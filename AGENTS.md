@@ -1,5 +1,18 @@
 # T3 Code
 
+## This fork: upstream nightly compatibility
+
+The goal is to keep custom changes while receiving upstream source updates. `origin` is `JustYannicc/t3code`; `upstream` is `pingdotgg/t3code`. A daily Codex automation syncs upstream `main` into this fork's `main`. It does not build or install desktop releases.
+
+- Keep custom changes cohesive and avoid unrelated formatting or renames in upstream-owned code. Prefer existing extension points when they fit the feature; introduce abstractions only for a real responsibility.
+- Preserve upstream history. Integrate updates by fast-forward or merge, keeping this section when upstream changes `AGENTS.md`.
+- Before syncing, fetch both remotes and pin their commits. Integrate in an isolated worktree and preserve dirty or unpushed local work. Push normally after focused validation; leave conflicts or failed checks recoverable and report the blocker.
+- When changing shared contracts, persistence, dependencies, or release tooling, verify the affected compatibility and migration behavior. Keep existing user data usable across updates.
+- For custom desktop releases, set `T3CODE_DESKTOP_UPDATE_REPOSITORY=JustYannicc/t3code` at build time. Official upstream binaries replace custom code. A fork updater needs its own built releases and channel manifests; source syncing alone does not provide those.
+- Before enabling release workflows in this fork, check their publishing destinations, package ownership, signing, and secrets. Upstream workflows also publish services beyond the desktop app.
+
+Explicit user instructions take precedence over these defaults and skill guidance. Continue authorized work without inventing approval gates. If an instruction blocks work, identify its file and exact rule, explain the conflict, and state what remains unfinished.
+
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
