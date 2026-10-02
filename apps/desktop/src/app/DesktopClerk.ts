@@ -11,7 +11,7 @@ import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/code
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
-import { accountReturnLoadUrl } from "./DesktopAccountReturn.ts";
+import { accountReturnLoadUrl } from "./DesktopAccountReturn.ts"; // signalbox: accounts
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -170,6 +170,7 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const resumeProviderAuth = (value: string | undefined) => {
+        // signalbox: accounts sign-in returns through the same deep link.
         const destination =
           providerAuthReturnUrl(value) ?? accountReturnLoadUrl(value, environment.isDevelopment);
         const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;

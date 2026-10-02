@@ -61,7 +61,7 @@ import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderE
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 import { WorkspaceContentWidthContext } from "./workspace-content-width";
-import { useNeedsAccountSignIn } from "../account/accountGate";
+import { useNeedsAccountSignIn } from "../account/accountGate"; // signalbox: accounts
 
 interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
@@ -240,7 +240,7 @@ function AdaptiveWorkspaceLayoutContent(
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
-  const needsAccountSignIn = useNeedsAccountSignIn();
+  const needsAccountSignIn = useNeedsAccountSignIn(); // signalbox: accounts, no sidebar while signed out
   const showPrimarySidebar =
     !needsAccountSignIn && (pathname === "/" || primarySidebarPreferredVisible);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);

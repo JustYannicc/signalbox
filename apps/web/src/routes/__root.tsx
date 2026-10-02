@@ -61,7 +61,7 @@ import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
-import { resolveAccountRedirect } from "../account/accountSession";
+import { resolveAccountRedirect } from "../account/accountSession"; // signalbox: accounts
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { shellEnvironment } from "../state/shell";
@@ -102,8 +102,8 @@ export const Route = createRootRoute({
     }
 
     const authGateState = await resolveInitialServerAuthGateState();
-    // After the auth bootstrap: a startup pairing token must be exchanged first
-    // so the account state sees that session's claim right.
+    // signalbox: accounts sign-in gate. After the auth bootstrap: a startup pairing
+    // token must be exchanged first so the account state sees that session's claim right.
     const signInRedirect = await resolveAccountRedirect(location);
     if (signInRedirect) throw signInRedirect;
     if (
@@ -164,6 +164,7 @@ function RootRouteView() {
   }, [pathname]);
 
   if (pathname === "/pair" || pathname === "/connect" || pathname === "/sign-in") {
+    // signalbox: accounts; /sign-in renders without app chrome, like /pair.
     return (
       <>
         <DocumentTitleSync />
