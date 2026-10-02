@@ -3,7 +3,7 @@
 The environment server owns simulators and emulators the way it owns
 terminals: discovery, streaming, and agent access all run there, and every
 client reaches them through the environment connection. This is what makes the
-Device panel work over Tailscale and T3 Connect, including when an SSH host runs the devices.
+Device panel work over Tailscale and Signalbox Connect, including when an SSH host runs the devices.
 
 ## Two external tools, one seam
 
@@ -43,7 +43,7 @@ the Vite proxy must forward WebSocket upgrades for `/api`, not only `/ws`.
 
 serve-sim's preview drives its Tools panel by sending shell commands over that
 same exec channel. Proxying it, even allowlisted, would hand any environment
-session arbitrary command execution on the host, so T3 does not. The
+session arbitrary command execution on the host, so Signalbox does not. The
 [`device.action`](../../apps/server/src/device/DeviceActions.ts) RPC runs the
 underlying `simctl`, `adb`, and serve-sim helper binaries itself through
 `DeviceHostReady.run`, one typed action per control, and returns the settings
@@ -55,7 +55,7 @@ screenshot capture and stream tuning.
 
 The `device_*` toolkit is deliberately four tools: list, open, screenshot, and
 close. Driving happens through the `agent-device` CLI, which has the semantic
-snapshot model agents need and stays current with its own releases. T3 prepends
+snapshot model agents need and stays current with its own releases. Signalbox prepends
 a shim directory to the provider's PATH. The CLI installs on the environment
 server even when that server cannot run simulators. Hosts start on demand.
 

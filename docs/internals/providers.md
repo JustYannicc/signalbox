@@ -43,7 +43,7 @@ session creation for this reason. Antigravity likewise reserves authenticated ca
 explicit setup or model refresh; background checks use initialization only.
 
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
-T3 auth session. The client carries the return URL back to the environment because the provider's
+Signalbox auth session. The client carries the return URL back to the environment because the provider's
 loopback listener may be on another machine. Forward only the callback for the owned pending flow;
 a successful callback HTTP request is not proof that provider authentication finished. The native
 process owns token exchange and storage.

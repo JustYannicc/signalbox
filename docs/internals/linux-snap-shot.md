@@ -91,7 +91,7 @@ Modifier serialization writes Linux `Ctrl` explicitly, never the cross-platform 
 
 ## GNOME extension
 
-Source in `apps/desktop/gnome-extension`, UUID `snap-shot@t3.codes`. GNOME only discovers a newly
+Source in `apps/desktop/gnome-extension`, UUID `signalbox-snap-shot@justyannicc.github.io`. GNOME only discovers a newly
 installed extension at login, so setup distinguishes "installed, needs logout" from "discovered but
 disabled" and compares loaded and installed versions.
 
@@ -100,7 +100,7 @@ variant) on the same connection. This is GNOME's trusted-session-client pattern,
 against a hostile process on the user's bus.
 
 Electron does not position overlay windows on Wayland, so the flash and flight run as Shell actors
-inside the extension with coordinates relative to T3's content area. Electron 44's restored-session
+inside the extension with coordinates relative to Signalbox's content area. Electron 44's restored-session
 path can skip rebinding and leave callbacks behind on unregister, which is why
 `PortalCaptureShortcut` owns its own portal session instead of using Electron's global-shortcut API.
 
