@@ -19,7 +19,7 @@ const SESSION_COOKIE_NAME = "t3_session";
  * Remote web servers use their persisted environment identity and omit the
  * port, so the name survives state-directory moves and public port changes.
  *
- * Desktop scans upward from 3773 for a free port and binds
+ * Desktop scans upward from 4783 for a free port and binds
  *   127.0.0.1, so a second instance lands on a different port and the same host.
  */
 export function resolveSessionCookieName(input: {

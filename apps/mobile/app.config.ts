@@ -28,7 +28,7 @@ if (
     !IOS_BUNDLE_IDENTIFIER_PATTERN.test(personalTeamBundleIdentifier))
 ) {
   throw new Error(
-    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
+    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.signalbox when T3CODE_IOS_PERSONAL_TEAM=1.",
   );
 }
 
@@ -73,26 +73,26 @@ const RELEASE_ASSETS = {
 
 const VARIANT_CONFIG = {
   development: {
-    appName: "T3 Code Dev",
-    scheme: "t3code-dev",
-    iosBundleIdentifier: "com.t3tools.t3code.dev",
-    androidPackage: "com.t3tools.t3code.dev",
+    appName: "Signalbox Dev",
+    scheme: "signalbox-dev",
+    iosBundleIdentifier: "com.justyannicc.signalbox.dev",
+    androidPackage: "com.justyannicc.signalbox.dev",
     relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
-    appName: "T3 Code Preview",
-    scheme: "t3code-preview",
-    iosBundleIdentifier: "com.t3tools.t3code.preview",
-    androidPackage: "com.t3tools.t3code.preview",
+    appName: "Signalbox Preview",
+    scheme: "signalbox-preview",
+    iosBundleIdentifier: "com.justyannicc.signalbox.preview",
+    androidPackage: "com.justyannicc.signalbox.preview",
     relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
   },
   production: {
-    appName: "T3 Code",
-    scheme: "t3code",
-    iosBundleIdentifier: "com.t3tools.t3code",
-    androidPackage: "com.t3tools.t3code",
+    appName: "Signalbox",
+    scheme: "signalbox",
+    iosBundleIdentifier: "com.justyannicc.signalbox",
+    androidPackage: "com.justyannicc.signalbox",
     relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
   },

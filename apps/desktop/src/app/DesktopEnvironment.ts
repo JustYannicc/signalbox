@@ -62,7 +62,7 @@ export class DesktopEnvironment extends Context.Service<
     // extracts on demand (see DesktopWslServerTree).
     readonly serverRoot: string;
     readonly backendEntryPath: string;
-    // Built web client the packaged renderer is served from over t3code://app.
+    // Built web client the packaged renderer is served from over signalbox://app.
     readonly clientAssetsDir: string;
     readonly backendCwd: string;
     readonly preloadPath: string;
@@ -188,8 +188,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = isDevelopment ? "signalbox-dev" : "signalbox";
+  const legacyUserDataDirName = isDevelopment ? "Signalbox (Dev)" : "Signalbox (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -240,10 +240,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment ? "com.justyannicc.signalbox.dev" : "com.justyannicc.signalbox",
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxWmClass: isDevelopment ? "signalbox-dev" : "signalbox",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,

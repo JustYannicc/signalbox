@@ -54,7 +54,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+const DESKTOP_APP_ID = "com.justyannicc.signalbox";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -2641,7 +2641,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: "Signalbox-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2697,7 +2697,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          schemes: ["signalbox", "signalbox-dev"],
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
@@ -2739,7 +2739,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // resources/package-type into the .deb only, so electron-updater updates
       // each install in its own format.
       target: target === "AppImage" ? [target, "deb"] : [target],
-      executableName: "t3code",
+      executableName: "signalbox",
       icon: "icons",
       category: "Development",
       synopsis: "Desktop GUI for coding agents",
@@ -2747,16 +2747,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       maintainer: "T3 Tools <hello@t3.codes>",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
-      // t3code:// OAuth callbacks to the app.
+      // signalbox:// OAuth callbacks to the app.
       protocols: [
         {
           name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          schemes: ["signalbox", "signalbox-dev"],
         },
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: "signalbox",
         },
       },
     };
@@ -3663,7 +3663,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: "signalbox",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -3671,7 +3671,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     packageManager: rootPackageJson.packageManager,
     description: "T3 Code desktop build",
     // Required by the .deb control file.
-    homepage: "https://t3.codes",
+    homepage: "https://github.com/JustYannicc/signalbox",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(

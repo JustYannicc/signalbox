@@ -62,7 +62,7 @@ export class SqliteStateSharedHomeMutationError extends Schema.TaggedError<Sqlit
   {},
 ) {
   override get message(): string {
-    return "Refusing to mutate the shared ~/.t3 database. Use an isolated --base-dir.";
+    return "Refusing to mutate the shared ~/.signalbox database. Use an isolated --base-dir.";
   }
 }
 
@@ -181,7 +181,7 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = path.resolve(input.baseDir);
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".signalbox"));
   const databasePath = path.join(baseDir, "userdata", "state.sqlite");
   const source = yield* resolveSqlSource(input.sql, input.file);
 

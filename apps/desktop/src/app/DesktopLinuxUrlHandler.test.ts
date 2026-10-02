@@ -29,8 +29,8 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     isPackaged: true,
     isDevelopment: false,
     displayName: "T3 Code (Alpha)",
-    linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
-    linuxWmClass: "t3code",
+    linuxDesktopEntryName: "com.justyannicc.Signalbox.desktop",
+    linuxWmClass: "signalbox",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path,
@@ -162,7 +162,7 @@ describe("DesktopLinuxUrlHandler", () => {
     const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
       displayName: "T3 Code (Nightly)",
       execTarget: '/home/al ice/Apps/T3 "100%" $HOME\\x.AppImage',
-      scheme: "t3code",
+      scheme: "signalbox",
       iconPath: "/home/al ice/icons/T3\\x.png",
     });
 
@@ -177,34 +177,34 @@ describe("DesktopLinuxUrlHandler", () => {
     );
     assert.include(entry, "NoDisplay=true");
     assert.notInclude(entry, "StartupWMClass=");
-    assert.include(entry, "MimeType=x-scheme-handler/t3code;");
+    assert.include(entry, "MimeType=x-scheme-handler/signalbox;");
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
   });
 
   it("carries structured context on registration errors", () => {
     const writeError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
       step: "write-desktop-entry",
-      scheme: "t3code",
-      desktopEntryPath: "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop",
+      scheme: "signalbox",
+      desktopEntryPath: "/home/alice/.local/share/applications/com.justyannicc.Signalbox.desktop",
       cause: new Error("boom"),
     });
     assert.equal(
       writeError.message,
-      "Failed to register the t3code:// URL handler (step: write-desktop-entry).",
+      "Failed to register the signalbox:// URL handler (step: write-desktop-entry).",
     );
     assert.equal(
       writeError.desktopEntryPath,
-      "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop",
+      "/home/alice/.local/share/applications/com.justyannicc.Signalbox.desktop",
     );
 
     const exitError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
       step: "set-default-handler",
-      scheme: "t3code",
+      scheme: "signalbox",
       exitCode: 4,
     });
     assert.equal(
       exitError.message,
-      "Failed to register the t3code:// URL handler (step: set-default-handler, xdg-mime exit code 4).",
+      "Failed to register the signalbox:// URL handler (step: set-default-handler, xdg-mime exit code 4).",
     );
   });
 
@@ -220,13 +220,13 @@ describe("DesktopLinuxUrlHandler", () => {
         assert.equal(recorded.files.length, 1);
         assert.equal(
           recorded.files[0]?.path,
-          "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop",
+          "/home/alice/.local/share/applications/com.justyannicc.Signalbox.desktop",
         );
         assert.include(
           recorded.files[0]?.content,
           'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
         );
-        assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+        assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/signalbox;");
         assert.deepEqual(recorded.commands, [
           {
             command: "update-desktop-database",
@@ -234,7 +234,7 @@ describe("DesktopLinuxUrlHandler", () => {
           },
           {
             command: "xdg-mime",
-            args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
+            args: ["default", "com.justyannicc.Signalbox.desktop", "x-scheme-handler/signalbox"],
           },
         ]);
       });
@@ -262,8 +262,8 @@ describe("DesktopLinuxUrlHandler", () => {
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "T3 Code (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
-          scheme: "t3code",
-          iconPath: "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png",
+          scheme: "signalbox",
+          iconPath: "/home/alice/.local/share/icons/com.justyannicc.Signalbox.desktop.png",
         }),
       });
 
@@ -276,7 +276,7 @@ describe("DesktopLinuxUrlHandler", () => {
         },
         {
           command: "xdg-mime",
-          args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
+          args: ["default", "com.justyannicc.Signalbox.desktop", "x-scheme-handler/signalbox"],
         },
       ]);
     });
@@ -284,14 +284,14 @@ describe("DesktopLinuxUrlHandler", () => {
 
   it.effect("installs a persistent icon even when the desktop entry is already current", () => {
     const recorded = emptyRecording();
-    const iconPath = "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png";
+    const iconPath = "/home/alice/.local/share/icons/com.justyannicc.Signalbox.desktop.png";
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         iconSource: "/tmp/.mount_T3/resources/icon.png",
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "T3 Code (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
-          scheme: "t3code",
+          scheme: "signalbox",
           iconPath,
         }),
       });
@@ -332,14 +332,14 @@ describe("DesktopLinuxUrlHandler", () => {
       yield* runRegister(unpackaged, {
         environment: {
           isPackaged: false,
-          linuxDesktopEntryName: "com.t3tools.T3Code.Development.desktop",
+          linuxDesktopEntryName: "com.justyannicc.Signalbox.Development.desktop",
         },
       });
 
       assert.deepEqual(nonLinux.files, []);
       assert.equal(
         unpackaged.files[0]?.path,
-        "/home/alice/.local/share/applications/com.t3tools.T3Code.Development.desktop",
+        "/home/alice/.local/share/applications/com.justyannicc.Signalbox.Development.desktop",
       );
       assert.deepEqual(unpackaged.commands, []);
     });
@@ -359,7 +359,8 @@ describe("DesktopLinuxUrlHandler", () => {
           module: "FileSystem",
           method: "writeFileString",
           description: "read-only filesystem",
-          pathOrDescriptor: "/home/alice/.local/share/applications/com.t3tools.T3Code.desktop",
+          pathOrDescriptor:
+            "/home/alice/.local/share/applications/com.justyannicc.Signalbox.desktop",
         }),
       });
 

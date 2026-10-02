@@ -187,7 +187,7 @@ describe("WSL runtime cache", () => {
       "b".repeat(64),
     );
 
-    expect(script).toContain('runtime_parent="$HOME/.t3/wsl-runtime"');
+    expect(script).toContain('runtime_parent="$HOME/.signalbox/wsl-runtime"');
     expect(script).toContain('  [ -f "$ready_marker" ] &&');
     expect(script).toContain('    runtime_entry_runs "$runtime_root" &&');
     expect(script).toContain("if runtime_is_ready; then");
@@ -405,7 +405,9 @@ describe("WSL runtime cache", () => {
 
     // Readiness is a presence check, so a tree whose pty.node is present but
     // unloadable stays ready forever unless the probe can revoke the marker.
-    expect(script).toContain('rm -f "$HOME/.t3/wsl-runtime/1.2.3_x64/.t3code-wsl-runtime-ready"');
+    expect(script).toContain(
+      'rm -f "$HOME/.signalbox/wsl-runtime/1.2.3_x64/.t3code-wsl-runtime-ready"',
+    );
     // Deleting the tree here would pull it out from under any backend still
     // running from it; the next install moves an unready root aside instead.
     expect(script).not.toContain("rm -rf");
@@ -461,9 +463,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       archivePath,
       archiveSha,
       runtimeId,
-      runtimeParent: `${work}/home/.t3/wsl-runtime`,
-      runtimeRoot: `${work}/home/.t3/wsl-runtime/${runtimeId}`,
-      serverEntry: `${work}/home/.t3/wsl-runtime/${runtimeId}/t3`,
+      runtimeParent: `${work}/home/.signalbox/wsl-runtime`,
+      runtimeRoot: `${work}/home/.signalbox/wsl-runtime/${runtimeId}`,
+      serverEntry: `${work}/home/.signalbox/wsl-runtime/${runtimeId}/t3`,
       installScript,
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
@@ -755,7 +757,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         "set -eu",
         "work=$(mktemp -d)",
         'home="$work/home"',
-        'runtime_parent="$home/.t3/wsl-runtime"',
+        'runtime_parent="$home/.signalbox/wsl-runtime"',
         'mkdir -p "$runtime_parent"',
         'make_ready() { mkdir -p "$runtime_parent/$1"; printf ready > "$runtime_parent/$1/.t3code-wsl-runtime-ready"; }',
         "make_ready sha256-current",

@@ -43,7 +43,7 @@ const provider = {
 } satisfies SubscriptionUsageSnapshot["providers"][number];
 const snapshot = {
   checkedAt: now,
-  url: "t3code-dev://settings/usage?tab=limits",
+  url: "signalbox-dev://settings/usage?tab=limits",
   providers: [provider, { ...provider, name: "Claude" }],
 } satisfies SubscriptionUsageSnapshot;
 
