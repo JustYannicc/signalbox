@@ -36,7 +36,7 @@ The goal is one app. Until it is good enough, it plugs into what people already 
 
 ### 7. One interface, wherever you are
 
-Signalbox follows the person, not the job. Work, personal, a new employer: it is the same app, and you connect whatever the new context needs. Nobody runs two instances or keeps separate apps per job. How contexts connect is still open; the rule is that everything lives in one place.
+Signalbox follows the person, not the job. Work, personal life, a new employer: it stays the same app, and a new context is something you connect, never something you install. When you design a feature, picture one person bringing several contexts into it at once.
 
 ### 8. Opinionated defaults, full freedom
 
