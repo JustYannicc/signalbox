@@ -3,7 +3,7 @@ import { Command, GlobalFlag } from "effect/unstable/cli";
 
 import { ServerConfig, type StartupPresentation } from "../config.ts";
 import { runServer } from "../server.ts";
-import { offerT3ImportOnServerStart } from "../signalbox/T3Import.ts"; // signalbox: one-time T3 Code import
+import { offerT3ImportOnServerStart } from "../signalbox/T3ImportOffer.ts"; // signalbox: one-time T3 Code import
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 
 export const runServerCommand = (
