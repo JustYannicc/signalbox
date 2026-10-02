@@ -3,6 +3,7 @@
 ## Using Signalbox
 
 - [Install Signalbox](./user/install.md)
+- [Sign in](./user/sign-in.md)
 - [Messages and context](./user/composer.md)
 - [Working with threads](./user/thread-sidebar.md)
 - [Permission modes](./user/permission-modes.md)
@@ -43,6 +44,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
+- [Accounts](./internals/accounts.md)
 - [Signalbox Connect](./internals/t3-connect.md)
 - [Assistant citations](./internals/assistant-citations.md)
 - [Mobile navigation](./internals/mobile-navigation.md)
@@ -55,6 +57,7 @@ source alone does not explain. Most code changes do not need an internal documen
 
 - [Development and local builds](./operations/development.md)
 - [Upstream sync and the rebrand codemod](./operations/upstream-sync.md)
+- [Accounts setup](./operations/accounts-setup.md)
 - [Signalbox Connect setup](./operations/connect-setup.md)
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)

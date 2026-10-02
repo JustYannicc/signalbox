@@ -15,6 +15,7 @@ import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { EnvironmentAccountSection } from "../account/EnvironmentAccountSection";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -167,6 +168,10 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 onUpdate={connections.onUpdateEnvironment}
               />
             </SettingsSection>
+            <EnvironmentAccountSection
+              environmentId={environmentId}
+              environmentLabel={environment.environmentLabel}
+            />
             {!connected ? (
               <Text className="px-2 text-sm text-foreground-muted">
                 Connect this environment to manage it.

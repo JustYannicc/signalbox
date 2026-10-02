@@ -11,6 +11,7 @@ import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/code
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
+import { accountReturnLoadUrl } from "./DesktopAccountReturn.ts";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -169,7 +170,8 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const resumeProviderAuth = (value: string | undefined) => {
-        const destination = providerAuthReturnUrl(value);
+        const destination =
+          providerAuthReturnUrl(value) ?? accountReturnLoadUrl(value, environment.isDevelopment);
         const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
         if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
         void runPromise(

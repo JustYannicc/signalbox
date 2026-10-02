@@ -56,6 +56,10 @@ in the receiving app. Connection settings are under **Settings → Connections**
 on web and desktop and **Settings → Environments** on mobile. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
+On a phone with no environment yet, the app opens on sign-in. Tap **Pair with a
+code instead** to reach **Add environment**. A server without account sign-in
+sends you there after you enter its address.
+
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original token to reconnect. Links
 created in Settings can only be copied from the client that created them while

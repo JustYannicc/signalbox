@@ -1,6 +1,7 @@
 "use client";
 
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
+import { accountSignOutPaletteItem } from "../account/accountPaletteItem";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -2251,6 +2252,9 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  const accountSignOutItem = accountSignOutPaletteItem();
+  if (accountSignOutItem) actionItems.push(accountSignOutItem);
 
   // Target the active thread or draft's project, falling back to the first sidebar group.
   const contextualProjectGroup =

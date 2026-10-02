@@ -61,6 +61,7 @@ import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
+import { resolveAccountRedirect } from "../account/accountSession";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { shellEnvironment } from "../state/shell";
@@ -101,6 +102,10 @@ export const Route = createRootRoute({
     }
 
     const authGateState = await resolveInitialServerAuthGateState();
+    // After the auth bootstrap: a startup pairing token must be exchanged first
+    // so the account state sees that session's claim right.
+    const signInRedirect = await resolveAccountRedirect(location);
+    if (signInRedirect) throw signInRedirect;
     if (
       authGateState.status === "authenticated" &&
       getDesktopSnapShotBridge() &&
@@ -158,7 +163,7 @@ function RootRouteView() {
     };
   }, [pathname]);
 
-  if (pathname === "/pair" || pathname === "/connect") {
+  if (pathname === "/pair" || pathname === "/connect" || pathname === "/sign-in") {
     return (
       <>
         <DocumentTitleSync />

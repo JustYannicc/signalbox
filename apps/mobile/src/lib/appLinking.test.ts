@@ -18,10 +18,12 @@ describe("shouldHandleAppLink", () => {
     expect(shouldHandleAppLink(url)).toBe(true);
   });
 
-  it.each(["signalbox://expo-development-client/?url=x", "signalbox://expo-sharing/anything"])(
-    "ignores lifecycle URL %s",
-    (url) => {
-      expect(shouldHandleAppLink(url)).toBe(false);
-    },
-  );
+  it.each([
+    "signalbox://expo-development-client/?url=x",
+    "signalbox://expo-sharing/anything",
+    "signalbox://account-return?handoff=h_1",
+    "signalbox-dev://account-return?error=expired",
+  ])("ignores lifecycle URL %s", (url) => {
+    expect(shouldHandleAppLink(url)).toBe(false);
+  });
 });

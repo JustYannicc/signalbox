@@ -50,6 +50,7 @@ import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
+import { AccountSignInRouteScreen } from "./features/account/AccountSignInRoutes";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
@@ -471,6 +472,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
 // influence the adaptive workspace layout: opening Settings over Home should
 // not flip the sidebar in or change the active thread.
 const WORKSPACE_OVERLAY_ROUTES = new Set([
+  "AccountSignIn",
   "ConnectOnboarding",
   "Connections",
   "ConnectionsNew",
@@ -785,6 +787,15 @@ const RootStackConfig = createNativeStackNavigator({
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
+      },
+    }),
+    // No linking path: sign-in starts from "Add environment", never from a link.
+    AccountSignIn: createNativeStackScreen({
+      screen: AccountSignInRouteScreen,
+      options: {
+        headerShown: false,
+        gestureEnabled: true,
+        presentation: Platform.OS === "android" ? "card" : "modal",
       },
     }),
     NewTaskSheet: createNativeStackScreen({
