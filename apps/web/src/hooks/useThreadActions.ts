@@ -721,7 +721,7 @@ export function useThreadActions() {
           }
           return unsettled;
         },
-        failureTitle: "Failed to undo settle",
+        failureTitle: "Failed to undo archive",
       });
       return result;
     },
@@ -861,7 +861,7 @@ export function useThreadActions() {
         action: "Snoozed",
         claim: action,
         undo: () => unsnoozeThread(target),
-        failureTitle: "Failed to wake thread",
+        failureTitle: "Failed to bring thread back",
       });
       return result;
     },

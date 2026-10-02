@@ -10,7 +10,16 @@ export function isSidebarUtilityPage(pathname: string) {
     pathname.startsWith("/settings/") ||
     pathname.startsWith("/projects/") ||
     pathname === "/usage" ||
-    pathname === "/pull-requests"
+    pathname === "/accounts" ||
+    pathname === "/pull-requests" ||
+    // Fork: rail view pages. Leaving them returns to the last thread, not to them.
+    pathname === "/spaces" ||
+    pathname === "/plugins" ||
+    pathname === "/automations" ||
+    pathname.startsWith("/automations/") ||
+    ["/devices", "/team", "/computers", "/setup", "/capture"].some(
+      (page) => pathname === page || pathname.startsWith(`${page}/`),
+    )
   );
 }
 
@@ -28,9 +37,9 @@ export function MainAppLocationTracker() {
   return null;
 }
 
-// Leaves a utility page for the last main app URL, or the thread list when
-// the app was opened directly on a utility page.
+// Leaves a utility page for the last main app URL, or the assistant when the
+// app was opened directly on a utility page.
 export function useNavigateToMainApp() {
   const navigate = useNavigate();
-  return useCallback(() => navigate({ href: mainAppHref ?? "/" }), [navigate]);
+  return useCallback(() => navigate({ href: mainAppHref ?? "/assistant" }), [navigate]);
 }

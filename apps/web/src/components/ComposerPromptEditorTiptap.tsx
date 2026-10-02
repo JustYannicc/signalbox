@@ -66,6 +66,7 @@ import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
 import { ContextChip } from "./ContextChip";
+import { ComposerMentionRendererContext } from "./composerMentionRenderer";
 import {
   ComposerContextActionsContext,
   ComposerContextReferenceChip,
@@ -218,7 +219,16 @@ const ComposerMentionExtension = Node.create({
 
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
+  const renderMention = use(ComposerMentionRendererContext);
   const path = (node.attrs.path as string) ?? "";
+  const custom = renderMention?.(path) ?? null;
+  if (custom) {
+    return (
+      <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+        {custom}
+      </NodeViewWrapper>
+    );
+  }
   const chip = (
     <ContextChip
       kind="mention"

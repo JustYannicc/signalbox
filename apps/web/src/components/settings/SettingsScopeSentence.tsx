@@ -34,6 +34,8 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/snap-shot",
   "/settings/connections",
+  // Fork: notifications are per person, not per environment.
+  "/settings/notifications",
 ]);
 
 interface SettingsScopeMenuProps {

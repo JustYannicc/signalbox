@@ -18,7 +18,7 @@ import {
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
-import { memo, useLayoutEffect, useRef } from "react";
+import { memo, useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
@@ -64,6 +64,16 @@ export type ComposerCommandItem =
       id: string;
       type: "pull-request";
       pullRequest: PullRequestContextMetadata;
+      label: string;
+      description: string;
+    }
+  | {
+      /** A person, their assistant, or an agent to @mention (team chats and rooms). */
+      id: string;
+      type: "person";
+      handle: string;
+      /** Shown before the label, e.g. an avatar. */
+      leading: ReactNode;
       label: string;
       description: string;
     };
@@ -179,6 +189,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           theme={props.resolvedTheme}
         />
       ) : null}
+      {props.item.type === "person" ? props.item.leading : null}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon
           role="img"

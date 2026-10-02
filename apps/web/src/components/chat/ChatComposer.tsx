@@ -2,6 +2,7 @@ import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
+import { ALWAYS_FULL_ACCESS } from "../../lib/fullAccessPolicy";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
@@ -115,12 +116,20 @@ import {
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
 import {
+  SEND_LOCKED_REASON,
+  useComposerSendLockStore,
+  useComposerSendLocked,
+} from "../../composerSendLockStore";
+import {
   MAX_STASH_ENTRIES,
   partitionStashAttachments,
   usePromptStashStore,
   type PromptStashEntry,
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
+import { formatComposerMention } from "../composerMentionRenderer";
+import { useMentionDirectory } from "../multiplayer/mentionDirectory";
+import { defaultSectionIdForProject } from "../sidebar/sections/sectionModel";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { useComposerTriggerState } from "./useComposerTriggerState";
@@ -849,7 +858,10 @@ function composerCommandMenuPositionsEqual(
   );
 }
 
-function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
+export function ComposerCommandMenuLayer(props: {
+  anchor: HTMLElement | null;
+  children: ReactNode;
+}) {
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
 
   useLayoutEffect(() => {
@@ -1131,6 +1143,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
     </>
   ) : null;
 
+  // Fork: runs always get full access, so only the plan toggle remains.
+  if (ALWAYS_FULL_ACCESS) return interactionModeToggle;
+
   return (
     <>
       <ComposerControlSeparator size={size} />
@@ -1202,6 +1217,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   promptHasText: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
+  sendLocked: boolean;
+  sendLockOn: boolean;
+  onToggleSendLock: () => void;
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
@@ -1234,6 +1252,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
         sendDisabledReason={props.sendDisabledReason}
+        sendLocked={props.sendLocked}
+        sendLockOn={props.sendLockOn}
+        onToggleSendLock={props.onToggleSendLock}
         isConnecting={props.isConnecting}
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
         isPreparingWorktree={props.isPreparingWorktree}
@@ -1275,6 +1296,7 @@ export interface ChatComposerHandle {
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
   compactContext: () => void;
+  toggleSendLock: () => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1594,6 +1616,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // happened while they awaited.
   const composerDraftTargetKeyRef = useRef("");
   composerDraftTargetKeyRef.current = composerDraftTargetKey;
+  // The lock only holds free-text sends: answering a pending question or approval stays open.
+  const sendLockOn = useComposerSendLocked(composerDraftTargetKey);
+  const sendLocked = sendLockOn && !activePendingProgress && activePendingApproval === null;
+  const toggleSendLock = useCallback(
+    () => useComposerSendLockStore.getState().toggleSendLocked(composerDraftTargetKeyRef.current),
+    [],
+  );
   const questionAttachmentTarget =
     pendingUserInputs[0] && activePendingProgress?.activeQuestion
       ? questionAttachmentDraftId(
@@ -1936,6 +1965,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
   );
   const sendDisabledReason =
+    (sendLocked ? SEND_LOCKED_REASON : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -2342,10 +2372,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
   );
 
+  // `@` also reaches teammates, your assistant and your agents, ahead of files.
+  const { source: peopleMentions } = useMentionDirectory({
+    containerId: gitCwd
+      ? defaultSectionIdForProject({ displayName: "", workspaceRoot: gitCwd })
+      : null,
+    includeAgents: true,
+  });
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return workspaceEntries.entries.map((entry) => ({
+      const fileItems: ComposerCommandItem[] = workspaceEntries.entries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
         type: "path",
         path: entry.path,
@@ -2353,6 +2390,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         label: basenameOfPath(entry.path),
         description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
       }));
+      return [...peopleMentions.items(composerTrigger.query), ...fileItems];
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
@@ -2498,6 +2536,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderStatus,
     settings.showSkillsInSlashMenu,
     workspaceEntries.entries,
+    peopleMentions,
   ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
@@ -3587,6 +3626,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
+      if (item.type === "person") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `${formatComposerMention(item.handle)} `,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+        );
+        if (applied) setComposerHighlightedItemId(null);
+        return;
+      }
       if (item.type === "path") {
         const replacement = `${serializeComposerFileLink(item.path)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -4033,6 +4082,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             isRunning: phase === "running",
             sendShortcut: settings.sendShortcut,
             prompt: promptRef.current,
+            sendLocked,
           })
         : null;
     if (submissionIntent) {
@@ -5955,6 +6005,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         trigger.click();
       },
       compactContext: compactThreadContext,
+      toggleSendLock,
       isModelPickerOpen: () => isComposerModelPickerOpen,
       readSnapshot: () => {
         return readComposerSnapshot();
@@ -6301,6 +6352,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               promptHasText={false}
                               isSendBusy={isSendBusy}
                               sendDisabledReason={sendDisabledReason}
+                              sendLocked={sendLocked}
+                              sendLockOn={sendLockOn}
+                              onToggleSendLock={toggleSendLock}
                               isConnecting={isConnecting}
                               isEnvironmentUnavailable={
                                 environmentUnavailable !== null ||
@@ -6845,6 +6899,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
+                    renderMention={peopleMentions.renderMention}
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     value={
@@ -6918,6 +6973,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       promptHasText={false}
                       isSendBusy={isSendBusy}
                       sendDisabledReason={sendDisabledReason}
+                      sendLocked={sendLocked}
+                      sendLockOn={sendLockOn}
+                      onToggleSendLock={toggleSendLock}
                       isConnecting={isConnecting}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
@@ -7027,6 +7085,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy}
                     sendDisabledReason={sendDisabledReason}
+                    sendLocked={sendLocked}
+                    sendLockOn={sendLockOn}
+                    onToggleSendLock={toggleSendLock}
                     isConnecting={isConnecting}
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||

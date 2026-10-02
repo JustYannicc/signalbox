@@ -32,7 +32,10 @@ export function composerSubmissionIntentForEnter(input: {
   isRunning?: boolean;
   sendShortcut?: ClientSettings["sendShortcut"];
   prompt?: string;
+  /** A send-locked composer never submits from Enter; it inserts a newline instead. */
+  sendLocked?: boolean;
 }): ComposerSubmissionIntent | null {
+  if (input.sendLocked) return null;
   const requiresModifier =
     input.sendShortcut === "mod-enter" ||
     (input.sendShortcut === "mod-enter-multiline" && /[\r\n]/.test(input.prompt ?? ""));

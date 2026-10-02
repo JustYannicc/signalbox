@@ -12,6 +12,7 @@ import {
   resolveTimelineMinimapPreview,
   type TimelineMinimapItem,
 } from "./timelineMinimapItems";
+import { TimelineAnnotationsContext, type TimelineAnnotations } from "./timelineAnnotations";
 import {
   COMPOSER_CONTEXT_KINDS,
   type AssistantCitation,
@@ -106,7 +107,8 @@ import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
-import { T3Wordmark } from "../T3Wordmark";
+import { SignalboxMark } from "../SignalboxMark";
+import { APP_BASE_NAME } from "~/branding";
 import {
   BotIcon,
   BrainIcon,
@@ -268,6 +270,7 @@ import { ComputerUseAppIcon } from "~/components/Icons";
 // ---------------------------------------------------------------------------
 
 interface TimelineRowSharedState {
+  annotations: TimelineAnnotations | null;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
@@ -468,6 +471,8 @@ interface MessagesTimelineProps {
   onSteerQueuedMessage?: (id: string) => void;
   steerQueuedMessageShortcutLabel?: string | null;
   onRemoveQueuedMessage?: (id: string) => void;
+  /** Row decorations, e.g. authors and harnesses; also read from `TimelineAnnotationsContext`. */
+  annotations?: TimelineAnnotations | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,7 +531,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onSteerQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
   steerQueuedMessageShortcutLabel = null,
   onRemoveQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
+  annotations: annotationsProp,
 }: MessagesTimelineProps) {
+  const contextAnnotations = use(TimelineAnnotationsContext);
+  const annotations = annotationsProp ?? contextAnnotations;
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   const rememberedPosition = useMemo(
     () => readTimelinePosition(listIdentityKey),
@@ -1141,6 +1149,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
+      annotations,
       citationRequest: readyCitationRequest,
       listRef,
       timestampFormat,
@@ -1212,6 +1221,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
+      annotations,
     ],
   );
   const backgroundWorktreeSetup =
@@ -1883,6 +1893,7 @@ function ContextCompactionTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
+  const eventIcon = use(TimelineRowCtx).annotations?.separatorIcon?.(row.id);
   return (
     <div
       role="separator"
@@ -1891,7 +1902,7 @@ function ContextCompactionTimelineRow({
     >
       <span className="h-px flex-1 bg-border/70" />
       <span className="flex shrink-0 items-center gap-1.5">
-        <Minimize2Icon aria-hidden="true" className="size-3" />
+        {eventIcon ?? <Minimize2Icon aria-hidden="true" className="size-3" />}
         {row.label}
       </span>
       <span className="h-px flex-1 bg-border/70" />
@@ -1954,6 +1965,7 @@ function MessageAuthorHeading({ children }: { children: string }) {
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const { annotations } = ctx;
   const { onImageExpand, onFileOpen } = ctx;
   const resources = useMemo(
     () => selectMessageImageResources(row.message.attachments),
@@ -2059,6 +2071,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   };
   const renderContextReference = useCallback(
     (reference: ChatMarkdownContextReference) => {
+      const annotated = annotations?.renderContextReference?.(reference);
+      if (annotated) return annotated;
       const record = asKnownContextRecord(resolvedContext.recordsById.get(reference.contextId));
       // Structured annotations point at the image record, which in turn points at the persisted
       // attachment. Filename and order are compatibility fallbacks for legacy messages only.
@@ -2105,11 +2119,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       onImageExpand,
       onFileOpen,
       ctx.activeThreadEnvironmentId,
+      annotations,
     ],
   );
 
+  const authorHeader = annotations?.userMessageHeader?.(row.message.id);
   return (
     <div className="group flex flex-col items-end gap-1">
+      {authorHeader}
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
@@ -2381,11 +2398,13 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const harnessHeader = ctx.annotations?.assistantMessageHeader?.(row.message.id);
 
   return (
     <>
+      {harnessHeader}
       <div className="relative min-w-0 px-1 py-0.5">
-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+        <MessageAuthorHeading>{APP_BASE_NAME}</MessageAuthorHeading>
         <AssistantCitationSource
           messageId={row.message.id}
           {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
@@ -4341,7 +4360,7 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
-      return <T3Wordmark className={className} aria-hidden />;
+      return <SignalboxMark className={className} aria-hidden />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":

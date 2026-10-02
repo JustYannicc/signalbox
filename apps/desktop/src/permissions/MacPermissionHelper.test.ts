@@ -168,7 +168,7 @@ it("does not open for a permission already granted", async () => {
 });
 it("does not show a helper with a missing packaged icon", async () => {
   mocks.createFromPath.mockReturnValueOnce({ isEmpty: () => true });
-  await expect(open()).rejects.toThrow("packaged T3 Code icon is missing");
+  await expect(open()).rejects.toThrow("packaged Signalbox icon is missing");
   expect(windows).toHaveLength(0);
 });
 it("cleans up when the helper page fails to load", async () => {

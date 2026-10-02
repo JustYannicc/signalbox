@@ -89,20 +89,22 @@ export function buildThreadActionMenuItems(
     // Both lifecycle actions stay available on pinned threads: settling
     // clears the pin ("done" beats "keep on top"), and snoozing hides the
     // card until wake with the pin intact.
+    // Fork: settle is shown as Archive (it comes back on its own when the
+    // agent needs you) and snooze as "Remind me later".
     ...(state.supports.settlement
       ? [
           state.isSettled
-            ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
-            : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
+            ? { id: "unsettle" as const, label: "Restore thread", icon: "archive" }
+            : { id: "settle" as const, label: "Archive thread", icon: "archive" },
         ]
       : []),
     ...(state.supports.snooze
       ? [
           state.isSnoozed
-            ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
+            ? { id: "unsnooze" as const, label: "Bring back now", icon: "clock" }
             : {
                 id: "snooze" as const,
-                label: "Snooze",
+                label: "Remind me later",
                 icon: "clock",
                 disabled: !state.canSnoozeNow,
                 children: [
@@ -146,7 +148,7 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "auto-settle" as const,
-            label: "Auto-settle behavior",
+            label: "Auto-archive",
             icon: "timer",
             children: [
               {
@@ -181,19 +183,25 @@ export function buildThreadActionMenuItems(
     // conversation under Settings > Archived threads — distinct from Settle
     // (stays visible in the Settled shelf) and Delete (clears history for
     // good), so it sits beside Delete without borrowing its destructive
-    // styling.
-    {
-      id: "archive",
-      label: "Archive thread",
-      icon: "archive",
-      disabled: state.isRunning,
-      separatorBefore: true,
-    },
+    // styling. Fork: where settle exists it already is "Archive", so the
+    // server-side archive is only offered on environments without it.
+    ...(state.supports.settlement
+      ? []
+      : [
+          {
+            id: "archive" as const,
+            label: "Archive thread",
+            icon: "archive",
+            disabled: state.isRunning,
+            separatorBefore: true,
+          },
+        ]),
     {
       id: "delete",
       label: "Delete",
       destructive: true,
       icon: "trash",
+      separatorBefore: state.supports.settlement,
     },
   ];
 }

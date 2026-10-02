@@ -180,6 +180,7 @@ vi.mock("../uiStateStore", () => ({
 }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
 
+import { effectiveRuntimeMode } from "../lib/fullAccessPolicy";
 import { useNewThreadHandler } from "./useHandleNewThread";
 
 describe.each([
@@ -194,8 +195,9 @@ describe.each([
     },
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
+  // Fork: with ALWAYS_FULL_ACCESS every configured default resolves to full access.
   it.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
-    "uses the target environment's %s permissions for new threads",
+    "opens new threads with full access when the environment defaults to %s",
     async (runtimeMode) => {
       testState.reset(draft);
       testState.targetSettings.defaultRuntimeMode = runtimeMode;
@@ -211,7 +213,7 @@ describe.each([
         "remote-project",
         projectRef,
         opened!.draftId,
-        expect.objectContaining({ runtimeMode }),
+        expect.objectContaining({ runtimeMode: effectiveRuntimeMode(runtimeMode) }),
       );
     },
   );

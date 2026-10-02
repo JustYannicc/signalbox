@@ -167,7 +167,7 @@ export function useThreadActionMenu(input: {
           if (!preset) return;
           const result = await snoozeThread(threadRef, preset.snoozedUntil);
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-            failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
+            failureToast("Failed to move thread to Later", squashAtomCommandFailure(result));
           }
           return;
         }
@@ -214,13 +214,13 @@ export function useThreadActionMenu(input: {
             return;
           }
           case "settle":
-            await reportFailure("Failed to settle thread", () => settleThread(threadRef));
+            await reportFailure("Failed to archive thread", () => settleThread(threadRef));
             return;
           case "unsettle":
-            await reportFailure("Failed to un-settle thread", () => unsettleThread(threadRef));
+            await reportFailure("Failed to restore thread", () => unsettleThread(threadRef));
             return;
           case "unsnooze":
-            await reportFailure("Failed to wake thread", () => unsnoozeThread(threadRef));
+            await reportFailure("Failed to bring thread back", () => unsnoozeThread(threadRef));
             return;
           case "pin":
             await reportFailure("Failed to pin thread", () => pinThread(threadRef));
@@ -231,7 +231,7 @@ export function useThreadActionMenu(input: {
           }
           case "auto-settle:enabled":
           case "auto-settle:disabled":
-            await reportFailure("Failed to update auto-settle", () =>
+            await reportFailure("Failed to update auto-archive", () =>
               setThreadAutoSettle(threadRef, action === "auto-settle:enabled"),
             );
             return;

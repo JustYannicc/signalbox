@@ -9,6 +9,8 @@ const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
   ...SETTINGS_SECTION_LABELS,
   "/settings/diagnostics": "Diagnostics",
   "/settings/open-source-licenses": "Open source licenses",
+  // Fork: notification defaults for the assistant and agents.
+  "/settings/notifications": "Notifications",
 };
 
 function settingsBreadcrumbLabel(pathname: string): string | null {

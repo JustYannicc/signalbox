@@ -1,6 +1,7 @@
 import { definePlugin } from "@oxlint/plugins";
 
 import namespaceNodeImports from "./rules/namespace-node-imports.ts";
+import noEffectExpressionBody from "./rules/no-effect-expression-body.ts";
 import noGlobalProcessRuntime from "./rules/no-global-process-runtime.ts";
 import noHermesUnsupportedApis from "./rules/no-hermes-unsupported-apis.ts";
 import noInlineSchemaCompile from "./rules/no-inline-schema-compile.ts";
@@ -14,6 +15,7 @@ export default definePlugin({
   },
   rules: {
     "namespace-node-imports": namespaceNodeImports,
+    "no-effect-expression-body": noEffectExpressionBody,
     "no-global-process-runtime": noGlobalProcessRuntime,
     "no-hermes-unsupported-apis": noHermesUnsupportedApis,
     "no-inline-schema-compile": noInlineSchemaCompile,
