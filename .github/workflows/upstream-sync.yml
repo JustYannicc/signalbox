@@ -1,0 +1,59 @@
+# Signalbox-only. Merges pingdotgg/t3code main into a PR against main every
+# four hours. The logic lives in scripts/upstream-sync/sync.ts; the manual
+# runbook is docs/operations/upstream-sync.md.
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write # dispatch Signalbox CI on the sync branch
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync
+    if: github.repository == 'JustYannicc/signalbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # GITHUB_TOKEN may not push upstream's workflow-file changes, and its
+      # pushes start no CI. An optional token with Workflows access lifts both.
+      GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+      DISPATCH_CI: ${{ secrets.UPSTREAM_SYNC_TOKEN == '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          filter: blob:none
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags upstream main
+
+      # Dependencies are installed by the script, only when there is a merge to finish.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Sync
+        run: node scripts/upstream-sync/sync.ts

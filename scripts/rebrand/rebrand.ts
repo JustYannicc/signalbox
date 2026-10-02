@@ -143,6 +143,7 @@ const EXCLUDED = [
   /^packaging\//, // upstream's AUR packages
   /^patches\//,
   /^scripts\/rebrand\//,
+  /^scripts\/upstream-sync\//, // names upstream T3 Code on purpose
   /^docs\/operations\/upstream-sync\.md$/, // names the old identifiers on purpose
   /(^|\/)UPSTREAM\.md$/,
   /^(README|AGENTS|CLAUDE|CONTRIBUTING)\.md$/, // fork-owned or upstream policy
