@@ -54,7 +54,7 @@ let inflight: Promise<AccountSessionState | null> | null = null;
  * means unknown (no primary, old server, request failed): callers fall back to
  * the pairing gate.
  */
-export function loadAccountSession(): Promise<AccountSessionState | null> {
+function loadAccountSession(): Promise<AccountSessionState | null> {
   if (resolvedSession || unsupported) return Promise.resolve(resolvedSession);
   inflight ??= fetchPrimaryAccountSession()
     .then(
