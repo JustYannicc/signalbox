@@ -34,23 +34,27 @@ Most of AI never settled who an agent works for, which is why everyone runs thei
 
 The goal is one app. Until it is good enough, it plugs into what people already use every day. Meta's display glasses made you adopt their whole ecosystem instead of showing your Google Maps and your phone's notifications, and that's why Yannic didn't buy them. Nobody adopts Signalbox wholesale. Everything connects outward, and nothing locks you in.
 
-### 7. Opinionated defaults, full freedom
+### 7. One interface, wherever you are
+
+Signalbox follows the person, not the job. Work, personal, a new employer: it is the same app, and you connect whatever the new context needs. Nobody runs two instances or keeps separate apps per job. How contexts connect is still open; the rule is that everything lives in one place.
+
+### 8. Opinionated defaults, full freedom
 
 Ship defaults that prevent the avoidable fuckups, so people never have to care about the machinery. Then let them change anything. Tighter guardrails leave less room to do useful work.
 
-### 8. How it feels is how it works
+### 9. How it feels is how it works
 
 Presentation matters as much as mechanics. The same system with a different label, entry point, or flow changes how people use it. OpenAI renaming live voice to calls is the kind of change we care about. Copy, motion, and layout are part of the feature.
 
-### 9. Better together
+### 10. Better together
 
 One person gets full value alone. Each extra person adds more: multiplayer threads, shared workflows, assistants that talk to each other. Build features so they work solo and get better with a team.
 
-### 10. Hosting is the convenience
+### 11. Hosting is the convenience
 
 Everything works self-hosted. The hosted service adds convenience: no servers to keep running and scaling, and one-click setup for everything. Connecting Gmail is one click because the service provides the Google credentials; self-hosted, you bring your own. Same product either way, one is just less work.
 
-### 11. Fast and everywhere
+### 12. Fast and everywhere
 
 Inherited from T3 Code. Performance is a feature: watch websocket payloads, GPU-heavy CSS, and long lists. Web, desktop (Electron), and mobile (React Native) all ship every feature where reasonable.
 
