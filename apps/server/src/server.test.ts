@@ -1217,7 +1217,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
-          get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
+          get: Effect.die(new Error("Unexpected Signalbox Connect CLI authorization request.")),
           getExisting: Effect.succeedNone,
           hasCredential: Effect.succeed(false),
           clear: Effect.void,
@@ -2463,7 +2463,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
         scope: "orchestration:read orchestration:operate terminal:operate review:write",
         clientMetadata: {
-          label: "T3 Code Mobile",
+          label: "Signalbox Mobile",
           deviceType: "mobile",
           os: "iOS",
         },
@@ -2490,7 +2490,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assert.equal(clientsResponse.status, 200);
       assert.deepInclude(mobileClient?.client, {
-        label: "T3 Code Mobile",
+        label: "Signalbox Mobile",
         deviceType: "mobile",
         os: "iOS",
         ipAddress: "127.0.0.1",
@@ -4728,7 +4728,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+  for (const desktopOrigin of ["signalbox://app", "signalbox-dev://app"]) {
     it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({
@@ -8058,7 +8058,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-clone-" });
-      const destinationPath = path.join(parentDir, "t3code");
+      const destinationPath = path.join(parentDir, "signalbox");
       const projectId = ProjectId.make("project-clone-1");
       const dispatched: Array<string> = [];
       const cloneGate = yield* Deferred.make<void>();
@@ -8105,7 +8105,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           Effect.gen(function* () {
             const started = yield* client[WS_METHODS.projectCloneStart]({
               projectId,
-              title: "t3code",
+              title: "signalbox",
               createdAt: "2026-01-01T00:00:00.000Z",
               remoteUrl: "git@github.com:octocat/t3code.git",
               destinationPath,

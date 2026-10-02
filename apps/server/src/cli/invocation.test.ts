@@ -4,25 +4,25 @@ import { formatCliCommand } from "./invocation.ts";
 
 it("formats package runner commands from their cache entry paths", () => {
   for (const [entryPath, expected] of [
-    ["/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs", "npx t3 serve"],
+    ["/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs", "npx signalbox-cli serve"],
     [
       "C:\\Users\\theo\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\t3\\dist\\bin.mjs",
-      "npx t3 serve",
+      "npx signalbox-cli serve",
     ],
-    ["/home/theo/.cache/pnpm/dlx/abc/node_modules/t3/dist/bin.mjs", "pnpm dlx t3 serve"],
+    ["/home/theo/.cache/pnpm/dlx/abc/node_modules/t3/dist/bin.mjs", "pnpm dlx signalbox-cli serve"],
     [
       "/home/theo/.local/share/pnpm/.pnpm/dlx/abc/node_modules/t3/dist/bin.mjs",
-      "pnpm dlx t3 serve",
+      "pnpm dlx signalbox-cli serve",
     ],
     [
       "C:\\Users\\theo\\AppData\\Local\\pnpm-cache\\dlx\\abc\\node_modules\\t3\\dist\\bin.mjs",
-      "pnpm dlx t3 serve",
+      "pnpm dlx signalbox-cli serve",
     ],
-    ["/home/theo/.bun/install/cache/t3@0.0.31/dist/bin.mjs", "bunx t3 serve"],
-    ["/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs", "bunx t3 serve"],
+    ["/home/theo/.bun/install/cache/t3@0.0.31/dist/bin.mjs", "bunx signalbox-cli serve"],
+    ["/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs", "bunx signalbox-cli serve"],
     [
       "C:\\Users\\theo\\AppData\\Local\\Temp\\bunx-0-t3@latest\\node_modules\\t3\\dist\\bin.mjs",
-      "bunx t3 serve",
+      "bunx signalbox-cli serve",
     ],
   ] as const) {
     assert.equal(formatCliCommand({ subcommand: "serve", entryPath, version: "0.0.31" }), expected);
@@ -38,17 +38,17 @@ it("treats stable installs as direct invocations", () => {
   ]) {
     assert.equal(
       formatCliCommand({ subcommand: "serve", entryPath, version: "0.0.31" }),
-      "t3 serve",
+      "signalbox serve",
     );
   }
 });
 
 it("re-suggests the prerelease channel only for prerelease builds", () => {
   for (const [version, expected] of [
-    ["0.0.31-nightly.20260729", "npx t3@nightly serve"],
-    ["0.0.31-preview.20260729.1", "npx t3@preview serve"],
-    ["0.0.31-foo-preview.20260729.1", "npx t3 serve"],
-    ["0.0.31", "npx t3 serve"],
+    ["0.0.31-nightly.20260729", "npx signalbox-cli@nightly serve"],
+    ["0.0.31-preview.20260729.1", "npx signalbox-cli@preview serve"],
+    ["0.0.31-foo-preview.20260729.1", "npx signalbox-cli serve"],
+    ["0.0.31", "npx signalbox-cli serve"],
   ] as const) {
     assert.equal(
       formatCliCommand({
@@ -68,7 +68,7 @@ it("formats serve suggestions to match the launching command", () => {
       entryPath: "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs",
       version: "0.0.31-nightly.20260729",
     }),
-    "npx t3@nightly serve",
+    "npx signalbox-cli@nightly serve",
   );
   assert.equal(
     formatCliCommand({
@@ -76,7 +76,7 @@ it("formats serve suggestions to match the launching command", () => {
       entryPath: "/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs",
       version: "0.0.31",
     }),
-    "bunx t3 serve",
+    "bunx signalbox-cli serve",
   );
   assert.equal(
     formatCliCommand({
@@ -84,6 +84,6 @@ it("formats serve suggestions to match the launching command", () => {
       entryPath: "/usr/local/lib/node_modules/t3/dist/bin.mjs",
       version: "0.0.31-nightly.20260729",
     }),
-    "t3 serve",
+    "signalbox serve",
   );
 });

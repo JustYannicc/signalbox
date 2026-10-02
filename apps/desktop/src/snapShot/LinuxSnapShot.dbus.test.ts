@@ -164,13 +164,13 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       setup.close();
     }
     const portal = connect();
-    expect(await portal.backend("com.t3tools.T3Code")).toBe("screenshot-portal");
+    expect(await portal.backend("com.justyannicc.Signalbox")).toBe("screenshot-portal");
     expect(await portal.capturePortal()).toEqual({ png });
     expect(target).toBe(8);
     portalVersion = 2;
     const extension = connect();
-    expect(await extension.backend("com.t3tools.T3Code")).toBe("gnome-extension");
-    expect(await extension.captureExtension("com.t3tools.T3Code")).toMatchObject({
+    expect(await extension.backend("com.justyannicc.Signalbox")).toBe("gnome-extension");
+    expect(await extension.captureExtension("com.justyannicc.Signalbox")).toMatchObject({
       png,
       window: { processId: 42 },
     });
@@ -181,35 +181,35 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
         interface: "org.freedesktop.DBus",
         member: "GetNameOwner",
         signature: "s",
-        body: ["com.t3tools.T3Code.SnapShot"],
+        body: ["com.justyannicc.Signalbox.SnapShot"],
       }),
     );
     expect(owner?.body[0]).toBe(clientName);
     extension.close();
     extensionVersion = 2;
     const updated = connect();
-    expect(await updated.backend("com.t3tools.T3Code")).toBe("gnome-extension");
-    const snapshot = await updated.captureExtension("com.t3tools.T3Code", {
+    expect(await updated.backend("com.justyannicc.Signalbox")).toBe("gnome-extension");
+    const snapshot = await updated.captureExtension("com.justyannicc.Signalbox", {
       flash: true,
       animate: true,
     });
     expect(snapshot.feedback?.animationStarted).toBe(true);
-    await snapshot.feedback!.activate("T3 Code");
+    await snapshot.feedback!.activate("Signalbox");
     await snapshot.feedback!.animateTo({ x: 0.1, y: 0.8, width: 0.2, height: 0.1 });
     await snapshot.feedback!.complete();
     expect(feedbackArgs).toEqual([true, true]);
-    expect(activateTitle).toBe("T3 Code");
+    expect(activateTitle).toBe("Signalbox");
     expect(animateFrame).toEqual([0.1, 0.8, 0.2, 0.1]);
     vi.stubEnv("XDG_CURRENT_DESKTOP", "KDE");
     const kde = connect();
-    expect(await kde.backend("com.t3tools.T3Code")).toBe("kde");
+    expect(await kde.backend("com.justyannicc.Signalbox")).toBe("kde");
     expect(kde.feedbackAvailable).toBe(false);
     kde.close();
     const triggered = vi.fn();
     const failed = vi.fn();
     const niriBus = sessionBus({ busAddress: String(address) });
     stopNiriShortcut = await startNiriCaptureShortcut(
-      "com.t3tools.T3Code.NiriTest",
+      "com.justyannicc.Signalbox.NiriTest",
       triggered,
       failed,
       niriBus,
@@ -218,7 +218,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       "call",
       "--session",
       "--dest",
-      "com.t3tools.T3Code.NiriTest.SnapShot",
+      "com.justyannicc.Signalbox.NiriTest.SnapShot",
       "--object-path",
       "/com/t3tools/SnapShot",
       "--method",
@@ -240,7 +240,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     expect(failed).not.toHaveBeenCalled();
     const invalid = server.call(
       new Message({
-        destination: "com.t3tools.T3Code.NiriTest.SnapShot",
+        destination: "com.justyannicc.Signalbox.NiriTest.SnapShot",
         path: "/com/t3tools/SnapShot",
         interface: "com.t3tools.SnapShot",
         member: "Capture",
@@ -252,7 +252,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     expect(triggered).toHaveBeenCalledOnce();
     await expect(
       startNiriCaptureShortcut(
-        "com.t3tools.T3Code.NiriTest",
+        "com.justyannicc.Signalbox.NiriTest",
         triggered,
         failed,
         sessionBus({ busAddress: String(address) }),
@@ -260,7 +260,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
     ).rejects.toThrow("already owns");
     stopNiriShortcut();
     const restarted = await startNiriCaptureShortcut(
-      "com.t3tools.T3Code.NiriTest",
+      "com.justyannicc.Signalbox.NiriTest",
       triggered,
       failed,
       sessionBus({ busAddress: String(address) }),

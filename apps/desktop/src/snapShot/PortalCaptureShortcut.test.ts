@@ -114,7 +114,7 @@ function start(bus = new FakeBus(), shortcut = chord, managedByHyprland = false)
   const capture = vi.fn();
   const changed = vi.fn();
   const client = new PortalCaptureShortcut(
-    "com.t3tools.T3Code",
+    "com.justyannicc.Signalbox",
     shortcut,
     capture,
     changed,
@@ -318,7 +318,7 @@ it("guides users to manual desktop settings when the portal cannot open them", a
   expect(client.hasSession).toBe(true);
   expect(client.state.shortcutCanRetry).toBe(false);
   expect(client.state.shortcutMessage).toBe(
-    "Shortcut permission wasn't granted. Allow T3 Code in your desktop's shortcut settings.",
+    "Shortcut permission wasn't granted. Allow Signalbox in your desktop's shortcut settings.",
   );
   await expect(client.configure()).rejects.toThrow("Open your desktop's shortcut settings");
   expect(bus.calls.some((message) => message.member === "ConfigureShortcuts")).toBe(false);
