@@ -89,7 +89,7 @@ describe("scanLines", () => {
       `x${at}northwind.example`,
       `a${at}b.co`,
       "icon@2x.png",
-      "npx t3@1.2.3",
+      "npx signalbox-cli@1.2.3",
     ].join(" ");
     expect(scanLines(line(text), ALLOWLIST, [])).toEqual([]);
   });
