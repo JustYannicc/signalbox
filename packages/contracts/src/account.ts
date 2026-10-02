@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
  *    one-time pairing credential it exchanges the usual way.
  */
 
-export const ACCOUNT_API_PREFIX = "/api/account";
+const ACCOUNT_API_PREFIX = "/api/account";
 export const ACCOUNT_SESSION_PATH = `${ACCOUNT_API_PREFIX}/session`;
 export const ACCOUNT_AUTHORIZE_PATH = `${ACCOUNT_API_PREFIX}/authorize`;
 export const ACCOUNT_CALLBACK_PATH = `${ACCOUNT_API_PREFIX}/callback`;
