@@ -65,6 +65,24 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
+### Importing existing data
+
+If [T3 Code](https://github.com/pingdotgg/t3code) is installed, the first launch offers
+to import its projects, threads, and settings. The import copies them and leaves the
+originals in the `.t3` folder of your home directory unchanged, so both apps keep working
+side by side. Provider settings and keys come along. Paired devices, saved remote
+connections, and Connect sign-in do not, so pair your phone and other browsers again and
+reconnect remotes in Signalbox.
+
+Imported threads keep using their existing worktrees, which still belong to the other app,
+so Signalbox never deletes them. Continue each imported thread in only one of the two apps:
+both apps save that thread's checkpoints in the same repository, and working in it from
+both makes them overwrite each other's restore points.
+
+The command line asks the same question the first time you start `signalbox` in a
+terminal. To import from a script, run `signalbox import-t3` before the first start. The
+import only fills a fresh Signalbox home and refuses once Signalbox has data of its own.
+
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Connections** to run agents and projects

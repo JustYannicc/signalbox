@@ -31,6 +31,7 @@ import {
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { guardT3HomeWorktree } from "../signalbox/T3WorktreeGuard.ts"; // signalbox: keep T3 Code's worktrees
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
@@ -363,6 +364,7 @@ export const make = Effect.gen(function* () {
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
         Effect.andThen(git.removeWorktree(input)),
+        guardT3HomeWorktree(input), // signalbox: keep T3 Code's worktrees
       ),
     pruneWorktrees: (input) =>
       ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(

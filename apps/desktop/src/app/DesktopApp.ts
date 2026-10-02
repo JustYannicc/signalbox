@@ -32,6 +32,7 @@ import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
+import * as DesktopT3Import from "../signalbox/DesktopT3Import.ts"; // signalbox: one-time T3 Code import
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 4783;
 const MAX_TCP_PORT = 65_535;
@@ -165,6 +166,7 @@ const bootstrap = Effect.gen(function* () {
   const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
   yield* logBootstrapInfo("bootstrap start");
+  yield* DesktopT3Import.offerT3Import; // signalbox: offer the T3 Code import before the backend creates state
 
   const settings = yield* desktopSettings.get;
   // The renderer is served from the bundled client (or Vite in development)
