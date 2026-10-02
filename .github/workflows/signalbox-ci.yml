@@ -9,6 +9,9 @@ on:
   push:
     branches:
       - main
+  # The upstream sync dispatches this on its branch: pushes and PRs made with
+  # GITHUB_TOKEN start no runs, dispatches do.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -264,12 +267,53 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
+  # Fails when a PR adds conflicts with upstream T3 Code: files that conflict for
+  # the PR head but not for its base, so a sync conflict pending on main doesn't
+  # block every PR. On main it only reports.
+  upstream_merge:
+    name: Upstream Merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Fetch upstream
+        run: git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream/main
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          run-install: false
+
+      - name: Check merge with upstream
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request) set -- --base "$BASE_SHA" --head "$HEAD_SHA" ;;
+            push) set -- --base HEAD --report ;;
+            *) set -- --base origin/main ;;
+          esac
+          node scripts/upstream-sync/check-merge.ts "$@"
+
   # One required check for branch protection. Fails when any job fails, is
   # cancelled, or is skipped. Add every new job to `needs`.
   check:
     name: Check
     if: ${{ always() }}
-    needs: [lint, typecheck, build, test, test_web, test_server, rust, release_smoke]
+    needs:
+      [lint, typecheck, build, test, test_web, test_server, rust, release_smoke, upstream_merge]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
