@@ -56,6 +56,7 @@ import {
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  WandSparklesIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -2036,6 +2037,17 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:setup",
+    searchTerms: ["setup", "onboarding", "install", "cli", "mcp", "skill", "agent"],
+    title: "Open setup",
+    icon: <WandSparklesIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/setup" });
     },
   });
 

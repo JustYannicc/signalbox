@@ -1,0 +1,33 @@
+# BuildKit reads <Dockerfile>.dockerignore beside the Dockerfile.
+**/node_modules
+**/dist
+**/dist-exe
+**/dist-electron
+**/.vite-plus
+**/.turbo
+**/*.tsbuildinfo
+.git
+.repos
+.t3
+.plans
+.logs
+.vercel
+.alchemy
+release
+release-mock
+native/**/target
+apps/mobile/ios
+apps/mobile/android
+apps/mobile/.showcase
+apps/mobile/.generated
+apps/web/.playwright
+apps/web/playwright-report
+**/__screenshots__
+# Never ship secrets or baked origins (VITE_HTTP_URL / VITE_WS_URL / dev auth token).
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+.pnpm-store
+**/.pnpm-store

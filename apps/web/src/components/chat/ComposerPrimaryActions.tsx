@@ -6,7 +6,10 @@ import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../Sideb
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SEND_LOCKED_REASON } from "../../composerSendLockStore";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { SendArrowIcon, SendLockLatch } from "./SendLockLatch";
 
 interface PendingActionState {
   questionIndex: number;
@@ -24,6 +27,12 @@ interface ComposerPrimaryActionsProps {
   promptHasText: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
+  /** Send lock holds right now: free-text sends stay disabled. Pending answers never lock. */
+  sendLocked?: boolean;
+  /** The lock's own state (the shackle), which stays latched while a pending answer is open. */
+  sendLockOn?: boolean;
+  /** Draws the shackle on the send button; omit where the lock is not offered. */
+  onToggleSendLock?: () => void;
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
@@ -69,6 +78,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   promptHasText,
   isSendBusy,
   sendDisabledReason,
+  sendLocked = false,
+  sendLockOn = sendLocked,
+  onToggleSendLock,
   isConnecting,
   isEnvironmentUnavailable,
   isPreparingWorktree,
@@ -82,7 +94,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     ? { onPointerDown: preventPointerFocus }
     : undefined;
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
-  const isSendDisabled = sendDisabledReason !== null;
+  const disabledReason = sendDisabledReason ?? (sendLocked ? SEND_LOCKED_REASON : null);
+  const isSendDisabled = disabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
@@ -231,8 +244,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       aria-label={
         isEnvironmentUnavailable
           ? "Environment disconnected"
-          : sendDisabledReason
-            ? sendDisabledReason
+          : disabledReason
+            ? disabledReason
             : isConnecting
               ? "Connecting"
               : isPreparingWorktree
@@ -252,21 +265,32 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       {isConnecting || isSendBusy ? (
         <Spinner size="sm" aria-hidden="true" />
       ) : (
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path
-            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <SendArrowIcon locked={sendLocked} />
       )}
     </button>
   );
 
+  // A disabled button gets no pointer events, so the tooltip hangs off a wrapper.
+  const explainedSendButton = sendLocked ? (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        {sendButton}
+      </TooltipTrigger>
+      <TooltipPopup>{SEND_LOCKED_REASON}</TooltipPopup>
+    </Tooltip>
+  ) : (
+    sendButton
+  );
+  const primarySendButton = onToggleSendLock ? (
+    <SendLockLatch locked={sendLockOn} onToggle={onToggleSendLock}>
+      {explainedSendButton}
+    </SendLockLatch>
+  ) : (
+    explainedSendButton
+  );
+
   if (!isRunning) {
-    return sendButton;
+    return primarySendButton;
   }
 
   // While a turn runs, a sendable draft queues for the next tool boundary, so
@@ -274,7 +298,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   return (
     <>
       {renderStopGenerationButton(false)}
-      {hasSendableContent ? sendButton : null}
+      {hasSendableContent ? primarySendButton : null}
     </>
   );
 });

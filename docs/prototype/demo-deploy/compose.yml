@@ -1,0 +1,57 @@
+# Dokploy raw compose for the Signalbox demo: locally loaded image + cloudflared
+# sidecar. The app sits on an internal-only network, so it has no internet
+# egress and cannot reach dokploy-network, the tailnet, or other stacks. Only cloudflared bridges out.
+services:
+  signalbox:
+    image: signalbox-demo:${SIGNALBOX_IMAGE_TAG:?Set the image tag in Dokploy}
+    pull_policy: never
+    hostname: signalbox-demo # shown as the environment label in the UI
+    environment:
+      SIGNALBOX_PUBLIC_URL: https://signalbox-demo.justyannicc.com
+      SIGNALBOX_LINK_SCOPES: ${SIGNALBOX_LINK_SCOPES:-orchestration:read,relay:read}
+    expose:
+      - "3773"
+    networks:
+      - signalbox-internal
+    restart: unless-stopped
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.2
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set the Signalbox tunnel token in Dokploy}
+    depends_on:
+      signalbox:
+        condition: service_healthy
+    networks:
+      - signalbox-internal
+      - signalbox-egress
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+
+networks:
+  signalbox-internal:
+    internal: true
+  signalbox-egress: {}

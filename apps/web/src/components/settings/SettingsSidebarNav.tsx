@@ -39,6 +39,7 @@ import {
   SidebarInput,
 } from "../ui/sidebar";
 import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
+import { SettingsWorkspaceNav } from "./SettingsWorkspaceNav";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
@@ -344,6 +345,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 })}
               </SidebarMenu>
             )}
+            {isSearching ? null : <SettingsWorkspaceNav pathname={pathname} />}
           </div>
         </SidebarGroup>
       </SidebarContent>

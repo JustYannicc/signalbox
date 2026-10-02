@@ -152,6 +152,31 @@ describe("composerSubmissionIntentForEnter", () => {
     ).toBe("background");
   });
 
+  it.each([
+    ["enter", false, false, false],
+    ["enter", false, true, false],
+    ["enter", false, true, true],
+    ["mod-enter", false, true, false],
+    ["mod-enter", true, true, true],
+    ["mod-enter-multiline", false, true, false],
+  ] as const)(
+    "inserts a newline instead of sending while locked (%s, shift=%s, mod=%s, running=%s)",
+    (sendShortcut, shiftKey, modifierKey, isRunning) => {
+      expect(
+        composerSubmissionIntentForEnter({
+          isMobileViewport: false,
+          shiftKey,
+          modifierKey,
+          isDraftThread: true,
+          isRunning,
+          sendShortcut,
+          prompt: "two\nlines",
+          sendLocked: true,
+        }),
+      ).toBeNull();
+    },
+  );
+
   it("keeps Mod+Enter in the foreground for an active thread", () => {
     expect(
       composerSubmissionIntentForEnter({

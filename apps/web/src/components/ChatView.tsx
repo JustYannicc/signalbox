@@ -1,3 +1,4 @@
+import { APP_BASE_NAME } from "../branding";
 import { isChatGptUsageLimitError } from "@t3tools/shared/usageLimits";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -234,7 +235,7 @@ import { isEditableFocused } from "../lib/editableFocus";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
-  CheckCircle2Icon,
+  ArchiveIcon,
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
@@ -297,6 +298,7 @@ import {
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -306,6 +308,8 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../composerDraftStore";
+import { isComposerSendLocked } from "../composerSendLockStore";
+import { effectiveRuntimeMode } from "../lib/fullAccessPolicy";
 import {
   formatTerminalContextLabel,
   type TerminalContextDraft,
@@ -376,6 +380,7 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { useThreadTimelineAnnotations } from "./multiplayer/threadAnnotations";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -1948,11 +1953,14 @@ export default function ChatView(props: ChatViewProps) {
   // session.lastError. Bump a tick so the banner hides immediately. Mirrors
   // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
-  const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
-    .settings.defaultRuntimeMode;
+  const defaultRuntimeMode = effectiveRuntimeMode(
+    resolveProjectSettings(settings, activeThread?.projectId ?? null).settings.defaultRuntimeMode,
+  );
   // Implicit drafts follow their current project/environment, including retargets.
   // Explicit composer choices and existing server threads retain their permissions.
-  const runtimeMode = composerRuntimeMode ?? activeServerThread?.runtimeMode ?? defaultRuntimeMode;
+  const runtimeMode = effectiveRuntimeMode(
+    composerRuntimeMode ?? activeServerThread?.runtimeMode ?? defaultRuntimeMode,
+  );
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -2556,8 +2564,10 @@ export default function ChatView(props: ChatViewProps) {
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
-        runtimeMode: resolveProjectSettings(settings, activeProject.id, activeProject).settings
-          .defaultRuntimeMode,
+        runtimeMode: effectiveRuntimeMode(
+          resolveProjectSettings(settings, activeProject.id, activeProject).settings
+            .defaultRuntimeMode,
+        ),
         interactionMode: DEFAULT_INTERACTION_MODE,
         ...input,
       });
@@ -2872,6 +2882,12 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  // Every chat looks the same: your avatar on your turns, the harness on its own.
+  const timelineAnnotations = useThreadTimelineAnnotations({
+    provider: selectedProvider ?? null,
+    modelSlug: activeThread?.modelSelection.model ?? null,
+    models: activeProviderStatus?.models,
+  });
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
@@ -6102,7 +6118,7 @@ export default function ChatView(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to un-settle thread",
+            title: "Failed to restore thread",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -6130,7 +6146,7 @@ export default function ChatView(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to wake thread",
+            title: "Failed to bring thread back",
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
@@ -6338,9 +6354,9 @@ export default function ChatView(props: ChatViewProps) {
       id: `thread-woke:${activeThread?.id ?? "unknown"}`,
       variant: "info",
       icon: <AlarmClockIcon />,
-      title: "Thread woke from snooze",
+      title: "This thread is back from Later",
       description: "Send a message to continue",
-      dismissLabel: "Dismiss Woke notification",
+      dismissLabel: "Mark as seen",
       onDismiss: acknowledgeActiveThreadWoke,
     };
   }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
@@ -6352,9 +6368,9 @@ export default function ChatView(props: ChatViewProps) {
     return {
       id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
       variant: "info",
-      icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
-      title: `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
-      description: `Send a message to ${isSnoozed ? "wake" : "unsettle"}`,
+      icon: isSnoozed ? <AlarmClockIcon /> : <ArchiveIcon />,
+      title: `This thread is ${isSnoozed ? "in Later" : "archived"}`,
+      description: `Send a message to ${isSnoozed ? "bring it back now" : "restore it"}`,
       actions: (
         <Button
           size="xs"
@@ -6366,11 +6382,11 @@ export default function ChatView(props: ChatViewProps) {
         >
           {isSnoozed
             ? isUnsnoozing
-              ? "Waking..."
-              : "Wake now"
+              ? "Bringing back..."
+              : "Bring back now"
             : isUnsettling
-              ? "Un-settling..."
-              : "Un-settle"}
+              ? "Restoring..."
+              : "Restore"}
         </Button>
       ),
     };
@@ -6746,7 +6762,7 @@ export default function ChatView(props: ChatViewProps) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to settle thread",
+              title: "Failed to archive thread",
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
@@ -6883,6 +6899,13 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!event.repeat) composerRef.current?.openControl(command);
+        return;
+      }
+
+      if (command === "composer.toggleSendLock") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) composerRef.current?.toggleSendLock();
         return;
       }
 
@@ -7324,6 +7347,24 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    // Covers sends that bypass the composer's own gate, like "send annotation" from the preview.
+    // Answering a pending question or approval is never locked; only free-text sends are.
+    if (
+      !activePendingProgress &&
+      activePendingApproval === null &&
+      isComposerSendLocked(composerTargetKey(composerDraftTarget))
+    ) {
+      if (directAnnotation) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Annotation attached to draft",
+            description: "Sending is locked for this draft. Unlock it to send.",
+          }),
+        );
+      }
+      return;
+    }
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -9576,7 +9617,7 @@ export default function ChatView(props: ChatViewProps) {
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState
         title="Pull requests unavailable"
-        error="Update this environment's T3 Code server to browse pull requests."
+        error={`Update this environment's ${APP_BASE_NAME} server to browse pull requests.`}
       />
     ) : renderedRightPanelSurface?.kind === "pull-request" ? (
       // No onClose: the surface tab's own X owns closing here, and a second X in the header
@@ -9822,6 +9863,7 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                annotations={timelineAnnotations}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline

@@ -9,9 +9,14 @@ interface PanelLayoutControlsProps {
   terminalAvailable: boolean;
   terminalOpen: boolean;
   terminalShortcutLabel: string | null;
+  /** What the terminal toggle does, when it isn't this thread's drawer. */
+  terminalLabel?: string;
+  terminalUnavailableLabel?: string;
   rightPanelAvailable: boolean;
   rightPanelOpen: boolean;
   rightPanelShortcutLabel: string | null;
+  /** What the right panel toggle opens, e.g. "Trace" on pages whose side panel is their own. */
+  rightPanelLabel?: string;
   rightPanelUnavailableLabel?: string;
   /** Running + waiting subagents in this thread; badges the right panel toggle. */
   liveAgentCount: number;
@@ -24,9 +29,12 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   terminalAvailable,
   terminalOpen,
   terminalShortcutLabel,
+  terminalLabel = "Toggle terminal drawer",
+  terminalUnavailableLabel = "Terminal drawer is unavailable",
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
+  rightPanelLabel = "Toggle right panel",
   rightPanelUnavailableLabel = "Right panel is unavailable",
   liveAgentCount,
   onToggleTerminal,
@@ -44,7 +52,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
+              aria-label={terminalLabel}
               variant="ghost"
               size="sm"
               disabled={!terminalAvailable}
@@ -54,8 +62,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
-              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-              : "Terminal drawer is unavailable"}
+              ? `${terminalLabel}${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+              : terminalUnavailableLabel}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -67,8 +75,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             onPressedChange={onToggleRightPanel}
             aria-label={
               liveAgentCount > 0
-                ? `Toggle right panel, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                : "Toggle right panel"
+                ? `${rightPanelLabel}, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+                : rightPanelLabel
             }
             variant="ghost"
             size="sm"
@@ -87,7 +95,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           {rightPanelAvailable
-            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
+            ? `${rightPanelLabel}${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
                 liveAgentCount > 0
                   ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
                   : ""

@@ -24,6 +24,12 @@ const baseState: ThreadActionMenuState = {
   ],
 };
 
+// Server archive only appears where settle (shown as Archive) is unsupported.
+const withoutSettlement: ThreadActionMenuState = {
+  ...baseState,
+  supports: { ...baseState.supports, settlement: false },
+};
+
 function ids(state: ThreadActionMenuState): string[] {
   return buildThreadActionMenuItems(state).map((item) => item.id);
 }
@@ -51,7 +57,7 @@ describe("buildThreadActionMenuItems", () => {
   });
 
   it("groups project settings with utility actions before archive", () => {
-    const items = buildThreadActionMenuItems(baseState);
+    const items = buildThreadActionMenuItems(withoutSettlement);
     const copyIndex = items.findIndex((item) => item.id === "copy");
     expect(items[copyIndex + 1]).toMatchObject({
       id: "project-settings",
@@ -59,6 +65,18 @@ describe("buildThreadActionMenuItems", () => {
       icon: "settings",
     });
     expect(items[copyIndex + 2]?.id).toBe("archive");
+  });
+
+  it("offers one Archive: settle where supported, server archive otherwise", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    expect(items.filter((item) => item.label === "Archive thread").map((item) => item.id)).toEqual([
+      "settle",
+    ]);
+    expect(
+      buildThreadActionMenuItems({ ...baseState, isSettled: true }).find(
+        (item) => item.id === "unsettle",
+      ),
+    ).toMatchObject({ label: "Restore thread" });
   });
 
   it("offers project filtering only for surfaces with a scoped thread list", () => {
@@ -101,7 +119,7 @@ describe("buildThreadActionMenuItems", () => {
     const find = (state: ThreadActionMenuState) =>
       buildThreadActionMenuItems(state).find((item) => item.id === "auto-settle");
     const on = find(baseState);
-    expect(on?.label).toBe("Auto-settle behavior");
+    expect(on?.label).toBe("Auto-archive");
     expect(on?.children?.map((child) => [child.id, child.checked])).toEqual([
       ["auto-settle:enabled", true],
       ["auto-settle:disabled", false],
@@ -136,7 +154,7 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
   });
   it("offers archive as a non-destructive action right before delete", () => {
-    const items = buildThreadActionMenuItems(baseState);
+    const items = buildThreadActionMenuItems(withoutSettlement);
     const archiveItem = items.at(-2);
     expect(archiveItem?.id).toBe("archive");
     expect(archiveItem?.icon).toBe("archive");
@@ -161,7 +179,7 @@ describe("buildThreadActionMenuItems", () => {
   });
 
   it("disables archive while the thread is running", () => {
-    const archiveItem = buildThreadActionMenuItems({ ...baseState, isRunning: true }).find(
+    const archiveItem = buildThreadActionMenuItems({ ...withoutSettlement, isRunning: true }).find(
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);

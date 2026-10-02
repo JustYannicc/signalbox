@@ -11,17 +11,29 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UsageRouteImport } from './routes/usage'
+import { Route as TeamRouteImport } from './routes/team'
+import { Route as SpacesRouteImport } from './routes/spaces'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as PluginsRouteImport } from './routes/plugins'
 import { Route as PairRouteImport } from './routes/pair'
+import { Route as DevicesRouteImport } from './routes/devices'
 import { Route as ConnectRouteImport } from './routes/connect'
+import { Route as CaptureRouteImport } from './routes/capture'
+import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as ChatRouteImport } from './routes/_chat'
+import { Route as ComputersIndexRouteImport } from './routes/computers.index'
+import { Route as AutomationsIndexRouteImport } from './routes/automations.index'
+import { Route as AssistantIndexRouteImport } from './routes/assistant.index'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SharedThreadIdRouteImport } from './routes/shared.$threadId'
 import { Route as SettingsStorageRouteImport } from './routes/settings.storage'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsSnapShotRouteImport } from './routes/settings.snap-shot'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
 import { Route as SettingsOpenSourceLicensesRouteImport } from './routes/settings.open-source-licenses'
+import { Route as SettingsNotificationsRouteImport } from './routes/settings.notifications'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
@@ -29,7 +41,12 @@ import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagn
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as RoomsRoomIdRouteImport } from './routes/rooms.$roomId'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as ComputersComputerIdRouteImport } from './routes/computers.$computerId'
+import { Route as AutomationsAutomationIdRouteImport } from './routes/automations.$automationId'
+import { Route as AssistantCallRouteImport } from './routes/assistant.call'
+import { Route as AgentAgentIdRouteImport } from './routes/agent.$agentId'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -44,9 +61,29 @@ const UsageRoute = UsageRouteImport.update({
   path: '/usage',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TeamRoute = TeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpacesRoute = SpacesRouteImport.update({
+  id: '/spaces',
+  path: '/spaces',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PluginsRoute = PluginsRouteImport.update({
+  id: '/plugins',
+  path: '/plugins',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PairRoute = PairRouteImport.update({
@@ -54,19 +91,54 @@ const PairRoute = PairRouteImport.update({
   path: '/pair',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DevicesRoute = DevicesRouteImport.update({
+  id: '/devices',
+  path: '/devices',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConnectRoute = ConnectRouteImport.update({
   id: '/connect',
   path: '/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CaptureRoute = CaptureRouteImport.update({
+  id: '/capture',
+  path: '/capture',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountsRoute = AccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChatRoute = ChatRouteImport.update({
   id: '/_chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ComputersIndexRoute = ComputersIndexRouteImport.update({
+  id: '/computers/',
+  path: '/computers/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutomationsIndexRoute = AutomationsIndexRouteImport.update({
+  id: '/automations/',
+  path: '/automations/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AssistantIndexRoute = AssistantIndexRouteImport.update({
+  id: '/assistant/',
+  path: '/assistant/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SharedThreadIdRoute = SharedThreadIdRouteImport.update({
+  id: '/shared/$threadId',
+  path: '/shared/$threadId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsStorageRoute = SettingsStorageRouteImport.update({
   id: '/storage',
@@ -99,6 +171,11 @@ const SettingsOpenSourceLicensesRoute =
     path: '/open-source-licenses',
     getParentRoute: () => SettingsRoute,
   } as any)
+const SettingsNotificationsRoute = SettingsNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   id: '/keybindings',
   path: '/keybindings',
@@ -134,9 +211,34 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const RoomsRoomIdRoute = RoomsRoomIdRouteImport.update({
+  id: '/rooms/$roomId',
+  path: '/rooms/$roomId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
   path: '/projects/$projectKey',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ComputersComputerIdRoute = ComputersComputerIdRouteImport.update({
+  id: '/computers/$computerId',
+  path: '/computers/$computerId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutomationsAutomationIdRoute = AutomationsAutomationIdRouteImport.update({
+  id: '/automations/$automationId',
+  path: '/automations/$automationId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AssistantCallRoute = AssistantCallRouteImport.update({
+  id: '/assistant/call',
+  path: '/assistant/call',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentAgentIdRoute = AgentAgentIdRouteImport.update({
+  id: '/agent/$agentId',
+  path: '/agent/$agentId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
@@ -158,13 +260,25 @@ const ChatEnvironmentIdThreadIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
+  '/accounts': typeof AccountsRoute
+  '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
+  '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
+  '/plugins': typeof PluginsRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/setup': typeof SetupRoute
+  '/spaces': typeof SpacesRoute
+  '/team': typeof TeamRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/agent/$agentId': typeof AgentAgentIdRoute
+  '/assistant/call': typeof AssistantCallRoute
+  '/automations/$automationId': typeof AutomationsAutomationIdRoute
+  '/computers/$computerId': typeof ComputersComputerIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/rooms/$roomId': typeof RoomsRoomIdRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -172,23 +286,40 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
+  '/shared/$threadId': typeof SharedThreadIdRoute
+  '/assistant/': typeof AssistantIndexRoute
+  '/automations/': typeof AutomationsIndexRoute
+  '/computers/': typeof ComputersIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
 export interface FileRoutesByTo {
+  '/accounts': typeof AccountsRoute
+  '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
+  '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
+  '/plugins': typeof PluginsRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/setup': typeof SetupRoute
+  '/spaces': typeof SpacesRoute
+  '/team': typeof TeamRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/agent/$agentId': typeof AgentAgentIdRoute
+  '/assistant/call': typeof AssistantCallRoute
+  '/automations/$automationId': typeof AutomationsAutomationIdRoute
+  '/computers/$computerId': typeof ComputersComputerIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/rooms/$roomId': typeof RoomsRoomIdRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -196,26 +327,43 @@ export interface FileRoutesByTo {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
+  '/shared/$threadId': typeof SharedThreadIdRoute
   '/': typeof ChatIndexRoute
+  '/assistant': typeof AssistantIndexRoute
+  '/automations': typeof AutomationsIndexRoute
+  '/computers': typeof ComputersIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
+  '/accounts': typeof AccountsRoute
+  '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
+  '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
+  '/plugins': typeof PluginsRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/setup': typeof SetupRoute
+  '/spaces': typeof SpacesRoute
+  '/team': typeof TeamRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/agent/$agentId': typeof AgentAgentIdRoute
+  '/assistant/call': typeof AssistantCallRoute
+  '/automations/$automationId': typeof AutomationsAutomationIdRoute
+  '/computers/$computerId': typeof ComputersComputerIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/rooms/$roomId': typeof RoomsRoomIdRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -223,13 +371,18 @@ export interface FileRoutesById {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
+  '/shared/$threadId': typeof SharedThreadIdRoute
   '/_chat/': typeof ChatIndexRoute
+  '/assistant/': typeof AssistantIndexRoute
+  '/automations/': typeof AutomationsIndexRoute
+  '/computers/': typeof ComputersIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -237,13 +390,25 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accounts'
+    | '/capture'
     | '/connect'
+    | '/devices'
     | '/pair'
+    | '/plugins'
     | '/settings'
+    | '/setup'
+    | '/spaces'
+    | '/team'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
+    | '/agent/$agentId'
+    | '/assistant/call'
+    | '/automations/$automationId'
+    | '/computers/$computerId'
     | '/projects/$projectKey'
+    | '/rooms/$roomId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/connections'
@@ -251,23 +416,40 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/notifications'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
+    | '/shared/$threadId'
+    | '/assistant/'
+    | '/automations/'
+    | '/computers/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/accounts'
+    | '/capture'
     | '/connect'
+    | '/devices'
     | '/pair'
+    | '/plugins'
     | '/settings'
+    | '/setup'
+    | '/spaces'
+    | '/team'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
+    | '/agent/$agentId'
+    | '/assistant/call'
+    | '/automations/$automationId'
+    | '/computers/$computerId'
     | '/projects/$projectKey'
+    | '/rooms/$roomId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/connections'
@@ -275,25 +457,42 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/notifications'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
+    | '/shared/$threadId'
     | '/'
+    | '/assistant'
+    | '/automations'
+    | '/computers'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   id:
     | '__root__'
     | '/_chat'
+    | '/accounts'
+    | '/capture'
     | '/connect'
+    | '/devices'
     | '/pair'
+    | '/plugins'
     | '/settings'
+    | '/setup'
+    | '/spaces'
+    | '/team'
     | '/usage'
     | '/welcome'
     | '/_chat/pull-requests'
+    | '/agent/$agentId'
+    | '/assistant/call'
+    | '/automations/$automationId'
+    | '/computers/$computerId'
     | '/projects/$projectKey'
+    | '/rooms/$roomId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/connections'
@@ -301,25 +500,46 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
+    | '/settings/notifications'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
+    | '/shared/$threadId'
     | '/_chat/'
+    | '/assistant/'
+    | '/automations/'
+    | '/computers/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
+  AccountsRoute: typeof AccountsRoute
+  CaptureRoute: typeof CaptureRoute
   ConnectRoute: typeof ConnectRoute
+  DevicesRoute: typeof DevicesRoute
   PairRoute: typeof PairRoute
+  PluginsRoute: typeof PluginsRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  SetupRoute: typeof SetupRoute
+  SpacesRoute: typeof SpacesRoute
+  TeamRoute: typeof TeamRoute
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
+  AgentAgentIdRoute: typeof AgentAgentIdRoute
+  AssistantCallRoute: typeof AssistantCallRoute
+  AutomationsAutomationIdRoute: typeof AutomationsAutomationIdRoute
+  ComputersComputerIdRoute: typeof ComputersComputerIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
+  RoomsRoomIdRoute: typeof RoomsRoomIdRoute
+  SharedThreadIdRoute: typeof SharedThreadIdRoute
+  AssistantIndexRoute: typeof AssistantIndexRoute
+  AutomationsIndexRoute: typeof AutomationsIndexRoute
+  ComputersIndexRoute: typeof ComputersIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -338,11 +558,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsageRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/team': {
+      id: '/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof TeamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spaces': {
+      id: '/spaces'
+      path: '/spaces'
+      fullPath: '/spaces'
+      preLoaderRoute: typeof SpacesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/plugins': {
+      id: '/plugins'
+      path: '/plugins'
+      fullPath: '/plugins'
+      preLoaderRoute: typeof PluginsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pair': {
@@ -352,11 +600,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PairRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/devices': {
+      id: '/devices'
+      path: '/devices'
+      fullPath: '/devices'
+      preLoaderRoute: typeof DevicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/connect': {
       id: '/connect'
       path: '/connect'
       fullPath: '/connect'
       preLoaderRoute: typeof ConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/capture': {
+      id: '/capture'
+      path: '/capture'
+      fullPath: '/capture'
+      preLoaderRoute: typeof CaptureRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accounts': {
+      id: '/accounts'
+      path: '/accounts'
+      fullPath: '/accounts'
+      preLoaderRoute: typeof AccountsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_chat': {
@@ -366,12 +635,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/computers/': {
+      id: '/computers/'
+      path: '/computers'
+      fullPath: '/computers/'
+      preLoaderRoute: typeof ComputersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/automations/': {
+      id: '/automations/'
+      path: '/automations'
+      fullPath: '/automations/'
+      preLoaderRoute: typeof AutomationsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/assistant/': {
+      id: '/assistant/'
+      path: '/assistant'
+      fullPath: '/assistant/'
+      preLoaderRoute: typeof AssistantIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat/': {
       id: '/_chat/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/shared/$threadId': {
+      id: '/shared/$threadId'
+      path: '/shared/$threadId'
+      fullPath: '/shared/$threadId'
+      preLoaderRoute: typeof SharedThreadIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/settings/storage': {
       id: '/settings/storage'
@@ -413,6 +710,13 @@ declare module '@tanstack/react-router' {
       path: '/open-source-licenses'
       fullPath: '/settings/open-source-licenses'
       preLoaderRoute: typeof SettingsOpenSourceLicensesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/notifications': {
+      id: '/settings/notifications'
+      path: '/notifications'
+      fullPath: '/settings/notifications'
+      preLoaderRoute: typeof SettingsNotificationsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/keybindings': {
@@ -464,11 +768,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/rooms/$roomId': {
+      id: '/rooms/$roomId'
+      path: '/rooms/$roomId'
+      fullPath: '/rooms/$roomId'
+      preLoaderRoute: typeof RoomsRoomIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projects/$projectKey': {
       id: '/projects/$projectKey'
       path: '/projects/$projectKey'
       fullPath: '/projects/$projectKey'
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/computers/$computerId': {
+      id: '/computers/$computerId'
+      path: '/computers/$computerId'
+      fullPath: '/computers/$computerId'
+      preLoaderRoute: typeof ComputersComputerIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/automations/$automationId': {
+      id: '/automations/$automationId'
+      path: '/automations/$automationId'
+      fullPath: '/automations/$automationId'
+      preLoaderRoute: typeof AutomationsAutomationIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/assistant/call': {
+      id: '/assistant/call'
+      path: '/assistant/call'
+      fullPath: '/assistant/call'
+      preLoaderRoute: typeof AssistantCallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agent/$agentId': {
+      id: '/agent/$agentId'
+      path: '/agent/$agentId'
+      fullPath: '/agent/$agentId'
+      preLoaderRoute: typeof AgentAgentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_chat/pull-requests': {
@@ -519,6 +858,7 @@ interface SettingsRouteChildren {
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
+  SettingsNotificationsRoute: typeof SettingsNotificationsRoute
   SettingsOpenSourceLicensesRoute: typeof SettingsOpenSourceLicensesRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
@@ -535,6 +875,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
+  SettingsNotificationsRoute: SettingsNotificationsRoute,
   SettingsOpenSourceLicensesRoute: SettingsOpenSourceLicensesRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
@@ -549,12 +890,28 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
+  AccountsRoute: AccountsRoute,
+  CaptureRoute: CaptureRoute,
   ConnectRoute: ConnectRoute,
+  DevicesRoute: DevicesRoute,
   PairRoute: PairRoute,
+  PluginsRoute: PluginsRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  SetupRoute: SetupRoute,
+  SpacesRoute: SpacesRoute,
+  TeamRoute: TeamRoute,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
+  AgentAgentIdRoute: AgentAgentIdRoute,
+  AssistantCallRoute: AssistantCallRoute,
+  AutomationsAutomationIdRoute: AutomationsAutomationIdRoute,
+  ComputersComputerIdRoute: ComputersComputerIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
+  RoomsRoomIdRoute: RoomsRoomIdRoute,
+  SharedThreadIdRoute: SharedThreadIdRoute,
+  AssistantIndexRoute: AssistantIndexRoute,
+  AutomationsIndexRoute: AutomationsIndexRoute,
+  ComputersIndexRoute: ComputersIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
