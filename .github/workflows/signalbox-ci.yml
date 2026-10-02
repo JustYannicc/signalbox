@@ -264,12 +264,40 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
+  # This repo is public: lines the fork adds over upstream must not carry real
+  # emails, people, or employers. The denylist is a repository secret because
+  # it is personal data itself; fork PRs without it get the email check only.
+  personal_data:
+    name: Personal Data
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: scripts/personal-data
+
+      - name: Fetch upstream
+        run: git fetch --no-tags --filter=blob:none https://github.com/pingdotgg/t3code main
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Check added lines for personal data
+        env:
+          PERSONAL_DATA_DENYLIST: ${{ secrets.PERSONAL_DATA_DENYLIST }}
+        run: node scripts/personal-data/check.ts --upstream FETCH_HEAD
+
   # One required check for branch protection. Fails when any job fails, is
   # cancelled, or is skipped. Add every new job to `needs`.
   check:
     name: Check
     if: ${{ always() }}
-    needs: [lint, typecheck, build, test, test_web, test_server, rust, release_smoke]
+    needs: [lint, typecheck, build, test, test_web, test_server, rust, release_smoke, personal_data]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
