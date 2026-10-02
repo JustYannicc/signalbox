@@ -6,7 +6,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
-import { SignalboxLogo } from "../SignalboxMark";
+import { SignalboxLogo } from "../SignalboxMark"; // signalbox: brand
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -85,6 +85,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       )}
       to="/"
     >
+      {/* signalbox: brand */}
       <SignalboxLogo className="text-sm" />
     </Link>
   );

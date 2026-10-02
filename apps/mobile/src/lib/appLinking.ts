@@ -13,7 +13,7 @@ export function shouldHandleAppLink(url: string): boolean {
     !url.includes("expo-development-client") &&
     !url.includes("://expo-sharing") &&
     !/^signalbox(-dev|-preview)?:\/*$/.test(url) &&
-    // Account sign-in returns here; expo-web-browser consumes it (features/account).
+    // signalbox: account sign-in returns here; expo-web-browser consumes it (features/account).
     !/^signalbox(-dev|-preview)?:\/\/account-return\b/.test(url)
   );
 }

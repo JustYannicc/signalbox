@@ -1,6 +1,7 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
+import { createNativeStackScreen } from "@react-navigation/native-stack";
 import { useLayoutEffect } from "react";
-import { Pressable } from "react-native";
+import { Platform, Pressable } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -58,6 +59,19 @@ export function AccountSignInRouteScreen() {
     />
   );
 }
+
+/**
+ * The root stack's `AccountSignIn` screen. No linking path: sign-in starts from
+ * "Add environment", never from a link.
+ */
+export const accountSignInStackScreen = createNativeStackScreen({
+  screen: AccountSignInRouteScreen,
+  options: {
+    headerShown: false,
+    gestureEnabled: true,
+    presentation: Platform.OS === "android" ? "card" : "modal",
+  },
+});
 
 /** "Add environment" link to account sign-in. Hidden when sign-in is already Home. */
 export function AccountSignInEntry() {

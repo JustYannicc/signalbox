@@ -878,7 +878,11 @@ export const ComputerUseAppIcon: Icon = (props) => {
   );
 };
 
-/** Google's "G" keeps its brand colors in both themes, per Google's sign-in guidelines. */
+/**
+ * signalbox: accounts sign-in. Lives here because the brand-colour lint rule only
+ * allows literal colours in this file. Google's "G" keeps its brand colors in
+ * both themes, per Google's sign-in guidelines.
+ */
 export const GoogleIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
     <path

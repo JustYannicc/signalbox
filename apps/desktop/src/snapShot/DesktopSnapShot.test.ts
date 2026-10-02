@@ -501,7 +501,7 @@ const testLayer = (
           DesktopEnvironment.DesktopEnvironment.of({
             platform,
             stateDir: "/state",
-            linuxDesktopEntryName: "com.justyannicc.Signalbox.desktop",
+            linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
             appRoot: "/repo",
             linuxApplicationsDir: "/test-data/applications",
           } as DesktopEnvironment.DesktopEnvironment["Service"]),
@@ -939,7 +939,7 @@ it.effect.each(["win32", "darwin", "linux"] as const)(
     const t3 = {
       id: 42,
       title: "Signalbox",
-      appIdentifier: "com.justyannicc.Signalbox.desktop",
+      appIdentifier: "com.t3tools.T3Code.desktop",
       owner: { name: "Signalbox", processId: 123 },
       bounds,
       png: Buffer.from([1, 2, 3]),
