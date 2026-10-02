@@ -142,16 +142,14 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
-    yield* fs
-      .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
-      .pipe(
-        Effect.mapError(
-          () =>
-            new CliUpdateError({
-              reason: `Could not rewrite the signalbox launcher at ${shimPath}.`,
-            }),
-        ),
-      );
+    yield* fs.writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`).pipe(
+      Effect.mapError(
+        () =>
+          new CliUpdateError({
+            reason: `Could not rewrite the signalbox launcher at ${shimPath}.`,
+          }),
+      ),
+    );
     return Option.some(shimPath);
   }
 
@@ -215,7 +213,7 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(";"),
   ].filter((entry) => entry.trim().length > 0);
   for (const directory of candidates) {
-    const shimPath = path.join(directory, "t3.cmd");
+    const shimPath = path.join(directory, "signalbox.cmd");
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
     if (Option.isNone(contents)) continue;
     const target = /^"([^"]+)"/m.exec(contents.value)?.[1];

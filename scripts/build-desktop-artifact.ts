@@ -1550,7 +1550,7 @@ const BuildEnvConfig = Config.all({
   verbose: Config.Boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.Boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.String("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
-  // Path to the Linux CLI release archive (t3-<version>-linux-x64.tar.gz) built
+  // Path to the Linux CLI release archive (signalbox-<version>-linux-x64.tar.gz) built
   // by the build_linux_cli CI job. The Windows build embeds it verbatim as the
   // WSL runtime.
   wslRuntime: Config.String("T3CODE_DESKTOP_WSL_RUNTIME").pipe(Config.option),
@@ -2857,7 +2857,7 @@ export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(functi
 // this module, so it cannot be imported here). WSL runs the same CPU arch as
 // the Windows host.
 export const wslRuntimeArchiveStem = (version: string, arch: typeof BuildArch.Type): string =>
-  `t3-${version}-linux-${arch}`;
+  `signalbox-${version}-linux-${arch}`;
 
 export const parseWslRuntimeArchiveMembers = (listing: string): ReadonlyArray<string> =>
   listing
@@ -3291,7 +3291,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
         ),
       );
     }
-    const requiredMembers = [`${stem}/t3`, `${stem}/client`, `${stem}/node_modules`];
+    const requiredMembers = [`${stem}/signalbox`, `${stem}/client`, `${stem}/node_modules`];
     const missingMembers = requiredMembers.filter((member) => !members.includes(member));
     // node-pty can load a source build or the prebuild for the WSL target.
     const ptyCandidates = [
@@ -3672,7 +3672,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     description: "Signalbox desktop build",
     // Required by the .deb control file.
     homepage: "https://github.com/JustYannicc/signalbox",
-    author: "T3 Tools",
+    author: "Signalbox",
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,
@@ -3945,7 +3945,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   wslRuntime: Flag.String("wsl-runtime").pipe(
     Flag.withDescription(
-      "Path to the Linux CLI release archive (t3-<version>-linux-x64.tar.gz) to embed as the WSL runtime of a Windows build (env: T3CODE_DESKTOP_WSL_RUNTIME).",
+      "Path to the Linux CLI release archive (signalbox-<version>-linux-x64.tar.gz) to embed as the WSL runtime of a Windows build (env: T3CODE_DESKTOP_WSL_RUNTIME).",
     ),
     Flag.optional,
   ),

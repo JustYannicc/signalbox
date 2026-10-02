@@ -65,7 +65,7 @@ export function pinnedRuntimePaths(
   const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir), version);
   return {
     versionDir,
-    entryPath: path.join(versionDir, platform === "win32" ? "t3.exe" : "t3"),
+    entryPath: path.join(versionDir, platform === "win32" ? "signalbox.exe" : "signalbox"),
     sentinelPath: path.join(versionDir, ".install-complete"),
   };
 }
@@ -242,7 +242,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   input.onProgress?.({ stage: "extract" });
   const extractStep = "extracting the signalbox release archive";
   // The archive wraps everything in one directory named after its stem;
-  // strip it so the executable lands at <versionDir>/t3.
+  // strip it so the executable lands at <versionDir>/signalbox.
   yield* input.runner
     .run({
       command: cliArchiveTarCommand(input.platform, process.env),

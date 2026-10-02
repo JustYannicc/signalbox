@@ -108,7 +108,7 @@ const makeLinuxCliArchiveFixture = Effect.fn("test.makeLinuxCliArchiveFixture")(
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const contentRoot = path.join(input.root, "content");
   const members = [
-    `${input.stem}/t3`,
+    `${input.stem}/signalbox`,
     `${input.stem}/client/index.html`,
     `${input.stem}/node_modules/node-pty/package.json`,
     `${input.stem}/node_modules/node-pty/build/Release/pty.node`,
@@ -2012,18 +2012,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
     // Both the staging and the packaging config hang off this one decision:
     // Windows only, and only when CI handed the build a Linux CLI archive.
-    const runtimeArchivePath = "/tmp/t3-1.2.3-linux-x64.tar.gz";
+    const runtimeArchivePath = "/tmp/signalbox-1.2.3-linux-x64.tar.gz";
     assert.isTrue(bundlesWslRuntime({ platform: "win", runtimeArchivePath }));
     assert.isFalse(bundlesWslRuntime({ platform: "win", runtimeArchivePath: undefined }));
     assert.isFalse(bundlesWslRuntime({ platform: "linux", runtimeArchivePath }));
     assert.isFalse(bundlesWslRuntime({ platform: "mac", runtimeArchivePath }));
-    assert.equal(wslRuntimeArchiveStem("1.2.3", "x64"), "t3-1.2.3-linux-x64");
+    assert.equal(wslRuntimeArchiveStem("1.2.3", "x64"), "signalbox-1.2.3-linux-x64");
   });
 
   it("parses Windows bsdtar member listings with CRLF line endings", () => {
     assert.deepStrictEqual(
-      parseWslRuntimeArchiveMembers("./t3-1.2.3-linux-x64/t3\r\nt3-1.2.3-linux-x64/client/\r\n"),
-      ["t3-1.2.3-linux-x64/t3", "t3-1.2.3-linux-x64/client"],
+      parseWslRuntimeArchiveMembers(
+        "./signalbox-1.2.3-linux-x64/signalbox\r\nsignalbox-1.2.3-linux-x64/client/\r\n",
+      ),
+      ["signalbox-1.2.3-linux-x64/signalbox", "signalbox-1.2.3-linux-x64/client"],
     );
   });
 
@@ -2035,7 +2037,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-runtime-stage-" });
         const sourceArchivePath = yield* makeLinuxCliArchiveFixture({
           root,
-          stem: "t3-1.2.3-linux-x64",
+          stem: "signalbox-1.2.3-linux-x64",
         });
         const stageAppDir = path.join(root, "app");
         const archivePath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from);
@@ -2063,7 +2065,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-runtime-missing-" });
         const error = yield* stageWslRuntimeArchive({
-          sourceArchivePath: path.join(root, "t3-1.2.3-linux-x64.tar.gz"),
+          sourceArchivePath: path.join(root, "signalbox-1.2.3-linux-x64.tar.gz"),
           archivePath: path.join(root, WSL_RUNTIME_ARCHIVE_NAME),
           hashPath: path.join(root, WSL_RUNTIME_ARCHIVE_HASH_NAME),
         }).pipe(Effect.flip);

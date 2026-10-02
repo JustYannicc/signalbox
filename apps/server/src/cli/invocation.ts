@@ -44,7 +44,7 @@ function detectCliRunner(entryPath: string): CliRunner | null {
  */
 function suggestedPackageSpec(version: string): string {
   const channel = /^[^-+]+-(nightly|preview)\./.exec(version)?.[1];
-  return channel === undefined ? "t3" : `signalbox@${channel}`;
+  return channel === undefined ? "signalbox-cli" : `signalbox-cli@${channel}`;
 }
 
 /**

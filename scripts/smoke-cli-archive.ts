@@ -75,7 +75,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const platform = yield* HostProcessPlatform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scratch = yield* fs.makeTempDirectory({ prefix: "t3-cli-smoke-" });
-  // Windows can keep t3.exe locked (EBUSY) for a moment after the server
+  // Windows can keep signalbox.exe locked (EBUSY) for a moment after the server
   // exits. A leftover scratch directory on a CI runner is harmless, so
   // cleanup retries briefly and never fails a smoke test that passed.
   yield* Effect.addFinalizer(() =>
@@ -107,7 +107,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     });
   }
   const contentDir = path.join(scratch, root);
-  const executable = path.join(contentDir, platform === "win32" ? "t3.exe" : "t3");
+  const executable = path.join(contentDir, platform === "win32" ? "signalbox.exe" : "signalbox");
   for (const required of [executable, path.join(contentDir, "client/index.html")]) {
     if (!(yield* fs.exists(required))) {
       return yield* new CliArchiveSmokeError({

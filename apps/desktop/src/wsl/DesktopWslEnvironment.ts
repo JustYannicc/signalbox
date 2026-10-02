@@ -121,7 +121,7 @@ export class DesktopWslEnvironment extends Context.Service<
     readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     // Marks a staged runtime as unusable so the next launch reinstalls it.
     readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
-    // Proves a staged self-contained runtime can run (`<root>/t3 --version`)
+    // Proves a staged self-contained runtime can run (`<root>/signalbox --version`)
     // and resolves the user's PATH, including version-managed Node for provider
     // CLIs. Node is optional; the mounted tree still requires ensureNodePty.
     readonly probeRuntime: (
@@ -305,7 +305,7 @@ export const buildWslRuntimeInstallScript = (
     // use: the file is executable and `t3 --version` exits 0. That covers the
     // truncated-binary and wrong-arch cases without a separate native probe.
     "runtime_entry_runs() {",
-    '  [ -x "$1/t3" ] && "$1/t3" --version >/dev/null 2>&1',
+    '  [ -x "$1/signalbox" ] && "$1/signalbox" --version >/dev/null 2>&1',
     "}",
     // Hashing the entry is what tells a working cache from one whose `t3` was
     // swapped or half-written after install: the file is still there and may
@@ -314,7 +314,7 @@ export const buildWslRuntimeInstallScript = (
     // milliseconds inside the distro, once per launch, against a cold
     // reinstall of a few hundred megabytes.
     "runtime_server_entry_digest() {",
-    `  sha256sum "$1/t3" 2>/dev/null | cut -d ' ' -f 1`,
+    `  sha256sum "$1/signalbox" 2>/dev/null | cut -d ' ' -f 1`,
     "}",
     "runtime_is_ready() {",
     '  [ -f "$ready_marker" ] &&',
@@ -382,7 +382,7 @@ export const buildWslRuntimeInstallScript = (
     'cleanup_runtime_install() { rm -rf "$runtime_tmp"; }',
     "trap cleanup_runtime_install EXIT",
     // The release archive has one top-level `t3-<version>-linux-<arch>/`
-    // directory; strip it so the executable lands at `$runtime_root/t3`.
+    // directory; strip it so the executable lands at `$runtime_root/signalbox`.
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp" --strip-components=1`,
     // Never write the ready marker over a tree whose executable does not run.
     // Failing here drops out to the mounted-tree fallback, which is
@@ -551,7 +551,7 @@ NODE`;
 export const buildWslRuntimeProbeScript = (linuxAppRoot: string) =>
   [
     `bash -lc ${shellQuote(`${buildWslNodeEnvPreamble()}${RESOLVED_PATH_LINE}`)} 2>/dev/null || ${RESOLVED_PATH_LINE}`,
-    `${shellQuote(`${linuxAppRoot}/t3`)} --version >/dev/null 2>&1`,
+    `${shellQuote(`${linuxAppRoot}/signalbox`)} --version >/dev/null 2>&1`,
   ].join("\n");
 
 const TOOLCHAIN_CHECK_SCRIPT = [
@@ -694,7 +694,7 @@ const probeWslRuntimeImpl = (
       const trimmedTail = probe.stderr.trim().slice(-500);
       return {
         ok: false,
-        reason: `${linuxAppRoot}/t3 --version failed (exit ${probe.exitCode})${trimmedTail ? `: ${trimmedTail}` : ""}`,
+        reason: `${linuxAppRoot}/signalbox --version failed (exit ${probe.exitCode})${trimmedTail ? `: ${trimmedTail}` : ""}`,
       } as const;
     }
     const resolvedPath = parseResolvedPath(probe.stdout);

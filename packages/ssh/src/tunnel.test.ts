@@ -120,10 +120,16 @@ describe("ssh tunnel scripts", () => {
       script,
       "T3_RELEASE_BASE_URL='https://github.com/JustYannicc/signalbox/releases/download'",
     );
-    assert.include(script, 'T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"');
-    assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
+    assert.include(
+      script,
+      'T3_RUNTIME_DIR="$HOME/.signalbox/runtime/versions/$T3_ARCHIVE_VERSION"',
+    );
+    assert.include(
+      script,
+      'T3_ARCHIVE="signalbox-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"',
+    );
     assert.include(script, "SHA256SUMS");
-    assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
+    assert.include(script, 'exec "$T3_RUNTIME_DIR/signalbox" "$@"');
     assert.notInclude(script, "npx");
     assert.notInclude(script, "npm exec");
     assert.notInclude(script, "signalbox@latest");
@@ -132,7 +138,7 @@ describe("ssh tunnel scripts", () => {
     // the completion marker after acquiring it.
     assert.include(
       script,
-      'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
+      'T3_LOCK="$HOME/.signalbox/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
     );
     // mkdir is the exclusive create; the pid follows atomically. A dead owner
     // is reclaimed at once, a never-published owner after a short grace.
@@ -147,7 +153,7 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, "-mmin");
     assert.equal(script.split("if ! t3_runtime_ready; then").length - 1, 2);
     assert.isBelow(
-      script.indexOf('"$T3_STAGING/t3" --version'),
+      script.indexOf('"$T3_STAGING/signalbox" --version'),
       script.indexOf('> "$T3_STAGING/.install-complete"'),
     );
     // Node discovery is defined for the dev path but only ever invoked inside
@@ -210,7 +216,7 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, TEST_NODE_ENGINE_RANGE);
   });
 
-  it("builds the remote signalbox runner with a node script override", () => {
+  it("builds the remote t3 runner with a node script override", () => {
     const script = buildRemoteT3RunnerScript({
       ...NODE_SCRIPT,
       nodeEngineRange: TEST_NODE_ENGINE_RANGE,
@@ -242,7 +248,7 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, "npx");
   });
 
-  it("uses the remote signalbox runner for launch and pairing scripts", () => {
+  it("uses the remote t3 runner for launch and pairing scripts", () => {
     const target = {
       alias: "devbox",
       hostname: "devbox.example.com",
@@ -744,14 +750,14 @@ describe("archive runner script", () => {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const platform = hostPlatform === "darwin" ? "darwin" : "linux";
     const arch = hostArch === "arm64" ? "arm64" : "x64";
-    const stem = `t3-${archiveVersion}-${platform}-${arch}`;
+    const stem = `signalbox-${archiveVersion}-${platform}-${arch}`;
     const stage = `${root}/stage/${stem}`;
     const release = `${root}/mirror/v${archiveVersion}`;
     const script = [
       "set -eu",
       `mkdir -p '${stage}' '${release}'`,
-      `printf '#!/bin/sh\\necho signalbox v${archiveVersion}\\n' > '${stage}/t3'`,
-      `chmod +x '${stage}/t3'`,
+      `printf '#!/bin/sh\\necho signalbox v${archiveVersion}\\n' > '${stage}/signalbox'`,
+      `chmod +x '${stage}/signalbox'`,
       `tar -czf '${release}/${stem}.tar.gz' -C '${root}/stage' '${stem}'`,
       `cd '${release}' && (sha256sum '${stem}.tar.gz' 2>/dev/null || shasum -a 256 '${stem}.tar.gz') > SHA256SUMS`,
     ].join("\n");
@@ -783,7 +789,7 @@ describe("archive runner script", () => {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `signalbox v${archiveVersion}`);
         }
-        const versionsDir = `${home}/.t3/runtime/versions`;
+        const versionsDir = `${home}/.signalbox/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(
           (yield* fs.readFileString(`${versionsDir}/${archiveVersion}/.install-complete`)).trim(),
