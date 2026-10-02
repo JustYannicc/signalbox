@@ -26,6 +26,7 @@ import { sshHelperCommand } from "./cli/sshHelper.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
+import { importT3Command } from "./signalbox/importT3Command.ts"; // signalbox: one-time T3 Code import
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -76,6 +77,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       themeCommand,
       traceCommand,
       triageCommand,
+      importT3Command, // signalbox: one-time T3 Code import
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );
