@@ -6,7 +6,7 @@ import { Button } from "../components/ui/button";
 import { toastManager } from "../components/ui/toast";
 import { readAccountSession, signOutAccount } from "./accountSession";
 
-export function accountDisplayName(account: AccountProfile): string {
+function accountDisplayName(account: AccountProfile): string {
   const name = [account.firstName, account.lastName].filter(Boolean).join(" ").trim();
   return name || account.email;
 }
