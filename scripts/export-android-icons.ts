@@ -28,11 +28,11 @@ type IconVariant = "dev" | "nightly" | "prod";
 const ADAPTIVE_CANVAS = 432;
 // 288dp at xxxhdpi: the full Android 12+ splash canvas, so the icon needs no upscaling.
 const SPLASH_CANVAS = 1152;
-// Icon Composer's layer sources use a 128pt viewBox; the wordmark path spans this box.
-const TEXT = { x: 15.53, y: 37, width: 94.5, height: 57 };
-// Wordmark width as a fraction of the 108dp canvas. The visible area is 72dp (66dp
-// guaranteed), so 0.48 leaves the letters at ~72% of the mask with room for the
-// launcher's own zoom effects.
+// Icon Composer's layer sources use a 128pt viewBox; the mark's paths span this box.
+const TEXT = { x: 26, y: 26, width: 76, height: 76 };
+// Mark width as a fraction of the 108dp canvas. The visible area is 72dp (66dp
+// guaranteed), so 0.48 leaves the mark at ~72% of the mask, and its rounded corners
+// (~30dp from center) inside the 33dp guaranteed circle.
 const WORDMARK_FRACTION = 0.48;
 // Icon Composer positions layers on a 1024pt canvas, with translation relative to center.
 const COMPOSER_CANVAS_PT = 1024;
@@ -46,8 +46,8 @@ export class AndroidIconRenderError extends Schema.TaggedError<AndroidIconRender
   { layer: Schema.String, cause: Schema.Defect() },
 ) {}
 
-const wordmarkTransform = (size: number) => {
-  const scale = (size * WORDMARK_FRACTION) / TEXT.width;
+const wordmarkTransform = (size: number, fraction = WORDMARK_FRACTION) => {
+  const scale = (size * fraction) / TEXT.width;
   const tx = (size - TEXT.width * scale) / 2 - TEXT.x * scale;
   const ty = (size - TEXT.height * scale) / 2 - TEXT.y * scale;
   return `translate(${tx.toFixed(3)} ${ty.toFixed(3)}) scale(${scale.toFixed(4)})`;
@@ -106,12 +106,13 @@ const readLayerSource = Effect.fn("androidIcons.readLayerSource")(function* (
 const renderForeground = Effect.fn("androidIcons.renderForeground")(function* (
   repositoryRoot: string,
   size: number,
+  fraction = WORDMARK_FRACTION,
 ) {
   const text = yield* readLayerSource(repositoryRoot, "prod", "text.svg");
   const paths = text.match(/<path[^>]*\/>/g) ?? [];
   return yield* rasterize(
     "foreground",
-    canvasSvg(size, `<g transform="${wordmarkTransform(size)}">${paths.join("")}</g>`),
+    canvasSvg(size, `<g transform="${wordmarkTransform(size, fraction)}">${paths.join("")}</g>`),
     size,
   );
 });
@@ -212,6 +213,10 @@ const exportAndroidIcons = Effect.gen(function* () {
   const repositoryRoot = path.resolve(import.meta.dirname, "..");
   const outputs = [
     ["android-icon-foreground.png", yield* renderForeground(repositoryRoot, ADAPTIVE_CANVAS)],
+    // The monochrome themed icon is the same flat silhouette as the foreground.
+    ["android-icon-mark.png", yield* renderForeground(repositoryRoot, ADAPTIVE_CANVAS)],
+    // 24dp at xxxhdpi, with the mark filling the central 16dp.
+    ["android-notification-icon.png", yield* renderForeground(repositoryRoot, 96, 2 / 3)],
     [
       "android-icon-background-dev.png",
       yield* renderDevelopmentBackground(repositoryRoot, ADAPTIVE_CANVAS),

@@ -38,13 +38,13 @@ export function CompactBrandTitle(
       className="flex-row items-center gap-1.5"
       style={[{ marginLeft: titleOffset }, Platform.OS === "android" && { gap: 5.25 * scale }]}
     >
-      <T3Wordmark colorClassName="accent-icon" height={Math.round(15 * scale)} />
+      <T3Wordmark colorClassName="accent-icon" height={Math.round(19 * scale)} />
       <Text
         allowFontScaling={props.allowFontScaling}
-        className="font-t3-medium text-foreground-muted"
-        style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
+        className="font-t3-semibold text-foreground"
+        style={{ fontSize: 21 * scale, letterSpacing: -0.6 * scale }}
       >
-        Code
+        signalbox
       </Text>
       <View
         className="rounded-full bg-subtle px-1.5 py-0.5"
