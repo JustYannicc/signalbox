@@ -23,7 +23,6 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
-import { offerT3ImportOnFirstStart } from "../signalbox/T3Import.ts"; // signalbox: one-time T3 Code import
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -328,13 +327,6 @@ export const resolveServerConfig = (
     yield* fs.makeDirectory(cwd, { recursive: true });
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
       baseDirIsExplicit: Option.isSome(explicitBaseDir),
-    });
-    // signalbox: offer the one-time T3 Code import before the first start creates state.
-    yield* offerT3ImportOnFirstStart({
-      baseDir,
-      isDefaultHome: Option.isNone(explicitBaseDir) && bootstrap?.t3Home === undefined,
-      isDesktop: mode === "desktop" || bootstrap !== undefined,
-      isDevelopment: devUrl !== undefined,
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(

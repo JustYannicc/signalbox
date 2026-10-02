@@ -37,13 +37,26 @@ function writeT3Home(root: string) {
   NodeFS.mkdirSync(NodePath.join(root, ".t3", "worktrees", "repo", "branch"), { recursive: true });
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "settings.json"), '{"a":1}');
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "secrets", "server-signing-key.bin"), "key");
+  NodeFS.writeFileSync(
+    NodePath.join(sourceStateDir, "secrets", "provider-env-Y29kZXg-T1BFTkFJ.bin"),
+    "sk",
+  );
+  NodeFS.writeFileSync(NodePath.join(sourceStateDir, "secrets", "dpop-proof-abc.bin"), "");
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "attachments", "thread-1", "a.png"), "png");
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "environment-id"), "env-t3");
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "connection-catalog.json"), "{}");
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "logs", "server.log"), "log");
   const database = new NodeSqlite.DatabaseSync(NodePath.join(sourceStateDir, "state.sqlite"));
   database.exec(
-    "PRAGMA journal_mode=WAL; CREATE TABLE threads (id TEXT); INSERT INTO threads VALUES ('t1');",
+    [
+      "PRAGMA journal_mode=WAL",
+      "CREATE TABLE threads (id TEXT)",
+      "INSERT INTO threads VALUES ('t1')",
+      "CREATE TABLE auth_sessions (id TEXT)",
+      "INSERT INTO auth_sessions VALUES ('phone')",
+      "CREATE TABLE auth_pairing_links (id TEXT)",
+      "INSERT INTO auth_pairing_links VALUES ('link')",
+    ].join(";"),
   );
   database.close();
   return {
@@ -52,17 +65,18 @@ function writeT3Home(root: string) {
   } satisfies T3Import.T3ImportPaths;
 }
 
-const threadIds = (database: string) => {
+const ids = (database: string, table: string) => {
   const db = new NodeSqlite.DatabaseSync(database, { readOnly: true });
   try {
     return db
-      .prepare("SELECT id FROM threads ORDER BY id")
+      .prepare(`SELECT id FROM ${table} ORDER BY id`)
       .all()
       .map((row) => row.id);
   } finally {
     db.close();
   }
 };
+const threadIds = (database: string) => ids(database, "threads");
 
 it.layer(NodeServices.layer)("T3 Code import", (it) => {
   it.effect("copies the allowlisted data and leaves the T3 home byte for byte unchanged", () =>
@@ -77,8 +91,8 @@ it.layer(NodeServices.layer)("T3 Code import", (it) => {
       assert.deepStrictEqual(fingerprint(NodePath.join(root, ".t3")), before);
       assert.deepStrictEqual(result.copied, [
         "settings.json",
-        "secrets",
         "attachments",
+        "secrets",
         "state.sqlite",
       ]);
       const target = paths.targetStateDir;
@@ -88,10 +102,12 @@ it.layer(NodeServices.layer)("T3 Code import", (it) => {
         NodeFS.readFileSync(NodePath.join(target, "attachments", "thread-1", "a.png"), "utf8"),
         "png",
       );
-      assert.equal(
-        NodeFS.readFileSync(NodePath.join(target, "secrets", "server-signing-key.bin"), "utf8"),
-        "key",
-      );
+      // Provider credentials come along; the server's identity and paired devices do not.
+      assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(target, "secrets")), [
+        "provider-env-Y29kZXg-T1BFTkFJ.bin",
+      ]);
+      assert.deepStrictEqual(ids(NodePath.join(target, "state.sqlite"), "auth_sessions"), []);
+      assert.deepStrictEqual(ids(NodePath.join(target, "state.sqlite"), "auth_pairing_links"), []);
       for (const skipped of ["environment-id", "connection-catalog.json", "logs"]) {
         assert.isFalse(NodeFS.existsSync(NodePath.join(target, skipped)), skipped);
       }
@@ -121,6 +137,8 @@ it.layer(NodeServices.layer)("T3 Code import", (it) => {
         "t1",
         "t2",
       ]);
+      // The database and WAL are untouched. `-shm` is not compared: readers
+      // record marks there, and the open writer rewrites it anyway.
       assert.isTrue(NodeFS.readFileSync(source).equals(mainBefore));
       assert.isTrue(NodeFS.readFileSync(`${source}-wal`).equals(walBefore));
     }).pipe(Effect.scoped),

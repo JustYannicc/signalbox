@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
@@ -10,6 +11,7 @@ import * as DesktopShutdown from "../app/DesktopShutdown.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
 const { logInfo, logWarning } = DesktopObservability.makeComponentLogger("desktop-t3-import");
 
@@ -18,16 +20,23 @@ const MAX_ERROR_DETAIL = 2_000;
 /**
  * First-launch offer to copy T3 Code's data (`~/.t3/userdata`) into a fresh
  * Signalbox home. Runs before the backend starts, only for the default home
- * in a packaged build, and only while Signalbox has no database. Declining
- * lets the backend create one, so the question is asked once; a failed import
- * can quit before that so the next launch asks again. The copy itself
- * is `signalbox import-t3`, run through the bundled backend entry.
+ * in a packaged build with the local backend on, and only while Signalbox has
+ * no database. Declining lets the backend create one, so the question is
+ * asked once; a failed import can quit before that so the next launch asks
+ * again. The copy itself is `signalbox import-t3`, run through the bundled
+ * backend entry. There is
+ * no progress UI: no window exists yet, so a large history means a pause
+ * between the prompt and the main window.
  */
 export const offerT3Import = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const { path } = environment;
   if (environment.isDevelopment) return;
   if (environment.baseDir !== path.join(environment.homeDirectory, ".signalbox")) return;
+  // Only the local backend uses this home; WSL-only and remote-only setups never create it.
+  const settings = yield* (yield* DesktopAppSettings.DesktopAppSettings).get;
+  if (!settings.localEnvironmentEnabled) return;
+  if (settings.wslOnly === true && settings.wslBackendEnabled === true) return;
 
   const fs = yield* FileSystem.FileSystem;
   const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
@@ -74,6 +83,9 @@ export const offerT3Import = Effect.gen(function* () {
       );
       return { exitCode: Number(exitCode), stderr };
     }),
+  ).pipe(
+    // A spawn that fails (missing entry, killed by a signal) is a failed import too.
+    Effect.catchCause((cause) => Effect.succeed({ exitCode: -1, stderr: Cause.pretty(cause) })),
   );
   if (result.exitCode === 0) {
     yield* logInfo("t3 import finished");
