@@ -73,7 +73,7 @@ import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.log
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ClaudeAI, OpenAI } from "../Icons";
-import { SignalboxLogo } from "../SignalboxMark";
+import { SignalboxLogo } from "../SignalboxMark"; // signalbox: brand
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -219,6 +219,7 @@ export function WelcomeWizard({
         <WizardHeader
           title="Set up Signalbox"
           identity={
+            // signalbox: brand
             <SignalboxLogo className="gap-2.5 text-2xl" role="img" aria-label="Signalbox" />
           }
         >

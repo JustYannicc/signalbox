@@ -143,6 +143,7 @@ const EXCLUDED = [
   /^packaging\//, // upstream's AUR packages
   /^patches\//,
   /^scripts\/rebrand\//,
+  /^scripts\/upstream-sync\//, // names upstream T3 Code on purpose
   /^docs\/operations\/upstream-sync\.md$/, // names the old identifiers on purpose
   /^apps\/(?:server|desktop)\/src\/signalbox\/(?:(?:Desktop)?T3Import(?:Offer)?|importT3Command|T3WorktreeGuard)\./, // imports from T3 Code by name
   /(^|\/)UPSTREAM\.md$/,

@@ -15,7 +15,7 @@ import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
-import { EnvironmentAccountSection } from "../account/EnvironmentAccountSection";
+import { EnvironmentAccountSection } from "../account/EnvironmentAccountSection"; // signalbox: accounts
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -168,6 +168,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 onUpdate={connections.onUpdateEnvironment}
               />
             </SettingsSection>
+            {/* signalbox: accounts */}
             <EnvironmentAccountSection
               environmentId={environmentId}
               environmentLabel={environment.environmentLabel}

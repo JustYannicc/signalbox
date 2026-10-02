@@ -18,7 +18,7 @@ import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
-import { AccountSignInEntry } from "../account/AccountSignInRoutes";
+import { AccountSignInEntry } from "../account/AccountSignInRoutes"; // signalbox: accounts
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -278,6 +278,7 @@ export function ConnectionsNewRouteScreen({
               </View>
             </View>
           )}
+          {/* signalbox: accounts */}
           {showScanner ? null : <AccountSignInEntry />}
         </View>
       </ScrollView>

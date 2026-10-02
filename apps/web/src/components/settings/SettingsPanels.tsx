@@ -1,5 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
-import { AccountSettingsSection } from "../../account/AccountSettingsSection";
+import { AccountSettingsSection } from "../../account/AccountSettingsSection"; // signalbox: accounts
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
@@ -2238,6 +2238,7 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      {/* signalbox: accounts */}
       <AccountSettingsSection />
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">

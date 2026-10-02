@@ -114,7 +114,7 @@ function start(bus = new FakeBus(), shortcut = chord, managedByHyprland = false)
   const capture = vi.fn();
   const changed = vi.fn();
   const client = new PortalCaptureShortcut(
-    "com.justyannicc.Signalbox",
+    "com.t3tools.T3Code",
     shortcut,
     capture,
     changed,
