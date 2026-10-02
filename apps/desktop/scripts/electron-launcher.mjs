@@ -15,7 +15,7 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const APP_DISPLAY_NAME = isDevelopment ? "Signalbox (Dev)" : "Signalbox (Alpha)";
 const APP_BUNDLE_ID = isDevelopment
   ? `com.justyannicc.signalbox.dev.${devBundleIdSuffix || "local"}`
   : "com.justyannicc.signalbox";
@@ -270,8 +270,8 @@ export function resolveMacBundleInfoPlistStrings(executableName) {
     CFBundleExecutable: executableName,
     CFBundleIconFile: "icon.icns",
     NSScreenCaptureUsageDescription:
-      "T3 Code captures the active window when you use the snapshot shortcut.",
-    NSDocumentsFolderUsageDescription: "T3 Code reads project files you open in the desktop app.",
+      "Signalbox captures the active window when you use the snapshot shortcut.",
+    NSDocumentsFolderUsageDescription: "Signalbox reads project files you open in the desktop app.",
   };
 }
 

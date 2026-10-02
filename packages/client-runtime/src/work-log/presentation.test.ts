@@ -295,8 +295,8 @@ describe("resolveWorkEntryToolPresentation", () => {
       "Stopping recording the preview browser",
       "Stopped recording the preview browser",
     ],
-    ["t3_thread_read", "Reading a T3 thread", "Read a T3 thread"],
-    ["t3_thread_send", "Sending to a T3 thread", "Sent to a T3 thread"],
+    ["t3_thread_read", "Reading a Signalbox thread", "Read a Signalbox thread"],
+    ["t3_thread_send", "Sending to a Signalbox thread", "Sent to a Signalbox thread"],
     [
       "t3_worktree_handoff",
       "Handing off thread to a git worktree",
@@ -641,7 +641,7 @@ describe("pull request tool presentation", () => {
       tone: "tool",
       itemType: "mcp_tool_call",
       toolLifecycleStatus: "completed",
-      toolSource: { key: "t3-code", name: "T3 Code", kind: "integration" },
+      toolSource: { key: "t3-code", name: "Signalbox", kind: "integration" },
     };
     const list: WorkLogPresentationEntry = {
       ...link,

@@ -137,10 +137,10 @@ it("captures exact-window metadata for accessibility and focuses only through th
   const result = await captureHyprlandWindow(paths);
   expect(result.png).toEqual(png);
   expect(result.window).toEqual(window);
-  await result.feedback?.activate("T3 destination");
+  await result.feedback?.activate("Signalbox destination");
   expect(execute.mock.calls.find(([, args]) => args[0] === "activate")?.slice(0, 2)).toEqual([
     hyprlandCaptureExecutable(paths),
-    ["activate", String(process.pid), "T3 destination"],
+    ["activate", String(process.pid), "Signalbox destination"],
   ]);
   const captureDirectory = execute.mock.calls.find(([, args]) => args[0] === "capture")![1][1];
   await expect(NodeFSP.stat(captureDirectory)).rejects.toMatchObject({ code: "ENOENT" });

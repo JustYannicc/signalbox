@@ -68,25 +68,25 @@ describe("SubscriptionUsage Android layout", () => {
       ...snapshot,
       providers: [{ ...provider, expiresAt: now - 1 }],
     });
-    expect(tree).toContain("Open T3 to refresh");
+    expect(tree).toContain("Open Signalbox to refresh");
     expect(tree).not.toContain("LinearProgressIndicator");
-    expect(tree).not.toContain("more in T3");
+    expect(tree).not.toContain("more in Signalbox");
   });
 
   it("counts the quotas that did not fit", () => {
     const tree = render({ ...snapshot, providers: [{ ...provider, totalWindows: 5 }] });
-    expect(tree).toContain("3 more in T3");
+    expect(tree).toContain("3 more in Signalbox");
   });
 
   it("keeps quotas without an expiry deadline visible", () => {
     const tree = render({ ...snapshot, providers: [{ ...provider, expiresAt: 0 }] });
     expect(tree).toContain("5 hours · 60% left");
-    expect(tree).not.toContain("Open T3 to refresh");
+    expect(tree).not.toContain("Open Signalbox to refresh");
   });
 
   it("invites connecting when nothing has been checked", () => {
     const tree = render({ checkedAt: 0, providers: [] }, "light");
-    expect(tree).toContain("Tap to connect in T3");
+    expect(tree).toContain("Tap to connect in Signalbox");
     expect(tree).not.toContain("As of ");
     expect(tree).toContain('"containerColor":"light-surface"');
   });

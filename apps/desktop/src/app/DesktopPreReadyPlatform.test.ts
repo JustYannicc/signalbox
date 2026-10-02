@@ -118,7 +118,7 @@ describe("DesktopPreReadyPlatform", () => {
             const identity = yield* Effect.promise(() => portalIdentity);
             assert.equal(identity.desktopName, "com.justyannicc.Signalbox.desktop");
             assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
-            assert.include(identity.desktopEntry ?? "", "Name=T3 Code (Alpha)");
+            assert.include(identity.desktopEntry ?? "", "Name=Signalbox (Alpha)");
             assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/signalbox;");
             assert.include(
               identity.desktopEntry ?? "",

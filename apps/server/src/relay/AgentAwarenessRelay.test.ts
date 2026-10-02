@@ -360,7 +360,7 @@ describe("signRelayAgentActivityPublishProof", { concurrent: false }, () => {
         projects: [
           {
             id: projectId,
-            title: "T3 Code",
+            title: "Signalbox",
           },
         ],
         threads: [
@@ -504,7 +504,7 @@ describe("signRelayAgentActivityPublishProof", { concurrent: false }, () => {
 
         const project = {
           id: projectId,
-          title: "T3 Code",
+          title: "Signalbox",
           workspaceRoot: "/workspace",
           repositoryIdentity: null,
           defaultModelSelection: null,
@@ -696,7 +696,7 @@ describe("signRelayAgentActivityPublishProof", { concurrent: false }, () => {
 
         const project = {
           id: projectId,
-          title: "T3 Code",
+          title: "Signalbox",
           workspaceRoot: "/workspace",
           repositoryIdentity: null,
           defaultModelSelection: null,
@@ -853,7 +853,7 @@ describe("signRelayAgentActivityPublishProof", { concurrent: false }, () => {
         const environmentId = "env-1" as EnvironmentId;
         const project = {
           id: projectId,
-          title: "T3 Code",
+          title: "Signalbox",
           workspaceRoot: "/workspace",
           repositoryIdentity: null,
           defaultModelSelection: null,

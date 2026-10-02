@@ -184,7 +184,7 @@ describe("window capture IPC", () => {
           borderWidth: 1,
           cornerRadius: 8,
           details: {
-            appName: "T3 Code",
+            appName: "Signalbox",
             windowTitle: "Capture animation",
             appIconDataUrl: "data:image/png;base64,aWNvbg==",
           },
@@ -202,7 +202,7 @@ describe("window capture IPC", () => {
           cornerRadius: 10,
           scaleFactor: 1.25,
           details: {
-            appName: "T3 Code",
+            appName: "Signalbox",
             windowTitle: "Capture animation",
             appIconDataUrl: "data:image/png;base64,aWNvbg==",
           },

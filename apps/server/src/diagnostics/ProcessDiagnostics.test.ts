@@ -71,7 +71,7 @@ describe("ProcessDiagnostics", () => {
           startTimeMs: 1_000,
           runTimeMs: 60_000,
           name: "node",
-          command: "t3 server",
+          command: "signalbox server",
           status: "Running",
           cpuPercent: 0,
           cpuTimeMs: 100,
@@ -277,7 +277,7 @@ describe("ProcessDiagnostics", () => {
         pid: 4_242,
         signal: "SIGKILL",
         signaled: false,
-        message: Option.some("Process 4242 is not a signalable T3 backend descendant."),
+        message: Option.some("Process 4242 is not a signalable Signalbox backend descendant."),
       });
 
       const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(

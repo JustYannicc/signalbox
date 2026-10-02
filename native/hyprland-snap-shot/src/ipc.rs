@@ -139,7 +139,7 @@ pub fn destination(windows: Vec<Window>, pid: u32, title: &str) -> Result<Option
         .filter(|w| w.pid == pid && w.title == title && w.mapped && !w.hidden);
     let found = matches.next();
     if matches.next().is_some() {
-        return Err("More than one T3 Code window matches the capture destination.".into());
+        return Err("More than one Signalbox window matches the capture destination.".into());
     }
     Ok(found)
 }
@@ -157,14 +157,14 @@ pub fn activate(pid: u32, title: &str) -> Result<()> {
             if request(&lua)?.trim() != "ok"
                 && request(&format!("/dispatch focuswindow address:0x{address:x}"))?.trim() != "ok"
             {
-                return Err("Hyprland could not focus T3 Code.".into());
+                return Err("Hyprland could not focus Signalbox.".into());
             }
             return Ok(());
         }
         events.get_ref().set_read_timeout(Some(
             deadline
                 .checked_duration_since(Instant::now())
-                .ok_or("T3 Code did not become visible.")?,
+                .ok_or("Signalbox did not become visible.")?,
         ))?;
         let mut event = Vec::new();
         if events.by_ref().take(8193).read_until(b'\n', &mut event)? == 0 || event.len() > 8192 {

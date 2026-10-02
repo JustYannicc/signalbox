@@ -176,7 +176,7 @@ describe("t3 pair", () => {
         // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
         const credentials = JSON.parse(listed) as ReadonlyArray<{ readonly label?: string }>;
         assert.equal(credentials.length, 1);
-        assert.equal(credentials[0]?.label, "t3 pair");
+        assert.equal(credentials[0]?.label, "signalbox pair");
       }),
     ).pipe(
       Effect.provide(NodeServices.layer),
@@ -228,9 +228,9 @@ describe("t3 pair", () => {
       const rendered = String(
         typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
       );
-      assert.include(rendered, "No running T3 Code server found.");
-      assert.include(rendered, "npx t3 serve");
-      assert.include(rendered, "npx t3 connect");
+      assert.include(rendered, "No running Signalbox server found.");
+      assert.include(rendered, "npx signalbox-cli serve");
+      assert.include(rendered, "npx signalbox-cli connect");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -259,7 +259,7 @@ describe("t3 pair", () => {
         const rendered = String(
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
-        assert.include(rendered, "No running T3 Code server found.");
+        assert.include(rendered, "No running Signalbox server found.");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -285,7 +285,7 @@ describe("t3 pair", () => {
       const rendered = String(
         typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
       );
-      assert.include(rendered, "No running T3 Code server found.");
+      assert.include(rendered, "No running Signalbox server found.");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

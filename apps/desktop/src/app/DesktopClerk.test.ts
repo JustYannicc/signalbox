@@ -50,7 +50,7 @@ const makeDesktopClerkLayer = (
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
     userDataDirName: isDevelopment ? "signalbox-dev" : "signalbox",
-    legacyUserDataDirName: isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)",
+    legacyUserDataDirName: isDevelopment ? "Signalbox (Dev)" : "Signalbox (Alpha)",
     path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
