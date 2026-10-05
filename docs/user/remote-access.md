@@ -192,7 +192,7 @@ when SSH closes, see [background-service troubleshooting](./background-service.m
 | HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                                                  |
 
 After fixing a permanent rejection, restart the host's server. On Linux, use
-`systemctl --user restart t3code.service` for the background service. For a
+`systemctl --user restart signalbox.service` for the background service. For a
 foreground server, stop it and run `signalbox serve` again with your usual options.
 Include the diagnostic message and trace ID when reporting a persistent failure.
 
