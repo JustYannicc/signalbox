@@ -32,9 +32,10 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
-import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarViews } from "./sidebar/SidebarViews"; // signalbox: view rail
+import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons"; // signalbox: view rail
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
@@ -54,6 +55,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { useIsMobile } from "../hooks/useMediaQuery";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -81,7 +83,7 @@ function readInitialThreadSidebarWidth(): number {
 function SidebarControl() {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { toggleSidebar } = useSidebar();
+  const { isMobile, toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(
@@ -130,9 +132,13 @@ function SidebarControl() {
     // the panel), so the trigger mirrors it: both clusters sit one extra pixel
     // off their edge and the titlebar reads symmetric.
     <div
-      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
+      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center gap-1"
       data-sidebar-control=""
     >
+      {/* signalbox: view rail */}
+      {isMobile ? null : (
+        <TitlebarHistoryButtons onBackdrop={isSidebarVisible && stageBackdropVariant !== null} />
+      )}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -226,6 +232,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
+  const isMobile = useIsMobile();
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
   // and a clamped drag ends with an unchanged width, which skips the re-render
@@ -248,6 +255,13 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   });
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
+    // signalbox: desktop widths put back/forward before the sidebar toggle, so
+    // titlebar content that clears the toggle clears them too.
+    ...(isMobile
+      ? {}
+      : {
+          "--workspace-titlebar-content-left": `calc(var(--workspace-controls-left) + ${TITLEBAR_HISTORY_WIDTH} + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))`,
+        }),
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
@@ -302,7 +316,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <ProjectProjectionRetention />
         <Sidebar
           side="left"
-          collapsible="offcanvas"
+          // signalbox: the rail layout collapses to its rail; legacy slides away whole.
+          collapsible={legacySidebarEnabled ? "offcanvas" : "icon"}
           data-app-sidebar=""
           role="navigation"
           aria-label={isOnSettings ? "Settings" : "Threads"}
@@ -316,15 +331,18 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             onResize: setSidebarWidth,
           }}
         >
-          {isOnSettings ? (
+          {/* signalbox: view rail, unless the legacy sidebar setting is on */}
+          {!legacySidebarEnabled ? (
+            <SidebarViews
+              panelOverride={isOnSettings ? <SettingsSidebarNav pathname={pathname} /> : undefined}
+            />
+          ) : isOnSettings ? (
             <>
               <SidebarChromeHeader isElectron={isElectron} />
               <SettingsSidebarNav pathname={pathname} />
             </>
-          ) : legacySidebarEnabled ? (
-            <LegacyThreadSidebar />
           ) : (
-            <ThreadSidebar />
+            <LegacyThreadSidebar />
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
