@@ -24,6 +24,9 @@ const AuthFile = Schema.Struct({
   provider: Schema.String,
   email: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
+  status: Schema.optional(Schema.String),
+  unavailable: Schema.optional(Schema.Boolean),
+  next_retry_after: Schema.optional(Schema.Unknown),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -104,6 +107,11 @@ const SUPPORTED_PROVIDERS = new Set(["codex", "claude", CHATGPT_SIWC]);
 // Codex and Sign in with ChatGPT accounts both run Codex; everything else listed is Claude.
 const driverForProvider = (provider: string) =>
   ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : "codex");
+
+// The hub marks an account whose refresh token died as an error with no retry time;
+// a cooldown always carries `next_retry_after`.
+const needsSignIn = (account: typeof AuthFile.Type) =>
+  account.status === "error" && account.unavailable === true && account.next_retry_after == null;
 
 const notProbed = (
   account: typeof AuthFile.Type,
@@ -340,14 +348,21 @@ export const makeCliproxyApi = Effect.gen(function* () {
         // Paused accounts are listed so they can be resumed, without spending a usage probe.
         account.disabled
           ? Effect.succeed(notProbed(account, checkedAt, "Paused."))
-          : account.provider === CHATGPT_SIWC
-            ? Effect.succeed(
-                notProbed(account, checkedAt, "ChatGPT does not share usage with connected apps.", {
-                  label: "ChatGPT usage",
-                  url: "https://chatgpt.com/#settings/Usage",
-                }),
-              )
-            : readAccount(config, account),
+          : needsSignIn(account)
+            ? Effect.succeed(notProbed(account, checkedAt, "Signed out. Sign in again."))
+            : account.provider === CHATGPT_SIWC
+              ? Effect.succeed(
+                  notProbed(
+                    account,
+                    checkedAt,
+                    "ChatGPT does not share usage with connected apps.",
+                    {
+                      label: "ChatGPT usage",
+                      url: "https://chatgpt.com/#settings/Usage",
+                    },
+                  ),
+                )
+              : readAccount(config, account),
       { concurrency: 4 },
     );
   });

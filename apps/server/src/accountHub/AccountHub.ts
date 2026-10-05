@@ -147,6 +147,10 @@ export function renderAccountHubConfig(options: {
     "plugins:",
     "  enabled: true",
     `  dir: ${yamlString(options.pluginsDir)}`,
+    // Plugins start disabled; this one runs Sign in with ChatGPT accounts (native/cliproxyapi-chatgpt).
+    "  configs:",
+    "    chatgpt-siwc:",
+    "      enabled: true",
     "",
   ].join("\n");
 }

@@ -50,6 +50,9 @@ function fixture(
     accounts?: Array<
       Omit<(typeof accounts)[number], "id_token"> & {
         disabled?: boolean;
+        status?: string;
+        unavailable?: boolean;
+        next_retry_after?: string;
         id_token?: (typeof accounts)[number]["id_token"];
       }
     >;
@@ -315,6 +318,36 @@ describe("CLIProxyAPI built-in management API", () => {
         },
       ]);
       expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+    }),
+  );
+
+  it.effect("asks for a fresh sign-in when the hub reports a dead refresh token", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "chatgpt-siwc-a.json",
+            auth_index: "s",
+            provider: "chatgpt-siwc",
+            email: "a@example.com",
+            status: "error",
+            unavailable: true,
+          },
+          {
+            id: "cooling.json",
+            auth_index: "c",
+            provider: "chatgpt-siwc",
+            email: "c@example.com",
+            status: "error",
+            unavailable: true,
+            next_retry_after: "2099-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const api = yield* test.api;
+      const [signedOut, cooling] = yield* api.readAccounts(config);
+      expect(signedOut?.usageLimits.unavailable?.message).toBe("Signed out. Sign in again.");
+      expect(cooling?.usageLimits.unavailable?.message).not.toContain("Signed out");
     }),
   );
 

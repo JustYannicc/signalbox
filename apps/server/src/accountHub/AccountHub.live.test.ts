@@ -27,6 +27,13 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("AccountHub (liv
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "account-hub-live-" });
+        // Set SIGNALBOX_CHATGPT_PLUGIN to a built chatgpt-siwc library to load it as well.
+        const plugin = process.env.SIGNALBOX_CHATGPT_PLUGIN;
+        if (plugin) {
+          const dir = `${baseDir}/userdata/account-hub/plugins`;
+          yield* fs.makeDirectory(dir, { recursive: true });
+          yield* fs.copyFile(plugin, `${dir}/${plugin.split("/").at(-1)}`);
+        }
         const layer = AccountHub.layer.pipe(
           Layer.provide(ServerSecretStore.layer),
           Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
