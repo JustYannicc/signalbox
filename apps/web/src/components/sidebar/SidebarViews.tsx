@@ -14,8 +14,6 @@ import { useCallback, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
-import LegacyThreadSidebar from "../LegacySidebar";
-import ThreadSidebar from "../Sidebar";
 import { SidebarStageBackdrop, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { HomeNewButton } from "./HomeNewButton";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
@@ -25,7 +23,7 @@ import { useSidebarView, type SidebarView } from "./sidebarView";
 
 const VIEW_TITLES: Record<SidebarView, string> = { home: "Home", pipeline: "Pipeline" };
 
-function SidebarViewPanel(props: { view: SidebarView }) {
+function SidebarViewPanel(props: { view: SidebarView; home: ReactNode; pipeline: ReactNode }) {
   return (
     <>
       <div className="shrink-0 px-2 pt-2">
@@ -36,16 +34,20 @@ function SidebarViewPanel(props: { view: SidebarView }) {
       {props.view === "home" ? (
         <>
           <HomeNewButton />
-          <LegacyThreadSidebar />
+          {props.home}
         </>
       ) : (
-        <ThreadSidebar />
+        props.pipeline
       )}
     </>
   );
 }
 
 export function SidebarViews(props: {
+  /** Upstream's project-tree sidebar. */
+  home: ReactNode;
+  /** Upstream's attention-ordered sidebar. */
+  pipeline: ReactNode;
   /** Replaces the view panel, e.g. the settings navigation. */
   panelOverride?: ReactNode;
 }) {
@@ -90,7 +92,9 @@ export function SidebarViews(props: {
             className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-tl-xl border-t border-l border-sidebar-border bg-sidebar"
             data-sidebar-view={view}
           >
-            {props.panelOverride ?? <SidebarViewPanel view={view} />}
+            {props.panelOverride ?? (
+              <SidebarViewPanel view={view} home={props.home} pipeline={props.pipeline} />
+            )}
           </div>
         </div>
       </div>

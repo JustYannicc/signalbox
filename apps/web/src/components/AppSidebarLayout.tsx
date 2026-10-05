@@ -32,10 +32,9 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
+import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { SidebarViews } from "./sidebar/SidebarViews"; // signalbox: view rail
-import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons"; // signalbox: view rail
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
@@ -55,7 +54,10 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+// signalbox: view rail
 import { useIsMobile } from "../hooks/useMediaQuery";
+import { SidebarViews } from "./sidebar/SidebarViews";
+import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -255,6 +257,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   });
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
+    "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
+    ...(isMacosDesktop && !isWindowFullscreen
+      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
+      : {}),
     // signalbox: desktop widths put back/forward before the sidebar toggle, so
     // titlebar content that clears the toggle clears them too.
     ...(isMobile
@@ -262,10 +268,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       : {
           "--workspace-titlebar-content-left": `calc(var(--workspace-controls-left) + ${TITLEBAR_HISTORY_WIDTH} + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))`,
         }),
-    "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
-    ...(isMacosDesktop && !isWindowFullscreen
-      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
-      : {}),
   } as CSSProperties;
 
   useEffect(() => {
@@ -334,6 +336,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           {/* signalbox: view rail, unless the legacy sidebar setting is on */}
           {!legacySidebarEnabled ? (
             <SidebarViews
+              home={<LegacyThreadSidebar />}
+              pipeline={<ThreadSidebar />}
               panelOverride={isOnSettings ? <SettingsSidebarNav pathname={pathname} /> : undefined}
             />
           ) : isOnSettings ? (
