@@ -32,10 +32,7 @@ describe("applySignalboxEnvironment", () => {
   });
 
   it("preserves homes written by Signalbox-managed services", () => {
-    for (const serviceUnit of [
-      "signalbox.service",
-      "com.justyannicc.signalbox.service.plist",
-    ]) {
+    for (const serviceUnit of ["signalbox.service", "com.justyannicc.signalbox.service.plist"]) {
       const environment = {
         T3_BOOT_SERVICE_UNIT: serviceUnit,
         T3CODE_HOME: "/home/user/.signalbox-service",
