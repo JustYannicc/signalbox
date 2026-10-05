@@ -13,6 +13,8 @@ interface ImportMetaEnv {
   readonly VITE_RELAY_OTLP_TRACES_URL: string;
   readonly VITE_RELAY_OTLP_TRACES_DATASET: string;
   readonly VITE_RELAY_OTLP_TRACES_TOKEN: string;
+  /** Signalbox: Sentry DSN the rail feedback button sends to. */
+  readonly VITE_T3CODE_FEEDBACK_DSN?: string;
   readonly APP_VERSION: string;
 }
 
