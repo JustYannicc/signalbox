@@ -72,7 +72,7 @@ Two interaction models I don't want. The first is the department bot: a universi
 
 ## Staying on T3 Code
 
-`origin` is `JustYannicc/signalbox`; `upstream` is `pingdotgg/t3code`. Upstream ships hundreds of commits a week, so every fork change is a future merge.
+`origin` is `JustYannicc/signalbox`. `pingdotgg/t3code` is the remote `t3code`, fetched into `refs/remotes/upstream/*` so `upstream/main` is T3 Code's main (`git fetch t3code`). Don't name a remote `upstream`: T3 Code and Signalbox name a project after it, and the sidebar would show T3 Code's repository. Upstream ships hundreds of commits a week, so every fork change is a future merge.
 
 - Merge upstream into `main`; never rebase shared history.
 - Rename what users see, type, or install. Keep upstream's internal names (`@t3tools/*`, `T3CODE_*`, symbols, `t3.json`) so upstream patches apply cleanly.
@@ -134,17 +134,8 @@ The most common defect in this repo is a change that works on the path you teste
 
 An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
 
-- Copy from `~/.signalbox/userdata` (the developer's real data, the most realistic test set), `~/.signalbox/dev`, or T3 Code's `~/.t3/userdata`, which uses the same format. Worktree state lives at `<worktree>/.t3/userdata`.
-- Snapshot the database with `VACUUM INTO`, which is safe even while a server has the source open and yields one consistent file:
-
-  ```bash
-  mkdir -p .t3/userdata
-  rm -f .t3/userdata/state.sqlite*  # VACUUM INTO refuses to overwrite
-  bun -e "new (require('bun:sqlite').Database)(process.env.HOME + '/.signalbox/userdata/state.sqlite', { readonly: true }).run(\"VACUUM INTO '.t3/userdata/state.sqlite'\")"
-  ```
-
-  A plain `cp` is only safe when no server has the source open, and must bring the `-wal` and `-shm` siblings along. A live file copy is a corrupt copy.
-
+- Run `vp run migrate-dev-db` with your dev server stopped. It rebuilds `<worktree>/.t3/userdata/statev2.sqlite` from a read-only snapshot of `~/.signalbox/userdata/statev2.sqlite`, the developer's real data. It keeps recent projects and their stopped threads, and drops scheduled tasks, pending work, and auth sessions, so your dev server never runs the developer's agents. Raise `--projects` and `--threads-per-project` for more data. Point `--source` at another database file (`~/.signalbox/dev/userdata/statev2.sqlite`, or T3 Code's `~/.t3/userdata/statev2.sqlite`, which uses the same format) when you need it.
+- Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
 
@@ -154,7 +145,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Test meaningful logic or observable behavior. Do not render components to static markup to assert props or attributes, or add tests that merely assert callback wiring or mirror the implementation.
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask. CI owns the full suite.
 - Backend behavior changes ship with focused tests for that behavior.
-- The server is event-sourced and its async flows emit typed receipts. Wait on receipts and worker drains, never on sleeps or polling. A test that needs a timeout to pass is wrong.
+- The server is event-sourced, and side effects run after the command commits. In tests, drain the effect worker (`OrchestrationEffectWorkerV2.drain`) or await the specific persisted event or `Deferred` that marks the milestone. Never wait on sleeps or polling. A test that needs a timeout to pass is wrong.
 - Upon request, user-visible frontend changes should get one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
 
 For authorized mobile verification, a missing or outdated native client is a build step, not a blocker. Run `node scripts/mobile-native-client.ts ensure <ios|android> <device-id>` on the simulator host before starting Metro. It checks the local Expo fingerprint and builds/installs when needed. See `test-t3-mobile` for the full workflow.
@@ -189,9 +180,9 @@ Most code changes do not need an internal documentation change. Agents can read 
 
 ## How it works
 
-Clients send typed WebSocket requests. The server turns them into _commands_, a pure _decider_ turns commands into persisted _events_, and a _projector_ derives the read model the UI renders. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Side effects run in queue-backed _reactors_ that emit _receipts_ when milestones land. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
+Clients send typed WebSocket requests. The server turns them into _commands_. The _orchestrator_ (`apps/server/src/orchestration-v2/Orchestrator.ts`) serializes commands and decides _events_ without doing any I/O. The _event sink_ commits those events, the _projections_ the UI reads, the _command receipt_, and _outbox_ effects in one transaction. The _effect worker_ then runs the effects, such as starting a provider turn or capturing a checkpoint, and feeds results back as commands. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
 
-Full glossary with file links: `docs/internals/glossary.md`
+Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/internals/glossary.md`
 
 ## Where code lives
 

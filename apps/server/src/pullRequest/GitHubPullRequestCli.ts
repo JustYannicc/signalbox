@@ -1,3 +1,4 @@
+import { makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -51,7 +52,7 @@ import {
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestCoreJson,
-  PULL_REQUEST_CORE_GRAPHQL_QUERY,
+  pullRequestCoreGraphQlQuery,
   type GitHubPullRequestCore,
   type GitHubPullRequestSummary,
   decodePullRequestPreviewJson,
@@ -541,6 +542,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<ProviderChangeRequestSummary, GitHubPullRequestCliError>;
+
+    readonly revalidateChecks: Effect.Success<typeof makeChecksRevalidator>;
 
     readonly getPullRequestDetail: (input: {
       readonly cwd: string;
@@ -1090,6 +1093,7 @@ function actionArgs(
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+  const revalidateChecks = yield* makeChecksRevalidator;
   const routingIdentities = new Map<
     string,
     {
@@ -1591,7 +1595,7 @@ export const make = Effect.gen(function* () {
             ["-F", `number=${input.number}`],
             ["-f", `headRef=refs/pull/${input.number}/head`],
           ],
-          query: PULL_REQUEST_CORE_GRAPHQL_QUERY,
+          query: pullRequestCoreGraphQlQuery(input.host),
           decode: decodePullRequestCoreJson,
         }),
       ),
@@ -1885,6 +1889,7 @@ export const make = Effect.gen(function* () {
 
   return GitHubPullRequestCli.of({
     withVerifiedCredential,
+    revalidateChecks,
     getRoutingIdentity,
     getViewerLogin: (input) =>
       getRoutingIdentity(input).pipe(Effect.map((identity) => identity.viewer)),
@@ -2404,6 +2409,7 @@ export const make = Effect.gen(function* () {
           // where a bound kept some of the words on GitHub.
           commentCount: entries.reduce((total, entry) => total + entry.commentCount, 0),
           truncated: cursor !== null || entries.some((entry) => entry.nextCommentCursor !== null),
+          reviewThreadsTruncated: cursor !== null,
           reactions,
           reactionsById,
           reviewers,

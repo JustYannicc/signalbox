@@ -1,0 +1,102 @@
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { Argument, Command } from "effect/unstable/cli";
+import * as CliError from "effect/unstable/cli/CliError";
+
+import * as NetService from "@t3tools/shared/Net";
+import packageJson from "../package.json" with { type: "json" };
+import { acpMcpBridgeCommand, acpMcpCallCommand } from "./cli/acpMcpBridge.ts";
+import { authCommand } from "./cli/auth.ts";
+import { appCommand } from "./cli/app.ts";
+import { connectCommand } from "./cli/connect.ts";
+import { pairCommand } from "./cli/pair.ts";
+import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
+import { sharedServerCommandFlags } from "./cli/config.ts";
+import { projectCommand } from "./cli/project.ts";
+import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
+import { updateCommand } from "./cli/update.ts";
+import { uninstallCommand } from "./cli/uninstall.ts";
+import { serviceLauncherCommand } from "./cli/serviceLauncher.ts";
+import { claudeHistoryCommand } from "./cli/claudeHistory.ts";
+import { sshHelperCommand } from "./cli/sshHelper.ts";
+import { serviceCommand } from "./cli/service.ts";
+import { servicePreflightCommand } from "./cli/servicePreflight.ts";
+import { themeCommand } from "./cli/theme.ts";
+import { traceCommand } from "./cli/trace.ts";
+import { triageCommand } from "./cli/triage.ts";
+import { importT3Command } from "./signalbox/importT3Command.ts"; // signalbox: one-time T3 Code import
+
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+
+const connectPublicConfigMissingMessage =
+  "Signalbox Connect commands are unavailable: this build is missing Signalbox Connect public configuration.";
+
+class ConnectPublicConfigMissingError extends CliError.UserError {
+  override get message() {
+    return connectPublicConfigMissingMessage;
+  }
+}
+
+const connectUnavailableCommand = Command.make("connect", {
+  command: Argument.String("command").pipe(Argument.variadic),
+}).pipe(
+  Command.withDescription(
+    "Signalbox Connect is unavailable in builds without public configuration.",
+  ),
+  Command.unlisted,
+  Command.withHandler(() =>
+    Effect.fail(
+      new CliError.ShowHelp({
+        commandPath: ["signalbox", "connect"],
+        errors: [new ConnectPublicConfigMissingError({ cause: connectPublicConfigMissingMessage })],
+      }),
+    ),
+  ),
+);
+
+export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
+  Command.make("signalbox", { ...sharedServerCommandFlags }).pipe(
+    Command.withDescription("Run the Signalbox server."),
+    Command.withHandler(runDefaultServerCommand),
+    Command.withSubcommands([
+      Command.make("help").pipe(
+        Command.withDescription("Show command help."),
+        Command.withHandler(() =>
+          Effect.fail(new CliError.ShowHelp({ commandPath: ["signalbox"], errors: [] })),
+        ),
+      ),
+      acpMcpBridgeCommand,
+      acpMcpCallCommand,
+      startCommand,
+      serveCommand,
+      appCommand,
+      pairCommand,
+      authCommand,
+      projectCommand,
+      serviceCommand,
+      updateCommand,
+      uninstallCommand,
+      serviceLauncherCommand,
+      claudeHistoryCommand,
+      sshHelperCommand,
+
+      servicePreflightCommand,
+      themeCommand,
+      traceCommand,
+      triageCommand,
+      importT3Command, // signalbox: one-time T3 Code import
+      cloudEnabled ? connectCommand : connectUnavailableCommand,
+    ]),
+  );
+
+export const cli = makeCli();
+
+export function runCli() {
+  Command.run(cli, { version: packageJson.version }).pipe(
+    Effect.scoped,
+    Effect.provide(CliRuntimeLayer),
+    NodeRuntime.runMain,
+  );
+}

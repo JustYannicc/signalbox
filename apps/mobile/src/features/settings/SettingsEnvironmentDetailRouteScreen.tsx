@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { StaticScreenProps } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -16,6 +16,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
 import { EnvironmentAccountSection } from "../account/EnvironmentAccountSection"; // signalbox: accounts
+import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -42,6 +43,7 @@ export function SettingsEnvironmentDetailRouteScreen({
 
 function EnvironmentDetail({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const connections = useRemoteConnections();
   const environment = connections.connectedEnvironments.find(
     (entry) => entry.environmentId === environmentId,
@@ -168,6 +170,19 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 onUpdate={connections.onUpdateEnvironment}
               />
             </SettingsSection>
+            <EnvironmentRoutesSection
+              environmentId={environmentId}
+              connected={connected}
+              onAddRoute={() =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: {
+                    screen: "SettingsEnvironmentNew",
+                    params: { routeFor: environmentId },
+                  },
+                })
+              }
+            />
             {/* signalbox: accounts */}
             <EnvironmentAccountSection
               environmentId={environmentId}

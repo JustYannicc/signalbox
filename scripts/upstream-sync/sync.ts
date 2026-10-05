@@ -9,7 +9,7 @@
  * - Nothing new upstream: closes a stale conflict issue, then stops.
  * - Clean merge: rebuilds the `upstream-sync` branch from main (merge, never
  *   rebase), applies the post-merge steps from docs/operations/upstream-sync.md,
- *   and opens or updates one PR with auto-merge (merge commit) enabled.
+ *   and opens or updates one PR for a person to review and merge.
  * - Conflict, or a push GitHub refuses: opens or updates one issue labelled
  *   `upstream-sync-conflict`. A later clean sync closes it.
  *
@@ -31,7 +31,12 @@ const UPSTREAM = "upstream/main";
 const BRANCH = "upstream-sync";
 const LABEL = "upstream-sync-conflict";
 const UPSTREAM_REPOSITORY = "pingdotgg/t3code";
-const RUNBOOK_URL = `https://github.com/${process.env.GITHUB_REPOSITORY ?? "JustYannicc/signalbox"}/blob/main/docs/operations/upstream-sync.md`;
+const REPOSITORY = process.env.GITHUB_REPOSITORY ?? "JustYannicc/signalbox";
+const RUNBOOK_URL = `https://github.com/${REPOSITORY}/blob/main/docs/operations/upstream-sync.md`;
+
+// gh infers its repo from git remotes and can pick `upstream`, so every issue,
+// label, and PR call would land on T3 Code. Pin it for all child processes.
+process.env.GH_REPO = REPOSITORY;
 
 function run(command: string, args: ReadonlyArray<string>): string {
   console.log(`$ ${command} ${args.join(" ")}`);
@@ -148,12 +153,12 @@ async function generateRouteTree() {
   await new generator.Generator({ config, root: webRoot }).run();
 }
 
-function ensurePullRequest(upstreamSha: string): string {
+function ensurePullRequest(upstreamSha: string) {
   const count = git(ROOT, ["rev-list", "--count", `${BASE}..${UPSTREAM}`]);
   const body = [
     `Merges ${UPSTREAM_REPOSITORY} main at ${upstreamCommitLink(upstreamSha)} (${count} new commits), then reruns the rebrand codemod, \`vp fmt\`, and the generated files.`,
     "",
-    `Auto-merge lands this with a merge commit once Check passes. Never squash or rebase it: that drops upstream's history and turns every later sync into conflicts. Upstream may add identity values the codemod can't rename; see [the runbook](${RUNBOOK_URL}).`,
+    `Review before merging: upstream changes land in the product as-is. Merge with a merge commit. Never squash or rebase it: that drops upstream's history and turns every later sync into conflicts. Upstream may add identity values the codemod can't rename; see [the runbook](${RUNBOOK_URL}).`,
     "",
     `Last updated by ${runLink()}.`,
   ].join("\n");
@@ -173,9 +178,9 @@ function ensurePullRequest(upstreamSha: string): string {
   ]);
   if (existing) {
     run("gh", ["pr", "edit", existing, "--body", body]);
-    return existing;
+    return;
   }
-  const url = run("gh", [
+  run("gh", [
     "pr",
     "create",
     "--base",
@@ -187,17 +192,6 @@ function ensurePullRequest(upstreamSha: string): string {
     "--body",
     body,
   ]);
-  return url.split("/").at(-1) ?? url;
-}
-
-function enableAutoMerge(pr: string) {
-  try {
-    run("gh", ["pr", "merge", pr, "--auto", "--merge"]);
-  } catch {
-    console.log(
-      `::warning::Could not enable auto-merge on #${pr}. Allow auto-merge and merge commits in the repository settings.`,
-    );
-  }
 }
 
 function remoteBranchHead(): string | undefined {
@@ -230,7 +224,7 @@ async function main() {
     if (isAncestor(ROOT, BASE, pending) && isAncestor(ROOT, UPSTREAM, pending)) {
       console.log(`${BRANCH} already merges the current main and upstream.`);
       closeConflictIssue("Upstream merges cleanly again");
-      enableAutoMerge(ensurePullRequest(upstreamSha));
+      ensurePullRequest(upstreamSha);
       return;
     }
   }
@@ -271,7 +265,7 @@ async function main() {
   }
 
   closeConflictIssue("Upstream merges cleanly again");
-  enableAutoMerge(ensurePullRequest(upstreamSha));
+  ensurePullRequest(upstreamSha);
   if (process.env.DISPATCH_CI === "true") {
     run("gh", ["workflow", "run", "signalbox-ci.yml", "--ref", BRANCH]);
   }

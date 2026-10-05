@@ -78,6 +78,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
@@ -158,7 +159,9 @@ import {
   buildRootGroups,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
+  buildCommandPaletteRows,
   enumerateCommandPaletteItems,
+  findHighlightedCommandPaletteItem,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
@@ -175,7 +178,10 @@ import {
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
-import { CommandPaletteResults } from "./CommandPaletteResults";
+import {
+  CommandPaletteVirtualizedResults,
+  scrollCommandPaletteRowIntoView,
+} from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon, ForgejoIcon } from "./Icons";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
@@ -192,7 +198,11 @@ import {
 } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
-import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  type ProviderInstanceEntry,
+} from "../providerInstances";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -212,58 +222,6 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
-
-const APPEARANCE_OPTIONS = [
-  { mode: "system", label: "System", icon: MonitorIcon },
-  { mode: "light", label: "Light", icon: SunIcon },
-  { mode: "dark", label: "Dark", icon: MoonIcon },
-] as const;
-
-function notifyThemeSaveFailure(): void {
-  toastManager.add(
-    stackedThreadToast({
-      type: "error",
-      title: "Couldn't save theme selection",
-      description: "Try again.",
-    }),
-  );
-}
-
-function projectFavicon(project: Project) {
-  return <ProjectFavicon project={project} className="size-4" />;
-}
-
-function ProjectSearchDescription(props: {
-  readonly environmentLabels: ReadonlyArray<string>;
-  readonly grouped: boolean;
-  readonly location: {
-    readonly kind: "local" | "remote";
-    readonly label: string;
-    readonly machine: EnvironmentMachineKind;
-  };
-  readonly workspaceRoot: string;
-}) {
-  if (!props.grouped) {
-    return (
-      <span className="flex min-w-0 items-center gap-1">
-        <span className="inline-flex min-w-0 items-center gap-1">
-          {props.location.kind === "remote" ? (
-            <EnvironmentMachineIcon
-              aria-hidden
-              kind={props.location.machine}
-              className={COMMAND_PALETTE_META_ICON_CLASS}
-            />
-          ) : null}
-          <span className="truncate">{props.location.label}</span>
-        </span>
-        <CommandPaletteMetaDot />
-        <span className="truncate">{props.workspaceRoot}</span>
-      </span>
-    );
-  }
-
-  return <span className="truncate">{props.environmentLabels.join(" · ")}</span>;
-}
 
 function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
   if (os === "windows") {
@@ -380,6 +338,10 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
   }
 }
 
+function projectFaviconIcon(project: Project): ReactNode {
+  return <ProjectFavicon project={project} className={ITEM_ICON_CLASS} />;
+}
+
 function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null): string | null {
   if (!flow) return null;
   if (flow.step === "confirm") return null;
@@ -481,6 +443,26 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
   return command in OVERLAY_MODE_BY_COMMAND
     ? OVERLAY_MODE_BY_COMMAND[command as keyof typeof OVERLAY_MODE_BY_COMMAND]
     : null;
+}
+
+const APPEARANCE_OPTIONS = [
+  { mode: "system", label: "System", icon: MonitorIcon },
+  { mode: "light", label: "Light", icon: SunIcon },
+  { mode: "dark", label: "Dark", icon: MoonIcon },
+] as const;
+
+function notifyThemeSaveFailure(): void {
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: "Couldn't save theme selection",
+      description: "Try again.",
+    }),
+  );
+}
+
+function projectFavicon(project: Project) {
+  return <ProjectFavicon project={project} className="size-4" />;
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
@@ -719,6 +701,15 @@ function OpenCommandPaletteDialog(props: {
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
+  const resultListRef = useRef<LegendListRef | null>(null);
+  // Typing or entering a submenu clears the highlight. Base UI keeps its own on the
+  // first row, but the palette shows none until the user navigates, and the first
+  // ArrowDown lands on it.
+  const highlightClearedRef = useRef(false);
+  function clearTypedHighlight(): void {
+    highlightClearedRef.current = true;
+    setHighlightedItemValue(null);
+  }
   const clientSettings = useClientSettings();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
@@ -827,10 +818,17 @@ function OpenCommandPaletteDialog(props: {
   const providerEntryByEnvironmentAndInstanceId = useMemo(() => {
     const map = new Map<string, ProviderInstanceEntry>();
     for (const environment of environments) {
+      const serverConfig = environment.serverConfig;
       const environmentProviders =
-        environment.serverConfig?.providers ??
+        serverConfig?.providers ??
         (environment.environmentId === primaryEnvironmentId ? providers : []);
-      for (const entry of deriveProviderInstanceEntries(environmentProviders)) {
+      const derived = deriveProviderInstanceEntries(environmentProviders);
+      // Settings fill the ACP registry identity (agent id, icon URL) the
+      // derived entries alone do not carry.
+      const entries = serverConfig
+        ? applyProviderInstanceSettings(derived, serverConfig.settings)
+        : derived;
+      for (const entry of entries) {
         map.set(`${environment.environmentId}:${entry.instanceId}`, entry);
       }
     }
@@ -1301,7 +1299,7 @@ function OpenCommandPaletteDialog(props: {
             />
           );
         },
-        icon: projectFavicon,
+        icon: projectFaviconIcon,
         runProject: openProjectFromSearch,
       }),
     [
@@ -1353,7 +1351,7 @@ function OpenCommandPaletteDialog(props: {
               </span>
             );
           },
-          icon: projectFavicon,
+          icon: projectFaviconIcon,
           runProject: async (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
             const contextualRefBelongsToGroup =
@@ -1408,7 +1406,7 @@ function OpenCommandPaletteDialog(props: {
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
         renderDescription: (thread, { projectTitle }) => {
           const modelInstanceId =
-            thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+            thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
           const providerEntry =
             providerEntryByEnvironmentAndInstanceId.get(
               `${thread.environmentId}:${modelInstanceId}`,
@@ -1425,8 +1423,10 @@ function OpenCommandPaletteDialog(props: {
               isCurrent={thread.id === activeThreadId}
               driverKind={providerEntry?.driverKind ?? null}
               providerDisplayName={
-                thread.session?.providerName ?? providerEntry?.displayName ?? modelInstanceId
+                thread.runtime?.providerName ?? providerEntry?.displayName ?? modelInstanceId
               }
+              acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+              acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
             />
           );
         },
@@ -1441,7 +1441,7 @@ function OpenCommandPaletteDialog(props: {
             ? {
                 source: match.source,
                 snippet: match.snippet,
-                query: threadSearchQuery,
+                query: threadSearch.query,
               }
             : undefined;
         },
@@ -1456,12 +1456,13 @@ function OpenCommandPaletteDialog(props: {
       activeThreadId,
       clientSettings.sidebarThreadSortOrder,
       navigate,
+      projectCwdById,
       projectByKey,
       projectEnvironmentLocationById,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
-      threadSearchQuery,
+      threadSearch.query,
       threads,
     ],
   );
@@ -1478,6 +1479,7 @@ function OpenCommandPaletteDialog(props: {
           ...(view.initialQuery ? { initialQuery: view.initialQuery } : {}),
         },
       ]);
+      highlightClearedRef.current = true;
       setHighlightedItemValue(null);
       setQuery(view.initialQuery ?? "");
     },
@@ -1509,7 +1511,7 @@ function OpenCommandPaletteDialog(props: {
 
   function handleQueryChange(nextQuery: string): void {
     browseNavigation.invalidate();
-    setHighlightedItemValue(null);
+    clearTypedHighlight();
     setQuery(nextQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
@@ -1988,7 +1990,7 @@ function OpenCommandPaletteDialog(props: {
       // Failures throw into executeItem's error toast.
       run: async () => {
         const { environmentId } = thread;
-        if (thread.session && thread.session.status !== "stopped") {
+        if (thread.runtime !== null) {
           const stopped = await stopThreadSession({
             environmentId,
             input: { threadId: thread.id },
@@ -2007,7 +2009,7 @@ function OpenCommandPaletteDialog(props: {
         const refreshed = await refreshProviders({
           environmentId,
           input: {
-            instanceId: thread.session?.providerInstanceId ?? thread.modelSelection.instanceId,
+            instanceId: thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId,
             cwd: thread.worktreePath ?? project.workspaceRoot,
             fresh: true,
           },
@@ -2957,6 +2959,9 @@ function OpenCommandPaletteDialog(props: {
   } else if (isBrowsing) {
     displayedGroups = relativePathNeedsActiveProject ? [] : browseGroups;
   }
+  const resultRows = buildCommandPaletteRows(displayedGroups);
+  const autoHighlightsFirstRow =
+    !isBrowsing && !isRemoteProjectCloneFlow && newProjectFlow === null;
 
   const inputPlaceholder =
     newProjectFlow !== null
@@ -3102,6 +3107,43 @@ function OpenCommandPaletteDialog(props: {
     if (event.key === "Backspace" && query === "" && isSubmenu) {
       event.preventDefault();
       popView();
+      return;
+    }
+
+    // Base UI ignores navigation keys with modifiers, so these fallbacks do too.
+    if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
+    // Base UI only keeps a hidden highlight on the first row when it auto-highlights.
+    const firstItemValue = autoHighlightsFirstRow ? resultRows.itemValues[0] : undefined;
+    if (
+      event.key === "ArrowDown" &&
+      highlightClearedRef.current &&
+      firstItemValue &&
+      !event.nativeEvent.isComposing
+    ) {
+      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+      event.preventDefault();
+      highlightClearedRef.current = false;
+      setHighlightedItemValue(firstItemValue);
+      scrollCommandPaletteRowIntoView(
+        resultListRef.current,
+        resultRows.rowIndexByItemIndex[0] ?? 0,
+      );
+      return;
+    }
+
+    // Base UI clicks the highlighted row on Enter, which does nothing once the
+    // virtualized list has unmounted it, so run the tracked highlight directly.
+    if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+      const highlightedItem = findHighlightedCommandPaletteItem(
+        displayedGroups,
+        highlightedItemValue ?? firstItemValue ?? null,
+      );
+      if (highlightedItem) {
+        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        event.preventDefault();
+        event.stopPropagation();
+        executeItem(highlightedItem);
+      }
     }
   }
 
@@ -3368,9 +3410,7 @@ function OpenCommandPaletteDialog(props: {
     <CommandPaletteContent
       key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${newProjectFlow ? "new-project" : (addProjectCloneFlow?.step ?? "none")}`}
       aria-label="Command palette"
-      autoHighlight={
-        isBrowsing || isRemoteProjectCloneFlow || newProjectFlow !== null ? false : "always"
-      }
+      autoHighlight={autoHighlightsFirstRow ? "always" : false}
       footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}
       inputAccessory={inputAccessory}
@@ -3406,8 +3446,16 @@ function OpenCommandPaletteDialog(props: {
         onKeyDown: handleKeyDown,
       }}
       mode="none"
-      onItemHighlighted={(value) => {
+      items={resultRows.itemValues}
+      virtualized
+      onItemHighlighted={(value, eventDetails) => {
+        if (eventDetails.reason === "none" && highlightClearedRef.current) return;
+        highlightClearedRef.current = false;
         setHighlightedItemValue(typeof value === "string" ? value : null);
+        const rowIndex = resultRows.rowIndexByItemIndex[eventDetails.index];
+        if (eventDetails.reason === "keyboard" && rowIndex !== undefined) {
+          scrollCommandPaletteRowIntoView(resultListRef.current, rowIndex);
+        }
       }}
       onValueChange={handleQueryChange}
       showBackHint={isSubmenu}
@@ -3445,8 +3493,9 @@ function OpenCommandPaletteDialog(props: {
           </div>
         </div>
       ) : null}
-      <CommandPaletteResults
-        groups={displayedGroups}
+      <CommandPaletteVirtualizedResults
+        rows={resultRows.rows}
+        listRef={resultListRef}
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={isActionsOnly}
         keybindings={keybindings}
@@ -3472,4 +3521,36 @@ function OpenCommandPaletteDialog(props: {
       />
     </CommandPaletteContent>
   );
+}
+
+function ProjectSearchDescription(props: {
+  readonly environmentLabels: ReadonlyArray<string>;
+  readonly grouped: boolean;
+  readonly location: {
+    readonly kind: "local" | "remote";
+    readonly label: string;
+    readonly machine: EnvironmentMachineKind;
+  };
+  readonly workspaceRoot: string;
+}) {
+  if (!props.grouped) {
+    return (
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="inline-flex min-w-0 items-center gap-1">
+          {props.location.kind === "remote" ? (
+            <EnvironmentMachineIcon
+              aria-hidden
+              kind={props.location.machine}
+              className={COMMAND_PALETTE_META_ICON_CLASS}
+            />
+          ) : null}
+          <span className="truncate">{props.location.label}</span>
+        </span>
+        <CommandPaletteMetaDot />
+        <span className="truncate">{props.workspaceRoot}</span>
+      </span>
+    );
+  }
+
+  return <span className="truncate">{props.environmentLabels.join(" · ")}</span>;
 }

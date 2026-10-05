@@ -66,6 +66,35 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+### Reach one machine several ways
+
+A machine can have more than one route: LAN, Tailscale, a public URL, SSH, or
+Signalbox Connect. To add one, choose **Add route** in the machine's route list, or
+next to it in the Signalbox Connect list. Pairing the same machine again over another
+address also adds a route instead of a second machine. A new route is placed by
+speed, in that order, and you can reorder routes at any time.
+
+While connected through Signalbox Connect or a paired address, Signalbox also learns the
+machine's current LAN and Tailscale addresses and adds them as routes, so
+pairing once through Signalbox Connect is enough to use the LAN at home. When the
+machine's LAN address changes, for example after it joins another Wi-Fi network,
+the learned route follows it. The machine must allow network access for its LAN
+address to be learned. You can reorder a learned route, but not remove it; it
+goes away with the route it was learned through, or when the machine stops
+reporting that address.
+
+Signalbox connects over the first route that answers. Away from home, a LAN
+address that does not answer is checked briefly and skipped. It is only tried
+again, after the other routes, if none of them connect. While connected over a
+later route, Signalbox checks the earlier ones when your network changes, when you
+return to the app, and every minute, and moves back as soon as one works.
+
+On web and desktop, select the route count under the machine's name in
+**Settings → Connections** to see its routes. Drag a route to change the order,
+or remove it. On mobile, open the machine under **Settings → Environments** and
+choose **Edit**. Signing out of Signalbox Connect removes only that route; a machine
+you can still reach another way stays saved.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
@@ -192,7 +221,7 @@ when SSH closes, see [background-service troubleshooting](./background-service.m
 | HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                                                  |
 
 After fixing a permanent rejection, restart the host's server. On Linux, use
-`systemctl --user restart t3code.service` for the background service. For a
+`systemctl --user restart signalbox.service` for the background service. For a
 foreground server, stop it and run `signalbox serve` again with your usual options.
 Include the diagnostic message and trace ID when reporting a persistent failure.
 
