@@ -18,6 +18,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 const DATABASE_FILE = "state.sqlite";
+const ImportedSettingsSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json));
+const decodeImportedSettings = Schema.decodeEffect(ImportedSettingsSchema);
+const encodeImportedSettings = Schema.encodeEffect(ImportedSettingsSchema);
 
 /**
  * What the import brings over from `userdata`. An allowlist, so files upstream
@@ -92,6 +95,22 @@ export class T3ImportError extends Schema.TaggedError<T3ImportError>()("T3Import
     return `Importing T3 Code data failed at ${this.step} (${this.path}). T3 Code's data was not changed.`;
   }
 }
+
+/** Keep the imported T3 global shortcut from firing in both apps. */
+const resetImportedSnapShotSetting = Effect.fn("T3Import.resetImportedSnapShotSetting")(function* (
+  settingsPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const fail = (cause: unknown) =>
+    new T3ImportError({ step: "copy-entry", path: settingsPath, cause });
+  const contents = yield* fs.readFileString(settingsPath).pipe(Effect.mapError(fail));
+  const settings = yield* decodeImportedSettings(contents).pipe(Effect.mapError(fail));
+  const encodedSettings = yield* encodeImportedSettings({
+    ...settings,
+    snapShotEnabled: false,
+  }).pipe(Effect.mapError(fail));
+  yield* fs.writeFileString(settingsPath, encodedSettings).pipe(Effect.mapError(fail));
+});
 
 /** The import source and target for a Signalbox home on this machine. */
 export const defaultT3ImportPaths = Effect.fn("T3Import.defaultPaths")(function* (
@@ -271,6 +290,9 @@ export const importT3Data = Effect.fn("T3Import.importT3Data")(function* (paths:
       .pipe(
         Effect.mapError((cause) => new T3ImportError({ step: "copy-entry", path: from, cause })),
       );
+    if (entry === "settings.json") {
+      yield* resetImportedSnapShotSetting(path.join(paths.targetStateDir, entry));
+    }
     copied.push(entry);
   }
   if (yield* copySecrets(paths)) copied.push("secrets");
