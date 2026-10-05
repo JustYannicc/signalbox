@@ -1,6 +1,6 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback } from "react";
+import { createContext, memo, use, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
@@ -30,11 +30,19 @@ import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
+// signalbox: true inside the view-rail layout (SidebarViews). The rail carries
+// the utility buttons, and the layout renders the one titlebar row itself.
+export const SidebarRailContext = createContext(false);
+
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
+  inRail = false,
 }: {
   isElectron: boolean;
+  /** The rail layout's own row: it starts after the rail and paints no backdrop. */
+  inRail?: boolean;
 }) {
+  const railLayout = use(SidebarRailContext);
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = resolveSidebarStageBackdropVariant(
@@ -45,6 +53,8 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
+  // signalbox: in the rail layout, only the layout's own row renders.
+  if (railLayout && !inRail) return null;
 
   return (
     // The titlebar row, not a padded SidebarHeader: it aligns to the window controls.
@@ -54,13 +64,13 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         isElectron && "drag-region",
       )}
     >
-      {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
+      {backdropVariant && !inRail ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
       <SidebarTrigger
         // Over the stage artwork: the media viewer's control-on-imagery treatment.
         variant={backdropVariant ? "media-navigation" : "ghost"}
         className="relative top-auto z-10 translate-y-0 md:hidden"
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
+      <SidebarBrand onBackdrop={backdropVariant !== null} inRail={inRail} />
       {pillLabel ? (
         <Badge
           className="relative z-10 ml-1 hidden @[15rem]/sidebar-header:inline-flex"
@@ -75,12 +85,16 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   );
 });
 
-function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+function SidebarBrand({ onBackdrop, inRail }: { onBackdrop: boolean; inRail: boolean }) {
   return (
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        // Clears the fixed titlebar controls; beside the rail, minus its width.
+        inRail
+          ? "ml-[calc(var(--workspace-titlebar-content-left)-3rem)]"
+          : "ml-[var(--workspace-titlebar-content-left)]",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -194,12 +208,20 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 });
 
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+  const railLayout = use(SidebarRailContext);
   return (
     <SidebarFooter>
       <SidebarThreadUndoNotice />
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarUtilityMenu />
+      {/* signalbox: the rail carries Settings and Usage. */}
+      {railLayout ? (
+        <SidebarMenu className="flex-row items-center empty:hidden">
+          <SidebarUpdatePill />
+        </SidebarMenu>
+      ) : (
+        <SidebarUtilityMenu />
+      )}
     </SidebarFooter>
   );
 });
