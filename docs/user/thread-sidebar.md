@@ -3,6 +3,17 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+## Home and Pipeline
+
+The icon rail on the left edge of the sidebar switches between two views of your
+threads. **Home** groups them under their projects. **Pipeline** orders them by what
+needs your attention, and is the view the rest of this page describes. Collapsing the
+sidebar hides the view but keeps the rail. The back and forward arrows beside the
+sidebar toggle step through where you've been.
+
+To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
+**Settings**.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model
