@@ -318,6 +318,75 @@ describe("pools", () => {
     expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
   });
 
+  it("keeps every hub account as a row, even without windows, so the hub can manage it", () => {
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "chatgpt-siwc-a@example.com.json",
+                    driver: ProviderDriverKind.make("codex"),
+                    email: "a@example.com",
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: { reason: "unsupported" as const, message: "No usage API." },
+                    },
+                  },
+                  {
+                    id: "claude-paused@example.com.json",
+                    driver: claude,
+                    email: "paused@example.com",
+                    disabled: true,
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: { reason: "unsupported" as const, message: "Paused." },
+                    },
+                  },
+                  {
+                    id: "claude-broken@example.com.json",
+                    driver: claude,
+                    email: "broken@example.com",
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: { reason: "probeFailed" as const },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((account) => [account.email, account.hubAccount?.disabled])).toEqual([
+      ["a@example.com", false],
+      ["paused@example.com", true],
+      ["broken@example.com", false],
+    ]);
+    expect(accounts[0]?.hubAccount).toEqual({
+      environmentId: "env-a",
+      sourceId: source.id,
+      accountId: "chatgpt-siwc-a@example.com.json",
+      disabled: false,
+    });
+    // Windowless rows add nothing to the pooled bars.
+    const claudePool = collectLimitPools(accounts, Date.parse(checkedAt)).find(
+      (pool) => pool.driver === claude,
+    );
+    expect(claudePool?.windows).toEqual([]);
+  });
+
   it("redeems through the hub when it holds a credit, even with a fresher native read", () => {
     const native = provider({
       driver: claude,
@@ -590,8 +659,9 @@ describe("pools", () => {
       ],
     ]);
     const pools = collectLimitPools(collectLimitAccounts(input), now);
+    // The windowless hub account is listed (it can be managed there) but adds no bar segment.
     expect(pools.map((pool) => [pool.driver, pool.accounts.length])).toEqual([
-      ["claudeAgent", 2],
+      ["claudeAgent", 3],
       ["codex", 1],
     ]);
     const [session, week] = pools[0]!.windows;
@@ -664,7 +734,12 @@ describe("pools", () => {
     ]);
     // Session resets determine the account order for every row.
     expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
-    expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+    // Accounts without windows sort after every reset, by name.
+    expect(pools[0]?.accounts.map((account) => account.key)).toEqual([
+      "hub:a",
+      "hub:b",
+      "hub:unsupported",
+    ]);
   });
 });
 

@@ -115,13 +115,34 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Use several subscription accounts
+
+Signalbox can spread work across several ChatGPT and Claude accounts. Open **Usage → Limits** and
+choose **Add account**, then **ChatGPT account** or **Claude account**, and sign in with the account
+to add. Repeat for each account. ChatGPT accounts use Sign in with ChatGPT.
+
+When Signalbox runs on the same machine as your browser, sign-in finishes on its own. From another
+device, the provider ends on a page that cannot load; copy that page's full address and paste it
+into Signalbox to finish.
+
+The first account adds a **Codex accounts** or **Claude accounts** provider. Pick it in the model
+picker to use every account you added: each conversation stays on one account, and work moves to
+another account when one runs out. Add more accounts from **Settings → Providers** on that provider
+as well.
+
+Each added account appears under **Accounts** on **Usage → Limits**. Use its menu to pause it,
+resume it, sign in again, or remove it. Claude accounts report their limits; ChatGPT does not share
+usage with connected apps, so ChatGPT accounts link to ChatGPT's usage page instead.
+
 ## Connect a CLIProxyAPI hub
 
-To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
-environment that will connect to the hub and enter its URL and management key.
+To see the accounts of a CLIProxyAPI hub you run yourself, open **Settings → Providers → Usage
+providers → Add hub**. Choose the environment that will connect to the hub and enter its URL and
+management key.
 
-The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
-account and choose **Use reset** to redeem one. No hub plugin is required.
+The accounts appear under **Usage → Limits**, where you can pause, resume, or remove them. Codex
+accounts show banked reset credits; select an account and choose **Use reset** to redeem one. No
+hub plugin is required.
 
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same

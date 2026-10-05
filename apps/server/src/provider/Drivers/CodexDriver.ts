@@ -72,6 +72,8 @@ import {
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
+import { makeHubCodexProvider } from "../../accountHub/HubCodexProvider.ts"; // signalbox
+import { withAccountHub } from "../../accountHub/hubInstance.ts"; // signalbox
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
@@ -134,6 +136,20 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   defaultConfig: (): CodexSettings => decodeCodexSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      // signalbox: hub instances pool accounts through the account hub.
+      if (config.setupMode === "hub")
+        return yield* withAccountHub(
+          DRIVER_KIND,
+          instanceId,
+          makeHubCodexProvider({
+            instanceId,
+            displayName,
+            accentColor,
+            environment,
+            enabled,
+            config,
+          }),
+        );
       if (config.setupMode === "managed")
         return yield* makeManagedCodexProvider({
           instanceId,

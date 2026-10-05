@@ -2431,6 +2431,12 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "provider" },
           ),
+        [WS_METHODS.usageLimitSourceUpdateAccount]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.usageLimitSourceUpdateAccount,
+            usageLimitSources.updateAccount(input),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.providerAuthStart]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerAuthStart,

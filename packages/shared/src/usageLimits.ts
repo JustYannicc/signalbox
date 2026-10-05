@@ -15,6 +15,7 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceId,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
@@ -152,6 +153,13 @@ export interface LimitAccount {
     readonly input: ProviderConsumeResetCreditInput;
   } | null;
   readonly limits: ServerProviderUsageLimits;
+  /** Set when a hub pools the account, so it can be paused, resumed, or removed there. */
+  readonly hubAccount?: {
+    readonly environmentId: EnvironmentId;
+    readonly sourceId: UsageLimitSourceId;
+    readonly accountId: string;
+    readonly disabled: boolean;
+  };
 }
 
 /**
@@ -200,6 +208,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       ),
     ];
     const winner = fresher ? next : previous;
+    const hubAccount = previous.hubAccount ?? next.hubAccount;
     // Credits and their redemption target travel together. A failed credit
     // probe must not erase a successful read from another environment.
     const creditSource = creditSources.get(key);
@@ -211,6 +220,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       environments,
       // A hub only names the account when no environment has it natively.
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
+      ...(hubAccount ? { hubAccount } : {}),
       redeem:
         hubRedeems.get(key)?.redeem ??
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
@@ -254,7 +264,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
-        if (limitsNotice(account.usageLimits) !== null) continue;
+        // Every hub account gets a row, including ones that cannot report (paused,
+        // no usage API, failed probe): the hub is where they are fixed or removed.
         merge(
           accountKey(account.driver, account.email, account.usageLimits) ??
             `${source.id}:${account.id}`,
@@ -278,6 +289,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
                 }
               : null,
             limits: account.usageLimits,
+            hubAccount: {
+              environmentId,
+              sourceId: source.id,
+              accountId: account.id,
+              disabled: account.disabled === true,
+            },
           },
         );
       }

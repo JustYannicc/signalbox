@@ -22,6 +22,7 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
+import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
@@ -567,6 +568,7 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
     Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
       CodexInstallation.CodexInstallation.layer,
+      AccountHub.layer.pipe(Layer.provide(NetService.layer)), // signalbox: account hub
     ),
   ),
 );

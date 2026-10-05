@@ -582,7 +582,8 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
-    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
+    // signalbox: "hub" runs Codex through the account hub's pooled accounts.
+    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing", "hub"])).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     enabled: Schema.Boolean.pipe(
@@ -644,6 +645,10 @@ const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
+    // signalbox: "hub" runs Claude through the account hub's pooled accounts.
+    setupMode: Schema.optionalKey(Schema.Literals(["existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),

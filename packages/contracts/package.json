@@ -22,6 +22,10 @@
     "./account": {
       "types": "./src/account.ts",
       "import": "./src/account.ts"
+    },
+    "./accountHub": {
+      "types": "./src/accountHub.ts",
+      "import": "./src/accountHub.ts"
     }
   },
   "scripts": {

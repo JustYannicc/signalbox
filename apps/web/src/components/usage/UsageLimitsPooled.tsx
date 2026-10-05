@@ -1,3 +1,4 @@
+import { AddHubAccountMenu } from "../accountHub/AddHubAccountMenu"; // signalbox
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
@@ -566,7 +567,12 @@ export function UsageLimitsPooled({
       ) : null}
       <PoolSummary pools={pools} now={now} />
       {cursorPrompt}
-      <UsageLimitsAccountList pools={pools} now={now} />
+      <UsageLimitsAccountList
+        pools={pools}
+        now={now}
+        // signalbox: accounts are added to the account hub from here.
+        actions={<AddHubAccountMenu environmentIds={[...presentations.keys()]} />}
+      />
       {externalLinks.map((link) => (
         <section
           key={link.url}

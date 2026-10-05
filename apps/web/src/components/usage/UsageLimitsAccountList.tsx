@@ -4,6 +4,10 @@ import {
   type LimitPool,
 } from "@t3tools/shared/usageLimits";
 
+import type { ReactNode } from "react";
+
+import { HubAccountActions } from "../accountHub/HubAccountActions";
+import { Badge } from "../ui/badge";
 import { AccountAvatar } from "./UsageLimitsAccountIdentity";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { LimitWindows, ResetCredits, resetCreditsSummary } from "./UsageLimits";
@@ -42,16 +46,29 @@ function AccountRow({
         {account.displayName && account.email ? (
           <span className="truncate text-xs text-muted-foreground">{account.email}</span>
         ) : null}
-        <span className="flex min-w-0 flex-wrap gap-x-2 text-xs text-muted-foreground">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span>{providerLabel}</span>
           {account.plan ? <span>{account.plan}</span> : null}
+          {account.hubAccount?.disabled ? (
+            <Badge variant="secondary" size="sm">
+              Paused
+            </Badge>
+          ) : null}
         </span>
         {location ? (
           <span className="truncate text-xs text-muted-foreground">{location}</span>
         ) : null}
       </div>
 
-      <LimitWindows driver={pool.driver} windows={windows} now={now} compact />
+      {windows.length > 0 ? (
+        <LimitWindows driver={pool.driver} windows={windows} now={now} compact />
+      ) : account.hubAccount?.disabled ? (
+        <span />
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {account.limits.unavailable?.message ?? "No limits reported."}
+        </p>
+      )}
 
       <div
         data-slot="account-actions"
@@ -69,6 +86,7 @@ function AccountRow({
             {credits?.availableCount ? resetCreditsSummary(credits, now, true) : "No resets banked"}
           </span>
         )}
+        <HubAccountActions account={account} />
       </div>
     </li>
   );
@@ -78,14 +96,20 @@ function AccountRow({
 export function UsageLimitsAccountList({
   pools,
   now,
+  actions,
 }: {
   readonly pools: readonly LimitPool[];
   readonly now: number;
+  /** Shown beside the heading, even before there are accounts. */
+  readonly actions?: ReactNode;
 }) {
-  if (pools.length === 0) return null;
+  if (pools.length === 0 && !actions) return null;
   return (
     <section className="flex flex-col gap-3" aria-label="Accounts">
-      <h2 className="text-sm font-medium text-foreground">Accounts</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-foreground">Accounts</h2>
+        {actions}
+      </div>
       {pools.map((pool) => {
         const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
         return (

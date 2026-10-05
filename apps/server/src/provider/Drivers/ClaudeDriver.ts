@@ -12,6 +12,8 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
+import { makeHubClaudeProvider } from "../../accountHub/HubClaudeProvider.ts"; // signalbox
+import { withAccountHub } from "../../accountHub/hubInstance.ts"; // signalbox
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -117,6 +119,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
   defaultConfig: (): ClaudeSettings => decodeClaudeSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      // signalbox: hub instances run this same driver against the account hub.
+      if (config.setupMode === "hub")
+        return yield* withAccountHub(
+          DRIVER_KIND,
+          instanceId,
+          makeHubClaudeProvider(
+            { instanceId, displayName, accentColor, environment, enabled, config },
+            ClaudeDriver.create,
+          ),
+        );
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

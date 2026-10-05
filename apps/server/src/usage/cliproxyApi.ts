@@ -6,6 +6,7 @@ import {
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
+  type UsageLimitSourceUpdateAccountInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -96,6 +97,31 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
   ),
 );
 
+// signalbox: accounts from Signalbox's Sign in with ChatGPT plugin run Codex too.
+const CHATGPT_SIWC = "chatgpt-siwc";
+const SUPPORTED_PROVIDERS = new Set(["codex", "claude", CHATGPT_SIWC]);
+
+// Codex and Sign in with ChatGPT accounts both run Codex; everything else listed is Claude.
+const driverForProvider = (provider: string) =>
+  ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : "codex");
+
+const notProbed = (
+  account: typeof AuthFile.Type,
+  checkedAt: string,
+  message: string,
+  externalUsage?: { readonly label: string; readonly url: string },
+): UsageLimitSourceAccount => ({
+  id: account.id,
+  driver: driverForProvider(account.provider),
+  ...(account.email ? { email: account.email } : {}),
+  ...(account.provider === CHATGPT_SIWC ? { plan: "ChatGPT" } : {}),
+  ...(account.disabled ? { disabled: true } : {}),
+  usageLimits: {
+    ...makeUnavailableUsageLimits({ checkedAt, reason: "unsupported", message }),
+    ...(externalUsage ? { externalUsage } : {}),
+  },
+});
+
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
 
@@ -118,14 +144,19 @@ export const makeCliproxyApi = Effect.gen(function* () {
   const management = Effect.fn("CliproxyApi.management")(function* (
     config: UsageLimitSourceConfig,
     path: string,
-    body?: unknown,
+    options: { readonly body?: unknown; readonly method?: "PATCH" | "DELETE" } = {},
   ) {
+    const { body, method } = options;
     const url = yield* Effect.try({
       try: () => new URL(`/v0/management/${path}`, config.url).toString(),
       catch: () => new UsageLimitSourceError({ detail: "The hub URL is not valid." }),
     });
     const request = (
-      body === undefined ? HttpClientRequest.get(url) : HttpClientRequest.post(url)
+      method
+        ? HttpClientRequest.make(method)(url)
+        : body === undefined
+          ? HttpClientRequest.get(url)
+          : HttpClientRequest.post(url)
     ).pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${config.managementKey}`));
     const response = yield* client
       .execute(body === undefined ? request : request.pipe(HttpClientRequest.bodyJsonUnsafe(body)))
@@ -164,11 +195,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
           }
         : { Authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" };
     const raw = yield* management(config, "api-call", {
-      auth_index: account.auth_index,
-      method: data === undefined ? "GET" : "POST",
-      url,
-      header,
-      ...(data === undefined ? {} : { data: yield* encodeJson(data) }),
+      body: {
+        auth_index: account.auth_index,
+        method: data === undefined ? "GET" : "POST",
+        url,
+        header,
+        ...(data === undefined ? {} : { data: yield* encodeJson(data) }),
+      },
     });
     const response = yield* decodeApiResponse(raw);
     if (response.status_code < 200 || response.status_code >= 300) {
@@ -203,7 +236,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = {
       id: account.id,
-      driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
+      driver: driverForProvider(account.provider),
       ...(account.email ? { email: account.email } : {}),
     };
     const read = Effect.gen(function* () {
@@ -300,13 +333,47 @@ export const makeCliproxyApi = Effect.gen(function* () {
         () => new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
     return yield* Effect.forEach(
-      accounts.filter(
-        (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
-      ),
-      (account) => readAccount(config, account),
+      accounts.filter((account) => SUPPORTED_PROVIDERS.has(account.provider)),
+      (account) =>
+        // Paused accounts are listed so they can be resumed, without spending a usage probe.
+        account.disabled
+          ? Effect.succeed(notProbed(account, checkedAt, "Paused."))
+          : account.provider === CHATGPT_SIWC
+            ? Effect.succeed(
+                notProbed(account, checkedAt, "ChatGPT does not share usage with connected apps.", {
+                  label: "ChatGPT usage",
+                  url: "https://chatgpt.com/#settings/Usage",
+                }),
+              )
+            : readAccount(config, account),
       { concurrency: 4 },
+    );
+  });
+
+  // The hub answers an unknown name with an error status, so there is no list-then-act race.
+  const updateAccount = Effect.fn("CliproxyApi.updateAccount")(function* (
+    config: UsageLimitSourceConfig,
+    accountId: string,
+    action: UsageLimitSourceUpdateAccountInput["action"],
+  ) {
+    yield* (
+      action === "remove"
+        ? management(config, `auth-files?name=${encodeURIComponent(accountId)}`, {
+            method: "DELETE",
+          })
+        : management(config, "auth-files/status", {
+            method: "PATCH",
+            body: { name: accountId, disabled: action === "pause" },
+          })
+    ).pipe(
+      Effect.mapError(
+        () =>
+          new UsageLimitSourceError({
+            detail: "The hub could not update this account. Refresh and try again.",
+          }),
+      ),
     );
   });
 
@@ -340,7 +407,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       )[response.code];
       if (outcome !== "reset" && outcome !== "alreadyRedeemed") return { outcome };
       const cleared = yield* management(config, "reset-quota", {
-        auth_index: account.auth_index,
+        body: { auth_index: account.auth_index },
       }).pipe(Effect.result);
       return {
         outcome,
@@ -362,5 +429,5 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, consume };
+  return { readAccounts, consume, updateAccount };
 });

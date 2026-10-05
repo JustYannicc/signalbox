@@ -8,6 +8,7 @@ import {
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { HubAccountActions } from "../accountHub/HubAccountActions";
 import { AccountLimits, ResetCredits } from "./UsageLimitsSection";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
@@ -84,33 +85,46 @@ export function UsageLimitsAccountList({
               revealInstanceLabel
               showExternalUsage={false}
               trailing={
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Details for ${name}`}
-                  disabled={!firstWindow}
-                  onPress={() => {
-                    if (!firstWindow) return;
-                    navigation.navigate("SettingsSheet", {
-                      screen: "SettingsContent",
-                      params: {
-                        screen: "SettingsUsageAccount",
-                        params: {
-                          accountKey: account.key,
-                          windowId: firstWindow.id,
-                          windowKind: firstWindow.kind,
-                          environmentIds,
-                          now,
-                        },
-                      },
-                    });
-                  }}
-                  className="min-h-11 justify-center rounded-full bg-subtle-strong px-3"
-                >
-                  <Text className="text-xs font-t3-medium text-foreground">Details</Text>
-                </Pressable>
+                <View className="flex-row items-center gap-2">
+                  <HubAccountActions account={account} />
+                  {firstWindow ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Details for ${name}`}
+                      onPress={() => {
+                        navigation.navigate("SettingsSheet", {
+                          screen: "SettingsContent",
+                          params: {
+                            screen: "SettingsUsageAccount",
+                            params: {
+                              accountKey: account.key,
+                              windowId: firstWindow.id,
+                              windowKind: firstWindow.kind,
+                              environmentIds,
+                              now,
+                            },
+                          },
+                        });
+                      }}
+                      className="min-h-11 justify-center rounded-full bg-subtle-strong px-3"
+                    >
+                      <Text className="text-xs font-t3-medium text-foreground">Details</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               }
               footer={
                 <View className="gap-2">
+                  {account.hubAccount?.disabled ? (
+                    <Text className="text-xs font-t3-medium text-foreground-secondary">Paused</Text>
+                  ) : null}
+                  {accountWindows.length === 0 &&
+                  !account.hubAccount?.disabled &&
+                  account.limits.unavailable?.message ? (
+                    <Text className="text-xs text-foreground-tertiary">
+                      {account.limits.unavailable.message}
+                    </Text>
+                  ) : null}
                   {location ? (
                     <Text className="text-xs text-foreground-tertiary" numberOfLines={2}>
                       {location}

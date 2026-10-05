@@ -47,21 +47,33 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<
+      Omit<(typeof accounts)[number], "id_token"> & {
+        disabled?: boolean;
+        id_token?: (typeof accounts)[number]["id_token"];
+      }
+    >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
 ) {
-  const requests: Array<{ path: string; body?: RequestBody }> = [];
+  const requests: Array<{ method: string; path: string; search: string; body?: RequestBody }> = [];
   const http = HttpClient.make((request) =>
     Effect.sync(() => {
       expect(request.headers.authorization).toBe("Bearer management-secret");
-      const path = new URL(request.url).pathname;
+      const { pathname: path, search } = new URL(request.url);
       const body =
-        request.body._tag === "Uint8Array"
+        request.body._tag === "Uint8Array" && !path.endsWith("/auth-files/status")
           ? decodeRequest(new TextDecoder().decode(request.body.body))
           : undefined;
-      requests.push({ path, ...(body ? { body } : {}) });
+      requests.push({ method: request.method, path, search, ...(body ? { body } : {}) });
+      if (path.endsWith("/auth-files/status") || request.method === "DELETE")
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(search.includes("gone") ? { error: "not found" } : { status: "ok" }, {
+            status: search.includes("gone") ? 404 : 200,
+          }),
+        );
       if (path.endsWith("/auth-files"))
         return HttpClientResponse.fromWeb(
           request,
@@ -258,15 +270,70 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("skips disabled accounts and rejects redemption on them", () =>
+  it.effect("lists paused accounts without probing them and rejects redemption on them", () =>
     Effect.gen(function* () {
       const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });
       const api = yield* test.api;
-      expect(yield* api.readAccounts(config)).toEqual([]);
+      const [paused, ...rest] = yield* api.readAccounts(config);
+      expect(rest).toEqual([]);
+      expect(paused).toMatchObject({
+        id: "first.json",
+        driver: "codex",
+        disabled: true,
+        usageLimits: { windows: [], unavailable: { reason: "unsupported" } },
+      });
       expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
         "Failure",
       );
       expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+    }),
+  );
+
+  it.effect("lists Sign in with ChatGPT accounts as Codex without probing ChatGPT", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "chatgpt-siwc-a.json",
+            auth_index: "s",
+            provider: "chatgpt-siwc",
+            email: "a@example.com",
+          },
+        ],
+      });
+      const api = yield* test.api;
+      expect(yield* api.readAccounts(config)).toMatchObject([
+        {
+          id: "chatgpt-siwc-a.json",
+          driver: "codex",
+          email: "a@example.com",
+          plan: "ChatGPT",
+          usageLimits: {
+            unavailable: { reason: "unsupported" },
+            externalUsage: { url: "https://chatgpt.com/#settings/Usage" },
+          },
+        },
+      ]);
+      expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+    }),
+  );
+
+  it.effect("pauses, resumes, and removes accounts through the hub's auth files", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      yield* api.updateAccount(config, "second.json", "pause");
+      yield* api.updateAccount(config, "second.json", "resume");
+      yield* api.updateAccount(config, "second.json", "remove");
+      expect(test.requests.map(({ method, path, search }) => `${method} ${path}${search}`)).toEqual(
+        [
+          "PATCH /v0/management/auth-files/status",
+          "PATCH /v0/management/auth-files/status",
+          "DELETE /v0/management/auth-files?name=second.json",
+        ],
+      );
+      const missing = yield* api.updateAccount(config, "gone.json", "remove").pipe(Effect.flip);
+      expect(missing.detail).toContain("could not update");
     }),
   );
 
