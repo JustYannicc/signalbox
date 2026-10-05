@@ -72,7 +72,7 @@ Two interaction models I don't want. The first is the department bot: a universi
 
 ## Staying on T3 Code
 
-`origin` is `JustYannicc/signalbox`; `upstream` is `pingdotgg/t3code`. Upstream ships hundreds of commits a week, so every fork change is a future merge.
+`origin` is `JustYannicc/signalbox`. `pingdotgg/t3code` is the remote `t3code`, fetched into `refs/remotes/upstream/*` so `upstream/main` is T3 Code's main (`git fetch t3code`). Don't name a remote `upstream`: T3 Code and Signalbox name a project after it, and the sidebar would show T3 Code's repository. Upstream ships hundreds of commits a week, so every fork change is a future merge.
 
 - Merge upstream into `main`; never rebase shared history.
 - Rename what users see, type, or install. Keep upstream's internal names (`@t3tools/*`, `T3CODE_*`, symbols, `t3.json`) so upstream patches apply cleanly.
