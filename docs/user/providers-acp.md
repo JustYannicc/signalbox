@@ -26,13 +26,13 @@ code; review an agent's source and license before adding it.
 ## Where agents run
 
 Registry agents always run on the machine that hosts your Signalbox server. That stays true when you
-connect through `app.t3.codes`, Signalbox Connect, or a relay.
+connect remotely, through Signalbox Connect, or through a relay.
 
 Agents install under `tools/<agent-id>/<version>/` inside Signalbox home. Signalbox verifies SHA-256 when the Registry entry
 provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.
-Registry `npx` and `uvx` packages use T3-owned npm prefixes and Python tool directories at the exact
+Registry `npx` and `uvx` packages use Signalbox-owned npm prefixes and Python tool directories at the exact
 version published by the Registry. Their commands are available in a new server terminal for
-sign-in and direct use. Removing an agent's last provider instance removes T3-managed binary files
+sign-in and direct use. Removing an agent's last provider instance removes Signalbox-managed binary files
 but keeps package installs. To use an existing local binary, set **Executable override** explicitly.
 
 ## Signing in
