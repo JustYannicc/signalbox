@@ -49,7 +49,10 @@ the sync still lands merges that leave workflow files alone.
    git checkout --theirs -- <file>
    ```
 
-   Keep ours only where we changed meaning, not wording: the identity sites above.
+   Keep ours only where we changed meaning, not wording: the identity sites above, `// signalbox:`
+   hook lines, and fork-owned docs (`AGENTS.md`, and `docs/user/` pages that describe how to get
+   Signalbox). For those, keep ours and port upstream's change by hand. When upstream refactors a
+   hooked file, re-apply the hook to upstream's new code instead of reverting it.
 
 3. Run the post-merge steps: install, rename whatever upstream added, format, and regenerate
    `.github/triage/PLAYBOOK.md` and `apps/web/src/routeTree.gen.ts`:

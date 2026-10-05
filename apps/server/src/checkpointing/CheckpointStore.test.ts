@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { CheckpointRef, ThreadId, type VcsError } from "@t3tools/contracts";
+import { CheckpointRef, CheckpointScopeId, ThreadId, type VcsError } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +13,7 @@ import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
 
 import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
 import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -116,6 +117,17 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     );
   });
 
+  it.effect("detects a nested workspace without its own .git entry", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const nested = NodePath.join(tmp, "packages", "nested");
+      yield* fileSystem.makeDirectory(nested, { recursive: true });
+      const checkpointStore = yield* CheckpointStore.CheckpointStore;
+      expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
+    }),
+  );
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
@@ -431,6 +443,36 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
   });
+
+  it.effect("keeps orchestration-v2 refs under Signalbox's namespace too", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const checkpointStore = yield* CheckpointStore.CheckpointStore;
+      const scopeId = CheckpointScopeId.make("shared-v2-scope");
+      const signalboxRef = checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 0 });
+      const t3Ref = CheckpointRef.make(signalboxRef.replace("refs/signalbox/", "refs/t3/"));
+      expect(signalboxRef).toContain("refs/signalbox/orchestration-v2/checkpoints/");
+
+      // A T3 Code (or pre-split) V2 ref still restores; deleting it is refused.
+      yield* git(tmp, ["update-ref", t3Ref, "HEAD"]);
+      yield* writeTextFile(NodePath.join(tmp, "README.md"), "later change\n");
+      expect(
+        yield* checkpointStore.restoreCheckpoint({ cwd: tmp, checkpointRef: signalboxRef }),
+      ).toBe(true);
+      yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: signalboxRef });
+      yield* checkpointStore.deleteCheckpointRefs({
+        cwd: tmp,
+        checkpointRefs: [signalboxRef, t3Ref],
+      });
+      expect(
+        yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef: signalboxRef }),
+      ).toBe(false);
+      expect(yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef: t3Ref })).toBe(
+        true,
+      );
+    }),
+  );
 
   it.effect("reads legacy T3 refs but deletes only Signalbox refs", () =>
     Effect.gen(function* () {

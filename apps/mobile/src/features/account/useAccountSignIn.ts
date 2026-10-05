@@ -187,7 +187,9 @@ export function useAccountSignIn(options: {
           handoff: parsed.handoff,
           verifier,
         });
-        const connected = await connectPairing(buildPairingUrl(serverUrl, credential));
+        const connected = await connectPairing({
+          pairingUrl: buildPairingUrl(serverUrl, credential),
+        });
         if (AsyncResult.isFailure(connected)) throw squashAtomCommandFailure(connected);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
           () => undefined,

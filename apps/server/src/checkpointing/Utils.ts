@@ -6,7 +6,7 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
   return SignalboxCheckpointRefs.checkpointRefForThreadTurn(threadId, turnCount);
 }
 
-export function resolveThreadWorkspaceCwd(input: {
+function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId;
     readonly worktreePath: string | null;

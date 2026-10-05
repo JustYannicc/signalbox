@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 
 const SIGNALBOX_CHECKPOINT_REFS_PREFIX = "refs/signalbox/checkpoints";
-const T3_CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
+// Everything Signalbox writes lives under refs/signalbox/ (V1 checkpoints and
+// orchestration-v2's). The same path under refs/t3/ is T3 Code's, or ours from
+// before the split: readable as a fallback, never deleted.
+const SIGNALBOX_REFS = "refs/signalbox/";
+const T3_REFS = "refs/t3/";
 
 export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
   return CheckpointRef.make(
@@ -14,15 +18,12 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
 }
 
 const isSignalboxCheckpointRef = (checkpointRef: CheckpointRef): boolean =>
-  checkpointRef.startsWith(`${SIGNALBOX_CHECKPOINT_REFS_PREFIX}/`);
+  checkpointRef.startsWith(SIGNALBOX_REFS);
 
-const legacyT3CheckpointRef = (checkpointRef: CheckpointRef): CheckpointRef | undefined => {
-  const signalboxPrefix = `${SIGNALBOX_CHECKPOINT_REFS_PREFIX}/`;
-  if (!checkpointRef.startsWith(signalboxPrefix)) return undefined;
-  return CheckpointRef.make(
-    `${T3_CHECKPOINT_REFS_PREFIX}/${checkpointRef.slice(signalboxPrefix.length)}`,
-  );
-};
+const legacyT3CheckpointRef = (checkpointRef: CheckpointRef): CheckpointRef | undefined =>
+  isSignalboxCheckpointRef(checkpointRef)
+    ? CheckpointRef.make(`${T3_REFS}${checkpointRef.slice(SIGNALBOX_REFS.length)}`)
+    : undefined;
 
 const resolveReadCheckpointRef = (input: {
   readonly checkpoints: VcsCheckpointOps;

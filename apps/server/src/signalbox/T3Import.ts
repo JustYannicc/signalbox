@@ -17,7 +17,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-const DATABASE_FILE = "state.sqlite";
+/** T3 Code moved to statev2.sqlite; older homes only have state.sqlite, which seeds V2 on start. */
+const DATABASE_FILES = ["statev2.sqlite", "state.sqlite"] as const;
 const ImportedSettingsSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json));
 const decodeImportedSettings = Schema.decodeEffect(ImportedSettingsSchema);
 const encodeImportedSettings = Schema.encodeEffect(ImportedSettingsSchema);
@@ -157,8 +158,13 @@ export const checkT3Import = Effect.fn("T3Import.check")(function* (paths: T3Imp
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
   };
   if (inside(source, target) || inside(target, source)) return yield* fail("overlap");
-  if (!(yield* exists(path.join(source, DATABASE_FILE)))) return yield* fail("source-missing");
-  if (yield* exists(path.join(target, DATABASE_FILE))) return yield* fail("target-has-data");
+  for (const file of DATABASE_FILES) {
+    if (yield* exists(path.join(target, file))) return yield* fail("target-has-data");
+  }
+  for (const file of DATABASE_FILES) {
+    if (yield* exists(path.join(source, file))) return file;
+  }
+  return yield* fail("source-missing");
 });
 
 const quoteSqlString = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -217,7 +223,7 @@ const snapshotSqliteDatabase = Effect.fn("T3Import.snapshotSqliteDatabase")(func
 
   const scratch = path.join(input.scratchDir, `t3-import-${NodeCrypto.randomUUID()}`);
   yield* Effect.gen(function* () {
-    const copy = path.join(scratch, DATABASE_FILE);
+    const copy = path.join(scratch, path.basename(input.sourceDatabase));
     yield* Effect.all([
       fs.makeDirectory(scratch, { recursive: true }),
       fs.copyFile(input.sourceDatabase, copy),
@@ -269,7 +275,7 @@ const copySecrets = Effect.fn("T3Import.copySecrets")(function* (paths: T3Import
 export const importT3Data = Effect.fn("T3Import.importT3Data")(function* (paths: T3ImportPaths) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* checkT3Import(paths);
+  const databaseFile = yield* checkT3Import(paths);
 
   const copied: string[] = [];
   yield* fs
@@ -297,11 +303,11 @@ export const importT3Data = Effect.fn("T3Import.importT3Data")(function* (paths:
   }
   if (yield* copySecrets(paths)) copied.push("secrets");
 
-  const database = path.join(paths.targetStateDir, DATABASE_FILE);
+  const database = path.join(paths.targetStateDir, databaseFile);
   const pending = `${database}.t3-import-${NodeCrypto.randomUUID()}`;
   yield* Effect.gen(function* () {
     yield* snapshotSqliteDatabase({
-      sourceDatabase: path.join(paths.sourceStateDir, DATABASE_FILE),
+      sourceDatabase: path.join(paths.sourceStateDir, databaseFile),
       output: pending,
       scratchDir: paths.targetStateDir,
     });
@@ -323,6 +329,6 @@ export const importT3Data = Effect.fn("T3Import.importT3Data")(function* (paths:
       ),
     ),
   );
-  copied.push(DATABASE_FILE);
+  copied.push(databaseFile);
   return { copied } as const;
 });

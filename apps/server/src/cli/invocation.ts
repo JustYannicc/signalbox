@@ -1,6 +1,15 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
-import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import type { ServerInstallation } from "@t3tools/contracts";
+import {
+  HostProcessArguments,
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -35,6 +44,69 @@ function detectCliRunner(entryPath: string): CliRunner | null {
   }
   return null;
 }
+
+const InstallManifest = Schema.Struct({
+  name: Schema.String,
+  version: Schema.String,
+  bin: Schema.optionalKey(Schema.Struct({ signalbox: Schema.String })), // signalbox: npm identity
+  optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+});
+const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(InstallManifest));
+
+/** Prove the running package and its global bin belong together before suggesting an update. */
+export const resolveServerInstallation = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const args = yield* HostProcessArguments;
+  const executable = yield* HostProcessIsExecutable;
+  const executablePath = yield* HostProcessExecutablePath;
+  const platform = yield* HostProcessPlatform;
+  const entry = yield* fs.realPath(executable ? executablePath : (args[1] ?? ""));
+  const match =
+    /^(.*)\/lib\/node_modules\/signalbox-cli\/(?:dist\/bin\.mjs|bin\/signalbox\.js|node_modules\/@signalbox-cli\/signalbox-[^/]+\/signalbox)$/.exec(
+      // signalbox: npm identity
+      entry,
+    );
+  if (!match) {
+    const runner = detectCliRunner(entry);
+    return runner === null
+      ? null
+      : ({ kind: runner === "pnpm dlx" ? "pnpm-dlx" : runner } satisfies ServerInstallation);
+  }
+  // A global prefix can contain runner-like names; prove its ownership first.
+  // Windows shims and other package managers need their own ownership proof.
+  if (platform === "win32") return null;
+  const prefix = match[1] || "/";
+  if (
+    prefix.includes("/node_modules/") ||
+    /\/(?:Cellar|Caskroom)\//i.test(prefix) ||
+    /\/mise\/installs\/(?!node\/)[^/]+\//.test(prefix)
+  )
+    return null;
+
+  const packageRoot = path.join(prefix, "lib/node_modules/signalbox-cli"); // signalbox: npm identity
+  const manifest = yield* fs
+    .readFileString(path.join(packageRoot, "package.json"))
+    .pipe(Effect.flatMap(decodeInstallManifest));
+  if (manifest.name !== "signalbox-cli" || !manifest.bin) return null; // signalbox: npm identity
+  const bin = yield* fs.realPath(path.join(packageRoot, manifest.bin.signalbox));
+  const globalBin = yield* fs.realPath(path.join(prefix, "bin/signalbox"));
+  if (globalBin !== bin) return null;
+  if (executable) {
+    const nativeManifest = yield* fs
+      .readFileString(path.join(path.dirname(entry), "package.json"))
+      .pipe(Effect.flatMap(decodeInstallManifest));
+    if (
+      manifest.bin.signalbox !== "./bin/signalbox.js" ||
+      manifest.optionalDependencies?.[nativeManifest.name] !== nativeManifest.version ||
+      nativeManifest.version !== manifest.version
+    )
+      return null;
+  } else if (bin !== entry) {
+    return null;
+  }
+  return { kind: "npm-global", prefix } satisfies ServerInstallation;
+}).pipe(Effect.orElseSucceed(() => null));
 
 /**
  * The `t3` package spec to suggest. The literal spec the user typed (e.g.
