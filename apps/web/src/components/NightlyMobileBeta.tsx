@@ -27,6 +27,8 @@ const ANDROID_BETA_GROUP_URL = "https://groups.google.com/g/t3-code-v2-beta";
 const ANDROID_PLAY_TESTING_URL = "https://play.google.com/apps/testing/com.t3tools.t3code";
 
 const ROW_ID = "nightly-mobile-beta";
+// signalbox: these are T3 Code's beta programs; Signalbox has no mobile beta yet.
+const HAS_MOBILE_BETA = false;
 const NOTICE_DISMISSED_STORAGE_KEY = "t3code:nightly-mobile-beta-notice-dismissed:v1";
 
 // Guards against a second toast from a remount or a Strict Mode effect replay.
@@ -56,12 +58,12 @@ export function NightlyMobileBetaNotice() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!IS_NIGHTLY_BUILD || noticeShown || isNoticeDismissed()) return;
+    if (!HAS_MOBILE_BETA || !IS_NIGHTLY_BUILD || noticeShown || isNoticeDismissed()) return; // signalbox: no mobile beta
     noticeShown = true;
     const toastId = toastManager.add({
       title: "Nightly needs the beta mobile app",
       description:
-        "Nightly uses the new orchestrator. The App Store and Google Play versions of T3 Code cannot connect to it.",
+        "Nightly uses the new orchestrator. The App Store and Google Play versions of Signalbox cannot connect to it.",
       timeout: 0,
       onClose: dismissNotice,
       actionProps: {
@@ -103,6 +105,7 @@ function BetaLinkQr({ url, label }: { url: string; label: string }) {
 
 /** Settings → General → About row with the beta app links. Render it only for Nightly. */
 export function NightlyMobileBetaRow() {
+  if (!HAS_MOBILE_BETA) return null; // signalbox: no mobile beta
   return (
     <SettingsRow
       id={ROW_ID}

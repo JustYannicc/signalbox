@@ -2,20 +2,20 @@
 
 ## Purpose
 
-T3 exposes V2 orchestration through its app-owned MCP endpoint. A provider
+Signalbox exposes V2 orchestration through its app-owned MCP endpoint. A provider
 agent can use this endpoint to:
 
 - create an app-owned sub-agent on any supported provider instance;
 - wait for or poll the sub-agent's durable result;
 - cancel an active delegated task; and
-- create one or more ordinary top-level T3 threads;
+- create one or more ordinary top-level Signalbox threads;
 - list and incrementally read project threads;
 - rename threads, regenerate titles, and link or unlink pull requests;
 - send or steer follow-up messages; and
 - wait for or interrupt ordinary thread runs.
 
-These are T3 orchestration operations, not provider-native sub-agent APIs.
-Delegated tasks always create a T3 child thread and run. The child receives
+These are Signalbox orchestration operations, not provider-native sub-agent APIs.
+Delegated tasks always create a Signalbox child thread and run. The child receives
 only the supplied task prompt, plus an optional role instruction supplied in
 the same tool call. Parent conversation history is not copied into the child.
 
@@ -40,8 +40,8 @@ preview toolkit and the orchestration toolkit.
 Before `ProviderSessionManager` opens a new V2 provider session, it asks
 `McpSessionRegistry` for a credential scoped to:
 
-- the T3 environment;
-- the parent T3 thread;
+- the Signalbox environment;
+- the parent Signalbox thread;
 - the concrete provider instance; and
 - the provider session.
 
@@ -159,12 +159,12 @@ one with `pi.registerTool` under a `mcp__t3-code__` namespace
 (`mcp__t3-code__delegate_task`, `mcp__t3-code__t3_thread_launch`, and the rest).
 The bridge calls the original MCP tool name over HTTP. Follow-up requests send
 `mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
-without it. The first turn of a session also receives the shared T3
+without it. The first turn of a session also receives the shared Signalbox
 orchestration instructions.
 
-Pi keeps ownership of native extension discovery. T3 does not replace Pi's
+Pi keeps ownership of native extension discovery. Signalbox does not replace Pi's
 `subagent` tool or reproduce Pi's package and project-trust loader. Durable
-delegation goes through the namespaced T3 MCP `delegate_task` tool and the
+delegation goes through the namespaced Signalbox MCP `delegate_task` tool and the
 shared orchestration child-thread lifecycle. When Pi's example `subagent`
 extension is installed, the adapter observes its documented `details.results`
 shape and projects task cards with no child thread id. Unknown result shapes
@@ -289,7 +289,7 @@ remain available. It accepts an optional cancellation reason. Use
 
 ### `create_threads`
 
-Creates between one and twenty ordinary top-level T3 threads:
+Creates between one and twenty ordinary top-level Signalbox threads:
 
 ```ts
 type CreateThreadsInput = {

@@ -1751,7 +1751,7 @@ describe("EnvironmentSupervisor routes", () => {
         // Signed out of T3 Connect; the LAN is up but its check timed out.
         prepare: (_attempt, target) =>
           target._tag === "RelayConnectionTarget"
-            ? Effect.fail(blocked("Sign in to T3 Connect."))
+            ? Effect.fail(blocked("Sign in to Signalbox Connect."))
             : Effect.succeed(preparedFor(target)),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
@@ -1771,7 +1771,7 @@ describe("EnvironmentSupervisor routes", () => {
         checkRoute: () => Effect.succeed("answered"),
         prepare: (_attempt, target) =>
           target._tag === "RelayConnectionTarget"
-            ? Effect.fail(blocked("Sign in to T3 Connect."))
+            ? Effect.fail(blocked("Sign in to Signalbox Connect."))
             : Effect.fail(transient("LAN socket refused.")),
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {

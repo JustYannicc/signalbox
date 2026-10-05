@@ -170,7 +170,7 @@ function routeAddressKey(route: ConnectionRoute): string | null {
 export function connectionRouteLabel(route: ConnectionRoute): string {
   switch (connectionRouteKind(route)) {
     case "relay":
-      return "T3 Connect";
+      return "Signalbox Connect";
     case "loopback":
       return "This device";
     case "lan":

@@ -14,6 +14,8 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { useNeedsAccountSignIn } from "../account/accountGate"; // signalbox: accounts
+import { HomeAccountSignIn } from "../account/AccountSignInRoutes"; // signalbox: accounts
 import { checkForAppUpdateOnLaunch, startAppUpdateForegroundRecheck } from "../updates/app-updates";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
@@ -37,6 +39,7 @@ export function HomeRouteScreen() {
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
   const handleSelectThread = useHomeThreadSelection();
+  const needsAccountSignIn = useNeedsAccountSignIn(); // signalbox: accounts
   const handleNewThreadOnBranch = useCallback(
     (thread: EnvironmentThreadShell) => {
       navigation.navigate("NewTaskSheet", {
@@ -117,6 +120,8 @@ export function HomeRouteScreen() {
       setSelectedProjectKey(null);
     }
   }, [projectFilterOptions, selectedProjectKey]);
+
+  if (needsAccountSignIn) return <HomeAccountSignIn />; // signalbox: accounts
 
   // In split layouts the persistent sidebar IS the thread list — Home becomes
   // an empty detail pane so selecting a thread never transitions layouts.

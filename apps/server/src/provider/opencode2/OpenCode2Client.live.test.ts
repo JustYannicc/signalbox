@@ -93,7 +93,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Client live", () => {
         assert.strictEqual(info.pid, server.pid);
 
         const session = yield* client.session.create({
-          title: "t3 client live check",
+          title: "signalbox client live check",
           location: Location.PublicRef.make({ directory: AbsolutePath.make(server.directory) }),
           model: Model.Ref.make({
             providerID: Provider.ID.make("opencode"),

@@ -30,7 +30,7 @@ the first that works. Each direct route is first checked with the public
 descriptor, so a saved LAN address that a different machine answers on another
 network receives no credential. That check is not proof of a working route:
 when every route stays silent, each is still tried. A route that fails to
-connect, including a blocked one such as a signed-out T3 Connect, moves on to
+connect, including a blocked one such as a signed-out Signalbox Connect, moves on to
 the next; only an incompatible server stops the walk, because it is the same
 server on every route. While connected over a later route the
 [supervisor](../../packages/client-runtime/src/connection/supervisor.ts)
@@ -41,7 +41,7 @@ held back for a cooldown so a flaky network cannot bounce the connection.
 
 A connected server reports the LAN and tailnet addresses it is bound to, and the
 client saves them as learned routes. A learned route reuses the credential of
-the route it was learned over: the T3 Connect access token, which is not bound
+the route it was learned over: the Signalbox Connect access token, which is not bound
 to an origin because each DPoP proof names the URL it signs, or the paired
 bearer token. Learned routes the server stops reporting are dropped, which is
 how a changed LAN address replaces the old one; routes the user saved are never

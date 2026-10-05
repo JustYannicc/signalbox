@@ -1359,9 +1359,9 @@ describe("buildThreadFeed", () => {
     const feed = buildThreadFeed([projected(toolItem, 0)]);
     const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
 
-    expect(activity?.summary).toBe("Read a T3 thread");
+    expect(activity?.summary).toBe("Read a Signalbox thread");
     expect(activity?.logo).toBe("t3-code");
-    expect(activity?.getCopyText().split("\n")[0]).toBe("Read a T3 thread");
+    expect(activity?.getCopyText().split("\n")[0]).toBe("Read a Signalbox thread");
   });
 
   it("uses the CUA action title in the mobile feed", () => {

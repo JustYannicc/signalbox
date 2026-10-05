@@ -15,6 +15,7 @@ import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { EnvironmentAccountSection } from "../account/EnvironmentAccountSection"; // signalbox: accounts
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -104,7 +105,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       return;
     Alert.alert(
       `Update ${environment?.environmentLabel ?? "environment"}?`,
-      `Install T3 Code ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Running threads may be interrupted.`,
+      `Install Signalbox ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Running threads may be interrupted.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -182,6 +183,11 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 })
               }
             />
+            {/* signalbox: accounts */}
+            <EnvironmentAccountSection
+              environmentId={environmentId}
+              environmentLabel={environment.environmentLabel}
+            />
             {!connected ? (
               <Text className="px-2 text-sm text-foreground-muted">
                 Connect this environment to manage it.
@@ -203,7 +209,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
             {config ? (
               <>
-                <SettingsSection title="T3 Code">
+                <SettingsSection title="Signalbox">
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">Version {version}</Text>
                     {running ? (
@@ -228,7 +234,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       <Text className="text-sm text-foreground-muted">
                         {capabilities?.serverSelfUpdate === "desktop-managed"
                           ? "Update the desktop app on this machine."
-                          : "Update and restart T3 Code on this machine."}
+                          : "Update and restart Signalbox on this machine."}
                       </Text>
                     ) : null}
                   </View>

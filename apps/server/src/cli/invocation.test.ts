@@ -129,15 +129,15 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped();
       const prefix = path.join(root, "bunx-tools");
-      const packageRoot = path.join(prefix, "lib/node_modules/t3");
+      const packageRoot = path.join(prefix, "lib/node_modules/signalbox-cli");
       const entry = path.join(packageRoot, "dist/bin.mjs");
-      const globalBin = path.join(prefix, "bin/t3");
+      const globalBin = path.join(prefix, "bin/signalbox");
       yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
       yield* fs.makeDirectory(path.dirname(globalBin), { recursive: true });
       yield* fs.writeFileString(entry, "");
       yield* fs.writeFileString(
         path.join(packageRoot, "package.json"),
-        '{"name":"t3","version":"0.0.45","bin":{"t3":"./dist/bin.mjs"}}',
+        '{"name":"signalbox-cli","version":"0.0.45","bin":{"signalbox":"./dist/bin.mjs"}}',
       );
       const resolve = resolveServerInstallation.pipe(
         Effect.provideService(HostProcessArguments, ["node", entry]),
@@ -148,7 +148,7 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       yield* fs.symlink(entry, globalBin);
       expect(yield* resolve).toEqual({ kind: "npm-global", prefix });
       yield* fs.remove(globalBin);
-      yield* fs.writeFileString(globalBin, "an unrelated t3 command");
+      yield* fs.writeFileString(globalBin, "an unrelated signalbox command");
       expect(yield* resolve).toBeNull();
       expect(yield* resolve.pipe(Effect.provideService(HostProcessPlatform, "win32"))).toBeNull();
     }),
@@ -160,9 +160,12 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped();
       const prefix = path.join(root, "bunx-tools");
-      const packageRoot = path.join(prefix, "lib/node_modules/t3");
-      const launcher = path.join(packageRoot, "bin/t3.js");
-      const entry = path.join(packageRoot, "node_modules/@t3code/t3-linux-x64/t3");
+      const packageRoot = path.join(prefix, "lib/node_modules/signalbox-cli");
+      const launcher = path.join(packageRoot, "bin/signalbox.js");
+      const entry = path.join(
+        packageRoot,
+        "node_modules/@signalbox-cli/signalbox-linux-x64/signalbox",
+      );
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
       yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
       yield* fs.makeDirectory(path.join(prefix, "bin"));
@@ -170,9 +173,9 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       yield* fs.writeFileString(entry, "");
       yield* fs.writeFileString(
         path.join(packageRoot, "package.json"),
-        '{"name":"t3","version":"0.0.45","bin":{"t3":"./bin/t3.js"},"optionalDependencies":{"@t3code/t3-linux-x64":"0.0.45"}}',
+        '{"name":"signalbox-cli","version":"0.0.45","bin":{"signalbox":"./bin/signalbox.js"},"optionalDependencies":{"@signalbox-cli/signalbox-linux-x64":"0.0.45"}}',
       );
-      yield* fs.symlink(launcher, path.join(prefix, "bin/t3"));
+      yield* fs.symlink(launcher, path.join(prefix, "bin/signalbox"));
       const resolve = resolveServerInstallation.pipe(
         Effect.provideService(HostProcessExecutablePath, entry),
         Effect.provideService(HostProcessIsExecutable, true),
@@ -184,7 +187,7 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       ]) {
         yield* fs.writeFileString(
           path.join(path.dirname(entry), "package.json"),
-          `{"name":"@t3code/t3-linux-x64","version":"${version}"}`,
+          `{"name":"@signalbox-cli/signalbox-linux-x64","version":"${version}"}`,
         );
         expect(yield* resolve).toEqual(expected);
       }

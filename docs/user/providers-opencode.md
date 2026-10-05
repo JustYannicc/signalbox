@@ -7,13 +7,13 @@ OpenCode server.
 
 ## OpenCode 2
 
-T3 Code supports OpenCode 2.0.18 and newer. It detects the version on its own, so
+Signalbox supports OpenCode 2.0.18 and newer. It detects the version on its own, so
 the same provider settings work for OpenCode 1.x and 2.x. OpenCode 1.x shows
 **Limited support** in its provider settings.
 
 OpenCode 2 is a separate package, `@opencode/cli`. To move from 1.x, install it
 yourself, for example `npm install -g @opencode/cli`. Then refresh provider status.
-T3 Code's update button updates whichever package you have installed. It never
+Signalbox's update button updates whichever package you have installed. It never
 switches a 1.x install to 2.x.
 
 OpenCode 2 converts the shared OpenCode database to its own format the first time it

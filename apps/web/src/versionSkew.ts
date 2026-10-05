@@ -85,7 +85,7 @@ export function resolveVersionMismatch(
   return {
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
-    hint: "Version mismatch. Try syncing the client and server to the same T3 Code version.",
+    hint: "Version mismatch. Try syncing the client and server to the same Signalbox version.",
   };
 }
 
@@ -126,11 +126,11 @@ export function manualServerUpdateCommand(
 ): string {
   if (installation?.kind === "npm-global") {
     const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
-    return `npm install --global --prefix ${prefix} t3@${targetVersion}`;
+    return `npm install --global --prefix ${prefix} signalbox-cli@${targetVersion}`; // signalbox: npm package name
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return `${runner} t3@${targetVersion}`;
+  return `${runner} signalbox-cli@${targetVersion}`; // signalbox: npm package name
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {

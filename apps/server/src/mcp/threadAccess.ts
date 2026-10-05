@@ -144,7 +144,7 @@ export const resolveProjectId = (context: Caller, projectId: ProjectId | undefin
       : Effect.fail(
           new OrchestratorMcpFailure({
             code: "target_required",
-            message: "Pass projectId: this MCP client is not running inside a T3 thread.",
+            message: "Pass projectId: this MCP client is not running inside a Signalbox thread.",
           }),
         );
 
@@ -157,7 +157,7 @@ const resolveThreadId = (context: Caller, threadId: ThreadId | undefined) =>
       : Effect.fail(
           new OrchestratorMcpFailure({
             code: "target_required",
-            message: "Pass threadId: this MCP client is not running inside a T3 thread.",
+            message: "Pass threadId: this MCP client is not running inside a Signalbox thread.",
           }),
         );
 

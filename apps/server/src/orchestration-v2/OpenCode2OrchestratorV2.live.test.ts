@@ -339,7 +339,10 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        yield* fs.writeFileString(path.join(ROOT, "work", "hello.txt"), "hello from t3 live\n");
+        yield* fs.writeFileString(
+          path.join(ROOT, "work", "hello.txt"),
+          "hello from signalbox live\n",
+        );
         yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
 
         // A status check starts a fresh server, which lists no models for its
@@ -1075,7 +1078,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
           yield* send(
             threadId,
             "restart-mcp",
-            "Call the echo_marker tool from the T3 Code MCP server with word 'kiwi', then reply with its exact output and nothing else.",
+            "Call the echo_marker tool from the Signalbox MCP server with word 'kiwi', then reply with its exact output and nothing else.",
           );
           const called = yield* waitFor(threadId, runs(1));
           assert.equal(called.runs[0]?.status, "completed");
@@ -1173,7 +1176,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
         assert.deepEqual(
           servers.data.map((server) => server.name),
           [],
-          "an external server gets no T3 MCP server, as with 1.x",
+          "an external server gets no Signalbox MCP server, as with 1.x",
         );
       }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
     360_000,

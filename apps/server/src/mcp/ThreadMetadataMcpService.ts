@@ -151,7 +151,7 @@ const make = Effect.gen(function* () {
     if (threadId === undefined) {
       return yield* failure(
         "target_required",
-        "Pass threadId: this MCP client is not running inside a T3 thread.",
+        "Pass threadId: this MCP client is not running inside a Signalbox thread.",
       );
     }
     const shell = yield* threadManagement

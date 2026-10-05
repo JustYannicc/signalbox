@@ -34,7 +34,7 @@ function fingerprint(dir: string): Record<string, string> {
   return result;
 }
 
-function writeT3Home(root: string) {
+function writeT3Home(root: string, databaseFile = "state.sqlite") {
   const sourceStateDir = NodePath.join(root, ".t3", "userdata");
   NodeFS.mkdirSync(NodePath.join(sourceStateDir, "secrets"), { recursive: true });
   NodeFS.mkdirSync(NodePath.join(sourceStateDir, "attachments", "thread-1"), { recursive: true });
@@ -51,7 +51,7 @@ function writeT3Home(root: string) {
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "environment-id"), "env-t3");
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "connection-catalog.json"), "{}");
   NodeFS.writeFileSync(NodePath.join(sourceStateDir, "logs", "server.log"), "log");
-  const database = new NodeSqlite.DatabaseSync(NodePath.join(sourceStateDir, "state.sqlite"));
+  const database = new NodeSqlite.DatabaseSync(NodePath.join(sourceStateDir, databaseFile));
   database.exec(
     [
       "PRAGMA journal_mode=WAL",
@@ -84,6 +84,30 @@ const ids = (database: string, table: string) => {
 const threadIds = (database: string) => ids(database, "threads");
 
 it.layer(NodeServices.layer)("T3 Code import", (it) => {
+  it.effect("takes a current T3 home's statev2.sqlite over its legacy state.sqlite", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-import-" });
+      const paths = writeT3Home(root, "statev2.sqlite");
+      const legacy = new NodeSqlite.DatabaseSync(
+        NodePath.join(paths.sourceStateDir, "state.sqlite"),
+      );
+      legacy.exec("CREATE TABLE threads (id TEXT); INSERT INTO threads VALUES ('stale')");
+      legacy.close();
+
+      const result = yield* T3Import.importT3Data(paths);
+
+      assert.include(result.copied, "statev2.sqlite");
+      assert.deepStrictEqual(threadIds(NodePath.join(paths.targetStateDir, "statev2.sqlite")), [
+        "t1",
+      ]);
+      assert.isFalse(NodeFS.existsSync(NodePath.join(paths.targetStateDir, "state.sqlite")));
+      // A V2 database in the Signalbox home counts as existing data.
+      const again = yield* T3Import.checkT3Import(paths).pipe(Effect.flip);
+      assert.equal(again.reason, "target-has-data");
+    }),
+  );
+
   it.effect("copies the allowlisted data and leaves the T3 home byte for byte unchanged", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

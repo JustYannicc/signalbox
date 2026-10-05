@@ -377,7 +377,7 @@ export class ChromiumLocalStorageReadError extends Schema.TaggedError<ChromiumLo
 }
 
 /**
- * Returns the localStorage items one origin (for example `t3code://app`) had
+ * Returns the localStorage items one origin (for example `signalbox://app`) had
  * in the profile, or an empty map when the profile never stored any.
  */
 export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.read")(function* (

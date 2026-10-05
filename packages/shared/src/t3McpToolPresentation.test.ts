@@ -14,7 +14,7 @@ describe("resolveT3McpToolPresentation", () => {
         "t3_code/",
         "t3code:",
         "mcp_t3-code_",
-        "T3 Code ",
+        "Signalbox ",
         "t3-code · ",
       ]) {
         expect(resolveT3McpToolPresentation(`${prefix}${tool} completed`), tool).toEqual(
@@ -26,21 +26,21 @@ describe("resolveT3McpToolPresentation", () => {
   });
   it("pretty prints Claude and Cursor T3 MCP tool names", () => {
     expect(resolveT3McpToolPresentation("mcp__t3-code__t3_thread_read")).toEqual({
-      displayName: "Read a T3 thread",
+      displayName: "Read a Signalbox thread",
       logo: "t3-code",
     });
   });
 
   it("pretty prints Codex T3 MCP tool names", () => {
     expect(resolveT3McpToolPresentation("t3-code.create_threads")).toEqual({
-      displayName: "Create T3 threads",
+      displayName: "Create Signalbox threads",
       logo: "t3-code",
     });
   });
 
   it("pretty prints thread metadata updates", () => {
     expect(resolveT3McpToolPresentation("mcp__t3-code__t3_thread_update")).toEqual({
-      displayName: "Update T3 thread metadata",
+      displayName: "Update Signalbox thread metadata",
       logo: "t3-code",
     });
   });
@@ -80,7 +80,7 @@ describe("resolveT3McpToolPresentation", () => {
       "t3_code:delegate_task",
       "t3code/delegate_task",
       "t3-code delegate_task",
-      "T3 Code delegate_task",
+      "Signalbox delegate_task",
       "t3-code__delegate_task",
     ]) {
       expect(resolveT3McpToolPresentation(name)?.displayName).toBe("Delegate a child task");

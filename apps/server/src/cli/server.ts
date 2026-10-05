@@ -8,6 +8,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 
 import * as ServerConfig from "../config.ts";
 import { runServer } from "../server.ts";
+import { offerT3ImportOnServerStart } from "../signalbox/T3ImportOffer.ts"; // signalbox: one-time T3 Code import
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
@@ -22,6 +23,7 @@ const runServerCommand = (
 ) =>
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
+    yield* offerT3ImportOnServerStart(flags); // signalbox: offer the T3 Code import before first start
     const config = yield* resolveServerConfig(flags, logLevel, options);
     return yield* runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config));
   });
@@ -45,7 +47,7 @@ export const runDefaultServerCommand = (flags: CliServerFlags) =>
       ) {
         return yield* new CliError.UserError({
           cause: cwd,
-          userMessage: `Unknown command ${yield* encodeCommand(cwd)}. Use "t3 --help" for commands or an explicit path such as "t3 ./my-project" for a new directory.`,
+          userMessage: `Unknown command ${yield* encodeCommand(cwd)}. Use "signalbox --help" for commands or an explicit path such as "signalbox ./my-project" for a new directory.`,
         });
       }
     }
@@ -53,13 +55,13 @@ export const runDefaultServerCommand = (flags: CliServerFlags) =>
   });
 
 export const startCommand = Command.make("start", { ...sharedServerCommandFlags }).pipe(
-  Command.withDescription("Run the T3 Code server."),
+  Command.withDescription("Run the Signalbox server."),
   Command.withHandler((flags) => runServerCommand(flags, { rejectRunningServer: true })),
 );
 
 export const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe(
   Command.withDescription(
-    "Run the T3 Code server without opening a browser and print headless pairing details.",
+    "Run the Signalbox server without opening a browser and print headless pairing details.",
   ),
   Command.withHandler((flags) =>
     runServerCommand(flags, {

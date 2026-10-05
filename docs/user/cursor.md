@@ -10,13 +10,13 @@ TypeScript package. It does not use Cursor's ACP transport for V2 execution.
   `CURSOR_API_KEY`.
 - A model accepted by the Cursor SDK. `auto` is sent to the SDK as its `default` model selection.
 
-The adapter currently uses the SDK's local-agent runtime so runs operate in the selected T3 Code
-workspace. Cursor cloud agents need repository and cloud-environment configuration that T3 Code does
+The adapter currently uses the SDK's local-agent runtime so runs operate in the selected Signalbox
+workspace. Cursor cloud agents need repository and cloud-environment configuration that Signalbox does
 not expose yet.
 
 ## Sign in
 
-Choose **Sign in**, then open the sign-in page and complete it in your browser. T3 Code
+Choose **Sign in**, then open the sign-in page and complete it in your browser. Signalbox
 updates automatically when sign-in finishes. This works when connected to a remote environment too.
 On mobile, use **Settings > Provider accounts** for an already configured Cursor instance.
 
@@ -35,7 +35,7 @@ The adapter supports:
 - creating and resuming local Cursor agent threads;
 - changing the model and model parameters between turns;
 - assistant text, reasoning, tool activity, plans, and todo streaming;
-- thread-scoped T3 Code MCP tools;
+- thread-scoped Signalbox MCP tools;
 - image attachments;
 - interruption, queued app messages, and orchestrator-owned interrupt/restart steering;
 - provider conversation snapshots through `Agent.messages.list()`;
@@ -60,7 +60,7 @@ read-only: send messages from the parent thread.
 
 Runtime modes map to the controls the local SDK exposes: full access disables its sandbox, while
 restricted modes and explicit non-full-access sandbox policies enable it. Explicit approval policy
-overrides also control Cursor Auto-review. Auto-review is not represented as an interactive T3 Code
+overrides also control Cursor Auto-review. Auto-review is not represented as an interactive Signalbox
 approval flow.
 
 The existing Cursor binary path and API endpoint settings belong to the CLI/ACP integration. Cursor
@@ -75,7 +75,7 @@ orchestrator, event store, projections, and checkpoint logic still run in tests.
 Record a fixture against the real SDK with:
 
 ```bash
-pnpm --filter t3 record:cursor-replay --scenario simple
+pnpm --filter signalbox record:cursor-replay --scenario simple
 ```
 
 Use `--out <path>` to record a temporary probe without replacing a checked-in fixture. Supported

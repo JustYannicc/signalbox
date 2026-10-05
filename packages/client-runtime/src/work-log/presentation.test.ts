@@ -279,7 +279,7 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "t3-code", tool },
         toolLifecycleStatus: "completed",
         itemType: "dynamic_tool",
-        toolSource: { key: "t3-code", name: "T3 Code", kind: "integration" },
+        toolSource: { key: "t3-code", name: "Signalbox", kind: "integration" },
       };
       const presentation = resolveWorkEntryToolPresentation(entry);
       expect(presentation, tool).not.toBeNull();

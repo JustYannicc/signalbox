@@ -31,8 +31,8 @@ export class DesktopLegacyLocalStorage extends Context.Service<
 >()("@t3tools/desktop/app/DesktopLegacyLocalStorage") {}
 
 const MARKER_FILE_NAME = "v1-local-storage-imported";
-// V1 used "T3 Code (Alpha)" when that folder existed and "t3code" otherwise.
-const V1_PROFILE_NAMES = ["T3 Code (Alpha)", "t3code"];
+// V1 used "Signalbox (Alpha)" when that folder existed and "signalbox" otherwise.
+const V1_PROFILE_NAMES = ["Signalbox (Alpha)", "signalbox"];
 
 const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;

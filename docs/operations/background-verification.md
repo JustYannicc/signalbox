@@ -10,7 +10,7 @@ node apps/server/scripts/verify-background-live.ts --repeat 2
 Each scenario starts the production server in a fresh temporary T3 home and Git
 project. It connects through authenticated HTTP and the same typed WebSocket RPC
 contract as clients. There are no substituted adapters, in-memory databases, or
-seeded projection rows. Existing T3 environments are not modified.
+seeded projection rows. Existing Signalbox environments are not modified.
 
 The scenarios exercise delegated completion after the parent ends its turn,
 delivery into an active foreground command, native background-command wake-up,
