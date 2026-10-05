@@ -1,6 +1,6 @@
 /**
  * The always-visible icon column of the sidebar. The top group switches the
- * panel beside it; the bottom group opens Usage and Settings.
+ * panel beside it; the bottom group opens Usage, Feedback and Settings.
  * Entries that don't run on real data yet stay visible but disabled, with a
  * "coming soon" tooltip.
  */
@@ -11,7 +11,6 @@ import {
   ChartNoAxesColumnIcon,
   HouseIcon,
   LibraryIcon,
-  MessageSquareHeartIcon,
   MoonIcon,
   SettingsIcon,
   WorkflowIcon,
@@ -21,6 +20,7 @@ import { memo, type ReactNode } from "react";
 
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SidebarFeedbackButton } from "./feedback/SidebarFeedbackButton";
 import type { SidebarView } from "./sidebarView";
 
 type RailEntry =
@@ -129,9 +129,9 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
         >
           <ChartNoAxesColumnIcon />
         </RailButton>
-        <ComingSoonButton label="Feedback">
-          <MessageSquareHeartIcon />
-        </ComingSoonButton>
+        <SidebarMenuItem>
+          <SidebarFeedbackButton />
+        </SidebarMenuItem>
         <ComingSoonButton label="Focus">
           <MoonIcon />
         </ComingSoonButton>
