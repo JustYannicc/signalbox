@@ -1,8 +1,9 @@
 /**
  * Renders the app window to a PNG for feedback. The desktop bridge has no
  * self-capture API (SnapShot is a system-screenshot flow with its own
- * permissions), so this draws the DOM through modern-screenshot, which is
- * imported on first use and costs nothing until then.
+ * permissions), so this draws the DOM through html-to-image, which is
+ * imported on first use and costs nothing until then. It has no overall
+ * timeout; the button caps how long Send waits for it.
  *
  * Popovers and tooltips are left out, so the feedback popover never appears in
  * its own screenshot. Native surfaces the DOM cannot see (webviews, iframes
@@ -15,15 +16,15 @@ function keepNode(node: Node): boolean {
 }
 
 export async function captureAppScreenshot(): Promise<Blob> {
-  const { domToBlob } = await import("modern-screenshot");
-  return domToBlob(document.body, {
-    type: "image/png",
+  const { toBlob } = await import("html-to-image");
+  const blob = await toBlob(document.body, {
     width: window.innerWidth,
     height: window.innerHeight,
     // Retina detail without shipping 3x monsters from high-density displays.
-    scale: Math.min(window.devicePixelRatio || 1, 2),
+    pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
     backgroundColor: getComputedStyle(document.body).backgroundColor,
     filter: keepNode,
-    timeout: 10_000,
   });
+  if (!blob) throw new Error("Screenshot capture produced no image.");
+  return blob;
 }

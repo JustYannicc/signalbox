@@ -8,7 +8,7 @@ vi.mock("../../../account/accountSession", () => ({
   }),
 }));
 
-const DSN = "https://public@o1.ingest.sentry.io/42";
+const DSN = "https://public@sentry.example.com/42";
 
 async function loadSendFeedback() {
   vi.stubEnv("VITE_T3CODE_FEEDBACK_DSN", DSN);
@@ -52,7 +52,7 @@ describe("sendFeedback", () => {
 
     expect(posted).toHaveLength(1);
     const [request] = posted;
-    expect(request!.url).toContain("o1.ingest.sentry.io/api/42/envelope/");
+    expect(request!.url).toContain("sentry.example.com/api/42/envelope/");
     const lines = request!.body.split("\n");
     const feedback = JSON.parse(lines[lines.indexOf('{"type":"feedback"}') + 1]!);
     expect(feedback.contexts.feedback).toMatchObject({
