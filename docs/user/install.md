@@ -34,7 +34,7 @@ line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 | Remove it again                                  | `signalbox uninstall`                                            |
 
 Run `signalbox help` or `signalbox --help` for the full reference. To start in a new working
-directory, use an explicit path such as `t3 ./my-project`. A bare directory name
+directory, use an explicit path such as `signalbox ./my-project`. A bare directory name
 is accepted only if it already exists.
 
 If `signalbox` or `signalbox start` reports an already running server, connect to that server
@@ -48,11 +48,11 @@ Node.js for `npx`).
 
 There is no `signalbox` executable for Intel Macs (the desktop app is available). To
 run a server there, build it from source with Node.js 24 and `vp`
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+([Install vp](https://github.com/JustYannicc/signalbox#install-vp)):
 
 ```bash
-git clone https://github.com/pingdotgg/t3code
-cd t3code && vp i && vp run build:desktop
+git clone https://github.com/JustYannicc/signalbox
+cd signalbox && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
 
@@ -61,20 +61,33 @@ update it with `git pull` and a rebuild.
 
 ## Desktop app
 
-Download a release from [GitHub Releases](https://github.com/JustYannicc/signalbox/releases),
-or use a package manager:
-
-| Platform           | Install                            |
-| ------------------ | ---------------------------------- |
-| Windows            | `winget install T3Tools.T3Code`    |
-| macOS              | `brew install --cask t3-code`      |
-| Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb` |
-| Arch Linux         | `yay -S t3code-bin`                |
-| Arch Linux nightly | `yay -S t3code-nightly-bin`        |
+Download the installer for your platform from
+[GitHub Releases](https://github.com/JustYannicc/signalbox/releases): a `.dmg` for
+macOS, an `.exe` for Windows, and an AppImage or `.deb` for Linux
+(`sudo apt install ./Signalbox-*.deb`). Signalbox installs next to
+[T3 Code](https://github.com/pingdotgg/t3code) and keeps its own data in `~/.signalbox`.
 
 The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
+
+### Importing existing data
+
+If [T3 Code](https://github.com/pingdotgg/t3code) is installed, the first launch offers
+to import its projects, threads, and settings. The import copies them and leaves the
+originals in the `.t3` folder of your home directory unchanged, so both apps keep working
+side by side. Provider settings and keys come along. Paired devices, saved remote
+connections, and Connect sign-in do not, so pair your phone and other browsers again and
+reconnect remotes in Signalbox.
+
+Imported threads keep using their existing worktrees, which still belong to the other app,
+so Signalbox never deletes them. Continue each imported thread in only one of the two apps:
+both apps save that thread's checkpoints in the same repository, and working in it from
+both makes them overwrite each other's restore points.
+
+The command line asks the same question the first time you start `signalbox` in a
+terminal. To import from a script, run `signalbox import-t3` before the first start. The
+import only fills a fresh Signalbox home and refuses once Signalbox has data of its own.
 
 ### Windows Subsystem for Linux
 
@@ -98,19 +111,10 @@ command cannot reach the app, start or update the desktop app and try again.
 
 ## Mobile app
 
-Install Signalbox from the
-[App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or
-[Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code).
-The phone connects to a server on another machine. Follow
-[remote access](./remote-access.md) to link it through Signalbox Connect or a pairing URL.
-
-Nightly builds need the beta app. The store apps cannot connect to them. A Nightly build also
-shows these links as QR codes in **Settings → General → Mobile app**.
-
-- **iPhone and iPad:** join the [TestFlight beta](https://testflight.apple.com/join/XgaxaRtd).
-- **Android:** join the [beta group](https://groups.google.com/g/t3-code-v2-beta). With the same
-  Google account, open the [Google Play testing page](https://play.google.com/apps/testing/com.t3tools.t3code)
-  and become a tester.
+The Signalbox mobile app is not in the App Store or Google Play yet. Build it from
+source with the [mobile README](../../apps/mobile/README.md). The phone connects to a
+server on another machine. Follow [remote access](./remote-access.md) to link it
+through Signalbox Connect or a pairing URL.
 
 If the app crashes during launch, open Settings → Diagnostics on the next launch
 that succeeds. It lists startup crashes from the last 7 days with the error and
