@@ -7,14 +7,16 @@ import {
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
+  formatDuration,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
   type LimitPoolWindow,
   remainingPercent,
+  summarizeLimitPool,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -34,92 +36,8 @@ import {
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
-
-/** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
-function accountInitials(email: string): string {
-  const [local = "", domain = ""] = email.split("@");
-  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "?";
-}
-
-/** A stable hue per email, so the same account gets the same chip on every visit. */
-function accountHue(email: string): number {
-  let hash = 0;
-  for (let index = 0; index < email.length; index += 1) {
-    hash = (hash * 31 + email.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash) % 360;
-}
-
-/** The two-letter chip for an email, coloured by a stable hue per address. */
-function AccountChip({ email }: { readonly email: string }) {
-  const hue = accountHue(email);
-  return (
-    <span
-      role="img"
-      aria-label={`Account ${accountInitials(email)}`}
-      className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-3xs leading-none font-semibold"
-      style={{ backgroundColor: `oklch(0.85 0.08 ${hue})`, color: `oklch(0.35 0.1 ${hue})` }}
-    >
-      {accountInitials(email)}
-    </span>
-  );
-}
-
-/**
- * The same mark the model picker uses for a native instance (provider glyph,
- * initials badge, accent); hub accounts have no instance, so they get the chip.
- */
-function AccountAvatar({
-  account,
-  className,
-}: {
-  readonly account: LimitAccount;
-  readonly className?: string;
-}) {
-  if (account.redeem) {
-    return (
-      <ProviderInstanceIcon
-        driverKind={account.driver}
-        displayName={
-          account.displayName ?? getDriverOption(account.driver)?.label ?? String(account.driver)
-        }
-        accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
-        indicatorBackground="var(--popover)"
-        className={cn("size-5", className)}
-        iconClassName="size-4 text-foreground/80"
-      />
-    );
-  }
-  return account.email ? <AccountChip email={account.email} /> : null;
-}
-
-/**
- * Who an account is, without printing the email: the instance name when there
- * is one, else a two-letter chip. The address itself is revealed on demand in
- * the segment's popover.
- */
-function AccountName({
-  account,
-  className,
-}: {
-  readonly account: LimitAccount;
-  readonly className?: string;
-}) {
-  if (account.displayName) return <span className={className}>{account.displayName}</span>;
-  if (account.email) {
-    return (
-      <span className={cn("inline-flex min-w-0 items-center", className)}>
-        <AccountChip email={account.email} />
-      </span>
-    );
-  }
-  return (
-    <span className={className}>
-      {getDriverOption(account.driver)?.label ?? String(account.driver)}
-    </span>
-  );
-}
+import { AccountAvatar, AccountName, accountInitials } from "./UsageLimitsAccountIdentity";
+import { UsageLimitsAccountList } from "./UsageLimitsAccountList";
 
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
@@ -484,11 +402,8 @@ function PoolBar({
   );
 }
 
-/**
- * Big pooled number and the segment bar. Accounts keep the same column across
- * windows; each segment's popover shows its own reset time and share restored.
- */
-function PoolWindowCard({
+/** Each provider window keeps its account columns aligned with every other window. */
+function PoolWindowSummary({
   pool,
   color,
   now,
@@ -501,40 +416,56 @@ function PoolWindowCard({
   readonly label?: string | undefined;
   readonly description?: string | undefined;
 }) {
-  // The soonest reset that hands anything back; an untouched account resets to no effect.
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
-      <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
-        <span className="flex items-baseline gap-2">
-          <span className="text-3xl font-semibold text-foreground tabular-nums">
+    <div className="flex min-w-0 flex-col gap-2.5">
+      <div className="flex min-w-0 items-baseline justify-between gap-3">
+        <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+          {label ?? pool.label}
+        </span>
+        <span className="flex shrink-0 items-baseline gap-1.5">
+          <span className="text-2xl font-semibold text-foreground tabular-nums">
             {pool.remainingPercent}%
           </span>
-          <span className="text-sm text-muted-foreground">left</span>
+          <span className="text-xs text-muted-foreground">left</span>
           {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
         </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
-          </span>
-        ) : null}
       </div>
       <PoolBar pool={pool} color={color} now={now} />
-      {description ? (
-        <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
-      ) : null}
+      {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
     </div>
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  now,
+  index,
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+  readonly index: number;
+}) {
   const color = barColor(pool.driver);
   const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
+  const summary = summarizeLimitPool(pool);
+  const resetWindowDetails = summary.nextReset
+    ? pool.driver === "cursor"
+      ? cursorUsageWindowDetails(summary.nextReset.window.id)
+      : undefined
+    : undefined;
+  const nextResetWindowLabel = resetWindowDetails?.label ?? summary.nextReset?.window.label;
+  const columnClass = cn(
+    "min-w-0 border-b border-border/60 py-6 last:border-b-0 first:pt-0 last:pb-0 md:border-b-0 md:py-0",
+    index % 2 === 1 && "md:border-s md:border-border md:ps-6",
+    index % 2 === 0 && "md:pe-6",
+    index % 3 === 0 && "xl:border-s-0 xl:ps-0 xl:pe-6",
+    index % 3 === 1 && "xl:border-s xl:border-border xl:ps-6 xl:pe-6",
+    index % 3 === 2 && "xl:border-s xl:border-border xl:ps-6 xl:pe-0",
+  );
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+    <section className={cn("flex min-w-0 flex-col gap-4", columnClass)}>
+      <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
         <ProviderInstanceIcon
           driverKind={pool.driver}
           displayName={label}
@@ -542,30 +473,78 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           className="size-5"
           iconClassName="size-4 text-foreground/80"
         />
-        {label}
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">
+          {pool.accounts.length} {pool.accounts.length === 1 ? "account" : "accounts"}
+        </span>
       </h2>
-      {windows.map((window) => {
-        const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-        return (
-          <PoolWindowCard
-            key={`${window.kind}:${window.id}`}
-            pool={window}
-            color={color}
-            now={now}
-            label={details?.label}
-            description={details?.description}
-          />
-        );
-      })}
+      <div className="flex min-w-0 flex-col gap-4">
+        {windows.map((window, windowIndex) => {
+          const details =
+            pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+          return (
+            <div
+              key={`${window.kind}:${window.id}`}
+              className={cn(windowIndex > 0 && "border-t border-border/60 pt-4")}
+            >
+              <PoolWindowSummary
+                pool={window}
+                color={color}
+                now={now}
+                label={details?.label}
+                description={details?.description}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <dl className="flex flex-col gap-1 border-t border-border/60 pt-3 text-xs">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="shrink-0 text-muted-foreground">Next reset</dt>
+          <dd className="min-w-0 text-end text-foreground tabular-nums">
+            {summary.nextReset
+              ? `${summary.nextReset.at <= now ? "now" : `in ${formatDuration(summary.nextReset.at - now)}`} · +${summary.nextReset.restoresPercent}% ${nextResetWindowLabel}`
+              : "—"}
+          </dd>
+        </div>
+        {summary.bankedResets.availableCount > 0 ? (
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="shrink-0 text-muted-foreground">Banked resets</dt>
+            <dd className="min-w-0 text-end text-foreground tabular-nums">
+              {summary.bankedResets.availableCount}{" "}
+              {summary.bankedResets.availableCount === 1 ? "reset credit" : "reset credits"}
+              {summary.bankedResets.nextExpiresAt
+                ? ` · next expires in ${formatDuration(Date.parse(summary.bankedResets.nextExpiresAt) - now)}`
+                : ""}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
     </section>
   );
 }
 
-/**
- * Accounts pooled per provider: what is open across all of them, who resets
- * next, and how much of the pool that hands back. Answers "can I keep going"
- * before "on which account".
- */
+function PoolSummary({
+  pools,
+  now,
+}: {
+  readonly pools: readonly LimitPool[];
+  readonly now: number;
+}) {
+  if (pools.length === 0) return null;
+  return (
+    <section
+      aria-label="Provider limits summary"
+      className="grid min-w-0 grid-cols-1 gap-y-0 border-b border-border pb-6 md:grid-cols-2 md:gap-y-6 xl:grid-cols-3"
+    >
+      {pools.map((pool, index) => (
+        <PoolSection key={pool.driver} pool={pool} now={now} index={index} />
+      ))}
+    </section>
+  );
+}
+
+/** Provider summary first; the account rows below it show each underlying allowance. */
 export function UsageLimitsPooled({
   presentations,
   now,
@@ -578,11 +557,6 @@ export function UsageLimitsPooled({
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
-  const cursorPromptAt =
-    Math.max(
-      pools.findIndex((pool) => pool.driver === "codex"),
-      pools.findIndex((pool) => pool.driver === "claudeAgent"),
-    ) + 1;
   return (
     <div className="flex flex-col gap-8">
       {pools.length === 0 && notices.length === 0 && !cursorPrompt && externalLinks.length === 0 ? (
@@ -590,13 +564,9 @@ export function UsageLimitsPooled({
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
-      {pools.map((pool, index) => (
-        <Fragment key={pool.driver}>
-          {index === cursorPromptAt ? cursorPrompt : null}
-          <PoolSection pool={pool} now={now} />
-        </Fragment>
-      ))}
-      {cursorPromptAt === pools.length ? cursorPrompt : null}
+      <PoolSummary pools={pools} now={now} />
+      {cursorPrompt}
+      <UsageLimitsAccountList pools={pools} now={now} />
       {externalLinks.map((link) => (
         <section
           key={link.url}

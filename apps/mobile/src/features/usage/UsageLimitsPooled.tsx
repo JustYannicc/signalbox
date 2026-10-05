@@ -11,10 +11,12 @@ import {
   formatDuration,
   formatResetsIn,
   remainingPercent,
+  summarizeLimitPool,
   type LimitAccount,
+  type LimitPool,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
-import { Fragment, type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { Linking, Pressable, ScrollView, View } from "react-native";
 import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -25,6 +27,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
+import { UsageLimitsAccountList } from "./UsageLimitsAccountList";
 import { useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
@@ -68,7 +71,7 @@ function AccountSegment({
   );
 }
 
-function PoolWindowCard({
+function PoolWindowSummary({
   pool,
   color,
   now,
@@ -84,7 +87,6 @@ function PoolWindowCard({
   readonly description?: string;
 }) {
   const navigation = useNavigation();
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsSheet", {
       screen: "SettingsContent",
@@ -100,15 +102,17 @@ function PoolWindowCard({
       },
     });
   return (
-    <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
+    <View className="gap-3">
       <View className="flex-row items-start justify-between gap-3">
-        <View className="gap-1">
-          <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
+        <View className="min-w-0 flex-1 gap-1">
+          <Text className="text-xs font-t3-medium text-foreground-muted">
+            {label ?? pool.label}
+          </Text>
           <View className="flex-row items-baseline gap-1.5">
-            <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
+            <Text className="text-2xl font-t3-bold tabular-nums text-foreground">
               {pool.remainingPercent}%
             </Text>
-            <Text className="text-sm text-foreground-muted">left</Text>
+            <Text className="text-xs text-foreground-muted">left</Text>
           </View>
         </View>
         {pool.pace ? (
@@ -116,12 +120,6 @@ function PoolWindowCard({
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
-      {nextRefill ? (
-        <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}%{" "}
-          {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
-        </Text>
-      ) : null}
       <View className="flex-row gap-1">
         {pool.columns.map(({ account, window }, index) => {
           if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
@@ -200,6 +198,82 @@ function PoolWindowCard({
   );
 }
 
+function PoolSummaryColumn({
+  pool,
+  now,
+  environmentIds,
+  color,
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+  readonly environmentIds: readonly string[] | null;
+  readonly color: string;
+}) {
+  const label = DRIVER_LABEL[pool.driver] ?? pool.driver;
+  const windows = displayLimitWindows(pool);
+  const summary = summarizeLimitPool(pool);
+  const resetWindowDetails = summary.nextReset
+    ? pool.driver === "cursor"
+      ? cursorUsageWindowDetails(summary.nextReset.window.id)
+      : undefined
+    : undefined;
+  const nextResetWindowLabel = resetWindowDetails?.label ?? summary.nextReset?.window.label;
+  return (
+    <View className="gap-4 rounded-[24px] border-continuous bg-grouped-card p-4">
+      <View className="flex-row items-center gap-2">
+        <ProviderIcon provider={pool.driver} size={18} />
+        <Text className="min-w-0 flex-1 text-base font-t3-medium text-foreground">{label}</Text>
+        <Text className="shrink-0 text-xs tabular-nums text-foreground-tertiary">
+          {pool.accounts.length} {pool.accounts.length === 1 ? "account" : "accounts"}
+        </Text>
+      </View>
+      <View className="gap-4">
+        {windows.map((window, index) => {
+          const details =
+            pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+          return (
+            <View
+              key={`${window.kind}:${window.id}`}
+              className={index > 0 ? "border-t border-border-subtle pt-4" : undefined}
+            >
+              <PoolWindowSummary
+                pool={window}
+                color={color}
+                now={now}
+                environmentIds={environmentIds}
+                label={details?.label}
+                description={details?.description}
+              />
+            </View>
+          );
+        })}
+      </View>
+      <View className="gap-2 border-t border-border-subtle pt-3">
+        <View className="flex-row items-baseline justify-between gap-3">
+          <Text className="shrink-0 text-xs text-foreground-tertiary">Next reset</Text>
+          <Text className="min-w-0 flex-1 text-right text-xs tabular-nums text-foreground">
+            {summary.nextReset
+              ? `${summary.nextReset.at <= now ? "now" : `in ${formatDuration(summary.nextReset.at - now)}`} · +${summary.nextReset.restoresPercent}% ${nextResetWindowLabel}`
+              : "—"}
+          </Text>
+        </View>
+        {summary.bankedResets.availableCount > 0 ? (
+          <View className="flex-row items-baseline justify-between gap-3">
+            <Text className="shrink-0 text-xs text-foreground-tertiary">Banked resets</Text>
+            <Text className="min-w-0 flex-1 text-right text-xs tabular-nums text-foreground">
+              {summary.bankedResets.availableCount}{" "}
+              {summary.bankedResets.availableCount === 1 ? "reset credit" : "reset credits"}
+              {summary.bankedResets.nextExpiresAt
+                ? ` · next expires in ${formatDuration(Date.parse(summary.bankedResets.nextExpiresAt) - now)}`
+                : ""}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 export function UsageLimitsSection({
   now,
   failedLabels,
@@ -220,11 +294,7 @@ export function UsageLimitsSection({
   const notices = collectLimitNotices(selected);
   const externalLinks = collectExternalUsageLinks(selected);
   const colors = useProviderColors();
-  const cursorPromptAt =
-    Math.max(
-      pools.findIndex((pool) => pool.driver === "codex"),
-      pools.findIndex((pool) => pool.driver === "claudeAgent"),
-    ) + 1;
+  const environmentIds = selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds];
   return (
     <View className="gap-6">
       {pools.length === 0 &&
@@ -238,40 +308,17 @@ export function UsageLimitsSection({
             : "No provider on the selected environments reports subscription limits."}
         </Text>
       ) : null}
-      {pools.map((pool, index) => {
-        const windows = displayLimitWindows(pool);
-        return (
-          <Fragment key={pool.driver}>
-            {index === cursorPromptAt ? cursorPrompt : null}
-            <View className="gap-3">
-              <View className="flex-row items-center gap-2 px-1">
-                <ProviderIcon provider={pool.driver} size={18} />
-                <Text className="text-base font-t3-medium text-foreground">
-                  {DRIVER_LABEL[pool.driver] ?? pool.driver}
-                </Text>
-              </View>
-              {windows.map((window) => {
-                const details =
-                  pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-                return (
-                  <PoolWindowCard
-                    key={`${window.kind}:${window.id}`}
-                    pool={window}
-                    color={pool.driver === "claudeAgent" ? colors.claude : colors.codex}
-                    now={now}
-                    environmentIds={
-                      selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
-                    }
-                    label={details?.label}
-                    description={details?.description}
-                  />
-                );
-              })}
-            </View>
-          </Fragment>
-        );
-      })}
-      {cursorPromptAt === pools.length ? cursorPrompt : null}
+      {pools.map((pool) => (
+        <PoolSummaryColumn
+          key={pool.driver}
+          pool={pool}
+          now={now}
+          environmentIds={environmentIds}
+          color={pool.driver === "claudeAgent" ? colors.claude : colors.codex}
+        />
+      ))}
+      {cursorPrompt}
+      <UsageLimitsAccountList pools={pools} now={now} environmentIds={environmentIds} />
       {externalLinks.map((link) => (
         <View key={link.url} className="gap-3 rounded-xl border border-border-subtle p-4">
           <Text className="text-base font-t3-medium text-foreground">{link.label}</Text>

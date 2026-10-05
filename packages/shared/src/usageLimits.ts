@@ -354,6 +354,51 @@ export interface LimitPool {
   readonly windows: readonly LimitPoolWindow[];
 }
 
+export interface LimitPoolSummary {
+  readonly nextReset: {
+    readonly at: number;
+    readonly restoresPercent: number;
+    readonly window: Pick<LimitPoolWindow, "id" | "kind" | "label">;
+  } | null;
+  readonly bankedResets: {
+    readonly availableCount: number;
+    readonly nextExpiresAt: string | null;
+  };
+}
+
+/** The provider-level reset details shared by the web and mobile summaries. */
+export function summarizeLimitPool(pool: LimitPool): LimitPoolSummary {
+  const nextReset =
+    displayLimitWindows(pool)
+      .flatMap((window) =>
+        window.resets
+          .filter((reset) => reset.restoresPercent > 0)
+          .map((reset) => ({
+            at: reset.at,
+            restoresPercent: reset.restoresPercent,
+            window: { id: window.id, kind: window.kind, label: window.label },
+          })),
+      )
+      .sort((left, right) => left.at - right.at)[0] ?? null;
+  const credits = pool.accounts.flatMap((account) => {
+    const resetCredits = account.limits.resetCredits;
+    return resetCredits && resetCredits.availableCount > 0 ? [resetCredits] : [];
+  });
+  const nextExpiresAt =
+    credits
+      .flatMap((credit) => (credit.nextExpiresAt ? [credit.nextExpiresAt] : []))
+      .filter((expiresAt) => Number.isFinite(Date.parse(expiresAt)))
+      .sort((left, right) => Date.parse(left) - Date.parse(right))[0] ?? null;
+
+  return {
+    nextReset,
+    bankedResets: {
+      availableCount: credits.reduce((total, credit) => total + credit.availableCount, 0),
+      nextExpiresAt,
+    },
+  };
+}
+
 /** Show Cursor's two usable pools instead of a combined percentage when both are available. */
 export function displayLimitWindows(pool: LimitPool) {
   if (pool.driver !== "cursor") return pool.windows;

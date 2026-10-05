@@ -74,18 +74,19 @@ the dialog.
 ## Track subscription limits
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
-or Claude accounts across your environments and hubs you read one number per window rather than a
-list. Each window card shows how much of the pool is left and a bar with one segment per account,
-kept in the same column across windows. Accounts are ordered by their 5-hour reset, soonest
-first, or by the first available window when no account reports a 5-hour limit. A gap means the
-account does not report that window. When the provider reports reset times, the card also says
-when the next reset lands and how much it hands back. The hatched
-part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
-where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
-with banked reset credits show a ticket count and the **Use reset** action in the account details.
-Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
-Keychain. On narrow screens, numbered rows below
-the bar show each account's quota, countdown, and credits. Tap a row to open its details.
+or Claude accounts across your environments and hubs, the provider summary shows how much is left
+in each pooled window. Each bar has one segment per account, kept in the same column across windows.
+Accounts are ordered by their 5-hour reset, soonest first, or by the first available window when no
+account reports a 5-hour limit. A gap means the account does not report that window. The summary
+shows the soonest reset that restores quota and the total banked reset credits, with the next expiry
+when one is reported. The hatched part of a segment is what that account's reset restores. Tap a
+segment for the account's plan, email, environment or hub, and reset time. On web, you can hover too.
+
+Below the summary, **Accounts** lists each subscription account once with its individual window
+bars, plan, and environment or hub source. Available reset credits include **Use reset** when that
+account can redeem them. On mobile, use **Details** in a row or tap a segment to open the account
+screen. Claude resets are not available when the server runs on macOS, where Claude keeps its login
+in the Keychain.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
