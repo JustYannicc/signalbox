@@ -8,8 +8,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
 
 import * as T3Import from "./T3Import.ts";
+
+const decodeSettings = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+);
 
 /** Every file under `dir` with its sha256, so "unchanged" means byte for byte. */
 function fingerprint(dir: string): Record<string, string> {
@@ -97,7 +102,10 @@ it.layer(NodeServices.layer)("T3 Code import", (it) => {
       ]);
       const target = paths.targetStateDir;
       assert.deepStrictEqual(threadIds(NodePath.join(target, "state.sqlite")), ["t1"]);
-      assert.equal(NodeFS.readFileSync(NodePath.join(target, "settings.json"), "utf8"), '{"a":1}');
+      assert.deepStrictEqual(
+        decodeSettings(NodeFS.readFileSync(NodePath.join(target, "settings.json"), "utf8")),
+        { a: 1, snapShotEnabled: false },
+      );
       assert.equal(
         NodeFS.readFileSync(NodePath.join(target, "attachments", "thread-1", "a.png"), "utf8"),
         "png",
@@ -116,6 +124,32 @@ it.layer(NodeServices.layer)("T3 Code import", (it) => {
         NodeFS.readdirSync(target).filter((name) => name.includes("t3-import")),
         [],
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("turns off imported SnapShot without changing T3 settings", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-import-" });
+      const paths = writeT3Home(root);
+      const sourceSettings = NodePath.join(paths.sourceStateDir, "settings.json");
+      const t3Settings =
+        '{"theme":"dark","snapShotEnabled":true,"snapShotIncludeAccessibility":false}';
+      NodeFS.writeFileSync(sourceSettings, t3Settings);
+
+      yield* T3Import.importT3Data(paths);
+
+      assert.deepStrictEqual(
+        decodeSettings(
+          NodeFS.readFileSync(NodePath.join(paths.targetStateDir, "settings.json"), "utf8"),
+        ),
+        {
+          theme: "dark",
+          snapShotEnabled: false,
+          snapShotIncludeAccessibility: false,
+        },
+      );
+      assert.equal(NodeFS.readFileSync(sourceSettings, "utf8"), t3Settings);
     }).pipe(Effect.scoped),
   );
 

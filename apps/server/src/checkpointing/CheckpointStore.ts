@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 
 import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
+import * as SignalboxCheckpointRefs from "../signalbox/CheckpointRefs.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 export interface CaptureCheckpointInput {
@@ -114,7 +115,10 @@ export const make = Effect.gen(function* () {
         detail: `${handle.kind} driver does not implement checkpoint operations.`,
       });
     }
-    return handle.driver.checkpoints satisfies VcsCheckpointOps;
+    // signalbox: Isolate deletions while resolving legacy T3 refs for reads.
+    return SignalboxCheckpointRefs.withSignalboxCheckpointRefs(
+      handle.driver.checkpoints,
+    ) satisfies VcsCheckpointOps;
   });
 
   const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd) =>

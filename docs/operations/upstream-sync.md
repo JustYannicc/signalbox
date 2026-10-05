@@ -22,8 +22,9 @@ ids, the `t3.json` format, protocol paths such as `/.well-known/t3/environment`,
 `.github/workflows/upstream-sync.yml` runs every four hours and on demand (Actions > Upstream Sync >
 Run workflow). When upstream has new commits and they merge cleanly, it rebuilds the
 `upstream-sync` branch from `main`, merges `upstream/main`, runs the post-merge steps below, and
-opens one PR with auto-merge set to a merge commit. Never squash or rebase a sync PR: that drops
-upstream's history and turns the next sync into conflicts. The workflow force-pushes
+opens one PR. It never merges itself: a person reviews what upstream changed and merges it with a
+merge commit. Never squash or rebase a sync PR: that drops upstream's history and turns the next
+sync into conflicts. The workflow force-pushes
 `upstream-sync` on every clean run, so never push your own work to that branch.
 
 Every PR also runs the Upstream Merge job in Signalbox CI. It fails when the PR adds files that

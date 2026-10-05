@@ -1,12 +1,9 @@
-import * as Encoding from "effect/Encoding";
-import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
-
-const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
+import { type CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
+import * as SignalboxCheckpointRefs from "../signalbox/CheckpointRefs.ts";
 
 export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
-  return CheckpointRef.make(
-    `${CHECKPOINT_REFS_PREFIX}/${Encoding.encodeBase64Url(threadId)}/turn/${turnCount}`,
-  );
+  // signalbox: Keep new checkpoint refs isolated from T3 Code's shared refs.
+  return SignalboxCheckpointRefs.checkpointRefForThreadTurn(threadId, turnCount);
 }
 
 function resolveThreadWorkspaceCwd(input: {

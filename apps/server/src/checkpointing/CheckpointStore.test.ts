@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { ThreadId, type VcsError } from "@t3tools/contracts";
+import { CheckpointRef, ThreadId, type VcsError } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -442,4 +442,48 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
   });
+
+  it.effect("reads legacy T3 refs but deletes only Signalbox refs", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const checkpointStore = yield* CheckpointStore.CheckpointStore;
+      const threadId = ThreadId.make("shared-checkpoint-thread");
+      const signalboxBaseline = checkpointRefForThreadTurn(threadId, 0);
+      const signalboxTarget = checkpointRefForThreadTurn(threadId, 1);
+      const legacyT3Baseline = CheckpointRef.make(
+        signalboxBaseline.replace("refs/signalbox/checkpoints/", "refs/t3/checkpoints/"),
+      );
+      expect(signalboxBaseline).toContain("refs/signalbox/checkpoints/");
+
+      yield* git(tmp, ["update-ref", legacyT3Baseline, "HEAD"]);
+      yield* writeTextFile(NodePath.join(tmp, "README.md"), "Signalbox change\n");
+      yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: signalboxTarget });
+      const diff = yield* checkpointStore.diffCheckpoints({
+        cwd: tmp,
+        fromCheckpointRef: signalboxBaseline,
+        toCheckpointRef: signalboxTarget,
+        ignoreWhitespace: false,
+      });
+      expect(diff).toContain("+Signalbox change");
+
+      yield* writeTextFile(NodePath.join(tmp, "README.md"), "later change\n");
+      expect(
+        yield* checkpointStore.restoreCheckpoint({ cwd: tmp, checkpointRef: signalboxBaseline }),
+      ).toBe(true);
+      expect(yield* fileSystem.readFileString(NodePath.join(tmp, "README.md"))).toBe("# test\n");
+
+      yield* checkpointStore.deleteCheckpointRefs({
+        cwd: tmp,
+        checkpointRefs: [signalboxTarget, legacyT3Baseline],
+      });
+      expect(
+        yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef: signalboxTarget }),
+      ).toBe(false);
+      expect(
+        yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef: legacyT3Baseline }),
+      ).toBe(true);
+    }),
+  );
 });
