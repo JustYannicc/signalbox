@@ -31,7 +31,12 @@ const UPSTREAM = "upstream/main";
 const BRANCH = "upstream-sync";
 const LABEL = "upstream-sync-conflict";
 const UPSTREAM_REPOSITORY = "pingdotgg/t3code";
-const RUNBOOK_URL = `https://github.com/${process.env.GITHUB_REPOSITORY ?? "JustYannicc/signalbox"}/blob/main/docs/operations/upstream-sync.md`;
+const REPOSITORY = process.env.GITHUB_REPOSITORY ?? "JustYannicc/signalbox";
+const RUNBOOK_URL = `https://github.com/${REPOSITORY}/blob/main/docs/operations/upstream-sync.md`;
+
+// gh infers its repo from git remotes and can pick `upstream`, so every issue,
+// label, and PR call would land on T3 Code. Pin it for all child processes.
+process.env.GH_REPO = REPOSITORY;
 
 function run(command: string, args: ReadonlyArray<string>): string {
   console.log(`$ ${command} ${args.join(" ")}`);
