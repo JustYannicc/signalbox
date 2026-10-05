@@ -118,7 +118,7 @@ actual web and server ports. For example, with the default ports:
 
 ```sh
 VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \
-T3CODE_PORT=13773 \
+SIGNALBOX_PORT=13773 \
   "/Applications/Signalbox (Alpha).app/Contents/MacOS/Signalbox (Alpha)"
 ```
 

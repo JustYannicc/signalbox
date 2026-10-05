@@ -7,18 +7,18 @@
 #   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
-#   T3CODE_HOME              Signalbox home directory (default: ~\.signalbox)
+#   SIGNALBOX_HOME           Signalbox home directory (default: ~\.signalbox)
 #   T3CODE_INSTALL_BIN_DIR   where signalbox.exe is linked (default: ~\.local\bin)
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $T3CODE_HOME\runtime\versions\<version>, the
+# The archive is unpacked into $SIGNALBOX_HOME\runtime\versions\<version>, the
 # same layout `signalbox service install` uses, so the service reuses this download.
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $repo = "JustYannicc/signalbox"
 $baseUrl = if ($env:T3CODE_RELEASE_BASE_URL) { $env:T3CODE_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
-$t3Home = if ($env:T3CODE_HOME) { $env:T3CODE_HOME } else { Join-Path $HOME ".signalbox" }
+$signalboxHome = if ($env:SIGNALBOX_HOME) { $env:SIGNALBOX_HOME } else { Join-Path $HOME ".signalbox" }
 $binDir = if ($env:T3CODE_INSTALL_BIN_DIR) { $env:T3CODE_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
 function Fail([string] $message) {
@@ -153,7 +153,7 @@ if ($version -match '-preview\.') {
 
 $stem = "signalbox-$version-win32-$arch"
 $archive = "$stem.zip"
-$versionsDir = Join-Path $t3Home "runtime\versions"
+$versionsDir = Join-Path $signalboxHome "runtime\versions"
 $targetDir = Join-Path $versionsDir $version
 $marker = Join-Path $targetDir ".install-complete"
 

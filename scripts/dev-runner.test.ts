@@ -9,6 +9,7 @@ import {
   HostProcessPlatform,
   HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
+import { applySignalboxEnvironment } from "@t3tools/shared/signalboxEnvironment";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -190,6 +191,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_HOME, undefined);
+        assert.equal(env.SIGNALBOX_HOME, undefined);
+        assert.equal(env.SIGNALBOX_PORT, "13773");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
       }),
     );
@@ -253,6 +256,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-t3"));
         assert.equal(env.T3CODE_PORT, "4222");
+        assert.equal(env.SIGNALBOX_HOME, path.resolve("/tmp/custom-t3"));
+        assert.equal(env.SIGNALBOX_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
@@ -350,6 +355,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
+        assert.equal(env.SIGNALBOX_HOME, path.resolve("/tmp/my-t3"));
       }),
     );
 
@@ -378,10 +384,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
+        assert.equal(env.SIGNALBOX_HOME, path.resolve("/tmp/my-t3"));
         assert.equal(env.PORT, "5733");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
         assert.equal(env.HOST, "127.0.0.1");
         assert.equal(env.T3CODE_PORT, "4222");
+        assert.equal(env.SIGNALBOX_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:4222");
         assert.equal(env.T3CODE_MODE, undefined);
         assert.equal(env.T3CODE_NO_BROWSER, undefined);
@@ -1258,10 +1266,16 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       const spawnedHome = (input: {
         readonly t3Home: string | undefined;
         readonly cwd: string;
-        readonly ambientHome: string | undefined;
+        readonly signalboxHome?: string;
+        readonly ambientT3Home?: string;
       }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
+          const environment = {
+            ...(input.signalboxHome === undefined ? {} : { SIGNALBOX_HOME: input.signalboxHome }),
+            ...(input.ambientT3Home === undefined ? {} : { T3CODE_HOME: input.ambientT3Home }),
+          };
+          applySignalboxEnvironment(environment);
           const spawnerLayer = Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make((command) => {
@@ -1278,13 +1292,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcessPlatform, "linux"),
             Effect.provideService(HostProcessWorkingDirectory, input.cwd),
-            Effect.provideService(
-              HostProcessEnvironment,
-              input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome },
-            ),
+            Effect.provideService(HostProcessEnvironment, environment),
           );
 
-          return captured?.T3CODE_HOME;
+          return {
+            t3Home: captured?.T3CODE_HOME,
+            signalboxHome: captured?.SIGNALBOX_HOME,
+          };
         });
 
       it.effect("prefers an explicit --home-dir over the worktree default", () =>
@@ -1294,9 +1308,10 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: "/tmp/explicit-home",
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            signalboxHome: "/home/user/.signalbox",
           });
-          assert.equal(home, path.resolve("/tmp/explicit-home"));
+          assert.equal(home.t3Home, path.resolve("/tmp/explicit-home"));
+          assert.equal(home.signalboxHome, path.resolve("/tmp/explicit-home"));
         }).pipe(Effect.scoped),
       );
 
@@ -1307,34 +1322,49 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: "   ",
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            signalboxHome: "/home/user/.signalbox",
           });
-          assert.equal(home, path.join(path.resolve(root), ".t3"));
+          assert.equal(home.t3Home, path.join(path.resolve(root), ".t3"));
+          assert.equal(home.signalboxHome, path.join(path.resolve(root), ".t3"));
         }).pipe(Effect.scoped),
       );
 
-      it.effect("prefers the worktree .t3 over an ambient T3CODE_HOME", () =>
+      it.effect("prefers the worktree .t3 over SIGNALBOX_HOME", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = yield* spawnedHome({
             t3Home: undefined,
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            signalboxHome: "/home/user/.signalbox",
           });
-          assert.equal(home, path.join(path.resolve(root), ".t3"));
+          assert.equal(home.t3Home, path.join(path.resolve(root), ".t3"));
+          assert.equal(home.signalboxHome, path.join(path.resolve(root), ".t3"));
         }).pipe(Effect.scoped),
       );
 
-      it.effect("falls back to an ambient T3CODE_HOME outside a worktree", () =>
+      it.effect("falls back to SIGNALBOX_HOME outside a worktree", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const home = yield* spawnedHome({
             t3Home: undefined,
             cwd: NodeOS.tmpdir(),
-            ambientHome: "/home/user/.t3",
+            signalboxHome: "/home/user/.signalbox",
           });
-          assert.equal(home, path.resolve("/home/user/.t3"));
+          assert.equal(home.t3Home, path.resolve("/home/user/.signalbox"));
+          assert.equal(home.signalboxHome, path.resolve("/home/user/.signalbox"));
+        }),
+      );
+
+      it.effect("ignores an ambient T3CODE_HOME outside a worktree", () =>
+        Effect.gen(function* () {
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientT3Home: "/home/user/.t3",
+          });
+          assert.equal(home.t3Home, undefined);
+          assert.equal(home.signalboxHome, undefined);
         }),
       );
 
@@ -1343,9 +1373,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: undefined,
             cwd: NodeOS.tmpdir(),
-            ambientHome: undefined,
           });
-          assert.equal(home, undefined);
+          assert.equal(home.t3Home, undefined);
+          assert.equal(home.signalboxHome, undefined);
         }),
       );
     });

@@ -6,6 +6,7 @@ import { Argument, Command } from "effect/unstable/cli";
 import * as CliError from "effect/unstable/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
+import { applySignalboxEnvironment } from "@t3tools/shared/signalboxEnvironment";
 import packageJson from "../package.json" with { type: "json" };
 import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";
@@ -91,6 +92,7 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
+  applySignalboxEnvironment(process.env); // signalbox: isolate the server CLI from T3 Code's environment
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
     Effect.provide(CliRuntimeLayer),

@@ -320,6 +320,26 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
+  it.effect("keeps the Windows Signalbox home out of the WSL backend", () =>
+    Effect.gen(function* () {
+      const previousHome = process.env.SIGNALBOX_HOME;
+      try {
+        process.env.SIGNALBOX_HOME = "C:\\Users\\user\\.signalbox";
+        yield* withHarness(
+          Effect.gen(function* () {
+            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+            const wsl = yield* configuration.resolveWsl({ port: 5000, distro: null });
+
+            assert.isUndefined(wsl.env.SIGNALBOX_HOME);
+            assert.isUndefined(wsl.env.T3CODE_HOME);
+          }),
+        );
+      } finally {
+        restoreEnv("SIGNALBOX_HOME", previousHome);
+      }
+    }),
+  );
+
   it.effect("resolveWsl pins a default-tracking run to the concrete default distro", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
