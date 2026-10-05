@@ -7,6 +7,7 @@
  * CLI module graph (seconds of evaluation) loads; everything else defers to
  * the real CLI in ./binCli.ts.
  */
+import { applySignalboxEnvironment } from "@t3tools/shared/signalboxEnvironment";
 import { isEntrypoint } from "./entrypoint.ts";
 
 if (
@@ -16,6 +17,7 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
+  applySignalboxEnvironment(process.env); // signalbox: isolate the server CLI from T3 Code's environment
   const command = process.argv[2];
   if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");

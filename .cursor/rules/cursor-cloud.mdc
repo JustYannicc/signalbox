@@ -28,8 +28,9 @@ Pre-installed and wired into login shells (`~/.bashrc`/`~/.profile`): Node 24 (v
   the next free pair, so read the actual ports from stdout. Avoid production `build`/`start` in dev.
 - Auth/pairing: the server is unauthenticated by default and prints a pairing URL to stdout on startup
   (e.g. `http://localhost:5733/pair#token=XXXX`). Open that URL in the browser to pair before the web
-  UI can talk to the server. Server state (SQLite, auth, projects) lives under `~/.t3`
-  (`T3CODE_HOME`); multiple `npm run dev` instances bind different ports but share that same DB.
+  UI can talk to the server. Server state lives under `~/.signalbox/dev` by default;
+  `SIGNALBOX_HOME` selects another base. Multiple `npm run dev` instances bind different ports but
+  share that DB. Linked worktrees use their own `.t3`.
 - Agent providers are external CLIs (`codex`, `claude`, `cursor-agent`, `opencode`) probed on `PATH`.
   Without one installed the UI loads but no agent can run. Claude Code
   (`npm i -g @anthropic-ai/claude-code`) works headlessly using `ANTHROPIC_API_KEY` from the

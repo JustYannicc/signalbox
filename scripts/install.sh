@@ -8,18 +8,18 @@
 #   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
-#   T3CODE_HOME              Signalbox home directory (default: ~/.signalbox)
+#   SIGNALBOX_HOME           Signalbox home directory (default: ~/.signalbox)
 #   T3CODE_INSTALL_BIN_DIR   where the `signalbox` symlink goes (default: ~/.local/bin)
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $T3CODE_HOME/runtime/versions/<version>, the
+# The archive is unpacked into $SIGNALBOX_HOME/runtime/versions/<version>, the
 # same layout `signalbox service install` uses, so the service reuses this download
 # instead of fetching the release again.
 set -eu
 
 repo="JustYannicc/signalbox"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-t3_home="${T3CODE_HOME:-$HOME/.signalbox}"
+signalbox_home="${SIGNALBOX_HOME:-$HOME/.signalbox}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 
 fail() {
@@ -174,7 +174,7 @@ esac
 
 stem="signalbox-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
-versions_dir="${t3_home}/runtime/versions"
+versions_dir="${signalbox_home}/runtime/versions"
 target_dir="${versions_dir}/${version}"
 
 if [ -f "${target_dir}/.install-complete" ] && [ "$(cat "${target_dir}/.install-complete")" = "$version" ]; then

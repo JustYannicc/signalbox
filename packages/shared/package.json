@@ -175,6 +175,10 @@
       "types": "./src/relayUrl.ts",
       "import": "./src/relayUrl.ts"
     },
+    "./signalboxEnvironment": {
+      "types": "./src/signalboxEnvironment.ts",
+      "import": "./src/signalboxEnvironment.ts"
+    },
     "./relayJwt": {
       "types": "./src/relayJwt.ts",
       "import": "./src/relayJwt.ts"
