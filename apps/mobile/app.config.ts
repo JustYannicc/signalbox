@@ -226,7 +226,7 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 
 const config: ExpoConfig = {
   name: variant.appName,
-  slug: "t3-code",
+  slug: "signalbox", // signalbox: our Expo project
   platforms: ["ios", "android"],
   scheme: variant.scheme,
   version: "1.3.1",
@@ -241,7 +241,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: {
     enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    url: "https://u.expo.dev/56da3071-6d9f-4475-97a0-251d21a462d8", // signalbox: our Expo project
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
@@ -471,10 +471,10 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      projectId: "56da3071-6d9f-4475-97a0-251d21a462d8", // signalbox: our Expo project
     },
   },
-  owner: "pingdotgg",
+  owner: "justyannicc", // signalbox: our Expo project
 };
 
 export default config;
