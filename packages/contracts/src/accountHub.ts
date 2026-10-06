@@ -6,7 +6,9 @@
  */
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ServerProviderUsageWindow } from "./providerUsageLimits.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
 export const ACCOUNT_HUB_SOURCE_ID = UsageLimitSourceId.make("signalbox-account-hub");
@@ -115,6 +117,39 @@ export const AccountPoolImportInput = Schema.Struct({
   ...AccountHubImportInput.fields,
 });
 export type AccountPoolImportInput = typeof AccountPoolImportInput.Type;
+
+/**
+ * A pool as anyone allowed to use it sees it: what is left per provider and
+ * window and when it next resets. No account count, emails, plans, or banked
+ * resets, so it is safe to hand to a pool's members and to agents.
+ */
+export const AccountPoolUsageWindow = Schema.Struct({
+  label: Schema.String,
+  kind: ServerProviderUsageWindow.fields.kind,
+  /** Share of the pool's quota still open in this window, 0..100. */
+  remainingPercent: Schema.Number,
+  /** The soonest reset that hands quota back to the pool. */
+  nextResetAt: Schema.optional(IsoDateTime),
+});
+export type AccountPoolUsageWindow = typeof AccountPoolUsageWindow.Type;
+
+export const AccountPoolProvider = Schema.Struct({
+  /** Pass this as the provider instance to run a thread or task on this pool. */
+  providerInstanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  displayName: Schema.String,
+  /** Whether the pool has an account that can take turns for this provider now. */
+  available: Schema.Boolean,
+  usage: Schema.Array(AccountPoolUsageWindow),
+});
+export type AccountPoolProvider = typeof AccountPoolProvider.Type;
+
+export const AccountPoolOverview = Schema.Struct({
+  id: AccountPoolId,
+  name: PoolName,
+  providers: Schema.Array(AccountPoolProvider),
+});
+export type AccountPoolOverview = typeof AccountPoolOverview.Type;
 
 /** The usage limit source a pool's accounts report under. */
 export const poolSourceId = (poolId: string) =>

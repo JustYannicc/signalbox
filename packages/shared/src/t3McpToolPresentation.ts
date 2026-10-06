@@ -50,6 +50,7 @@ export type T3McpToolSummaryAction =
   | "project-clone"
   | "environment-read"
   | "environment-update"
+  | "pool-list" // signalbox
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -296,6 +297,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Read", "Reading", "Read", "environment preferences"],
     "environment-read",
   ),
+  t3_pool_list: tool(["List", "Listing", "Listed", "account pools"], "pool-list"), // signalbox
   t3_environment_preferences_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",

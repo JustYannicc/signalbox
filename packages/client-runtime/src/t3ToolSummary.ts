@@ -329,6 +329,9 @@ export function summarizeT3ToolCalls(
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
       break;
+    case "pool-list": // signalbox
+      label = phrase("Checked", "check", `account pools ${times}`);
+      break;
     case "attachment-prepare":
       label = phrase(
         "Prepared",
