@@ -117,22 +117,33 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 ## Use several subscription accounts
 
-Signalbox can spread work across several ChatGPT and Claude accounts. Open **Usage → Limits** and
-choose **Add account**, then **ChatGPT account** or **Claude account**, and sign in with the account
-to add. Repeat for each account. ChatGPT accounts use Sign in with ChatGPT.
+Signalbox can spread work across several ChatGPT, Claude, Grok, and Antigravity accounts. Open
+**Usage → Limits**, choose **Add account**, pick the provider, and sign in with the account to add.
+Repeat for each account. ChatGPT accounts use Sign in with ChatGPT; Grok shows a code to enter on
+xAI's page.
 
-When Signalbox runs on the same machine as your browser, sign-in finishes on its own. From another
-device, the provider ends on a page that cannot load; copy that page's full address and paste it
-into Signalbox to finish.
+When Signalbox runs on the same machine as your browser, browser sign-ins finish on their own. From
+another device, the provider ends on a page that cannot load; copy that page's full address and paste
+it into Signalbox to finish.
 
-The first account adds a **Codex accounts** or **Claude accounts** provider. Pick it in the model
-picker to use every account you added: each conversation stays on one account, and work moves to
-another account when one runs out. Add more accounts from **Settings → Providers** on that provider
-as well.
+The first account of each provider adds a provider such as **Claude accounts** to the model picker.
+Pick it to use every account you added: each conversation stays on one account, and work moves to
+another account when one runs out. Antigravity accounts offer only its Flash models this way.
 
-Each added account appears under **Accounts** on **Usage → Limits**. Use its menu to pause it,
-resume it, sign in again, or remove it. Claude accounts report their limits; ChatGPT does not share
-usage with connected apps, so ChatGPT accounts link to ChatGPT's usage page instead.
+Each account appears under **Accounts** on **Usage → Limits**. Use its menu to pause it, resume it,
+sign in again, or remove it. ChatGPT does not share usage with connected apps, so ChatGPT accounts
+link to ChatGPT's usage page instead of showing bars.
+
+### Bring accounts from CLIProxyAPI
+
+If you already run CLIProxyAPI, choose **Add account → Import from CLIProxyAPI** and enter its URL and
+management key to copy its accounts in. Leave **Remove them from that CLIProxyAPI** on unless you stop
+using that instance: two hubs refreshing the same account sign each other out.
+
+To keep your accounts where they are, choose **Add account → Account hub…**, select **Use my
+CLIProxyAPI**, and enter its URL, management key, and one of its API keys. Signalbox then sends work
+through your instance and adds new accounts to it. ChatGPT accounts need Signalbox's ChatGPT plugin
+installed there. Switch back to **Signalbox runs it** at any time.
 
 ## Connect a CLIProxyAPI hub
 

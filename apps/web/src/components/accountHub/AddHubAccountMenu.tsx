@@ -1,11 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { PlusIcon } from "lucide-react";
+import { DownloadIcon, PlusIcon, ServerIcon } from "lucide-react";
 import { useState } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { AccountHubConnectionDialog } from "./AccountHubConnectionDialog";
 import { AddHubAccountDialog } from "./AddHubAccountDialog";
 import { HUB_INSTANCES, type HubAccountKind } from "./hubInstances";
 
@@ -20,6 +21,7 @@ export function AddHubAccountMenu({
 }) {
   const primary = usePrimaryEnvironmentId();
   const [adding, setAdding] = useState<HubAccountKind | null>(null);
+  const [hubDialog, setHubDialog] = useState<"connect" | "import" | null>(null);
   const environmentId =
     environmentIds.length === 1
       ? environmentIds[0]
@@ -46,8 +48,24 @@ export function AddHubAccountMenu({
               {HUB_INSTANCES[kind].account}
             </MenuItem>
           ))}
+          <MenuSeparator />
+          <MenuItem onClick={() => setHubDialog("import")}>
+            <DownloadIcon aria-hidden />
+            Import from CLIProxyAPI
+          </MenuItem>
+          <MenuItem onClick={() => setHubDialog("connect")}>
+            <ServerIcon aria-hidden />
+            Account hub…
+          </MenuItem>
         </MenuPopup>
       </Menu>
+      {hubDialog ? (
+        <AccountHubConnectionDialog
+          environmentId={environmentId}
+          initialTab={hubDialog}
+          onClose={() => setHubDialog(null)}
+        />
+      ) : null}
       {adding ? (
         <AddHubAccountDialog
           environmentId={environmentId}

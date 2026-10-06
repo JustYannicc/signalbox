@@ -201,7 +201,10 @@ export const makeHubCodexProvider = Effect.fn("makeHubCodexProvider")(function* 
     const accounts = yield* hub.accounts.pipe(Effect.orElseSucceed(() => []));
     // Paused accounts serve nothing, so a pool of only paused accounts is not signed in.
     const chatGptAccounts = accounts.filter(
-      (account) => account.type === ACCOUNT_HUB_CHATGPT_TYPE && !account.disabled,
+      // Sign in with ChatGPT accounts, and Codex logins a hub imported or already held.
+      (account) =>
+        (account.type === ACCOUNT_HUB_CHATGPT_TYPE || account.type === "codex") &&
+        !account.disabled,
     );
     if (chatGptAccounts.length === 0) {
       return {

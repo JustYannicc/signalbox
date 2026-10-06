@@ -23,6 +23,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
 import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
+import * as AccountHubConnections from "./accountHub/AccountHubConnections.ts"; // signalbox
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
@@ -555,7 +556,12 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.
   Layer.provideMerge(
-    Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
+    Layer.mergeAll(
+      Keybindings.layer,
+      EnvironmentTheme.layer,
+      UsageLimitSources.layer,
+      AccountHubConnections.layer, // signalbox: account hub
+    ),
   ),
   Layer.provideMerge(ProviderRegistryLive),
   // The instance registry is the new routing keystone — text generation,

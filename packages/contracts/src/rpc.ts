@@ -1,3 +1,10 @@
+import {
+  AccountHubConnection,
+  AccountHubImportInput,
+  AccountHubImportResult,
+  AccountHubRpcError,
+  AccountHubSetConnectionInput,
+} from "./accountHub.ts"; // signalbox
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -368,6 +375,9 @@ export const WS_METHODS = {
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
   usageLimitSourceUpdateAccount: "usageLimitSource.updateAccount",
+  accountHubGetConnection: "accountHub.getConnection",
+  accountHubSetConnection: "accountHub.setConnection",
+  accountHubImportAccounts: "accountHub.importAccounts",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -599,6 +609,23 @@ const WsProviderConsumeResetCreditRpc = Rpc.make(WS_METHODS.providerConsumeReset
 const WsUsageLimitSourceUpdateAccountRpc = Rpc.make(WS_METHODS.usageLimitSourceUpdateAccount, {
   payload: UsageLimitSourceUpdateAccountInput,
   error: Schema.Union([UsageLimitSourceError, EnvironmentAuthorizationError]),
+});
+
+// signalbox: the account hub's connection and account import.
+const AccountHubRpcFailure = Schema.Union([AccountHubRpcError, EnvironmentAuthorizationError]);
+const WsAccountHubGetConnectionRpc = Rpc.make(WS_METHODS.accountHubGetConnection, {
+  success: AccountHubConnection,
+  error: AccountHubRpcFailure,
+});
+const WsAccountHubSetConnectionRpc = Rpc.make(WS_METHODS.accountHubSetConnection, {
+  payload: AccountHubSetConnectionInput,
+  success: AccountHubConnection,
+  error: AccountHubRpcFailure,
+});
+const WsAccountHubImportAccountsRpc = Rpc.make(WS_METHODS.accountHubImportAccounts, {
+  payload: AccountHubImportInput,
+  success: AccountHubImportResult,
+  error: AccountHubRpcFailure,
 });
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
@@ -1713,6 +1740,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
   WsUsageLimitSourceUpdateAccountRpc,
+  WsAccountHubGetConnectionRpc,
+  WsAccountHubSetConnectionRpc,
+  WsAccountHubImportAccountsRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,

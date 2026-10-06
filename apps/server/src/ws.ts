@@ -1,3 +1,5 @@
+import { AccountHubRpcError } from "@t3tools/contracts/accountHub"; // signalbox
+import * as AccountHubConnections from "./accountHub/AccountHubConnections.ts"; // signalbox
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -2429,6 +2431,33 @@ const makeWsRpcLayer = (
               );
               return { outcome };
             }),
+            { "rpc.aggregate": "provider" },
+          ),
+        // signalbox: the account hub's connection and account import.
+        [WS_METHODS.accountHubGetConnection]: () =>
+          observeRpcEffect(
+            WS_METHODS.accountHubGetConnection,
+            AccountHubConnections.AccountHubConnections.pipe(
+              Effect.flatMap((hub) => hub.connection),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountHubSetConnection]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountHubSetConnection,
+            AccountHubConnections.AccountHubConnections.pipe(
+              Effect.flatMap((hub) => hub.setConnection(input)),
+              Effect.mapError((error) => new AccountHubRpcError({ detail: error.detail })),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountHubImportAccounts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountHubImportAccounts,
+            AccountHubConnections.AccountHubConnections.pipe(
+              Effect.flatMap((hub) => hub.importAccounts(input)),
+              Effect.mapError((error) => new AccountHubRpcError({ detail: error.detail })),
+            ),
             { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.usageLimitSourceUpdateAccount]: (input) =>

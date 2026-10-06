@@ -1130,6 +1130,21 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
+    // signalbox: the account hub's connection and account import.
+    getAccountHubConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-account-hub-connection",
+      tag: WS_METHODS.accountHubGetConnection,
+    }),
+    setAccountHubConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-account-hub-connection",
+      tag: WS_METHODS.accountHubSetConnection,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    importAccountHubAccounts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:import-account-hub-accounts",
+      tag: WS_METHODS.accountHubImportAccounts,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     updateUsageLimitSourceAccount: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-usage-limit-source-account",
       tag: WS_METHODS.usageLimitSourceUpdateAccount,

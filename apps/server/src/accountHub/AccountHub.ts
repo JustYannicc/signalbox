@@ -14,7 +14,13 @@
  * @module accountHub/AccountHub
  */
 import type { UsageLimitSourceConfig, UsageLimitSourceId } from "@t3tools/contracts";
-import { ACCOUNT_HUB_SOURCE_ID } from "@t3tools/contracts/accountHub";
+import {
+  ACCOUNT_HUB_SOURCE_ID,
+  type AccountHubConnection,
+  type AccountHubImportInput,
+  type AccountHubImportResult,
+  type AccountHubSetConnectionInput,
+} from "@t3tools/contracts/accountHub";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -98,6 +104,16 @@ export class AccountHub extends Context.Service<
     ) => Effect.Effect<AccountHubOAuthLogin, AccountHubError>;
     /** Accounts in the running hub. Empty when the hub is off. */
     readonly accounts: Effect.Effect<ReadonlyArray<Management.AccountHubAccount>, AccountHubError>;
+    /** Which hub pooled accounts go through: this one, or one the user runs. */
+    readonly connection: Effect.Effect<AccountHubConnection>;
+    /** Switches hubs. An external hub is checked with both keys before it is saved. */
+    readonly setConnection: (
+      input: AccountHubSetConnectionInput,
+    ) => Effect.Effect<AccountHubConnection, AccountHubError>;
+    /** Copies (or moves) every account of another CLIProxyAPI into this hub. */
+    readonly importAccounts: (
+      input: AccountHubImportInput,
+    ) => Effect.Effect<AccountHubImportResult, AccountHubError>;
     /** The running hub as a usage limit source, so its accounts report limits. */
     readonly usageLimitSource: Effect.Effect<
       Option.Option<readonly [UsageLimitSourceId, UsageLimitSourceConfig]>
@@ -106,6 +122,12 @@ export class AccountHub extends Context.Service<
 >()("t3/accountHub/AccountHub") {}
 
 const MANAGEMENT_KEY_SECRET = "account-hub-management-key";
+const EXTERNAL_MANAGEMENT_KEY_SECRET = "account-hub-external-management-key";
+const EXTERNAL_CLIENT_KEY_SECRET = "account-hub-external-client-key";
+const StoredConnection = Schema.Struct({ mode: Schema.Literal("external"), url: Schema.String });
+const decodeStoredConnection = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredConnection));
+const encodeStoredConnection = Schema.encodeEffect(Schema.fromJsonString(StoredConnection));
+const normalizeHubUrl = (url: string) => url.trim().replace(/\/+$/u, "");
 const CLIENT_KEY_SECRET = "account-hub-client-key";
 // A hub that exits before this long counts as a crash loop and backs off.
 const STABLE_UPTIME = Duration.seconds(30);
@@ -117,6 +139,9 @@ const backoff = (previous: Duration.Duration) =>
 const isAccountHubError = Schema.is(AccountHubError);
 const isAccountHubInstallError = Schema.is(AccountHubInstallError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeCredentialFile = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 // JSON strings are valid YAML double-quoted scalars, so paths and keys need no escaping rules.
 const yamlString = (value: string) => JSON.stringify(value);
 
@@ -192,6 +217,9 @@ const make = Effect.gen(function* () {
   const configPath = path.join(hubDirectory, "config.yaml");
 
   const status = yield* SubscriptionRef.make<AccountHubStatus>({ phase: "off" });
+  // A hub the user runs replaces the managed one entirely: nothing is spawned.
+  const connectionPath = path.join(hubDirectory, "connection.json");
+  const external = yield* Ref.make<Option.Option<AccountHubEndpoint>>(Option.none());
   const running = yield* Ref.make<
     Option.Option<{ readonly endpoint: AccountHubEndpoint; readonly scope: Scope.Closeable }>
   >(Option.none());
@@ -391,12 +419,15 @@ const make = Effect.gen(function* () {
     return started.endpoint;
   });
 
-  const ensureRunning = gate.withPermit(
+  const ensureManaged = gate.withPermit(
     Ref.get(running).pipe(
       Effect.flatMap((current) =>
         Option.isSome(current) ? Effect.succeed(current.value.endpoint) : start,
       ),
     ),
+  );
+  const ensureRunning: Effect.Effect<AccountHubEndpoint, AccountHubError> = Ref.get(external).pipe(
+    Effect.flatMap((hub) => (Option.isSome(hub) ? Effect.succeed(hub.value) : ensureManaged)),
   );
 
   yield* Effect.addFinalizer(() =>
@@ -408,17 +439,42 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const savedExternal = yield* Effect.gen(function* () {
+    const saved = yield* fs
+      .readFileString(connectionPath)
+      .pipe(Effect.flatMap(decodeStoredConnection));
+    const managementKey = yield* secrets.get(EXTERNAL_MANAGEMENT_KEY_SECRET);
+    const clientKey = yield* secrets.get(EXTERNAL_CLIENT_KEY_SECRET);
+    if (Option.isNone(managementKey) || Option.isNone(clientKey)) return Option.none();
+    const decoder = new TextDecoder();
+    return Option.some<AccountHubEndpoint>({
+      baseUrl: normalizeHubUrl(saved.url),
+      managementKey: decoder.decode(managementKey.value),
+      clientKey: decoder.decode(clientKey.value),
+    });
+  }).pipe(Effect.orElseSucceed(() => Option.none<AccountHubEndpoint>()));
+  yield* Ref.set(external, savedExternal);
+  if (Option.isSome(savedExternal)) {
+    yield* SubscriptionRef.set(status, { phase: "running", version: "external" });
+  }
+
   // Accounts already exist: bring the hub back with the server, in the background.
-  const hasAccounts = yield* fs.readDirectory(authDir).pipe(
-    Effect.map((entries) => entries.some((entry) => entry.endsWith(".json"))),
-    Effect.orElseSucceed(() => false),
-  );
+  const hasAccounts = Option.isSome(savedExternal)
+    ? false
+    : yield* fs.readDirectory(authDir).pipe(
+        Effect.map((entries) => entries.some((entry) => entry.endsWith(".json"))),
+        Effect.orElseSucceed(() => false),
+      );
   if (hasAccounts) {
     yield* ensureRunning.pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(serviceScope));
   }
 
-  const endpoint = Ref.get(running).pipe(Effect.map(Option.map((current) => current.endpoint)));
-  const plannedEndpoint = gate
+  const endpoint = Effect.gen(function* () {
+    const hub = yield* Ref.get(external);
+    if (Option.isSome(hub)) return hub;
+    return Option.map(yield* Ref.get(running), (current) => current.endpoint);
+  });
+  const plannedManaged = gate
     .withPermit(
       Effect.gen(function* () {
         const current = yield* Ref.get(running);
@@ -433,6 +489,9 @@ const make = Effect.gen(function* () {
         (cause) => new AccountHubError({ detail: "Could not prepare the account hub.", cause }),
       ),
     );
+  const plannedEndpoint = Ref.get(external).pipe(
+    Effect.flatMap((hub) => (Option.isSome(hub) ? Effect.succeed(hub.value) : plannedManaged)),
+  );
   const withHttp = Effect.provideService(HttpClient.HttpClient, http);
 
   const saveCredential = Effect.fn("AccountHub.saveCredential")(
@@ -440,7 +499,12 @@ const make = Effect.gen(function* () {
       if (!/^[\w.@+-]+\.json$/u.test(name) || name.startsWith(".")) {
         return yield* new AccountHubError({ detail: "Invalid account file name." });
       }
-      yield* ensureRunning;
+      const hub = yield* ensureRunning;
+      if (Option.isSome(yield* Ref.get(external))) {
+        yield* withHttp(Management.uploadCredential(hub, name, yield* encodeJson(credential)));
+        yield* markAccountsChanged;
+        return;
+      }
       // Write beside the auth directory and rename in, so the hub never reads half a file.
       const staging = yield* fs.makeTempDirectoryScoped({
         directory: hubDirectory,
@@ -477,7 +541,136 @@ const make = Effect.gen(function* () {
     } satisfies AccountHubOAuthLogin;
   });
 
+  const stopManaged = gate.withPermit(
+    Ref.getAndSet(running, Option.none()).pipe(
+      // Cleared first, so the supervisor sees the exit as intended and does not restart it.
+      Effect.flatMap((current) =>
+        Option.isSome(current) ? Scope.close(current.value.scope, Exit.void) : Effect.void,
+      ),
+    ),
+  );
+
+  const connection = Ref.get(external).pipe(
+    Effect.map((hub): AccountHubConnection =>
+      Option.isSome(hub) ? { mode: "external", url: hub.value.baseUrl } : { mode: "managed" },
+    ),
+  );
+
+  const setConnection = Effect.fn("AccountHub.setConnection")(
+    function* (input: AccountHubSetConnectionInput) {
+      if (input.mode === "managed") {
+        yield* fs.remove(connectionPath, { force: true });
+        yield* secrets.remove(EXTERNAL_MANAGEMENT_KEY_SECRET);
+        yield* secrets.remove(EXTERNAL_CLIENT_KEY_SECRET);
+        yield* Ref.set(external, Option.none());
+        yield* SubscriptionRef.set(status, { phase: "off" });
+        yield* markAccountsChanged;
+        return yield* connection;
+      }
+      const hub: AccountHubEndpoint = {
+        baseUrl: normalizeHubUrl(input.url),
+        managementKey: input.managementKey,
+        clientKey: input.clientKey,
+      };
+      // Both keys are checked now, so a typo fails here and not on the first turn.
+      yield* withHttp(Management.listCredentials(hub)).pipe(
+        Effect.mapError(
+          () =>
+            new AccountHubError({
+              detail: "Could not reach that CLIProxyAPI with this management key.",
+            }),
+        ),
+      );
+      const models = yield* http
+        .execute(
+          HttpClientRequest.get(`${hub.baseUrl}/v1/models`).pipe(
+            HttpClientRequest.bearerToken(hub.clientKey),
+          ),
+        )
+        .pipe(Effect.timeout("10 seconds"), Effect.option);
+      if (Option.isNone(models) || models.value.status !== 200) {
+        return yield* new AccountHubError({
+          detail: "That CLIProxyAPI did not accept the API key. Use one of its access api-keys.",
+        });
+      }
+      const encoder = new TextEncoder();
+      yield* secrets.set(EXTERNAL_MANAGEMENT_KEY_SECRET, encoder.encode(hub.managementKey));
+      yield* secrets.set(EXTERNAL_CLIENT_KEY_SECRET, encoder.encode(hub.clientKey));
+      yield* fs.makeDirectory(hubDirectory, { recursive: true });
+      yield* fs.writeFileString(
+        connectionPath,
+        yield* encodeStoredConnection({ mode: "external", url: hub.baseUrl }),
+        { mode: 0o600 },
+      );
+      yield* stopManaged;
+      yield* Ref.set(external, Option.some(hub));
+      yield* SubscriptionRef.set(status, { phase: "running", version: "external" });
+      yield* markAccountsChanged;
+      return yield* connection;
+    },
+    Effect.mapError((cause) =>
+      isAccountHubError(cause)
+        ? cause
+        : new AccountHubError({ detail: "Could not save the hub connection.", cause }),
+    ),
+  );
+
+  const importAccounts = Effect.fn("AccountHub.importAccounts")(
+    function* (input: AccountHubImportInput) {
+      const source = { baseUrl: normalizeHubUrl(input.url), managementKey: input.managementKey };
+      const target = yield* ensureRunning;
+      if (source.baseUrl === target.baseUrl) {
+        return yield* new AccountHubError({
+          detail: "That is the hub Signalbox already uses, so there is nothing to import.",
+        });
+      }
+      const sourceAccounts = yield* withHttp(Management.listCredentials(source)).pipe(
+        Effect.mapError(
+          () =>
+            new AccountHubError({
+              detail: "Could not reach that CLIProxyAPI with this management key.",
+            }),
+        ),
+      );
+      const existing = new Set(
+        (yield* withHttp(Management.listCredentials(target))).map((account) => account.name),
+      );
+      const imported: string[] = [];
+      const skipped: string[] = [];
+      const failed: Array<{ name: string; reason: string }> = [];
+      for (const account of sourceAccounts) {
+        if (existing.has(account.name)) {
+          skipped.push(account.name);
+          continue;
+        }
+        const moved = yield* Effect.gen(function* () {
+          const content = yield* withHttp(Management.downloadCredential(source, account.name));
+          const credential = yield* decodeCredentialFile(content).pipe(
+            Effect.mapError(
+              () => new AccountHubError({ detail: `${account.name} is not a credential file.` }),
+            ),
+          );
+          yield* saveCredential(account.name, credential);
+          if (input.removeFromSource) {
+            yield* withHttp(Management.deleteCredential(source, account.name));
+          }
+        }).pipe(Effect.result);
+        if (moved._tag === "Success") imported.push(account.name);
+        else failed.push({ name: account.name, reason: moved.failure.detail });
+      }
+      return { imported, skipped, failed } satisfies AccountHubImportResult;
+    },
+    Effect.mapError((cause) =>
+      isAccountHubError(cause)
+        ? cause
+        : new AccountHubError({ detail: "Could not import accounts.", cause }),
+    ),
+  );
+
   return AccountHub.of({
+    connection,
+    setConnection,
+    importAccounts,
     ensureRunning,
     endpoint,
     saveCredential,
@@ -501,7 +694,9 @@ const make = Effect.gen(function* () {
               ACCOUNT_HUB_SOURCE_ID,
               {
                 kind: "cliproxy",
-                label: "Signalbox",
+                label: hub.baseUrl.startsWith("http://127.0.0.1:")
+                  ? "Signalbox"
+                  : new URL(hub.baseUrl).host,
                 url: hub.baseUrl,
                 managementKey: hub.managementKey,
                 enabled: true,

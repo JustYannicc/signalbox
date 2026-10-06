@@ -4,7 +4,9 @@
  * Opt in with SIGNALBOX_ACCOUNT_HUB_LIVE=1; it downloads about 20 MB. Host process
  * references keep their defaults, so this runs the release for this machine.
  */
+// @effect-diagnostics nodeBuiltinImport:off - runs a second hub as a stand-in source.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeChildProcess from "node:child_process";
 import { describe, expect, it } from "@effect/vitest";
 import { ACCOUNT_HUB_SOURCE_ID } from "@t3tools/contracts/accountHub";
 import * as NetService from "@t3tools/shared/Net";
@@ -90,6 +92,136 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("AccountHub (liv
           expect((yield* api.readAccounts(config))[0]?.disabled).toBeUndefined();
           yield* api.updateAccount(config, "chatgpt-siwc-live@example.com.json", "remove");
           expect(yield* api.readAccounts(config)).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    120_000,
+  );
+
+  it.live(
+    "moves accounts out of another CLIProxyAPI, then switches to it as the hub",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "account-hub-live-" });
+        const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "account-hub-source-" });
+        const layer = AccountHub.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(NetService.layer),
+          Layer.provideMerge(FetchHttpClient.layer),
+        );
+        yield* Effect.gen(function* () {
+          const hub = yield* AccountHub.AccountHub;
+          const managed = yield* hub.ensureRunning;
+
+          // A second CLIProxyAPI, standing in for one the user already runs.
+          const net = yield* NetService.NetService;
+          const port = yield* net.reserveLoopbackPort();
+          yield* fs.makeDirectory(`${sourceDir}/auths`);
+          for (const name of ["claude-a@example.com.json", "xai-b@example.com.json"]) {
+            yield* fs.writeFileString(
+              `${sourceDir}/auths/${name}`,
+              `{"type":"${name.split("-")[0]}","email":"${name.slice(name.indexOf("-") + 1, -5)}","access_token":"a","refresh_token":"r"}`,
+            );
+          }
+          yield* fs.writeFileString(
+            `${sourceDir}/config.yaml`,
+            [
+              "config-version: 8",
+              `server: { host: "127.0.0.1", port: ${port} }`,
+              'management: { allow-remote: false, secret-key: "source-mgmt", disable-control-panel: true }',
+              'access: { api-keys: ["source-client"] }',
+              `oauth: { auth-dir: "${sourceDir}/auths" }`,
+              "",
+            ].join("\n"),
+          );
+          const binary = `${baseDir}/tools/cliproxyapi/8.0.15/cli-proxy-api`;
+          const source = NodeChildProcess.spawn(binary, ["--config", `${sourceDir}/config.yaml`], {
+            stdio: "ignore",
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(() => source.kill()));
+          const sourceUrl = `http://127.0.0.1:${port}`;
+          const sourceFiles = Effect.promise(() =>
+            fetch(`${sourceUrl}/v0/management/auth-files`, {
+              headers: { authorization: "Bearer source-mgmt" },
+            })
+              .then((response) => response.json() as Promise<{ files: Array<{ name: string }> }>)
+              .then((body) => body.files.map((file) => file.name).toSorted())
+              .catch(() => [] as string[]),
+          );
+          yield* sourceFiles.pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("150 millis"),
+              until: (names) => names.length === 2,
+              times: 60,
+            }),
+          );
+
+          const result = yield* hub.importAccounts({
+            url: sourceUrl,
+            managementKey: "source-mgmt",
+            removeFromSource: true,
+          });
+          expect(result.imported.toSorted()).toEqual([
+            "claude-a@example.com.json",
+            "xai-b@example.com.json",
+          ]);
+          expect(result.failed).toEqual([]);
+          expect(yield* sourceFiles).toEqual([]);
+          const inHub = yield* hub.accounts.pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("100 millis"),
+              until: (list) => list.length === 2,
+              times: 50,
+            }),
+          );
+          expect(inHub.map((account) => account.name).toSorted()).toEqual(
+            result.imported.toSorted(),
+          );
+          // Importing the same hub again only skips.
+          const again = yield* hub.importAccounts({
+            url: sourceUrl,
+            managementKey: "source-mgmt",
+            removeFromSource: false,
+          });
+          expect(again).toEqual({ imported: [], skipped: [], failed: [] });
+
+          // Connecting checks both keys before saving anything.
+          const badKey = yield* hub
+            .setConnection({
+              mode: "external",
+              url: sourceUrl,
+              managementKey: "source-mgmt",
+              clientKey: "wrong",
+            })
+            .pipe(Effect.flip);
+          expect(badKey.detail).toContain("API key");
+          expect(yield* hub.connection).toEqual({ mode: "managed" });
+
+          expect(
+            yield* hub.setConnection({
+              mode: "external",
+              url: `${sourceUrl}/`,
+              managementKey: "source-mgmt",
+              clientKey: "source-client",
+            }),
+          ).toEqual({ mode: "external", url: sourceUrl });
+          const external = yield* hub.ensureRunning;
+          expect(external.baseUrl).toBe(sourceUrl);
+          expect(external.clientKey).toBe("source-client");
+          // The managed hub stopped and is not restarted.
+          const managedUp = yield* Effect.promise(() =>
+            fetch(`${managed.baseUrl}/v1/models`).then(
+              () => true,
+              () => false,
+            ),
+          );
+          expect(managedUp).toBe(false);
+          const [, config] = Option.getOrThrow(yield* hub.usageLimitSource);
+          expect(config.url).toBe(sourceUrl);
+
+          expect(yield* hub.setConnection({ mode: "managed" })).toEqual({ mode: "managed" });
+          expect((yield* hub.ensureRunning).baseUrl).toBe(managed.baseUrl);
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     120_000,

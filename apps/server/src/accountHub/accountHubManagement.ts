@@ -47,8 +47,11 @@ const Status = Schema.Struct({
 const decodeAuthUrl = Schema.decodeUnknownEffect(AuthUrl);
 const decodeStatus = Schema.decodeUnknownEffect(Status);
 
+type ManagementEndpoint = Pick<AccountHubEndpoint, "baseUrl" | "managementKey">;
+const isAccountHubError = Schema.is(AccountHubError);
+
 const request = (
-  endpoint: AccountHubEndpoint,
+  endpoint: ManagementEndpoint,
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
@@ -93,7 +96,7 @@ export interface AccountHubAccount {
 }
 
 export const listCredentials = Effect.fn("accountHub.listCredentials")(function* (
-  endpoint: AccountHubEndpoint,
+  endpoint: ManagementEndpoint,
 ) {
   const response = yield* request(endpoint, "GET", "credentials");
   const decoded = yield* decodeCredentials(response.json).pipe(
@@ -177,3 +180,71 @@ export const cancelOAuthLogin = (endpoint: AccountHubEndpoint, state: string) =>
   request(endpoint, "DELETE", `oauth/session?state=${encodeURIComponent(state)}`).pipe(
     Effect.ignore,
   );
+
+/** The raw credential file, exactly as the hub stores it. */
+export const downloadCredential = Effect.fn("accountHub.downloadCredential")(
+  function* (endpoint: ManagementEndpoint, name: string) {
+    const http = yield* HttpClient.HttpClient;
+    const response = yield* http.execute(
+      HttpClientRequest.get(
+        `${endpoint.baseUrl}/v0/management/auth-files/download?name=${encodeURIComponent(name)}`,
+      ).pipe(HttpClientRequest.bearerToken(endpoint.managementKey)),
+    );
+    if (response.status !== 200) {
+      return yield* new AccountHubError({ detail: `Could not download ${name}.` });
+    }
+    return yield* response.text;
+  },
+  Effect.timeout("15 seconds"),
+  Effect.mapError((cause) =>
+    isAccountHubError(cause)
+      ? cause
+      : new AccountHubError({ detail: "The hub did not answer.", cause }),
+  ),
+);
+
+/** Writes a credential file into a hub that Signalbox does not run. */
+export const uploadCredential = Effect.fn("accountHub.uploadCredential")(
+  function* (endpoint: ManagementEndpoint, name: string, content: string) {
+    const http = yield* HttpClient.HttpClient;
+    const response = yield* http.execute(
+      HttpClientRequest.post(
+        `${endpoint.baseUrl}/v0/management/auth-files?name=${encodeURIComponent(name)}`,
+      ).pipe(
+        HttpClientRequest.bearerToken(endpoint.managementKey),
+        HttpClientRequest.bodyText(content, "application/json"),
+      ),
+    );
+    if (response.status !== 200) {
+      return yield* new AccountHubError({ detail: `The hub refused ${name}.` });
+    }
+  },
+  Effect.timeout("15 seconds"),
+  Effect.mapError((cause) =>
+    isAccountHubError(cause)
+      ? cause
+      : new AccountHubError({ detail: "The hub did not answer.", cause }),
+  ),
+);
+
+export const deleteCredential = Effect.fn("accountHub.deleteCredential")(
+  function* (endpoint: ManagementEndpoint, name: string) {
+    const http = yield* HttpClient.HttpClient;
+    const response = yield* http.execute(
+      HttpClientRequest.delete(
+        `${endpoint.baseUrl}/v0/management/auth-files?name=${encodeURIComponent(name)}`,
+      ).pipe(HttpClientRequest.bearerToken(endpoint.managementKey)),
+    );
+    if (response.status !== 200) {
+      return yield* new AccountHubError({
+        detail: `Could not remove ${name} from the source hub.`,
+      });
+    }
+  },
+  Effect.timeout("15 seconds"),
+  Effect.mapError((cause) =>
+    isAccountHubError(cause)
+      ? cause
+      : new AccountHubError({ detail: "The hub did not answer.", cause }),
+  ),
+);
