@@ -44,6 +44,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ProductAnalytics from "../signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
@@ -394,6 +395,7 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const analytics = yield* ProductAnalytics.automationAnalytics; // signalbox: analytics
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
@@ -833,6 +835,7 @@ export const layer = Layer.effect(
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success";
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
+        yield* ProductAnalytics.recordAutomationRun(analytics, active, trigger, lastRunStatus); // signalbox: analytics
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         // Re-read the task so the next run is computed from the schedule as it
         // is *now* (the user may have edited or deleted it while we ran).

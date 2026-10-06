@@ -18,6 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
+import { SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES } from "../signalbox/analytics/rpc.ts"; // signalbox: analytics
+
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
@@ -26,6 +28,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * runtime failure.
  */
 export const RPC_REQUIRED_SCOPES = {
+  ...SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES, // signalbox: analytics
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,

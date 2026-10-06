@@ -48,6 +48,16 @@ A send can fail after PostHog has stored the batch, so every retry is a copy.
 uuid when it is recorded, backs off after a failed send, and drops a batch after a
 few tries. Without these limits, one stuck batch was sent every second for days.
 
+Signalbox sends every event to the PostHog project of [T3 Code](https://github.com/pingdotgg/t3code) and to its own.
+[Each destination](../../apps/server/src/signalbox/analytics/ProductAnalytics.ts) is a
+separate instance of upstream's service, so buffers and backoff never couple: a down
+destination must not delay or drop the other's events. Signalbox's key is injected at
+build time so upstream's hardcoded default stays untouched across syncs.
+
+The Settings opt-out is checked at record time and again at send time. Retries mean a
+batch can sit for minutes; checking only at record time would send it after the user
+opted out.
+
 ## Collection boundary
 
 Keep analytics payloads to product metadata and normalized measurements. Do not
