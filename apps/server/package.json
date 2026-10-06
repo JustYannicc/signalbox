@@ -51,6 +51,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@signalbox/account": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",

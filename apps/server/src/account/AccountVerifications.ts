@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-import { randomToken } from "./AccountFlow.ts";
+import { randomToken } from "@signalbox/account/AccountFlow";
 import { makeExpiringStore } from "./ExpiringStore.ts";
-import type * as WorkOSClient from "./WorkOSClient.ts";
+import * as WorkOSClient from "@signalbox/account/WorkOSClient";
 
 /**
  * Sign-ins paused for email verification. WorkOS emailed the user a code; the
@@ -43,24 +43,6 @@ interface PendingVerification<Attempt> {
   readonly failures: number;
 }
 
-type ExchangeError =
-  | WorkOSClient.WorkOSAuthenticateError
-  | WorkOSClient.WorkOSEmailVerificationRequired;
-
-/**
- * How a failed code exchange affects the pause. WorkOS does not document its
- * wrong-code error, so any other 4xx counts as a wrong code; 5xx and network
- * failures leave the attempt untouched. A dead pending token (observed:
- * `invalid_pending_authentication_token`) cannot be retried, so it is expired.
- */
-const classify = (error: ExchangeError): "invalid-code" | "expired" | "failed" => {
-  if (error._tag === "WorkOSEmailVerificationRequired") return "invalid-code";
-  if (error.status === undefined || error.status >= 500) return "failed";
-  return /expire|pending_authentication_token/i.test(`${error.code ?? ""} ${error.error ?? ""}`)
-    ? "expired"
-    : "invalid-code";
-};
-
 export const makeAccountVerifications = <Attempt>() => {
   const store = makeExpiringStore<PendingVerification<Attempt>>({
     ttl: VERIFICATION_TTL,
@@ -82,7 +64,7 @@ export const makeAccountVerifications = <Attempt>() => {
     id: string,
     exchange: (
       pendingToken: Redacted.Redacted<string>,
-    ) => Effect.Effect<WorkOSClient.WorkOSUser, ExchangeError>,
+    ) => Effect.Effect<WorkOSClient.WorkOSUser, WorkOSClient.WorkOSGrantError>,
   ) {
     const pending = yield* store.modify(id, (entry) => [entry, entry] as const);
     if (!pending) return yield* new AccountVerificationExpiredError();
@@ -95,7 +77,7 @@ export const makeAccountVerifications = <Attempt>() => {
       return { user: outcome.user, attempt: pending.attempt };
     }
     const error = outcome.error;
-    const kind = classify(error);
+    const kind = WorkOSClient.classifyEmailVerificationFailure(error);
     if (kind === "failed" && error._tag === "WorkOSAuthenticateError") return yield* error;
     if (kind === "expired") {
       yield* store.take(id);

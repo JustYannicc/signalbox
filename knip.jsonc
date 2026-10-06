@@ -38,6 +38,10 @@
       // The Vite+ web build prerequisite.
       "ignoreDependencies": ["@effect/platform-node-shared", "@t3tools/web"],
     },
+    "apps/cloud": {
+      // `cloudflare:workers` is a Workers runtime module, not a package.
+      "ignoreDependencies": ["cloudflare"],
+    },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
       "entry": [
