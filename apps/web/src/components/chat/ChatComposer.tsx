@@ -263,6 +263,7 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { type ComposerSendLock, useComposerSendLock } from "./sendLock/composerSendLock"; // signalbox: send lock
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -1381,6 +1382,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onCompactContext?: (() => void) | undefined;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
+  sendLock: ComposerSendLock; // signalbox: send lock
 }) {
   return (
     <>
@@ -1418,6 +1420,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
+        sendLock={props.sendLock} // signalbox: send lock
       />
     </>
   );
@@ -1800,6 +1803,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // happened while they awaited.
   const composerDraftTargetKeyRef = useRef("");
   composerDraftTargetKeyRef.current = composerDraftTargetKey;
+  // signalbox: send lock
+  const sendLock = useComposerSendLock(
+    composerDraftTargetKey,
+    !!activePendingProgress || showPlanFollowUpPrompt,
+  );
   const questionAttachmentTarget =
     pendingUserInputs[0] && activePendingProgress?.activeQuestion
       ? questionAttachmentDraftId(
@@ -2158,6 +2166,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
   );
   const sendDisabledReason =
+    sendLock.disabledReason ?? // signalbox: send lock
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -4374,6 +4383,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isRunning: phase === "running",
       sendShortcut: settings.sendShortcut,
       prompt: promptRef.current,
+      sendLocked: sendLock.locked, // signalbox: send lock
     });
     if (key === "Tab" && event.shiftKey && submissionIntent === null) {
       if (!planModeUiEnabled) return false;
@@ -7504,6 +7514,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     </>
                   ) : null}
                   <ComposerFooterPrimaryActions
+                    sendLock={sendLock} // signalbox: send lock
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null

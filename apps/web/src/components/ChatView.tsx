@@ -434,6 +434,10 @@ import {
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import {
+  holdLockedComposerSend,
+  toggleComposerSendLockFromShortcut,
+} from "./chat/sendLock/composerSendLock"; // signalbox: send lock
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -7794,6 +7798,11 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      // signalbox: send lock
+      if (command === "composer.toggleSendLock") {
+        return toggleComposerSendLockFromShortcut(event, composerDraftTarget);
+      }
+
       if (command === "composer.branch") {
         event.preventDefault();
         event.stopPropagation();
@@ -7883,6 +7892,7 @@ export default function ChatView(props: ChatViewProps) {
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
+    composerDraftTarget, // signalbox: send lock
     draftId,
     environmentId,
     envLocked,
@@ -8426,6 +8436,9 @@ export default function ChatView(props: ChatViewProps) {
       onAdvanceActivePendingUserInput();
       return;
     }
+    // signalbox: send lock
+    const lockInput = { annotation: !!directAnnotation, answeringPlan: showPlanFollowUpPrompt };
+    if (holdLockedComposerSend(composerDraftTarget, lockInput)) return;
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx?.providerAvailable) {
       notifyDirectAnnotationAttached();

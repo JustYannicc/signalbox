@@ -124,6 +124,17 @@ This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
 memory. The action is available only when the provider supports rewind.
 
+## Lock sending
+
+On web and desktop, click the shackle above the send button to lock sending for
+the current draft. While it is locked, Enter adds a new line and nothing sends,
+so you can write a long prompt without sending it early. Click the shackle again
+to unlock. Each draft keeps its own lock, including after a reload. Answering an
+agent's question or a proposed plan is never locked.
+
+To lock and unlock from the keyboard, bind **Composer: Toggle Send Lock** in
+Settings > Keybindings.
+
 ## Prompt stash
 
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save

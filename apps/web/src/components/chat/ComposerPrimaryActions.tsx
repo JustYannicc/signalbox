@@ -11,6 +11,8 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import type { ComposerSendLock } from "./sendLock/composerSendLock"; // signalbox: send lock
+import { SendArrowLockStrike, SendLockLatch } from "./sendLock/SendLockLatch"; // signalbox: send lock
 import {
   alternateComposerDispatchAction,
   resolveComposerDispatchMode,
@@ -49,6 +51,8 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  /** signalbox: send lock. Draws the padlock shackle on the send button. */
+  sendLock?: ComposerSendLock;
 }
 
 const formatPendingPrimaryActionLabel = (input: {
@@ -101,6 +105,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
+  sendLock, // signalbox: send lock
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
@@ -321,15 +326,20 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             strokeLinecap="round"
             strokeLinejoin="round"
           />
+          {/* signalbox: send lock */}
+          <SendArrowLockStrike />
         </svg>
       )}
     </button>
   );
 
   return (
-    <Tooltip key="submit">
-      <TooltipTrigger render={<span className="inline-flex" />}>{sendButton}</TooltipTrigger>
-      <TooltipPopup>{submitTooltip}</TooltipPopup>
-    </Tooltip>
+    // signalbox: send lock
+    <SendLockLatch lock={sendLock}>
+      <Tooltip key="submit">
+        <TooltipTrigger render={<span className="inline-flex" />}>{sendButton}</TooltipTrigger>
+        <TooltipPopup>{submitTooltip}</TooltipPopup>
+      </Tooltip>
+    </SendLockLatch>
   );
 });
