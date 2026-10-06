@@ -1,0 +1,7 @@
+# Local secrets for `vp run dev`. Copy to .dev.vars (gitignored).
+# Any random string of 32+ characters; `openssl rand -base64 32` works.
+SESSION_SECRET=
+# A WorkOS staging client id whose redirect URIs include http://localhost:*.
+T3CODE_WORKOS_CLIENT_ID=
+# Optional, but GitHub sign-ins need it to finish email verification.
+T3CODE_WORKOS_API_KEY=

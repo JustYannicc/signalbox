@@ -59,8 +59,10 @@ function WindowRow(props: {
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
-        <Text className="text-sm text-foreground">{window.label}</Text>
-        <Text className="text-sm font-t3-medium tabular-nums text-foreground">
+        <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>
+          {window.label}
+        </Text>
+        <Text className="shrink-0 text-sm font-t3-medium tabular-nums text-foreground">
           {remaining}% left
         </Text>
       </View>
@@ -98,9 +100,22 @@ function WindowRow(props: {
   );
 }
 
-function AccountInstanceLabel({ value }: { readonly value: string }) {
+function AccountInstanceLabel({
+  value,
+  revealByDefault,
+}: {
+  readonly value: string;
+  readonly revealByDefault: boolean;
+}) {
   const [revealed, setRevealed] = useState(false);
   if (!value.includes("@")) {
+    return (
+      <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
+        · {value}
+      </Text>
+    );
+  }
+  if (revealByDefault) {
     return (
       <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
         · {value}
@@ -128,6 +143,7 @@ export function AccountLimits(props: {
   readonly instanceLabel: string;
   readonly detail: string | undefined;
   readonly limits: ServerProvider["usageLimits"];
+  readonly windows?: readonly ServerProviderUsageWindow[] | undefined;
   readonly now: number;
   readonly first: boolean;
   /** Tighter padding for the composer card. */
@@ -135,12 +151,16 @@ export function AccountLimits(props: {
   /** Sits at the end of the heading row, such as a close control. */
   readonly trailing?: ReactNode;
   readonly footer?: ReactNode;
+  /** Keeps a normal account row from repeating its separate usage destination. */
+  readonly showExternalUsage?: boolean;
+  /** Usage → Limits rows show the account address beside its display name. */
+  readonly revealInstanceLabel?: boolean;
 }) {
   const { limits, now, dense = false } = props;
   const color = useBarColor(props.driver);
   if (!limits) return null;
   const notice = limitsNotice(limits);
-  const externalUsage = limits.externalUsage;
+  const externalUsage = props.showExternalUsage === false ? undefined : limits.externalUsage;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (
     <View
@@ -151,9 +171,18 @@ export function AccountLimits(props: {
       <View className="flex-row items-center gap-2">
         <ProviderIcon provider={props.driver} size={16} />
         <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
-          <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
+          <Text
+            className="min-w-0 shrink text-base font-t3-medium text-foreground"
+            numberOfLines={1}
+          >
+            {props.label}
+          </Text>
           {props.instanceLabel !== props.label ? (
-            <AccountInstanceLabel key={props.instanceLabel} value={props.instanceLabel} />
+            <AccountInstanceLabel
+              key={props.instanceLabel}
+              value={props.instanceLabel}
+              revealByDefault={props.revealInstanceLabel ?? false}
+            />
           ) : null}
           {props.detail ? (
             <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
@@ -167,7 +196,7 @@ export function AccountLimits(props: {
         <Text className="text-sm text-foreground-muted">{notice}</Text>
       ) : (
         <View className="gap-3">
-          {limits.windows.map((window) => (
+          {(props.windows ?? limits.windows).map((window) => (
             <WindowRow key={window.id} window={window} color={color} now={now} />
           ))}
         </View>

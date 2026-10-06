@@ -20,6 +20,8 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import { SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES } from "../signalbox/analytics/rpc.ts"; // signalbox: analytics
 
+import { AUTOMATION_RPC_SCOPES } from "../workflows/rpcScopes.ts"; // signalbox: automations
+
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
@@ -48,6 +50,13 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverUpdateProvider]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerConsumeResetCredit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.usageLimitSourceUpdateAccount]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolSubscribe]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolRename]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolSetBacking]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolImportAccounts]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthComplete]: AuthOrchestrationOperateScope,
   [WS_METHODS.chatGptReconnectProfile]: AuthOrchestrationOperateScope,
   [WS_METHODS.chatGptImportProfile]: AuthOrchestrationOperateScope,
@@ -190,13 +199,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewOpen]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewNavigate]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewResize]: AuthOrchestrationOperateScope,
+  [WS_METHODS.previewAdjust]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewRefresh]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewClose]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewList]: AuthOrchestrationReadScope,
+  [WS_METHODS.previewClearProfile]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewReportStatus]: AuthOrchestrationOperateScope,
-  [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
-  [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
-  [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceConfigure]: AuthOrchestrationOperateScope,
@@ -212,6 +220,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
+  ...AUTOMATION_RPC_SCOPES, // signalbox: automations
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

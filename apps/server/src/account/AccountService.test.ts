@@ -1,17 +1,17 @@
 import type { AccountAuthorizeParams } from "@t3tools/contracts/account";
 import { describe, expect, it } from "@effect/vitest";
+import { WORKOS_TEST_ENV } from "@signalbox/account/WorkOSTesting";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
-import * as AccountFlow from "./AccountFlow.ts";
+import * as AccountFlow from "@signalbox/account/AccountFlow";
 import * as AccountService from "./AccountService.ts";
 import type * as AccountSessions from "./AccountSessions.ts";
 import {
   CODES,
   VERIFIER,
-  WORKOS_TEST_ENV,
   anonymousRequest,
   bearerRequest,
   browserParams,

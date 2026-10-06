@@ -1,0 +1,43 @@
+{
+  // Signalbox Cloud. `wrangler dev` runs fully local (its own state under
+  // .wrangler/, secrets from .dev.vars); only `wrangler deploy` reaches
+  // Cloudflare. See docs/operations/cloud.md.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "signalbox-cloud",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": ["nodejs_compat"],
+  // One origin: sign-in callbacks, cookies and saved connections all key on it.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "app.signalbox.run", "custom_domain": true }],
+  "assets": {
+    // The web app, built by `vp run deploy`. Same origin as the API.
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/oauth/*", "/.well-known/*", "/ws"],
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "USERS", "class_name": "UserObject" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserObject"] }],
+  "vars": {
+    // Production identity. Never reuse it for another deployment.
+    "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
+    "ENVIRONMENT_LABEL": "Signalbox Cloud",
+  },
+  "observability": { "enabled": true },
+  "env": {
+    // A pull request preview: its own Worker and Durable Objects, so it never
+    // shares state with production. The workflow passes the name, domain and
+    // identity per pull request.
+    "preview": {
+      "routes": [],
+      "durable_objects": {
+        "bindings": [{ "name": "USERS", "class_name": "UserObject" }],
+      },
+      "vars": {},
+    },
+  },
+}

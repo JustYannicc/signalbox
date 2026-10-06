@@ -18,6 +18,10 @@ import { createPkceVerifier, pkceChallenge } from "./pkce";
  * desktop-managed bearer that is never an account, so the handoff's one-time
  * credential becomes a separate account bearer, kept here and shown only to
  * the account routes.
+ *
+ * The same flow adds another environment that offers accounts, such as
+ * Signalbox Cloud: the attempt then names that environment's origin, and its
+ * credential pairs the environment like a pairing code would.
  */
 
 const TOKEN_KEY = "signalbox.account.desktopToken";
@@ -50,22 +54,33 @@ export async function startNativeSignIn(input: {
   readonly screenHint: "sign-in" | "sign-up";
   readonly selectAccount?: boolean;
   readonly returnTo?: string;
+  /** Sign in to this environment and add it, instead of the primary one. */
+  readonly environmentOrigin?: string;
 }): Promise<void> {
   const bridge = window.desktopBridge;
   if (!bridge) throw new AccountFlowError("failed");
-  const verifier = readPendingNativeSignIn()?.verifier ?? createPkceVerifier();
+  const pending = readPendingNativeSignIn();
+  // A retry for the same target reuses the verifier, so an earlier tab can still finish.
+  const verifier =
+    pending && pending.environmentOrigin === input.environmentOrigin
+      ? pending.verifier
+      : createPkceVerifier();
   const returnTo = sanitizeReturnTo(input.returnTo);
   // Same window, same origin: survives the main process reloading us on return.
   sessionStorage.setItem(
     PENDING_KEY,
-    JSON.stringify({ verifier, ...(returnTo ? { returnTo } : {}) }),
+    JSON.stringify({
+      verifier,
+      ...(returnTo ? { returnTo } : {}),
+      ...(input.environmentOrigin ? { environmentOrigin: input.environmentOrigin } : {}),
+    }),
   );
   const url = buildAccountAuthorizeUrl({
     provider: "email",
     mode: "native",
     via: "web",
     screenHint: input.screenHint,
-    origin: requirePrimaryOrigin(),
+    origin: input.environmentOrigin ?? requirePrimaryOrigin(),
     returnUrl: `${window.location.protocol}//${window.location.host}${NATIVE_RETURN_PATH}`,
     challenge: await pkceChallenge(verifier),
     ...(input.selectAccount ? { selectAccount: "1" as const } : {}),
@@ -78,24 +93,64 @@ export function cancelNativeSignIn() {
   sessionStorage.removeItem(PENDING_KEY);
 }
 
-function readPendingNativeSignIn(): { verifier: string; returnTo?: string } | null {
+interface PendingNativeSignIn {
+  readonly verifier: string;
+  readonly returnTo?: string;
+  readonly environmentOrigin?: string;
+}
+
+function readPendingNativeSignIn(): PendingNativeSignIn | null {
   const raw = sessionStorage.getItem(PENDING_KEY);
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { verifier?: unknown; returnTo?: unknown };
+    const parsed = JSON.parse(raw) as {
+      verifier?: unknown;
+      returnTo?: unknown;
+      environmentOrigin?: unknown;
+    };
     if (typeof parsed.verifier !== "string") return null;
     const returnTo =
       typeof parsed.returnTo === "string" ? sanitizeReturnTo(parsed.returnTo) : undefined;
-    return { verifier: parsed.verifier, ...(returnTo ? { returnTo } : {}) };
+    const environmentOrigin =
+      typeof parsed.environmentOrigin === "string" ? parsed.environmentOrigin : undefined;
+    return {
+      verifier: parsed.verifier,
+      ...(returnTo ? { returnTo } : {}),
+      ...(environmentOrigin ? { environmentOrigin } : {}),
+    };
   } catch {
     return null;
   }
+}
+
+/** The environment this window is waiting to add by signing in to it, if any. */
+export function readPendingEnvironmentSignIn(): string | null {
+  return readPendingNativeSignIn()?.environmentOrigin ?? null;
 }
 
 function takePendingNativeSignIn() {
   const pending = readPendingNativeSignIn();
   sessionStorage.removeItem(PENDING_KEY);
   return pending;
+}
+
+const redeem = (origin: string, handoff: string, verifier: string) =>
+  redeemAccountHandoff(origin, { handoff, verifier }).catch((error: unknown) => {
+    throw new AccountFlowError(error instanceof AccountHandoffError ? error.code : "failed");
+  });
+
+/**
+ * Adding an environment: redeems the handoff against it and returns the
+ * one-time credential that pairs it, like a pairing code would.
+ */
+export async function completeEnvironmentSignIn(
+  handoff: string,
+): Promise<{ readonly origin: string; readonly credential: string }> {
+  const pending = takePendingNativeSignIn();
+  if (!pending?.environmentOrigin) throw new AccountFlowError("expired");
+  const origin = pending.environmentOrigin;
+  const { credential } = await redeem(origin, handoff, pending.verifier);
+  return { origin, credential };
 }
 
 /** Redeems the handoff with this window's verifier, stores the account bearer, reloads signed in. */
@@ -106,12 +161,7 @@ export async function completeNativeSignIn(handoff: string): Promise<void> {
   const failed = () => {
     throw new AccountFlowError("failed");
   };
-  const { credential } = await redeemAccountHandoff(origin, {
-    handoff,
-    verifier: pending.verifier,
-  }).catch((error: unknown) => {
-    throw new AccountFlowError(error instanceof AccountHandoffError ? error.code : "failed");
-  });
+  const { credential } = await redeem(origin, handoff, pending.verifier);
   const access = await runtime
     .runPromise(
       bootstrapRemoteBearerSession({

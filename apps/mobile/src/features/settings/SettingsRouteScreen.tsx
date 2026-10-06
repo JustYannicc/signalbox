@@ -10,6 +10,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
+import { UsageSettingsRow } from "../usage/UsageSettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
@@ -17,6 +18,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -154,6 +156,8 @@ function SettingsIndexSections() {
       </SettingsSection>
 
       <SettingsSection title="Automations">
+        {/* signalbox: automations */}
+        <AutomationsSettingsRows />
         <SettingsRow icon="clock" label="Scheduled tasks" target="SettingsScheduledTasks" />
       </SettingsSection>
 
@@ -206,7 +210,7 @@ function SettingsIndexSections() {
       </SettingsSection>
 
       <SettingsSection title="App">
-        <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
+        <UsageSettingsRow />
         <SettingsRow icon="info.circle" label="About Signalbox" target="SettingsAbout" />
       </SettingsSection>
     </>

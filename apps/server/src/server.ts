@@ -23,6 +23,11 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
+import * as AutomationHttp from "./workflows/http.ts"; // signalbox: automations
+import * as AutomationPush from "./workflows/AutomationPush.ts"; // signalbox: automations
+import * as AutomationSkill from "./workflows/skill/installSkill.ts"; // signalbox: automations
+import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
+import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
 import * as ProductAnalytics from "./signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
 import * as WorkloadAnalytics from "./signalbox/analytics/workload/WorkloadAnalytics.ts"; // signalbox: workload analytics
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -65,6 +70,10 @@ import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as ServerBrowser from "./preview/ServerBrowser.ts";
+import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
+import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
+import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -524,6 +533,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
+  AutomationPush.layer, // signalbox: automations
+  AutomationSkill.layer, // signalbox: automations
   layerThreadSettlementWorker,
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
@@ -582,6 +593,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
       CodexInstallation.CodexInstallation.layer,
+      // signalbox: account pools, each on its own hub; the personal pool's is today's hub.
+      AccountPools.layer.pipe(
+        Layer.provideMerge(AccountHub.layer),
+        Layer.provide(NetService.layer),
+      ),
     ),
   ),
 );
@@ -657,7 +673,12 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
-      Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
+      Layer.provide(
+        WebhookRoute.layer.pipe(
+          Layer.provide(RelayDeliveryProof.layer),
+          Layer.provide(AutomationHttp.layerWebhookReceiver), // signalbox: automation webhooks
+        ),
+      ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
@@ -665,6 +686,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     DeviceHubProxy.layer,
+    ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
   ),
@@ -680,6 +702,10 @@ const layerMakeRoutes = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),
+  // The stream route and the WebSocket RPCs share one browser.
+  Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
+  // Server browser tabs and HTML render previews install and run the same headless browser.
+  Layer.provide(PreviewBrowser.layer),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),

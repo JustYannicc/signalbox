@@ -13,17 +13,18 @@ import {
   ArchiveIcon,
   BlocksIcon,
   BotIcon,
-  createLucideIcon,
   CalendarClockIcon,
   GitBranchIcon,
   HardDriveIcon,
-  PanelsTopLeftIcon,
   KeyboardIcon,
+  LayersIcon,
   Link2Icon,
   PaletteIcon,
+  PanelsTopLeftIcon,
   SearchIcon,
   Settings2Icon,
   XIcon,
+  createLucideIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -83,6 +84,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/keybindings": KeyboardIcon,
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
+  "/settings/pools": LayersIcon, // signalbox
   "/settings/integrations": BlocksIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,

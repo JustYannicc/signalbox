@@ -19,13 +19,14 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
-import * as PreviewBrowser from "../htmlRender/PreviewBrowser.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
+import { PoolsToolkit } from "./toolkits/pools/tools.ts"; // signalbox: account pools
+import * as PoolsHandlers from "./toolkits/pools/handlers.ts"; // signalbox
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -56,6 +57,9 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import { AutomationToolkit } from "../workflows/mcp/tools.ts"; // signalbox: automations
+import * as AutomationHandlers from "../workflows/mcp/handlers.ts"; // signalbox: automations
+import * as AutomationBuiltinTools from "../workflows/builtinTools/layer.ts"; // signalbox: automations
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -181,7 +185,7 @@ type SnapshotMetadata = {
 };
 
 /**
- * Drops the accessibility tree, shortens page text, element names, identifiers,
+ * Keeps server ARIA refs, drops legacy object trees, shortens page text, names, identifiers,
  * and log strings, keeps only the newest log entries, and finally sheds
  * interactive elements until the JSON fits. Returns the bounded value, its
  * text, and notes on what is missing so the agent can reach for
@@ -190,7 +194,8 @@ type SnapshotMetadata = {
 const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const omitted: Array<string> = [];
   const { accessibilityTree, ...withoutTree } = metadata;
-  if (accessibilityTree !== undefined) {
+  const ariaTree = typeof accessibilityTree === "string" ? accessibilityTree : undefined;
+  if (accessibilityTree !== undefined && ariaTree === undefined) {
     omitted.push("accessibilityTree (use interactiveElements locators or preview_evaluate)");
   }
   const tail = <A>(entries: ReadonlyArray<A>, label: string) => {
@@ -253,8 +258,10 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     actionTimeline: 0,
   };
   let visibleTextChars = Math.min(metadata.visibleText.length, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS);
+  let ariaTreeChars = Math.min(ariaTree?.length ?? 0, 20_000);
   const value = () => ({
     ...bounded,
+    ...(ariaTree === undefined ? {} : { accessibilityTree: cutText(ariaTree, ariaTreeChars) }),
     visibleText: cutText(metadata.visibleText, visibleTextChars),
     ...lists,
   });
@@ -269,10 +276,14 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
         ? "visibleText"
         : lists.interactiveElements.length > 0
           ? "interactiveElements"
-          : undefined);
+          : ariaTreeChars > 0
+            ? "accessibilityTree"
+            : undefined);
     if (key === undefined) break;
     if (key === "visibleText") {
       visibleTextChars = Math.floor(visibleTextChars / 2);
+    } else if (key === "accessibilityTree") {
+      ariaTreeChars = Math.floor(ariaTreeChars / 2);
     } else {
       const keep = Math.floor(lists[key].length / 2);
       dropped[key] += lists[key].length - keep;
@@ -290,6 +301,9 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     omitted.push(
       `visibleText after ${visibleTextChars} characters (use preview_evaluate for more)`,
     );
+  }
+  if (ariaTree !== undefined && ariaTreeChars < ariaTree.length) {
+    omitted.push(`accessibilityTree after ${ariaTreeChars} characters`);
   }
   for (const key of shedOrder) {
     if (dropped[key] > 0) {
@@ -683,7 +697,7 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
 export const layerHtmlToolkit = Layer.mergeAll(
   McpServer.toolkit(HtmlRenderToolkit).pipe(Layer.provide(HtmlHandlers.layerRender)),
   Layer.effectDiscard(registerHtmlPreview()).pipe(Layer.provide(HtmlHandlers.layerPreview)),
-).pipe(Layer.provide(HtmlRender.layer), Layer.provide(PreviewBrowser.layer));
+).pipe(Layer.provide(HtmlRender.layer));
 
 const layerPreviewStandardToolkitRegistration = McpServer.toolkit(PreviewStandardToolkit).pipe(
   Layer.provide(PreviewHandlers.layerStandard),
@@ -719,6 +733,11 @@ const layerPreviewControlsRegistration = McpServer.toolkit(PreviewControlsToolki
 
 const layerEnvironmentRegistration = McpServer.toolkit(EnvironmentToolkit).pipe(
   Layer.provide(EnvironmentHandlers.layer),
+);
+
+// signalbox: account pools
+const layerPoolsRegistration = McpServer.toolkit(PoolsToolkit).pipe(
+  Layer.provide(PoolsHandlers.layer),
 );
 
 const layerProjectRegistration = McpServer.toolkit(ProjectToolkit).pipe(
@@ -760,9 +779,12 @@ export const layer = Layer.mergeAll(
   layerAttachmentRegistration,
   layerProjectRegistration,
   layerEnvironmentRegistration,
+  layerPoolsRegistration, // signalbox
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  McpServer.toolkit(AutomationToolkit).pipe(Layer.provide(AutomationHandlers.layer)), // signalbox: automations
+  AutomationBuiltinTools.layer, // signalbox: automations call Signalbox's tools as steps
 ).pipe(Layer.provideMerge(layerMcpTransport));

@@ -20,6 +20,7 @@ import {
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
+  type UsageLimitSourceUpdateAccountInput,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
@@ -28,11 +29,13 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as AccountPools from "../accountHub/AccountPools.ts"; // signalbox: account pools
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
@@ -48,6 +51,10 @@ export class UsageLimitSources extends Context.Service<
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
+    /** Pauses, resumes, or removes one hub account, then re-reads that hub. */
+    readonly updateAccount: (
+      input: UsageLimitSourceUpdateAccountInput,
+    ) => Effect.Effect<void, UsageLimitSourceError>;
   }
 >()("t3/usage/UsageLimitSources") {}
 
@@ -65,6 +72,13 @@ export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const settingsService = yield* Settings.ServerSettingsService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  // signalbox: every account pool's hub reports like a configured source.
+  const accountPools = yield* Effect.serviceOption(AccountPools.AccountPools);
+  const hubSources = Option.match(accountPools, {
+    onNone: () =>
+      Effect.succeed<ReadonlyArray<readonly [UsageLimitSourceId, UsageLimitSourceConfig]>>([]),
+    onSome: (pools) => pools.usageLimitSources,
+  });
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
   const changes = yield* Effect.acquireRelease(
     PubSub.unbounded<ReadonlyArray<UsageLimitSourceSnapshot>>(),
@@ -104,9 +118,10 @@ export const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
     );
-    const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
-      ([, config]) => config.enabled,
-    );
+    const entries = [
+      ...Object.entries(settings?.usageLimitSources ?? {}).filter(([, config]) => config.enabled),
+      ...(yield* hubSources),
+    ];
     const snapshots = yield* Effect.forEach(
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
@@ -115,25 +130,47 @@ export const make = Effect.gen(function* () {
     yield* publish(snapshots);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
-  // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
-  const consumeResetCredit = (input: UsageLimitSourceConsumeResetCreditInput) =>
+  const sourceConfig = (sourceId: UsageLimitSourceId) =>
     Effect.gen(function* () {
       const settings = yield* settingsService.getSettings.pipe(
         Effect.mapError(
           () => new UsageLimitSourceError({ detail: "Could not read hub settings." }),
         ),
       );
-      const config = settings.usageLimitSources[input.sourceId];
+      const hub = (yield* hubSources).find(([id]) => id === sourceId);
+      const config = hub ? hub[1] : settings.usageLimitSources[sourceId];
       if (!config?.enabled || !config.managementKey) {
         return yield* new UsageLimitSourceError({
           detail: "The usage limit source is missing or disabled.",
         });
       }
-      const result = yield* api.consume(config, input.accountId, input.creditId);
-      const snapshot = yield* readSource(input.sourceId, config);
+      return config;
+    });
+  const republish = (sourceId: UsageLimitSourceId, config: UsageLimitSourceConfig) =>
+    Effect.gen(function* () {
+      const snapshot = yield* readSource(sourceId, config);
       const previous = yield* Ref.get(stateRef);
-      yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
+      yield* publish(previous.map((source) => (source.id === sourceId ? snapshot : source)));
+    });
+
+  // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
+  const consumeResetCredit = (input: UsageLimitSourceConsumeResetCreditInput) =>
+    Effect.gen(function* () {
+      const config = yield* sourceConfig(input.sourceId);
+      const result = yield* api.consume(config, input.accountId, input.creditId);
+      yield* republish(input.sourceId, config);
       return result;
+    }).pipe(refreshLock.withPermits(1));
+
+  const updateAccount = (input: UsageLimitSourceUpdateAccountInput) =>
+    Effect.gen(function* () {
+      const config = yield* sourceConfig(input.sourceId);
+      yield* api.updateAccount(config, input.accountId, input.action);
+      yield* republish(input.sourceId, config);
+      // signalbox: hub instances recount their accounts.
+      if (Option.isSome(accountPools)) {
+        yield* accountPools.value.markAccountsChanged(input.sourceId);
+      }
     }).pipe(refreshLock.withPermits(1));
 
   // Settings edits re-read straight away so a new hub shows up without
@@ -164,9 +201,19 @@ export const make = Effect.gen(function* () {
 
   yield* refresh.pipe(Effect.forkScoped);
 
+  // signalbox: re-read when a pool changes, or its hub comes up, goes down, or changes accounts.
+  if (Option.isSome(accountPools)) {
+    yield* accountPools.value.activity.pipe(
+      Stream.debounce("300 millis"), // signalbox: account changes arrive in bursts
+      Stream.runForEach(() => refresh),
+      Effect.forkScoped,
+    );
+  }
+
   return {
     current: Ref.get(stateRef),
     consumeResetCredit,
+    updateAccount,
     refresh,
     get streamChanges() {
       return Stream.unwrap(

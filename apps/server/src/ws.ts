@@ -1,3 +1,7 @@
+import { AccountHubRpcError } from "@t3tools/contracts/accountHub"; // signalbox
+import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
+import type { AccountHubError } from "./accountHub/accountHubManagement.ts"; // signalbox
+
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -121,6 +125,8 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as WorkflowEngine from "./workflows/WorkflowEngine.ts"; // signalbox: automations
+import { automationRpcHandlers } from "./workflows/rpcHandlers.ts"; // signalbox: automations
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -180,6 +186,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -248,6 +255,15 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+
+// signalbox: one pool operation, with hub errors mapped for the wire.
+const accountPool = <A>(
+  operation: (pools: AccountPools.AccountPools["Service"]) => Effect.Effect<A, AccountHubError>,
+) =>
+  AccountPools.AccountPools.pipe(
+    Effect.flatMap(operation),
+    Effect.mapError((error) => new AccountHubRpcError({ detail: error.detail })),
+  );
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -1183,6 +1199,7 @@ const layerWsRpc = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
   ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -1220,6 +1237,7 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const automations = yield* WorkflowEngine.WorkflowEngine; // signalbox: automations
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2121,6 +2139,7 @@ const layerWsRpc = (
             scheduledTasks.getWebhookDelivery(input),
             { "rpc.aggregate": "scheduledTasks", "scheduled_task.id": input.id },
           ),
+        ...automationRpcHandlers(automations), // signalbox: automations
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",
@@ -2442,6 +2461,49 @@ const layerWsRpc = (
               );
               return { outcome };
             }),
+            { "rpc.aggregate": "provider" },
+          ),
+        // signalbox: account pools.
+        [WS_METHODS.accountPoolSubscribe]: () =>
+          observeRpcStream(
+            WS_METHODS.accountPoolSubscribe,
+            Stream.unwrap(AccountPools.AccountPools.pipe(Effect.map((pools) => pools.changes))),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolCreate,
+            accountPool((pools) => pools.create(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolRename]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolRename,
+            accountPool((pools) => pools.rename(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolDelete,
+            accountPool((pools) => pools.remove(input.poolId)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolSetBacking]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolSetBacking,
+            accountPool((pools) => pools.setBacking(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolImportAccounts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolImportAccounts,
+            accountPool((pools) => pools.importAccounts(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.usageLimitSourceUpdateAccount]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.usageLimitSourceUpdateAccount,
+            usageLimitSources.updateAccount(input),
             { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.providerAuthStart]: (input) =>
@@ -3493,6 +3555,10 @@ const layerWsRpc = (
           observeRpcEffect(WS_METHODS.previewResize, previewManager.resize(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewAdjust]: (input) =>
+          observeRpcEffect(WS_METHODS.previewAdjust, previewManager.adjust(input), {
+            "rpc.aggregate": "preview",
+          }),
         [WS_METHODS.previewRefresh]: (input) =>
           observeRpcEffect(WS_METHODS.previewRefresh, previewManager.refresh(input), {
             "rpc.aggregate": "preview",
@@ -3505,28 +3571,16 @@ const layerWsRpc = (
           observeRpcEffect(WS_METHODS.previewList, previewManager.list(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewClearProfile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewClearProfile,
+            serverBrowser.clearProfile(input.profileId),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.previewReportStatus]: (input) =>
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
-        [WS_METHODS.previewAutomationConnect]: (input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.previewAutomationConnect,
-            previewAutomationBroker.connect(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.previewAutomationRespond]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewAutomationRespond,
-            previewAutomationBroker.respond(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.previewAutomationFocusHost]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewAutomationFocusHost,
-            previewAutomationBroker.focusHost(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",
@@ -3800,6 +3854,7 @@ const layerWsRpc = (
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
@@ -3848,7 +3903,13 @@ export const layer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            layerWsRpc(session, clientOrigin, clientAnalyticsProps, previewAutomationBroker).pipe(
+            layerWsRpc(
+              session,
+              clientOrigin,
+              clientAnalyticsProps,
+              previewAutomationBroker,
+              serverBrowser,
+            ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),

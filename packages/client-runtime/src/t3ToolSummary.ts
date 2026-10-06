@@ -178,6 +178,13 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("taskId")), "task"),
       );
       break;
+    case "automation": // signalbox: automations
+      label = phrase(
+        "Worked on",
+        "work on",
+        quantity(countEntities(entityIds("automationId")), "automation"),
+      );
+      break;
     case "schedule-create":
       label = phrase(
         "Scheduled",
@@ -328,6 +335,9 @@ export function summarizeT3ToolCalls(
       break;
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
+      break;
+    case "pool-list": // signalbox
+      label = phrase("Checked", "check", `account pools ${times}`);
       break;
     case "attachment-prepare":
       label = phrase(

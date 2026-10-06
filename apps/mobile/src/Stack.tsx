@@ -43,6 +43,7 @@ import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentCompo
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
+import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -53,6 +54,11 @@ import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
 import { accountSignInStackScreen } from "./features/account/AccountSignInRoutes"; // signalbox: accounts
+import {
+  AUTOMATION_OVERLAY_ROUTES,
+  automationSettingsScreens,
+  automationStackScreens,
+} from "./features/automations/routes"; // signalbox: automations
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
@@ -318,6 +324,7 @@ const SettingsContentStack = createNativeStackNavigator({
         headerTitleStyle: { fontSize: 16, fontWeight: "800" },
       },
     }),
+    ...automationSettingsScreens(), // signalbox: automations
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
       linking: "scheduled-tasks/new",
@@ -536,6 +543,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
 // not flip the sidebar in or change the active thread.
 const WORKSPACE_OVERLAY_ROUTES = new Set([
   "AccountSignIn", // signalbox: accounts
+  ...AUTOMATION_OVERLAY_ROUTES, // signalbox: automations
   "ConnectOnboarding",
   "Connections",
   "ConnectionsNew",
@@ -550,6 +558,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ThreadQueue",
   "ThreadReviewComment",
   "ThreadDevicePreview",
+  "ThreadBrowserPreview",
   "ThreadSettingsSheet",
 ]);
 
@@ -705,6 +714,15 @@ const RootStackConfig = createNativeStackNavigator({
         gestureEnabled: false,
         autoHideHomeIndicator: true,
         navigationBarHidden: true,
+      },
+    }),
+    ThreadBrowserPreview: createNativeStackScreen({
+      screen: BrowserPreviewRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/browser`,
+      options: {
+        presentation: "fullScreenModal",
+        headerShown: false,
+        gestureEnabled: false,
       },
     }),
     ThreadReview: createNativeStackScreen({
@@ -894,6 +912,7 @@ const RootStackConfig = createNativeStackNavigator({
         headerShown: false,
       },
     }),
+    ...automationStackScreens({ glass: GLASS_HEADER_OPTIONS, solid: SOLID_HEADER_OPTIONS }), // signalbox: automations
     NotFound: createNativeStackScreen({
       screen: NotFoundScreen,
       linking: "*",

@@ -91,6 +91,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
+import { usePickerPools } from "../accountPool/ModelPoolSwitcher"; // signalbox
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   SettingsPageContainer,
@@ -797,6 +798,7 @@ function ScheduledTaskEditorDialog({
       ),
     [providers, settings],
   );
+  const pools = usePickerPools(environmentId, instanceEntries, settings.providerInstances); // signalbox
   const [draft, setDraft] = useState<DraftState>(() =>
     task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
@@ -1112,6 +1114,7 @@ function ScheduledTaskEditorDialog({
                 model={activeModel}
                 lockedProvider={null}
                 instanceEntries={instanceEntries}
+                pools={pools}
                 modelOptionsByInstance={modelOptionsByInstance}
                 isComposerOwned={false}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}

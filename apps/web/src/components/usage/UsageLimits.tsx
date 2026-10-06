@@ -52,7 +52,7 @@ export function barColor(driver: ServerProvider["driver"]): string {
 }
 
 /** Pace as a glyph with the words on hover. */
-export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
+function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   return (
     <Tooltip>
@@ -167,7 +167,7 @@ export function LimitWindows({
     <div
       className={
         compact
-          ? "grid grid-cols-[minmax(0,9rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-0.5"
+          ? "grid grid-cols-[minmax(0,7rem)_minmax(3rem,1fr)_auto] gap-x-2 gap-y-0.5"
           : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
       }
     >

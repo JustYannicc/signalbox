@@ -25,6 +25,8 @@ import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { WorkflowEngine } from "../../../workflows/WorkflowEngine.ts"; // signalbox: automations
+import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -40,6 +42,10 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(WorkflowEngine)({
+    validate: () => ({ ok: true, graph: { nodes: [] } }),
+    registerBuiltinTools: () => Effect.void,
+  }), // signalbox: automations
 );
 
 const ToolsListPayload = Schema.fromJsonString(
@@ -77,6 +83,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
           }),
         ),
         Layer.provide(PreviewAutomationBroker.layer),
+        Layer.provide(PreviewBrowser.layer),
         Layer.provide(layerStubServices),
         Layer.build,
       );

@@ -37,6 +37,21 @@ export const ServerProviderResetCredits = Schema.Struct({
   nextExpiresAt: Schema.optional(IsoDateTime),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * signalbox: set when credits clear only some windows (Claude has 5-hour and
+   * full resets). A window listed here shows its own credits; one missing has
+   * none. Absent means every credit clears every window.
+   */
+  windows: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        windowId: TrimmedNonEmptyString,
+        availableCount: NonNegativeInt,
+        nextExpiresAt: Schema.optional(IsoDateTime),
+        nextCreditId: Schema.optional(TrimmedNonEmptyString),
+      }),
+    ),
+  ),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
@@ -93,6 +108,10 @@ export const UsageLimitSourceAccount = Schema.Struct({
   /** Plan as the matching provider would label it (`ChatGPT Pro 20x Subscription`). */
   plan: Schema.optional(TrimmedNonEmptyString),
   usageLimits: ServerProviderUsageLimits,
+  /** Paused in the hub: kept, but no request is routed to it. */
+  disabled: Schema.optional(Schema.Boolean),
+  /** signalbox: the login died (revoked or expired refresh token); it needs a new sign-in. */
+  signedOut: Schema.optional(Schema.Boolean),
 });
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 
@@ -121,6 +140,14 @@ export const UsageLimitSourceConsumeResetCreditInput = Schema.Struct({
 });
 export type UsageLimitSourceConsumeResetCreditInput =
   typeof UsageLimitSourceConsumeResetCreditInput.Type;
+
+/** Pause, resume, or remove one account a hub pools. */
+export const UsageLimitSourceUpdateAccountInput = Schema.Struct({
+  sourceId: UsageLimitSourceId,
+  accountId: TrimmedNonEmptyString,
+  action: Schema.Literals(["pause", "resume", "remove"]),
+});
+export type UsageLimitSourceUpdateAccountInput = typeof UsageLimitSourceUpdateAccountInput.Type;
 
 export const ProviderConsumeResetCreditInput = Schema.Union([
   Schema.Struct({ instanceId: ProviderInstanceId }),

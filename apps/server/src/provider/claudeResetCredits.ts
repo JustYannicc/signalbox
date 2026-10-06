@@ -41,7 +41,10 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
+  // signalbox: the windows a claim clears; Claude has 5-hour and full resets.
+  clears: Schema.optional(Schema.Array(Schema.String)),
 });
+export type ClaudeResetGrant = typeof Grant.Type;
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
   eligible: Schema.Boolean,
@@ -52,7 +55,7 @@ const UsageResponse = Schema.Struct({
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 const decodeCedarEmber = Schema.decodeUnknownOption(CedarEmber);
-const ClaimResponse = Schema.Struct({
+export const ClaimResponse = Schema.Struct({
   result: Schema.Literals([
     "reset",
     "already_used",
@@ -63,7 +66,7 @@ const ClaimResponse = Schema.Struct({
   ]),
 });
 
-const RESET_CREDIT_FAILURES = {
+export const RESET_CREDIT_FAILURES = {
   malformedCredit: "Claude returned a malformed reset credit.",
   loginUnreadable: "Claude could not read its login.",
   accountUnreadable: "Claude could not read its account.",
@@ -111,13 +114,15 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
 };
 
 /** Grants that are paused or past `ends_at` cannot be claimed and do not count. */
-export function claudeResetCreditsToContract(
+export function liveClaudeResetGrants(
   block: unknown,
   nowMs: number,
-): ServerProviderResetCredits | undefined {
+):
+  | { readonly grants: ReadonlyArray<ClaudeResetGrant>; readonly nextGrantId: string | null }
+  | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
-  const live = (parsed.value.grants ?? [])
+  const grants = (parsed.value.grants ?? [])
     .flatMap((raw) => Option.toArray(decodeGrant(raw)))
     .filter(
       (grant) =>
@@ -125,7 +130,17 @@ export function claudeResetCreditsToContract(
         grant.usable_now &&
         (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
-  const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
+  return { grants, nextGrantId: parsed.value.next_grant_id ?? null };
+}
+
+export function claudeResetCreditsToContract(
+  block: unknown,
+  nowMs: number,
+): ServerProviderResetCredits | undefined {
+  const parsed = liveClaudeResetGrants(block, nowMs);
+  if (!parsed) return undefined;
+  const live = parsed.grants;
+  const next = live.find((grant) => grant.id === parsed.nextGrantId);
   const nextExpiresAt = next?.ends_at ? DateTime.make(next.ends_at) : Option.none();
   return {
     availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
@@ -195,7 +210,7 @@ export const claudeAccountConfigPath = (configDir: string | undefined) =>
     configDir ? path.join(configDir, ".claude.json") : path.join(NodeOS.homedir(), ".claude.json"),
   );
 
-const CLAIM_OUTCOMES = {
+export const CLAIM_OUTCOMES = {
   reset: "reset",
   not_limited: "nothingToReset",
   already_used: "alreadyRedeemed",

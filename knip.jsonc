@@ -32,11 +32,17 @@
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
+        "scripts/verify-automations-live.ts", // signalbox: automations
+        "scripts/verify-automations-tickets.ts", // signalbox: automations
         "src/provider/testFixtures/*.mjs",
       ],
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
       "ignoreDependencies": ["@effect/platform-node-shared", "@t3tools/web"],
+    },
+    "apps/cloud": {
+      // `cloudflare:workers` is a Workers runtime module, not a package.
+      "ignoreDependencies": ["cloudflare"],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
@@ -77,6 +83,7 @@
         "plugins/*.cjs",
         "scripts/generate-device-stream.mts",
         "src/features/devices/device-stream.browser.ts!",
+        "src/features/browser/preview-stream.browser.ts!",
       ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [

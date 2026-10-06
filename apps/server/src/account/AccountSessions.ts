@@ -11,10 +11,10 @@ import type { HttpServerRequest } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { deriveAuthClientMetadata } from "../auth/utils.ts";
-import * as AccountFlow from "./AccountFlow.ts";
+import * as AccountFlow from "@signalbox/account/AccountFlow";
 import * as AccountHandoffs from "./AccountHandoffs.ts";
 import * as AccountRepository from "./AccountRepository.ts";
-import type { WorkOSUser } from "./WorkOSClient.ts";
+import type { WorkOSUser } from "@signalbox/account/WorkOSClient";
 
 /**
  * Turns a WorkOS-verified user into an environment session: records their

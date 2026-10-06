@@ -84,12 +84,13 @@ const PROSE_CLI_RULE: Rule = {
 };
 
 /**
- * The product's short name in prose ("Open T3 to connect", "a T3 thread"). Not
- * "T3 Tools" (the company), "T3 Chat" (another product), or the "T3 home" term.
+ * The product's short name in prose ("Open T3 to connect", "a T3 thread", "T3's
+ * browser"). Not "T3 Tools" (the company), "T3 Chat" (another product), or the
+ * "T3 home" term.
  */
 const SHORT_NAME_RULE: Rule = {
   pattern:
-    /(?<![\w@./:#$\\-])T3(?= [a-z])(?! home\b)|(?<=[A-Za-z,] )T3(?![\w@./:#$\\-]| (?:Tools|Code|Connect|Chat|home)\b)/g,
+    /(?<![\w@./:#$\\-])T3(?= [a-z]|'s\b)(?! home\b)|(?<=[A-Za-z,] )T3(?![\w@./:#$\\-]| (?:Tools|Code|Connect|Chat|home)\b)/g,
   replace: "Signalbox",
 };
 
