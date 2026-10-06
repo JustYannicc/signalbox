@@ -95,6 +95,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.workspace",
   "composer.previousWorktree",
   "composer.branch",
+  "composer.toggleSendLock", // signalbox: send lock
   "chat.new",
   "chat.newLocal",
   "chat.newWithoutProject",
