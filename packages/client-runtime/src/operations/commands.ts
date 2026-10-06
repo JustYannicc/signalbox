@@ -32,6 +32,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
+import { stopAttachedAutomations } from "../automations/attached.ts"; // signalbox: Stop cancels attached automation runs
 import { getInitialServerConfig, request } from "../rpc/client.ts";
 
 interface CommandMetadata {
@@ -805,6 +806,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
       }
     }
     if (runId === undefined) {
+      yield* stopAttachedAutomations(input.threadId); // signalbox: Stop cancels attached automation runs
       let result = { sequence: 0 };
       for (const link of visibleThreadPullRequests(projection.thread.pullRequests ?? [])) {
         if (link.watch === undefined) continue;

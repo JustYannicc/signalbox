@@ -105,6 +105,7 @@ vi.mock("../hooks/useSettings", () => ({
   ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp }),
   getClientSettings: () => ({ notificationMode: state.mode }),
 }));
+vi.mock("./automations/AutomationNotices", () => ({ AutomationNotices: () => null })); // signalbox: automations
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => ["env-1"],
 }));

@@ -57,6 +57,9 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import { AutomationToolkit } from "../workflows/mcp/tools.ts"; // signalbox: automations
+import * as AutomationHandlers from "../workflows/mcp/handlers.ts"; // signalbox: automations
+import * as AutomationBuiltinTools from "../workflows/builtinTools/layer.ts"; // signalbox: automations
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -782,4 +785,6 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  McpServer.toolkit(AutomationToolkit).pipe(Layer.provide(AutomationHandlers.layer)), // signalbox: automations
+  AutomationBuiltinTools.layer, // signalbox: automations call Signalbox's tools as steps
 ).pipe(Layer.provideMerge(layerMcpTransport));

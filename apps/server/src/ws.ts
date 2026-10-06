@@ -125,6 +125,8 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as WorkflowEngine from "./workflows/WorkflowEngine.ts"; // signalbox: automations
+import { automationRpcHandlers } from "./workflows/rpcHandlers.ts"; // signalbox: automations
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1235,6 +1237,7 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const automations = yield* WorkflowEngine.WorkflowEngine; // signalbox: automations
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2136,6 +2139,7 @@ const layerWsRpc = (
             scheduledTasks.getWebhookDelivery(input),
             { "rpc.aggregate": "scheduledTasks", "scheduled_task.id": input.id },
           ),
+        ...automationRpcHandlers(automations), // signalbox: automations
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",

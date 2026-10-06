@@ -75,10 +75,15 @@ const handlerFor = (
     request: WebhookTriggerRequest,
   ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>,
   secrets: ReadonlyMap<string, string> = linkedSecrets,
+  receivers: ReadonlyArray<WebhookRoute.WebhookReceiver> = [],
 ) =>
   HttpRouter.toWebHandler(
     HttpApiBuilder.layer(WebhookTestApi).pipe(
-      Layer.provide(WebhookRoute.layer),
+      Layer.provide(
+        WebhookRoute.layer.pipe(
+          Layer.provide(Layer.succeed(WebhookRoute.WebhookReceivers, receivers)),
+        ),
+      ),
       Layer.provide(RelayDeliveryProof.layer),
       Layer.provide(Layer.mock(ScheduledTaskService)({ triggerWebhook: trigger })),
       Layer.provide(
@@ -138,6 +143,39 @@ describe("webhook route", () => {
       expect(received?.query).toBe("x=1");
       expect(received?.headers["x-github-event"]).toBe("push");
       expect(received?.bodyText).toBe('{"a":1}');
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("hands hook ids with a receiver's prefix to that receiver", async () => {
+    const tasks: Array<string> = [];
+    const received: Array<WebhookTriggerRequest> = [];
+    const { handler, dispose } = handlerFor(
+      (request) => {
+        tasks.push(request.hookId);
+        return Effect.succeed({ _tag: "not_found" });
+      },
+      linkedSecrets,
+      [
+        {
+          hookIdPrefix: "automation_",
+          trigger: (request) => {
+            received.push(request);
+            return Effect.succeed({ _tag: "rejected_signature" });
+          },
+        },
+      ],
+    );
+    try {
+      const response = await handler(post("/api/hooks/automation_1/tok?x=1", '{"a":1}'));
+      expect(response.status).toBe(401);
+      expect(response.headers.get("x-t3-hook-outcome")).toBe("rejected_signature");
+      expect(received.map((request) => [request.hookId, request.token, request.query])).toEqual([
+        ["automation_1", "tok", "x=1"],
+      ]);
+      expect((await handler(post("/api/hooks/task-1/tok", "{}"))).status).toBe(404);
+      expect(tasks).toEqual(["task-1"]);
     } finally {
       await dispose();
     }

@@ -70,6 +70,7 @@ import type { ProviderContinuationRequest } from "../ProviderContinuationRequest
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import { AutomationToolkit } from "../../workflows/mcp/tools.ts"; // signalbox: automations
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
@@ -659,6 +660,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(PoolsToolkit.tools), // signalbox
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
+      ...Object.values(AutomationToolkit.tools), // signalbox: automations
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__t3-code__${tool.name}`)
