@@ -18,6 +18,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -155,6 +156,8 @@ function SettingsIndexSections() {
       </SettingsSection>
 
       <SettingsSection title="Automations">
+        {/* signalbox: automations */}
+        <AutomationsSettingsRows />
         <SettingsRow icon="clock" label="Scheduled tasks" target="SettingsScheduledTasks" />
       </SettingsSection>
 

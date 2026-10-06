@@ -179,6 +179,13 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("taskId")), "task"),
       );
       break;
+    case "automation": // signalbox: automations
+      label = phrase(
+        "Worked on",
+        "work on",
+        quantity(countEntities(entityIds("automationId")), "automation"),
+      );
+      break;
     case "schedule-create":
       label = phrase(
         "Scheduled",

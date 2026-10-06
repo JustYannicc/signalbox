@@ -2,6 +2,7 @@
 
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // signalbox: accounts
+import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -2258,6 +2259,7 @@ function OpenCommandPaletteDialog(props: {
   // signalbox: accounts sign-out action.
   const accountSignOutItem = accountSignOutPaletteItem();
   if (accountSignOutItem) actionItems.push(accountSignOutItem);
+  actionItems.push(...useAutomationPaletteItems()); // signalbox: automations
 
   // Target the active thread or draft's project, falling back to the first sidebar group.
   const contextualProjectGroup =

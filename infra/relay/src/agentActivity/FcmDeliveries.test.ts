@@ -870,3 +870,66 @@ describe("FCM queue message isolation", () => {
     },
   );
 });
+
+// signalbox: automations
+describe("automation alerts", () => {
+  const automation = {
+    kind: "ask" as const,
+    alert: {
+      alert_id: '["automation","env","run_1/s1"]',
+      alert_group: '["automation","env","/automations/env/runs/run_1"]',
+      alert_title: "Ship it",
+      alert_body: "Ship v2 to prod?",
+      alert_path: "/automations/env/runs/run_1",
+    },
+  };
+
+  it.effect("ring the phone with the given alert and leave the card's baseline alone", () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.enqueue({ target: h.current.target, state: null, automation });
+      expect(h.queued).toHaveLength(1);
+      expect(h.queued[0]).toMatchObject({ state: null, automation });
+
+      yield* delivery.process(h.queued[0]);
+      expect(h.sent).toHaveLength(1);
+      expect(h.sent[0]?.alert).toBe(true);
+      expect(h.sent[0]?.data).toMatchObject({
+        t3_kind: "agent_activity",
+        alert_title: "Ship it",
+        alert_body: "Ship v2 to prod?",
+        alert_path: "/automations/env/runs/run_1",
+        // The running thread's card is redrawn as it was, not cleared.
+        active: "true",
+      });
+      expect(h.marked).toEqual([]);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("stay quiet once the phone turned notifications off", () => {
+    const h = harness();
+    h.current.target.preferences_json = encodeJson({ ...preferences, notificationsEnabled: false });
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: null, automation });
+      expect(h.sent).toEqual([]);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("send asks only to phones that want input requests", () => {
+    const h = harness();
+    h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnInput: false });
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: null, automation });
+      expect(h.sent).toEqual([]);
+      yield* delivery.process({
+        ...h.job,
+        state: null,
+        automation: { ...automation, kind: "notify" },
+      });
+      expect(h.sent.map((sent) => sent.data.alert_title)).toEqual(["Ship it"]);
+    }).pipe(Effect.provide(h.layer));
+  });
+});

@@ -69,6 +69,7 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useMaterialFabScroll } from "./MaterialFabScrollContext";
 import { SectionNavigationPanel } from "../sections/SectionNavigationPanel";
 import { resolveSelectedProjectScope } from "../sections/section-project-filter";
+import { withAutomationsBanner } from "../automations/AutomationsHomeBanner"; // signalbox: automations
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -911,7 +912,7 @@ export function HomeScreen(props: HomeScreenProps) {
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
-  const v2ListHeader = (
+  const v2ListHeader = withAutomationsBanner(
     <>
       {listHeader}
       {props.sectionsOpen ? (
@@ -923,7 +924,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onClose={props.onCloseSections}
         />
       ) : null}
-    </>
+    </>,
   );
 
   // Use the v2 project scope for its empty state. Snoozed threads need no

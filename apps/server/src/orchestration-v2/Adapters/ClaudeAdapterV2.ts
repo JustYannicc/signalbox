@@ -135,6 +135,7 @@ import {
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
 } from "../SubagentProjection.ts";
+import { AUTOMATION_READ_ONLY_TOOLS } from "../../workflows/mcp/readOnlyTools.ts"; // signalbox: automations
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
@@ -949,6 +950,7 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_queue_read",
   "mcp__t3-code__html_preview",
   "mcp__t3-code__html_render",
+  ...AUTOMATION_READ_ONLY_TOOLS.map((name) => `mcp__t3-code__${name}`), // signalbox: automations
 ];
 
 // Claude Code aborts an HTTP MCP call after 60 s ("The operation timed out.")

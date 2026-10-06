@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { OrchestrationProjectShell } from "@t3tools/contracts";
 import { SectionId } from "@t3tools/contracts/sections";
 import { describe, expect, it } from "vite-plus/test";
@@ -7,6 +7,9 @@ import { buildSidebarProjectSnapshots } from "../../../sidebarProjectGrouping";
 import type { Project } from "../../../types";
 import { sectionTreeFromSnapshot } from "@t3tools/client-runtime/state/sections";
 import type { SectionsSnapshot } from "@t3tools/contracts/sections";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { makeThreadFixture } from "../../../test-fixtures";
+import { visibleSectionThreadKeys } from "./sectionSidebarViewModel";
 import {
   buildSectionSidebarEnvironment,
   hasAnySavedSectionSidebarState,
@@ -95,6 +98,50 @@ function buildEnvironment(input: {
 }
 
 describe("section sidebar project adapter", () => {
+  it("keeps keyboard navigation scoped to physical rows and honors project collapse", () => {
+    const a = project(environmentA, "shared-project", "/work/a");
+    const b = project(environmentB, "shared-project", "/work/b");
+    const projectGroups = groups([a, b]);
+    const rows = visibleSectionProjectRows(
+      [b, a].map((entry) =>
+        buildEnvironment({
+          environmentId: entry.environmentId,
+          projects: [projectShell(entry.id, entry.workspaceRoot)],
+          projectGroups,
+        }),
+      ),
+      new Set(),
+    );
+    const threadA = makeThreadFixture({
+      id: ThreadId.make("thread-a"),
+      environmentId: environmentA,
+      projectId: a.id,
+    });
+    const threadB = makeThreadFixture({
+      id: ThreadId.make("thread-b"),
+      environmentId: environmentB,
+      projectId: b.id,
+    });
+    const keyA = scopedThreadKey(scopeThreadRef(environmentA, threadA.id));
+    const keyB = scopedThreadKey(scopeThreadRef(environmentB, threadB.id));
+    const input = {
+      rows,
+      threads: [threadA, threadB],
+      threadSortOrder: "created_at" as const,
+      threadPreviewCount: 5 as const,
+      expandedThreadLists: new Set<string>(),
+      projectExpandedById: {},
+      activeThreadKey: null,
+    };
+    expect(visibleSectionThreadKeys(input)).toEqual([keyB, keyA]);
+    const collapsed = {
+      ...input,
+      projectExpandedById: { [rows[0]!.project.sidebarProjectKey]: false },
+    };
+    expect(visibleSectionThreadKeys(collapsed)).toEqual([keyA]);
+    expect(visibleSectionThreadKeys({ ...collapsed, activeThreadKey: keyB })).toEqual([keyB, keyA]);
+  });
+
   it("keeps same-ID projects scoped to their environment and as physical rows", () => {
     const environmentBProject = project(environmentB, "shared-project", "/work/environment-b");
     const environmentAProject = project(environmentA, "shared-project", "/work/environment-a");

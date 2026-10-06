@@ -1,4 +1,5 @@
 import { sectionMcpToolDefinitions, type SectionMcpToolSummaryAction } from "./sectionsMcpTools.ts";
+import { AUTOMATION_MCP_TOOLS } from "./automationMcpTools.ts"; // signalbox: automations
 
 export type T3McpToolLogo = "t3-code";
 
@@ -65,7 +66,8 @@ export type T3McpToolSummaryAction =
   | "browser"
   | "device"
   | "html-preview"
-  | "html-render";
+  | "html-render"
+  | "automation"; // signalbox: automations
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -324,6 +326,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  ...AUTOMATION_MCP_TOOLS, // signalbox: automations
 };
 
 /**

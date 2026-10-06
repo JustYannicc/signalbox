@@ -3,8 +3,8 @@ import { expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  SectionsWsRpcGroup,
   WS_METHODS,
-  WsRpcGroup,
 } from "@t3tools/contracts";
 import type { SectionsSnapshot } from "@t3tools/contracts/sections";
 import * as Effect from "effect/Effect";
@@ -18,27 +18,9 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as Sections from "./Sections.ts";
 import * as SectionsStore from "./SectionsStore.ts";
-import { makeSectionsWsHandlers } from "./rpc.ts";
+import * as SectionsRpc from "./rpc.ts";
 
-const sectionMethods = [
-  WS_METHODS.sectionsSubscribe,
-  WS_METHODS.sectionsCreate,
-  WS_METHODS.sectionsUpdate,
-  WS_METHODS.sectionsMove,
-  WS_METHODS.sectionsDelete,
-  WS_METHODS.sectionsMoveProject,
-] as const;
-
-const group = WsRpcGroup.omit(
-  ...[...WsRpcGroup.requests.keys()].filter(
-    (
-      tag,
-    ): tag is Exclude<
-      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
-      (typeof sectionMethods)[number]
-    > => !(sectionMethods as ReadonlyArray<string>).includes(tag),
-  ),
-);
+const group = SectionsWsRpcGroup;
 
 const layerState = Sections.layer.pipe(
   Layer.provide(SectionsStore.layer),
@@ -46,7 +28,7 @@ const layerState = Sections.layer.pipe(
   Layer.provide(Sqlite.layerMemory),
   Layer.provide(NodeCrypto.layer),
 );
-const layerHandlers = group.toLayer(makeSectionsWsHandlers).pipe(Layer.provide(layerState));
+const layerHandlers = SectionsRpc.layer.pipe(Layer.provide(layerState));
 
 it.effect("pushes a committed section change to two independent RPC clients", () =>
   Effect.gen(function* () {

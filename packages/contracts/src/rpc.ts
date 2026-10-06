@@ -330,6 +330,7 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
+import { AUTOMATION_WS_METHODS, AutomationRpcs } from "./automationRpc.ts"; // signalbox: automations
 import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
@@ -350,7 +351,11 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
-import { SECTION_WS_METHODS, SectionsWsRpcGroup } from "./sectionsRpc.ts";
+import {
+  SECTION_WS_METHODS,
+  SectionRpcs,
+  SectionsWsRpcGroup as UnauthenticatedSectionsWsRpcGroup,
+} from "./sectionsRpc.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -561,6 +566,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  ...AUTOMATION_WS_METHODS, // signalbox: automations
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1791,6 +1797,9 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+export const SectionsWsRpcGroup =
+  UnauthenticatedSectionsWsRpcGroup.middleware(RpcScopeAuthorization);
+
 export const WsRpcGroup = RpcGroup.make(
   ...SIGNALBOX_ANALYTICS_RPCS, // signalbox: analytics
   WsServerProbeRpc,
@@ -1977,6 +1986,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
-)
-  .merge(SectionsWsRpcGroup)
-  .middleware(RpcScopeAuthorization);
+  ...AutomationRpcs, // signalbox: automations
+  ...SectionRpcs, // signalbox: sections
+).middleware(RpcScopeAuthorization);
+
+export { SECTION_WS_METHODS, SectionRpcs };

@@ -28,7 +28,7 @@ export interface SectionSidebarVisibleProjectRow {
   readonly project: SectionSidebarProject;
 }
 
-export function hasSavedSectionSidebarState(environment: SectionSidebarEnvironment): boolean {
+function hasSavedSectionSidebarState(environment: SectionSidebarEnvironment): boolean {
   return (
     (environment.snapshot?.sections.length ?? 0) > 0 ||
     (environment.snapshot?.projectPlacements.length ?? 0) > 0
@@ -220,6 +220,6 @@ export function buildSectionSidebarEnvironment(input: {
   };
 }
 
-export function sectionSidebarProjectKey(environmentId: EnvironmentId, projectId: string): string {
+function sectionSidebarProjectKey(environmentId: EnvironmentId, projectId: string): string {
   return `section-project:${environmentId}:${projectId}`;
 }

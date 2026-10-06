@@ -5,7 +5,8 @@
  *
  * Home is upstream's project tree and Pipeline is upstream's attention-ordered
  * list, both rendered unchanged apart from their titlebar row, which this
- * layout owns (see SidebarRailContext). Settings keeps the rail and shows its
+ * layout owns (see SidebarRailContext). Automations is Signalbox's own panel;
+ * automations waiting on the user also sit on top of Pipeline. Settings keeps the rail and shows its
  * own navigation in the panel. Picking a view from a utility page (settings,
  * usage, pull requests) returns to the last thread.
  */
@@ -13,6 +14,8 @@ import { useLocation } from "@tanstack/react-router";
 import { useCallback, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
+import { AutomationsPanel } from "../automations/AutomationsPanel";
+import { AutomationsWaitingGroup } from "../automations/AutomationsWaitingGroup";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { SidebarStageBackdrop, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { HomeNewButton } from "./HomeNewButton";
@@ -21,9 +24,15 @@ import { SidebarChromeHeader, SidebarRailContext } from "./SidebarChrome";
 import { SidebarViewRail } from "./SidebarViewRail";
 import { useSidebarView, type SidebarView } from "./sidebarView";
 
-const VIEW_TITLES: Record<SidebarView, string> = { home: "Home", pipeline: "Pipeline" };
+const VIEW_TITLES: Record<SidebarView, string> = {
+  home: "Home",
+  automations: "Automations",
+  pipeline: "Pipeline",
+};
 
 function SidebarViewPanel(props: { view: SidebarView; home: ReactNode; pipeline: ReactNode }) {
+  // Automations draws its own title row, with its sort, filter and search.
+  if (props.view === "automations") return <AutomationsPanel />;
   return (
     <>
       <div className="shrink-0 px-2 pt-2">
@@ -37,7 +46,10 @@ function SidebarViewPanel(props: { view: SidebarView; home: ReactNode; pipeline:
           {props.home}
         </>
       ) : (
-        props.pipeline
+        <>
+          <AutomationsWaitingGroup />
+          {props.pipeline}
+        </>
       )}
     </>
   );

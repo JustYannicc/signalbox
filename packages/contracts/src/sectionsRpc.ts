@@ -23,36 +23,45 @@ export const SECTION_WS_METHODS = {
 
 const SectionsRpcFailure = Schema.Union([SectionsRpcError, EnvironmentAuthorizationError]);
 
-export const SectionsWsRpcGroup = RpcGroup.make(
-  Rpc.make(SECTION_WS_METHODS.sectionsSubscribe, {
-    payload: Schema.Struct({}),
-    success: SectionsSnapshot,
-    error: SectionsRpcFailure,
-    stream: true,
-  }),
-  Rpc.make(SECTION_WS_METHODS.sectionsCreate, {
-    payload: SectionCreateInput,
-    success: SectionsSnapshot,
-    error: SectionsRpcFailure,
-  }),
-  Rpc.make(SECTION_WS_METHODS.sectionsUpdate, {
-    payload: SectionUpdateInput,
-    success: SectionsSnapshot,
-    error: SectionsRpcFailure,
-  }),
-  Rpc.make(SECTION_WS_METHODS.sectionsMove, {
-    payload: SectionMoveInput,
-    success: SectionsSnapshot,
-    error: SectionsRpcFailure,
-  }),
-  Rpc.make(SECTION_WS_METHODS.sectionsDelete, {
-    payload: SectionDeleteInput,
-    success: SectionsSnapshot,
-    error: SectionsRpcFailure,
-  }),
-  Rpc.make(SECTION_WS_METHODS.sectionsMoveProject, {
-    payload: SectionProjectMoveInput,
-    success: SectionsSnapshot,
-    error: SectionsRpcFailure,
-  }),
-);
+const SectionsSubscribeRpc = Rpc.make(SECTION_WS_METHODS.sectionsSubscribe, {
+  payload: Schema.Struct({}),
+  success: SectionsSnapshot,
+  error: SectionsRpcFailure,
+  stream: true,
+});
+const SectionsCreateRpc = Rpc.make(SECTION_WS_METHODS.sectionsCreate, {
+  payload: SectionCreateInput,
+  success: SectionsSnapshot,
+  error: SectionsRpcFailure,
+});
+const SectionsUpdateRpc = Rpc.make(SECTION_WS_METHODS.sectionsUpdate, {
+  payload: SectionUpdateInput,
+  success: SectionsSnapshot,
+  error: SectionsRpcFailure,
+});
+const SectionsMoveRpc = Rpc.make(SECTION_WS_METHODS.sectionsMove, {
+  payload: SectionMoveInput,
+  success: SectionsSnapshot,
+  error: SectionsRpcFailure,
+});
+const SectionsDeleteRpc = Rpc.make(SECTION_WS_METHODS.sectionsDelete, {
+  payload: SectionDeleteInput,
+  success: SectionsSnapshot,
+  error: SectionsRpcFailure,
+});
+const SectionsMoveProjectRpc = Rpc.make(SECTION_WS_METHODS.sectionsMoveProject, {
+  payload: SectionProjectMoveInput,
+  success: SectionsSnapshot,
+  error: SectionsRpcFailure,
+});
+
+export const SectionRpcs = [
+  SectionsSubscribeRpc,
+  SectionsCreateRpc,
+  SectionsUpdateRpc,
+  SectionsMoveRpc,
+  SectionsDeleteRpc,
+  SectionsMoveProjectRpc,
+] as const;
+
+export const SectionsWsRpcGroup = RpcGroup.make(...SectionRpcs);

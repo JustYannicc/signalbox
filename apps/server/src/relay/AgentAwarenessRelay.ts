@@ -195,9 +195,33 @@ function sanitizeRelayAgentActivityState(
   return detail ? { ...rest, detail } : rest;
 }
 
-function relayEnvironmentClient(token: string) {
+export function relayEnvironmentClient(token: string) {
   return HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", `Bearer ${token}`));
 }
+
+/** A Connect secret as text, or null when it isn't set. */
+export const readRelaySecret = (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  name: string,
+) =>
+  secrets
+    .get(name)
+    .pipe(
+      Effect.map((bytes) => (Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : null)),
+    );
+
+/** The relay this environment is linked to, or null while it isn't linked. */
+export const readRelayLink = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
+  Effect.gen(function* () {
+    const [url, issuer, environmentCredential] = yield* Effect.all([
+      readRelaySecret(secrets, RELAY_URL_SECRET),
+      readRelaySecret(secrets, RELAY_ISSUER_SECRET),
+      readRelaySecret(secrets, RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+    ]);
+    return url && environmentCredential
+      ? { url, issuer: issuer ?? url, environmentCredential }
+      : null;
+  });
 
 function deliveryStats(
   deliveries: ReadonlyArray<{
@@ -249,6 +273,25 @@ function signRelayAgentActivityPublishProof(input: {
   });
 }
 
+/** The claims every proof this environment signs for the relay carries; it expires in five minutes. */
+export const relayEnvironmentProofClaims = Effect.fnUntraced(function* (input: {
+  readonly relayIssuer: string;
+  readonly environmentId: string;
+  readonly jti: string;
+}) {
+  const now = yield* DateTime.now;
+  const expiresAt = DateTime.add(now, { minutes: 5 });
+  return {
+    iss: `t3-env:${input.environmentId}`,
+    aud: normalizeRelayIssuer(input.relayIssuer),
+    sub: input.environmentId,
+    jti: input.jti,
+    iat: Math.floor(now.epochMilliseconds / 1_000),
+    exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+    environmentId: input.environmentId as EnvironmentId,
+  };
+});
+
 const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   readonly privateKey: string;
   readonly relayIssuer: string;
@@ -257,16 +300,8 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   readonly state: RelayAgentActivityState | null;
   readonly jti: string;
 }) {
-  const now = yield* DateTime.now;
-  const expiresAt = DateTime.add(now, { minutes: 5 });
   const payload = {
-    iss: `t3-env:${input.environmentId}`,
-    aud: normalizeRelayIssuer(input.relayIssuer),
-    sub: input.environmentId,
-    jti: input.jti,
-    iat: Math.floor(now.epochMilliseconds / 1_000),
-    exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
-    environmentId: input.environmentId as RelayAgentActivityPublishProofPayload["environmentId"],
+    ...(yield* relayEnvironmentProofClaims(input)),
     threadId: input.threadId,
     state: input.state,
   } satisfies RelayAgentActivityPublishProofPayload;
@@ -379,25 +414,9 @@ export const make = Effect.gen(function* () {
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
-  const readSecretString = (name: string) =>
-    secrets
-      .get(name)
-      .pipe(
-        Effect.map((bytes) =>
-          Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : null,
-        ),
-      );
+  const readSecretString = (name: string) => readRelaySecret(secrets, name);
 
-  const readRelayConfig = Effect.gen(function* () {
-    const [url, issuer, environmentCredential] = yield* Effect.all([
-      readSecretString(RELAY_URL_SECRET),
-      readSecretString(RELAY_ISSUER_SECRET),
-      readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
-    ]);
-    return url && environmentCredential
-      ? { url, issuer: issuer ?? url, environmentCredential }
-      : null;
-  });
+  const readRelayConfig = readRelayLink(secrets);
 
   const readPublishAgentActivityEnabled = readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET).pipe(
     Effect.map(isAgentActivityPublishingEnabledValue),

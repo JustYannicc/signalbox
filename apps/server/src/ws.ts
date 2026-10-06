@@ -101,6 +101,7 @@ import {
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
+  SECTION_WS_METHODS,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -125,6 +126,8 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as WorkflowEngine from "./workflows/WorkflowEngine.ts"; // signalbox: automations
+import { automationRpcHandlers } from "./workflows/rpcHandlers.ts"; // signalbox: automations
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -556,6 +559,7 @@ function projectFileFailureContext(
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 const ServerWsRpcGroup = WsRpcGroup;
+const CoreWsRpcGroup = WsRpcGroup.omit(...Object.values(SECTION_WS_METHODS));
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1200,7 +1204,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  CoreWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1224,7 +1228,6 @@ const layerWsRpc = (
       // attribution must never fail the user's command.
       const originProps = clientAnalyticsProps;
       const signalboxAnalyticsHandlers = yield* makeSignalboxAnalyticsWsHandlers(originProps); // signalbox: analytics
-      const sectionsHandlers = yield* SectionsRpc.makeSectionsWsHandlers; // signalbox: sections
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
         switch (command.type) {
           case "message.dispatch":
@@ -1237,6 +1240,7 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const automations = yield* WorkflowEngine.WorkflowEngine; // signalbox: automations
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -1823,9 +1827,8 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = CoreWsRpcGroup.of({
         ...signalboxAnalyticsHandlers, // signalbox: analytics
-        ...sectionsHandlers, // signalbox: sections
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
@@ -2139,6 +2142,7 @@ const layerWsRpc = (
             scheduledTasks.getWebhookDelivery(input),
             { "rpc.aggregate": "scheduledTasks", "scheduled_task.id": input.id },
           ),
+        ...automationRpcHandlers(automations), // signalbox: automations
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",
@@ -3848,7 +3852,7 @@ const layerWsRpc = (
       });
       return handlers;
     }),
-  );
+  ).pipe(Layer.merge(SectionsRpc.layer)); // signalbox: sections
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {

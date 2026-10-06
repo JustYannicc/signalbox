@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   SectionsRpcError,
+  SectionsWsRpcGroup,
   WS_METHODS,
 } from "@t3tools/contracts";
 import type { SectionId } from "@t3tools/contracts/sections";
@@ -96,3 +97,5 @@ export const makeSectionsWsHandlers = Effect.gen(function* () {
       ),
   };
 });
+
+export const layer = SectionsWsRpcGroup.toLayer(makeSectionsWsHandlers);
