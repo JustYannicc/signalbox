@@ -12,7 +12,7 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import { makeHubClaudeProvider } from "../../accountHub/HubClaudeProvider.ts"; // signalbox
+import { makeHubClaudeInstance } from "../../accountHub/HubDriverInstance.ts"; // signalbox
 import { withAccountHub } from "../../accountHub/hubInstance.ts"; // signalbox
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -124,7 +124,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         return yield* withAccountHub(
           DRIVER_KIND,
           instanceId,
-          makeHubClaudeProvider(
+          makeHubClaudeInstance(
+            DRIVER_KIND,
             { instanceId, displayName, accentColor, environment, enabled, config },
             ClaudeDriver.create,
           ),

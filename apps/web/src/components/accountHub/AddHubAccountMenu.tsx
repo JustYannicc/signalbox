@@ -3,6 +3,7 @@ import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { AddHubAccountDialog } from "./AddHubAccountDialog";
@@ -36,7 +37,13 @@ export function AddHubAccountMenu({
         <MenuPopup align="end">
           {(Object.keys(HUB_INSTANCES) as HubAccountKind[]).map((kind) => (
             <MenuItem key={kind} onClick={() => setAdding(kind)}>
-              {HUB_INSTANCES[kind].account} account
+              <ProviderInstanceIcon
+                driverKind={HUB_INSTANCES[kind].driver}
+                displayName={HUB_INSTANCES[kind].account}
+                className="size-4"
+                iconClassName="size-4"
+              />
+              {HUB_INSTANCES[kind].account}
             </MenuItem>
           ))}
         </MenuPopup>

@@ -142,6 +142,15 @@ export function renderAccountHubConfig(options: {
     `    - ${yamlString(options.clientKey)}`,
     "oauth:",
     `  auth-dir: ${yamlString(options.authDir)}`,
+    // Antigravity's API-key mode asks for Flash models without the effort suffix
+    // that Antigravity accounts serve them under.
+    "  model-alias:",
+    "    antigravity:",
+    ...["3.7", "3.6", "3.5"].flatMap((version) => [
+      `      - name: "gemini-${version}-flash-high"`,
+      `        alias: "gemini-${version}-flash"`,
+      "        fork: true",
+    ]),
     "routing:",
     '  strategy: "round-robin"',
     // A thread keeps one account so cached prompts and encrypted reasoning stay valid.

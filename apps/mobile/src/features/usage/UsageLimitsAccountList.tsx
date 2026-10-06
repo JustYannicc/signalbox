@@ -11,14 +11,20 @@ import { AppText as Text } from "../../components/AppText";
 import { HubAccountActions } from "../accountHub/HubAccountActions";
 import { AccountLimits, ResetCredits } from "./UsageLimitsSection";
 
-const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
+const DRIVER_LABEL: Partial<Record<string, string>> = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+  grok: "Grok",
+  antigravity: "Antigravity",
+};
 
 function driverLabel(account: LimitAccount) {
   return DRIVER_LABEL[account.driver] ?? String(account.driver);
 }
 
+// The email tells accounts apart; the instance name is the same for every pooled account.
 function accountLabel(account: LimitAccount) {
-  return account.displayName ?? account.email ?? driverLabel(account);
+  return account.email ?? account.displayName ?? driverLabel(account);
 }
 
 function resetCreditSummary(account: LimitAccount, now: number) {
@@ -62,7 +68,7 @@ export function UsageLimitsAccountList({
             window.members.some((member) => member.account.key === account.key),
           );
           const name = accountLabel(account);
-          const instanceLabel = account.displayName && account.email ? account.email : name;
+          const instanceLabel = name;
           const location =
             account.environments.length > 0
               ? `On ${account.environments.map((environment) => environment.label).join(", ")}`

@@ -40,7 +40,7 @@ export function HubInstanceSetup({
           environmentId={environmentId}
           instanceId={instanceId}
           account={HUB_INSTANCES[kind].account}
-          disabled={readOnly || !provider.installed}
+          disabled={readOnly}
         />
       ) : (
         <SettingsRow title="Account hub" description="Setting up the account hub." />

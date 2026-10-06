@@ -18,6 +18,18 @@ export const HUB_INSTANCES = {
     displayName: "Claude accounts",
     account: "Claude",
   },
+  grok: {
+    instanceId: ProviderInstanceId.make("grok_hub"),
+    driver: ProviderDriverKind.make("grok"),
+    displayName: "Grok accounts",
+    account: "Grok",
+  },
+  antigravity: {
+    instanceId: ProviderInstanceId.make("antigravity_hub"),
+    driver: ProviderDriverKind.make("antigravity"),
+    displayName: "Antigravity accounts",
+    account: "Antigravity",
+  },
 } as const;
 
 export type HubAccountKind = keyof typeof HUB_INSTANCES;
@@ -32,7 +44,9 @@ export function isHubInstanceConfig(config: unknown): boolean {
 }
 
 export function hubAccountKindForDriver(driver: ProviderDriverKind): HubAccountKind | null {
-  if (driver === HUB_INSTANCES.codex.driver) return "codex";
-  if (driver === HUB_INSTANCES.claude.driver) return "claude";
-  return null;
+  return (
+    (Object.keys(HUB_INSTANCES) as HubAccountKind[]).find(
+      (kind) => HUB_INSTANCES[kind].driver === driver,
+    ) ?? null
+  );
 }

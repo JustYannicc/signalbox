@@ -95,7 +95,6 @@ export function AddHubAccountDialog({
               environmentId={environmentId}
               instanceId={hub.instanceId}
               account={hub.account}
-              disabled={!provider.installed}
             />
           ) : (
             <SettingsRow title="Account hub" description="Setting up the account hub." />

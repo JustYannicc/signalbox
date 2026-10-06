@@ -733,6 +733,10 @@ export type CursorSettings = typeof CursorSettings.Type;
 
 export const GrokSettings = makeProviderSettingsSchema(
   {
+    // signalbox: "hub" runs this harness through the account hub's pooled accounts.
+    setupMode: Schema.optionalKey(Schema.Literals(["existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     // Off by default (like Cursor and OpenCode): the binding is not yet
     // stable enough to probe on every install. Users opt in from Settings.
     enabled: Schema.Boolean.pipe(
@@ -775,6 +779,10 @@ export type AntigravityAuthMethod = typeof AntigravityAuthMethod.Type;
 
 export const AntigravitySettings = makeProviderSettingsSchema(
   {
+    // signalbox: "hub" runs this harness through the account hub's pooled accounts.
+    setupMode: Schema.optionalKey(Schema.Literals(["existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
