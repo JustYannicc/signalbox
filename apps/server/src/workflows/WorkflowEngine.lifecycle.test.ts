@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
 import { WorkflowEngine } from "./WorkflowEngine.ts";

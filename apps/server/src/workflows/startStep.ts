@@ -8,7 +8,7 @@ import type * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 
 import { resolveRuntimeMode } from "../mcp/OrchestratorMcpService.ts";
 import type { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";

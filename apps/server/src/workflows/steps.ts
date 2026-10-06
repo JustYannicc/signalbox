@@ -12,13 +12,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Stream from "effect/Stream";
 
 import { subagentResultForRun } from "../orchestration-v2/SubagentProjection.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import {
   isTerminalRunStatus,
   latestRun,
@@ -95,7 +95,7 @@ function workspaceFor(worktree: unknown) {
  */
 const effortOption = (instanceId: string, model: string) =>
   Effect.gen(function* () {
-    const registry = yield* Effect.serviceOption(ProviderRegistry);
+    const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
     if (Option.isNone(registry)) return { id: "effort", values: null };
     const providers = yield* registry.value.getProviders;
     const descriptors =

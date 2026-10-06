@@ -1,7 +1,7 @@
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -64,7 +64,7 @@ const install = Effect.gen(function* () {
         .join("\n\0"),
     ),
   );
-  const hash = Encoding.encodeHex(digest);
+  const hash = Hex.encode(digest);
   const root = path.join(config.stateDir, "skills");
   const directory = path.join(root, SKILL_NAME);
   const marker = path.join(root, `${SKILL_NAME}.installed`);

@@ -1,7 +1,7 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { jsonOrText } from "./json.ts";
 import { AUTOMATION_WEBHOOK_ROUTE } from "./views.ts";
@@ -65,7 +65,7 @@ export const layer = HttpRouter.add(
     const { token } = yield* HttpRouter.params;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const body = yield* readBody(request).pipe(
-      Effect.catchTag("TooLarge", () => Effect.succeed(null)),
+      Effect.catchTags({ TooLarge: () => Effect.succeed(null) }),
       Effect.orElseSucceed(() => undefined),
     );
     if (body === null) return HttpServerResponse.text("Payload too large.", { status: 413 });

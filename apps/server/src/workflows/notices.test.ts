@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import { toJson } from "./json.ts";
 import { automationNotice, failureNotice, relayNotificationForNotice } from "./notices.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
@@ -150,5 +150,5 @@ it.effect("a step moves into waiting or done only once, which is what gates noti
       status: "succeeded",
     });
     expect(yield* store.completeStep("run_1", "notify", done, AT)).toBeUndefined();
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
 );

@@ -3,7 +3,7 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useEffect, useState } from "react";
 import { Alert, View } from "react-native";
 

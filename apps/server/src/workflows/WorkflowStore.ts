@@ -7,8 +7,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 
 import { ensureAutomationTables } from "./storeSchema.ts";
 import { isoAt } from "./time.ts";
@@ -190,15 +190,14 @@ export const make = Effect.gen(function* () {
 
   return {
     withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      sql
-        .withTransaction(effect)
-        .pipe(
-          Effect.catchTag("SqlError", (cause) =>
-            Effect.fail(
-              new AutomationError({ message: "Automation storage failed (transaction).", cause }),
-            ),
+      sql.withTransaction(effect).pipe(
+        // oxlint-disable-next-line t3code/prefer-catch-tags -- the wrapped effect's error type is generic, and catchTags can't infer over it
+        Effect.catchTag("SqlError", (cause) =>
+          Effect.fail(
+            new AutomationError({ message: "Automation storage failed (transaction).", cause }),
           ),
         ),
+      ),
 
     getAutomation: (id: string) =>
       run(

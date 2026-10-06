@@ -1,6 +1,26 @@
+// @effect-diagnostics nodeBuiltinImport:off - Checks the codemod against the checked-out tree.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "vite-plus/test";
 
-import { rebrandFile, rebrandScript } from "./rebrand.ts";
+import {
+  EXTERNAL_CONTRACT_PROPERTIES,
+  PRESERVED_TEST_LINES,
+  rebrandFile,
+  rebrandScript,
+} from "./rebrand.ts";
+
+// Upstream moves files often. A stale key silently stops protecting a contract,
+// so the next sync rebrands it (Codex's clientInfo did once).
+it("keys its per-file exceptions by files that exist", () => {
+  const root = NodePath.resolve(import.meta.dirname, "../..");
+  const missing = [
+    ...Object.keys(EXTERNAL_CONTRACT_PROPERTIES),
+    ...Object.keys(PRESERVED_TEST_LINES),
+  ].filter((file) => !NodeFS.existsSync(NodePath.join(root, file)));
+  expect(missing).toEqual([]);
+});
 
 describe("rebrandScript", () => {
   it("renames product names in strings, templates, and JSX text", () => {
@@ -89,7 +109,7 @@ describe("rebrandScript", () => {
     const code =
       'const p = { clientInfo: { name: "T3 Code", title: "T3 Code" }, message: "T3 Code" };';
 
-    expect(rebrandScript("apps/server/src/provider/Layers/CodexProvider.ts", code)).toBe(
+    expect(rebrandScript("apps/server/src/provider/CodexProvider.ts", code)).toBe(
       'const p = { clientInfo: { name: "T3 Code", title: "T3 Code" }, message: "Signalbox" };',
     );
     expect(rebrandScript("apps/server/src/mcp/McpHttpServer.ts", code)).toBe(

@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const AT = "2026-10-06T09:00:00.000Z";
@@ -42,5 +42,5 @@ it.effect("a cron firing is claimed once, and never re-enables a paused automati
       enabled: 0,
       next_run_at: null,
     });
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
 );

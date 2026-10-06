@@ -1,5 +1,5 @@
 import { CheckpointRef, type ThreadId } from "@t3tools/contracts";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Effect from "effect/Effect";
 
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
@@ -13,7 +13,7 @@ const T3_REFS = "refs/t3/";
 
 export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
   return CheckpointRef.make(
-    `${SIGNALBOX_CHECKPOINT_REFS_PREFIX}/${Encoding.encodeBase64Url(threadId)}/turn/${turnCount}`,
+    `${SIGNALBOX_CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(threadId)}/turn/${turnCount}`,
   );
 }
 

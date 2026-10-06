@@ -68,7 +68,7 @@ const EdgeLayer = memo(function EdgeLayer(props: {
         return (
           <path
             // Edge ids can repeat across decisions that share option names.
-            // oxlint-disable-next-line react/no-array-index-key
+            // oxlint-disable-next-line react/no-array-index-key -- one edge can carry several labels; id plus position is stable for a given layout
             key={`${edge.id}:${index}`}
             d={roundedPath(edge.points, CORNER)}
             fill="none"
@@ -91,7 +91,7 @@ function EdgeLabels(props: { layout: WorkflowLayout; run: DiagramRun | null }) {
     const state = props.run?.edges.get(edge.id);
     return (
       <span
-        // oxlint-disable-next-line react/no-array-index-key
+        // oxlint-disable-next-line react/no-array-index-key -- an edge can carry several labels; its id plus position is stable within one layout
         key={`${edge.id}:${index}`}
         className={cn(
           "pointer-events-none absolute max-w-40 -translate-x-1/2 truncate rounded-full border bg-background px-2 text-2xs leading-4.5",

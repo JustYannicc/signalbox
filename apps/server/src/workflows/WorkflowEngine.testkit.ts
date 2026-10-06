@@ -17,9 +17,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   ThreadLaunchService,
@@ -27,7 +27,7 @@ import {
 } from "../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { fromJson, toJson } from "./json.ts";
@@ -271,7 +271,7 @@ const makeDependencies = (options: EngineOptions) =>
     Scheduler.layer,
     (options.threads ?? fakeThreads()).layer,
     (options.http ?? fakeHttp()).layer,
-    SqlitePersistenceMemory,
+    Sqlite.layerMemory,
     ServerConfig.layerTest(PROJECT_ROOT, { prefix: "signalbox-automations-test-" }),
     Layer.mock(ProjectService)({
       getById: () => Effect.succeedSome({ workspaceRoot: PROJECT_ROOT } as never),

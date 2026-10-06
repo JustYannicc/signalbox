@@ -29,7 +29,7 @@ const changing = <A, R>(
   use: (caller: Caller) => Effect.Effect<A, AutomationError | OrchestratorMcpFailure, R>,
 ) => readMutationCaller().pipe(Effect.flatMap(use), Effect.mapError(toMcpFailure));
 
-export const AutomationToolkitHandlersLive = AutomationToolkit.toLayer(
+export const layer = AutomationToolkit.toLayer(
   Effect.gen(function* () {
     const engine = yield* WorkflowEngine.WorkflowEngine;
     return {

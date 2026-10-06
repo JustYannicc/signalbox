@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { AutomationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpRouter from "effect/http/HttpRouter";
 
 import * as AutomationHttp from "./http.ts";
 import { WorkflowEngine, type WorkflowEngineShape } from "./WorkflowEngine.ts";

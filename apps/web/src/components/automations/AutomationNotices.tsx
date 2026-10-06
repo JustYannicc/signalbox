@@ -12,12 +12,11 @@ import { automationKey } from "@t3tools/client-runtime/automations/list";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { AutomationNotice, EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { BellIcon, CircleAlertIcon, MessageCircleQuestionIcon } from "lucide-react";
 import { useEffect } from "react";
 
 import { getClientSettings, useClientSettings } from "../../hooks/useSettings";
-import { useConnectedEnvironmentIds } from "../../state/environments";
 import { automationState } from "../../state/automations";
 import {
   hasDesktopNotifications,
@@ -45,12 +44,15 @@ type OnNotification = (environmentId: EnvironmentId, notification: Notification)
 /** One environment's automation alerts, while it's connected. */
 export function AutomationNotices(props: {
   environmentId: EnvironmentId;
+  /** Whether the environment's shell is live; notices only stream from a connected environment. */
+  live: boolean;
   /** Counts the desktop notification on the dock badge and closes it when the app gets focus. */
   onNotification: OnNotification;
 }) {
-  const connected = useConnectedEnvironmentIds();
-  if (!connected.includes(props.environmentId)) return null;
-  return <NoticeListener {...props} />;
+  if (!props.live) return null;
+  return (
+    <NoticeListener environmentId={props.environmentId} onNotification={props.onNotification} />
+  );
 }
 
 function NoticeListener(props: { environmentId: EnvironmentId; onNotification: OnNotification }) {

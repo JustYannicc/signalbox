@@ -1,6 +1,6 @@
 import { AUTOMATION_WS_METHODS, type AutomationRpcs } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as Rpc from "effect/unstable/rpc/Rpc";
+import type * as Rpc from "effect/rpc/Rpc";
 import * as Stream from "effect/Stream";
 
 import { observeRpcEffect, observeRpcStream } from "../observability/RpcInstrumentation.ts";

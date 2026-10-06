@@ -27,12 +27,12 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 
 import type { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { ProjectService } from "../project/ProjectService.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import {
   isTerminalRunStatus,
   ThreadManagementService,
@@ -161,9 +161,9 @@ const make = Effect.gen(function* () {
     ThreadLaunchService | ThreadManagementService | HttpClient.HttpClient
   >();
   // The provider catalog, when the server has one, tells agent steps each model's option names.
-  const providerCatalog = yield* Effect.serviceOption(ProviderRegistry);
+  const providerCatalog = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
   const services = Option.isSome(providerCatalog)
-    ? Context.add(required, ProviderRegistry, providerCatalog.value)
+    ? Context.add(required, ProviderRegistry.ProviderRegistry, providerCatalog.value)
     : required;
   const scope = yield* Effect.scope;
   const changes = yield* PubSub.unbounded<Change>();

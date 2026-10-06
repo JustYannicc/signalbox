@@ -7,8 +7,8 @@ import {
   RelayInternalError,
 } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 
 import * as AutomationNotifications from "../agentActivity/AutomationNotifications.ts";
 import { mapErrorTags } from "./Api.ts";

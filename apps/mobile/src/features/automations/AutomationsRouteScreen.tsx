@@ -9,7 +9,7 @@ import { runTitle } from "@t3tools/client-runtime/automations/runs";
 import { runDisplayStatus } from "@t3tools/client-runtime/automations/status";
 import type { Automation, EnvironmentId } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

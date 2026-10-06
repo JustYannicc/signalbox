@@ -22,6 +22,10 @@
     "./account": {
       "types": "./src/account.ts",
       "import": "./src/account.ts"
+    },
+    "./signalboxAnalytics": {
+      "types": "./src/signalboxAnalytics.ts",
+      "import": "./src/signalboxAnalytics.ts"
     }
   },
   "scripts": {

@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { HttpClient, type HttpServerRequest } from "effect/unstable/http";
+import { HttpClient, type HttpServerRequest } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AccountConfig from "./AccountConfig.ts";
@@ -189,21 +189,22 @@ const make = Effect.gen(function* () {
         Effect.flatMap((user) => sessions.finish(attempt, user, request)),
         // WorkOS emailed a code (e.g. GitHub emails are not trusted): the
         // sign-in page collects it, in every mode.
-        Effect.catchTag("WorkOSEmailVerificationRequired", (required) =>
-          // The verification grant needs the client secret, so without the API
-          // key the code page could never succeed.
-          workos.apiKey === undefined
-            ? Effect.logError(
-                "WorkOS requires T3CODE_WORKOS_API_KEY to finish email verification for this provider",
-              ).pipe(Effect.as(errorRedirect(attempt, "failed")))
-            : verifications
-                .issue({ pendingToken: required.pendingToken, email: required.email, attempt })
-                .pipe(
-                  Effect.map((id) =>
-                    redirect(AccountFlow.verifyEmailLocation(attempt.origin, id, required.email)),
+        Effect.catchTags({
+          WorkOSEmailVerificationRequired: (required) =>
+            // The verification grant needs the client secret, so without the API
+            // key the code page could never succeed.
+            workos.apiKey === undefined
+              ? Effect.logError(
+                  "WorkOS requires T3CODE_WORKOS_API_KEY to finish email verification for this provider",
+                ).pipe(Effect.as(errorRedirect(attempt, "failed")))
+              : verifications
+                  .issue({ pendingToken: required.pendingToken, email: required.email, attempt })
+                  .pipe(
+                    Effect.map((id) =>
+                      redirect(AccountFlow.verifyEmailLocation(attempt.origin, id, required.email)),
+                    ),
                   ),
-                ),
-        ),
+        }),
         Effect.catch((error) =>
           logSignInFailure(error).pipe(Effect.as(errorRedirect(attempt, "failed"))),
         ),

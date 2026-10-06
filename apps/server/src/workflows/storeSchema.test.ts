@@ -1,8 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import { ensureAutomationTables } from "./storeSchema.ts";
 
 const AT = "2026-10-06T09:00:00.000Z";
@@ -40,5 +40,5 @@ it.effect("names are unique per project and a second run keeps every row", () =>
       { automation_id: "automation_a", draft_version: 1, intent: "Summarize the week" },
       { automation_id: "automation_b", draft_version: 1, intent: "Summarize the week" },
     ]);
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
 );

@@ -8,7 +8,7 @@ import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type * as EnvironmentRegistry from "../connection/registry.ts";
 
@@ -119,8 +119,9 @@ export function createAutomationAtoms<R, E>(
       tag: AUTOMATION_WS_METHODS.automationsSubscribeNotices,
       transform: (stream) =>
         stream.pipe(
-          Stream.scan([] as ReadonlyArray<AutomationNotice>, (recent, notice) =>
-            [...recent, notice].slice(-RECENT_NOTICES),
+          Stream.scan(
+            (): ReadonlyArray<AutomationNotice> => [],
+            (recent, notice) => [...recent, notice].slice(-RECENT_NOTICES),
           ),
         ),
     }),
