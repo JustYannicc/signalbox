@@ -1,0 +1,184 @@
+# Signalbox-only: deploys Signalbox Cloud (apps/cloud) to Cloudflare. Its own
+# file so upstream merges never touch it. Setup: docs/operations/cloud.md.
+#
+# - main deploys production at app.signalbox.run.
+# - Pull requests from JustYannicc get a preview at preview-<number>.signalbox.run:
+#   its own Worker and Durable Objects, deleted when the pull request closes.
+name: Deploy Signalbox Cloud
+
+on:
+  push:
+    branches:
+      - main
+    paths: &cloud-paths
+      - apps/cloud/**
+      - apps/web/**
+      - packages/account/**
+      - packages/client-runtime/**
+      - packages/contracts/**
+      - packages/shared/**
+      - pnpm-lock.yaml
+      - .github/workflows/deploy-cloud.yml
+      # Every deploy reconnects every client, so skip what never ships.
+      - "!**/*.test.ts"
+      - "!**/*.test.tsx"
+      - "!**/*.md"
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths: *cloud-paths
+  # Redeploys main, e.g. after rotating a secret.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy_production:
+    name: Deploy production cloud
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: cloud-production
+      cancel-in-progress: false
+    environment:
+      name: cloud-production
+      url: https://app.signalbox.run
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - &checkout
+        name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - &setup
+        name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+              - --filter=@t3tools/web...
+
+      # The cloud serves this build from its own origin.
+      - &build
+        name: Build web app
+        run: vp run --filter @t3tools/web build
+        env:
+          # Sourcemaps change every build and would be served publicly.
+          T3CODE_WEB_SOURCEMAP: "false"
+          # The sidebar feedback button sends here; without it the button hides.
+          VITE_T3CODE_FEEDBACK_DSN: ${{ vars.VITE_T3CODE_FEEDBACK_DSN }}
+
+      - name: Write Worker secrets
+        run: |
+          umask 077
+          jq -n \
+            --arg SESSION_SECRET "$SESSION_SECRET" \
+            --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
+            '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
+        env:
+          SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
+          T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
+
+      # Secrets ship with the version, so no deploy runs without them.
+      - name: Deploy
+        working-directory: apps/cloud
+        run: >-
+          ./node_modules/.bin/wrangler deploy --env ""
+          --secrets-file "$RUNNER_TEMP/cloud-secrets.json"
+          --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+
+      - &cleanup
+        name: Remove secrets file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cloud-secrets.json"
+
+  # Same-repository pull requests opened by JustYannicc (including agents
+  # working under that account). Forks never get a preview or the secrets.
+  deploy_preview:
+    name: Deploy preview cloud
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.user.login == 'JustYannicc' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: cloud-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    environment:
+      name: cloud-preview
+      url: https://preview-${{ github.event.pull_request.number }}.signalbox.run
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - *checkout
+      - *setup
+      - *build
+
+      # Each preview signs its own sessions: stable across its redeploys, and
+      # never accepted by production or another preview.
+      - name: Write Worker secrets
+        run: |
+          umask 077
+          session_secret="$(printf 'preview-%s' "$PR_NUMBER" | openssl dgst -sha256 -hmac "$PREVIEW_SESSION_SECRET" -r | cut -d' ' -f1)"
+          jq -n \
+            --arg SESSION_SECRET "$session_secret" \
+            --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
+            '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
+        env:
+          PREVIEW_SESSION_SECRET: ${{ secrets.CLOUD_PREVIEW_SESSION_SECRET }}
+          T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
+
+      - name: Deploy
+        working-directory: apps/cloud
+        run: >-
+          ./node_modules/.bin/wrangler deploy --env preview
+          --name "signalbox-cloud-pr-$PR_NUMBER"
+          --domain "preview-$PR_NUMBER.signalbox.run"
+          --secrets-file "$RUNNER_TEMP/cloud-secrets.json"
+          --var "ENVIRONMENT_ID:cloud-preview-$PR_NUMBER"
+          --var "ENVIRONMENT_LABEL:Signalbox Cloud (PR #$PR_NUMBER)"
+          --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+
+      - *cleanup
+
+  # Deletes the preview's Worker, domain and Durable Objects.
+  delete_preview:
+    name: Delete preview cloud
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: cloud-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    environment:
+      name: cloud-preview
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Delete preview Worker
+        run: |
+          npx --yes wrangler@4 delete --name "signalbox-cloud-pr-$PR_NUMBER" --force \
+            || echo "No preview Worker to delete."

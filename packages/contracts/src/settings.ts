@@ -582,7 +582,16 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
-    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
+    // signalbox: "hub" runs Codex through the account hub's pooled accounts.
+    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: bumped when the hub changes, so the instance is rebuilt against it.
+    hubRevision: Schema.optionalKey(Schema.Number).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     enabled: Schema.Boolean.pipe(
@@ -644,6 +653,18 @@ const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
+    // signalbox: "hub" runs Claude through the account hub's pooled accounts.
+    setupMode: Schema.optionalKey(Schema.Literals(["existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: bumped when the hub changes, so the instance is rebuilt against it.
+    hubRevision: Schema.optionalKey(Schema.Number).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -728,6 +749,18 @@ export type CursorSettings = typeof CursorSettings.Type;
 
 export const GrokSettings = makeProviderSettingsSchema(
   {
+    // signalbox: "hub" runs this harness through the account hub's pooled accounts.
+    setupMode: Schema.optionalKey(Schema.Literals(["existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: bumped when the hub changes, so the instance is rebuilt against it.
+    hubRevision: Schema.optionalKey(Schema.Number).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     // Off by default (like Cursor and OpenCode): the binding is not yet
     // stable enough to probe on every install. Users opt in from Settings.
     enabled: Schema.Boolean.pipe(
@@ -770,6 +803,18 @@ export type AntigravityAuthMethod = typeof AntigravityAuthMethod.Type;
 
 export const AntigravitySettings = makeProviderSettingsSchema(
   {
+    // signalbox: "hub" runs this harness through the account hub's pooled accounts.
+    setupMode: Schema.optionalKey(Schema.Literals(["existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: bumped when the hub changes, so the instance is rebuilt against it.
+    hubRevision: Schema.optionalKey(Schema.Number).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),

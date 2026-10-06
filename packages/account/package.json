@@ -1,0 +1,36 @@
+{
+  "name": "@signalbox/account",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./AccountConfig": {
+      "types": "./src/AccountConfig.ts",
+      "import": "./src/AccountConfig.ts"
+    },
+    "./AccountFlow": {
+      "types": "./src/AccountFlow.ts",
+      "import": "./src/AccountFlow.ts"
+    },
+    "./WorkOSClient": {
+      "types": "./src/WorkOSClient.ts",
+      "import": "./src/WorkOSClient.ts"
+    },
+    "./WorkOSTesting": {
+      "types": "./src/WorkOSTesting.ts",
+      "import": "./src/WorkOSTesting.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -177,6 +177,7 @@ import {
 import { APP_VERSION } from "~/branding";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { AccountEnvironmentSignIn } from "../../account/AccountEnvironmentSignIn";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import {
@@ -2812,6 +2813,8 @@ export function ConnectionsSettings() {
           Paste a full pairing URL here to fill both fields automatically.
         </span>
       </div>
+      {/* signalbox: sign in to an environment with accounts instead of pairing */}
+      <AccountEnvironmentSignIn host={savedBackendHost} disabled={isAddingSavedBackend} />
     </div>
   );
   // T3 Connect is offered as a route when this account can reach the machine

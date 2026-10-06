@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { timingSafeEqualBase64Url } from "../auth/utils.ts";
-import { pkceChallenge, randomToken } from "./AccountFlow.ts";
+import { pkceChallenge, randomToken } from "@signalbox/account/AccountFlow";
 import { makeExpiringStore } from "./ExpiringStore.ts";
 
 /**

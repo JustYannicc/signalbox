@@ -10,6 +10,30 @@ import { cn } from "../../../lib/cn";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
+/** The row icon, with a red dot in its corner while something behind the row needs the user. */
+function RowIcon(props: {
+  readonly name: SymbolName;
+  readonly size: number;
+  readonly attention: boolean;
+}) {
+  const icon = (
+    <SymbolView
+      name={props.name}
+      size={props.size}
+      tintColorClassName="accent-icon"
+      type="monochrome"
+      weight="regular"
+    />
+  );
+  if (!props.attention) return icon;
+  return (
+    <View>
+      {icon}
+      <View className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-red-500" />
+    </View>
+  );
+}
+
 export function SettingsRow(props: {
   readonly disabled?: boolean;
   readonly icon: SymbolName;
@@ -19,15 +43,19 @@ export function SettingsRow(props: {
   readonly target?: SettingsSheetTarget;
   readonly fullScreenTarget?: SettingsLegalDocumentTarget;
   readonly onPress?: () => void;
+  /** Marks the row with a red dot, such as Usage while an account needs a new sign-in. */
+  readonly attention?: boolean;
 }) {
   const navigation = useNavigation();
+  const attention = props.attention === true;
+  const accessibilityLabel = attention ? `${props.label}, needs attention` : props.label;
   if (Platform.OS === "android") {
     return (
       <MaterialListRow
         className="bg-grouped-card"
         title={props.label}
         subtitle={props.valuePosition === "trailing" ? undefined : props.value}
-        accessibilityLabel={[props.label, props.value].filter(Boolean).join(", ")}
+        accessibilityLabel={[accessibilityLabel, props.value].filter(Boolean).join(", ")}
         trailing={
           props.valuePosition === "trailing" && props.value ? (
             <View className="flex-row items-center gap-3">
@@ -37,15 +65,7 @@ export function SettingsRow(props: {
           ) : undefined
         }
         disabled={props.disabled}
-        leading={
-          <SymbolView
-            name={props.icon}
-            size={24}
-            tintColorClassName="accent-icon"
-            type="monochrome"
-            weight="regular"
-          />
-        }
+        leading={<RowIcon name={props.icon} size={24} attention={attention} />}
         onPress={() => {
           if (props.target)
             navigation.navigate("SettingsSheet", {
@@ -60,13 +80,7 @@ export function SettingsRow(props: {
   }
   const content = (
     <View className={cn("flex-row items-center gap-4 p-4", props.disabled && "opacity-[0.45]")}>
-      <SymbolView
-        name={props.icon}
-        size={22}
-        tintColorClassName="accent-icon"
-        type="monochrome"
-        weight="regular"
-      />
+      <RowIcon name={props.icon} size={22} attention={attention} />
       <>
         <Text className="shrink-0 text-lg text-foreground" numberOfLines={1}>
           {props.label}
@@ -97,7 +111,7 @@ export function SettingsRow(props: {
   if (target) {
     return (
       <Pressable
-        accessibilityLabel={props.label}
+        accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         disabled={props.disabled}
         onPress={() =>
@@ -116,7 +130,7 @@ export function SettingsRow(props: {
   if (fullScreenTarget) {
     return (
       <Pressable
-        accessibilityLabel={props.label}
+        accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         disabled={props.disabled}
         onPress={() => navigation.navigate(fullScreenTarget)}
@@ -128,7 +142,7 @@ export function SettingsRow(props: {
 
   return (
     <Pressable
-      accessibilityLabel={props.label}
+      accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
       disabled={props.disabled}
       onPress={props.onPress}

@@ -1,3 +1,5 @@
+import { makeHubAntigravityInstance } from "../../accountHub/HubDriverInstance.ts"; // signalbox
+import { withAccountHub } from "../../accountHub/hubInstance.ts"; // signalbox
 import { withAgentDeviceEnvironment } from "../../mcp/McpProviderSession.ts";
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -89,6 +91,18 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
   defaultConfig: () => decodeSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      // signalbox: hub instances run this same driver against the account hub.
+      if (config.setupMode === "hub")
+        return yield* withAccountHub(
+          DRIVER,
+          instanceId,
+          config.poolId,
+          makeHubAntigravityInstance(
+            DRIVER,
+            { instanceId, displayName, accentColor, environment, enabled, config },
+            AntigravityDriver.create,
+          ),
+        );
       const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

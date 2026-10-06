@@ -134,7 +134,8 @@ export function FirstRunGate({
         environmentCount: environments.length,
       })
     : resolveFirstRunDecision({
-        enabled,
+        // signalbox: the cloud has no computers, agents or projects to set up yet.
+        enabled: enabled && serverConfig?.environment.capabilities.signalboxCloud !== true,
         hydrated,
         completed: onboardingCompletedAt !== null,
         bootstrapped,

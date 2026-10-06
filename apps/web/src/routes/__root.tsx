@@ -32,6 +32,7 @@ import { NightlyMobileBetaNotice } from "../components/NightlyMobileBeta";
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { AutomationsShortcut } from "../components/automations/AutomationsShortcut"; // signalbox: automations
+import { LimitProblemNotifier } from "../components/usage/LimitProblemNotifier";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
@@ -244,6 +245,7 @@ function RootRouteView() {
           <ThreadNotificationCoordinator />
           {/* signalbox: automations */}
           <AutomationsShortcut />
+          <LimitProblemNotifier />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />

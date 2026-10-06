@@ -46,6 +46,7 @@
     "node-pty": "^1.2.0-beta.15",
     "oxc-parser": "0.148.0",
     "oxc-transform": "0.148.0",
+    "playwright-core": "1.60.0",
     "proper-lockfile": "4.1.2",
     "quickjs-emscripten-core": "0.32.0",
     "stream-chain": "^4.2.5",
@@ -55,6 +56,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@signalbox/account": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",

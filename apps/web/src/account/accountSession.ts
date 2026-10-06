@@ -12,10 +12,20 @@ import { redirect } from "@tanstack/react-router";
 
 import { decideAccountGate, sanitizeReturnTo } from "./accountGate";
 import { isDesktop, primaryOrigin, reloadAt, requirePrimaryOrigin } from "./accountPlatform";
-import { clearDesktopAccountToken, readDesktopAccountToken } from "./desktopAccount";
+import {
+  clearDesktopAccountToken,
+  readDesktopAccountToken,
+  readPendingEnvironmentSignIn,
+} from "./desktopAccount";
 
 export { AccountFlowError, isDesktop } from "./accountPlatform";
-export { cancelNativeSignIn, completeNativeSignIn, startNativeSignIn } from "./desktopAccount";
+export {
+  cancelNativeSignIn,
+  completeEnvironmentSignIn,
+  completeNativeSignIn,
+  readPendingEnvironmentSignIn,
+  startNativeSignIn,
+} from "./desktopAccount";
 
 /**
  * Signalbox account state and transitions for web and desktop.
@@ -104,6 +114,9 @@ export async function resolveAccountRedirect(location: {
   readonly pathname: string;
   readonly href: string;
 }) {
+  // Adding an environment by signing in to it returns here whatever the
+  // primary environment's own accounts say.
+  if (location.pathname === ACCOUNT_SIGN_IN_ROUTE && readPendingEnvironmentSignIn()) return null;
   const decision = decideAccountGate({ ...location, session: await loadAccountSession() });
   switch (decision._tag) {
     case "allow":

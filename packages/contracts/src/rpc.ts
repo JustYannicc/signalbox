@@ -1,3 +1,13 @@
+import {
+  AccountHubImportResult,
+  AccountHubRpcError,
+  AccountPool,
+  AccountPoolCreateInput,
+  AccountPoolDeleteInput,
+  AccountPoolImportInput,
+  AccountPoolRenameInput,
+  AccountPoolSetBackingInput,
+} from "./accountHub.ts"; // signalbox
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -238,11 +248,14 @@ import {
   PreviewEvent,
   PreviewListInput,
   PreviewListResult,
+  PreviewClearProfileError,
+  PreviewClearProfileInput,
   PreviewNavigateInput,
   PreviewOpenInput,
   PreviewRefreshInput,
   PreviewReportStatusInput,
   PreviewResizeInput,
+  PreviewAdjustInput,
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
@@ -260,13 +273,7 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
-import {
-  PreviewAutomationError,
-  PreviewAutomationHost,
-  PreviewAutomationHostFocus,
-  PreviewAutomationResponse,
-  PreviewAutomationStreamEvent,
-} from "./previewAutomation.ts";
+import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -301,6 +308,7 @@ import {
   UsageLimitSourceError,
   ProviderConsumeResetCreditInput,
   ProviderConsumeResetCreditResult,
+  UsageLimitSourceUpdateAccountInput,
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
@@ -374,6 +382,13 @@ export const WS_METHODS = {
   providerUploadFeedback: "provider.uploadFeedback",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
+  usageLimitSourceUpdateAccount: "usageLimitSource.updateAccount",
+  accountPoolSubscribe: "accountPool.subscribe",
+  accountPoolCreate: "accountPool.create",
+  accountPoolRename: "accountPool.rename",
+  accountPoolDelete: "accountPool.delete",
+  accountPoolSetBacking: "accountPool.setBacking",
+  accountPoolImportAccounts: "accountPool.importAccounts",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -420,13 +435,12 @@ export const WS_METHODS = {
   previewOpen: "preview.open",
   previewNavigate: "preview.navigate",
   previewResize: "preview.resize",
+  previewAdjust: "preview.adjust",
   previewRefresh: "preview.refresh",
   previewClose: "preview.close",
   previewList: "preview.list",
+  previewClearProfile: "preview.clearProfile",
   previewReportStatus: "preview.reportStatus",
-  previewAutomationConnect: "previewAutomation.connect",
-  previewAutomationRespond: "previewAutomation.respond",
-  previewAutomationFocusHost: "previewAutomation.focusHost",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -605,6 +619,44 @@ const WsProviderConsumeResetCreditRpc = Rpc.make(WS_METHODS.providerConsumeReset
   payload: ProviderConsumeResetCreditInput,
   success: ProviderConsumeResetCreditResult,
   error: Schema.Union([ProviderSetupError, UsageLimitSourceError, EnvironmentAuthorizationError]),
+});
+
+const WsUsageLimitSourceUpdateAccountRpc = Rpc.make(WS_METHODS.usageLimitSourceUpdateAccount, {
+  payload: UsageLimitSourceUpdateAccountInput,
+  error: Schema.Union([UsageLimitSourceError, EnvironmentAuthorizationError]),
+});
+
+// signalbox: account pools.
+const AccountPoolRpcFailure = Schema.Union([AccountHubRpcError, EnvironmentAuthorizationError]);
+const WsAccountPoolSubscribeRpc = Rpc.make(WS_METHODS.accountPoolSubscribe, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AccountPool),
+  error: AccountPoolRpcFailure,
+  stream: true,
+});
+const WsAccountPoolCreateRpc = Rpc.make(WS_METHODS.accountPoolCreate, {
+  payload: AccountPoolCreateInput,
+  success: AccountPool,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolRenameRpc = Rpc.make(WS_METHODS.accountPoolRename, {
+  payload: AccountPoolRenameInput,
+  success: AccountPool,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolDeleteRpc = Rpc.make(WS_METHODS.accountPoolDelete, {
+  payload: AccountPoolDeleteInput,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolSetBackingRpc = Rpc.make(WS_METHODS.accountPoolSetBacking, {
+  payload: AccountPoolSetBackingInput,
+  success: AccountPool,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolImportAccountsRpc = Rpc.make(WS_METHODS.accountPoolImportAccounts, {
+  payload: AccountPoolImportInput,
+  success: AccountHubImportResult,
+  error: AccountPoolRpcFailure,
 });
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
@@ -1401,6 +1453,12 @@ const WsPreviewResizeRpc = Rpc.make(WS_METHODS.previewResize, {
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+const WsPreviewAdjustRpc = Rpc.make(WS_METHODS.previewAdjust, {
+  payload: PreviewAdjustInput,
+  success: PreviewSessionSnapshot,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+});
+
 const WsPreviewRefreshRpc = Rpc.make(WS_METHODS.previewRefresh, {
   payload: PreviewRefreshInput,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
@@ -1417,26 +1475,14 @@ const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsPreviewClearProfileRpc = Rpc.make(WS_METHODS.previewClearProfile, {
+  payload: PreviewClearProfileInput,
+  error: Schema.Union([PreviewClearProfileError, EnvironmentAuthorizationError]),
+});
+
 const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   payload: PreviewReportStatusInput,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
-});
-
-const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
-  payload: PreviewAutomationHost,
-  success: PreviewAutomationStreamEvent,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-  stream: true,
-});
-
-const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomationRespond, {
-  payload: PreviewAutomationResponse,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-});
-
-const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFocusHost, {
-  payload: PreviewAutomationHostFocus,
-  error: EnvironmentAuthorizationError,
 });
 
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
@@ -1751,6 +1797,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
+  WsUsageLimitSourceUpdateAccountRpc,
+  WsAccountPoolSubscribeRpc,
+  WsAccountPoolCreateRpc,
+  WsAccountPoolRenameRpc,
+  WsAccountPoolDeleteRpc,
+  WsAccountPoolSetBackingRpc,
+  WsAccountPoolImportAccountsRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,
@@ -1889,13 +1942,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewOpenRpc,
   WsPreviewNavigateRpc,
   WsPreviewResizeRpc,
+  WsPreviewAdjustRpc,
   WsPreviewRefreshRpc,
   WsPreviewCloseRpc,
   WsPreviewListRpc,
+  WsPreviewClearProfileRpc,
   WsPreviewReportStatusRpc,
-  WsPreviewAutomationConnectRpc,
-  WsPreviewAutomationRespondRpc,
-  WsPreviewAutomationFocusHostRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,
