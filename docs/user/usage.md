@@ -130,6 +130,11 @@ picker. Pick it to use every account of that kind in the pool: each conversation
 account, and work moves to another account when one runs out. Antigravity accounts offer only its
 Flash models this way.
 
+With several pools, the model picker asks for the pool first and then shows that pool's models. A
+conversation stays on its pool. To start a project's new conversations on a pool, pick a model from
+that pool as the project's default model in its settings. Agents can see each pool's providers and
+how much of their usage is left, so they can pick a pool for the work they hand off.
+
 Each account appears on **Usage → Limits** under its pool. Use its menu to pause, resume, or remove
 it. ChatGPT accounts added with Sign in with ChatGPT link to ChatGPT's usage page instead of showing
 bars.

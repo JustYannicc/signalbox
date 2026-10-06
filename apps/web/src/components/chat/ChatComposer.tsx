@@ -2087,7 +2087,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings],
   );
-  const pickerPools = usePickerPools(environmentId, providerInstanceEntries); // signalbox
+  const pickerPools = usePickerPools(
+    environmentId,
+    providerInstanceEntries,
+    settings.providerInstances,
+  ); // signalbox
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const {
     selectedProviderEntry,

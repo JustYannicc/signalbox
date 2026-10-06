@@ -25,6 +25,8 @@ import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
+import { PoolsToolkit } from "./toolkits/pools/tools.ts"; // signalbox: account pools
+import * as PoolsHandlers from "./toolkits/pools/handlers.ts"; // signalbox
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -730,6 +732,11 @@ const layerEnvironmentRegistration = McpServer.toolkit(EnvironmentToolkit).pipe(
   Layer.provide(EnvironmentHandlers.layer),
 );
 
+// signalbox: account pools
+const layerPoolsRegistration = McpServer.toolkit(PoolsToolkit).pipe(
+  Layer.provide(PoolsHandlers.layer),
+);
+
 const layerProjectRegistration = McpServer.toolkit(ProjectToolkit).pipe(
   Layer.provide(ProjectHandlers.layer),
 );
@@ -769,6 +776,7 @@ export const layer = Layer.mergeAll(
   layerAttachmentRegistration,
   layerProjectRegistration,
   layerEnvironmentRegistration,
+  layerPoolsRegistration, // signalbox
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,

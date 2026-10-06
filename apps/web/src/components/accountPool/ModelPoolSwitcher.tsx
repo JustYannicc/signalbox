@@ -1,8 +1,8 @@
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
-import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
+import { type AccountPool, hubInstancePoolId } from "@t3tools/contracts/accountHub";
+import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { useMemo } from "react";
 
-import { useEnvironmentSettings } from "../../hooks/useSettings";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { useAccountPools } from "../../state/accountPools";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -17,39 +17,50 @@ export interface PickerPool {
 const NOT_IN_A_POOL = "not-in-a-pool";
 
 /**
- * The model picker's pools for an environment: every account pool with its
- * providers, then the providers no pool holds yet. Empty with one group, so
- * the picker shows no switcher until there is a choice to make.
+ * The model picker's pools: every account pool with its providers, then the
+ * providers no pool holds yet. Empty with one group, so the picker shows no
+ * switcher until there is a choice to make. `providerInstances` is the
+ * environment's setting, which says each instance's pool.
  */
-export function usePickerPools(
-  environmentId: EnvironmentId,
+export function pickerPools(
+  accountPools: ReadonlyArray<AccountPool>,
   entries: ReadonlyArray<ProviderInstanceEntry>,
+  providerInstances: UnifiedSettings["providerInstances"],
 ): ReadonlyArray<PickerPool> {
-  const settings = useEnvironmentSettings(environmentId);
+  const byPool = new Map<string, Set<ProviderInstanceId>>();
+  const outside = new Set<ProviderInstanceId>();
+  for (const entry of entries) {
+    const poolId = hubInstancePoolId(providerInstances[entry.instanceId]?.config);
+    if (poolId === null) {
+      outside.add(entry.instanceId);
+      continue;
+    }
+    byPool.set(poolId, (byPool.get(poolId) ?? new Set()).add(entry.instanceId));
+  }
+  const pools: PickerPool[] = accountPools
+    .map((pool) => ({
+      id: pool.id,
+      name: pool.name,
+      instanceIds: byPool.get(pool.id) ?? new Set<ProviderInstanceId>(),
+    }))
+    .filter((pool) => pool.instanceIds.size > 0);
+  if (outside.size > 0) {
+    pools.push({ id: NOT_IN_A_POOL, name: "Not in a pool", instanceIds: outside });
+  }
+  return pools.length > 1 ? pools : [];
+}
+
+/** {@link pickerPools} for an environment, kept live. */
+export function usePickerPools(
+  environmentId: EnvironmentId | null,
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  providerInstances: UnifiedSettings["providerInstances"],
+): ReadonlyArray<PickerPool> {
   const accountPools = useAccountPools(environmentId);
-  return useMemo(() => {
-    const byPool = new Map<string, Set<ProviderInstanceId>>();
-    const outside = new Set<ProviderInstanceId>();
-    for (const entry of entries) {
-      const poolId = hubInstancePoolId(settings.providerInstances[entry.instanceId]?.config);
-      if (poolId === null) {
-        outside.add(entry.instanceId);
-        continue;
-      }
-      byPool.set(poolId, (byPool.get(poolId) ?? new Set()).add(entry.instanceId));
-    }
-    const pools: PickerPool[] = accountPools
-      .map((pool) => ({
-        id: pool.id,
-        name: pool.name,
-        instanceIds: byPool.get(pool.id) ?? new Set(),
-      }))
-      .filter((pool) => pool.instanceIds.size > 0);
-    if (outside.size > 0) {
-      pools.push({ id: NOT_IN_A_POOL, name: "Not in a pool", instanceIds: outside });
-    }
-    return pools.length > 1 ? pools : [];
-  }, [accountPools, entries, settings.providerInstances]);
+  return useMemo(
+    () => pickerPools(accountPools, entries, providerInstances),
+    [accountPools, entries, providerInstances],
+  );
 }
 
 /** The pool the picker opens on: the one running the current model, else the first. */

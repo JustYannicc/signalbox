@@ -123,6 +123,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }
   };
 
+  // signalbox: a pool browsed without picking a model is forgotten, so the picker reopens on the thread's pool.
+  const [poolChoiceOpen, setPoolChoiceOpen] = useState(isMenuOpen);
+  if (poolChoiceOpen !== isMenuOpen) {
+    setPoolChoiceOpen(isMenuOpen);
+    if (!isMenuOpen) setPoolChoice(null);
+  }
+
   useEffect(() => {
     if (!isMenuOpen) {
       return;
