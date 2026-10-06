@@ -44,8 +44,9 @@ export const makeDrafts = (deps: {
   readonly requireAutomation: (
     automationId: string,
   ) => Effect.Effect<AutomationRow, AutomationError>;
+  readonly relayHookBaseUrl: Effect.Effect<string | null>;
 }): DraftsShape => {
-  const { store, changed, requireAutomation } = deps;
+  const { store, changed, requireAutomation, relayHookBaseUrl } = deps;
 
   const publish: DraftsShape["publish"] = (automationId) =>
     Effect.gen(function* () {
@@ -77,7 +78,7 @@ export const makeDrafts = (deps: {
       };
       yield* store.upsertAutomation(live);
       yield* changed({ kind: "definition", automationId });
-      return automationView(live, undefined);
+      return automationView(live, undefined, [], yield* relayHookBaseUrl);
     });
 
   const discardDraft: DraftsShape["discardDraft"] = (automationId) =>
@@ -99,7 +100,7 @@ export const makeDrafts = (deps: {
       };
       yield* store.upsertAutomation(next);
       yield* changed({ kind: "definition", automationId });
-      return automationView(next, undefined);
+      return automationView(next, undefined, [], yield* relayHookBaseUrl);
     });
 
   return { publish, discardDraft };

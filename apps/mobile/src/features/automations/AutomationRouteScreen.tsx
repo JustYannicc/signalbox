@@ -9,6 +9,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import type { AutomationDetail, EnvironmentId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { ReactNode } from "react";
@@ -19,15 +20,23 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { automationState } from "../../state/automations";
 import { useEnvironmentQuery } from "../../state/query";
+import { usePreparedConnection } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatNextScheduledTaskRun } from "../settings/scheduledTaskPresentation";
 import { useOpenAgentDraft } from "./agent-draft";
-import { useEnabledToggle, useMinuteClock, useStartRun } from "./automation-hooks";
+import { useCustomize, useEnabledToggle, useMinuteClock, useStartRun } from "./automation-hooks";
 import { AutomationDraftCard } from "./AutomationDraftCard";
-import { GroupedCard, PillButton, RunStatusLine, SectionTitle } from "./AutomationParts";
+import {
+  BuiltInPill,
+  GroupedCard,
+  PillButton,
+  RunStatusLine,
+  SectionTitle,
+} from "./AutomationParts";
 import { AUTOMATION_CONTENT_STYLE } from "./AutomationsRouteScreen";
 
 type AutomationRouteParams = {
@@ -82,6 +91,7 @@ function AutomationContent(props: {
   });
   const { starting, start } = useStartRun(environmentId);
   const openDraft = useOpenAgentDraft();
+  const { customizing, customize } = useCustomize(environmentId, automation);
   const now = useMinuteClock();
   // An automation only webhooks or events start leads with replaying its latest
   // run, the one web's diagram shows by default, so only then is its input loaded.
@@ -125,6 +135,11 @@ function AutomationContent(props: {
 
   return (
     <>
+      {automation.builtIn ? (
+        <View className="flex-row px-2">
+          <BuiltInPill />
+        </View>
+      ) : null}
       {automation.description ? (
         <Text className="px-2 text-base leading-normal text-foreground" selectable>
           {automation.description}
@@ -139,6 +154,9 @@ function AutomationContent(props: {
       <GroupedCard>
         <DetailRow label="Runs" value={triggerSummary(automation.triggers)} />
         <DetailRow label="Status" value={status} border />
+        {automation.webhook ? (
+          <WebhookRow environmentId={environmentId} webhook={automation.webhook} />
+        ) : null}
         <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-2">
           <Text className="flex-1 text-lg text-foreground">{toggle.value ? "On" : "Paused"}</Text>
           <ThemedSwitch
@@ -180,17 +198,28 @@ function AutomationContent(props: {
             onPress={() => startRun(extra)}
           />
         ) : null}
-        <PillButton
-          size="lg"
-          icon="square.and.pencil"
-          label="Change with agent"
-          onPress={() =>
-            void openDraft(
-              { environmentId, projectId: automation.projectId },
-              changePrompt(automation),
-            )
-          }
-        />
+        {/* A built-in's code is Signalbox's: change it by customizing a copy. */}
+        {automation.builtIn ? (
+          <PillButton
+            size="lg"
+            icon="square.and.pencil"
+            label={customizing ? "Customizing…" : "Customize"}
+            disabled={customizing}
+            onPress={customize}
+          />
+        ) : (
+          <PillButton
+            size="lg"
+            icon="square.and.pencil"
+            label="Change with agent"
+            onPress={() =>
+              void openDraft(
+                { environmentId, projectId: automation.projectId },
+                changePrompt(automation),
+              )
+            }
+          />
+        )}
       </View>
 
       <View className="gap-2">
@@ -241,6 +270,37 @@ function AutomationContent(props: {
         </Pressable>
       </View>
     </>
+  );
+}
+
+/** The webhook URL to give senders; tapping copies it when it's a full URL. */
+function WebhookRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly webhook: NonNullable<AutomationDetail["automation"]["webhook"]>;
+}) {
+  const connection = usePreparedConnection(props.environmentId);
+  const resolved = webhookAddress(
+    props.webhook,
+    connection._tag === "Some" ? connection.value.httpBaseUrl : null,
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Copy webhook URL"
+      disabled={!resolved.copyable}
+      onPress={() => void tryCopyTextWithHaptic(resolved.address)}
+      className="gap-1 border-t border-border-subtle px-4 py-3 active:opacity-70"
+    >
+      <Text className="text-lg text-foreground">
+        {resolved.copyable ? "Webhook URL" : "Webhook path"}
+      </Text>
+      <Text className="text-sm text-foreground-muted" numberOfLines={2} selectable>
+        {resolved.address}
+      </Text>
+      {resolved.note !== null ? (
+        <Text className="text-sm text-foreground-muted">{resolved.note}</Text>
+      ) : null}
+    </Pressable>
   );
 }
 

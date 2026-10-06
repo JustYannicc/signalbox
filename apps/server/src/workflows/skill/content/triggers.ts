@@ -17,7 +17,7 @@ export const meta = {
 } as const;
 \`\`\`
 
-The workflow gets \`(w, input, trigger)\`. \`trigger.type\` is \`"manual"\`, \`"cron"\`, \`"webhook"\`, \`"event"\` or \`"automation"\`.
+The workflow gets \`(w, input, trigger)\`. \`trigger.type\` is \`"manual"\`, \`"cron"\`, \`"webhook"\`, \`"event"\` or \`"automation"\`. A run started attached to a thread also has \`trigger.attach: { threadId, key, label }\` (see \`patterns.md\`).
 
 ## Schedules
 
@@ -25,7 +25,18 @@ The workflow gets \`(w, input, trigger)\`. \`trigger.type\` is \`"manual"\`, \`"
 
 ## Webhooks
 
-\`{ webhook: true }\` gives the automation a URL; every POST starts a run with the parsed JSON body as \`input\`. The third argument has \`trigger.headers\` and \`trigger.rawBody\`, for verifying a signature in a \`w.run\` function. Requests with the same \`Idempotency-Key\` or \`X-Request-Id\` within 24 hours start one run. The URL is on the automation's page; rotating it there stops the old one.
+\`{ webhook: true }\` gives the automation a URL (\`webhook.url\` in \`automation_read\`, public when Signalbox Connect is linked); every request to it starts a run with the body as \`input\` (parsed JSON or form, else text, null when empty). The third argument has \`trigger.method\`, \`trigger.headers\` and \`trigger.query\` (credential-looking ones redacted) and \`trigger.rawBody\`. Requests with the same \`Idempotency-Key\` or \`X-Request-Id\` within 24 hours start one run. Rotating the URL on the automation's page stops the old one.
+
+For a sender that signs requests, let the server check them instead of doing it in code:
+
+\`\`\`ts
+triggers: [{ webhook: {
+  signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" }, // GitHub
+  maxDeliveryAgeMinutes: 60, // optional: skip requests held longer while the server was offline
+} }]
+\`\`\`
+
+The secret never goes in the file: ask the user with \`request_secret\` and pass the \`secretRef\` to \`automation_set_webhook_secret\`. Until it's set, every request is turned away. Requests turned away (bad signature, paused, over 60 a minute, too old) show in \`automation_read\` as \`webhookRejections\`.
 
 ## Events in Signalbox
 

@@ -2,13 +2,14 @@
  * The TypeScript file the automation runs, read-only. The diagram is derived
  * from it, so this is the ground truth when the picture leaves a question.
  * `line` highlights and scrolls to the line a diagram node came from. Changes
- * go through an agent, one click away in the toolbar. A draft passes the live
+ * go through an agent, one click away in the toolbar; a built-in's code is
+ * Signalbox's, so there it's Customize instead. A draft passes the live
  * source as `compareTo` and opens on what publishing it would change.
  */
 import type { Automation, EnvironmentId } from "@t3tools/contracts";
 import { changePrompt } from "@t3tools/client-runtime/automations/prompts";
 import * as Schema from "effect/Schema";
-import { GitBranchIcon, MessageCircleIcon } from "lucide-react";
+import { GitBranchIcon, MessageCircleIcon, PencilIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -17,6 +18,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { SourceDiffView } from "./SourceDiffView";
 import { useAutomationAgent } from "./useAutomationAgent";
+import { useCustomizeAutomation } from "./useCustomizeAutomation";
 
 const SourceMode = Schema.Literals(["changes", "code"]);
 type SourceMode = typeof SourceMode.Type;
@@ -33,13 +35,14 @@ function ScrollTarget() {
 
 export function AutomationSourceView(props: {
   environmentId: EnvironmentId;
-  automation: Pick<Automation, "id" | "name" | "projectId">;
+  automation: Pick<Automation, "id" | "name" | "projectId" | "builtIn">;
   source: string;
   line: number | null;
   /** The live source a draft is compared with. */
   compareTo?: string | null;
 }) {
   const askAgent = useAutomationAgent(props.environmentId, props.automation);
+  const customize = useCustomizeAutomation(props.environmentId, props.automation);
   // Opened on a line from the diagram, the code itself is what was asked for.
   const [mode, setMode] = useState<SourceMode>(props.line ? "code" : "changes");
   const compareTo = props.compareTo ?? null;
@@ -76,15 +79,28 @@ export function AutomationSourceView(props: {
             <Toggle value="code">Code</Toggle>
           </ToggleGroup>
         ) : null}
-        <Button
-          size="xs"
-          variant="outline"
-          className="ms-auto"
-          onClick={() => void askAgent(changePrompt(props.automation))}
-        >
-          <MessageCircleIcon />
-          Change with agent
-        </Button>
+        {props.automation.builtIn ? (
+          <Button
+            size="xs"
+            variant="outline"
+            className="ms-auto"
+            disabled={customize.busy}
+            onClick={() => void customize.customize()}
+          >
+            <PencilIcon />
+            Customize
+          </Button>
+        ) : (
+          <Button
+            size="xs"
+            variant="outline"
+            className="ms-auto"
+            onClick={() => void askAgent(changePrompt(props.automation))}
+          >
+            <MessageCircleIcon />
+            Change with agent
+          </Button>
+        )}
       </div>
       <div className="min-h-0 flex-1 bg-code">
         {showChanges ? (

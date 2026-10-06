@@ -15,6 +15,7 @@ import { createElement, useState } from "react";
 import { useEnvironmentQuery } from "../../state/query";
 import { automationState } from "../../state/automations";
 import { formatRelativeTimeUntil } from "../../timestampFormat";
+import { Badge } from "../ui/badge";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -148,6 +149,7 @@ export function AutomationPage(props: {
       }
     >
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-2 text-xs">
+        {automation.builtIn ? <Badge variant="secondary">Built-in</Badge> : null}
         <span className="flex items-center gap-1.5 font-medium text-foreground">
           {createElement(TriggerIcon, {
             "aria-hidden": true,

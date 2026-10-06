@@ -17,6 +17,21 @@ For processes where agents do the work and something has to decide order, qualit
 
 \`examples/work-through-tickets.ts\` does all of this for GitHub issues in blocker order.
 
+## Supervise a thread or pull request
+
+To keep an eye on one thread's work after its agent's turn ends (CI on its pull request, a deploy, a review), start a run attached to the thread:
+
+\`\`\`
+automation_run({ automationId, input: { number: 12 }, attach: { threadId, key: "pr:12", label: "Watching PR #12" } })
+\`\`\`
+
+- While it runs, the thread shows it as background work and stays in Working, labelled by the step it's waiting on. Settling, archiving or deleting the thread, or Stop on it, cancels the run. A second start with the same \`key\` returns the running one.
+- In the code, wait for Signalbox events instead of polling: \`w.waitFor("Wait for CI", { on: ["pr.checks.failed", "pr.checks.passed", "pr.merged", "pr.closed"], where: { threadId, number }, timeout: { minutes: 30 } })\`. On a timeout, check the source of truth before going on.
+- Wake the thread's agent with what it needs to act: \`w.call("Wake the agent", "signalbox.t3_thread_send", { threadId, mode: "queue", message })\`. It doesn't see the automation, so say what happened and what to do.
+- Loop with \`w.repeat\` and \`return w.restart(input)\` after a number of passes, so a watch that lasts days doesn't replay its whole history.
+
+The built-in "Watch pull request" (\`builtin:watch-pull-request\`, \`examples/watch-pull-request.ts\`) does all of this. Run it as is, or \`automation_customize\` it to change what it does.
+
 ## Wait for something slow outside
 
 \`w.run\` can block for up to 15 minutes, so poll inside it and loop around it:

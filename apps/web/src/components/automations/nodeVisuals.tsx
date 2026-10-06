@@ -27,6 +27,7 @@ import { faviconUrlForOrigin } from "~/lib/favicon";
 import { cn } from "~/lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { GitHubIcon } from "../Icons";
+import { SignalboxMark } from "../SignalboxMark";
 
 type Tone = "agent" | "ask" | "neutral" | "start";
 
@@ -104,6 +105,8 @@ export const StepTile = memo(function StepTile(props: {
           displayName={identity.name}
           iconClassName="size-4.5"
         />
+      ) : identity?.kind === "signalbox" ? (
+        <SignalboxMark aria-hidden className="size-4.5" />
       ) : identity?.kind === "domain" ? (
         <DomainLogo domain={identity.domain} fallback={verb.icon} />
       ) : (

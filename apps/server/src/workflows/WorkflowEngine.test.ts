@@ -15,6 +15,8 @@ import {
   fakeHttp,
   fakeThreads,
   withEngine as withEngineOptions,
+  acceptedRun,
+  webhookRequest,
 } from "./WorkflowEngine.testkit.ts";
 
 const executor = fakeHttp();
@@ -258,12 +260,17 @@ export default workflow(async (w, issue: { title: string }) => {
       });
       if (!saved.ok)
         throw new Error(saved.diagnostics.map((diagnostic) => diagnostic.message).join("\n"));
-      expect(saved.automation.webhookPath).toMatch(/^\/api\/automations\/hooks\/hook_/);
+      expect(saved.automation.webhook?.path).toMatch(/^\/api\/hooks\/automation_[^/]+\/hook_/);
 
-      const token = saved.automation.webhookPath!.split("/").at(-1)!;
-      expect(yield* engine.startFromWebhook({ token: "wrong", payload: {} })).toBeNull();
-      const started = yield* engine.startFromWebhook({ token, payload: { title: "Login crash" } });
-      const run = { id: started!.runId };
+      expect(
+        yield* engine.receiveWebhook(webhookRequest(saved.automation, { token: "wrong" })),
+      ).toEqual({ _tag: "not_found" });
+      const started = yield* acceptedRun(
+        yield* engine.receiveWebhook(
+          webhookRequest(saved.automation, { body: '{"title":"Login crash"}' }),
+        ),
+      );
+      const run = { id: started.runId };
       yield* engine.drain;
       expect(threads.launches[0]).toMatchObject({
         interactionMode: "plan",

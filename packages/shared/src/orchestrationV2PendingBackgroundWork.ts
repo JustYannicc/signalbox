@@ -233,6 +233,8 @@ export function derivePendingBackgroundWork(input: {
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
+  /** Adds the thread's registered monitors (see `setThreadMonitorSource`). Stop pickers leave it out. */
+  readonly threadId?: string | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
   const hasActiveRun =
     input.hasActiveRun ??
@@ -245,7 +247,7 @@ export function derivePendingBackgroundWork(input: {
   }
   // A thread that never ran waits on nothing else, but a watch started on it still wakes it.
   if (input.latestRun == null) {
-    return pullRequestWatchTasks(input.pullRequests);
+    return [...pullRequestWatchTasks(input.pullRequests), ...threadMonitors(input.threadId)];
   }
   if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
     return [];
@@ -282,8 +284,27 @@ export function derivePendingBackgroundWork(input: {
   }
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
+  for (const task of threadMonitors(input.threadId)) byTaskId.set(task.taskId, task);
 
   return Array.from(byTaskId.values());
+}
+
+/**
+ * Monitors a server feature keeps outside the projection, such as Signalbox
+ * automation runs attached to a thread. They wake the agent like a pull
+ * request watch, so they show and hold the same way. One source per process;
+ * clients never set one.
+ */
+let threadMonitorSource: (threadId: string) => ReadonlyArray<PendingBackgroundWorkTask> = () => [];
+
+export function setThreadMonitorSource(
+  source: (threadId: string) => ReadonlyArray<PendingBackgroundWorkTask>,
+): void {
+  threadMonitorSource = source;
+}
+
+function threadMonitors(threadId: string | undefined): ReadonlyArray<PendingBackgroundWorkTask> {
+  return threadId === undefined ? [] : threadMonitorSource(threadId);
 }
 
 function pullRequestWatchTasks(

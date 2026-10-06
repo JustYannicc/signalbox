@@ -17,6 +17,8 @@ import { MAX_START_DEPTH } from "../startStep.ts";
 import type { AutomationRow, WorkflowStore } from "../WorkflowStore.ts";
 import type { ReadError } from "./candidate.ts";
 import { candidatesFor, type Actor, type Candidate, type EventReads } from "./normalize.ts";
+import type { PullRequestTracker } from "./pullRequestFacts.ts";
+import type { RunWaitListener, RunWaits } from "./runWaits.ts";
 import {
   ACTORS,
   buildIndex,
@@ -66,12 +68,14 @@ type Work =
       readonly hits: ReadonlyArray<{
         readonly candidate: Candidate;
         readonly subs: ReadonlyArray<Subscription>;
+        readonly waiting: ReadonlyArray<RunWaitListener>;
       }>;
     }
   | {
       readonly type: "ready";
       readonly envelope: Envelope;
       readonly subs: ReadonlyArray<Subscription>;
+      readonly waiting: ReadonlyArray<RunWaitListener>;
       readonly context: DeliveryContext;
     };
 
@@ -84,6 +88,10 @@ export interface EventTriggerDependencies {
   readonly adjustBusy: (delta: number) => Effect.Effect<void>;
   readonly notify: (notice: AutomationNotice) => Effect.Effect<void>;
   readonly launchRun: LaunchRun;
+  /** Runs whose `w.waitFor({ on })` steps want events too. */
+  readonly runWaits: RunWaits;
+  /** Derives `pr.*` facts from pull request syncs. */
+  readonly pullRequests: PullRequestTracker;
 }
 
 export const makeEventTriggers = (deps: EventTriggerDependencies) =>
@@ -124,12 +132,17 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
     /** Runs in the domain stream's fiber: a lookup per candidate, and nothing more for events nobody wants. */
     const offer = (event: OrchestrationV2DomainEvent) =>
       Effect.gen(function* () {
+        // Pull request facts are transitions, so every sync is seen, wanted or not.
+        const facts =
+          event.type === "thread.pull-request-synced" ? deps.pullRequests.observe(event) : [];
+        if (event.type === "thread.deleted") deps.pullRequests.forget(event.threadId);
         const current = yield* currentIndex;
-        if (current.empty) return;
-        const hits = candidatesFor(event).flatMap((candidate) => {
-          const subs = current.lookup(candidate.name);
-          return subs.length > 0 ? [{ candidate, subs }] : [];
-        });
+        const hits: Array<Extract<Work, { type: "domain" }>["hits"][number]> = [];
+        for (const candidate of [...candidatesFor(event), ...facts]) {
+          const subs = current.empty ? [] : current.lookup(candidate.name);
+          const waiting = yield* deps.runWaits.lookup(candidate.name);
+          if (subs.length > 0 || waiting.length > 0) hits.push({ candidate, subs, waiting });
+        }
         if (hits.length > 0) yield* enqueue({ type: "domain", event, hits });
       }).pipe(logged("matching"));
 
@@ -142,7 +155,8 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.gen(function* () {
         const current = yield* currentIndex;
         const subs = current.empty ? [] : current.lookup(name);
-        if (subs.length === 0) return;
+        const waiting = yield* deps.runWaits.lookup(name);
+        if (subs.length === 0 && waiting.length === 0) return;
         const run = yield* store.getRun(runId);
         const automation = run ? yield* store.getAutomation(run.automation_id) : undefined;
         if (!run || !automation) return;
@@ -161,6 +175,7 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
           type: "ready",
           envelope,
           subs,
+          waiting,
           context: {
             fromAutomation: Effect.succeed(false),
             sourceAutomationId: automation.automation_id,
@@ -276,7 +291,7 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
           threads,
         };
         const caused = yield* Effect.cached(automationCaused(event, reads));
-        for (const { candidate, subs } of item.hits) {
+        for (const { candidate, subs, waiting } of item.hits) {
           yield* Effect.gen(function* () {
             const fields = yield* candidate.build(reads);
             if (fields === null) return;
@@ -298,6 +313,7 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
               fromAutomation: candidate.automationMessage ? Effect.succeed(true) : caused,
               depth: 0,
             });
+            yield* deps.runWaits.deliver(envelope, waiting);
           }).pipe(logged(candidate.name));
         }
       });
@@ -306,7 +322,9 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.flatMap((item) =>
         (item.type === "domain"
           ? handleDomain(item)
-          : deliver(item.envelope, item.subs, item.context)
+          : deliver(item.envelope, item.subs, item.context).pipe(
+              Effect.andThen(deps.runWaits.deliver(item.envelope, item.waiting)),
+            )
         ).pipe(logged("delivery"), Effect.ensuring(deps.adjustBusy(-1))),
       ),
       Effect.forever,

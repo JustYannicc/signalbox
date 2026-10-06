@@ -5,6 +5,7 @@ import {
   type AutomationRunSummary,
   type AutomationStep,
   type AutomationWaitingQuestion,
+  type ScheduledTaskWebhookEndpoint,
   type WorkflowTrigger,
 } from "@t3tools/contracts";
 import { ellipsize } from "@t3tools/shared/String";
@@ -12,15 +13,30 @@ import * as Cron from "effect/Cron";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 
+import { WEBHOOK_ROUTE_PREFIX } from "../scheduledTasks/ScheduledTaskService.ts";
 import { automationTriggers, errorDetailOf, stepArgs, stepAsk } from "./columns.ts";
+import { builtInOfRow } from "./defaults/registry.ts";
 import { fromJson } from "./json.ts";
 import type { AutomationRow, RunSummaryRow, StepRow, WaitingAskRow } from "./WorkflowStore.ts";
 
 /** Stored rows as the contracts clients and agents see. */
 
-/** Where an automation with a `{ webhook: true }` trigger listens. The token is the only credential. */
-export const AUTOMATION_WEBHOOK_ROUTE = "/api/automations/hooks/:token";
-const automationWebhookPath = (token: string) => AUTOMATION_WEBHOOK_ROUTE.replace(":token", token);
+/**
+ * Where an automation with a webhook trigger listens: upstream's webhook route
+ * with the automation id as the hook id, so it shares the relay URL, held
+ * requests and limits. `relayHookBaseUrl` is set while linked to Signalbox Connect.
+ */
+export function automationWebhook(
+  row: Pick<AutomationRow, "automation_id" | "webhook_token" | "webhook_secret_set">,
+  relayHookBaseUrl: string | null,
+): ScheduledTaskWebhookEndpoint {
+  const hook = `${encodeURIComponent(row.automation_id)}/${row.webhook_token}`;
+  return {
+    path: `${WEBHOOK_ROUTE_PREFIX}/${hook}`,
+    url: relayHookBaseUrl === null ? null : `${relayHookBaseUrl}/${hook}`,
+    hasSecret: row.webhook_secret_set === 1,
+  };
+}
 
 export function runSummary(row: RunSummaryRow): AutomationRunSummary {
   return {
@@ -76,6 +92,7 @@ export function automationView(
   row: AutomationRow,
   lastRun: RunSummaryRow | undefined,
   waiting: ReadonlyArray<WaitingAskRow> = [],
+  relayHookBaseUrl: string | null = null,
 ): Automation {
   const triggers = automationTriggers(row);
   return {
@@ -89,13 +106,14 @@ export function automationView(
     projectId: ProjectId.make(row.project_id),
     triggers,
     nextRunAt: row.next_run_at,
-    webhookPath: triggers.some((trigger) => "webhook" in trigger)
-      ? automationWebhookPath(row.webhook_token)
+    webhook: triggers.some((trigger) => "webhook" in trigger)
+      ? automationWebhook(row, relayHookBaseUrl)
       : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastRun: lastRun ? runSummary(lastRun) : null,
     waiting: waiting.map(waitingQuestion),
+    ...(builtInOfRow(row) ? { builtIn: true } : {}),
   };
 }
 

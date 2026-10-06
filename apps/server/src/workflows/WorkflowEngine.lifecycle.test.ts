@@ -20,6 +20,8 @@ import {
   jsonResponse,
   saveOk,
   withEngine,
+  acceptedRun,
+  webhookRequest,
 } from "./WorkflowEngine.testkit.ts";
 
 /** An HTTP route that never answers, and says when it was called and when it was abandoned. */
@@ -344,8 +346,9 @@ export default workflow(async (w, input: { fail?: boolean }) => {
           trigger: "manual",
         });
         yield* engine.drain;
-        const token = automation.webhookPath!.split("/").at(-1)!;
-        const hooked = yield* engine.startFromWebhook({ token, payload: { fail: true } });
+        const hooked = yield* acceptedRun(
+          yield* engine.receiveWebhook(webhookRequest(automation, { body: '{"fail":true}' })),
+        );
         yield* engine.drain;
         const seen = yield* Fiber.join(collected);
         expect(
@@ -358,7 +361,7 @@ export default workflow(async (w, input: { fail?: boolean }) => {
             importance: "normal",
           },
           {
-            id: `${hooked!.runId}/failed`,
+            id: `${hooked.runId}/failed`,
             kind: "failed",
             body: "Linear is down.",
             importance: "high",

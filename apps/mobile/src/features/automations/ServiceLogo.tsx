@@ -6,6 +6,7 @@ import { View } from "react-native";
 
 import { SymbolView, type AppSymbolViewProps } from "../../components/AppSymbol";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { SignalboxMark } from "../../components/SignalboxMark";
 
 const VERB_SYMBOL: Record<WorkflowStepVerb, AppSymbolViewProps["name"]> = {
   agent: { ios: "sparkles", android: "auto_awesome" },
@@ -25,9 +26,9 @@ const VERB_SYMBOL: Record<WorkflowStepVerb, AppSymbolViewProps["name"]> = {
 };
 
 /**
- * What a step talks to: the provider's mark for agent steps, the service's
- * favicon for calls and web requests, and the step's verb when neither is known
- * or the favicon can't load.
+ * What a step talks to: the provider's mark for agent steps, Signalbox's mark
+ * for its own tools, the service's favicon for calls and web requests, and the
+ * step's verb when none is known or the favicon can't load.
  */
 export const ServiceLogo = memo(function ServiceLogo(props: {
   readonly verb: WorkflowStepVerb;
@@ -49,6 +50,8 @@ export const ServiceLogo = memo(function ServiceLogo(props: {
     >
       {identity?.kind === "provider" ? (
         <ProviderIcon provider={identity.provider} size={glyph} />
+      ) : identity?.kind === "signalbox" ? (
+        <SignalboxMark height={glyph} colorClassName="accent-foreground" />
       ) : showFavicon ? (
         <Image
           accessibilityIgnoresInvertColors

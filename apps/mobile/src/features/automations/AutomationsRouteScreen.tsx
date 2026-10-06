@@ -30,7 +30,7 @@ import {
   type WaitingAutomation,
 } from "./automation-data";
 import { AskAnswer } from "./AskAnswer";
-import { GroupedCard, PillButton, SectionTitle, StatusDot } from "./AutomationParts";
+import { BuiltInPill, GroupedCard, PillButton, SectionTitle, StatusDot } from "./AutomationParts";
 
 /** Content width on wide panes; rows past this get hard to scan. */
 export const AUTOMATION_CONTENT_STYLE = {
@@ -226,16 +226,19 @@ function AutomationRow(props: {
         }
         className="min-w-0 flex-1 gap-1 active:opacity-70"
       >
-        <Text
-          className={
-            automation.enabled
-              ? "text-lg font-t3-medium text-foreground"
-              : "text-lg font-t3-medium text-foreground-muted"
-          }
-          numberOfLines={1}
-        >
-          {automation.name}
-        </Text>
+        <View className="min-w-0 flex-row items-center gap-2">
+          <Text
+            className={
+              automation.enabled
+                ? "shrink text-lg font-t3-medium text-foreground"
+                : "shrink text-lg font-t3-medium text-foreground-muted"
+            }
+            numberOfLines={1}
+          >
+            {automation.name}
+          </Text>
+          {automation.builtIn ? <BuiltInPill /> : null}
+        </View>
         <Text className="text-sm text-foreground-muted" numberOfLines={1}>
           {automationSubtitle(automation, (iso) => formatNextScheduledTaskRun(iso, props.now))}
         </Text>

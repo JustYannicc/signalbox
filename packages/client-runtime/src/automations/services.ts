@@ -22,14 +22,18 @@ const DOMAINS: Record<string, string> = {
 
 export type ServiceIdentity =
   | { readonly kind: "provider"; readonly provider: ProviderDriverKind; readonly name: string }
-  | { readonly kind: "domain"; readonly domain: string; readonly name: string };
+  | { readonly kind: "domain"; readonly domain: string; readonly name: string }
+  /** Steps calling Signalbox's own tools (`signalbox.<tool>`), shown with its mark. */
+  | { readonly kind: "signalbox"; readonly name: "Signalbox" };
 
 /**
- * What a step's logo should show: a provider for agent steps, or a web domain
- * whose icon stands for the service (`stripe` → stripe.com, a host stays as is).
+ * What a step's logo should show: a provider for agent steps, Signalbox's own
+ * mark for its tools, or a web domain whose icon stands for the service
+ * (`stripe` → stripe.com, a host stays as is).
  */
 export function serviceIdentity(service: string | undefined): ServiceIdentity | null {
   if (!service) return null;
+  if (service === "signalbox") return { kind: "signalbox", name: "Signalbox" };
   // Agent steps may name `claude`; the provider is `claudeAgent`.
   const provider = service === "claude" ? "claudeAgent" : service;
   const providerName = PROVIDER_NAMES.get(provider);

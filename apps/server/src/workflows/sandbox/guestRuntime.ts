@@ -50,6 +50,7 @@ export function installGuestRuntime() {
   const host = scope.__host as Host;
   delete scope.__host;
   const DONE = Symbol("done");
+  const RESTART = Symbol("restart");
   const never = new Promise<never>(() => {});
   const encode = (value: unknown) => JSON.stringify(value === undefined ? null : value);
 
@@ -207,6 +208,10 @@ export function installGuestRuntime() {
       done(value?: unknown) {
         return { [DONE]: true, value };
       },
+      /** `return w.restart(input)` from the workflow: end this run and start a fresh one. */
+      restart(input?: unknown) {
+        return { [RESTART]: true, input };
+      },
       $frame(site: string) {
         return receiver(`${keyFor(site)}/`);
       },
@@ -267,6 +272,13 @@ export function installGuestRuntime() {
     if (!definition || typeof definition.__workflow !== "function") {
       throw new Error("The default export must be workflow(async (w, input) => { … }).");
     }
-    return definition.__workflow(receiver(""), JSON.parse(input), JSON.parse(trigger)).then(encode);
+    return definition
+      .__workflow(receiver(""), JSON.parse(input), JSON.parse(trigger))
+      .then((value) => {
+        const restart = value as { [RESTART]?: boolean; input?: unknown } | undefined;
+        return restart && typeof restart === "object" && restart[RESTART] === true
+          ? JSON.stringify({ restart: true, input: restart.input ?? null })
+          : JSON.stringify({ restart: false, output: value === undefined ? null : value });
+      });
   };
 }

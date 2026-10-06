@@ -42,6 +42,10 @@ export interface AutomationRow {
    * runs use; it is 0 while the automation has only ever been a draft.
    */
   readonly draft_version: number | null;
+  /** 1 once a webhook signing secret is in the server secret store. Never the secret itself. */
+  readonly webhook_secret_set: number;
+  /** Set on a built-in's host row in a project (see defaults/); saves and upserts never write it. */
+  readonly builtin_slug?: string | null;
 }
 
 export interface VersionRow {
@@ -145,6 +149,17 @@ export type VersionViewRow = Pick<VersionRow, "version" | "source" | "graph_json
 
 /** How long a webhook delivery id or event occurrence is remembered, so repeats don't start runs. */
 const REQUEST_KEY_TTL_MS = 24 * 60 * 60 * 1000;
+/** Turned-away webhook requests kept per automation. */
+const WEBHOOK_REJECTIONS_KEPT = 20;
+
+export interface WebhookRejectionRow {
+  readonly automation_id: string;
+  readonly received_at: string;
+  readonly method: string;
+  readonly outcome: "rejected_signature" | "disabled" | "rate_limited" | "expired";
+  readonly body_bytes: number;
+  readonly relayed: number;
+}
 
 type RetryColumns = "retry_of_run_id" | "replay_seed" | "replay_started_at";
 export type NewRun = Omit<
@@ -210,11 +225,6 @@ export const make = Effect.gen(function* () {
         sql<AutomationRow>`
           SELECT * FROM signalbox_automations WHERE project_id = ${projectId} AND name = ${name}
         `,
-      ).pipe(Effect.map((rows) => rows[0])),
-    getAutomationByWebhook: (token: string) =>
-      run(
-        "getAutomationByWebhook",
-        sql<AutomationRow>`SELECT * FROM signalbox_automations WHERE webhook_token = ${token}`,
       ).pipe(Effect.map((rows) => rows[0])),
     listAutomations: () =>
       run("listAutomations", sql<AutomationRow>`SELECT * FROM signalbox_automations ORDER BY name`),
@@ -286,6 +296,53 @@ export const make = Effect.gen(function* () {
           WHERE automation_id = ${id}
         `,
       ),
+    setWebhookSecretSet: (id: string, set: boolean, now: string) =>
+      run(
+        "setWebhookSecretSet",
+        sql`
+          UPDATE signalbox_automations SET webhook_secret_set = ${set ? 1 : 0}, updated_at = ${now}
+          WHERE automation_id = ${id}
+        `,
+      ),
+    /** Logs a turned-away webhook request, keeping each automation's newest few. */
+    recordWebhookRejection: (rejection: WebhookRejectionRow) =>
+      Effect.all(
+        [
+          run(
+            "recordWebhookRejection",
+            sql`
+              INSERT INTO signalbox_automation_webhook_rejections
+                (automation_id, received_at, method, outcome, body_bytes, relayed)
+              VALUES (
+                ${rejection.automation_id}, ${rejection.received_at}, ${rejection.method},
+                ${rejection.outcome}, ${rejection.body_bytes}, ${rejection.relayed}
+              )
+            `,
+          ),
+          run(
+            "recordWebhookRejection",
+            sql`
+              DELETE FROM signalbox_automation_webhook_rejections
+              WHERE automation_id = ${rejection.automation_id} AND rowid NOT IN (
+                SELECT rowid FROM signalbox_automation_webhook_rejections
+                WHERE automation_id = ${rejection.automation_id}
+                ORDER BY received_at DESC, rowid DESC
+                LIMIT ${WEBHOOK_REJECTIONS_KEPT}
+              )
+            `,
+          ),
+        ],
+        { discard: true },
+      ),
+    webhookRejections: (automationId: string) =>
+      run(
+        "webhookRejections",
+        sql<WebhookRejectionRow>`
+          SELECT * FROM signalbox_automation_webhook_rejections
+          WHERE automation_id = ${automationId}
+          ORDER BY received_at DESC, rowid DESC
+        `,
+      ),
     /** Everything the automation owns. Run inside a transaction. */
     deleteAutomation: (id: string) =>
       Effect.forEach(
@@ -295,6 +352,7 @@ export const make = Effect.gen(function* () {
           sql`DELETE FROM signalbox_automation_versions WHERE automation_id = ${id}`,
           sql`DELETE FROM signalbox_automation_memory WHERE automation_id = ${id}`,
           sql`DELETE FROM signalbox_automation_webhook_keys WHERE automation_id = ${id}`,
+          sql`DELETE FROM signalbox_automation_webhook_rejections WHERE automation_id = ${id}`,
           sql`DELETE FROM signalbox_automations WHERE automation_id = ${id}`,
         ],
         (statement) => run("deleteAutomation", statement),
@@ -684,6 +742,49 @@ export const make = Effect.gen(function* () {
           `,
         );
         return existing[0]?.run_id;
+      }),
+    /**
+     * Like claimRequestKey for several keys naming one request (a sender's
+     * idempotency key and the relay's delivery id): when any is taken, they
+     * all point at the run that took it, which is returned.
+     */
+    claimRequestKeys: (claim: {
+      readonly automationId: string;
+      readonly keys: ReadonlyArray<string>;
+      readonly runId: string;
+      readonly now: DateTime.Utc;
+    }) =>
+      Effect.gen(function* () {
+        const { automationId, keys } = claim;
+        const since = isoAt(claim.now.epochMilliseconds - REQUEST_KEY_TTL_MS);
+        yield* run(
+          "claimRequestKeys",
+          sql`
+            DELETE FROM signalbox_automation_webhook_keys
+            WHERE automation_id = ${automationId} AND request_key IN ${sql.in(keys)}
+              AND created_at < ${since}
+          `,
+        );
+        const existing = yield* run(
+          "claimRequestKeys",
+          sql<{ run_id: string }>`
+            SELECT run_id FROM signalbox_automation_webhook_keys
+            WHERE automation_id = ${automationId} AND request_key IN ${sql.in(keys)}
+            LIMIT 1
+          `,
+        );
+        const owner = existing[0]?.run_id;
+        for (const key of keys) {
+          yield* run(
+            "claimRequestKeys",
+            sql`
+              INSERT INTO signalbox_automation_webhook_keys (automation_id, request_key, run_id, created_at)
+              VALUES (${automationId}, ${key}, ${owner ?? claim.runId}, ${DateTime.formatIso(claim.now)})
+              ON CONFLICT (automation_id, request_key) DO NOTHING
+            `,
+          );
+        }
+        return owner;
       }),
 
     /**

@@ -50,6 +50,8 @@ export const runCandidates = (run: OrchestrationV2Run): Candidate[] => {
             ...turn,
             status: run.status,
             ...text,
+            errorClass: shell?.lastErrorClass ?? null,
+            usageLimitResetAt: shell?.usageLimitResetAt ?? null,
             branch: shell?.branch ?? null,
             worktreePath: shell?.worktreePath ?? null,
             startedAt: iso(run.startedAt),

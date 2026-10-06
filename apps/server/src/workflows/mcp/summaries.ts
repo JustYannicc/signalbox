@@ -3,6 +3,7 @@ import {
   AutomationRunStatus,
   AutomationRunTrigger,
   AutomationStepStatus,
+  AutomationWebhookRejection,
   WorkflowStepVerb,
   type Automation,
   type AutomationDetail,
@@ -43,7 +44,17 @@ export const AutomationSummary = Schema.Struct({
   }),
   triggers: Schema.Array(Schema.String),
   nextRunAt: Schema.NullOr(Schema.String),
-  webhookPath: Schema.NullOr(Schema.String),
+  webhook: Schema.NullOr(
+    Schema.Struct({
+      url: Schema.String.annotate({
+        description:
+          "Where senders call it. A full URL through Signalbox Connect, else a path on this server's address.",
+      }),
+      secretSet: Schema.Boolean.annotate({
+        description: "Whether a signing secret is set (automation_set_webhook_secret).",
+      }),
+    }),
+  ),
   lastRun: Schema.NullOr(
     Schema.Struct({
       runId: Schema.String,
@@ -52,6 +63,10 @@ export const AutomationSummary = Schema.Struct({
       waitingOnYou: Schema.Boolean,
     }),
   ),
+  builtIn: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Runs Signalbox's built-in code: read-only. automation_customize makes it the project's own to edit.",
+  }),
 });
 
 export const RunSummary = Schema.Struct({
@@ -92,6 +107,8 @@ export const ReadResult = Schema.Struct({
     Schema.Struct({ version: Schema.Int, source: Schema.String, outline: Schema.String }),
   ),
   runs: Schema.Array(RunSummary),
+  /** Recent webhook requests turned away (bad signature, paused, rate limited, too old). */
+  webhookRejections: Schema.Array(AutomationWebhookRejection),
 });
 
 export const RunReadResult = Schema.Struct({
@@ -137,7 +154,12 @@ export function automationSummary(automation: Automation): typeof AutomationSumm
     draftVersion: automation.draftVersion,
     triggers: automation.triggers.map(describeTrigger),
     nextRunAt: automation.nextRunAt,
-    webhookPath: automation.webhookPath,
+    webhook: automation.webhook
+      ? {
+          url: automation.webhook.url ?? automation.webhook.path,
+          secretSet: automation.webhook.hasSecret,
+        }
+      : null,
     lastRun: lastRun
       ? {
           runId: lastRun.id,
@@ -146,6 +168,7 @@ export function automationSummary(automation: Automation): typeof AutomationSumm
           waitingOnYou: lastRun.waitingOnYou,
         }
       : null,
+    ...(automation.builtIn ? { builtIn: true } : {}),
   };
 }
 
@@ -197,6 +220,7 @@ export function readResult(detail: AutomationDetail): typeof ReadResult.Type {
         }
       : null,
     runs: detail.runs.map(runSummary),
+    webhookRejections: detail.webhookRejections,
   };
 }
 

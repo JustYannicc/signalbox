@@ -6,11 +6,14 @@ import {
   workflowNodeIdForStepKey,
   type Automation,
   type AutomationAskAnswerInput,
+  type AutomationBuiltIn,
+  type AutomationDefaults,
   type AutomationDetail,
   type AutomationError,
   type AutomationErrorDetail,
   type AutomationNotice,
   type AutomationRunDetail,
+  type AutomationRunAttach,
   type AutomationRunLog,
   type AutomationRunSummary,
   type AutomationRunTrigger,
@@ -29,6 +32,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as HttpClient from "effect/http/HttpClient";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import type { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { ProjectService } from "../project/ProjectService.ts";
@@ -37,28 +41,35 @@ import {
   isTerminalRunStatus,
   ThreadManagementService,
 } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  ScheduledTaskWebhookOrigin,
+  type WebhookTriggerRequest,
+  type WebhookTriggerResult,
+} from "../scheduledTasks/ScheduledTaskService.ts";
 import { Scheduler } from "../scheduling/Scheduler.ts";
 import { forkParked } from "../serverActivation.ts";
+import { makeAttachments } from "./attachments.ts";
+import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
 import { makeCatalog, type AuthorizeAutomation, type CatalogShape } from "./catalog.ts";
-import {
-  automationDefaults,
-  automationTriggers,
-  errorDetailOf,
-  runLogLines,
-  stepArgs,
-  stepAsk,
-} from "./columns.ts";
+import { automationDefaults, errorDetailOf, runLogLines, stepArgs, stepAsk } from "./columns.ts";
 import { makeConnections } from "./connections.ts";
 import { makeTimedWork } from "./engineTick.ts";
 import type { EndRun, Launch, LaunchRun, RunOutcome, Settlement } from "./engineTypes.ts";
 import { automationError, causeText, fail, isAutomationError, logFailure } from "./errors.ts";
+import { makeBuiltIns, type BuiltInPlace } from "./defaults/builtIns.ts";
+import * as HostStore from "./defaults/hostStore.ts";
+import { BUILT_IN_AUTOMATIONS, builtInSummary } from "./defaults/registry.ts";
 import { makeEventTriggers } from "./events/eventTriggers.ts";
+import { makePullRequestTracker } from "./events/pullRequestFacts.ts";
+import { makeRunWaits } from "./events/runWaits.ts";
 import * as ExecutorSettings from "./executorSettings.ts";
 import { fromJson, toJson } from "./json.ts";
 import { automationShows, listShows, makeLiveFeed, runShows, type Change } from "./liveFeed.ts";
 import { automationNotice, failureNotice } from "./notices.ts";
 import { makeReplayQueue } from "./replayQueue.ts";
+import { makeRestart } from "./restart.ts";
 import { makeRunFunction } from "./runFunction.ts";
+import * as RunLinkStore from "./runLinkStore.ts";
 import { replayWorkflow, type JournalResult } from "./sandbox/replayWorkflow.ts";
 import { makeInheritance, makeRetryRun, type RetryRun } from "./retry.ts";
 import { makeStartStep, type StepOutcome } from "./startStep.ts";
@@ -67,17 +78,12 @@ import { errorDetail, makeRunLogs } from "./runLog.ts";
 import { afterMs } from "./steps.ts";
 import { isoAt, nowIso } from "./time.ts";
 import { runSummary, runTitle } from "./views.ts";
+import { makeWebhooks } from "./webhooks.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 type Store = WorkflowStore.WorkflowStore;
 
 export type { AuthorizeAutomation };
-
-/** A webhook POST that found its automation: the run it started, or the run an earlier delivery with the same id started. */
-export interface WebhookStart {
-  readonly runId: string;
-  readonly duplicate: boolean;
-}
 
 export interface WorkflowEngineShape extends CatalogShape {
   /** Stops its running runs, then deletes it with everything it stored and installed. */
@@ -88,19 +94,36 @@ export interface WorkflowEngineShape extends CatalogShape {
     readonly input?: unknown;
     readonly trigger: AutomationRunTrigger;
     readonly authorize?: AuthorizeAutomation<E>;
+    /** Binds the run to a thread (see attachments.ts). */
+    readonly attach?: AutomationRunAttach | undefined;
+    /**
+     * For a `builtin:<slug>` id: the project to run it in (default: the
+     * attached thread's) and the defaults its host row starts with there.
+     */
+    readonly projectId?: string | undefined;
+    readonly builtInDefaults?: AutomationDefaults | undefined;
   }) => Effect.Effect<AutomationRunSummary, AutomationError | E>;
-  /**
-   * Starts a run from a webhook POST. Null when the token doesn't match a live
-   * webhook automation. A repeated `requestKey` within a day returns the first
-   * delivery's run instead of starting another.
-   */
-  readonly startFromWebhook: (input: {
-    readonly token: string;
-    readonly payload: unknown;
-    readonly headers?: Readonly<Record<string, string>>;
-    readonly rawBody?: string;
-    readonly requestKey?: string;
-  }) => Effect.Effect<WebhookStart | null, AutomationError>;
+  /** Built-in automations Signalbox ships (see defaults/registry.ts). */
+  readonly builtIns: Effect.Effect<ReadonlyArray<AutomationBuiltIn>>;
+  /** Makes a built-in a project's own, editable automation. */
+  readonly customize: (
+    automationId: string,
+    place: BuiltInPlace,
+  ) => Effect.Effect<Automation, AutomationError>;
+  /** Stop on a thread: cancels the runs attached to it; returns how many. */
+  readonly cancelAttached: (threadId: string) => Effect.Effect<number, AutomationError>;
+  /** The MCP server hands over Signalbox's tools for `w.call("…", "signalbox.<tool>")`. */
+  readonly registerBuiltinTools: (handler: BuiltinToolHandler) => Effect.Effect<void>;
+  /** Takes a request to `/api/hooks/<automationId>/<token>` (see webhooks.ts). */
+  readonly receiveWebhook: (
+    request: WebhookTriggerRequest,
+  ) => Effect.Effect<WebhookTriggerResult, AutomationError>;
+  /** Sets or clears (null) the webhook signing secret; it is never read back. */
+  readonly setWebhookSecret: <E = never>(input: {
+    readonly automationId: string;
+    readonly secret: string | null;
+    readonly authorize?: AuthorizeAutomation<E>;
+  }) => Effect.Effect<Automation, AutomationError | E>;
   /** Ends a run now: interrupts its agents, requests and processes, and cancels runs it started. */
   readonly cancelRun: (runId: string) => Effect.Effect<void, AutomationError>;
   /** Starts a new run retrying a failed or cancelled one, reusing the steps that went well. */
@@ -153,6 +176,9 @@ const REPLAY_MISMATCH: AutomationErrorDetail = {
 
 const make = Effect.gen(function* () {
   const store: Store = yield* WorkflowStore.make;
+  const links = yield* RunLinkStore.make;
+  const hosts = yield* HostStore.make;
+  const builtinTools = makeBuiltinTools();
   const crypto = yield* Crypto.Crypto;
   const threads = yield* ThreadManagementService;
   const scheduler = yield* Scheduler;
@@ -180,6 +206,21 @@ const make = Effect.gen(function* () {
     );
   const ignoreFailure = (what: string) => logFailure(`Automation ${what} failed`);
 
+  // These call back into the run core below once runs exist.
+  const runWaits = makeRunWaits({
+    store,
+    links,
+    complete: (runId, key, outcome) => complete(runId, key, outcome),
+  });
+  const attachments = makeAttachments({
+    store,
+    links,
+    threads,
+    cancel: (runId) => endRunById(runId, { status: "cancelled" }),
+  });
+  const webhookOrigin = yield* ScheduledTaskWebhookOrigin;
+  // Called only once requests arrive, after launchRun below exists.
+  const webhooks = yield* makeWebhooks({ store, launchRun: (launch) => launchRun(launch) });
   const events = yield* makeEventTriggers({
     store,
     threads,
@@ -187,6 +228,8 @@ const make = Effect.gen(function* () {
     notify: (notice) => PubSub.publish(notices, notice).pipe(Effect.asVoid),
     // Called only once events flow, after launchRun below exists.
     launchRun: (launch) => launchRun(launch),
+    runWaits,
+    pullRequests: makePullRequestTracker((yield* DateTime.now).epochMilliseconds),
   });
 
   const changed = (change: Change) =>
@@ -271,6 +314,7 @@ const make = Effect.gen(function* () {
         });
       // An answered question stops the run waiting on someone, which run lists show.
       yield* runChanged(runId, settled.verb === "ask");
+      yield* attachments.refresh(runId);
       yield* replays.enqueue(runId);
       return true;
     });
@@ -314,6 +358,12 @@ const make = Effect.gen(function* () {
     projects,
     runFunction,
     connections,
+    builtinTools,
+    resolveBuiltIn: (name, automation) =>
+      builtIns.resolveName(name, {
+        projectId: automation.project_id,
+        defaults: automationDefaults(automation),
+      }),
     launchChild: ({ automation, input, parent }) =>
       launchRun({ automation, input, trigger: "automation", parent }).pipe(
         Effect.map(({ run }) => run),
@@ -331,17 +381,22 @@ const make = Effect.gen(function* () {
           case "retry":
             return retryOrFail(step, start.error, { retryAfterMs: start.retryAfterMs });
           case "waiting":
-            return store
-              .markWaiting(step.run_id, step.step_key, start)
-              .pipe(
-                Effect.tap((moved) =>
-                  moved
-                    ? runLogs
-                        .step(step, { status: "waiting" })
-                        .pipe(Effect.andThen(runChanged(step.run_id, step.verb === "ask")))
-                    : Effect.void,
-                ),
-              );
+            return store.markWaiting(step.run_id, step.step_key, start).pipe(
+              Effect.tap((moved) =>
+                moved
+                  ? runLogs.step(step, { status: "waiting" }).pipe(
+                      Effect.andThen(runChanged(step.run_id, step.verb === "ask")),
+                      // An event may have arrived before the step started waiting.
+                      Effect.andThen(
+                        step.verb === "waitFor"
+                          ? runWaits.deliverPending(step.run_id)
+                          : Effect.void,
+                      ),
+                      Effect.andThen(attachments.refresh(step.run_id)),
+                    )
+                  : Effect.void,
+              ),
+            );
         }
       }),
       // Only the call that moved the step tells the user, so restarts and replays can't repeat it.
@@ -407,6 +462,8 @@ const make = Effect.gen(function* () {
       );
       if (!ended) return false;
       yield* replays.forget(run.run_id);
+      yield* runWaits.ended(run.run_id);
+      yield* attachments.refresh(run.run_id);
       yield* interruptSteps(run.run_id);
       const automation = yield* store.getAutomation(run.automation_id);
       for (const step of steps) {
@@ -542,6 +599,7 @@ const make = Effect.gen(function* () {
         });
       if (outcome.type === "completed")
         return yield* endRun(current, { status: "succeeded", output: outcome.output });
+      if (outcome.type === "restart") return yield* restart(current, automation, outcome.input);
       if (outcome.type === "failed") {
         // A step failure nothing caught surfaces with the step's message; keep its explanation.
         const cause = [...steps.values()].find(
@@ -619,7 +677,21 @@ const make = Effect.gen(function* () {
         marks_json: "{}",
         trigger_json: retryOf
           ? retryOf.trigger_json
-          : toJson({ type: launch.trigger, ...launch.webhook, ...launch.event }),
+          : (launch.triggerJson ??
+            toJson({
+              type: launch.trigger,
+              ...launch.webhook,
+              ...launch.event,
+              ...(launch.link?.thread_id
+                ? {
+                    attach: {
+                      threadId: launch.link.thread_id,
+                      key: launch.link.attach_key,
+                      label: launch.link.label,
+                    },
+                  }
+                : {}),
+            })),
         parent_run_id: launch.parent?.run_id ?? null,
         depth: retryOf
           ? retryOf.depth
@@ -636,12 +708,25 @@ const make = Effect.gen(function* () {
         started_at: DateTime.formatIso(now),
         finished_at: null,
       } satisfies WorkflowStore.NewRun;
+      const link = launch.link;
+      const insert = store.insertRun(row).pipe(
+        Effect.andThen(
+          link
+            ? links.insertLink({
+                ...link,
+                run_id: row.run_id,
+                lineage_id: link.lineage_id ?? row.run_id,
+                started_at: row.started_at,
+              })
+            : Effect.void,
+        ),
+      );
       if (launch.claim) {
         const claim = launch.claim;
         const prior = yield* store.withTransaction(
           Effect.gen(function* () {
             const existing = yield* claim(row.run_id);
-            if (existing === undefined) yield* store.insertRun(row);
+            if (existing === undefined) yield* insert;
             return existing;
           }),
         );
@@ -651,8 +736,10 @@ const make = Effect.gen(function* () {
           return { run: runSummary(existing), duplicate: true };
         }
       } else {
-        yield* store.insertRun(row);
+        yield* store.withTransaction(insert);
       }
+      runWaits.invalidate();
+      yield* attachments.refresh(row.run_id);
       yield* runLogs.started(row, launch.automation);
       yield* events.automationEvent("automation.run.started", row.run_id, {
         trigger: launch.trigger,
@@ -677,9 +764,23 @@ const make = Effect.gen(function* () {
 
   const startRun: WorkflowEngineShape["startRun"] = (input) =>
     Effect.gen(function* () {
-      const automation = yield* requireAutomation(input.automationId);
+      const projectId =
+        input.projectId ??
+        (input.attach ? yield* projectOfThread(input.attach.threadId) : undefined);
+      const automation = yield* builtIns.resolve(
+        input.automationId,
+        projectId && input.builtInDefaults
+          ? { projectId, defaults: input.builtInDefaults }
+          : undefined,
+      );
       if (input.authorize) yield* input.authorize(automationDefaults(automation));
-      return (yield* launchRun({ automation, input: input.input, trigger: input.trigger })).run;
+      const attached = input.attach ? yield* attachments.launchFor(automation, input.attach) : {};
+      return (yield* launchRun({
+        automation,
+        input: input.input,
+        trigger: input.trigger,
+        ...attached,
+      })).run;
     });
 
   const remove: WorkflowEngineShape["remove"] = (automationId) =>
@@ -689,40 +790,18 @@ const make = Effect.gen(function* () {
         yield* endRunById(runId, { status: "cancelled" });
       }
       yield* store.withTransaction(store.deleteAutomation(automationId));
+      yield* webhooks.forget(automationId);
       yield* runFunction.remove(automationId).pipe(ignoreFailure("files couldn't be deleted"));
       yield* changed({ kind: "definition", automationId });
     });
 
-  const startFromWebhook: WorkflowEngineShape["startFromWebhook"] = (input) =>
+  const setWebhookSecret: WorkflowEngineShape["setWebhookSecret"] = (input) =>
     Effect.gen(function* () {
-      const automation = yield* store.getAutomationByWebhook(input.token);
-      if (
-        !automation ||
-        automation.enabled !== 1 ||
-        !automationTriggers(automation).some((trigger) => "webhook" in trigger)
-      ) {
-        return null;
-      }
-      const now = yield* DateTime.now;
-      const key = input.requestKey;
-      const started = yield* launchRun({
-        automation,
-        input: input.payload,
-        trigger: "webhook",
-        webhook: { headers: input.headers ?? {}, rawBody: input.rawBody ?? "" },
-        ...(key
-          ? {
-              claim: (runId: string) =>
-                store.claimRequestKey({
-                  automationId: automation.automation_id,
-                  key,
-                  runId,
-                  now,
-                }),
-            }
-          : {}),
-      });
-      return { runId: started.run.id, duplicate: started.duplicate } satisfies WebhookStart;
+      const automation = yield* requireAutomation(input.automationId);
+      if (input.authorize) yield* input.authorize(automationDefaults(automation));
+      yield* webhooks.setSecret(input.automationId, input.secret);
+      yield* changed({ kind: "automation", automationId: input.automationId });
+      return (yield* catalog.get(input.automationId)).automation;
     });
 
   const answer: WorkflowEngineShape["answer"] = (input) =>
@@ -756,11 +835,25 @@ const make = Effect.gen(function* () {
     });
 
   const retryRun = makeRetryRun({ store, requireAutomation, launchRun });
+  const restart = makeRestart({ store, links, newId, endRun, launchRun });
+  const projectOfThread = (threadId: string) =>
+    threads.getThreadShell(ThreadId.make(threadId)).pipe(
+      Effect.map((shell) => shell?.projectId),
+      Effect.mapError((cause) => automationError("Couldn't read the thread.", { cause })),
+    );
 
-  const catalog = makeCatalog({ store, newId, changed, requireAutomation });
+  const catalog = makeCatalog({
+    store,
+    newId,
+    changed,
+    requireAutomation,
+    relayHookBaseUrl: webhookOrigin.pipe(Effect.map((origin) => origin.relayHookBaseUrl)),
+  });
+  const builtIns = makeBuiltIns({ store, hosts, catalog, changed, requireAutomation });
 
   const { settleThreadStep, tick } = yield* makeTimedWork({
     store,
+    links,
     threads,
     services,
     runFunction,
@@ -817,6 +910,9 @@ const make = Effect.gen(function* () {
         .offer(event)
         .pipe(
           Effect.andThen(
+            attachments.onDomainEvent(event).pipe(logFailure("Automation detach failed")),
+          ),
+          Effect.andThen(
             event.type === "run.updated" && isTerminalRunStatus(event.payload.status)
               ? replays
                   .adjustBusy(1)
@@ -835,15 +931,24 @@ const make = Effect.gen(function* () {
         if (automation) yield* execute(automation, step);
       }
       for (const { run_id } of yield* store.runningRuns()) yield* replays.enqueue(run_id);
+      yield* attachments.recover;
     }).pipe(logFailure("Automation recovery failed")),
   );
   yield* scheduler.register("automations", tick);
 
   return {
     ...catalog,
+    // A built-in's host row changes only with the code.
+    save: (input, authorize) =>
+      builtIns.guardSave(input).pipe(Effect.andThen(catalog.save(input, authorize))),
     remove,
     startRun,
-    startFromWebhook,
+    builtIns: Effect.sync(() => BUILT_IN_AUTOMATIONS.map(builtInSummary)),
+    customize: builtIns.customize,
+    cancelAttached: attachments.cancelAttached,
+    registerBuiltinTools: builtinTools.register,
+    receiveWebhook: webhooks.receive,
+    setWebhookSecret,
     cancelRun,
     retryRun,
     answer,
@@ -863,5 +968,7 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(WorkflowEngine, make).pipe(
-  Layer.provide(Layer.mergeAll(ProcessRunner.layer, ExecutorSettings.layer)),
+  Layer.provide(
+    Layer.mergeAll(ProcessRunner.layer, ExecutorSettings.layer, ServerSecretStore.layer),
+  ),
 );

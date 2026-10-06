@@ -23,6 +23,7 @@ const automation = (id: string, projectId: string): WorkflowStore.AutomationRow 
   overlap: null,
   intent: null,
   draft_version: null,
+  webhook_secret_set: 0,
 });
 
 it.effect("a cron firing is claimed once, and never re-enables a paused automation", () =>

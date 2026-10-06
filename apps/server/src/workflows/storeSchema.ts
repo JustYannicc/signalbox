@@ -29,6 +29,8 @@ const TABLES = [
     overlap TEXT,
     draft_version INTEGER,
     intent TEXT,
+    webhook_secret_set INTEGER NOT NULL DEFAULT 0,
+    builtin_slug TEXT,
     UNIQUE (project_id, name)
   )`,
   `CREATE TABLE IF NOT EXISTS signalbox_automation_versions (
@@ -101,6 +103,43 @@ const TABLES = [
     created_at TEXT NOT NULL,
     PRIMARY KEY (automation_id, request_key)
   )`,
+  /** Recent webhook requests that didn't start a run; accepted ones are runs. */
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_webhook_rejections (
+    automation_id TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    method TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    body_bytes INTEGER NOT NULL,
+    relayed INTEGER NOT NULL
+  )`,
+  /**
+   * What a run is bound to beyond its row: the thread it's attached to, and
+   * the run it continues after `w.restart`. Only runs with either get a row.
+   */
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_run_links (
+    run_id TEXT PRIMARY KEY,
+    thread_id TEXT,
+    attach_key TEXT,
+    label TEXT,
+    restart_of_run_id TEXT,
+    lineage_id TEXT NOT NULL,
+    started_at TEXT NOT NULL
+  )`,
+  /**
+   * Events a running run's `w.waitFor({ on })` steps listen for, kept from
+   * the run's start so one arriving between steps isn't lost. Each event goes
+   * to one step; finished runs' rows are deleted.
+   */
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_run_inbox (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    envelope_json TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    consumed_by TEXT,
+    UNIQUE (run_id, event_id)
+  )`,
 ];
 
 /**
@@ -109,7 +148,10 @@ const TABLES = [
  * its CREATE statement (fresh databases) and here (existing ones). A
  * constraint change can't be added this way; it needs a table rebuild.
  */
-const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [];
+const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
+  ["signalbox_automations", "webhook_secret_set", "INTEGER NOT NULL DEFAULT 0"],
+  ["signalbox_automations", "builtin_slug", "TEXT"],
+];
 
 /** Indexes go last: some cover added columns. */
 const INDEXES = [
@@ -126,6 +168,14 @@ const INDEXES = [
     ON signalbox_automation_steps (event)`,
   `CREATE INDEX IF NOT EXISTS signalbox_automations_by_webhook
     ON signalbox_automations (webhook_token)`,
+  `CREATE INDEX IF NOT EXISTS signalbox_automation_webhook_rejections_by_automation
+    ON signalbox_automation_webhook_rejections (automation_id, received_at)`,
+  `CREATE INDEX IF NOT EXISTS signalbox_automation_run_links_by_thread
+    ON signalbox_automation_run_links (thread_id, attach_key)`,
+  `CREATE INDEX IF NOT EXISTS signalbox_automation_run_links_by_lineage
+    ON signalbox_automation_run_links (lineage_id, started_at)`,
+  `CREATE INDEX IF NOT EXISTS signalbox_automation_run_inbox_by_run
+    ON signalbox_automation_run_inbox (run_id, consumed_by)`,
 ];
 
 /** Creates the tables, or brings existing ones up to the current shape. Safe to run every start. */

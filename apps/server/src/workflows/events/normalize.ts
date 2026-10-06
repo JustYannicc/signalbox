@@ -17,6 +17,7 @@ import {
   TERMINAL_ITEMS,
   type Candidate,
 } from "./candidate.ts";
+import { PULL_REQUEST_FACT_EVENTS, pullRequestFacts } from "./pullRequestFacts.ts";
 import { itemCandidates } from "./turnItems.ts";
 import { requestCandidates, runCandidates } from "./turns.ts";
 
@@ -94,12 +95,7 @@ const THREAD_EVENTS = {
 const pullRequestFields = (thread: OrchestrationV2AppThread) => ({
   pullRequests: (thread.pullRequests ?? [])
     .filter((link) => link.source !== "stack-dismissed")
-    .map((link) => ({
-      repository: link.repository,
-      number: link.number,
-      url: link.url,
-      source: link.source,
-    })),
+    .map((link) => ({ ...pullRequestFacts(link), source: link.source })),
   branchPullRequest: thread.branchPullRequest
     ? {
         repository: thread.branchPullRequest.repository,
@@ -266,4 +262,5 @@ export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   "subagent.finished",
   "checkpoint.captured",
   "checkpoint.restore-requested",
+  ...PULL_REQUEST_FACT_EVENTS,
 ] satisfies ReadonlyArray<AutomationEventName>);

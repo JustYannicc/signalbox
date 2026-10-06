@@ -526,6 +526,22 @@ export class WorkflowAnalyzer {
       }
       return;
     }
+    if (argument && this.verbOf(argument, scope) === "restart") {
+      const call = argument as CallExpression;
+      if (scope.exit !== "workflow") {
+        this.source.error(
+          argument,
+          "w.restart() ends the whole run, so return it from the workflow itself, not from a callback or helper.",
+          "return w.restart({ ...input, pass: pass + 1 })",
+        );
+        return;
+      }
+      if (this.ownReceiver(call, scope)) {
+        for (const value of call.arguments) this.scan(value, scope, "inside w.restart", out);
+        out.push({ type: "end", id: id(), line, exit: "workflow", restart: true });
+      }
+      return;
+    }
     if (statement.argument) this.scan(statement.argument, scope, null, out);
     if (!tail) out.push({ type: "end", id: id(), line, exit: scope.exit });
   }
@@ -939,6 +955,8 @@ export class WorkflowAnalyzer {
         );
       } else if (verb === "done") {
         this.source.error(call, "Return w.done() from a w.repeat callback: return w.done(value).");
+      } else if (verb === "restart") {
+        this.source.error(call, "Return w.restart() from the workflow: return w.restart(input).");
       } else {
         this.source.error(callee, `w.${verb} isn't a step. Available: ${VERB_LIST}.`);
       }

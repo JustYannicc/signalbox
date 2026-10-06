@@ -4,6 +4,7 @@ import { AutomationAskField } from "./automationAsk.ts";
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { ScheduledTaskWebhookEndpoint } from "./scheduledTask.ts";
 import {
   WorkflowDiagnostic,
   WorkflowGraph,
@@ -107,11 +108,17 @@ export const Automation = Schema.Struct({
   projectId: ProjectId,
   triggers: Schema.Array(WorkflowTrigger),
   nextRunAt: Schema.NullOr(IsoDateTime),
-  /** Server path to POST to when the automation has a webhook trigger. It contains the secret token. */
-  webhookPath: Schema.NullOr(Schema.String),
+  /**
+   * Where senders call the automation when it has a webhook trigger: the path
+   * (with its secret token), the public Signalbox Connect URL when linked, and
+   * whether a signing secret is set. Shown with client-runtime's `webhookAddress`.
+   */
+  webhook: Schema.NullOr(ScheduledTaskWebhookEndpoint),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastRun: Schema.NullOr(AutomationRunSummary),
+  /** Runs a built-in automation Signalbox ships in code: read-only, customize to change it. */
+  builtIn: Schema.optional(Schema.Boolean),
   /** Every question waiting on the user across this automation's running runs, oldest first. */
   waiting: Schema.Array(AutomationWaitingQuestion),
 });
@@ -166,6 +173,17 @@ export const AutomationDraft = Schema.Struct({
 });
 export type AutomationDraft = typeof AutomationDraft.Type;
 
+/** A webhook request the automation turned away, with upstream's delivery outcome names. */
+export const AutomationWebhookRejection = Schema.Struct({
+  receivedAt: IsoDateTime,
+  method: Schema.String,
+  outcome: Schema.Literals(["rejected_signature", "disabled", "rate_limited", "expired"]),
+  bodyBytes: Schema.Int,
+  /** Delivered through Signalbox Connect rather than straight to the server. */
+  relayed: Schema.Boolean,
+});
+export type AutomationWebhookRejection = typeof AutomationWebhookRejection.Type;
+
 export const AutomationDetail = Schema.Struct({
   automation: Automation,
   /** The live version's file and diagram; the draft's while nothing is published yet. */
@@ -174,8 +192,32 @@ export const AutomationDetail = Schema.Struct({
   runs: Schema.Array(AutomationRunSummary),
   /** The pending draft, when there is one. */
   draft: Schema.NullOr(AutomationDraft),
+  /** Recent webhook requests that didn't start a run, newest first. Accepted ones are runs. */
+  webhookRejections: Schema.Array(AutomationWebhookRejection),
 });
 export type AutomationDetail = typeof AutomationDetail.Type;
+
+/**
+ * Binds a run to a thread: while it runs, the thread shows it as background
+ * work and stays in Working; settling, archiving, deleting or stopping the
+ * thread cancels it. One running attached run per thread and `key`.
+ */
+export const AutomationRunAttach = Schema.Struct({
+  threadId: ThreadId,
+  /** Dedupes: starting another run with a running run's key returns that run. Defaults to the automation. */
+  key: Schema.optional(TrimmedNonEmptyString),
+  /** What the thread shows while no step is waiting. Defaults to the automation's name. */
+  label: Schema.optional(TrimmedNonEmptyString),
+});
+export type AutomationRunAttach = typeof AutomationRunAttach.Type;
+
+/** A built-in automation as agents list it; `id` is `builtin:<slug>`. */
+export const AutomationBuiltIn = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  description: Schema.String,
+});
+export type AutomationBuiltIn = typeof AutomationBuiltIn.Type;
 
 export const AutomationSaveInput = Schema.Struct({
   automationId: Schema.optional(TrimmedNonEmptyString),

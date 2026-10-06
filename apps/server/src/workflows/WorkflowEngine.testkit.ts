@@ -7,6 +7,7 @@ import {
   AutomationError,
   ProjectId,
   ThreadId,
+  type Automation,
   type AutomationDefaults,
   type AutomationSaveResult,
 } from "@t3tools/contracts";
@@ -29,6 +30,10 @@ import { ThreadManagementService } from "../orchestration-v2/ThreadManagementSer
 import * as ServerConfig from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import { ProjectService } from "../project/ProjectService.ts";
+import type {
+  WebhookTriggerRequest,
+  WebhookTriggerResult,
+} from "../scheduledTasks/ScheduledTaskService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { fromJson, toJson } from "./json.ts";
 import { WorkflowEngine, layer as engineLayer } from "./WorkflowEngine.ts";
@@ -307,3 +312,40 @@ export const saveOk = (
       throw new Error(saved.diagnostics.map((diagnostic) => diagnostic.message).join("\n"));
     return saved.automation;
   });
+
+/** A request to an automation's webhook URL, as upstream's route hands it to the engine. */
+export function webhookRequest(
+  automation: Automation,
+  init: {
+    readonly body?: string;
+    readonly headers?: Readonly<Record<string, string>>;
+    readonly query?: string;
+    readonly token?: string;
+    readonly relayDeliveryId?: string;
+    readonly receivedAt?: string;
+  } = {},
+): WebhookTriggerRequest {
+  const [hookId, token] = automation.webhook!.path.split("/").slice(-2);
+  const bodyText = init.body ?? "";
+  return {
+    hookId: decodeURIComponent(hookId!),
+    token: init.token ?? token!,
+    method: "POST",
+    path: automation.webhook!.path,
+    query: init.query ?? "",
+    headers: init.headers ?? {},
+    body: new TextEncoder().encode(bodyText),
+    bodyText,
+    ...(init.relayDeliveryId ? { relayDeliveryId: init.relayDeliveryId } : {}),
+    ...(init.receivedAt ? { receivedAt: init.receivedAt } : {}),
+  };
+}
+
+/** The run a webhook request started, or a failure naming what happened instead. */
+export const acceptedRun = (result: WebhookTriggerResult) =>
+  result._tag === "accepted"
+    ? Effect.succeed({
+        runId: result.deliveryId as string,
+        duplicate: result.outcome === "duplicate",
+      })
+    : Effect.die(new Error(`The webhook wasn't accepted: ${result._tag}`));

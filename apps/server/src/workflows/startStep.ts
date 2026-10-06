@@ -14,12 +14,14 @@ import { resolveRuntimeMode } from "../mcp/OrchestratorMcpService.ts";
 import type { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import type { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import type { ProjectService } from "../project/ProjectService.ts";
+import { isBuiltinToolOperation, type BuiltinTools } from "./builtinTools/runner.ts";
 import { automationDefaults, stepArgs } from "./columns.ts";
 import type { makeConnections } from "./connections.ts";
 import { automationError, fail } from "./errors.ts";
 import { asRecord, fromJson, toJson } from "./json.ts";
 import { modelPrompt } from "./modelSteps.ts";
 import type { makeRunFunction } from "./runFunction.ts";
+import { waitsOnEvents } from "./events/runWaits.ts";
 import { explained } from "./runLog.ts";
 import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";
 import { httpRequest, isRetryableStatus, launchAgent, wakeAt, type StepStart } from "./steps.ts";
@@ -47,6 +49,13 @@ export interface StartStepDependencies {
   readonly projects: ProjectService["Service"];
   readonly runFunction: Effect.Success<typeof makeRunFunction>;
   readonly connections: Effect.Success<typeof makeConnections>;
+  /** `signalbox.<tool>` calls. */
+  readonly builtinTools: BuiltinTools;
+  /** `w.start` by a built-in's name, when the project has no automation of that name. */
+  readonly resolveBuiltIn: (
+    name: string,
+    automation: AutomationRow,
+  ) => Effect.Effect<AutomationRow | undefined, AutomationError>;
   /** Starts a run of `automation` as the child of `parent`. */
   readonly launchChild: (input: {
     readonly automation: AutomationRow;
@@ -100,10 +109,13 @@ export const makeStartStep =
         );
       case "waitFor": {
         const { event, timeout } = asRecord(first);
-        if (typeof event !== "string") return fail("w.waitFor needs an event name.");
+        // `on` steps wait without a name; runWaits.ts hands them matching events.
+        const named = typeof event === "string" ? { event } : {};
+        if (!waitsOnEvents(step) && !named.event)
+          return fail("w.waitFor needs `on` or an event name.");
         return Effect.gen(function* () {
           const at = timeout === undefined ? undefined : yield* wakeAt(timeout);
-          return { type: "waiting", event, ...(at ? { wakeAt: at } : {}) } satisfies StepStart;
+          return { type: "waiting", ...named, ...(at ? { wakeAt: at } : {}) } satisfies StepStart;
         });
       }
       case "ask": {
@@ -146,6 +158,17 @@ export const makeStartStep =
         return startChild(deps, automation, step, String(first), args[1]);
       case "call": {
         const options = asRecord(args[2]);
+        if (isBuiltinToolOperation(String(first))) {
+          return deps.builtinTools
+            .call(String(first), {
+              args: args[1] ?? {},
+              automationId: automation.automation_id,
+              automationName: automation.name,
+              runtimeMode: defaults().runtimeMode,
+              requestKey: `${step.run_id}/${step.step_key}`,
+            })
+            .pipe(Effect.map((value): StepOutcome => ({ type: "done", value })));
+        }
         return deps.connections
           .call({
             operation: String(first),
@@ -207,7 +230,9 @@ const startChild = (
         { fix: "Make sure the automations started with w.start don't start their starter again." },
       );
     }
-    const target = yield* deps.store.getAutomationByName(automation.project_id, name);
+    const target =
+      (yield* deps.store.getAutomationByName(automation.project_id, name)) ??
+      (yield* deps.resolveBuiltIn(name, automation));
     if (!target) {
       return yield* explained(`There's no automation named "${name}" in this project.`, {
         fix: "Use the exact meta.name of an automation saved in the same project.",

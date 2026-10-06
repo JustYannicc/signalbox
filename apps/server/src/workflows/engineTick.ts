@@ -19,6 +19,7 @@ import { asRecord } from "./json.ts";
 import type { Change } from "./liveFeed.ts";
 import { isModelVerb, modelResult } from "./modelSteps.ts";
 import type { ReplayQueue } from "./replayQueue.ts";
+import type { RunLinkStore } from "./runLinkStore.ts";
 import type { RunLogs } from "./runLog.ts";
 import type { makeRunFunction } from "./runFunction.ts";
 import { describeDuration, retries, stepOptions, stepTimeoutMs } from "./stepPolicy.ts";
@@ -49,6 +50,7 @@ const THREAD_SWEEP_INTERVAL_MS = 60 * 1000;
 /** What the timed work needs from the engine's run core. */
 export interface EngineCore {
   readonly store: WorkflowStore;
+  readonly links: RunLinkStore;
   readonly threads: ThreadManagementService["Service"];
   readonly services: Context.Context<ThreadManagementService>;
   readonly runFunction: Effect.Success<typeof makeRunFunction>;
@@ -253,6 +255,7 @@ export const makeTimedWork = (core: EngineCore) =>
           yield* core.changed({ kind: "runs", automationId, summary: true });
         const runningRuns = yield* store.runningRuns();
         yield* core.runLogs.sweep(new Set(runningRuns.map((run) => run.run_id)));
+        yield* core.links.prune();
         const running = Map.groupBy(runningRuns, (run) => run.automation_id);
         for (const automation of yield* store.listAutomations()) {
           const keep = new Set([

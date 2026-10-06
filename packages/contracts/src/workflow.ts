@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MAX_WEBHOOK_DELIVERY_AGE_MINUTES } from "./scheduledTask.ts";
 
 export * from "./automationEvents.ts";
 
@@ -23,9 +24,35 @@ export const WorkflowCronTrigger = Schema.Struct({
 });
 export type WorkflowCronTrigger = typeof WorkflowCronTrigger.Type;
 
+/** HMAC-SHA256 over the raw body. The signing secret is set apart from the code and never shown. */
+export const WorkflowWebhookSignature = Schema.Struct({
+  header: TrimmedNonEmptyString.annotate({
+    description: "Request header carrying the signature, such as x-hub-signature-256.",
+  }),
+  encoding: Schema.Literals(["hex", "base64"]).annotate({
+    description: "How the HMAC-SHA256 digest is encoded in the header.",
+  }),
+  prefix: Schema.optional(Schema.String).annotate({
+    description: "Text before the digest in the header value, such as 'sha256='.",
+  }),
+});
+export type WorkflowWebhookSignature = typeof WorkflowWebhookSignature.Type;
+
+export const WorkflowWebhookOptions = Schema.Struct({
+  signature: Schema.optional(WorkflowWebhookSignature),
+  maxDeliveryAgeMinutes: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_WEBHOOK_DELIVERY_AGE_MINUTES })),
+  ).annotate({
+    description:
+      "Skip requests Signalbox Connect held longer than this while the server was offline.",
+  }),
+});
+export type WorkflowWebhookOptions = typeof WorkflowWebhookOptions.Type;
+
 export const WorkflowWebhookTrigger = Schema.Struct({
-  webhook: Schema.Literal(true).annotate({
-    description: "Start a run for every POST to the automation's webhook URL.",
+  webhook: Schema.Union([Schema.Literal(true), WorkflowWebhookOptions]).annotate({
+    description:
+      "Start a run for every request to the automation's webhook URL. An object checks a signature or skips stale held requests.",
   }),
 });
 export type WorkflowWebhookTrigger = typeof WorkflowWebhookTrigger.Type;
@@ -222,6 +249,8 @@ export interface WorkflowEndNode {
   readonly line: number;
   readonly exit: "workflow" | "callback" | "helper";
   readonly done?: boolean | undefined;
+  /** `return w.restart(input)`: the run ends and a fresh run of the automation starts. */
+  readonly restart?: boolean | undefined;
 }
 
 const NodeRef = Schema.suspend((): Schema.Codec<WorkflowNode> => WorkflowNodeSchema);
@@ -280,6 +309,7 @@ export const WorkflowNodeSchema: Schema.Codec<WorkflowNode> = Schema.Union([
     line: Line,
     exit: Schema.Literals(["workflow", "callback", "helper"]),
     done: Schema.optional(Schema.Boolean),
+    restart: Schema.optional(Schema.Boolean),
   }),
 ]);
 

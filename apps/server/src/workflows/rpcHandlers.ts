@@ -4,6 +4,7 @@ import type * as Rpc from "effect/rpc/Rpc";
 import * as Stream from "effect/Stream";
 
 import { observeRpcEffect, observeRpcStream } from "../observability/RpcInstrumentation.ts";
+import { projectDefaults } from "./callerAccess.ts";
 import * as ConnectionSettings from "./connectionSettings.ts";
 import type * as WorkflowEngine from "./WorkflowEngine.ts";
 
@@ -67,11 +68,40 @@ export const automationRpcHandlers = (engine: WorkflowEngine.WorkflowEngine["Ser
       engine.rotateWebhook(input.automationId),
       attributes({ "automation.id": input.automationId }),
     ),
+  [METHODS.automationsSetWebhookSecret]: (
+    input: Payload<typeof METHODS.automationsSetWebhookSecret>,
+  ) =>
+    observeRpcEffect(
+      METHODS.automationsSetWebhookSecret,
+      engine.setWebhookSecret({ automationId: input.automationId, secret: input.secret }),
+      attributes({ "automation.id": input.automationId }),
+    ),
   [METHODS.automationsRunNow]: (input: Payload<typeof METHODS.automationsRunNow>) =>
     observeRpcEffect(
       METHODS.automationsRunNow,
-      engine.startRun({ automationId: input.automationId, input: input.input, trigger: "manual" }),
+      engine.startRun({
+        automationId: input.automationId,
+        input: input.input,
+        trigger: "manual",
+        attach: input.attach,
+      }),
       attributes({ "automation.id": input.automationId }),
+    ),
+  [METHODS.automationsCustomize]: (input: Payload<typeof METHODS.automationsCustomize>) =>
+    observeRpcEffect(
+      METHODS.automationsCustomize,
+      projectDefaults(input.projectId).pipe(
+        Effect.flatMap((defaults) =>
+          engine.customize(input.automationId, { projectId: input.projectId, defaults }),
+        ),
+      ),
+      attributes({ "automation.id": input.automationId }),
+    ),
+  [METHODS.automationsStopAttached]: (input: Payload<typeof METHODS.automationsStopAttached>) =>
+    observeRpcEffect(
+      METHODS.automationsStopAttached,
+      engine.cancelAttached(input.threadId).pipe(Effect.map((cancelled) => ({ cancelled }))),
+      attributes({ "thread.id": input.threadId }),
     ),
   [METHODS.automationsCancelRun]: (input: Payload<typeof METHODS.automationsCancelRun>) =>
     observeRpcEffect(

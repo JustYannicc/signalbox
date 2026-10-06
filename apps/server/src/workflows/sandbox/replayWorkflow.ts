@@ -57,6 +57,8 @@ export interface ReplayLog {
  */
 export type ReplayOutcome = (
   | { readonly type: "completed"; readonly output: unknown }
+  /** The code returned `w.restart(input)`. */
+  | { readonly type: "restart"; readonly input: unknown }
   | { readonly type: "failed"; readonly error: string }
   | { readonly type: "suspended" }
 ) & {
@@ -122,6 +124,7 @@ export async function replayWorkflow(options: ReplayInput): Promise<ReplayOutcom
   const finish = (
     outcome:
       | { type: "completed"; output: unknown }
+      | { type: "restart"; input: unknown }
       | { type: "failed"; error: string }
       | { type: "suspended" },
   ): ReplayOutcome => {
@@ -240,9 +243,15 @@ export async function replayWorkflow(options: ReplayInput): Promise<ReplayOutcom
         state.error.dispose();
         return finish({ type: "failed", error });
       }
-      const output = JSON.parse(context.getString(state.value)) as unknown;
+      const result = JSON.parse(context.getString(state.value)) as
+        | { readonly restart: true; readonly input: unknown }
+        | { readonly restart: false; readonly output: unknown };
       state.value.dispose();
-      return finish({ type: "completed", output });
+      return finish(
+        result.restart
+          ? { type: "restart", input: result.input }
+          : { type: "completed", output: result.output },
+      );
     } finally {
       settleNext.dispose();
       promise.dispose();

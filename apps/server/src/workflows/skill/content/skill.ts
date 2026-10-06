@@ -78,6 +78,8 @@ The validator enforces each one; breaking it fails with the quoted message.
 | Reading an agent's text to find its branch or PR | \`const built = await w.agent(…)\`; use \`built.branch\`, \`built.pullRequest\` |
 | A new agent to fix what the last one did | \`w.agent("Fix it", { prompt, thread: built.threadId })\` continues the same thread |
 | Supervising a long process yourself, turn by turn | an automation that encodes the process |
+| Polling \`gh pr checks\` in a loop to watch CI | \`w.waitFor("…", { on: ["pr.checks.failed", "pr.checks.passed"], where: { number } })\` |
+| A loop that runs for days | \`return w.restart(input)\` every few passes |
 
 ## References
 
@@ -87,7 +89,7 @@ The validator enforces each one; breaking it fails with the quoted message.
 | Branches, loops, concurrency, failures, helpers | \`references/control-flow.md\` |
 | Schedules, webhooks, app events, manual input | \`references/triggers.md\` |
 | Reading a run, fixing and retrying it, drafts | \`references/runs.md\` |
-| Proven shapes: supervising agents, polling, approvals, CLIs | \`references/patterns.md\` |
+| Proven shapes: supervising agents and threads, polling, approvals, CLIs | \`references/patterns.md\` |
 | Complete automations to start from | \`references/examples/\` |
 
 In a harness without these files, \`automation_reference\` returns the same content: call it with no topic for this page, or \`{ topic: "steps" }\` and so on.

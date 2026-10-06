@@ -43,7 +43,7 @@ const automation = (name: string, overrides: Partial<Automation> = {}): Automati
   projectId: "p" as ProjectId,
   triggers: [],
   nextRunAt: null,
-  webhookPath: null,
+  webhook: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   lastRun: null,

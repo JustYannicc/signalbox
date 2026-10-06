@@ -27,6 +27,8 @@ export const EVENTS_SECTION = `\`{ on: "turn.finished" }\` starts a run every ti
 
 ${EVENT_TABLE}
 
+Pull request events come from the pull requests linked to a thread, as Signalbox syncs them from the host: \`pr.updated\` on every sync, and \`pr.merged\`, \`pr.closed\`, \`pr.checks.passed\`, \`pr.checks.failed\`, \`pr.conflicted\` when that becomes true, with the pull request's facts at the top level so \`where: { number: 12 }\` works. Comments and reviews aren't events; read them with \`gh\` in a \`w.run\` function.
+
 \`\`\`ts
 export const meta = {
   name: "Explain failed turns",

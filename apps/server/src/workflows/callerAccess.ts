@@ -1,4 +1,10 @@
-import { OrchestratorMcpFailure, type ModelSelection, type ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  OrchestratorMcpFailure,
+  type AutomationDefaults,
+  type ModelSelection,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -51,6 +57,38 @@ const defaultModelSelection = Effect.fn("workflows.defaultModelSelection")(funct
     resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ??
     getAutoBootstrapThreadModelSelection()
   );
+});
+
+/**
+ * What a person's own action in a client acts with: the project's default
+ * model and full access, since nobody's access is being borrowed.
+ */
+export const projectDefaults = Effect.fn("workflows.projectDefaults")(function* (
+  projectId: ProjectId,
+) {
+  const project = yield* requireProject(projectId);
+  return {
+    modelSelection: yield* defaultModelSelection(project),
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: "default",
+  } satisfies AutomationDefaults;
+});
+
+/**
+ * The defaults a caller's automations act with: its thread's model (the
+ * project's default without a thread) and its modes.
+ */
+export const callerDefaults = Effect.fn("workflows.callerDefaults")(function* (
+  { caller, limits }: Pick<Caller, "caller" | "limits">,
+  projectId: ProjectId,
+) {
+  const modelSelection =
+    caller?.modelSelection ?? (yield* defaultModelSelection(yield* requireProject(projectId)));
+  return {
+    modelSelection,
+    runtimeMode: limits.runtimeMode,
+    interactionMode: limits.interactionMode,
+  } satisfies AutomationDefaults;
 });
 
 /**

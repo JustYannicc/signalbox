@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
+import type { RunLinkRow } from "./runLinkStore.ts";
 import type { AutomationRow, RunRow } from "./WorkflowStore.ts";
 
 /** The run core's entry points, as the modules around the engine call them. */
@@ -17,7 +18,8 @@ export interface Launch {
   /** The run whose `w.start` started this one. */
   readonly parent?: RunRow;
   readonly runId?: string;
-  readonly webhook?: { readonly headers?: unknown; readonly rawBody?: unknown };
+  /** A webhook request's method, headers, query and raw body, for the run's trigger. */
+  readonly webhook?: Readonly<Record<string, unknown>>;
   /** What an event trigger fired on, for the run's trigger. */
   readonly event?: { readonly event: string; readonly eventId: string };
   /** For runs started by another automation's events, which count toward the start depth. */
@@ -28,6 +30,13 @@ export interface Launch {
   readonly retryOf?: RunRow;
   /** Defaults to the live version. */
   readonly version?: number;
+  /** The thread it's attached to and the run it continues (see runLinkStore.ts). */
+  readonly link?: Omit<RunLinkRow, "run_id" | "started_at" | "lineage_id"> & {
+    /** Defaults to the new run itself. */
+    readonly lineage_id?: string;
+  };
+  /** The trigger the code gets, as stored, when a restart carries the previous run's over. */
+  readonly triggerJson?: string;
 }
 
 /** Records a new run and queues its first replay. `duplicate` when a claimed run stood in for it. */

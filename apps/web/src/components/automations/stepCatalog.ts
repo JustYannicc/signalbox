@@ -122,7 +122,7 @@ export const TRIGGER_GROUP: CatalogGroup = {
       "When a webhook arrives",
       "{ webhook: true }",
       WebhookIcon,
-      "Run for every POST to the automation's webhook URL, with its payload as input.",
+      "Run for every request to the automation's webhook URL, with its payload as input.",
     ),
     trigger(
       "event",

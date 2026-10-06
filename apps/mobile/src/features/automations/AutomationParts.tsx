@@ -10,6 +10,7 @@ import { Pressable, View } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { StatusPill } from "../../components/StatusPill";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { STATUS_DOT_CLASS, STATUS_TEXT_CLASS } from "./presentation";
@@ -25,6 +26,18 @@ export function StatusDot(props: {
         props.size === "md" ? "size-2.5" : "size-2",
         STATUS_DOT_CLASS[props.status],
       )}
+    />
+  );
+}
+
+/** Marks an automation whose code ships with Signalbox. */
+export function BuiltInPill() {
+  return (
+    <StatusPill
+      label="Built-in"
+      size="compact"
+      pillClassName="bg-subtle"
+      textClassName="text-foreground-secondary"
     />
   );
 }

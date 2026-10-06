@@ -1,4 +1,10 @@
-import { AutomationRetryVersion, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import {
+  AutomationRetryVersion,
+  AutomationRunAttach,
+  OrchestratorMcpFailure,
+  ProjectId,
+  SecretRef,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
@@ -8,6 +14,7 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as WorkflowEngine from "../WorkflowEngine.ts";
+import { BuiltInList } from "./builtIns.ts";
 import {
   AutomationSummary,
   ReadResult,
@@ -115,15 +122,15 @@ export const AutomationSaveTool = tool("automation_save", {
 export const AutomationListTool = tool("automation_list", {
   title: "List automations",
   description:
-    "Every automation with its project, whether it's on, its triggers, next run, and last run.",
-  success: Schema.Struct({ automations: Schema.Array(AutomationSummary) }),
+    "Every automation with its project, whether it's on, its triggers, next run, and last run, plus the built-in automations Signalbox ships.",
+  success: Schema.Struct({ automations: Schema.Array(AutomationSummary), builtIns: BuiltInList }),
   readonly: true,
 });
 
 export const AutomationReadTool = tool("automation_read", {
   title: "Read automation",
   description:
-    "An automation's live source, its diagram as an outline, the user's original request (intent), its pending draft if any, and its recent runs.",
+    "An automation's live source, its diagram as an outline, the user's original request (intent), its pending draft if any, and its recent runs. Built-ins read by their `builtin:<slug>` id too.",
   parameters: Schema.Struct({ automationId: AutomationId }),
   success: ReadResult,
   readonly: true,
@@ -132,8 +139,15 @@ export const AutomationReadTool = tool("automation_read", {
 export const AutomationRunTool = tool("automation_run", {
   title: "Run automation",
   description:
-    "Start a run now, even while the automation is turned off. `input` is passed to the workflow as its second argument. Refused when the automation runs with more access than you have.",
-  parameters: Schema.Struct({ automationId: AutomationId, input: Schema.optional(Schema.Unknown) }),
+    "Start a run now, even while the automation is turned off. `input` is passed to the workflow as its second argument. With `attach`, the run is bound to a thread: the thread stays in Working while it runs, settling, archiving or stopping the thread cancels it, and a second run with the same key returns the running one. A `builtin:<slug>` id runs the project's customized copy if there is one, else the built-in, in the attached thread's project, else projectId, else yours. Refused when the automation runs with more access than you have.",
+  parameters: Schema.Struct({
+    automationId: AutomationId,
+    input: Schema.optional(Schema.Unknown),
+    attach: Schema.optional(AutomationRunAttach),
+    projectId: Schema.optional(
+      ProjectId.annotate({ description: "Where a built-in runs when it isn't attached." }),
+    ),
+  }),
   success: Schema.Struct({ run: RunSummary }),
   readonly: false,
 });
@@ -214,6 +228,32 @@ export const AutomationEmitTool = tool("automation_emit", {
   readonly: false,
 });
 
+export const AutomationSetWebhookSecretTool = tool("automation_set_webhook_secret", {
+  title: "Set automation webhook secret",
+  description:
+    "Set the signing secret a webhook trigger's `signature` checks requests against. Ask the user for it with request_secret and pass the secretRef you get back; you never see the value, and it is never shown again. Until it's set, signed webhooks turn every request away. Rotating the URL keeps it.",
+  parameters: Schema.Struct({
+    automationId: AutomationId,
+    secretRef: SecretRef.annotate({ description: "From request_secret; it works once." }),
+  }),
+  success: Schema.Struct({ automation: AutomationSummary }),
+  readonly: false,
+});
+
+export const AutomationCustomizeTool = tool("automation_customize", {
+  title: "Customize built-in automation",
+  description:
+    "Make a built-in automation the project's own (projectId, default: your thread's project): its row there stops being built in, or a copy is saved under its name if it never ran there. From then on that project runs its own version wherever the built-in was used; change it with automation_save.",
+  parameters: Schema.Struct({
+    automationId: AutomationId.annotate({
+      description: "The built-in's `builtin:<slug>` id, or the id of its row in a project.",
+    }),
+    projectId: Schema.optional(ProjectId),
+  }),
+  success: Schema.Struct({ automation: AutomationSummary }),
+  readonly: false,
+});
+
 export const AutomationToolkit = Toolkit.make(
   AutomationReferenceTool,
   AutomationValidateTool,
@@ -229,4 +269,6 @@ export const AutomationToolkit = Toolkit.make(
   AutomationDiscardDraftTool,
   AutomationDeleteTool,
   AutomationEmitTool,
+  AutomationSetWebhookSecretTool,
+  AutomationCustomizeTool,
 );

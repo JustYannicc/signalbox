@@ -18,6 +18,7 @@ describe("serviceIdentity", () => {
       kind: "domain",
       domain: "github.com",
     });
+    expect(serviceIdentity("signalbox")).toEqual({ kind: "signalbox", name: "Signalbox" });
     expect(serviceIdentity(undefined)).toBeNull();
   });
 });

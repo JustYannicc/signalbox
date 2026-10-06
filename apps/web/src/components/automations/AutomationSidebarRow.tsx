@@ -23,6 +23,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useRelativeTimeTick } from "../settings/settingsLayout";
 import { SidebarHeaderIconButton } from "../sidebar/SidebarThreadHeader";
+import { Badge } from "../ui/badge";
 import { SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
 import { nextRunLabel } from "./automationFormat";
@@ -126,13 +127,20 @@ export const AutomationSidebarRow = memo(function AutomationSidebarRow(props: {
         onClick={() => open(null)}
       >
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span
-            className={cn(
-              "truncate text-sm",
-              automation.enabled ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
-            )}
-          >
-            {automation.name}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span
+              className={cn(
+                "truncate text-sm",
+                automation.enabled ? "text-sidebar-foreground" : "text-sidebar-muted-foreground",
+              )}
+            >
+              {automation.name}
+            </span>
+            {automation.builtIn ? (
+              <Badge variant="secondary" size="sm">
+                Built-in
+              </Badge>
+            ) : null}
           </span>
           <span className="truncate text-xs font-normal text-sidebar-muted-foreground/70">
             {subtitle}

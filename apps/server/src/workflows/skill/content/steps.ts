@@ -64,6 +64,8 @@ Any HTTP API. JSON bodies are sent and parsed automatically. Any status is a res
 
 A service the user connected in Signalbox through Executor: \`"gmail.users.messages.list"\`, \`"github.get_file_contents"\`, \`"todoist_com.find_tasks"\`. Credentials stay on the server. With several accounts for one service, name one: \`{ connection: "work" }\`. Discover operations with the user's Executor tools. If nothing is connected, the call fails and says where to connect.
 
+\`"signalbox.<tool>"\` calls Signalbox's own tools, the ones you have as MCP tools, with the same arguments and results: \`w.call("Wake the agent", "signalbox.t3_thread_send", { threadId, message, mode: "queue" })\`, \`"signalbox.list_thread_pull_requests"\`, \`"signalbox.t3_thread_read"\`. The automation calls without a thread of its own, so pass \`threadId\` where a tool would default to "this thread", and it can't do more than its runtime mode allows. Tools that need a person or a thread's own session (preview, device, \`delegate_task\`, \`request_secret\`, worktree handoff, the automation tools) aren't available; use the steps instead. A \`clientRequestId\` is filled in per step, so a retried step doesn't send twice.
+
 ### \`w.run(label, fn, ...args)\` → \`fn\`'s result
 
 Runs a top-level function from this file in Node, in the project's folder: anything code can do — parse files, scrape, crunch data, run CLIs (\`git\`, \`gh\`, \`ffmpeg\`) with \`node:child_process\`. Packages the file imports are installed for it. Helpers that only \`w.run\` functions call can use packages too.
@@ -78,8 +80,13 @@ Runs a top-level function from this file in Node, in the project's folder: anyth
 | Step | Returns | Use it to |
 |---|---|---|
 | \`w.sleep(label, duration \\| { until: iso })\` | null | Wait minutes or days; costs nothing while waiting. |
+| \`w.waitFor(label, { on, where?, timeout? })\` | the event (envelope and fields, as a trigger gets it), or null on timeout | Wait for something to happen in Signalbox: \`{ on: ["pr.checks.failed", "pr.merged"], where: { number: pr.number } }\`. \`on\` and \`where\` work like event triggers (\`triggers.md\`); \`on\` must be a literal. Events are kept from the run's start, so one that happens between steps isn't missed; each goes to one waiting step. |
 | \`w.waitFor(label, { event, timeout? })\` | the event's payload, or null on timeout | Wait for a named event, e.g. \`\` \`reply:\${ticket.id}\` \`\`. Agents raise events with the \`automation_emit\` tool. |
 | \`w.recall(label, key)\` | the stored value or null | Memory across runs: cursors, already-handled ids. |
 | \`w.remember(label, key, value)\` | null | Store it. |
-| \`w.start(label, automationName, input?)\` | \`{ runId }\` | Start another automation in the same project (at most 5 deep). |
+| \`w.start(label, automationName, input?)\` | \`{ runId }\` | Start another automation in the same project (at most 5 deep), or a built-in by its name. |
+
+## Starting over
+
+\`return w.restart(input)\` from the workflow ends the run and starts a fresh one of the same automation (its live version) with \`input\` and an empty history. Long-lived loops use it so they don't replay days of steps: watch for a while, then \`return w.restart({ ...input, since })\`. The new run keeps the trigger, the thread it's attached to, and the run that started it. Restarting more than 30 times an hour fails the run, so wait for something before restarting.
 `;

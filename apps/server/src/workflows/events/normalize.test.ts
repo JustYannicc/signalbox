@@ -66,3 +66,42 @@ describe("candidatesFor", () => {
     }),
   );
 });
+
+describe("turn.finished", () => {
+  it.effect("says why a turn stopped, including when a usage limit lifts", () =>
+    Effect.gen(function* () {
+      const [finished] = candidatesFor({
+        id: "event-limit",
+        type: "run.updated",
+        threadId: "thread-1",
+        runId: "run-1",
+        occurredAt: AT,
+        payload: {
+          id: "run-1",
+          threadId: "thread-1",
+          status: "failed",
+          providerInstanceId: "claudeAgent",
+          modelSelection: { instanceId: "claudeAgent", model: "claude-opus" },
+          startedAt: AT,
+          completedAt: AT,
+        },
+      } as never);
+      const fields = yield* finished!.build({
+        shell: Effect.succeed({
+          lastErrorClass: "usage_limit",
+          usageLimitResetAt: "2026-10-06T15:00:00.000Z",
+          branch: null,
+          worktreePath: null,
+        } as never),
+        threads: {
+          getThreadRecords: () => Effect.succeed({ messages: [], turnItems: [] }),
+        } as never,
+      });
+      expect(fields).toMatchObject({
+        status: "failed",
+        errorClass: "usage_limit",
+        usageLimitResetAt: "2026-10-06T15:00:00.000Z",
+      });
+    }),
+  );
+});

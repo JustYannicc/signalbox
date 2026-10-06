@@ -25,4 +25,6 @@ export const AUTOMATION_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>>
   automation_discard_draft: tool(["Discard", "Discarding", "Discarded", "an automation draft"]),
   automation_delete: tool(["Delete", "Deleting", "Deleted", "an automation"]),
   automation_emit: tool(["Send", "Sending", "Sent", "an automation event"]),
+  automation_set_webhook_secret: tool(["Set", "Setting", "Set", "an automation webhook secret"]),
+  automation_customize: tool(["Customize", "Customizing", "Customized", "a built-in automation"]),
 };

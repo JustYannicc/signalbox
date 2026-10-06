@@ -515,6 +515,26 @@ export default workflow(async (w) => {
     expect(!result.ok && result.diagnostics[0]?.message).toContain("invalid cron");
   });
 
+  it("accepts webhook signature options and rejects a malformed one", () => {
+    const withTrigger = (trigger: string) =>
+      compileWorkflow(
+        `export const meta = { name: "x", triggers: [${trigger}] };\nexport default workflow(async (w) => {});`,
+      );
+    const signed = withTrigger(
+      `{ webhook: { signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" }, maxDeliveryAgeMinutes: 60 } }`,
+    );
+    expect(signed.ok && signed.workflow.meta.triggers).toEqual([
+      {
+        webhook: {
+          signature: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" },
+          maxDeliveryAgeMinutes: 60,
+        },
+      },
+    ]);
+    const wrong = withTrigger(`{ webhook: { signature: { header: "x-sig", encoding: "sha1" } } }`);
+    expect(!wrong.ok && wrong.diagnostics[0]?.message).toContain("meta is invalid");
+  });
+
   it("points diagnostics at the offending line", () => {
     const result = compile(`\n\nawait w.agent(42, { prompt: "a" });`);
     expect(!result.ok && result.diagnostics[0]).toMatchObject({ line: 5 });

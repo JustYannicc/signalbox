@@ -41,7 +41,10 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
-  Layer.mock(WorkflowEngine)({ validate: () => ({ ok: true, graph: { nodes: [] } }) }), // signalbox: automations
+  Layer.mock(WorkflowEngine)({
+    validate: () => ({ ok: true, graph: { nodes: [] } }),
+    registerBuiltinTools: () => Effect.void,
+  }), // signalbox: automations
 );
 
 const ToolsListPayload = Schema.fromJsonString(

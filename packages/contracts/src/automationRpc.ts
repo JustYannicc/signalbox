@@ -9,9 +9,10 @@ import {
   AutomationNotice,
   AutomationRetryVersion,
   AutomationRunDetail,
+  AutomationRunAttach,
   AutomationRunSummary,
 } from "./automation.ts";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * WebSocket methods for automations. Spread into `WS_METHODS` and `WsRpcGroup`
@@ -24,7 +25,10 @@ export const AUTOMATION_WS_METHODS = {
   automationsSetEnabled: "automations.setEnabled",
   automationsDelete: "automations.delete",
   automationsRotateWebhook: "automations.rotateWebhook",
+  automationsSetWebhookSecret: "automations.setWebhookSecret",
   automationsRunNow: "automations.runNow",
+  automationsCustomize: "automations.customize",
+  automationsStopAttached: "automations.stopAttached",
   automationsCancelRun: "automations.cancelRun",
   automationsRetryRun: "automations.retryRun",
   automationsPublish: "automations.publish",
@@ -93,9 +97,40 @@ const RotateWebhookRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsRotateWebhook
   error,
 });
 
+/**
+ * Sets or clears (null) the secret a webhook trigger's `signature` checks.
+ * Write-only: it lives in the server's secret store and is never sent back.
+ */
+const SetWebhookSecretRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSetWebhookSecret, {
+  payload: Schema.Struct({
+    automationId: AutomationId,
+    secret: Schema.NullOr(TrimmedNonEmptyString),
+  }),
+  success: Automation,
+  error,
+});
+
 const RunNowRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsRunNow, {
-  payload: Schema.Struct({ automationId: AutomationId, input: Schema.optional(Schema.Unknown) }),
+  payload: Schema.Struct({
+    automationId: AutomationId,
+    input: Schema.optional(Schema.Unknown),
+    attach: Schema.optional(AutomationRunAttach),
+  }),
   success: AutomationRunSummary,
+  error,
+});
+
+/** Makes a built-in automation a project's own, editable automation; the project then runs it instead. */
+const CustomizeRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsCustomize, {
+  payload: Schema.Struct({ automationId: AutomationId, projectId: ProjectId }),
+  success: Automation,
+  error,
+});
+
+/** Stop on a thread: cancels the automation runs attached to it. */
+const StopAttachedRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsStopAttached, {
+  payload: Schema.Struct({ threadId: ThreadId }),
+  success: Schema.Struct({ cancelled: Schema.Int }),
   error,
 });
 
@@ -208,7 +243,10 @@ export const AutomationRpcs = [
   SetEnabledRpc,
   DeleteRpc,
   RotateWebhookRpc,
+  SetWebhookSecretRpc,
   RunNowRpc,
+  CustomizeRpc,
+  StopAttachedRpc,
   CancelRunRpc,
   RetryRunRpc,
   PublishRpc,

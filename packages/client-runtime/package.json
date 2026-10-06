@@ -175,6 +175,10 @@
       "types": "./src/automations/sourceDiff.ts",
       "default": "./src/automations/sourceDiff.ts"
     },
+    "./automations/attached": {
+      "types": "./src/automations/attached.ts",
+      "default": "./src/automations/attached.ts"
+    },
     "./automations/runs": {
       "types": "./src/automations/runs.ts",
       "default": "./src/automations/runs.ts"

@@ -2,6 +2,7 @@ import { WorkflowStepVerb, type WorkflowDetailValue } from "@t3tools/contracts";
 import type { CallExpression, Node } from "oxc-parser";
 
 import { readAskDetail } from "./ask.ts";
+import { eventTriggerProblem } from "./eventTriggers.ts";
 import { detailValue, evaluateLiteral, objectProperties, readString, unwrap } from "./literals.ts";
 import type { WorkflowSource } from "./source.ts";
 
@@ -17,7 +18,7 @@ export const isStepVerb = (verb: string): verb is WorkflowStepVerb => STEP_VERBS
 export const isOutcomeVerb = (verb: string): verb is "judge" | "ask" =>
   verb === "judge" || verb === "ask";
 
-export const VERB_LIST = `${[...STEP_VERBS].join(", ")}, each, repeat, parallel, when, done`;
+export const VERB_LIST = `${[...STEP_VERBS].join(", ")}, each, repeat, parallel, when, done, restart`;
 
 const OPERATION = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_$-]+)+$/;
 const SLEEP_UNITS = new Set(["seconds", "minutes", "hours", "days", "until"]);
@@ -121,6 +122,7 @@ export function readStepDetail(
       if (third) detail.args = detailValue(source, third);
       const connection = fourth ? objectProperties(fourth)?.get("connection") : undefined;
       if (connection) detail.connection = detailValue(source, connection);
+      // `signalbox.<tool>` runs Signalbox's own tools; the rest go through Executor.
       return { detail, service: operation.slice(0, operation.indexOf(".")) };
     }
     case "http": {
@@ -210,17 +212,39 @@ export function readStepDetail(
     case "waitFor": {
       const { detail, properties } = optionsDetail(source, second);
       const example =
-        'w.waitFor("Wait for the reply", { event: `reply:${ticket.id}`, timeout: { days: 3 } })';
+        'w.waitFor("Wait for checks", { on: ["pr.checks.passed", "pr.checks.failed"], where: { number }, timeout: { minutes: 30 } })';
+      const on = properties?.get("on");
       if (
         !ensure(
           source,
           call,
-          properties?.has("event"),
-          "w.waitFor needs the event to wait for.",
+          properties?.has("event") || on,
+          "w.waitFor needs the event to wait for: `on` for Signalbox events, `event` for automation_emit names.",
           example,
         )
       )
         return null;
+      if (on) {
+        // Literal, so the engine knows from the diagram which events to keep for the run.
+        const literal = evaluateLiteral(on);
+        if (!literal.ok) {
+          source.error(
+            on,
+            "`on` must be a literal event name or list, so the run can collect matching events from its start.",
+            example,
+          );
+          return null;
+        }
+        const problem = eventTriggerProblem([{ on: literal.value }]);
+        if (problem) {
+          source.error(
+            on,
+            problem.message.replace("meta.triggers listens for", "w.waitFor waits for"),
+            problem.hint,
+          );
+          return null;
+        }
+      }
       return { detail };
     }
     case "recall":

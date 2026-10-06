@@ -35,8 +35,14 @@ by its name in Executor.
 ## Triggers
 
 - **On a schedule**: the automation's page shows when it runs next.
-- **When a webhook arrives**: copy the URL from the automation's **⋯** menu. Anyone with the URL
-  can start a run, so treat it like a password.
+- **When a webhook arrives**: copy the URL from the automation's **⋯** menu (on mobile, from its
+  page). Anyone with the URL can start a run, so treat it like a password; **New webhook URL**
+  replaces it. With [Signalbox Connect](remote-access.md) the URL is public and, with **Hold
+  webhooks while offline**, requests wait while your server is down, as for
+  [webhook tasks](project-settings.md#webhook-automations). To accept only requests signed by the
+  sender, such as GitHub, ask the agent to require a signature: it asks you for the secret in a
+  private card and never sees it. The automation's agent can tell you which requests were turned
+  away and why.
 - **When something happens**: a turn finishes, you send a message, a thread starts, an agent
   needs you, another automation fails, and more. It works the same whichever agent ran the thread.
   Ask for it in your own words ("when a turn fails, tell me why"). By default it only reacts to

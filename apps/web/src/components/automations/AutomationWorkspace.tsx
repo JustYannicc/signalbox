@@ -1,7 +1,8 @@
 /**
  * The automation page's diagram: the canvas with the run picker and the
- * add-step palette, and the details panel. A run that needs you, or failed,
- * opens with that step selected so the answer or the error is one glance away.
+ * add-step palette (not on a built-in, whose code can't change), and the
+ * details panel. A run that needs you, or failed, opens with that step
+ * selected so the answer or the error is one glance away.
  */
 import type {
   AutomationDetail,
@@ -104,7 +105,9 @@ export function AutomationWorkspace(props: {
                   onSelect={props.onSelectRun}
                   onOpenChat={props.onOpenRunChat}
                 />
-                <AddStepPalette environmentId={environmentId} automation={automation} />
+                {automation.builtIn ? null : (
+                  <AddStepPalette environmentId={environmentId} automation={automation} />
+                )}
               </div>
               {runDetail && runDetail.run.version !== automation.version ? (
                 <CanvasNote>This run used an earlier version of the automation.</CanvasNote>

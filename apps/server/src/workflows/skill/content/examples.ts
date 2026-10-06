@@ -1,8 +1,12 @@
+import { WATCH_PULL_REQUEST } from "../../defaults/watchPullRequest.ts";
+
 /**
  * Complete automations agents start from, installed as `references/examples/<name>`.
  * A test compiles every one, so they stay valid as the SDK changes.
  */
 export const EXAMPLES: Readonly<Record<string, string>> = {
+  // The built-in, exactly as it runs.
+  "watch-pull-request.ts": WATCH_PULL_REQUEST,
   "rss-digest.ts": `import Parser from "rss-parser";
 
 export const meta = {

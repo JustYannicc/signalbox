@@ -234,55 +234,6 @@ it.effect("a cron missed by more than an hour is rescheduled, not run", () =>
   ),
 );
 
-it.effect("webhooks dedupe repeated deliveries, pass headers along, and rotate tokens", () =>
-  withEngine(
-    {},
-    Effect.gen(function* () {
-      const engine = yield* WorkflowEngine;
-      const automation = yield* saveOk(
-        source(
-          "Hook",
-          "return { input, event: trigger.headers['x-github-event'], raw: trigger.rawBody, type: trigger.type };",
-          ", triggers: [{ webhook: true }]",
-        ),
-      );
-      const token = automation.webhookPath!.split("/").at(-1)!;
-      const deliver = (requestKey?: string) =>
-        engine.startFromWebhook({
-          token,
-          payload: { a: 1 },
-          headers: { "x-github-event": "push" },
-          rawBody: '{"a":1}',
-          ...(requestKey ? { requestKey } : {}),
-        });
-      const first = (yield* deliver("evt-1"))!;
-      expect(first.duplicate).toBe(false);
-      expect(yield* deliver("evt-1")).toEqual({ runId: first.runId, duplicate: true });
-      const other = (yield* deliver("evt-2"))!;
-      expect(other.runId).not.toBe(first.runId);
-      yield* engine.drain;
-      expect((yield* engine.getRun(first.runId)).output).toEqual({
-        input: { a: 1 },
-        event: "push",
-        raw: '{"a":1}',
-        type: "webhook",
-      });
-
-      // A day later the sender may reuse the id.
-      yield* TestClock.adjust("25 hours");
-      expect((yield* deliver("evt-1"))!.duplicate).toBe(false);
-
-      const rotated = yield* engine.rotateWebhook(automation.id);
-      expect(rotated.webhookPath).not.toBe(automation.webhookPath);
-      expect(yield* deliver()).toBeNull();
-      const fresh = rotated.webhookPath!.split("/").at(-1)!;
-      expect(yield* engine.startFromWebhook({ token: fresh, payload: null })).not.toBeNull();
-      yield* engine.setEnabled(automation.id, false);
-      expect(yield* engine.startFromWebhook({ token: fresh, payload: null })).toBeNull();
-    }),
-  ),
-);
-
 it.effect("w.start refuses paused or more-privileged automations and stops runaway chains", () =>
   withEngine(
     {},

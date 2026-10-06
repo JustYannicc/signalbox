@@ -660,12 +660,16 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
-      Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
+      Layer.provide(
+        WebhookRoute.layer.pipe(
+          Layer.provide(RelayDeliveryProof.layer),
+          Layer.provide(AutomationHttp.layerWebhookReceiver), // signalbox: automation webhooks
+        ),
+      ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
     AccountHttp.layer, // signalbox: accounts routes
-    AutomationHttp.layer, // signalbox: automation webhooks
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     DeviceHubProxy.layer,

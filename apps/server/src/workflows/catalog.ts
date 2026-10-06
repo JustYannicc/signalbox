@@ -71,8 +71,10 @@ export const makeCatalog = (deps: {
   readonly requireAutomation: (
     automationId: string,
   ) => Effect.Effect<AutomationRow, AutomationError>;
+  /** The Signalbox Connect prefix for webhook URLs, read per view since linking can change. */
+  readonly relayHookBaseUrl: Effect.Effect<string | null>;
 }): CatalogShape => {
-  const { store, newId, changed, requireAutomation } = deps;
+  const { store, newId, changed, requireAutomation, relayHookBaseUrl } = deps;
 
   const versions = new Map<string, VersionView>();
   /** A saved version's file and diagram, read and decoded once. */
@@ -138,6 +140,7 @@ export const makeCatalog = (deps: {
         project_id: input.projectId,
         defaults_json: toJson(input.defaults),
         webhook_token: existing?.webhook_token ?? (yield* newId("hook")),
+        webhook_secret_set: existing?.webhook_secret_set ?? 0,
         created_at: existing?.created_at ?? nowText,
         updated_at: nowText,
         ...liveColumns(meta),
@@ -175,15 +178,17 @@ export const makeCatalog = (deps: {
         ]),
       );
       yield* changed({ kind: "definition", automationId: row.automation_id });
-      return { ok: true, automation: automationView(row, undefined), graph } as const;
+      const base = yield* relayHookBaseUrl;
+      return { ok: true, automation: automationView(row, undefined, [], base), graph } as const;
     });
 
   const list: CatalogShape["list"] = () =>
     Effect.gen(function* () {
       const latest = new Map((yield* store.latestRuns()).map((run) => [run.automation_id, run]));
       const waiting = Map.groupBy(yield* store.waitingQuestions(), (step) => step.automation_id);
+      const base = yield* relayHookBaseUrl;
       return (yield* store.listAutomations()).map((row) =>
-        automationView(row, latest.get(row.automation_id), waiting.get(row.automation_id)),
+        automationView(row, latest.get(row.automation_id), waiting.get(row.automation_id), base),
       );
     });
 
@@ -199,11 +204,23 @@ export const makeCatalog = (deps: {
       if (!version) return yield* fail("This automation's code is missing.", { automationId });
       const runs = yield* store.listRuns(automationId, RUN_HISTORY);
       return {
-        automation: automationView(row, runs[0], yield* store.waitingQuestions(automationId)),
+        automation: automationView(
+          row,
+          runs[0],
+          yield* store.waitingQuestions(automationId),
+          yield* relayHookBaseUrl,
+        ),
         source: version.source,
         graph: version.graph,
         runs: runs.map(runSummary),
         draft: draft ?? null,
+        webhookRejections: (yield* store.webhookRejections(automationId)).map((rejection) => ({
+          receivedAt: rejection.received_at,
+          method: rejection.method,
+          outcome: rejection.outcome,
+          bodyBytes: rejection.body_bytes,
+          relayed: rejection.relayed === 1,
+        })),
       };
     });
 
@@ -234,7 +251,12 @@ export const makeCatalog = (deps: {
       const next = nextRunAt(automationTriggers(row), enabled, now);
       yield* store.setSchedule(automationId, enabled, next, DateTime.formatIso(now));
       yield* changed({ kind: "definition", automationId });
-      return automationView({ ...row, enabled: enabled ? 1 : 0, next_run_at: next }, undefined);
+      return automationView(
+        { ...row, enabled: enabled ? 1 : 0, next_run_at: next },
+        undefined,
+        [],
+        yield* relayHookBaseUrl,
+      );
     });
 
   const rotateWebhook: CatalogShape["rotateWebhook"] = (automationId) =>
@@ -244,10 +266,15 @@ export const makeCatalog = (deps: {
       const now = yield* nowIso;
       yield* store.setWebhookToken(automationId, token, now);
       yield* changed({ kind: "automation", automationId });
-      return automationView({ ...row, webhook_token: token, updated_at: now }, undefined);
+      return automationView(
+        { ...row, webhook_token: token, updated_at: now },
+        undefined,
+        [],
+        yield* relayHookBaseUrl,
+      );
     });
 
-  const drafts = makeDrafts({ store, changed, requireAutomation });
+  const drafts = makeDrafts({ store, changed, requireAutomation, relayHookBaseUrl });
 
   return { validate, save, list, get, getRun, setEnabled, rotateWebhook, ...drafts };
 };

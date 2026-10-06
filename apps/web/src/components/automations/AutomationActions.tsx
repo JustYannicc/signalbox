@@ -1,13 +1,14 @@
 /**
  * The automation page's controls: On/Paused, Run now (or Replay for an
  * automation only a webhook starts, since a run without its payload means
- * little), and an overflow menu: change it with an agent, duplicate, rerun
- * with a run's input, the webhook URL, Delete. Every command reports its own
- * failure.
+ * little), and an overflow menu: change it with an agent (Customize, for a
+ * built-in), duplicate, rerun with a run's input, the webhook URL, Delete.
+ * Every command reports its own failure.
  */
 import type { Automation, AutomationRunDetail, EnvironmentId } from "@t3tools/contracts";
 import { runActions, type RunAction } from "@t3tools/client-runtime/automations/list";
 import { changePrompt, duplicatePrompt } from "@t3tools/client-runtime/automations/prompts";
+import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { useNavigate } from "@tanstack/react-router";
 import {
   CopyIcon,
@@ -15,7 +16,9 @@ import {
   LinkIcon,
   MessageCircleIcon,
   MoreHorizontalIcon,
+  PencilIcon,
   PlayIcon,
+  RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react";
 
@@ -28,6 +31,7 @@ import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { useAutomationAgent } from "./useAutomationAgent";
 import { confirmDestructive, useAutomationCommand } from "./useAutomationCommand";
+import { useCustomizeAutomation } from "./useCustomizeAutomation";
 
 const RUN_ICON: Record<RunAction["id"], typeof PlayIcon> = { run: PlayIcon, replay: HistoryIcon };
 
@@ -44,13 +48,14 @@ export function AutomationActions(props: {
   const setEnabled = useAutomationCommand(automationState.setEnabled, "Couldn't pause it");
   const runNow = useAutomationCommand(automationState.runNow, "Couldn't start a run");
   const remove = useAutomationCommand(automationState.remove, "Couldn't delete the automation");
-  const busy = setEnabled.busy || runNow.busy || remove.busy;
+  const rotate = useAutomationCommand(automationState.rotateWebhook, "Couldn't change the URL");
+  const customize = useCustomizeAutomation(environmentId, automation);
+  const busy = setEnabled.busy || runNow.busy || remove.busy || rotate.busy || customize.busy;
   const askAgent = useAutomationAgent(environmentId, automation);
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
-  const webhookUrl =
-    automation.webhookPath && httpBaseUrl
-      ? new URL(automation.webhookPath, httpBaseUrl).toString()
-      : null;
+  // The Signalbox Connect URL when linked, else the path on this client's address.
+  const webhook = automation.webhook ? webhookAddress(automation.webhook, httpBaseUrl) : null;
+  const webhookUrl = webhook?.copyable ? webhook.address : null;
   const { copyToClipboard } = useCopyToClipboard({
     onCopy: () => toastManager.add({ type: "success", title: "Webhook URL copied" }),
   });
@@ -82,6 +87,13 @@ export function AutomationActions(props: {
     if (!confirmed) return;
     const result = await remove.run({ environmentId, input: { automationId: automation.id } });
     if (result) void navigate({ to: "/automations" });
+  };
+
+  const rotateWebhook = async () => {
+    const confirmed = await confirmDestructive(
+      "Get a new webhook URL? The current one stops working.",
+    );
+    if (confirmed) await rotate.run({ environmentId, input: { automationId: automation.id } });
   };
 
   const LeadIcon = RUN_ICON[lead.id];
@@ -121,10 +133,17 @@ export function AutomationActions(props: {
           <MoreHorizontalIcon />
         </MenuTrigger>
         <MenuPopup align="end">
-          <MenuItem onClick={() => void askAgent(changePrompt(automation))}>
-            <MessageCircleIcon />
-            Change with agent
-          </MenuItem>
+          {automation.builtIn ? (
+            <MenuItem onClick={() => void customize.customize()}>
+              <PencilIcon />
+              Customize
+            </MenuItem>
+          ) : (
+            <MenuItem onClick={() => void askAgent(changePrompt(automation))}>
+              <MessageCircleIcon />
+              Change with agent
+            </MenuItem>
+          )}
           <MenuItem onClick={() => void askAgent(duplicatePrompt(automation))}>
             <CopyIcon />
             Duplicate with agent
@@ -142,7 +161,13 @@ export function AutomationActions(props: {
               Copy webhook URL
             </MenuItem>
           ) : null}
-          {(extra && !unpublished) || webhookUrl ? <MenuSeparator /> : null}
+          {webhook ? (
+            <MenuItem onClick={() => void rotateWebhook()}>
+              <RefreshCwIcon />
+              New webhook URL
+            </MenuItem>
+          ) : null}
+          {(extra && !unpublished) || webhook ? <MenuSeparator /> : null}
           <MenuItem variant="destructive" onClick={() => void destroy()}>
             <Trash2Icon />
             Delete

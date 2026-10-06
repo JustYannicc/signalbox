@@ -16,7 +16,7 @@ import { Alert } from "react-native";
 import { automationState } from "../../state/automations";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-/** Hooks the automation screens share: starting, stopping and retrying runs, pausing, and a ticking clock. */
+/** Hooks the automation screens share: starting, stopping and retrying runs, pausing, customizing, and a ticking clock. */
 
 /** Starts a run, optionally with a past run's input, and opens it. Reports its own failure. */
 export function useStartRun(environmentId: EnvironmentId) {
@@ -119,6 +119,42 @@ export function useStopRun(environmentId: EnvironmentId, runId: string) {
     [cancelRun, environmentId, runId],
   );
   return { stopping, stop };
+}
+
+/**
+ * A built-in's code is Signalbox's. Customize saves an editable copy into its
+ * project, which runs the copy from then on, and opens the copy in its place.
+ */
+export function useCustomize(
+  environmentId: EnvironmentId,
+  automation: Pick<Automation, "id" | "projectId"> | null,
+) {
+  const navigation = useNavigation();
+  const automationId = automation?.id;
+  const projectId = automation?.projectId;
+  const customizeCommand = useAtomCommand(automationState.customize, {
+    label: "automation customize",
+    reportFailure: false,
+  });
+  const [customizing, setCustomizing] = useState(false);
+  const customize = useCallback(async () => {
+    if (automationId === undefined || projectId === undefined) return;
+    setCustomizing(true);
+    void Haptics.selectionAsync();
+    const result = await customizeCommand({
+      environmentId,
+      input: { automationId, projectId },
+    });
+    setCustomizing(false);
+    if (result._tag === "Success") {
+      navigation.dispatch(
+        StackActions.replace("Automation", { environmentId, automationId: result.value.id }),
+      );
+    } else if (!isAtomCommandInterrupted(result)) {
+      Alert.alert("Couldn't customize it", String(squashAtomCommandFailure(result)));
+    }
+  }, [automationId, customizeCommand, environmentId, navigation, projectId]);
+  return { customizing, customize: () => void customize() };
 }
 
 /** On/Off with the switch following your tap until the live list catches up. */

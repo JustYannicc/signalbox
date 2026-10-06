@@ -1387,6 +1387,7 @@ export function threadShellFromProjection(
     activeProviderThreadId: projection.thread.activeProviderThreadId,
     runs: projection.runs,
     pullRequests: projection.thread.pullRequests,
+    threadId: projection.thread.id, // signalbox: automations attached to the thread
   });
   return {
     createdBy: projection.thread.createdBy,
@@ -5322,6 +5323,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     activeProviderThreadId: thread.activeProviderThreadId,
                     hasActiveRun: false,
                     pullRequests: thread.pullRequests,
+                    threadId: thread.id, // signalbox: automations attached to the thread
                   }),
                 } satisfies ProjectionSettlementCandidate;
               }),
@@ -5446,6 +5448,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             activeProviderThreadId: thread.activeProviderThreadId,
             hasActiveRun: row.active_run_id !== null,
             pullRequests: thread.pullRequests,
+            threadId: thread.id, // signalbox: automations attached to the thread
           }),
         ];
         return {

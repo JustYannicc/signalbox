@@ -15,12 +15,29 @@ export interface AutomationEventSpec {
   readonly when: string;
   readonly description: string;
   /** The event's own fields, on top of the envelope. */
-  readonly fields: Readonly<Record<string, string>>;
+  // `| undefined`: TypeScript normalizes the catalog's literal union by adding absent fields as undefined.
+  readonly fields: Readonly<Record<string, string | undefined>>;
   /** The trigger's `from` (people, agents, anyone) filters who caused it. */
   readonly from?: true;
 }
 
 const THREAD = { threadTitle: "the thread's title" } as const;
+/** One pull request's synced facts; derived `pr.*` events carry them at the top level. */
+const PULL_REQUEST = {
+  ...THREAD,
+  repository: "owner/repo",
+  number: "",
+  url: "",
+  title: "",
+  state: "open | closed | merged",
+  isDraft: "",
+  checksState: "passing | failing | pending, or null when the host didn't say",
+  mergeability: "mergeable | conflicting | unknown, or null",
+  reviewDecision: "approved | changes-requested | review-required, or null",
+  headBranch: "",
+  baseBranch: "",
+  headSha: "head commit while upstream's PR watch records it, else null",
+} as const;
 const AUTOMATION = {
   automationId: "the automation's id",
   automationName: "its meta.name",
@@ -85,10 +102,36 @@ export const AUTOMATION_EVENTS = [
     description: "Pull requests linked to a thread were synced: linked, opened, merged, closed.",
     fields: {
       ...THREAD,
-      pullRequests: "[{ repository, number, url, source }]",
+      pullRequests:
+        "[{ repository, number, url, source, …pull request facts }], facts null until first synced",
       branchPullRequest: "{ repository, number, url } found from the branch, or null",
     },
   },
+  ...(
+    [
+      ["pr.merged", "When a pull request merges", "A thread's pull request merged."],
+      [
+        "pr.closed",
+        "When a pull request closes",
+        "A thread's pull request closed without merging.",
+      ],
+      [
+        "pr.checks.passed",
+        "When a pull request's checks pass",
+        "A thread's pull request's checks turned green.",
+      ],
+      [
+        "pr.checks.failed",
+        "When a pull request's checks fail",
+        "A thread's pull request's checks turned red.",
+      ],
+      [
+        "pr.conflicted",
+        "When a pull request conflicts",
+        "A thread's pull request started to conflict with its base.",
+      ],
+    ] as const
+  ).map(([name, when, description]) => ({ name, when, description, fields: PULL_REQUEST })),
   {
     name: "turn.requested",
     when: "When a turn is queued",
@@ -112,6 +155,8 @@ export const AUTOMATION_EVENTS = [
       model: "",
       lastMessage: "the agent's final text (up to 20k chars)",
       error: "why it failed, or null",
+      errorClass: "the provider's failure class, e.g. usage_limit, or null",
+      usageLimitResetAt: "when a usage limit lifts (ISO), or null",
       branch: "",
       worktreePath: "",
       startedAt: "",

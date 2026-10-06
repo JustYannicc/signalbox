@@ -17,7 +17,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { automationState } from "../../state/automations";
 import { useEnvironmentQuery } from "../../state/query";
 import { useOpenAgentDraft } from "./agent-draft";
-import { useStartRun } from "./automation-hooks";
+import { useCustomize, useStartRun } from "./automation-hooks";
 import { AutomationRunChat } from "./AutomationRunChat";
 import { RunDiagram } from "./RunDiagram";
 import { RunStateButton } from "./RunStateButton";
@@ -102,7 +102,7 @@ export function AutomationRunRouteScreen({ route }: StaticScreenProps<RunRoutePa
   );
 }
 
-/** The header's run menu: Run now or Replay by web's rules, and Change with agent. */
+/** The header's run menu: Run now or Replay by web's rules, and Change with agent (Customize, for a built-in). */
 function useRunActionsMenu(
   environmentId: EnvironmentId,
   automation: Automation | null,
@@ -110,6 +110,7 @@ function useRunActionsMenu(
 ) {
   const { starting, start } = useStartRun(environmentId);
   const openDraft = useOpenAgentDraft();
+  const { customizing, customize } = useCustomize(environmentId, automation);
   const actions = automation ? runActions(automation, detail) : null;
   const runMenu = (actions ? [actions.lead, actions.extra] : []).flatMap(
     (action): HeaderMenuAction[] =>
@@ -134,16 +135,24 @@ function useRunActionsMenu(
           {
             id: "agent",
             actions: [
-              {
-                id: "change",
-                title: "Change with agent",
-                icon: "square.and.pencil",
-                onPress: () =>
-                  void openDraft(
-                    { environmentId, projectId: automation.projectId },
-                    changePrompt(automation),
-                  ),
-              },
+              automation.builtIn
+                ? {
+                    id: "customize",
+                    title: "Customize",
+                    icon: "square.and.pencil",
+                    disabled: customizing,
+                    onPress: customize,
+                  }
+                : {
+                    id: "change",
+                    title: "Change with agent",
+                    icon: "square.and.pencil",
+                    onPress: () =>
+                      void openDraft(
+                        { environmentId, projectId: automation.projectId },
+                        changePrompt(automation),
+                      ),
+                  },
             ],
           },
         ]

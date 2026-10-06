@@ -143,6 +143,16 @@ export function createAutomationAtoms<R, E>(
       label: "environment-data:automations:rotate-webhook",
       tag: AUTOMATION_WS_METHODS.automationsRotateWebhook,
     }),
+    /** Sets or clears (null) the webhook signing secret; write-only. Input `{ automationId, secret }`. */
+    setWebhookSecret: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:automations:set-webhook-secret",
+      tag: AUTOMATION_WS_METHODS.automationsSetWebhookSecret,
+    }),
+    /** Saves an editable copy of a built-in into a project and returns it. Input `{ automationId, projectId }`. */
+    customize: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:automations:customize",
+      tag: AUTOMATION_WS_METHODS.automationsCustomize,
+    }),
     runNow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:automations:run-now",
       tag: AUTOMATION_WS_METHODS.automationsRunNow,
