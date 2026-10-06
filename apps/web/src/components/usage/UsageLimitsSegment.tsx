@@ -5,6 +5,7 @@ import {
   type LimitPoolWindow,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { windowRedeem, windowResetCredits } from "@t3tools/shared/usageLimitWindows";
 import { TicketIcon } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState } from "react";
 
@@ -55,8 +56,8 @@ function SegmentPopover({
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
-  const credits =
-    redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const windowCredits = windowResetCredits(account, window.id);
+  const credits = redeem && windowCredits?.availableCount ? windowCredits : null;
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -144,7 +145,8 @@ export function LimitSegment({
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const credits = windowResetCredits(account, window.id)?.availableCount ?? 0;
+  const redeemAt = windowRedeem(account, window.id);
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -209,13 +211,13 @@ export function LimitSegment({
           </div>
         ) : null}
       </PopoverTrigger>
-      {account.redeem ? (
+      {redeemAt ? (
         <RedeemableSegmentPopup
           account={account}
           window={window}
           reset={reset}
           now={now}
-          redeemAt={account.redeem}
+          redeemAt={redeemAt}
           closePopover={() => setOpen(false)}
         />
       ) : (

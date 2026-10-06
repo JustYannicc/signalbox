@@ -160,6 +160,8 @@ export interface LimitAccount {
     readonly sourceId: UsageLimitSourceId;
     readonly accountId: string;
     readonly disabled: boolean;
+    /** The hub's copy needs a new sign-in, even when a native login of the same account works. */
+    readonly signedOut: boolean;
   };
 }
 
@@ -168,6 +170,21 @@ export interface LimitAccount {
  * entry per distinct account. The freshest reads supply windows and credits;
  * native instances supply names and environment labels.
  */
+/**
+ * signalbox: whether `next` should replace `previous`. A read that has
+ * something (windows, per-window credits) beats one that lacks it, so a hub's
+ * signed-out stub never hides a native login's bars; otherwise the fresher
+ * read wins.
+ */
+const prefers = (
+  next: LimitAccount,
+  previous: LimitAccount,
+  has: (account: LimitAccount) => unknown,
+) =>
+  Boolean(has(next)) !== Boolean(has(previous))
+    ? Boolean(has(next))
+    : Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
+
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
@@ -190,7 +207,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     if (
       next.limits.resetCredits &&
       (!previousCredit ||
-        Date.parse(next.limits.checkedAt) > Date.parse(previousCredit.limits.checkedAt))
+        prefers(next, previousCredit, (account) => account.limits.resetCredits?.windows))
     ) {
       creditSources.set(key, next);
     }
@@ -199,7 +216,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accounts.set(key, next);
       return;
     }
-    const fresher = Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
+    const fresher = prefers(next, previous, (account) => account.limits.windows.length > 0);
     // Two instances on one machine sharing an account still name it once.
     const environments = [
       ...previous.environments,
@@ -295,6 +312,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
               sourceId: source.id,
               accountId: account.id,
               disabled: account.disabled === true,
+              signedOut: account.signedOut === true,
             },
           },
         );

@@ -16,6 +16,7 @@ import {
   type LimitPool,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
+import { windowRedeem, windowResetCredits } from "@t3tools/shared/usageLimitWindows";
 import { type ReactNode, useId, useState } from "react";
 import { Linking, Pressable, ScrollView, View } from "react-native";
 import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
@@ -149,7 +150,7 @@ function PoolWindowSummary({
       <View>
         {pool.columns.map(({ account, window }, index) => {
           if (!window) return null;
-          const credits = account.limits.resetCredits?.availableCount ?? 0;
+          const credits = windowResetCredits(account, pool.id)?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
           return (
             <Pressable
@@ -391,6 +392,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
+  // Claude banks 5-hour and full resets apart; this screen is one window, so it redeems that window's own credit.
+  const credits = account ? windowResetCredits(account, windowId) : undefined;
+  const redeem = account ? windowRedeem(account, windowId) : undefined;
   const [revealed, setRevealed] = useState(false);
   return (
     <SettingsScreen title="Account">
@@ -464,14 +468,14 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                 <Text className="text-sm text-foreground-muted">{account.sourceLabel}</Text>
               )}
             </View>
-            {account.redeem && account.limits.resetCredits ? (
+            {redeem && credits ? (
               <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
                 <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>
                 <ResetCredits
-                  key={account.key}
-                  environmentId={account.redeem.environmentId}
-                  input={account.redeem.input}
-                  credits={account.limits.resetCredits}
+                  key={`${account.key}:${windowId}`}
+                  environmentId={redeem.environmentId}
+                  input={redeem.input}
+                  credits={credits}
                   now={now}
                 />
               </View>

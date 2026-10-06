@@ -10,43 +10,13 @@ import { HubAccountActions } from "../accountHub/HubAccountActions";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { barColor, ResetCreditDialog, useResetCredit } from "./UsageLimits";
+import { barColor } from "./UsageLimits";
 import { LimitSegment } from "./UsageLimitsSegment";
-
-/** "Use reset" for an account whose banked credit can be redeemed here; the count is on its bar. */
-function UseReset({ account }: { readonly account: LimitAccount }) {
-  const redeemAt = account.redeem;
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
-  if (!redeemAt || credits === 0) return null;
-  return <UseResetButton redeemAt={redeemAt} />;
-}
-
-function UseResetButton({ redeemAt }: { readonly redeemAt: NonNullable<LimitAccount["redeem"]> }) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
-  return (
-    <>
-      <Button
-        size="xs"
-        variant="outline"
-        disabled={redeem.busy}
-        title={redeem.status ?? undefined}
-        onClick={() => redeem.setConfirming(true)}
-      >
-        {redeem.busy ? "Using…" : "Use reset"}
-      </Button>
-      <ResetCreditDialog
-        open={redeem.confirming}
-        onOpenChange={redeem.setConfirming}
-        onConfirm={() => void redeem.redeem()}
-      />
-    </>
-  );
-}
 
 /**
  * One account: its email and plan, then T3 Code's segment for each window it
- * reports. Where it is signed in and reset times live in the segment popover.
+ * reports. Where it is signed in, reset times, and "Use reset" live in the
+ * segment popover.
  */
 function AccountRow({
   account,
@@ -65,7 +35,7 @@ function AccountRow({
     return [{ poolWindow, window: member.window, reset }];
   });
   const notice = windows.length === 0 ? limitsNotice(account.limits) : null;
-  const signedOut = notice?.startsWith("Signed out") === true;
+  const signedOut = account.hubAccount?.signedOut === true;
 
   return (
     <li className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 py-2.5 md:grid-cols-[minmax(12rem,16rem)_minmax(0,1fr)_auto]">
@@ -81,8 +51,9 @@ function AccountRow({
             </Badge>
           ) : null}
           {signedOut ? (
-            <Badge variant="warning" size="sm">
-              Signed out
+            // A native login of the same account can still work; the hub's copy cannot.
+            <Badge variant="error" size="sm">
+              {windows.length > 0 ? "Signed out in hub" : "Signed out"}
             </Badge>
           ) : null}
         </span>
@@ -108,7 +79,6 @@ function AccountRow({
         )}
       </div>
       <span className="col-start-2 row-start-1 flex items-center justify-end gap-1.5 md:col-start-auto md:row-start-auto">
-        <UseReset account={account} />
         <HubAccountActions account={account} />
       </span>
     </li>

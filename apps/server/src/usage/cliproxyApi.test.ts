@@ -225,6 +225,78 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("reads and redeems a Claude banked reset as the Claude CLI", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) => {
+          expect(request.header?.["User-Agent"]).toMatch(/^claude-cli\//);
+          if (request.url?.endsWith("/api/oauth/profile")) {
+            return { status: 200, body: { organization: { uuid: "org-1" } } };
+          }
+          if (request.url?.endsWith("/reset_rate_limits"))
+            return { status: 200, body: { result: "reset" } };
+          return {
+            status: 200,
+            body: {
+              five_hour: { utilization: 10, resets_at: null },
+              cedar_ember: {
+                eligible: true,
+                grants: [
+                  {
+                    id: "launch-grant",
+                    resets_left: 1,
+                    ends_at: "2099-01-01T00:00:00+00:00",
+                    paused: false,
+                    usable_now: true,
+                    clears: ["five_hour", "seven_day", "seven_day_overage_included"],
+                  },
+                  {
+                    id: "session-grant",
+                    resets_left: 1,
+                    ends_at: "2099-02-01T00:00:00+00:00",
+                    paused: false,
+                    usable_now: true,
+                    clears: ["five_hour"],
+                  },
+                ],
+                next_grant_id: "launch-grant",
+                event_props: { tier: "claude_max_20x" },
+              },
+            },
+          };
+        },
+      });
+      const api = yield* test.api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.plan).toBe("Claude Max 20x Subscription");
+      const credits = account?.usageLimits.resetCredits;
+      expect(credits?.availableCount).toBe(2);
+      // Nothing is at its limit, so a plain "Use reset" would take the narrowest grant.
+      expect(credits?.nextCreditId).toBe("session-grant");
+      // A 5-hour ticket spends the 5-hour reset and keeps the full one for the weekly window.
+      expect(credits?.windows?.find((entry) => entry.windowId === "five_hour")).toEqual({
+        windowId: "five_hour",
+        availableCount: 2,
+        nextCreditId: "session-grant",
+        // The soonest expiry among the window's credits, not the claimed one's.
+        nextExpiresAt: "2099-01-01T00:00:00.000Z",
+      });
+      expect(credits?.windows?.find((entry) => entry.windowId === "seven_day")).toEqual({
+        windowId: "seven_day",
+        availableCount: 1,
+        nextCreditId: "launch-grant",
+        nextExpiresAt: "2099-01-01T00:00:00.000Z",
+      });
+      expect(yield* api.consume(config, account!.id, "launch-grant")).toEqual({ outcome: "reset" });
+      const claim = test.requests.find((request) =>
+        request.body?.url?.endsWith("/api/organizations/org-1/reset_rate_limits"),
+      );
+      expect(claim?.body?.data).toContain('"grant_id":"launch-grant"');
+      expect(test.requests.some((request) => request.path.endsWith("/reset-quota"))).toBe(true);
+    }),
+  );
+
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       const test = fixture();
@@ -348,7 +420,9 @@ describe("CLIProxyAPI built-in management API", () => {
       const api = yield* test.api;
       const [signedOut, cooling] = yield* api.readAccounts(config);
       expect(signedOut?.usageLimits.unavailable?.message).toBe("Signed out. Sign in again.");
+      expect(signedOut?.signedOut).toBe(true);
       expect(cooling?.usageLimits.unavailable?.message).not.toContain("Signed out");
+      expect(cooling?.signedOut).toBeUndefined();
     }),
   );
 

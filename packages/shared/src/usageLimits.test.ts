@@ -379,6 +379,7 @@ describe("pools", () => {
       sourceId: source.id,
       accountId: "chatgpt-siwc-a@example.com.json",
       disabled: false,
+      signedOut: false,
     });
     // Windowless rows add nothing to the pooled bars.
     const claudePool = collectLimitPools(accounts, Date.parse(checkedAt)).find(
