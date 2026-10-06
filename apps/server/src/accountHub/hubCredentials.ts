@@ -7,6 +7,8 @@
  *
  * @module accountHub/hubCredentials
  */
+import * as NodeCrypto from "node:crypto";
+
 import type { ChatGptTransferredProfile } from "@t3tools/contracts";
 
 export const ACCOUNT_HUB_CHATGPT_TYPE = "chatgpt-siwc";
@@ -40,6 +42,34 @@ export function chatGptCredentialFile(profile: ChatGptTransferredProfile, hostId
         : { earliest_refresh_at: Math.floor(credentials.earliestRefreshAt / 1000) }),
       scopes: credentials.scopes,
       ...(credentials.email ? { email: credentials.email } : {}),
+    },
+  } as const;
+}
+
+/** Cursor accounts: kept in the hub so they go with the pool, though the hub never routes them. */
+export const CURSOR_CREDENTIAL_TYPE = "cursor";
+
+export function cursorCredentialFile(credential: {
+  readonly apiKey: string;
+  readonly email?: string | undefined;
+  readonly backendUrl?: string | undefined;
+  readonly apiKeyExpiresAtMs?: number | undefined;
+  readonly createdAtMs: number;
+}) {
+  const key =
+    (credential.email && slug(credential.email)) ||
+    NodeCrypto.createHash("sha256").update(credential.apiKey).digest("hex").slice(0, 12);
+  return {
+    name: `${CURSOR_CREDENTIAL_TYPE}-${key}.json`,
+    content: {
+      type: CURSOR_CREDENTIAL_TYPE,
+      api_key: credential.apiKey,
+      created_at_ms: credential.createdAtMs,
+      ...(credential.email ? { email: credential.email } : {}),
+      ...(credential.backendUrl ? { backend_url: credential.backendUrl } : {}),
+      ...(credential.apiKeyExpiresAtMs === undefined
+        ? {}
+        : { api_key_expires_at_ms: credential.apiKeyExpiresAtMs }),
     },
   } as const;
 }

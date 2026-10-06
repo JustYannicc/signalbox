@@ -723,6 +723,18 @@ export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const CursorSettings = makeProviderSettingsSchema(
   {
+    // signalbox: "hub" runs this harness on an account pool's credentials.
+    setupMode: Schema.optionalKey(Schema.Literals(["existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: bumped when the hub changes, so the instance is rebuilt against it.
+    hubRevision: Schema.optionalKey(Schema.Number).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     // Off by default like Grok and OpenCode. Users opt in from Settings.
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
@@ -826,6 +838,8 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         description:
           "Google accounts use your subscription; API keys and Agent Platform bill usage.",
         providerSettingsForm: {
+          // signalbox: no native sign-in; Antigravity accounts and Gemini keys go into a pool.
+          hidden: true,
           control: "select",
           options: ANTIGRAVITY_AUTH_METHODS,
           clearWhenEmpty: "omit",
@@ -838,6 +852,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         title: "API key",
         description: "Gemini or Vertex AI express key. Stored in plain text.",
         providerSettingsForm: {
+          hidden: true, // signalbox: Gemini keys go into a pool.
           control: "password",
           placeholder: "Optional",
           clearWhenEmpty: "omit",
@@ -980,6 +995,18 @@ export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
 
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
+    // signalbox: "hub" runs this harness on an account pool's credentials.
+    setupMode: Schema.optionalKey(Schema.Literals(["existing", "hub"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: bumped when the hub changes, so the instance is rebuilt against it.
+    hubRevision: Schema.optionalKey(Schema.Number).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     // Off by default (like Cursor and Grok): the binding is not yet stable
     // enough to probe on every install. Users opt in from Settings.
     enabled: Schema.Boolean.pipe(

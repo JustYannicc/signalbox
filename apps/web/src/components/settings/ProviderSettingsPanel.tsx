@@ -1,4 +1,6 @@
 import { HubInstanceSetup } from "../accountHub/HubInstanceSetup"; // signalbox
+import { MoveNativeLogins } from "../accountPool/MoveNativeLogins"; // signalbox
+import { NativeProviderSetup } from "../accountPool/NativeProviderSetup"; // signalbox
 import { isHubInstanceConfig } from "../accountHub/hubInstances"; // signalbox
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -1073,6 +1075,13 @@ export function EnvironmentProviderSettings({
               provider={liveProvider}
               readOnly={readOnly}
             />
+          ) : mode === "editor" && row.driver !== "acpRegistry" ? (
+            // signalbox: no native sign-in; a signed-in provider can move into a pool.
+            <NativeProviderSetup
+              environmentId={environmentId}
+              instanceId={row.instanceId}
+              provider={liveProvider}
+            />
           ) : mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection
               environmentId={environmentId}
@@ -1268,6 +1277,7 @@ export function EnvironmentProviderSettings({
             />
           </SettingsGroup>
         ) : null}
+        {readOnly ? null : <MoveNativeLogins environmentId={environmentId} framed />}
         <SettingsGroup
           divided={false}
           className={cn(

@@ -12,6 +12,9 @@
  */
 import {
   type AccountPool,
+  type AccountPoolAddApiKeyInput,
+  type AccountPoolMoveNativeLoginsInput,
+  type AccountPoolMoveNativeLoginsResult,
   type AccountPoolCreateInput,
   type AccountPoolImportInput,
   type AccountPoolRenameInput,
@@ -43,8 +46,20 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
 import * as Settings from "../serverSettings.ts";
+import { HttpClient } from "effect/http";
+
+import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as AccountHub from "./AccountHub.ts";
 import { AccountHubError } from "./accountHubManagement.ts";
+import {
+  configuredModels,
+  hubModels,
+  openCodeConfigPath,
+  openCodeInstanceDirectory,
+  sameModels,
+} from "./hubOpenCode.ts";
+import * as PoolCredentials from "./poolCredentials.ts";
+import { type PoolInstanceKind, withPoolInstances } from "./poolInstances.ts";
 
 type Hub = AccountHub.AccountHub["Service"];
 
@@ -82,11 +97,17 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const settings = yield* Settings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
+  const http = yield* HttpClient.HttpClient;
   const personalHub = yield* AccountHub.AccountHub;
   // Everything a hub needs, so pools created later get the same services.
   const hubContext =
     yield* Effect.context<
       Exclude<Effect.Services<ReturnType<typeof AccountHub.makeAccountHub>>, Scope.Scope>
+    >();
+  // What reading native logins needs (keychain, Signalbox's own stored sign-ins).
+  const moveContext =
+    yield* Effect.context<
+      Exclude<Effect.Services<ReturnType<typeof PoolCredentials.moveNativeLogins>>, Scope.Scope>
     >();
 
   // Every hub's coming up, going down, and account changes, for usage limits to re-read.
@@ -265,6 +286,56 @@ const make = Effect.gen(function* () {
       )
       .pipe(Effect.mapError(fail("Could not rename the pool.")));
 
+  // The pool providers that run `kinds`, added where missing.
+  const addPoolInstances = (pool: PoolEntry, kinds: Iterable<PoolInstanceKind>) =>
+    settings.getSettings.pipe(
+      Effect.flatMap((current) =>
+        settings.updateSettings({
+          providerInstances: withPoolInstances(current.providerInstances, pool, kinds),
+        }),
+      ),
+    );
+
+  const addApiKey = (input: AccountPoolAddApiKeyInput) =>
+    gate
+      .withPermit(
+        Effect.gen(function* () {
+          const pool = yield* entry(input.poolId);
+          const kind = yield* PoolCredentials.addApiKey(pool.hub, input);
+          yield* addPoolInstances(pool, [kind]);
+        }),
+      )
+      .pipe(Effect.mapError(fail("Could not add the API key.")));
+
+  const moveNativeLogins = (
+    input: AccountPoolMoveNativeLoginsInput,
+  ): Effect.Effect<AccountPoolMoveNativeLoginsResult, AccountHubError> =>
+    gate
+      .withPermit(
+        Effect.gen(function* () {
+          const pool = yield* entry(input.poolId);
+          const instances = deriveProviderInstanceConfigMap(yield* settings.getSettings);
+          const { moved, failed, kinds } = yield* PoolCredentials.moveNativeLogins(
+            pool.hub,
+            instances,
+            input.instanceIds,
+          ).pipe(Effect.provideContext(moveContext));
+          if (moved.length > 0) {
+            // Read again: the moves above may have changed settings (a cleared sign-in).
+            const current = yield* settings.getSettings;
+            const next = withPoolInstances(current.providerInstances, pool, kinds);
+            // The native instances go off, so nothing refreshes those logins but the pool.
+            for (const instanceId of moved) {
+              const instance = next[instanceId] ?? instances[instanceId];
+              if (instance) next[instanceId] = { ...instance, enabled: false };
+            }
+            yield* settings.updateSettings({ providerInstances: next });
+          }
+          return { moved, failed };
+        }),
+      )
+      .pipe(Effect.mapError(fail("Could not move the sign-ins.")));
+
   const remove = (poolId: string) =>
     gate
       .withPermit(
@@ -330,6 +401,59 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // OpenCode lists only the models its config names. When a pool's hub serves different
+  // models than an OpenCode instance was built with, rebuild that instance.
+  const syncOpenCodeModels = Effect.gen(function* () {
+    const current = yield* settings.getSettings;
+    const stale = new Set<string>();
+    for (const pool of yield* Ref.get(entries)) {
+      const instanceIds = Object.entries(current.providerInstances)
+        .filter(
+          ([, instance]) =>
+            instance.driver === "opencode" && isHubInstanceOf(instance.config, pool.id),
+        )
+        .map(([id]) => id);
+      if (instanceIds.length === 0) continue;
+      const endpoint = yield* pool.hub.endpoint;
+      if (Option.isNone(endpoint)) continue;
+      const served = yield* hubModels(endpoint.value).pipe(Effect.option);
+      if (Option.isNone(served)) continue;
+      for (const id of instanceIds) {
+        const listed = yield* configuredModels(
+          openCodeConfigPath(path, openCodeInstanceDirectory(path, config.stateDir, id)),
+        );
+        if (!sameModels(listed, served.value)) stale.add(id);
+      }
+    }
+    if (stale.size === 0) return;
+    const revision = yield* Clock.currentTimeMillis;
+    yield* settings.updateSettings({
+      providerInstances: Object.fromEntries(
+        Object.entries(current.providerInstances).map(([id, instance]) => [
+          id,
+          stale.has(id)
+            ? { ...instance, config: { ...(instance.config as object), hubRevision: revision } }
+            : instance,
+        ]),
+      ),
+    });
+  }).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(HttpClient.HttpClient, http),
+    Effect.ignoreCause({ log: true }),
+  );
+  yield* Stream.merge(
+    Stream.merge(Stream.fromPubSub(activity), Stream.fromPubSub(changed)),
+    settings.streamChanges.pipe(
+      Stream.map((next) => next.providerInstances),
+      Stream.changes,
+    ),
+  ).pipe(
+    Stream.debounce("1 second"),
+    Stream.runForEach(() => syncOpenCodeModels),
+    Effect.forkScoped,
+  );
+
   return AccountPools.of({
     list,
     // Subscribed before the first read, so a change in between is not missed.
@@ -376,6 +500,8 @@ const make = Effect.gen(function* () {
     remove,
     setBacking,
     importAccounts,
+    addApiKey,
+    moveNativeLogins,
   });
 });
 
@@ -405,6 +531,12 @@ export class AccountPools extends Context.Service<
     readonly setBacking: (
       input: AccountPoolSetBackingInput,
     ) => Effect.Effect<AccountPool, AccountHubError>;
+    /** Adds a pasted API key, and the pool provider that uses it when missing. */
+    readonly addApiKey: (input: AccountPoolAddApiKeyInput) => Effect.Effect<void, AccountHubError>;
+    /** Moves native logins into a pool and turns their instances off. */
+    readonly moveNativeLogins: (
+      input: AccountPoolMoveNativeLoginsInput,
+    ) => Effect.Effect<AccountPoolMoveNativeLoginsResult, AccountHubError>;
     readonly importAccounts: (
       input: AccountPoolImportInput,
     ) => Effect.Effect<AccountHubImportResult, AccountHubError>;

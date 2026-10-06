@@ -1,6 +1,7 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-import type { AccountPool } from "@t3tools/contracts/accountHub";
+import { ProviderDriverKind, ProviderInstanceId, type EnvironmentId } from "@t3tools/contracts";
+import { PERSONAL_POOL_ID, poolInstanceId, type AccountPool } from "@t3tools/contracts/accountHub";
 import {
+  CodeIcon,
   DownloadIcon,
   EllipsisIcon,
   PencilIcon,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useAccountPools } from "../../state/accountPools";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -27,7 +29,47 @@ import {
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import { MoveNativeLogins } from "./MoveNativeLogins";
 import { failureText, PoolBackingDialog, PoolImportDialog, PoolNameDialog } from "./PoolDialogs";
+
+/**
+ * Runs OpenCode on a pool, or stops. OpenCode then offers every model the
+ * pool serves, through the pool's own hub.
+ */
+function useOpenCodeOnPool(environmentId: EnvironmentId) {
+  const instances = useEnvironmentSettings(environmentId, (settings) => settings.providerInstances);
+  const update = useAtomCommand(serverEnvironment.updateSettings, "Change OpenCode");
+  return {
+    isOn: (pool: AccountPool) => poolInstanceId("opencode", pool.id) in instances,
+    set: (pool: AccountPool, on: boolean) => {
+      const id = ProviderInstanceId.make(poolInstanceId("opencode", pool.id));
+      const { [id]: _previous, ...rest } = instances;
+      void update({
+        environmentId,
+        input: {
+          patch: {
+            providerInstances: on
+              ? {
+                  ...instances,
+                  [id]: {
+                    driver: ProviderDriverKind.make("opencode"),
+                    displayName:
+                      pool.id === PERSONAL_POOL_ID ? "OpenCode" : `OpenCode · ${pool.name}`,
+                    enabled: true,
+                    config: {
+                      enabled: true,
+                      setupMode: "hub",
+                      ...(pool.id === PERSONAL_POOL_ID ? {} : { poolId: pool.id }),
+                    },
+                  },
+                }
+              : rest,
+          },
+        },
+      });
+    },
+  };
+}
 
 type Editing =
   | { readonly kind: "create" }
@@ -91,12 +133,17 @@ export function PoolsSettings() {
   // Pools belong to one environment; the settings scope picks which.
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
+  return environmentId ? <EnvironmentPools environmentId={environmentId} /> : null;
+}
+
+function EnvironmentPools({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const pools = useAccountPools(environmentId);
+  const openCode = useOpenCodeOnPool(environmentId);
   const [editing, setEditing] = useState<Editing | null>(null);
   const close = () => setEditing(null);
-  if (!environmentId) return null;
   return (
     <SettingsPageContainer>
+      <MoveNativeLogins environmentId={environmentId} framed />
       <SettingsSection
         id="pools"
         title="Pools"
@@ -132,6 +179,10 @@ export function PoolsSettings() {
                   <MenuItem onClick={() => setEditing({ kind: "import", pool })}>
                     <DownloadIcon aria-hidden />
                     Import from CLIProxyAPI
+                  </MenuItem>
+                  <MenuItem onClick={() => openCode.set(pool, !openCode.isOn(pool))}>
+                    <CodeIcon aria-hidden />
+                    {openCode.isOn(pool) ? "Stop using with OpenCode" : "Use with OpenCode"}
                   </MenuItem>
                   {pool.personal ? null : (
                     <>

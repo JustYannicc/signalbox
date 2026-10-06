@@ -1,6 +1,6 @@
 /**
- * Claude, Grok, and Antigravity instances whose requests go through the
- * account hub, so every account added to the hub for that provider is pooled.
+ * Claude, Grok, Antigravity, Cursor, and OpenCode instances that run on an
+ * account pool, so every account added to the pool for that provider is used.
  *
  * Each harness runs unmodified, exactly like any other instance of its
  * driver, only pointed at the hub with the hub's client key. Accounts are
@@ -9,21 +9,35 @@
  *
  * @module accountHub/HubDriverInstance
  */
-import type {
-  AntigravitySettings,
-  ClaudeSettings,
-  GrokSettings,
+import {
   ProviderDriverKind,
-  ProviderInstanceEnvironment,
+  type AntigravitySettings,
+  type ClaudeSettings,
+  type CursorSettings,
+  type GrokSettings,
+  type OpenCodeSettings,
+  type ProviderInstanceEnvironment,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { HttpClient } from "effect/http";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
 import { ProviderDriverError } from "../provider/Errors.ts";
 import type { ProviderDriverCreateInput, ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as AccountHub from "./AccountHub.ts";
 import type { AccountHubEndpoint, AccountHubOAuthProvider } from "./accountHubManagement.ts";
+import { CursorPoolCredentials, makeCursorPoolSignIn, makeCursorPoolStore } from "./hubCursor.ts";
+import {
+  OPENCODE_POOL_KEY_VARIABLE,
+  hubModels,
+  openCodeConfigPath,
+  openCodeInstanceDirectory,
+  renderOpenCodeConfig,
+} from "./hubOpenCode.ts";
 import { makeHubSignIn } from "./hubSignIn.ts";
 
 type Variables = Readonly<Record<string, { readonly value: string; readonly sensitive?: boolean }>>;
@@ -68,6 +82,8 @@ const hubGrokVariables = (hub: AccountHubEndpoint, home: string): Variables => (
 const hubAntigravityVariables = (hub: AccountHubEndpoint): Variables => ({
   GOOGLE_GEMINI_BASE_URL: { value: hub.baseUrl },
 });
+
+const DRIVER_OPENCODE = ProviderDriverKind.make("opencode");
 
 const make = <C, E, R>(options: {
   readonly driver: ProviderDriverKind;
@@ -172,4 +188,134 @@ export const makeHubAntigravityInstance = <E, R>(
         },
         variables: hubAntigravityVariables(hub),
       }),
+  });
+
+/**
+ * Cursor on a pool: the driver reads the pool's Cursor accounts instead of its
+ * own sign-in, and a machine-wide `CURSOR_API_KEY` never reaches it.
+ */
+export const makeHubCursorInstance = <E, R>(
+  input: ProviderDriverCreateInput<CursorSettings>,
+  create: (
+    input: ProviderDriverCreateInput<CursorSettings>,
+  ) => Effect.Effect<ProviderInstance, E, R>,
+) =>
+  Effect.gen(function* () {
+    const hub = yield* AccountHub.AccountHub;
+    if (input.enabled) {
+      yield* hub.ensureRunning.pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
+    }
+    const store = yield* makeCursorPoolStore(hub);
+    const instance = yield* create({
+      ...input,
+      config: { ...input.config, setupMode: "existing" as const },
+      environment: withHubVariables(input.environment, { CURSOR_API_KEY: { value: "" } }),
+    }).pipe(
+      Effect.provideService(CursorPoolCredentials, {
+        store,
+        binding: { owner: "t3", key: `account-hub:${input.instanceId}` },
+      }),
+    );
+    const auth = yield* makeCursorPoolSignIn({
+      hub,
+      instanceId: input.instanceId,
+      displayName: input.displayName ?? "Cursor",
+    });
+    return { ...instance, auth } satisfies ProviderInstance;
+  });
+
+// Keys OpenCode would otherwise pick up from the server's environment.
+const OPENCODE_BLANKED = [
+  "OPENCODE_API_KEY",
+  "OPENCODE_AUTH_CONTENT",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "XAI_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "OPENROUTER_API_KEY",
+] as const;
+
+/**
+ * OpenCode on a pool: its only provider is the pool's hub, and its config and
+ * data live in a directory of its own. An external OpenCode server would skip
+ * all of that, so a pool instance always runs its own.
+ */
+export const makeHubOpenCodeInstance = <E, R>(
+  input: ProviderDriverCreateInput<OpenCodeSettings>,
+  create: (
+    input: ProviderDriverCreateInput<OpenCodeSettings>,
+  ) => Effect.Effect<ProviderInstance, E, R>,
+) =>
+  Effect.gen(function* () {
+    const hub = yield* AccountHub.AccountHub;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const http = yield* HttpClient.HttpClient;
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const { instanceId } = input;
+    const endpoint = yield* hub.plannedEndpoint.pipe(
+      Effect.mapError(
+        (error) =>
+          new ProviderDriverError({ driver: DRIVER_OPENCODE, instanceId, detail: error.detail }),
+      ),
+    );
+    const directory = openCodeInstanceDirectory(path, stateDir, instanceId);
+    const configPath = openCodeConfigPath(path, directory);
+    // A running hub names its models now; otherwise the last list stands until it comes up.
+    const running = yield* hub.endpoint;
+    const models = Option.isSome(running)
+      ? yield* hubModels(running.value).pipe(
+          Effect.provideService(HttpClient.HttpClient, http),
+          Effect.option,
+        )
+      : Option.none();
+    const hasConfig = yield* fs.exists(configPath).pipe(Effect.orElseSucceed(() => false));
+    if (Option.isSome(models) || !hasConfig) {
+      yield* fs.makeDirectory(directory, { recursive: true }).pipe(
+        Effect.andThen(
+          writeFileStringAtomically({
+            filePath: configPath,
+            contents: renderOpenCodeConfig({
+              baseUrl: endpoint.baseUrl,
+              name: input.displayName ?? "Pool",
+              models: Option.getOrElse(models, () => []),
+            }),
+          }),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_OPENCODE,
+              instanceId,
+              detail: "Could not write the OpenCode pool configuration.",
+              cause,
+            }),
+        ),
+      );
+    }
+    if (input.enabled) {
+      yield* hub.ensureRunning.pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
+    }
+    const variables: Variables = {
+      XDG_CONFIG_HOME: { value: path.join(directory, "config") },
+      XDG_DATA_HOME: { value: path.join(directory, "data") },
+      XDG_STATE_HOME: { value: path.join(directory, "state") },
+      XDG_CACHE_HOME: { value: path.join(directory, "cache") },
+      OPENCODE_CONFIG: { value: configPath },
+      // Replaces any inline config the server's environment carries.
+      OPENCODE_CONFIG_CONTENT: { value: "{}" },
+      [OPENCODE_POOL_KEY_VARIABLE]: { value: endpoint.clientKey, sensitive: true },
+      ...Object.fromEntries(OPENCODE_BLANKED.map((name) => [name, { value: "" }])),
+    };
+    return yield* create({
+      ...input,
+      config: {
+        ...input.config,
+        setupMode: "existing" as const,
+        serverUrl: "",
+        serverPassword: "",
+      },
+      environment: withHubVariables(input.environment, variables),
+    });
   });

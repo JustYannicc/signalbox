@@ -11,6 +11,8 @@ import {
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 
+import { NATIVE_SIGN_IN } from "../accountPool/nativeLogins"; // signalbox
+
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
 } & Schema.Top;
@@ -61,15 +63,18 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("cursor"),
     label: "Cursor",
     settingsSchema: CursorSettings,
-    environmentFields: [
-      {
-        name: "CURSOR_API_KEY",
-        label: "Cursor API key",
-        description: "Optional. Overrides browser sign-in for this provider.",
-        placeholder: "Paste API key",
-        sensitive: true,
-      },
-    ],
+    // signalbox: a key here would be a native login; Cursor keys go into a pool.
+    environmentFields: NATIVE_SIGN_IN
+      ? [
+          {
+            name: "CURSOR_API_KEY",
+            label: "Cursor API key",
+            description: "Optional. Overrides browser sign-in for this provider.",
+            placeholder: "Paste API key",
+            sensitive: true,
+          },
+        ]
+      : [],
   },
   {
     value: ProviderDriverKind.make("grok"),

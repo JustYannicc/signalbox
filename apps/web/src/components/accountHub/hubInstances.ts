@@ -27,6 +27,11 @@ export const HUB_INSTANCES = {
     displayName: "Antigravity",
     account: "Antigravity",
   },
+  cursor: {
+    driver: ProviderDriverKind.make("cursor"),
+    displayName: "Cursor",
+    account: "Cursor",
+  },
 } as const;
 
 export type HubAccountKind = keyof typeof HUB_INSTANCES;

@@ -74,12 +74,8 @@ export function getProviderStatusMessage(status: ServerProvider): string {
     return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
   }
   if (status.auth.status === "unauthenticated") {
-    if (hasProviderSetup(status)) {
-      return status.driver === "antigravity"
-        ? "Open provider setup to sign in with Google."
-        : "Open provider setup to sign in.";
-    }
-    return "Sign in via the CLI to authenticate again.";
+    // signalbox: accounts live in pools; nothing signs in on the server machine.
+    return "Add an account to its pool from Usage → Limits.";
   }
   return status.status === "ready"
     ? "No models are available for this provider."

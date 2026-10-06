@@ -53,7 +53,7 @@ const Status = Schema.Struct({
 const decodeAuthUrl = Schema.decodeUnknownEffect(AuthUrl);
 const decodeStatus = Schema.decodeUnknownEffect(Status);
 
-type ManagementEndpoint = Pick<AccountHubEndpoint, "baseUrl" | "managementKey">;
+export type ManagementEndpoint = Pick<AccountHubEndpoint, "baseUrl" | "managementKey">;
 
 const hostOf = (endpoint: ManagementEndpoint) =>
   URL.canParse(endpoint.baseUrl) ? new URL(endpoint.baseUrl).host : endpoint.baseUrl;
@@ -86,9 +86,9 @@ const unreachable = (endpoint: ManagementEndpoint, cause: unknown) => {
  * One management call. Network, TLS, timeout, and rejected-key failures all
  * surface here with the host named, so every caller reports the real problem.
  */
-const send = (
+export const send = (
   endpoint: ManagementEndpoint,
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   withBody: (
     request: HttpClientRequest.HttpClientRequest,

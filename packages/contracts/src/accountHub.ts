@@ -151,6 +151,51 @@ export const AccountPoolOverview = Schema.Struct({
 });
 export type AccountPoolOverview = typeof AccountPoolOverview.Type;
 
+/**
+ * API keys a pool takes. The hub routes every kind but Cursor, whose key is
+ * handed to the pool's Cursor provider per turn instead.
+ */
+export const POOL_API_KEY_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "xai",
+  "gemini",
+  "openrouter",
+  "openai-compatible",
+  "cursor",
+] as const;
+export const PoolApiKeyProvider = Schema.Literals(POOL_API_KEY_PROVIDERS);
+export type PoolApiKeyProvider = typeof PoolApiKeyProvider.Type;
+
+export const AccountPoolAddApiKeyInput = Schema.Struct({
+  poolId: AccountPoolId,
+  provider: PoolApiKeyProvider,
+  apiKey: HubKey,
+  /** Required for `openai-compatible`: where the endpoint answers, such as `https://host/v1`. */
+  baseUrl: Schema.optional(HubUrl),
+});
+export type AccountPoolAddApiKeyInput = typeof AccountPoolAddApiKeyInput.Type;
+
+/**
+ * Moves the logins of provider instances that sign in on the server machine
+ * (native logins) into a pool. Each instance is turned off once its login is
+ * in the pool, so the pool is the only place that refreshes it.
+ */
+export const AccountPoolMoveNativeLoginsInput = Schema.Struct({
+  poolId: AccountPoolId,
+  instanceIds: Schema.Array(ProviderInstanceId).check(Schema.isMinLength(1)),
+});
+export type AccountPoolMoveNativeLoginsInput = typeof AccountPoolMoveNativeLoginsInput.Type;
+
+export const AccountPoolMoveNativeLoginsResult = Schema.Struct({
+  moved: Schema.Array(ProviderInstanceId),
+  failed: Schema.Array(Schema.Struct({ instanceId: ProviderInstanceId, reason: Schema.String })),
+});
+export type AccountPoolMoveNativeLoginsResult = typeof AccountPoolMoveNativeLoginsResult.Type;
+
+/** Drivers whose native login can move into a pool. */
+export const MOVABLE_NATIVE_DRIVERS: ReadonlyArray<string> = ["claudeAgent", "codex", "cursor"];
+
 /** The usage limit source a pool's accounts report under. */
 export const poolSourceId = (poolId: string) =>
   UsageLimitSourceId.make(
@@ -174,6 +219,9 @@ export const hubInstancePoolId = (config: unknown): string | null => {
     : PERSONAL_POOL_ID;
 };
 
-/** The provider instance id of a pool's instance for one kind (`codex`, `claude`, `grok`, `antigravity`). */
+/**
+ * The provider instance id of a pool's instance for one kind (`codex`,
+ * `claude`, `grok`, `antigravity`, `cursor`, `opencode`).
+ */
 export const poolInstanceId = (kind: string, poolId: string) =>
   poolId === PERSONAL_POOL_ID ? `${kind}_hub` : `${kind}_hub_${poolId}`;

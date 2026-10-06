@@ -1175,6 +1175,18 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.poolId]),
       },
     }),
+    addAccountPoolApiKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:add-account-pool-api-key",
+      tag: WS_METHODS.accountPoolAddApiKey,
+    }),
+    moveNativeLogins: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:move-native-logins",
+      tag: WS_METHODS.accountPoolMoveNativeLogins,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     updateUsageLimitSourceAccount: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-usage-limit-source-account",
       tag: WS_METHODS.usageLimitSourceUpdateAccount,
