@@ -29,7 +29,7 @@ import { makeHubSignIn } from "./hubSignIn.ts";
 type Variables = Readonly<Record<string, { readonly value: string; readonly sensitive?: boolean }>>;
 
 /** The instance environment with the hub's variables set, replacing any the user set. */
-export function withHubVariables(
+function withHubVariables(
   environment: ProviderInstanceEnvironment | undefined,
   variables: Variables,
 ): ProviderInstanceEnvironment {
@@ -44,7 +44,7 @@ export function withHubVariables(
 }
 
 /** Claude Code reads Anthropic's base URL and bearer token from its environment. */
-export const hubClaudeVariables = (hub: AccountHubEndpoint): Variables => ({
+const hubClaudeVariables = (hub: AccountHubEndpoint): Variables => ({
   ANTHROPIC_BASE_URL: { value: hub.baseUrl },
   ANTHROPIC_AUTH_TOKEN: { value: hub.clientKey, sensitive: true },
   // An inherited API key would win over the hub token.
@@ -55,7 +55,7 @@ export const hubClaudeVariables = (hub: AccountHubEndpoint): Variables => ({
  * Grok Build takes the hub as its xAI API and model catalog. The hub's catalog
  * lists every pooled model, so the default is pinned to a Grok model.
  */
-export const hubGrokVariables = (hub: AccountHubEndpoint, home: string): Variables => ({
+const hubGrokVariables = (hub: AccountHubEndpoint, home: string): Variables => ({
   XAI_API_KEY: { value: hub.clientKey, sensitive: true },
   GROK_MODELS_BASE_URL: { value: `${hub.baseUrl}/v1` },
   GROK_XAI_API_BASE_URL: { value: `${hub.baseUrl}/v1` },
@@ -65,7 +65,7 @@ export const hubGrokVariables = (hub: AccountHubEndpoint, home: string): Variabl
 });
 
 /** Antigravity's Gemini API-key mode, aimed at the hub's Gemini endpoint. */
-export const hubAntigravityVariables = (hub: AccountHubEndpoint): Variables => ({
+const hubAntigravityVariables = (hub: AccountHubEndpoint): Variables => ({
   GOOGLE_GEMINI_BASE_URL: { value: hub.baseUrl },
 });
 

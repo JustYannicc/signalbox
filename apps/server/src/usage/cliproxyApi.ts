@@ -196,7 +196,7 @@ const AntigravityQuota = Schema.Struct({
 const decodeAntigravityQuota = Schema.decodeUnknownEffect(Schema.fromJsonString(AntigravityQuota));
 
 /** One window per quota bucket, labelled by its group when there are several. */
-export function antigravityQuotaToLimits(quota: typeof AntigravityQuota.Type, checkedAt: string) {
+function antigravityQuotaToLimits(quota: typeof AntigravityQuota.Type, checkedAt: string) {
   const groups = quota.groups ?? [];
   const windows = groups.flatMap((group, groupIndex) =>
     (group.buckets ?? []).flatMap((bucket, bucketIndex) => {

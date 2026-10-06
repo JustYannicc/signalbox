@@ -55,7 +55,7 @@ import { ACCOUNT_HUB_CHATGPT_TYPE, chatGptCredentialFile } from "./hubCredential
 const DRIVER = ProviderDriverKind.make("codex");
 
 /** Codex talks Responses to the hub with the hub's client key, like any OpenAI-compatible endpoint. */
-export function hubCodexLaunchArgs(baseUrl: string): string {
+function hubCodexLaunchArgs(baseUrl: string): string {
   return [
     'model_provider="signalbox_hub"',
     'model_providers.signalbox_hub.name="Signalbox account hub"',

@@ -173,7 +173,7 @@ const decodeCredentialFile = Schema.decodeUnknownEffect(
 // JSON strings are valid YAML double-quoted scalars, so paths and keys need no escaping rules.
 const yamlString = (value: string) => JSON.stringify(value);
 
-export function renderAccountHubConfig(options: {
+function renderAccountHubConfig(options: {
   readonly port: number;
   readonly managementKey: string;
   readonly clientKey: string;
