@@ -42,13 +42,14 @@ Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
 which each preview derives its own session secret.
 
-| Name                      | Kind     | What                                                                    |
-| ------------------------- | -------- | ----------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`    | secret   | Account › Workers Scripts: Edit and Account › Account Settings: Read    |
-| `CLOUDFLARE_ACCOUNT_ID`   | variable | The Cloudflare account                                                  |
-| `CLOUD_SESSION_SECRET`    | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out. |
-| `T3CODE_WORKOS_CLIENT_ID` | variable | WorkOS client id                                                        |
-| `T3CODE_WORKOS_API_KEY`   | secret   | WorkOS API key, needed to finish email verification (GitHub sign-ins)   |
+| Name                       | Kind     | What                                                                    |
+| -------------------------- | -------- | ----------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`     | secret   | Account › Workers Scripts: Edit and Account › Account Settings: Read    |
+| `CLOUDFLARE_ACCOUNT_ID`    | variable | The Cloudflare account                                                  |
+| `CLOUD_SESSION_SECRET`     | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out. |
+| `T3CODE_WORKOS_CLIENT_ID`  | variable | WorkOS client id                                                        |
+| `T3CODE_WORKOS_API_KEY`    | secret   | WorkOS API key, needed to finish email verification (GitHub sign-ins)   |
+| `VITE_T3CODE_FEEDBACK_DSN` | variable | Sentry DSN for the sidebar feedback button, baked into the web build    |
 
 WorkOS must list each origin's `/api/account/callback` as a redirect URI:
 `https://app.signalbox.run/...` for production and

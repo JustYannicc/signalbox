@@ -74,6 +74,8 @@ jobs:
         env:
           # Sourcemaps change every build and would be served publicly.
           T3CODE_WEB_SOURCEMAP: "false"
+          # The sidebar feedback button sends here; without it the button hides.
+          VITE_T3CODE_FEEDBACK_DSN: ${{ vars.VITE_T3CODE_FEEDBACK_DSN }}
 
       - name: Write Worker secrets
         run: |
