@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { hubReauthMethodId } from "@t3tools/contracts/accountHub";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -15,16 +16,20 @@ import { HUB_INSTANCES, type HubAccountKind } from "./hubInstances";
 import { HubSignIn } from "./HubSignIn";
 
 /**
- * Adds one ChatGPT or Claude account to the account hub. The first account
- * also creates the hub's provider instance; every later one joins it.
+ * Adds one account to the account hub, or signs a dead one in again
+ * (`reauth`). The first account also creates the hub's provider instance;
+ * every later one joins it.
  */
 export function AddHubAccountDialog({
   environmentId,
   kind,
+  reauth,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
   readonly kind: HubAccountKind;
+  /** The hub account whose login died; the dialog signs that account in again. */
+  readonly reauth?: { readonly accountId: string; readonly email: string | undefined };
   readonly onClose: () => void;
 }) {
   const hub = HUB_INSTANCES[kind];
@@ -69,7 +74,12 @@ export function AddHubAccountDialog({
     serverEnvironment.providerAuthState({ environmentId, input: { instanceId: hub.instanceId } }),
   ).data;
   const finish = useEffectEvent(() => {
-    toastManager.add({ type: "success", title: `${hub.account} account added` });
+    toastManager.add({
+      type: "success",
+      title: reauth
+        ? `${reauth.email ?? hub.account} is signed in again`
+        : `${hub.account} account added`,
+    });
     onClose();
   });
   // A sign-in from an earlier visit may still read `succeeded`; only this visit's counts.
@@ -86,8 +96,16 @@ export function AddHubAccountDialog({
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <WizardPopup size="wide">
         <WizardHeader
-          title={`Add ${hub.account} account`}
-          description={`Sign in with the ${hub.account} account to add. Signalbox spreads work across every account you add.`}
+          title={
+            reauth
+              ? `Sign in to ${reauth.email ?? hub.account} again`
+              : `Add ${hub.account} account`
+          }
+          description={
+            reauth
+              ? `Its login expired. Sign in with the same ${hub.account} account to fix it; the account keeps its place in the pool.`
+              : `Sign in with the ${hub.account} account to add. Signalbox spreads work across every account you add.`
+          }
         />
         <WizardPanel>
           {provider ? (
@@ -95,6 +113,7 @@ export function AddHubAccountDialog({
               environmentId={environmentId}
               instanceId={hub.instanceId}
               account={hub.account}
+              {...(reauth ? { methodId: hubReauthMethodId(reauth.accountId) } : {})}
             />
           ) : (
             <SettingsRow title="Account hub" description="Setting up the account hub." />

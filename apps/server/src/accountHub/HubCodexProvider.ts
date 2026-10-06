@@ -43,6 +43,8 @@ import {
 } from "../provider/Layers/CodexProvider.ts";
 import { makeManagedServerProvider } from "../provider/makeManagedServerProvider.ts";
 import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
+import { reauthAccountName, reauthMethods } from "./hubReauth.ts";
+import { runHubReauth } from "./hubSignIn.ts";
 import type { ProviderDriverCreateInput, ProviderInstance } from "../provider/ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -145,17 +147,27 @@ export const makeHubCodexProvider = Effect.fn("makeHubCodexProvider")(function* 
     instanceId,
     credentialBinding: { owner: "t3", key: `account-hub:${instanceId}` },
     refreshMethodsAfterAuth: true,
-    // Each sign-in registers a fresh connection; signing an account in again replaces it.
-    methods: Effect.succeed([
-      {
-        id: "chatgpt-change-account",
-        name: "Add a ChatGPT account",
-        description: "Sign in with ChatGPT. The account joins this pool.",
-        type: "agent" as const,
-      },
-    ]),
+    defaultMethodId: "chatgpt-change-account",
+    // Each sign-in registers a fresh connection. A dead Codex login is signed in
+    // again through the hub's own Codex login, which works on any hub.
+    methods: reauthMethods(hub, ["codex", ACCOUNT_HUB_CHATGPT_TYPE]).pipe(
+      Effect.map((reauth) => [
+        {
+          id: "chatgpt-change-account",
+          name: "Add a ChatGPT account",
+          description: "Sign in with ChatGPT. The account joins this pool.",
+          type: "agent" as const,
+        },
+        ...reauth,
+      ]),
+    ),
     authenticate: (method, context) =>
       Effect.gen(function* () {
+        const accountName = reauthAccountName(method);
+        // A Sign in with ChatGPT file is named by email, so signing in again below replaces it.
+        if (accountName && !accountName.startsWith(`${ACCOUNT_HUB_CHATGPT_TYPE}-`)) {
+          return yield* runHubReauth({ hub, instanceId, accountName, context });
+        }
         yield* chatGpt.authenticate(method, context);
         const profile = yield* chatGpt.exportProfile;
         const credential = chatGptCredentialFile(profile, hostId);
@@ -277,6 +289,8 @@ export const makeHubCodexProvider = Effect.fn("makeHubCodexProvider")(function* 
     ),
     hub.accountChanges,
   ).pipe(
+    // A sign-in that replaces a file, or an import, changes accounts in a burst.
+    Stream.debounce("300 millis"),
     Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
     Effect.forkScoped,
   );

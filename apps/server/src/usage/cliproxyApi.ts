@@ -18,6 +18,7 @@ import { codexRateLimitsToLimits } from "../provider/Layers/codexUsageLimits.ts"
 import { claudeUsageResponseToLimits } from "../provider/Layers/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits, makeUsageLimits } from "../provider/providerUsageLimits.ts";
 import { grokUsageResponseToLimits } from "../provider/Layers/grokUsageLimits.ts";
+import { isSignedOutAuthFile } from "../accountHub/accountHubManagement.ts";
 import {
   HUB_CLAUDE_HEADERS,
   HUB_CLAUDE_USAGE_URL,
@@ -124,10 +125,7 @@ const DRIVER_BY_PROVIDER: Record<string, string> = {
 const driverForProvider = (provider: string) =>
   ProviderDriverKind.make(DRIVER_BY_PROVIDER[provider] ?? "codex");
 
-// The hub marks an account whose refresh token died as an error with no retry time;
-// a cooldown always carries `next_retry_after`.
-const needsSignIn = (account: typeof AuthFile.Type) =>
-  account.status === "error" && account.unavailable === true && account.next_retry_after == null;
+const needsSignIn = isSignedOutAuthFile; // signalbox
 
 const notProbed = (
   account: typeof AuthFile.Type,

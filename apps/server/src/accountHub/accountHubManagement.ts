@@ -31,8 +31,12 @@ export interface AccountHubEndpoint {
   readonly clientKey: string;
 }
 
-/** Logins the hub runs itself. ChatGPT is not here: Signalbox runs Sign in with ChatGPT. */
-export type AccountHubOAuthProvider = "claude" | "xai" | "antigravity";
+/**
+ * Logins the hub runs itself. New ChatGPT accounts use Signalbox's Sign in with
+ * ChatGPT; `codex` is the hub's own Codex login, for signing existing Codex
+ * accounts in again on hubs without Signalbox's plugin.
+ */
+export type AccountHubOAuthProvider = "claude" | "xai" | "antigravity" | "codex";
 
 const AuthUrl = Schema.Struct({
   url: Schema.String,
@@ -152,11 +156,27 @@ const Credentials = Schema.Struct({
       provider: Schema.optional(Schema.String),
       email: Schema.optional(Schema.String),
       disabled: Schema.optional(Schema.Boolean),
+      status: Schema.optional(Schema.String),
+      unavailable: Schema.optional(Schema.Boolean),
+      next_retry_after: Schema.optional(Schema.Unknown),
+      id_token: Schema.optional(
+        Schema.Struct({ chatgpt_account_id: Schema.optional(Schema.String) }),
+      ),
     }),
   ),
 });
 
 const decodeCredentials = Schema.decodeUnknownEffect(Credentials);
+
+/**
+ * The hub marks an account whose refresh token died as an error with no retry
+ * time; a cooldown always carries `next_retry_after`.
+ */
+export const isSignedOutAuthFile = (file: {
+  readonly status?: string | undefined;
+  readonly unavailable?: boolean | undefined;
+  readonly next_retry_after?: unknown;
+}) => file.status === "error" && file.unavailable === true && file.next_retry_after == null;
 
 /** An account the hub holds, as far as Signalbox needs to know it. */
 export interface AccountHubAccount {
@@ -164,6 +184,10 @@ export interface AccountHubAccount {
   readonly type: string;
   readonly email: string | null;
   readonly disabled: boolean;
+  /** The login died (revoked or expired refresh token); only a new sign-in fixes it. */
+  readonly signedOut: boolean;
+  /** The ChatGPT workspace, when known; one email can own several. */
+  readonly workspaceId: string | null;
 }
 
 export const listCredentials = Effect.fn("accountHub.listCredentials")(function* (
@@ -184,6 +208,8 @@ export const listCredentials = Effect.fn("accountHub.listCredentials")(function*
     type: file.type ?? file.provider ?? "unknown",
     email: file.email ?? null,
     disabled: file.disabled ?? false,
+    signedOut: isSignedOutAuthFile(file),
+    workspaceId: file.id_token?.chatgpt_account_id ?? null,
   }));
 });
 
@@ -191,7 +217,12 @@ const LOGIN_ROUTE: Record<AccountHubOAuthProvider, string> = {
   claude: "anthropic-auth-url",
   xai: "xai-auth-url",
   antigravity: "antigravity-auth-url",
+  codex: "codex-auth-url",
 };
+
+/** Whether the hub can run the login for credentials of `type` itself. */
+export const isHubLoginProvider = (type: string): type is AccountHubOAuthProvider =>
+  Object.hasOwn(LOGIN_ROUTE, type);
 
 /** Starts a provider OAuth login. `localCallback` lets the hub catch the redirect itself. */
 export const startOAuthLogin = Effect.fn("accountHub.startOAuthLogin")(function* (

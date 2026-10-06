@@ -103,6 +103,8 @@ export class AccountHub extends Context.Service<
       provider: Management.AccountHubOAuthProvider,
       options: { readonly localCallback: boolean },
     ) => Effect.Effect<AccountHubOAuthLogin, AccountHubError>;
+    /** Removes one account's credential file from the hub. */
+    readonly removeCredential: (name: string) => Effect.Effect<void, AccountHubError>;
     /** Accounts in the running hub. Empty when the hub is off. */
     readonly accounts: Effect.Effect<ReadonlyArray<Management.AccountHubAccount>, AccountHubError>;
     /** Which hub pooled accounts go through: this one, or one the user runs. */
@@ -534,7 +536,9 @@ const make = Effect.gen(function* () {
     options: { readonly localCallback: boolean },
   ) {
     const hub = yield* ensureRunning;
-    const login = yield* withHttp(Management.startOAuthLogin(hub, provider, options.localCallback));
+    // A hub on another machine cannot catch a redirect to this machine's localhost.
+    const localCallback = options.localCallback && Option.isNone(yield* Ref.get(external));
+    const login = yield* withHttp(Management.startOAuthLogin(hub, provider, localCallback));
     return {
       url: login.url,
       ...(login.flow === "device" && login.user_code ? { userCode: login.user_code } : {}),
@@ -676,6 +680,11 @@ const make = Effect.gen(function* () {
     endpoint,
     saveCredential,
     startOAuthLogin,
+    removeCredential: (name) =>
+      ensureRunning.pipe(
+        Effect.flatMap((hub) => withHttp(Management.deleteCredential(hub, name))),
+        Effect.andThen(markAccountsChanged),
+      ),
     accounts: endpoint.pipe(
       Effect.flatMap((current) =>
         Option.isNone(current)

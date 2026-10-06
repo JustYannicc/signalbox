@@ -1,8 +1,7 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { UsageLimitSourceUpdateAccountInput } from "@t3tools/contracts";
-import { ACCOUNT_HUB_SOURCE_ID } from "@t3tools/contracts/accountHub";
 import type { LimitAccount } from "@t3tools/shared/usageLimits";
-import { EllipsisIcon, LogInIcon, PauseIcon, PlayIcon, Trash2Icon } from "lucide-react";
+import { EllipsisIcon, PauseIcon, PlayIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -19,30 +18,22 @@ import {
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { AddHubAccountDialog } from "./AddHubAccountDialog";
-import { hubAccountKindForDriver } from "./hubInstances";
 
 const failureMessage = (result: Parameters<typeof squashAtomCommandFailure>[0]) => {
   const failure = squashAtomCommandFailure(result);
   return failure instanceof Error ? failure.message : undefined;
 };
 
-/**
- * Pause, resume, sign in again, or remove an account a hub pools. Signing in
- * again only applies to the hub Signalbox runs, which owns the sign-in.
- */
+/** Pause, resume, or remove an account a hub pools. Signing in again sits on the row. */
 export function HubAccountActions({ account }: { readonly account: LimitAccount }) {
   const hub = account.hubAccount;
   const update = useAtomCommand(serverEnvironment.updateUsageLimitSourceAccount, {
     reportFailure: false,
   });
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [signingIn, setSigningIn] = useState(false);
   const [busy, setBusy] = useState(false);
   if (!hub) return null;
   const name = account.email ?? account.displayName ?? "this account";
-  const kind =
-    hub.sourceId === ACCOUNT_HUB_SOURCE_ID ? hubAccountKindForDriver(account.driver) : null;
 
   const run = async (action: UsageLimitSourceUpdateAccountInput["action"]) => {
     setConfirmRemove(false);
@@ -71,12 +62,6 @@ export function HubAccountActions({ account }: { readonly account: LimitAccount 
           <EllipsisIcon aria-hidden />
         </MenuTrigger>
         <MenuPopup align="end">
-          {kind ? (
-            <MenuItem onClick={() => setSigningIn(true)}>
-              <LogInIcon aria-hidden />
-              Sign in again
-            </MenuItem>
-          ) : null}
           <MenuItem onClick={() => void run(hub.disabled ? "resume" : "pause")}>
             {hub.disabled ? <PlayIcon aria-hidden /> : <PauseIcon aria-hidden />}
             {hub.disabled ? "Resume" : "Pause"}
@@ -104,13 +89,6 @@ export function HubAccountActions({ account }: { readonly account: LimitAccount 
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
-      {signingIn && kind ? (
-        <AddHubAccountDialog
-          environmentId={hub.environmentId}
-          kind={kind}
-          onClose={() => setSigningIn(false)}
-        />
-      ) : null}
     </>
   );
 }

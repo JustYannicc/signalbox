@@ -30,12 +30,15 @@ export function HubSignIn({
   environmentId,
   instanceId,
   account,
+  methodId,
   disabled,
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   /** "ChatGPT" or "Claude". */
   readonly account: string;
+  /** A specific sign-in method, such as signing one dead account in again. */
+  readonly methodId?: string;
   readonly disabled?: boolean;
 }) {
   const target = { environmentId, input: { instanceId } };
@@ -81,13 +84,13 @@ export function HubSignIn({
     ? auth?.phase === "verifying"
       ? "Checking the account…"
       : userCode
-        ? `Open the sign-in page and enter this code to add the ${account} account.`
-        : local
-          ? `Finish signing in to ${account} in your browser.`
-          : `Sign in to ${account} in your browser. It then opens a page that cannot load: copy that page's address and paste it below.`
+        ? `Open the sign-in page and enter this code to ${methodId ? "sign in to" : "add"} the ${account} account.`
+        : `Sign in to ${account} in your browser. If it ends on a page that cannot load, copy that page's address and paste it below.`
     : auth?.phase === "failed"
       ? (auth.message ?? "Sign-in failed. Try again.")
-      : `Sign in with the ${account} account you want to add.`;
+      : methodId
+        ? `Sign in with the same ${account} account.`
+        : `Sign in with the ${account} account you want to add.`;
 
   return (
     <div className="divide-y divide-border/50">
@@ -139,12 +142,20 @@ export function HubSignIn({
                   void run(() =>
                     start({
                       environmentId,
-                      input: { instanceId, callbackMode: local ? "server" : "client" },
+                      input: {
+                        instanceId,
+                        callbackMode: local ? "server" : "client",
+                        ...(methodId ? { methodId } : {}),
+                      },
                     }),
                   )
                 }
               >
-                {auth?.phase === "failed" ? "Try again" : `Sign in with ${account}`}
+                {auth?.phase === "failed"
+                  ? "Try again"
+                  : methodId
+                    ? "Sign in again"
+                    : `Sign in with ${account}`}
               </Button>
             )}
           </div>

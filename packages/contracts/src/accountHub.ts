@@ -11,6 +11,10 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
 export const ACCOUNT_HUB_SOURCE_ID = UsageLimitSourceId.make("signalbox-account-hub");
 
+/** The sign-in method on a hub instance that signs one dead account in again. */
+export const HUB_REAUTH_METHOD_PREFIX = "reauth:";
+export const hubReauthMethodId = (accountId: string) => `${HUB_REAUTH_METHOD_PREFIX}${accountId}`;
+
 const HubUrl = TrimmedNonEmptyString.check(Schema.isMaxLength(2048));
 const HubKey = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
 

@@ -7,6 +7,7 @@ import {
 import type { ReactNode } from "react";
 
 import { HubAccountActions } from "../accountHub/HubAccountActions";
+import { SignInAgainButton } from "../accountHub/SignInAgainButton";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { Badge } from "../ui/badge";
@@ -79,6 +80,7 @@ function AccountRow({
         )}
       </div>
       <span className="col-start-2 row-start-1 flex items-center justify-end gap-1.5 md:col-start-auto md:row-start-auto">
+        <SignInAgainButton account={account} />
         <HubAccountActions account={account} />
       </span>
     </li>

@@ -130,9 +130,15 @@ The first account of each provider adds a provider such as **Claude accounts** t
 Pick it to use every account you added: each conversation stays on one account, and work moves to
 another account when one runs out. Antigravity accounts offer only its Flash models this way.
 
-Each account appears under **Accounts** on **Usage → Limits**. Use its menu to pause it, resume it,
-sign in again, or remove it. ChatGPT does not share usage with connected apps, so ChatGPT accounts
-link to ChatGPT's usage page instead of showing bars.
+Each account appears under **Accounts** on **Usage → Limits**. Use its menu to pause, resume, or
+remove it. ChatGPT does not share usage with connected apps, so ChatGPT accounts link to ChatGPT's
+usage page instead of showing bars.
+
+When an account's login expires, it shows **Signed out**, Usage gets a red dot, and Signalbox tells
+you. Choose **Sign in again** on the account and sign in with the same account; it keeps its place in
+the pool. If the sign-in page ends on a page that cannot load, copy that page's address into
+**Finish sign-in**. Using the same account directly in Codex or Claude Code as well can sign it out
+of the pool, because each sign-in replaces the other's login.
 
 ### Bring accounts from CLIProxyAPI
 

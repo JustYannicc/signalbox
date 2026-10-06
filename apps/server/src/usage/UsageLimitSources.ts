@@ -210,6 +210,7 @@ export const make = Effect.gen(function* () {
       ),
       accountHub.value.accountChanges,
     ).pipe(
+      Stream.debounce("300 millis"), // signalbox: account changes arrive in bursts
       Stream.runForEach(() => refresh),
       Effect.forkScoped,
     );
