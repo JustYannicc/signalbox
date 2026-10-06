@@ -15,7 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -141,14 +141,22 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("AccountHub (liv
           });
           yield* Effect.addFinalizer(() => Effect.sync(() => source.kill()));
           const sourceUrl = `http://127.0.0.1:${port}`;
-          const sourceFiles = Effect.promise(() =>
-            fetch(`${sourceUrl}/v0/management/auth-files`, {
-              headers: { authorization: "Bearer source-mgmt" },
-            })
-              .then((response) => response.json() as Promise<{ files: Array<{ name: string }> }>)
-              .then((body) => body.files.map((file) => file.name).toSorted())
-              .catch(() => [] as string[]),
-          );
+          const http = yield* HttpClient.HttpClient;
+          const sourceFiles = http
+            .execute(
+              HttpClientRequest.get(`${sourceUrl}/v0/management/auth-files`).pipe(
+                HttpClientRequest.bearerToken("source-mgmt"),
+              ),
+            )
+            .pipe(
+              Effect.flatMap((response) => response.json),
+              Effect.map((body) =>
+                ((body as { files?: Array<{ name: string }> }).files ?? [])
+                  .map((file) => file.name)
+                  .toSorted(),
+              ),
+              Effect.orElseSucceed((): string[] => []),
+            );
           yield* sourceFiles.pipe(
             Effect.repeat({
               schedule: Schedule.spaced("150 millis"),
@@ -210,12 +218,12 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("AccountHub (liv
           expect(external.baseUrl).toBe(sourceUrl);
           expect(external.clientKey).toBe("source-client");
           // The managed hub stopped and is not restarted.
-          const managedUp = yield* Effect.promise(() =>
-            fetch(`${managed.baseUrl}/v1/models`).then(
-              () => true,
-              () => false,
-            ),
-          );
+          const managedUp = yield* http
+            .execute(HttpClientRequest.get(`${managed.baseUrl}/v1/models`))
+            .pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
           expect(managedUp).toBe(false);
           const [, config] = Option.getOrThrow(yield* hub.usageLimitSource);
           expect(config.url).toBe(sourceUrl);

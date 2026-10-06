@@ -99,7 +99,7 @@ describe("AccountHub", () => {
         const status = yield* HttpClient.HttpClient.pipe(
           Effect.flatMap((client) =>
             client.execute(
-              HttpClientRequest.get(`${endpoint.baseUrl}/v8/management/config`).pipe(
+              HttpClientRequest.get(`${endpoint.baseUrl}/v0/management/config`).pipe(
                 HttpClientRequest.bearerToken(endpoint.managementKey),
               ),
             ),

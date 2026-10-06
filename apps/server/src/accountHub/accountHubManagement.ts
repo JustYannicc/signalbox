@@ -1,5 +1,7 @@
 /**
- * Calls to the account hub's CLIProxyAPI management API (`/v8/management`).
+ * Calls to the account hub's CLIProxyAPI management API. They use the `/v0`
+ * routes: CLIProxyAPI 8 still serves them, and older instances people
+ * already run serve nothing else.
  *
  * Only the OAuth login endpoints and credential status changes go through
  * HTTP; new credentials are written straight into the hub's auth directory,
@@ -23,7 +25,7 @@ export class AccountHubError extends Schema.TaggedError<AccountHubError>()("Acco
 /** Where the running hub answers, and the keys Signalbox uses to talk to it. */
 export interface AccountHubEndpoint {
   readonly baseUrl: string;
-  /** Management API key (`/v8/management/*`). Never leaves the server. */
+  /** Management API key (`/v0/management/*`). Never leaves the server. */
   readonly managementKey: string;
   /** Client key provider instances send as their bearer token. */
   readonly clientKey: string;
@@ -48,7 +50,74 @@ const decodeAuthUrl = Schema.decodeUnknownEffect(AuthUrl);
 const decodeStatus = Schema.decodeUnknownEffect(Status);
 
 type ManagementEndpoint = Pick<AccountHubEndpoint, "baseUrl" | "managementKey">;
-const isAccountHubError = Schema.is(AccountHubError);
+
+const hostOf = (endpoint: ManagementEndpoint) =>
+  URL.canParse(endpoint.baseUrl) ? new URL(endpoint.baseUrl).host : endpoint.baseUrl;
+
+// Node puts the useful bit (CERT_HAS_EXPIRED, ECONNREFUSED, ...) a few causes deep.
+const networkCode = (cause: unknown): string | null => {
+  for (let current = cause, depth = 0; current && depth < 6; depth++) {
+    if (typeof current !== "object") return null;
+    if ("code" in current && typeof current.code === "string") return current.code;
+    current = "cause" in current ? current.cause : null;
+  }
+  return null;
+};
+
+const unreachable = (endpoint: ManagementEndpoint, cause: unknown) => {
+  const code = networkCode(cause);
+  const host = hostOf(endpoint);
+  return new AccountHubError({
+    detail:
+      code === "ERR_TLS_CERT_ALTNAME_INVALID"
+        ? `Could not reach ${host}: its TLS certificate is for a different host.`
+        : code?.includes("CERT") || code?.includes("SIGNATURE")
+          ? `Could not reach ${host}: its TLS certificate is not trusted (${code}).`
+          : `Could not reach ${host}${code ? ` (${code})` : ""}.`,
+    cause,
+  });
+};
+
+/**
+ * One management call. Network, TLS, timeout, and rejected-key failures all
+ * surface here with the host named, so every caller reports the real problem.
+ */
+const send = (
+  endpoint: ManagementEndpoint,
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  path: string,
+  withBody: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => HttpClientRequest.HttpClientRequest = (request) => request,
+) =>
+  Effect.gen(function* () {
+    const http = yield* HttpClient.HttpClient;
+    const response = yield* http
+      .execute(
+        HttpClientRequest.make(method)(`${endpoint.baseUrl}/v0/management/${path}`).pipe(
+          HttpClientRequest.bearerToken(endpoint.managementKey),
+          withBody,
+        ),
+      )
+      .pipe(
+        Effect.mapError((cause) => unreachable(endpoint, cause)),
+        Effect.timeoutOrElse({
+          duration: "15 seconds",
+          orElse: () =>
+            Effect.fail(
+              new AccountHubError({
+                detail: `${hostOf(endpoint)} did not answer within 15 seconds.`,
+              }),
+            ),
+        }),
+      );
+    if (response.status === 401 || response.status === 403) {
+      return yield* new AccountHubError({
+        detail: `${hostOf(endpoint)} rejected the management key.`,
+      });
+    }
+    return response;
+  });
 
 const request = (
   endpoint: ManagementEndpoint,
@@ -57,21 +126,23 @@ const request = (
   body?: unknown,
 ) =>
   Effect.gen(function* () {
-    const http = yield* HttpClient.HttpClient;
-    const url = `${endpoint.baseUrl}/v8/management/${path}`;
-    const base = HttpClientRequest.make(method)(url).pipe(
-      HttpClientRequest.bearerToken(endpoint.managementKey),
+    const response = yield* send(
+      endpoint,
+      method,
+      path,
+      body === undefined ? undefined : (request) => HttpClientRequest.bodyJsonUnsafe(request, body),
     );
-    const response = yield* http.execute(
-      body === undefined ? base : HttpClientRequest.bodyJsonUnsafe(base, body),
+    const json = yield* response.json.pipe(
+      Effect.mapError(
+        (cause) =>
+          new AccountHubError({
+            detail: `${hostOf(endpoint)} did not answer like a CLIProxyAPI (HTTP ${response.status}).`,
+            cause,
+          }),
+      ),
     );
-    return yield* response.json.pipe(Effect.map((json) => ({ status: response.status, json })));
-  }).pipe(
-    Effect.timeout("15 seconds"),
-    Effect.mapError(
-      (cause) => new AccountHubError({ detail: "The account hub did not answer.", cause }),
-    ),
-  );
+    return { status: response.status, json };
+  });
 
 const Credentials = Schema.Struct({
   files: Schema.Array(
@@ -98,11 +169,14 @@ export interface AccountHubAccount {
 export const listCredentials = Effect.fn("accountHub.listCredentials")(function* (
   endpoint: ManagementEndpoint,
 ) {
-  const response = yield* request(endpoint, "GET", "credentials");
+  const response = yield* request(endpoint, "GET", "auth-files");
   const decoded = yield* decodeCredentials(response.json).pipe(
     Effect.mapError(
       (cause) =>
-        new AccountHubError({ detail: "The account hub returned an invalid account list.", cause }),
+        new AccountHubError({
+          detail: `${hostOf(endpoint)} returned an invalid account list.`,
+          cause,
+        }),
     ),
   );
   return decoded.files.map((file): AccountHubAccount => ({
@@ -113,14 +187,20 @@ export const listCredentials = Effect.fn("accountHub.listCredentials")(function*
   }));
 });
 
+const LOGIN_ROUTE: Record<AccountHubOAuthProvider, string> = {
+  claude: "anthropic-auth-url",
+  xai: "xai-auth-url",
+  antigravity: "antigravity-auth-url",
+};
+
 /** Starts a provider OAuth login. `localCallback` lets the hub catch the redirect itself. */
 export const startOAuthLogin = Effect.fn("accountHub.startOAuthLogin")(function* (
   endpoint: AccountHubEndpoint,
   provider: AccountHubOAuthProvider,
   localCallback: boolean,
 ) {
-  const query = new URLSearchParams({ provider, ...(localCallback ? { is_webui: "true" } : {}) });
-  const response = yield* request(endpoint, "GET", `oauth/auth-url?${query}`);
+  const query = localCallback ? "?is_webui=true" : "";
+  const response = yield* request(endpoint, "GET", `${LOGIN_ROUTE[provider]}${query}`);
   return yield* decodeAuthUrl(response.json).pipe(
     Effect.mapError(
       (cause) => new AccountHubError({ detail: "The account hub could not start sign-in.", cause }),
@@ -131,11 +211,10 @@ export const startOAuthLogin = Effect.fn("accountHub.startOAuthLogin")(function*
 /** Hands the hub the URL the provider redirected to, for logins finished on another device. */
 export const completeOAuthLogin = Effect.fn("accountHub.completeOAuthLogin")(function* (
   endpoint: AccountHubEndpoint,
-  provider: AccountHubOAuthProvider,
   redirectUrl: string,
 ) {
-  const response = yield* request(endpoint, "POST", "oauth/callback", {
-    provider,
+  // The hub reads the provider from the login's state, which the URL carries.
+  const response = yield* request(endpoint, "POST", "oauth-callback", {
     redirect_url: redirectUrl,
   });
   const status = yield* decodeStatus(response.json).pipe(Effect.option);
@@ -153,7 +232,7 @@ export const awaitOAuthLogin = Effect.fn("accountHub.awaitOAuthLogin")(
       const response = yield* request(
         endpoint,
         "GET",
-        `oauth/status?state=${encodeURIComponent(state)}`,
+        `get-auth-status?state=${encodeURIComponent(state)}`,
       );
       const status = yield* decodeStatus(response.json).pipe(
         Effect.orElseSucceed(() => ({ status: "error", error: undefined })),
@@ -177,74 +256,55 @@ export const awaitOAuthLogin = Effect.fn("accountHub.awaitOAuthLogin")(
 );
 
 export const cancelOAuthLogin = (endpoint: AccountHubEndpoint, state: string) =>
-  request(endpoint, "DELETE", `oauth/session?state=${encodeURIComponent(state)}`).pipe(
+  request(endpoint, "DELETE", `oauth-session?state=${encodeURIComponent(state)}`).pipe(
     Effect.ignore,
   );
 
 /** The raw credential file, exactly as the hub stores it. */
-export const downloadCredential = Effect.fn("accountHub.downloadCredential")(
-  function* (endpoint: ManagementEndpoint, name: string) {
-    const http = yield* HttpClient.HttpClient;
-    const response = yield* http.execute(
-      HttpClientRequest.get(
-        `${endpoint.baseUrl}/v0/management/auth-files/download?name=${encodeURIComponent(name)}`,
-      ).pipe(HttpClientRequest.bearerToken(endpoint.managementKey)),
-    );
-    if (response.status !== 200) {
-      return yield* new AccountHubError({ detail: `Could not download ${name}.` });
-    }
-    return yield* response.text;
-  },
-  Effect.timeout("15 seconds"),
-  Effect.mapError((cause) =>
-    isAccountHubError(cause)
-      ? cause
-      : new AccountHubError({ detail: "The hub did not answer.", cause }),
-  ),
-);
+export const downloadCredential = Effect.fn("accountHub.downloadCredential")(function* (
+  endpoint: ManagementEndpoint,
+  name: string,
+) {
+  const response = yield* send(
+    endpoint,
+    "GET",
+    `auth-files/download?name=${encodeURIComponent(name)}`,
+  );
+  if (response.status !== 200) {
+    return yield* new AccountHubError({ detail: `Could not download ${name}.` });
+  }
+  return yield* response.text.pipe(
+    Effect.mapError(
+      (cause) => new AccountHubError({ detail: `Could not download ${name}.`, cause }),
+    ),
+  );
+});
 
 /** Writes a credential file into a hub that Signalbox does not run. */
-export const uploadCredential = Effect.fn("accountHub.uploadCredential")(
-  function* (endpoint: ManagementEndpoint, name: string, content: string) {
-    const http = yield* HttpClient.HttpClient;
-    const response = yield* http.execute(
-      HttpClientRequest.post(
-        `${endpoint.baseUrl}/v0/management/auth-files?name=${encodeURIComponent(name)}`,
-      ).pipe(
-        HttpClientRequest.bearerToken(endpoint.managementKey),
-        HttpClientRequest.bodyText(content, "application/json"),
-      ),
-    );
-    if (response.status !== 200) {
-      return yield* new AccountHubError({ detail: `The hub refused ${name}.` });
-    }
-  },
-  Effect.timeout("15 seconds"),
-  Effect.mapError((cause) =>
-    isAccountHubError(cause)
-      ? cause
-      : new AccountHubError({ detail: "The hub did not answer.", cause }),
-  ),
-);
+export const uploadCredential = Effect.fn("accountHub.uploadCredential")(function* (
+  endpoint: ManagementEndpoint,
+  name: string,
+  content: string,
+) {
+  const response = yield* send(
+    endpoint,
+    "POST",
+    `auth-files?name=${encodeURIComponent(name)}`,
+    HttpClientRequest.bodyText(content, "application/json"),
+  );
+  if (response.status !== 200) {
+    return yield* new AccountHubError({ detail: `${hostOf(endpoint)} refused ${name}.` });
+  }
+});
 
-export const deleteCredential = Effect.fn("accountHub.deleteCredential")(
-  function* (endpoint: ManagementEndpoint, name: string) {
-    const http = yield* HttpClient.HttpClient;
-    const response = yield* http.execute(
-      HttpClientRequest.delete(
-        `${endpoint.baseUrl}/v0/management/auth-files?name=${encodeURIComponent(name)}`,
-      ).pipe(HttpClientRequest.bearerToken(endpoint.managementKey)),
-    );
-    if (response.status !== 200) {
-      return yield* new AccountHubError({
-        detail: `Could not remove ${name} from the source hub.`,
-      });
-    }
-  },
-  Effect.timeout("15 seconds"),
-  Effect.mapError((cause) =>
-    isAccountHubError(cause)
-      ? cause
-      : new AccountHubError({ detail: "The hub did not answer.", cause }),
-  ),
-);
+export const deleteCredential = Effect.fn("accountHub.deleteCredential")(function* (
+  endpoint: ManagementEndpoint,
+  name: string,
+) {
+  const response = yield* send(endpoint, "DELETE", `auth-files?name=${encodeURIComponent(name)}`);
+  if (response.status !== 200) {
+    return yield* new AccountHubError({
+      detail: `Could not remove ${name} from ${hostOf(endpoint)}.`,
+    });
+  }
+});

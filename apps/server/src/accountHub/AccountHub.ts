@@ -261,7 +261,7 @@ const make = Effect.gen(function* () {
   const probe = (endpoint: AccountHubEndpoint) =>
     http
       .execute(
-        HttpClientRequest.get(`${endpoint.baseUrl}/v8/management/config`).pipe(
+        HttpClientRequest.get(`${endpoint.baseUrl}/v0/management/config`).pipe(
           HttpClientRequest.bearerToken(endpoint.managementKey),
         ),
       )
@@ -499,7 +499,8 @@ const make = Effect.gen(function* () {
   );
   const withHttp = Effect.provideService(HttpClient.HttpClient, http);
 
-  const saveCredential = Effect.fn("AccountHub.saveCredential")(
+  // Writes without announcing it, so a batch (import) announces once.
+  const writeCredential = Effect.fn("AccountHub.writeCredential")(
     function* (name: string, credential: Readonly<Record<string, unknown>>) {
       if (!/^[\w.@+-]+\.json$/u.test(name) || name.startsWith(".")) {
         return yield* new AccountHubError({ detail: "Invalid account file name." });
@@ -507,7 +508,6 @@ const make = Effect.gen(function* () {
       const hub = yield* ensureRunning;
       if (Option.isSome(yield* Ref.get(external))) {
         yield* withHttp(Management.uploadCredential(hub, name, yield* encodeJson(credential)));
-        yield* markAccountsChanged;
         return;
       }
       // Write beside the auth directory and rename in, so the hub never reads half a file.
@@ -518,7 +518,6 @@ const make = Effect.gen(function* () {
       const file = path.join(staging, name);
       yield* fs.writeFileString(file, yield* encodeJson(credential), { mode: 0o600 });
       yield* fs.rename(file, path.join(authDir, name));
-      yield* markAccountsChanged;
     },
     Effect.scoped,
     Effect.mapError((cause) =>
@@ -527,6 +526,8 @@ const make = Effect.gen(function* () {
         : new AccountHubError({ detail: "Could not save the account to the hub.", cause }),
     ),
   );
+  const saveCredential = (name: string, credential: Readonly<Record<string, unknown>>) =>
+    writeCredential(name, credential).pipe(Effect.tap(() => markAccountsChanged));
 
   const startOAuthLogin = Effect.fn("AccountHub.startOAuthLogin")(function* (
     provider: Management.AccountHubOAuthProvider,
@@ -537,8 +538,7 @@ const make = Effect.gen(function* () {
     return {
       url: login.url,
       ...(login.flow === "device" && login.user_code ? { userCode: login.user_code } : {}),
-      complete: (redirectUrl: string) =>
-        withHttp(Management.completeOAuthLogin(hub, provider, redirectUrl)),
+      complete: (redirectUrl: string) => withHttp(Management.completeOAuthLogin(hub, redirectUrl)),
       await: withHttp(Management.awaitOAuthLogin(hub, login.state)).pipe(
         Effect.tap(() => markAccountsChanged),
       ),
@@ -578,21 +578,19 @@ const make = Effect.gen(function* () {
         clientKey: input.clientKey,
       };
       // Both keys are checked now, so a typo fails here and not on the first turn.
-      yield* withHttp(Management.listCredentials(hub)).pipe(
-        Effect.mapError(
-          () =>
-            new AccountHubError({
-              detail: "Could not reach that CLIProxyAPI with this management key.",
-            }),
-        ),
+      const [, models] = yield* Effect.all(
+        [
+          withHttp(Management.listCredentials(hub)),
+          http
+            .execute(
+              HttpClientRequest.get(`${hub.baseUrl}/v1/models`).pipe(
+                HttpClientRequest.bearerToken(hub.clientKey),
+              ),
+            )
+            .pipe(Effect.timeout("10 seconds"), Effect.option),
+        ],
+        { concurrency: 2 },
       );
-      const models = yield* http
-        .execute(
-          HttpClientRequest.get(`${hub.baseUrl}/v1/models`).pipe(
-            HttpClientRequest.bearerToken(hub.clientKey),
-          ),
-        )
-        .pipe(Effect.timeout("10 seconds"), Effect.option);
       if (Option.isNone(models) || models.value.status !== 200) {
         return yield* new AccountHubError({
           detail: "That CLIProxyAPI did not accept the API key. Use one of its access api-keys.",
@@ -629,17 +627,14 @@ const make = Effect.gen(function* () {
           detail: "That is the hub Signalbox already uses, so there is nothing to import.",
         });
       }
-      const sourceAccounts = yield* withHttp(Management.listCredentials(source)).pipe(
-        Effect.mapError(
-          () =>
-            new AccountHubError({
-              detail: "Could not reach that CLIProxyAPI with this management key.",
-            }),
-        ),
+      const [sourceAccounts, targetAccounts] = yield* Effect.all(
+        [
+          withHttp(Management.listCredentials(source)),
+          withHttp(Management.listCredentials(target)),
+        ],
+        { concurrency: 2 },
       );
-      const existing = new Set(
-        (yield* withHttp(Management.listCredentials(target))).map((account) => account.name),
-      );
+      const existing = new Set(targetAccounts.map((account) => account.name));
       const imported: string[] = [];
       const skipped: string[] = [];
       const failed: Array<{ name: string; reason: string }> = [];
@@ -655,7 +650,7 @@ const make = Effect.gen(function* () {
               () => new AccountHubError({ detail: `${account.name} is not a credential file.` }),
             ),
           );
-          yield* saveCredential(account.name, credential);
+          yield* writeCredential(account.name, credential);
           if (input.removeFromSource) {
             yield* withHttp(Management.deleteCredential(source, account.name));
           }
@@ -663,6 +658,7 @@ const make = Effect.gen(function* () {
         if (moved._tag === "Success") imported.push(account.name);
         else failed.push({ name: account.name, reason: moved.failure.detail });
       }
+      if (imported.length > 0) yield* markAccountsChanged;
       return { imported, skipped, failed } satisfies AccountHubImportResult;
     },
     Effect.mapError((cause) =>
