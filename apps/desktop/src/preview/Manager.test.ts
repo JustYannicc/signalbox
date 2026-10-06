@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it as effectIt } from "@effect/vitest";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type {
@@ -281,6 +282,7 @@ const layer = PreviewManager.layer.pipe(
   Layer.provideMerge(layerEnvironment),
   Layer.provideMerge(layerFileSystem),
   Layer.provideMerge(Path.layer),
+  Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
 );
 
