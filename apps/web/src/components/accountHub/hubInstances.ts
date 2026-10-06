@@ -1,9 +1,5 @@
-import { ProviderInstanceId, type ProviderDriverKind } from "@t3tools/contracts";
-import {
-  PERSONAL_POOL_ID,
-  POOL_INSTANCE_KINDS,
-  poolInstanceId,
-} from "@t3tools/contracts/accountHub";
+import type { ProviderDriverKind } from "@t3tools/contracts";
+import { POOL_INSTANCE_KINDS } from "@t3tools/contracts/accountHub";
 
 const accountKind = <K extends keyof typeof POOL_INSTANCE_KINDS>(kind: K) => ({
   ...POOL_INSTANCE_KINDS[kind],
@@ -24,10 +20,6 @@ export const HUB_INSTANCES = {
 } as const;
 
 export type HubAccountKind = keyof typeof HUB_INSTANCES;
-
-/** The provider instance of `kind` in `poolId`. */
-export const hubInstanceId = (kind: HubAccountKind, poolId: string = PERSONAL_POOL_ID) =>
-  ProviderInstanceId.make(poolInstanceId(kind, poolId));
 
 export function isHubInstanceConfig(config: unknown): boolean {
   return (

@@ -159,7 +159,7 @@ export type AccountPoolOverview = typeof AccountPoolOverview.Type;
  * API keys a pool takes. The hub routes every kind but Cursor, whose key is
  * handed to the pool's Cursor provider per turn instead.
  */
-export const POOL_API_KEY_PROVIDERS = [
+const POOL_API_KEY_PROVIDERS = [
   "anthropic",
   "openai",
   "xai",

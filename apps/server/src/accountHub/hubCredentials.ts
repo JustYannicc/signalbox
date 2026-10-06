@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 
 export const ACCOUNT_HUB_CHATGPT_TYPE = "chatgpt-siwc";
 
-export const slug = (value: string) =>
+const slug = (value: string) =>
   value
     .toLowerCase()
     .replace(/[^a-z0-9@.+-]+/gu, "-")

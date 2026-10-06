@@ -17,7 +17,7 @@ import type { AccountHubEndpoint } from "./accountHubManagement.ts";
 import { listModels } from "./hubApiKeys.ts";
 
 /** The OpenCode provider id the pool's models appear under (`signalbox/<model>`). */
-export const OPENCODE_POOL_PROVIDER = "signalbox";
+const OPENCODE_POOL_PROVIDER = "signalbox";
 
 /** The variable OpenCode's config reads the hub key from, so the key stays out of the file. */
 export const OPENCODE_POOL_KEY_VARIABLE = "SIGNALBOX_POOL_KEY";
