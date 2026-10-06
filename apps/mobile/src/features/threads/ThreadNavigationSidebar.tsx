@@ -41,6 +41,12 @@ import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
+import { SectionNavigationPanel } from "../sections/SectionNavigationPanel";
+import { SectionNavigationToggle } from "../sections/SectionNavigationToggle";
+import {
+  projectFilterOptions as buildProjectFilterOptions,
+  resolveSelectedProjectScope,
+} from "../sections/section-project-filter";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -206,6 +212,8 @@ function ThreadNavigationSidebarPane(
     [threadSearch.matches],
   );
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const [sectionsOpen, setSectionsOpen] = useState(false);
+  const toggleSections = useCallback(() => setSectionsOpen((open) => !open), []);
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
@@ -216,12 +224,8 @@ function ThreadNavigationSidebarPane(
     [options.projectGroupingMode, options.selectedEnvironmentId, projects],
   );
   const projectFilterOptions = useMemo(
-    () =>
-      projectScopes.map((scope) => ({
-        key: scope.key,
-        label: scope.title,
-      })),
-    [projectScopes],
+    () => buildProjectFilterOptions({ selectedProjectKey, projectScopes, projects }),
+    [projectScopes, projects, selectedProjectKey],
   );
   const projectTitleByProjectKey = useMemo(
     () =>
@@ -239,11 +243,8 @@ function ThreadNavigationSidebarPane(
     [projectScopes],
   );
   const selectedProjectScope = useMemo(
-    () =>
-      selectedProjectKey === null
-        ? null
-        : (projectScopes.find((scope) => scope.key === selectedProjectKey) ?? null),
-    [projectScopes, selectedProjectKey],
+    () => resolveSelectedProjectScope({ selectedProjectKey, projectScopes, projects }),
+    [projectScopes, projects, selectedProjectKey],
   );
   useEffect(() => {
     if (
@@ -855,14 +856,25 @@ function ThreadNavigationSidebarPane(
       }),
     [environments, options, projectFilterOptions, selectedProjectKey, setSelectedEnvironmentId],
   );
+  const sectionNavigationPanel = sectionsOpen ? (
+    <SectionNavigationPanel
+      environments={environments}
+      selectedEnvironmentId={options.selectedEnvironmentId}
+      selectedProjectKey={selectedProjectKey}
+      onProjectChange={setSelectedProjectKey}
+      onClose={() => setSectionsOpen(false)}
+    />
+  ) : null;
   const nativeHeaderItems = useMemo(
     () =>
       createSidebarHeaderItems({
         filterIcon,
         filterMenu,
+        sectionsOpen,
+        onOpenSections: toggleSections,
         onOpenSettings: props.onOpenSettings,
       }),
-    [filterIcon, filterMenu, props.onOpenSettings],
+    [filterIcon, filterMenu, props.onOpenSettings, sectionsOpen, toggleSections],
   );
   // Snoozed threads need no special case: the shelf header is a list row
   // even while collapsed.
@@ -954,6 +966,7 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={sectionNavigationPanel}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -987,7 +1000,7 @@ function ThreadNavigationSidebarPane(
             : { paddingBottom: insets.bottom }
         }
       >
-        {Platform.OS === "android" && listItems.length === 0 ? (
+        {Platform.OS === "android" && listItems.length === 0 && !sectionsOpen ? (
           <View className="flex-1 items-center justify-center">{listEmpty}</View>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
@@ -1019,6 +1032,7 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={sectionNavigationPanel}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -1037,6 +1051,13 @@ function ThreadNavigationSidebarPane(
           onFilterAction={handleListMenuAction}
           onOpenSettings={props.onOpenSettings}
           onOpenEnvironments={props.onOpenEnvironmentSettings}
+          trailingAction={
+            <SectionNavigationToggle
+              open={sectionsOpen}
+              onPress={toggleSections}
+              variant="android-header"
+            />
+          }
           onRequestVisibility={props.onRequestVisibility}
         />
       ) : (
@@ -1062,6 +1083,11 @@ function ThreadNavigationSidebarPane(
               }
             />
             <View className="flex-row items-center gap-2.5">
+              <SectionNavigationToggle
+                open={sectionsOpen}
+                onPress={toggleSections}
+                variant="pill"
+              />
               <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
                 <SidebarFilterButton accessibilityLabel="Filter threads" icon={filterIcon} />
               </ControlPillMenu>

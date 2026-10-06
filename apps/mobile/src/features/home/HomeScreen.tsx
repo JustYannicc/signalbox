@@ -67,6 +67,8 @@ import {
 import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useMaterialFabScroll } from "./MaterialFabScrollContext";
+import { SectionNavigationPanel } from "../sections/SectionNavigationPanel";
+import { resolveSelectedProjectScope } from "../sections/section-project-filter";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -82,11 +84,13 @@ interface HomeScreenProps {
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly sectionsOpen: boolean;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  readonly onCloseSections: () => void;
   readonly onAddConnection: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
@@ -356,18 +360,12 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const v2ScopedProjectGroup = useMemo(
     () =>
-      v2ProjectScopeKey === null
-        ? null
-        : (v2ScopeProjects.find(
-            (scope) =>
-              scope.key === v2ProjectScopeKey ||
-              scope.projectRefs.some(
-                (projectRef) =>
-                  scopedProjectKey(projectRef.environmentId, projectRef.projectId) ===
-                  v2ProjectScopeKey,
-              ),
-          ) ?? null),
-    [v2ProjectScopeKey, v2ScopeProjects],
+      resolveSelectedProjectScope({
+        selectedProjectKey: v2ProjectScopeKey,
+        projectScopes: v2ScopeProjects,
+        projects: props.projects,
+      }),
+    [props.projects, v2ProjectScopeKey, v2ScopeProjects],
   );
   const v2ProjectTitleByProjectKey = useMemo(
     () =>
@@ -913,7 +911,20 @@ export function HomeScreen(props: HomeScreenProps) {
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
-  const v2ListHeader = listHeader;
+  const v2ListHeader = (
+    <>
+      {listHeader}
+      {props.sectionsOpen ? (
+        <SectionNavigationPanel
+          environments={props.environments}
+          selectedEnvironmentId={props.selectedEnvironmentId}
+          selectedProjectKey={props.selectedProjectKey}
+          onProjectChange={props.onProjectChange}
+          onClose={props.onCloseSections}
+        />
+      ) : null}
+    </>
+  );
 
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.
@@ -944,7 +955,7 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (Platform.OS === "android" && threadListV2Items.length === 0) {
+  if (Platform.OS === "android" && threadListV2Items.length === 0 && !props.sectionsOpen) {
     return (
       <View className="flex-1 bg-header">
         <View

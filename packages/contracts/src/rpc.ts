@@ -350,6 +350,7 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import { SECTION_WS_METHODS, SectionsWsRpcGroup } from "./sectionsRpc.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -364,6 +365,8 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
+
+  ...SECTION_WS_METHODS, // signalbox: sections
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -1974,4 +1977,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
-).middleware(RpcScopeAuthorization);
+)
+  .merge(SectionsWsRpcGroup)
+  .middleware(RpcScopeAuthorization);

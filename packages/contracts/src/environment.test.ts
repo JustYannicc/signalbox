@@ -60,6 +60,19 @@ describe("ExecutionEnvironmentDescriptor", () => {
     expect(decodeDescriptor(descriptor).capabilities.attachmentUploads).toBeUndefined();
   });
 
+  it("treats missing section persistence as unsupported under version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.sections).toBeUndefined();
+  });
+
+  it("preserves advertised section persistence", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, sections: true },
+      }).capabilities.sections,
+    ).toBe(true);
+  });
+
   it("preserves an advertised attachment upload capability", () => {
     expect(
       decodeDescriptor({

@@ -253,6 +253,7 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import * as SectionsRpc from "./sections/rpc.ts"; // signalbox: sections
 
 // signalbox: one pool operation, with hub errors mapped for the wire.
 const accountPool = <A>(
@@ -1223,6 +1224,7 @@ const layerWsRpc = (
       // attribution must never fail the user's command.
       const originProps = clientAnalyticsProps;
       const signalboxAnalyticsHandlers = yield* makeSignalboxAnalyticsWsHandlers(originProps); // signalbox: analytics
+      const sectionsHandlers = yield* SectionsRpc.makeSectionsWsHandlers; // signalbox: sections
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
         switch (command.type) {
           case "message.dispatch":
@@ -1823,6 +1825,7 @@ const layerWsRpc = (
 
       const handlers = ServerWsRpcGroup.of({
         ...signalboxAnalyticsHandlers, // signalbox: analytics
+        ...sectionsHandlers, // signalbox: sections
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,

@@ -25,6 +25,8 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
 import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
 import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
+import * as Sections from "./sections/Sections.ts"; // signalbox: sections
+import * as SectionsStore from "./sections/SectionsStore.ts"; // signalbox: sections
 import * as ProductAnalytics from "./signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
@@ -562,7 +564,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Core Services
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
-  Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+  Layer.provideMerge(
+    Sections.layer.pipe(
+      Layer.provideMerge(SectionsStore.layer),
+      Layer.provideMerge(ProjectStore.layer),
+    ),
+  ),
+  Layer.provideMerge(ThreadSearch.layer),
   Layer.provideMerge(layerServerSettings),
   // The asset route uses the registry's GitHub credential for private PR media.
   Layer.provideMerge(Layer.mergeAll(layerSourceControlProviderRegistry, GitHubCli.layer)),
