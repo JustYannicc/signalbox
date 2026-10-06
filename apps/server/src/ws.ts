@@ -218,6 +218,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import { makeSignalboxAnalyticsWsHandlers } from "./signalbox/analytics/rpc.ts"; // signalbox: analytics
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -1206,6 +1207,7 @@ const layerWsRpc = (
       // client starts is credited to its surface + app version. Best-effort:
       // attribution must never fail the user's command.
       const originProps = clientAnalyticsProps;
+      const signalboxAnalyticsHandlers = yield* makeSignalboxAnalyticsWsHandlers(originProps); // signalbox: analytics
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
         switch (command.type) {
           case "message.dispatch":
@@ -1805,6 +1807,7 @@ const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        ...signalboxAnalyticsHandlers, // signalbox: analytics
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,

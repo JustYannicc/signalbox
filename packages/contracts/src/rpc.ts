@@ -11,6 +11,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { SIGNALBOX_ANALYTICS_RPCS } from "./signalboxAnalytics.ts"; // signalbox: analytics
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -1742,6 +1743,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  ...SIGNALBOX_ANALYTICS_RPCS, // signalbox: analytics
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

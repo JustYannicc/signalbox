@@ -1,5 +1,6 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { AccountSettingsSection } from "../../account/AccountSettingsSection"; // signalbox: accounts
+import { ProductAnalyticsSettingsSection } from "../../analytics/ProductAnalyticsSettingsSection"; // signalbox: analytics
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
@@ -2255,6 +2256,8 @@ export function GeneralSettingsPanel() {
     <SettingsPageContainer>
       {/* signalbox: accounts */}
       <AccountSettingsSection />
+      {/* signalbox: analytics opt-out */}
+      <ProductAnalyticsSettingsSection />
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow
