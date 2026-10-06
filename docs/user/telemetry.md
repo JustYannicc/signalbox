@@ -1,7 +1,7 @@
 # Product usage data
 
-The Signalbox server sends product usage events to two PostHog projects: T3 Code's, because
-Signalbox is built on T3 Code and the data helps improve it, and Signalbox's own. Both receive the
+The Signalbox server sends product usage events to two PostHog projects: the one run by
+[T3 Code](https://github.com/pingdotgg/t3code), which Signalbox is built on, and Signalbox's own. Both receive the
 same events, associated with a hashed account or installation identifier. Events include the
 provider, model, reasoning effort, permission mode, turn result, duration, and main-agent token
 totals when available, plus which Signalbox features are used, such as sending feedback or running
