@@ -24,6 +24,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
 import * as ProductAnalytics from "./signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
+import * as WorkloadAnalytics from "./signalbox/analytics/workload/WorkloadAnalytics.ts"; // signalbox: workload analytics
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
@@ -519,6 +520,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 );
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
+  WorkloadAnalytics.layer, // signalbox: workload analytics
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,

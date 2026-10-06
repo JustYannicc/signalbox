@@ -132,11 +132,32 @@ const makePreference = Effect.gen(function* () {
 
   return {
     service: AnalyticsPreference.of({ settings, setEnabled }),
-    isEnabled: Ref.get(enabledRef),
+    // The server-wide switch stops everything the opt-out does.
+    isEnabled: Effect.map(Ref.get(enabledRef), (enabled) => enabled && serverEnabled),
   };
 });
 
-/** Replaces upstream's `AnalyticsService.layer`; also provides `AnalyticsPreference`. */
+/**
+ * Fork-only events, such as workload usage, that go to Signalbox's project
+ * alone. Same identity and opt-out as every other event; without a Signalbox
+ * key they are dropped.
+ */
+export class SignalboxAnalytics extends Context.Service<
+  SignalboxAnalytics,
+  {
+    readonly record: (
+      event: string,
+      properties?: Readonly<Record<string, unknown>>,
+    ) => Effect.Effect<void>;
+    /** Whether a recorded event would be sent: a key is set and the user hasn't opted out. */
+    readonly active: Effect.Effect<boolean>;
+  }
+>()("t3/signalbox/analytics/ProductAnalytics/SignalboxAnalytics") {}
+
+/**
+ * Replaces upstream's `AnalyticsService.layer`; also provides
+ * `AnalyticsPreference` and `SignalboxAnalytics`.
+ */
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const preference = yield* makePreference;
@@ -161,32 +182,37 @@ export const layer = Layer.effectContext(
 
     // Sequential: both instances resolve the identity, and the first may
     // create the anonymous id the second must reuse.
-    const destinations = [yield* makeDestination];
+    const t3Destination = yield* makeDestination;
     const signalboxKey = destination.key.trim();
-    if (signalboxKey) {
-      const signalboxConfig = ConfigProvider.fromUnknown({
-        T3CODE_POSTHOG_KEY: signalboxKey,
-        T3CODE_POSTHOG_HOST: destination.host.trim().replace(/\/+$/, ""),
-      });
-      destinations.push(
-        yield* makeDestination.pipe(
+    const signalboxDestination = signalboxKey
+      ? yield* makeDestination.pipe(
           Effect.provideService(
             ConfigProvider.ConfigProvider,
-            ConfigProvider.orElse(signalboxConfig, ambientConfig),
+            ConfigProvider.orElse(
+              ConfigProvider.fromUnknown({
+                T3CODE_POSTHOG_KEY: signalboxKey,
+                T3CODE_POSTHOG_HOST: destination.host.trim().replace(/\/+$/, ""),
+              }),
+              ambientConfig,
+            ),
           ),
-        ),
-      );
-    }
-
-    const analytics = AnalyticsService.AnalyticsService.of({
-      record: (event, properties) =>
+        )
+      : undefined;
+    const destinations =
+      signalboxDestination === undefined ? [t3Destination] : [t3Destination, signalboxDestination];
+    const recordTo =
+      (targets: ReadonlyArray<AnalyticsService.AnalyticsService["Service"]>) =>
+      (event: string, properties?: Readonly<Record<string, unknown>>) =>
         Effect.flatMap(preference.isEnabled, (enabled) =>
           enabled
-            ? Effect.forEach(destinations, (target) => target.record(event, properties), {
+            ? Effect.forEach(targets, (target) => target.record(event, properties), {
                 discard: true,
               })
             : Effect.void,
-        ),
+        );
+
+    const analytics = AnalyticsService.AnalyticsService.of({
+      record: recordTo(destinations),
       // Concurrent, so one destination's hung send doesn't hold up the other.
       flush: Effect.forEach(destinations, (target) => target.flush, {
         concurrency: "unbounded",
@@ -196,6 +222,13 @@ export const layer = Layer.effectContext(
 
     return Context.make(AnalyticsService.AnalyticsService, analytics).pipe(
       Context.add(AnalyticsPreference, preference.service),
+      Context.add(
+        SignalboxAnalytics,
+        SignalboxAnalytics.of({
+          record: recordTo(signalboxDestination === undefined ? [] : [signalboxDestination]),
+          active: signalboxDestination === undefined ? Effect.succeed(false) : preference.isEnabled,
+        }),
+      ),
     );
   }),
 );

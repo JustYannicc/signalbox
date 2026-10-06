@@ -7,9 +7,16 @@ provider, model, reasoning effort, permission mode, turn result, duration, and m
 totals when available, plus which Signalbox features are used, such as sending feedback or running
 a scheduled task.
 
-Events do not include prompts, responses, feedback text, file contents, authentication tokens,
-conversation IDs, raw provider events, or child-agent output. Child-agent token use is excluded from
-the totals.
+Signalbox's project also receives resource usage, which helps us choose where to run agents in the
+cloud: how long each turn takes and how long until the next one, how many shell commands of each kind
+(install, build, test and so on) an agent ran and for how long, how many file edits it made, the CPU
+time and peak memory of the agent's processes, and once a week the disk size of each project you
+used. Commands are sorted into those kinds on your machine; their text is never sent. Threads and
+projects are identified only by a one-way hash.
+
+Events do not include prompts, responses, feedback text, file contents, command text, file or
+folder paths, authentication tokens, conversation IDs, raw provider events, or child-agent output.
+Child-agent token use is excluded from the totals.
 
 To stop collection, turn off **Settings → General → Privacy → Share usage analytics**. This stops
 events to both projects, including any not yet sent. The setting belongs to each environment, so it
