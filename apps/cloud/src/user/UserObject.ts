@@ -18,6 +18,7 @@ import {
   USER_OBJECT_JURISDICTION,
   type UserObjectApi,
 } from "./UserDirectory.ts";
+import * as UserContexts from "./UserContexts.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
 import * as UserStore from "./UserStore.ts";
 
@@ -43,7 +44,7 @@ const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage) =>
   ManagedRuntime.make(
-    UserStore.layer.pipe(
+    Layer.mergeAll(UserStore.layer, UserContexts.layer).pipe(
       Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
     ),
   );
@@ -108,6 +109,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   exchangeCredential(input: Parameters<UserObjectApi["exchangeCredential"]>[0]) {
     return this.api.exchangeCredential(input);
+  }
+
+  syncOrganizations(organizations: Parameters<UserObjectApi["syncOrganizations"]>[0]) {
+    return this.api.syncOrganizations(organizations);
   }
 
   shellSnapshot() {

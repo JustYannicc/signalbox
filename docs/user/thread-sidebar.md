@@ -14,6 +14,21 @@ sidebar toggle step through where you've been.
 To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
 **Settings**.
 
+## Contexts and sections
+
+When you're signed in to Signalbox Cloud, the top of **Home** shows Personal and every
+work organization you belong to, side by side. You don't switch accounts.
+
+Sections are your own folders inside each context. Use **New section** under a
+context, then drag a section to reorder it, drop it onto another section to nest
+it, or drop it on the context's name to move it back to the top. The **⋯** menu
+on a section does the same from the keyboard. Deleting a section keeps its
+subsections. Sections only organize: moving something never changes where it's
+stored or who can see it. They sync to all your devices. On mobile you can see them
+but not change them yet.
+
+Organizations you join show up the next time you sign in.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model

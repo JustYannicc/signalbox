@@ -8,6 +8,10 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import {
+  SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
+  SIGNALBOX_CONTEXTS_WS_METHODS,
+} from "@t3tools/contracts/signalboxContexts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -16,10 +20,12 @@ import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import * as Environment from "../environment.ts";
+import * as UserContexts from "./UserContexts.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
- * for a client to connect, become ready and render the user's sidebar. The
+ * for a client to connect, become ready and render the user's sidebar, plus
+ * the user's contexts and sections (see `UserContexts`). The
  * group is `WsRpcGroup` itself with everything else omitted, so every payload
  * and stream item is the contract's own schema. A client calling anything
  * else gets a per-request "unknown request tag" failure rather than a dropped
@@ -33,6 +39,7 @@ const SERVED = [
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+  ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -56,6 +63,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
+  ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
 } as const satisfies Record<ServedTag, AuthEnvironmentScope>;
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
@@ -79,50 +87,71 @@ const thenHold = <A>(items: ReadonlyArray<A>) =>
 /**
  * Handlers for one connection. `shellSnapshot` reads the user's shell from
  * their object, so the sidebar always comes from the same place over HTTP and
- * the socket.
+ * the socket. Contexts come from the object's own `UserContexts`, so every
+ * connection sees every other connection's changes. Storage failures are
+ * bugs, not answers a client can act on.
  */
 export const layerHandlers = (input: {
   readonly identity: Environment.CloudEnvironmentIdentity;
   readonly shellSnapshot: Effect.Effect<OrchestrationV2ShellSnapshot>;
 }) =>
-  CloudRpcGroup.toLayer({
-    [WS_METHODS.subscribeServerConfig]: () =>
-      thenHold([
-        { version: 1, type: "snapshot", config: Environment.serverConfig(input.identity) } as const,
-      ]),
-    [WS_METHODS.serverGetConfig]: () => Effect.succeed(Environment.serverConfig(input.identity)),
-    [WS_METHODS.serverProbe]: () => Effect.succeed({}),
-    [WS_METHODS.serverReportClientActivity]: () => Effect.void,
-    [WS_METHODS.subscribeServerLifecycle]: () =>
-      Stream.unwrap(
-        Effect.gen(function* () {
-          const at = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
-          return thenHold([
+  CloudRpcGroup.toLayer(
+    Effect.gen(function* () {
+      const contexts = yield* UserContexts.UserContexts;
+      return {
+        [WS_METHODS.subscribeServerConfig]: () =>
+          thenHold([
             {
               version: 1,
-              sequence: 0,
-              type: "welcome",
-              payload: Environment.welcome(input.identity),
+              type: "snapshot",
+              config: Environment.serverConfig(input.identity),
             } as const,
-            {
-              version: 1,
-              sequence: 1,
-              type: "ready",
-              payload: { at, environment: Environment.descriptor(input.identity) },
-            } as const,
-          ]);
-        }),
-      ),
-    [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (request) =>
-      Stream.unwrap(
-        Effect.map(input.shellSnapshot, (snapshot) => {
-          // There is no event log yet, so only a client already at the current
-          // sequence can skip the snapshot.
-          const resumed = request.afterSequence === snapshot.snapshotSequence;
-          return thenHold([
-            ...(resumed ? [] : [{ kind: "snapshot", snapshot } as const]),
-            ...(request.requestCompletionMarker ? [{ kind: "synchronized" } as const] : []),
-          ]);
-        }),
-      ),
-  });
+          ]),
+        [WS_METHODS.serverGetConfig]: () =>
+          Effect.succeed(Environment.serverConfig(input.identity)),
+        [WS_METHODS.serverProbe]: () => Effect.succeed({}),
+        [WS_METHODS.serverReportClientActivity]: () => Effect.void,
+        [WS_METHODS.subscribeServerLifecycle]: () =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const at = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+              return thenHold([
+                {
+                  version: 1,
+                  sequence: 0,
+                  type: "welcome",
+                  payload: Environment.welcome(input.identity),
+                } as const,
+                {
+                  version: 1,
+                  sequence: 1,
+                  type: "ready",
+                  payload: { at, environment: Environment.descriptor(input.identity) },
+                } as const,
+              ]);
+            }),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (request) =>
+          Stream.unwrap(
+            Effect.map(input.shellSnapshot, (snapshot) => {
+              // There is no event log yet, so only a client already at the current
+              // sequence can skip the snapshot.
+              const resumed = request.afterSequence === snapshot.snapshotSequence;
+              return thenHold([
+                ...(resumed ? [] : [{ kind: "snapshot", snapshot } as const]),
+                ...(request.requestCompletionMarker ? [{ kind: "synchronized" } as const] : []),
+              ]);
+            }),
+          ),
+        [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
+        [SIGNALBOX_CONTEXTS_WS_METHODS.createSection]: (request) =>
+          contexts.createSection(request).pipe(Effect.catchTags({ SqlError: Effect.die })),
+        [SIGNALBOX_CONTEXTS_WS_METHODS.renameSection]: (request) =>
+          contexts.renameSection(request).pipe(Effect.catchTags({ SqlError: Effect.die })),
+        [SIGNALBOX_CONTEXTS_WS_METHODS.moveSection]: (request) =>
+          contexts.moveSection(request).pipe(Effect.catchTags({ SqlError: Effect.die })),
+        [SIGNALBOX_CONTEXTS_WS_METHODS.deleteSection]: (request) =>
+          contexts.deleteSection(request).pipe(Effect.catchTags({ SqlError: Effect.die })),
+      };
+    }),
+  );

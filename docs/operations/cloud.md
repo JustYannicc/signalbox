@@ -48,7 +48,7 @@ which each preview derives its own session secret.
 | `CLOUDFLARE_ACCOUNT_ID`    | variable | The Cloudflare account                                                  |
 | `CLOUD_SESSION_SECRET`     | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out. |
 | `T3CODE_WORKOS_CLIENT_ID`  | variable | WorkOS client id                                                        |
-| `T3CODE_WORKOS_API_KEY`    | secret   | WorkOS API key, needed to finish email verification (GitHub sign-ins)   |
+| `T3CODE_WORKOS_API_KEY`    | secret   | WorkOS API key: email verification (GitHub sign-ins) and work contexts  |
 | `VITE_T3CODE_FEEDBACK_DSN` | variable | Sentry DSN for the sidebar feedback button, baked into the web build    |
 
 WorkOS must list each origin's `/api/account/callback` as a redirect URI:

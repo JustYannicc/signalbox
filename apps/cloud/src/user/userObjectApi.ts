@@ -2,6 +2,7 @@ import type * as Effect from "effect/Effect";
 
 import * as Environment from "../environment.ts";
 import type { UserObjectApi } from "./UserDirectory.ts";
+import * as UserContexts from "./UserContexts.ts";
 import * as UserStore from "./UserStore.ts";
 
 /**
@@ -10,7 +11,9 @@ import * as UserStore from "./UserStore.ts";
  * in-memory one.
  */
 export const makeUserObjectApi = (
-  run: <A, E>(effect: Effect.Effect<A, E, UserStore.UserStore>) => Promise<A>,
+  run: <A, E>(
+    effect: Effect.Effect<A, E, UserStore.UserStore | UserContexts.UserContexts>,
+  ) => Promise<A>,
 ): UserObjectApi => {
   const use = <A, E>(f: (store: UserStore.UserStore["Service"]) => Effect.Effect<A, E>) =>
     run(UserStore.UserStore.use(f));
@@ -23,6 +26,8 @@ export const makeUserObjectApi = (
     issueGrant: (input) => use((store) => store.issueGrant(input)),
     redeemHandoff: (input) => use((store) => store.redeemHandoff(input)),
     exchangeCredential: (input) => use((store) => store.exchangeCredential(input)),
+    syncOrganizations: (organizations) =>
+      run(UserContexts.UserContexts.use((contexts) => contexts.syncOrganizations(organizations))),
     shellSnapshot: async () => Environment.emptyShellSnapshot,
   };
 };

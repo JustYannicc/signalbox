@@ -3,7 +3,8 @@
  * collapses; collapsing the sidebar hides only the panel beside it (the
  * sidebar's `icon` collapse, whose icon width is the rail's width).
  *
- * Home is upstream's project tree and Pipeline is upstream's attention-ordered
+ * Home is upstream's project tree, under the Signalbox Cloud contexts when a
+ * cloud environment is connected, and Pipeline is upstream's attention-ordered
  * list, both rendered unchanged apart from their titlebar row, which this
  * layout owns (see SidebarRailContext). Settings keeps the rail and shows its
  * own navigation in the panel. Picking a view from a utility page (settings,
@@ -15,6 +16,7 @@ import { useCallback, type ReactNode } from "react";
 import { isElectron } from "../../env";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { SidebarStageBackdrop, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
+import { ContextsSidebar } from "./contexts/ContextsSidebar";
 import { HomeNewButton } from "./HomeNewButton";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarChromeHeader, SidebarRailContext } from "./SidebarChrome";
@@ -34,6 +36,7 @@ function SidebarViewPanel(props: { view: SidebarView; home: ReactNode; pipeline:
       {props.view === "home" ? (
         <>
           <HomeNewButton />
+          <ContextsSidebar />
           {props.home}
         </>
       ) : (

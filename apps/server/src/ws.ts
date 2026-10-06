@@ -220,6 +220,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { makeSignalboxAnalyticsWsHandlers } from "./signalbox/analytics/rpc.ts"; // signalbox: analytics
+import { signalboxContextsWsHandlers } from "./signalbox/contexts/rpc.ts"; // signalbox: contexts
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -1810,6 +1811,7 @@ const layerWsRpc = (
 
       const handlers = ServerWsRpcGroup.of({
         ...signalboxAnalyticsHandlers, // signalbox: analytics
+        ...signalboxContextsWsHandlers, // signalbox: contexts
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,

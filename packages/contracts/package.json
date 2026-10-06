@@ -26,6 +26,10 @@
     "./signalboxAnalytics": {
       "types": "./src/signalboxAnalytics.ts",
       "import": "./src/signalboxAnalytics.ts"
+    },
+    "./signalboxContexts": {
+      "types": "./src/signalboxContexts.ts",
+      "import": "./src/signalboxContexts.ts"
     }
   },
   "scripts": {

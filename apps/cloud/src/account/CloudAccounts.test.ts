@@ -6,7 +6,8 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
-import { CLOUD_TEST_ENV, layerAccounts } from "../testing.ts";
+import { CLOUD_TEST_ENV, layerAccounts, MemoryUserObjects } from "../testing.ts";
+import * as UserContexts from "../user/UserContexts.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as CloudAccounts from "./CloudAccounts.ts";
 
@@ -210,6 +211,48 @@ describe("CloudAccounts", () => {
     }).pipe(
       Effect.provide(
         layerAccounts(CODES, { ...CLOUD_TEST_ENV, T3CODE_WORKOS_PROVIDERS: "github" }),
+      ),
+    ),
+  );
+  it.effect("signing in shows Personal and every organization the user belongs to", () =>
+    Effect.gen(function* () {
+      const objects = yield* MemoryUserObjects;
+      yield* signIn(browserParams, { code: "code-ada" });
+      const { contexts } = yield* objects.run(
+        "user_ada",
+        UserContexts.UserContexts.use((store) => store.snapshot),
+      );
+      expect(contexts.map((context) => context.name)).toEqual([
+        "Personal",
+        "Acme",
+        "Globex",
+        "Initech",
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerAccounts(CODES, withKey, {
+          user_ada: [
+            { id: "org_initech", name: "Initech" },
+            { id: "org_acme", name: "Acme" },
+            { id: "org_globex", name: "Globex" },
+          ],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("without the WorkOS API key, signing in shows Personal only", () =>
+    Effect.gen(function* () {
+      const objects = yield* MemoryUserObjects;
+      yield* signIn(browserParams, { code: "code-ada" });
+      const { contexts } = yield* objects.run(
+        "user_ada",
+        UserContexts.UserContexts.use((store) => store.snapshot),
+      );
+      expect(contexts.map((context) => context.id)).toEqual(["personal"]);
+    }).pipe(
+      Effect.provide(
+        layerAccounts(CODES, undefined, { user_ada: [{ id: "org_acme", name: "Acme" }] }),
       ),
     ),
   );

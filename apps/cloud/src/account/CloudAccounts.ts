@@ -34,6 +34,7 @@ import * as UserDirectory from "../user/UserDirectory.ts";
 const ATTEMPT_TTL_MS = 10 * 60 * 1000;
 const VERIFICATION_TTL_MS = 10 * 60 * 1000;
 const HANDOFF_TTL_MS = 5 * 60 * 1000;
+const CONTEXTS_SYNC_TIMEOUT = "3 seconds";
 
 export class CloudSignInRequestError extends Schema.TaggedError<CloudSignInRequestError>()(
   "CloudSignInRequestError",
@@ -147,6 +148,28 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
+  /**
+   * Refreshes the user's work contexts from their WorkOS memberships. Best
+   * effort: a failure keeps the contexts from the previous sign-in, and
+   * without the API key there are no work contexts at all.
+   */
+  const syncContexts = (userObject: UserDirectory.UserHandle, userId: string) => {
+    const { apiKey } = workos;
+    if (apiKey === undefined) return Effect.void;
+    return WorkOSClient.listOrganizations({ ...workos, apiKey }, userId).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      // Sign-in waits for this, so a slow WorkOS must not hold it up.
+      Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
+      Effect.flatMap((organizations) => userObject.syncOrganizations(organizations)),
+      Effect.catch((error) =>
+        Effect.logWarning("cloud contexts sync failed", {
+          errorTag: error._tag,
+          ...(error._tag === "WorkOSOrganizationsError" ? { status: error.status } : {}),
+        }),
+      ),
+    );
+  };
+
   const redirect = (location: string): SignInResult => ({ _tag: "Redirect", location });
   const errorRedirect = (attempt: CloudTokens.PendingAttempt, error: AccountSignInError) =>
     redirect(AccountFlow.callbackErrorLocation(attempt, error));
@@ -206,7 +229,12 @@ const make = Effect.gen(function* () {
     user: WorkOSClient.WorkOSUser,
   ) {
     const userObject = users.forUser(user.id);
-    const recordSignIn = userObject.recordSignIn(toProfile(user));
+    // Contexts are refreshed alongside the profile, so the first shell after
+    // signing in already shows every organization.
+    const recordSignIn = Effect.all(
+      [userObject.recordSignIn(toProfile(user)), syncContexts(userObject, user.id)],
+      { concurrency: 2, discard: true },
+    );
     if (attempt.target.mode === "browser") {
       const [, { session, token }] = yield* Effect.all(
         [

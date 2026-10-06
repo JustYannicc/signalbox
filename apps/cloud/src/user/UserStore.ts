@@ -14,6 +14,8 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import * as UserContexts from "./UserContexts.ts";
+
 /**
  * Everything one user's Durable Object persists about who they are: their
  * WorkOS profile, their environment sessions, and the one-time grants that
@@ -114,6 +116,7 @@ const migrations = Migrator.fromRecord({
       used_at INTEGER
     )`;
   }),
+  "0002_contexts_sections": UserContexts.createTables,
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */

@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import * as Environment from "../environment.ts";
+import { layerMemoryStore } from "../testing.ts";
 import * as CloudRpc from "./rpc.ts";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
@@ -25,7 +26,7 @@ const client = (scopes: ReadonlyArray<AuthEnvironmentScope> = [AuthOrchestration
           shellSnapshot: Effect.succeed(Environment.emptyShellSnapshot),
         }),
         CloudRpc.layerScopeAuthorization(scopes),
-      ),
+      ).pipe(Layer.provideMerge(layerMemoryStore)),
     ),
   );
 
