@@ -67,6 +67,7 @@ import {
 import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useMaterialFabScroll } from "./MaterialFabScrollContext";
+import { withAutomationsBanner } from "../automations/AutomationsHomeBanner"; // signalbox: automations
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -913,7 +914,7 @@ export function HomeScreen(props: HomeScreenProps) {
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
-  const v2ListHeader = listHeader;
+  const v2ListHeader = withAutomationsBanner(listHeader); // signalbox: automations
 
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.

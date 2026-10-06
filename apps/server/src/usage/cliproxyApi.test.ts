@@ -47,21 +47,37 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<
+      Omit<(typeof accounts)[number], "id_token"> & {
+        disabled?: boolean;
+        status?: string;
+        unavailable?: boolean;
+        next_retry_after?: string;
+        project_id?: string;
+        id_token?: (typeof accounts)[number]["id_token"];
+      }
+    >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
 ) {
-  const requests: Array<{ path: string; body?: RequestBody }> = [];
+  const requests: Array<{ method: string; path: string; search: string; body?: RequestBody }> = [];
   const http = HttpClient.make((request) =>
     Effect.sync(() => {
       expect(request.headers.authorization).toBe("Bearer management-secret");
-      const path = new URL(request.url).pathname;
+      const { pathname: path, search } = new URL(request.url);
       const body =
-        request.body._tag === "Uint8Array"
+        request.body._tag === "Uint8Array" && !path.endsWith("/auth-files/status")
           ? decodeRequest(new TextDecoder().decode(request.body.body))
           : undefined;
-      requests.push({ path, ...(body ? { body } : {}) });
+      requests.push({ method: request.method, path, search, ...(body ? { body } : {}) });
+      if (path.endsWith("/auth-files/status") || request.method === "DELETE")
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(search.includes("gone") ? { error: "not found" } : { status: "ok" }, {
+            status: search.includes("gone") ? 404 : 200,
+          }),
+        );
       if (path.endsWith("/auth-files"))
         return HttpClientResponse.fromWeb(
           request,
@@ -209,6 +225,78 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("reads and redeems a Claude banked reset as the Claude CLI", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) => {
+          expect(request.header?.["User-Agent"]).toMatch(/^claude-cli\//);
+          if (request.url?.endsWith("/api/oauth/profile")) {
+            return { status: 200, body: { organization: { uuid: "org-1" } } };
+          }
+          if (request.url?.endsWith("/reset_rate_limits"))
+            return { status: 200, body: { result: "reset" } };
+          return {
+            status: 200,
+            body: {
+              five_hour: { utilization: 10, resets_at: null },
+              cedar_ember: {
+                eligible: true,
+                grants: [
+                  {
+                    id: "launch-grant",
+                    resets_left: 1,
+                    ends_at: "2099-01-01T00:00:00+00:00",
+                    paused: false,
+                    usable_now: true,
+                    clears: ["five_hour", "seven_day", "seven_day_overage_included"],
+                  },
+                  {
+                    id: "session-grant",
+                    resets_left: 1,
+                    ends_at: "2099-02-01T00:00:00+00:00",
+                    paused: false,
+                    usable_now: true,
+                    clears: ["five_hour"],
+                  },
+                ],
+                next_grant_id: "launch-grant",
+                event_props: { tier: "claude_max_20x" },
+              },
+            },
+          };
+        },
+      });
+      const api = yield* test.api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.plan).toBe("Claude Max 20x Subscription");
+      const credits = account?.usageLimits.resetCredits;
+      expect(credits?.availableCount).toBe(2);
+      // Nothing is at its limit, so a plain "Use reset" would take the narrowest grant.
+      expect(credits?.nextCreditId).toBe("session-grant");
+      // A 5-hour ticket spends the 5-hour reset and keeps the full one for the weekly window.
+      expect(credits?.windows?.find((entry) => entry.windowId === "five_hour")).toEqual({
+        windowId: "five_hour",
+        availableCount: 2,
+        nextCreditId: "session-grant",
+        // The soonest expiry among the window's credits, not the claimed one's.
+        nextExpiresAt: "2099-01-01T00:00:00.000Z",
+      });
+      expect(credits?.windows?.find((entry) => entry.windowId === "seven_day")).toEqual({
+        windowId: "seven_day",
+        availableCount: 1,
+        nextCreditId: "launch-grant",
+        nextExpiresAt: "2099-01-01T00:00:00.000Z",
+      });
+      expect(yield* api.consume(config, account!.id, "launch-grant")).toEqual({ outcome: "reset" });
+      const claim = test.requests.find((request) =>
+        request.body?.url?.endsWith("/api/organizations/org-1/reset_rate_limits"),
+      );
+      expect(claim?.body?.data).toContain('"grant_id":"launch-grant"');
+      expect(test.requests.some((request) => request.path.endsWith("/reset-quota"))).toBe(true);
+    }),
+  );
+
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       const test = fixture();
@@ -258,15 +346,172 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("skips disabled accounts and rejects redemption on them", () =>
+  it.effect("lists paused accounts without probing them and rejects redemption on them", () =>
     Effect.gen(function* () {
       const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });
       const api = yield* test.api;
-      expect(yield* api.readAccounts(config)).toEqual([]);
+      const [paused, ...rest] = yield* api.readAccounts(config);
+      expect(rest).toEqual([]);
+      expect(paused).toMatchObject({
+        id: "first.json",
+        driver: "codex",
+        disabled: true,
+        usageLimits: { windows: [], unavailable: { reason: "unsupported" } },
+      });
       expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
         "Failure",
       );
       expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+    }),
+  );
+
+  it.effect("lists Sign in with ChatGPT accounts as Codex without probing ChatGPT", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "chatgpt-siwc-a.json",
+            auth_index: "s",
+            provider: "chatgpt-siwc",
+            email: "a@example.com",
+          },
+        ],
+      });
+      const api = yield* test.api;
+      expect(yield* api.readAccounts(config)).toMatchObject([
+        {
+          id: "chatgpt-siwc-a.json",
+          driver: "codex",
+          email: "a@example.com",
+          plan: "ChatGPT",
+          usageLimits: {
+            unavailable: { reason: "unsupported" },
+            externalUsage: { url: "https://chatgpt.com/#settings/Usage" },
+          },
+        },
+      ]);
+      expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+    }),
+  );
+
+  it.effect("asks for a fresh sign-in when the hub reports a dead refresh token", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "chatgpt-siwc-a.json",
+            auth_index: "s",
+            provider: "chatgpt-siwc",
+            email: "a@example.com",
+            status: "error",
+            unavailable: true,
+          },
+          {
+            id: "cooling.json",
+            auth_index: "c",
+            provider: "chatgpt-siwc",
+            email: "c@example.com",
+            status: "error",
+            unavailable: true,
+            next_retry_after: "2099-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const api = yield* test.api;
+      const [signedOut, cooling] = yield* api.readAccounts(config);
+      expect(signedOut?.usageLimits.unavailable?.message).toBe("Signed out. Sign in again.");
+      expect(signedOut?.signedOut).toBe(true);
+      expect(cooling?.usageLimits.unavailable?.message).not.toContain("Signed out");
+      expect(cooling?.signedOut).toBeUndefined();
+    }),
+  );
+
+  it.effect("reads Grok billing and Antigravity quota through the hub", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { id: "xai-a.json", auth_index: "x", provider: "xai", email: "x@example.com" },
+          {
+            id: "antigravity-a.json",
+            auth_index: "g",
+            provider: "antigravity",
+            email: "g@example.com",
+            project_id: "proj-1",
+          },
+        ],
+        upstream: (request) =>
+          request.url?.includes("grok.com")
+            ? {
+                status: 200,
+                body: {
+                  config: {
+                    creditUsagePercent: 40,
+                    currentPeriod: {
+                      type: "USAGE_PERIOD_TYPE_WEEKLY",
+                      end: "2099-01-01T00:00:00Z",
+                    },
+                  },
+                },
+              }
+            : request.url?.startsWith("https://daily-cloudcode-pa.googleapis.com")
+              ? { status: 503, body: {} }
+              : {
+                  status: 200,
+                  body: {
+                    groups: [
+                      {
+                        displayName: "Gemini",
+                        buckets: [
+                          {
+                            bucketId: "g5h",
+                            displayName: "5 hours",
+                            window: "5h",
+                            remainingFraction: 0.25,
+                            resetTime: "2099-01-01T00:00:00Z",
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+      });
+      const api = yield* test.api;
+      const [grok, antigravity] = yield* api.readAccounts(config);
+      expect(grok).toMatchObject({
+        driver: "grok",
+        email: "x@example.com",
+        usageLimits: { windows: [{ kind: "weekly", usedPercent: 40 }] },
+      });
+      expect(antigravity).toMatchObject({
+        driver: "antigravity",
+        usageLimits: {
+          windows: [{ id: "g5h", kind: "session", label: "5 hours", usedPercent: 75 }],
+        },
+      });
+      const quotaCall = test.requests.find((request) =>
+        request.body?.url?.includes("cloudcode-pa"),
+      );
+      expect(quotaCall?.body?.method).toBe("POST");
+      expect(quotaCall?.body?.data).toBe('{"project":"proj-1"}');
+    }),
+  );
+
+  it.effect("pauses, resumes, and removes accounts through the hub's auth files", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      yield* api.updateAccount(config, "second.json", "pause");
+      yield* api.updateAccount(config, "second.json", "resume");
+      yield* api.updateAccount(config, "second.json", "remove");
+      expect(test.requests.map(({ method, path, search }) => `${method} ${path}${search}`)).toEqual(
+        [
+          "PATCH /v0/management/auth-files/status",
+          "PATCH /v0/management/auth-files/status",
+          "DELETE /v0/management/auth-files?name=second.json",
+        ],
+      );
+      const missing = yield* api.updateAccount(config, "gone.json", "remove").pipe(Effect.flip);
+      expect(missing.detail).toContain("could not update");
     }),
   );
 

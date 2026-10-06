@@ -40,7 +40,7 @@ Signalbox follows the person, not the job. Work, personal life, a new employer: 
 
 ### 8. Opinionated defaults, full freedom
 
-Ship defaults that prevent the avoidable fuckups, so people never have to care about the machinery. Then let them change anything. Tighter guardrails leave less room to do useful work.
+T3 Code is built for its maintainers' workflow. Signalbox is built so everyone can shape it to theirs. Ship defaults that prevent the avoidable fuckups, so people never have to care about the machinery. Then let them change anything. Workflow behavior, such as watching a PR or waking an agent when CI finishes, ships as a default automation built from primitives that people can read and edit. It never ships as special-case code. Tighter guardrails leave less room to do useful work.
 
 ### 9. How it feels is how it works
 
@@ -77,6 +77,7 @@ Two interaction models I don't want. The first is the department bot: a universi
 - Merge upstream into `main`; never rebase shared history.
 - Rename what users see, type, or install. Keep upstream's internal names (`@t3tools/*`, `T3CODE_*`, symbols, `t3.json`) so upstream patches apply cleanly.
 - Put fork features in their own modules. Give an upstream file at most a hook line, using existing seams (routes, provider registries, settings sections) before adding new ones.
+- When upstream ships a workflow-shaped feature, adopt the primitive it implies, not the feature itself (principle 8). Make the primitive available to automations and agents, and leave upstream's code in place so merges stay clean.
 - Generic fixes and seams belong upstream. Open those as PRs to T3 Code instead of carrying them.
 - Persistence migrations are numbered and the runner only applies ids above the latest recorded one. A fork migration that takes a number upstream later uses silently skips upstream's. Fork tables create themselves (`CREATE TABLE IF NOT EXISTS`) instead.
 - `settings.json` decodes through the contracts schema and drops unknown keys on write. Fork settings live in their own file.

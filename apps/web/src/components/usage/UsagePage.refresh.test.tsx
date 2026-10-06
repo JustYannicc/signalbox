@@ -26,6 +26,8 @@ vi.mock("../../state/server", () => ({
   primaryServerKeybindingsAtom: "keybindings",
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.refreshProviders }));
+// signalbox: the pool account list reads environments the page's own mocks don't cover.
+vi.mock("../accountPool/PoolAccountList", () => ({ PoolAccountList: () => null }));
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
 vi.mock("../../state/usage", () => ({

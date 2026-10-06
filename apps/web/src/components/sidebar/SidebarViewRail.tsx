@@ -8,7 +8,6 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   BellIcon,
   BlocksIcon,
-  ChartNoAxesColumnIcon,
   HouseIcon,
   LibraryIcon,
   MoonIcon,
@@ -18,10 +17,13 @@ import {
 } from "lucide-react";
 import { memo, type ReactNode } from "react";
 
+import { useWaitingAutomationCount } from "../automations/useAutomations";
+import { Badge } from "../ui/badge";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarFeedbackButton } from "./feedback/SidebarFeedbackButton";
 import type { SidebarView } from "./sidebarView";
+import { UsageNavIcon } from "../usage/UsageNavIcon";
 
 type RailEntry =
   | { kind: "view"; view: SidebarView; label: string; icon: LucideIcon }
@@ -30,7 +32,7 @@ type RailEntry =
 const VIEW_ENTRIES: ReadonlyArray<RailEntry> = [
   { kind: "view", view: "home", label: "Home", icon: HouseIcon },
   { kind: "soon", label: "Spaces", icon: LibraryIcon },
-  { kind: "soon", label: "Automations", icon: WorkflowIcon },
+  { kind: "view", view: "automations", label: "Automations", icon: WorkflowIcon },
   { kind: "view", view: "pipeline", label: "Pipeline", icon: BellIcon },
   { kind: "soon", label: "Plugins", icon: BlocksIcon },
 ];
@@ -39,15 +41,18 @@ function RailButton(props: {
   label: string;
   active: boolean;
   onClick: () => void;
+  /** Things waiting on the user behind this entry; shown as a count on the icon. */
+  badge?: number;
   children: ReactNode;
 }) {
+  const badge = props.badge ?? 0;
   return (
     <SidebarMenuItem>
       <Tooltip>
         <TooltipTrigger
           render={
             <SidebarMenuButton
-              aria-label={props.label}
+              aria-label={badge > 0 ? `${props.label}, ${badge} waiting on you` : props.label}
               aria-current={props.active ? "page" : undefined}
               isActive={props.active}
               size="icon"
@@ -56,8 +61,15 @@ function RailButton(props: {
           }
         >
           {props.children}
+          {badge > 0 ? (
+            <Badge aria-hidden size="sm" className="absolute -top-0.5 -right-0.5">
+              {badge > 9 ? "9+" : badge}
+            </Badge>
+          ) : null}
         </TooltipTrigger>
-        <TooltipPopup side="right">{props.label}</TooltipPopup>
+        <TooltipPopup side="right">
+          {badge > 0 ? `${props.label} · ${badge} waiting on you` : props.label}
+        </TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>
   );
@@ -91,6 +103,7 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { isMobile, setOpenMobile } = useSidebar();
+  const waitingAutomations = useWaitingAutomationCount();
   const leaveSidebar = () => {
     if (isMobile) setOpenMobile(false);
   };
@@ -108,6 +121,7 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
               label={entry.label}
               active={props.view === entry.view}
               onClick={() => props.onViewChange(entry.view)}
+              {...(entry.view === "automations" ? { badge: waitingAutomations } : {})}
             >
               <entry.icon />
             </RailButton>
@@ -127,7 +141,7 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
             void navigate({ to: "/usage" });
           }}
         >
-          <ChartNoAxesColumnIcon />
+          <UsageNavIcon />
         </RailButton>
         <SidebarMenuItem>
           <SidebarFeedbackButton />

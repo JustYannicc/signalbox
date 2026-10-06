@@ -1,3 +1,5 @@
+import { HubInstanceSetup } from "../accountHub/HubInstanceSetup"; // signalbox
+import { isHubInstanceConfig } from "../accountHub/hubInstances"; // signalbox
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
@@ -1063,7 +1065,15 @@ export function EnvironmentProviderSettings({
           ) : undefined
         }
         setup={
-          mode === "editor" && row.driver === "antigravity" ? (
+          // signalbox: hub instances add accounts to the account hub.
+          mode === "editor" && isHubInstanceConfig(row.instance.config) ? (
+            <HubInstanceSetup
+              environmentId={environmentId}
+              instanceId={row.instanceId}
+              provider={liveProvider}
+              readOnly={readOnly}
+            />
+          ) : mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection
               environmentId={environmentId}
               environmentLabel={environmentLabel}

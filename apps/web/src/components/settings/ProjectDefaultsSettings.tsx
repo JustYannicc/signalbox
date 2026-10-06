@@ -40,6 +40,7 @@ import {
   useScopedSettingSource,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { usePickerPools } from "../accountPool/ModelPoolSwitcher"; // signalbox
 
 /**
  * Rows for the settings a project may override. The same rows edit
@@ -72,6 +73,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     selection?.model,
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
+  // signalbox: the default model carries its pool, so a project's default picks the pool too.
+  const pools = usePickerPools(target?.environmentId ?? null, entries, settings.providerInstances);
   const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
@@ -162,6 +165,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               model={selection.model}
               lockedProvider={null}
               instanceEntries={entries}
+              pools={pools}
               modelOptionsByInstance={modelOptions}
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
               {...(mixedModel ? { triggerLabel: "Mixed" } : {})}

@@ -87,7 +87,7 @@ export class EnvironmentPublishSignatures extends Context.Service<
 
 const decodeProof = Schema.decodeUnknownEffect(RelayAgentActivityPublishProofPayload);
 
-function environmentPublishReplayThumbprintData(input: {
+export function environmentPublishReplayThumbprintData(input: {
   readonly environmentId: string;
   readonly environmentPublicKey: string;
 }) {
@@ -99,7 +99,7 @@ function environmentPublishReplayThumbprintData(input: {
   );
 }
 
-const formatEnvironmentPublishReplayThumbprint = (digest: Uint8Array) =>
+export const formatEnvironmentPublishReplayThumbprint = (digest: Uint8Array) =>
   `env-publish:${Base64Url.encode(digest)}`;
 
 const make = Effect.gen(function* () {

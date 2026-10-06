@@ -1,3 +1,5 @@
+import { makeHubGrokInstance } from "../../accountHub/HubDriverInstance.ts"; // signalbox
+import { withAccountHub } from "../../accountHub/hubInstance.ts"; // signalbox
 import { GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -96,6 +98,18 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
   defaultConfig: (): GrokSettings => decodeGrokSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      // signalbox: hub instances run this same driver against the account hub.
+      if (config.setupMode === "hub")
+        return yield* withAccountHub(
+          DRIVER_KIND,
+          instanceId,
+          config.poolId,
+          makeHubGrokInstance(
+            DRIVER_KIND,
+            { instanceId, displayName, accentColor, environment, enabled, config },
+            GrokDriver.create,
+          ),
+        );
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;

@@ -986,5 +986,8 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     access,
     exportProfile,
     revoke: lock.withPermit(withSessionLock(remove)),
+    // signalbox: the account hub runs this sign-in inside its own flow.
+    authenticate: (method: string, context: ProviderAuthFlowContext) =>
+      lock.withPermit(authenticate(method, context)),
   };
 });

@@ -129,6 +129,7 @@ import {
 } from "@t3tools/shared/projectScripts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { attachedAutomationTasks } from "@t3tools/client-runtime/automations/attached"; // signalbox: attached automation runs
 import {
   latestUnheldRun,
   usageLimitRunPresentedAsLatest,
@@ -3591,8 +3592,9 @@ export default function ChatView(props: ChatViewProps) {
         runs: serverProjection.runs,
         pullRequests: serverProjection.thread.pullRequests,
       }),
+      ...attachedAutomationTasks(activeThreadShell?.pendingBackgroundTasks), // signalbox: attached automation runs
     ];
-  }, [serverProjection]);
+  }, [serverProjection, activeThreadShell?.pendingBackgroundTasks]);
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
