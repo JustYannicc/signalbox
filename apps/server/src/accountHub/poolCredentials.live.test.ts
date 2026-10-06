@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -25,10 +26,12 @@ import * as AccountPools from "./AccountPools.ts";
 import { listApiKeys } from "./hubApiKeys.ts";
 import { makeCursorPoolStore, saveCursorAccount } from "./hubCursor.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 const jwt = (claims: Record<string, unknown>) =>
   [
-    Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
-    Buffer.from(JSON.stringify(claims)).toString("base64url"),
+    Buffer.from(encodeJson({ alg: "none" })).toString("base64url"),
+    Buffer.from(encodeJson(claims)).toString("base64url"),
     "sig",
   ].join(".");
 
@@ -61,7 +64,7 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("pool credential
         yield* fs.makeDirectory(codexHome, { recursive: true });
         yield* fs.writeFileString(
           `${codexHome}/auth.json`,
-          JSON.stringify({
+          encodeJson({
             tokens: {
               id_token: jwt({ email: "native@example.com" }),
               access_token: jwt({ exp: 4_102_444_800 }),
@@ -97,7 +100,9 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("pool credential
             (text) => text.includes("claude-"),
           );
           expect(models).toContain("claude-");
-          expect((yield* settings.getSettings).providerInstances.claude_hub).toMatchObject({
+          expect(
+            (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("claude_hub")],
+          ).toMatchObject({
             driver: "claudeAgent",
             config: { setupMode: "hub" },
           });
@@ -106,7 +111,7 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("pool credential
           yield* settings.updateSettings({
             providerInstances: {
               ...(yield* settings.getSettings).providerInstances,
-              codex: {
+              [ProviderInstanceId.make("codex")]: {
                 driver: ProviderDriverKind.make("codex"),
                 config: { homePath: codexHome },
               },
@@ -122,8 +127,11 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("pool credential
             ["codex-native@example.com.json", "codex"],
           ]);
           const after = (yield* settings.getSettings).providerInstances;
-          expect(after.codex?.enabled).toBe(false);
-          expect(after.codex_hub).toMatchObject({ driver: "codex", config: { setupMode: "hub" } });
+          expect(after[ProviderInstanceId.make("codex")]?.enabled).toBe(false);
+          expect(after[ProviderInstanceId.make("codex_hub")]).toMatchObject({
+            driver: "codex",
+            config: { setupMode: "hub" },
+          });
 
           // Cursor keys live in the hub and are handed out in turn.
           yield* saveCursorAccount(hub, { apiKey: "key_one", email: "one@example.com" });

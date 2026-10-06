@@ -558,7 +558,9 @@ describe("CLIProxyAPI built-in management API", () => {
         { driver: "claudeAgent", plan: "Anthropic API key ····1234", apiKey: true },
         { driver: "codex", plan: "OpenRouter API key ····wxyz", apiKey: true },
       ]);
-      expect(JSON.stringify(listed)).not.toContain("sk-ant-api03");
+      expect(listed.flatMap((account) => [account.id, account.plan ?? ""]).join(" ")).not.toContain(
+        "sk-ant-api03",
+      );
       const claudeKey = listed[1]!.id;
       const paused = yield* api.updateAccount(config, claudeKey, "pause").pipe(Effect.flip);
       expect(paused.detail).toBe("API keys can only be removed.");

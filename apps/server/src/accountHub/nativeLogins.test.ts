@@ -10,6 +10,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -17,11 +18,13 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { readNativeLogin } from "./nativeLogins.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 // A JWT with the given claims; the reader only decodes, never verifies.
 const jwt = (claims: Record<string, unknown>) =>
   [
-    Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
-    Buffer.from(JSON.stringify(claims)).toString("base64url"),
+    Buffer.from(encodeJson({ alg: "none" })).toString("base64url"),
+    Buffer.from(encodeJson(claims)).toString("base64url"),
     "sig",
   ].join(".");
 
@@ -54,7 +57,7 @@ describe("readNativeLogin", () => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "native-claude-" });
       yield* fs.writeFileString(
         `${dir}/.credentials.json`,
-        JSON.stringify({
+        encodeJson({
           claudeAiOauth: {
             accessToken: "sk-ant-oat-a",
             refreshToken: "sk-ant-ort-r",
@@ -64,7 +67,7 @@ describe("readNativeLogin", () => {
       );
       yield* fs.writeFileString(
         `${dir}/.claude.json`,
-        JSON.stringify({
+        encodeJson({
           oauthAccount: { emailAddress: "me@example.com", organizationUuid: "org" },
         }),
       );
@@ -99,7 +102,7 @@ describe("readNativeLogin", () => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "native-codex-" });
       yield* fs.writeFileString(
         `${dir}/auth.json`,
-        JSON.stringify({
+        encodeJson({
           OPENAI_API_KEY: "sk-openai",
           tokens: {
             id_token: jwt({ email: "dev@example.com" }),
@@ -147,13 +150,15 @@ describe("readNativeLogin", () => {
         ProviderInstanceId.make("cursor"),
         instance("cursor", {}),
       ).pipe(Effect.provide(testLayer(dir)), Effect.flip);
-      expect(missing.detail).toBe("No Cursor login was found for this provider.");
+      expect(missing).toMatchObject({ detail: "No Cursor login was found for this provider." });
 
       const unsupported = yield* readNativeLogin(
         ProviderInstanceId.make("grok"),
         instance("grok", {}),
       ).pipe(Effect.provide(testLayer(dir)), Effect.flip);
-      expect(unsupported.detail).toContain("can't move into a pool");
+      expect(unsupported).toMatchObject({
+        detail: "This provider's login can't move into a pool yet.",
+      });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

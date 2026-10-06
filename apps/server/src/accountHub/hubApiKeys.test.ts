@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { parse } from "yaml";
 
 import { apiKeyAccountId, apiKeySections } from "./hubApiKeys.ts";

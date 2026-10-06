@@ -329,7 +329,14 @@ const readCursor = (instanceId: ProviderInstanceId, instance: ProviderInstanceCo
 export const readNativeLogin = (
   instanceId: ProviderInstanceId,
   instance: ProviderInstanceConfig,
-) =>
+): Effect.Effect<
+  NativeLogin,
+  AccountHubError,
+  | Effect.Services<ReturnType<typeof readClaude>>
+  | Effect.Services<ReturnType<typeof readCodexCli>>
+  | Effect.Services<ReturnType<typeof readCodexManaged>>
+  | Effect.Services<ReturnType<typeof readCursor>>
+> =>
   instance.driver === "claudeAgent"
     ? readClaude(instance)
     : instance.driver === "codex"
