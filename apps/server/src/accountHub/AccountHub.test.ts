@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - spawns stand-in leftover processes.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeChildProcess from "node:child_process";
 import { describe, expect, it } from "@effect/vitest";
 import { ACCOUNT_HUB_SOURCE_ID } from "@t3tools/contracts/accountHub";
 import {
@@ -136,6 +138,52 @@ describe("AccountHub", () => {
         expect(second.baseUrl).toBe(first.baseUrl);
         expect(second.managementKey).toBe(first.managementKey);
         expect(second.clientKey).toBe(first.clientKey);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("stops a hub its previous server left running, and nothing else", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { baseDir, layer } = yield* harness();
+      const hubDir = `${baseDir}/userdata/account-hub`;
+      yield* fs.makeDirectory(hubDir, { recursive: true });
+      // Stand-ins: one carries the hub's config path like a leftover hub, one does not.
+      const sleeper = (marker: string) =>
+        NodeChildProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", marker], {
+          stdio: "ignore",
+        });
+      const leftover = sleeper(`${hubDir}/config.yaml`);
+      const stranger = sleeper("unrelated");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          leftover.kill();
+          stranger.kill();
+        }),
+      );
+      const exited = (child: NodeChildProcess.ChildProcess) =>
+        Effect.callback<void>((resume) => {
+          if (child.exitCode !== null || child.signalCode !== null) resume(Effect.void);
+          else child.once("exit", () => resume(Effect.void));
+        });
+
+      yield* fs.writeFileString(`${hubDir}/hub.pid`, `${leftover.pid}\n`);
+      yield* Effect.gen(function* () {
+        const hub = yield* AccountHub.AccountHub;
+        yield* hub.ensureRunning;
+        yield* exited(leftover);
+        // The new hub recorded itself for the next start.
+        const recorded = Number((yield* fs.readFileString(`${hubDir}/hub.pid`)).trim());
+        expect(recorded).not.toBe(leftover.pid);
+      }).pipe(Effect.provide(layer));
+
+      // A pid recycled by an unrelated process is never touched.
+      yield* fs.writeFileString(`${hubDir}/hub.pid`, `${stranger.pid}\n`);
+      yield* Effect.gen(function* () {
+        const hub = yield* AccountHub.AccountHub;
+        yield* hub.ensureRunning;
+        expect(stranger.exitCode).toBeNull();
+        expect(stranger.signalCode).toBeNull();
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

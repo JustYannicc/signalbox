@@ -224,6 +224,37 @@ const make = Effect.gen(function* () {
       )
       .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk), Effect.timeout("2 seconds"));
 
+  // A server that died abruptly (crash, kill -9) leaves its hub running, and
+  // CLIProxyAPI has no way to notice its parent is gone. Each start records the
+  // hub's pid and stops the previous one, if that pid still runs our config.
+  const pidPath = path.join(hubDirectory, "hub.pid");
+  const stopPreviousHub = Effect.gen(function* () {
+    if (platform === "win32") return;
+    const pid = yield* fs.readFileString(pidPath).pipe(
+      Effect.map((text) => Number.parseInt(text.trim(), 10)),
+      Effect.orElseSucceed(() => Number.NaN),
+    );
+    if (!Number.isInteger(pid) || pid <= 0) return;
+    const command = yield* spawner
+      .spawn(ChildProcess.make("ps", ["-o", "command=", "-p", String(pid)], { shell: false }))
+      .pipe(
+        Effect.flatMap((child) => child.stdout.pipe(Stream.decodeText(), Stream.mkString)),
+        Effect.scoped,
+        Effect.orElseSucceed(() => ""),
+      );
+    // A recycled pid belongs to something else; only our own config marks our hub.
+    if (!command.includes(configPath)) return;
+    yield* Effect.logWarning("stopping account hub left by a previous server", { pid });
+    yield* Effect.sync(() => {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // Already gone.
+      }
+    });
+    yield* Effect.sleep("500 millis");
+  });
+
   const spawn = Effect.gen(function* () {
     const executable = yield* installAccountHub({ toolsDirectory, platform, arch }).pipe(
       Effect.provideContext(installContext),
@@ -243,6 +274,7 @@ const make = Effect.gen(function* () {
       clientKey,
     };
     // MANAGEMENT_PASSWORD would add a second key and open management to the network.
+    yield* stopPreviousHub;
     const { MANAGEMENT_PASSWORD: _ignored, ...childEnvironment } = environment;
     const scope = yield* Scope.make("sequential");
     const child = yield* spawner
@@ -260,6 +292,7 @@ const make = Effect.gen(function* () {
         Effect.provideService(Scope.Scope, scope),
         Effect.tapError(() => Scope.close(scope, Exit.void)),
       );
+    yield* fs.writeFileString(pidPath, `${Number(child.pid)}\n`);
     // Drain output so a chatty hub never blocks on a full pipe.
     yield* Effect.forkIn(
       Stream.merge(child.stdout, child.stderr).pipe(
