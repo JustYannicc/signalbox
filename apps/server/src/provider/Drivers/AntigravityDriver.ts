@@ -96,6 +96,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         return yield* withAccountHub(
           DRIVER,
           instanceId,
+          config.poolId,
           makeHubAntigravityInstance(
             DRIVER,
             { instanceId, displayName, accentColor, environment, enabled, config },

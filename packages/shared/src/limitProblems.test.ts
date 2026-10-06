@@ -75,7 +75,7 @@ describe("collectLimitProblems", () => {
     expect(collectLimitProblems(presentations).map(({ title, detail }) => [title, detail])).toEqual(
       [
         ["Account signed out", "dead@example.com needs a new sign-in."],
-        ["The account hub is not working", "Could not reach hub.example.com (ECONNREFUSED)."],
+        ["The Signalbox pool is not working", "Could not reach hub.example.com (ECONNREFUSED)."],
       ],
     );
   });

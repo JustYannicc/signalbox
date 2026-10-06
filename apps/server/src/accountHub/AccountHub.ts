@@ -124,14 +124,39 @@ export class AccountHub extends Context.Service<
   }
 >()("t3/accountHub/AccountHub") {}
 
-const MANAGEMENT_KEY_SECRET = "account-hub-management-key";
-const EXTERNAL_MANAGEMENT_KEY_SECRET = "account-hub-external-management-key";
-const EXTERNAL_CLIENT_KEY_SECRET = "account-hub-external-client-key";
+/**
+ * Where one hub keeps its files, keys, and usage source. The personal pool's
+ * hub uses today's names, so existing installs need no migration; every other
+ * pool gets its own directory and key names.
+ */
+export interface AccountHubPlacement {
+  /** Under the server state directory. */
+  readonly directory: string;
+  /** Prefix for this hub's secret names. */
+  readonly secretPrefix: string;
+  readonly sourceId: UsageLimitSourceId;
+}
+
+/** Every secret a hub keeps, so removing a pool removes exactly these. */
+export const hubSecretNames = (placement: AccountHubPlacement) => ({
+  management: `${placement.secretPrefix}-management-key`,
+  client: `${placement.secretPrefix}-client-key`,
+  externalManagement: `${placement.secretPrefix}-external-management-key`,
+  externalClient: `${placement.secretPrefix}-external-client-key`,
+});
+
+// Every pool's hub installs into the same tools directory; one install at a time.
+const installLock = Semaphore.makeUnsafe(1);
+
+export const PERSONAL_HUB: AccountHubPlacement = {
+  directory: "account-hub",
+  secretPrefix: "account-hub",
+  sourceId: ACCOUNT_HUB_SOURCE_ID,
+};
 const StoredConnection = Schema.Struct({ mode: Schema.Literal("external"), url: Schema.String });
 const decodeStoredConnection = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredConnection));
 const encodeStoredConnection = Schema.encodeEffect(Schema.fromJsonString(StoredConnection));
 const normalizeHubUrl = (url: string) => url.trim().replace(/\/+$/u, "");
-const CLIENT_KEY_SECRET = "account-hub-client-key";
 // A hub that exits before this long counts as a crash loop and backs off.
 const STABLE_UPTIME = Duration.seconds(30);
 const RESTART_BACKOFF_MIN = Duration.seconds(1);
@@ -197,7 +222,10 @@ export function renderAccountHubConfig(options: {
   ].join("\n");
 }
 
-const make = Effect.gen(function* () {
+/** One hub at `placement`. `layer` builds the personal pool's; AccountPools builds the rest. */
+export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
+  placement: AccountHubPlacement,
+) {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -217,7 +245,12 @@ const make = Effect.gen(function* () {
   >();
 
   const toolsDirectory = path.join(config.baseDir, "tools", "cliproxyapi");
-  const hubDirectory = path.join(config.stateDir, "account-hub");
+  const hubDirectory = path.join(config.stateDir, placement.directory);
+  const secretNames = hubSecretNames(placement);
+  const MANAGEMENT_KEY_SECRET = secretNames.management;
+  const CLIENT_KEY_SECRET = secretNames.client;
+  const EXTERNAL_MANAGEMENT_KEY_SECRET = secretNames.externalManagement;
+  const EXTERNAL_CLIENT_KEY_SECRET = secretNames.externalClient;
   const authDir = path.join(hubDirectory, "auths");
   const pluginsDir = path.join(hubDirectory, "plugins");
   const configPath = path.join(hubDirectory, "config.yaml");
@@ -306,9 +339,9 @@ const make = Effect.gen(function* () {
   });
 
   const spawn = Effect.gen(function* () {
-    const executable = yield* installAccountHub({ toolsDirectory, platform, arch }).pipe(
-      Effect.provideContext(installContext),
-    );
+    const executable = yield* installLock
+      .withPermits(1)(installAccountHub({ toolsDirectory, platform, arch }))
+      .pipe(Effect.provideContext(installContext));
     const { managementKey, clientKey } = yield* keys;
     // First, so an orphan neither holds the saved port nor sees its config rewritten.
     yield* stopPreviousHub;
@@ -328,43 +361,45 @@ const make = Effect.gen(function* () {
     // MANAGEMENT_PASSWORD would add a second key and open management to the network.
     const { MANAGEMENT_PASSWORD: _ignored, ...childEnvironment } = environment;
     const scope = yield* Scope.make("sequential");
-    const child = yield* spawner
-      .spawn(
-        ChildProcess.make(executable, ["--config", configPath, "-local-model"], {
-          cwd: hubDirectory,
-          env: childEnvironment,
-          shell: false,
-          detached: false,
-          // No pipes: with a Go plugin loaded, CLIProxyAPI spins at full CPU forever when
-          // its output pipe closes during shutdown. And should it ever hang, SIGKILL.
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "ignore",
-          forceKillAfter: "5 seconds",
-        }),
-      )
-      .pipe(
-        Effect.provideService(Scope.Scope, scope),
-        Effect.tapError(() => Scope.close(scope, Exit.void)),
-      );
-    yield* fs.writeFileString(pidPath, `${Number(child.pid)}\n`);
-    // Stop waiting as soon as the hub exits (bad config, taken port) instead of timing out.
-    const ready = yield* Effect.raceFirst(
-      probe(endpoint).pipe(Effect.retry(Schedule.spaced("150 millis")), Effect.as(true)),
-      child.exitCode.pipe(
-        Effect.as(false),
-        Effect.orElseSucceed(() => false),
-      ),
-    ).pipe(Effect.timeoutOption("30 seconds"));
-    if (Option.isNone(ready) || !ready.value) {
-      yield* Scope.close(scope, Exit.void);
-      return yield* new AccountHubError({
-        detail: Option.isNone(ready)
-          ? "The account hub did not start in time."
-          : "The account hub stopped while starting.",
-      });
-    }
-    return { endpoint, scope, child };
+    // Anything but a started hub (a failure, or an interrupt because the pool was deleted or
+    // the server is stopping) closes the scope, which stops the process.
+    return yield* Effect.gen(function* () {
+      const child = yield* spawner
+        .spawn(
+          ChildProcess.make(executable, ["--config", configPath, "-local-model"], {
+            cwd: hubDirectory,
+            env: childEnvironment,
+            shell: false,
+            detached: false,
+            // No pipes: with a Go plugin loaded, CLIProxyAPI spins at full CPU forever when
+            // its output pipe closes during shutdown. And should it ever hang, SIGKILL.
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+            forceKillAfter: "5 seconds",
+          }),
+        )
+        .pipe(Effect.provideService(Scope.Scope, scope));
+      yield* fs.writeFileString(pidPath, `${Number(child.pid)}\n`);
+      // Stop waiting as soon as the hub exits (bad config, taken port) instead of timing out.
+      const ready = yield* Effect.raceFirst(
+        probe(endpoint).pipe(Effect.retry(Schedule.spaced("150 millis")), Effect.as(true)),
+        child.exitCode.pipe(
+          Effect.as(false),
+          Effect.orElseSucceed(() => false),
+        ),
+      ).pipe(Effect.timeoutOption("30 seconds"));
+      if (Option.isNone(ready) || !ready.value) {
+        return yield* new AccountHubError({
+          detail: Option.isNone(ready)
+            ? "The account hub did not start in time."
+            : "The account hub stopped while starting.",
+        });
+      }
+      return { endpoint, scope, child };
+    }).pipe(
+      Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : Scope.close(scope, Exit.void))),
+    );
   });
 
   // Restart on exit. Quick exits and failed restarts back off so a broken binary cannot spin,
@@ -426,12 +461,17 @@ const make = Effect.gen(function* () {
     return started.endpoint;
   });
 
+  // Set when this hub's scope closes (its pool was deleted); it never starts again.
+  const closed = yield* Ref.make(false);
+  yield* Effect.addFinalizer(() => Ref.set(closed, true));
   const ensureManaged = gate.withPermit(
-    Ref.get(running).pipe(
-      Effect.flatMap((current) =>
-        Option.isSome(current) ? Effect.succeed(current.value.endpoint) : start,
-      ),
-    ),
+    Effect.gen(function* () {
+      if (yield* Ref.get(closed)) {
+        return yield* new AccountHubError({ detail: "That pool no longer exists." });
+      }
+      const current = yield* Ref.get(running);
+      return Option.isSome(current) ? current.value.endpoint : yield* start;
+    }),
   );
   const ensureRunning: Effect.Effect<AccountHubEndpoint, AccountHubError> = Ref.get(external).pipe(
     Effect.flatMap((hub) => (Option.isSome(hub) ? Effect.succeed(hub.value) : ensureManaged)),
@@ -701,7 +741,7 @@ const make = Effect.gen(function* () {
         Option.map(
           (hub) =>
             [
-              ACCOUNT_HUB_SOURCE_ID,
+              placement.sourceId,
               {
                 kind: "cliproxy",
                 label: hub.baseUrl.startsWith("http://127.0.0.1:")
@@ -718,4 +758,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(AccountHub, make);
+export const layer = Layer.effect(AccountHub, makeAccountHub(PERSONAL_HUB));

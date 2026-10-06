@@ -1,38 +1,39 @@
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { PERSONAL_POOL_ID, poolInstanceId } from "@t3tools/contracts/accountHub";
 
 /**
- * The provider instances that run through the account hub. There is one per
- * provider; adding an account adds it to that instance's pool, so the model
- * picker never grows a row per account.
+ * The kinds of accounts a pool holds. Each pool runs one provider instance per
+ * kind; adding an account adds it to that instance's pool, so the model picker
+ * never grows a row per account.
  */
 export const HUB_INSTANCES = {
   codex: {
-    instanceId: ProviderInstanceId.make("codex_hub"),
     driver: ProviderDriverKind.make("codex"),
-    displayName: "Codex accounts",
+    displayName: "ChatGPT",
     account: "ChatGPT",
   },
   claude: {
-    instanceId: ProviderInstanceId.make("claude_hub"),
     driver: ProviderDriverKind.make("claudeAgent"),
-    displayName: "Claude accounts",
+    displayName: "Claude",
     account: "Claude",
   },
   grok: {
-    instanceId: ProviderInstanceId.make("grok_hub"),
     driver: ProviderDriverKind.make("grok"),
-    displayName: "Grok accounts",
+    displayName: "Grok",
     account: "Grok",
   },
   antigravity: {
-    instanceId: ProviderInstanceId.make("antigravity_hub"),
     driver: ProviderDriverKind.make("antigravity"),
-    displayName: "Antigravity accounts",
+    displayName: "Antigravity",
     account: "Antigravity",
   },
 } as const;
 
 export type HubAccountKind = keyof typeof HUB_INSTANCES;
+
+/** The provider instance of `kind` in `poolId`. */
+export const hubInstanceId = (kind: HubAccountKind, poolId: string = PERSONAL_POOL_ID) =>
+  ProviderInstanceId.make(poolInstanceId(kind, poolId));
 
 export function isHubInstanceConfig(config: unknown): boolean {
   return (

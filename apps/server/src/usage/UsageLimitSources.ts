@@ -35,7 +35,7 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import * as AccountHub from "../accountHub/AccountHub.ts"; // signalbox: account hub
+import * as AccountPools from "../accountHub/AccountPools.ts"; // signalbox: account pools
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
@@ -72,12 +72,12 @@ export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const settingsService = yield* Settings.ServerSettingsService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
-  // signalbox: the hub Signalbox runs reports like a configured source.
-  const accountHub = yield* Effect.serviceOption(AccountHub.AccountHub);
-  const hubSource = Option.match(accountHub, {
+  // signalbox: every account pool's hub reports like a configured source.
+  const accountPools = yield* Effect.serviceOption(AccountPools.AccountPools);
+  const hubSources = Option.match(accountPools, {
     onNone: () =>
-      Effect.succeed(Option.none<readonly [UsageLimitSourceId, UsageLimitSourceConfig]>()),
-    onSome: (hub) => hub.usageLimitSource,
+      Effect.succeed<ReadonlyArray<readonly [UsageLimitSourceId, UsageLimitSourceConfig]>>([]),
+    onSome: (pools) => pools.usageLimitSources,
   });
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
   const changes = yield* Effect.acquireRelease(
@@ -120,7 +120,7 @@ export const make = Effect.gen(function* () {
     );
     const entries = [
       ...Object.entries(settings?.usageLimitSources ?? {}).filter(([, config]) => config.enabled),
-      ...Option.toArray(yield* hubSource),
+      ...(yield* hubSources),
     ];
     const snapshots = yield* Effect.forEach(
       entries,
@@ -137,8 +137,8 @@ export const make = Effect.gen(function* () {
           () => new UsageLimitSourceError({ detail: "Could not read hub settings." }),
         ),
       );
-      const hub = Option.filter(yield* hubSource, ([id]) => id === sourceId);
-      const config = Option.isSome(hub) ? hub.value[1] : settings.usageLimitSources[sourceId];
+      const hub = (yield* hubSources).find(([id]) => id === sourceId);
+      const config = hub ? hub[1] : settings.usageLimitSources[sourceId];
       if (!config?.enabled || !config.managementKey) {
         return yield* new UsageLimitSourceError({
           detail: "The usage limit source is missing or disabled.",
@@ -168,7 +168,9 @@ export const make = Effect.gen(function* () {
       yield* api.updateAccount(config, input.accountId, input.action);
       yield* republish(input.sourceId, config);
       // signalbox: hub instances recount their accounts.
-      if (Option.isSome(accountHub)) yield* accountHub.value.markAccountsChanged;
+      if (Option.isSome(accountPools)) {
+        yield* accountPools.value.markAccountsChanged(input.sourceId);
+      }
     }).pipe(refreshLock.withPermits(1));
 
   // Settings edits re-read straight away so a new hub shows up without
@@ -199,17 +201,9 @@ export const make = Effect.gen(function* () {
 
   yield* refresh.pipe(Effect.forkScoped);
 
-  // signalbox: re-read when the account hub comes up or goes down, and when its accounts change.
-  if (Option.isSome(accountHub)) {
-    yield* Stream.merge(
-      accountHub.value.statusChanges.pipe(
-        Stream.map((status) => status.phase === "running"),
-        Stream.changes,
-        // The first value is the state the startup refresh above already read.
-        Stream.drop(1),
-      ),
-      accountHub.value.accountChanges,
-    ).pipe(
+  // signalbox: re-read when a pool changes, or its hub comes up, goes down, or changes accounts.
+  if (Option.isSome(accountPools)) {
+    yield* accountPools.value.activity.pipe(
       Stream.debounce("300 millis"), // signalbox: account changes arrive in bursts
       Stream.runForEach(() => refresh),
       Effect.forkScoped,

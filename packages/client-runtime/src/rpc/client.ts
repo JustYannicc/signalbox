@@ -54,6 +54,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
   | typeof WS_METHODS.scheduledTasksSubscribe
+  | typeof WS_METHODS.accountPoolSubscribe // signalbox
   | typeof WS_METHODS.subscribeTerminalEvents
   | typeof WS_METHODS.subscribeTerminalMetadata
   | typeof WS_METHODS.subscribePreviewEvents

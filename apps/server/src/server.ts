@@ -23,7 +23,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
 import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
-import * as AccountHubConnections from "./accountHub/AccountHubConnections.ts"; // signalbox
+import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
@@ -556,12 +556,7 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.
   Layer.provideMerge(
-    Layer.mergeAll(
-      Keybindings.layer,
-      EnvironmentTheme.layer,
-      UsageLimitSources.layer,
-      AccountHubConnections.layer, // signalbox: account hub
-    ),
+    Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
   ),
   Layer.provideMerge(ProviderRegistryLive),
   // The instance registry is the new routing keystone — text generation,
@@ -574,7 +569,11 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
     Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
       CodexInstallation.CodexInstallation.layer,
-      AccountHub.layer.pipe(Layer.provide(NetService.layer)), // signalbox: account hub
+      // signalbox: account pools, each on its own hub; the personal pool's is today's hub.
+      AccountPools.layer.pipe(
+        Layer.provideMerge(AccountHub.layer),
+        Layer.provide(NetService.layer),
+      ),
     ),
   ),
 );

@@ -1,4 +1,4 @@
-import { AddHubAccountMenu } from "../accountHub/AddHubAccountMenu"; // signalbox
+import { PoolAccountList } from "../accountPool/PoolAccountList"; // signalbox
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
@@ -23,7 +23,6 @@ import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { barColor } from "./UsageLimits";
-import { UsageLimitsAccountList } from "./UsageLimitsAccountList";
 import { LimitSegment } from "./UsageLimitsSegment";
 
 /**
@@ -229,12 +228,8 @@ export function UsageLimitsPooled({
       ) : null}
       <PoolSummary pools={pools} now={now} />
       {cursorPrompt}
-      <UsageLimitsAccountList
-        pools={pools}
-        now={now}
-        // signalbox: accounts are added to the account hub from here.
-        actions={<AddHubAccountMenu environmentIds={[...presentations.keys()]} />}
-      />
+      {/* signalbox: accounts by pool; each pool's accounts are added from here. */}
+      <PoolAccountList pools={pools} now={now} environmentIds={[...presentations.keys()]} />
       {externalLinks.map((link) => (
         <section
           key={link.url}

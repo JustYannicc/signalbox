@@ -124,6 +124,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         return yield* withAccountHub(
           DRIVER_KIND,
           instanceId,
+          config.poolId,
           makeHubClaudeInstance(
             DRIVER_KIND,
             { instanceId, displayName, accentColor, environment, enabled, config },

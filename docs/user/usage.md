@@ -117,37 +117,42 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 ## Use several subscription accounts
 
-Signalbox can spread work across several ChatGPT, Claude, Grok, and Antigravity accounts. Open
+Signalbox spreads work across several ChatGPT, Claude, Grok, and Antigravity accounts. Accounts live
+in **pools**: everyone starts with one pool, and you can add more, for example one for work. Open
 **Usage → Limits**, choose **Add account**, pick the provider, and sign in with the account to add.
-Repeat for each account. Grok shows a code to enter on xAI's page.
+With several pools, each pool has its own **Add account**. Grok shows a code to enter on xAI's page.
 
 In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
 cannot load; copy that page's full address and paste it into Signalbox to finish.
 
-The first account of each provider adds a provider such as **Claude accounts** to the model picker.
-Pick it to use every account you added: each conversation stays on one account, and work moves to
-another account when one runs out. Antigravity accounts offer only its Flash models this way.
+The first account of each provider in a pool adds that provider, such as **Claude**, to the model
+picker. Pick it to use every account of that kind in the pool: each conversation stays on one
+account, and work moves to another account when one runs out. Antigravity accounts offer only its
+Flash models this way.
 
-Each account appears under **Accounts** on **Usage → Limits**. Use its menu to pause, resume, or
-remove it. ChatGPT does not share usage with connected apps, so ChatGPT accounts link to ChatGPT's
-usage page instead of showing bars.
+Each account appears on **Usage → Limits** under its pool. Use its menu to pause, resume, or remove
+it. ChatGPT accounts added with Sign in with ChatGPT link to ChatGPT's usage page instead of showing
+bars.
 
 When an account's login expires, it shows **Signed out**, Usage gets a red dot, and Signalbox tells
 you. Choose **Sign in again** on the account and sign in with the same account; it keeps its place in
-the pool. If the sign-in page ends on a page that cannot load, copy that page's address into
-**Finish sign-in**. Using the same account directly in Codex or Claude Code as well can sign it out
-of the pool, because each sign-in replaces the other's login.
+the pool. Using the same account directly in Codex or Claude Code as well can sign it out of the
+pool, because each sign-in replaces the other's login.
 
-### Bring accounts from CLIProxyAPI
+### Manage pools
 
-If you already run CLIProxyAPI, choose **Add account → Import from CLIProxyAPI** and enter its URL and
-management key to copy its accounts in. Leave **Remove them from that CLIProxyAPI** on unless you stop
-using that instance: two hubs refreshing the same account sign each other out.
+Open **Settings → Pools** to create, rename, or delete pools. Each pool keeps its logins with
+Signalbox, or in a CLIProxyAPI you already run: choose **Where it keeps logins** in the pool's menu
+and enter that instance's URL, management key, and one of its API keys. Signalbox then sends the
+pool's work through your instance and adds new accounts to it.
 
-To keep your accounts where they are, choose **Add account → Account hub…**, select **Use my
-CLIProxyAPI**, and enter its URL, management key, and one of its API keys. Signalbox then sends work
-through your instance and adds new accounts to it. ChatGPT accounts need Signalbox's ChatGPT plugin
-installed there. Switch back to **Signalbox runs it** at any time.
+To bring accounts from a CLIProxyAPI you run into a pool, choose **Import from CLIProxyAPI** in the
+pool's menu. Leave **Remove them from that CLIProxyAPI** on unless you stop using that instance:
+two places refreshing the same account sign each other out.
+
+Deleting a pool removes its providers from the model picker, and threads on it stop working. The
+accounts Signalbox keeps for it are removed; a pool that keeps its logins in your CLIProxyAPI leaves
+them there.
 
 ## Connect a CLIProxyAPI hub
 

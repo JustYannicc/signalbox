@@ -92,17 +92,29 @@ export function UsageLimitsAccountList({
   pools,
   now,
   actions,
+  title = "Accounts",
 }: {
   readonly pools: readonly LimitPool[];
   readonly now: number;
   /** Shown beside the heading, even before there are accounts. */
   readonly actions?: ReactNode;
+  /** An account pool's name when the list shows one pool of several. */
+  readonly title?: string;
 }) {
   if (pools.length === 0 && !actions) return null;
   return (
-    <section className="flex flex-col gap-3" aria-label="Accounts">
+    <section className="flex flex-col gap-3" aria-label={title}>
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-medium text-foreground">Accounts</h2>
+        {/* A pool's name sits a level above its providers. */}
+        <h2
+          className={
+            title === "Accounts"
+              ? "text-sm font-medium text-foreground"
+              : "text-base font-semibold text-foreground"
+          }
+        >
+          {title}
+        </h2>
         {actions}
       </div>
       {pools.map((pool) => {

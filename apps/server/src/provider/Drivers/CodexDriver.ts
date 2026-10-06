@@ -141,6 +141,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         return yield* withAccountHub(
           DRIVER_KIND,
           instanceId,
+          config.poolId,
           makeHubCodexProvider({
             instanceId,
             displayName,

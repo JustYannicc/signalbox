@@ -103,6 +103,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         return yield* withAccountHub(
           DRIVER_KIND,
           instanceId,
+          config.poolId,
           makeHubGrokInstance(
             DRIVER_KIND,
             { instanceId, displayName, accentColor, environment, enabled, config },

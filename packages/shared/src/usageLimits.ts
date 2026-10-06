@@ -19,7 +19,7 @@ import {
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
-import { ACCOUNT_HUB_SOURCE_ID } from "@t3tools/contracts/accountHub";
+import { isAccountPoolSourceId } from "@t3tools/contracts/accountHub";
 import * as DateTime from "effect/DateTime";
 
 const MINUTE = 60_000;
@@ -345,8 +345,8 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
         notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
-      } else if (source.accounts.length === 0 && source.id !== ACCOUNT_HUB_SOURCE_ID) {
-        // signalbox: the hub Signalbox runs starts empty; adding an account is not an error.
+      } else if (source.accounts.length === 0 && !isAccountPoolSourceId(source.id)) {
+        // signalbox: an account pool starts empty; adding an account is not an error.
         notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
       }
     }

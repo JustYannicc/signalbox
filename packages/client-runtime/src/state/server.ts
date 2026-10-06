@@ -1130,20 +1130,42 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
-    // signalbox: the account hub's connection and account import.
-    getAccountHubConnection: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:get-account-hub-connection",
-      tag: WS_METHODS.accountHubGetConnection,
+    // signalbox: account pools.
+    accountPoolsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:account-pools:live",
+      tag: WS_METHODS.accountPoolSubscribe,
     }),
-    setAccountHubConnection: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:set-account-hub-connection",
-      tag: WS_METHODS.accountHubSetConnection,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    createAccountPool: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:create-account-pool",
+      tag: WS_METHODS.accountPoolCreate,
     }),
-    importAccountHubAccounts: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:import-account-hub-accounts",
-      tag: WS_METHODS.accountHubImportAccounts,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    renameAccountPool: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:rename-account-pool",
+      tag: WS_METHODS.accountPoolRename,
+    }),
+    deleteAccountPool: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:delete-account-pool",
+      tag: WS_METHODS.accountPoolDelete,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.poolId]),
+      },
+    }),
+    setAccountPoolBacking: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-account-pool-backing",
+      tag: WS_METHODS.accountPoolSetBacking,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.poolId]),
+      },
+    }),
+    importAccountPoolAccounts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:import-account-pool-accounts",
+      tag: WS_METHODS.accountPoolImportAccounts,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.poolId]),
+      },
     }),
     updateUsageLimitSourceAccount: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-usage-limit-source-account",

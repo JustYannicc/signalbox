@@ -7,7 +7,7 @@
  * @module limitProblems
  */
 import type { EnvironmentId, ServerProvider, UsageLimitSourceId } from "@t3tools/contracts";
-import { ACCOUNT_HUB_SOURCE_ID } from "@t3tools/contracts/accountHub";
+import { isAccountPoolSourceId } from "@t3tools/contracts/accountHub";
 
 import { collectLimitAccounts, type LimitPresentations } from "./usageLimits.ts";
 
@@ -44,10 +44,9 @@ export function collectLimitProblems(presentations: LimitPresentations): readonl
         environmentId,
         sourceId: source.id,
         driver: null,
-        title:
-          source.id === ACCOUNT_HUB_SOURCE_ID
-            ? "The account hub is not working"
-            : `${source.label} is not working`,
+        title: isAccountPoolSourceId(source.id)
+          ? `The ${source.label} pool is not working`
+          : `${source.label} is not working`,
         detail: source.error,
       });
     }

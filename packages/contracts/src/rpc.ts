@@ -1,9 +1,12 @@
 import {
-  AccountHubConnection,
-  AccountHubImportInput,
   AccountHubImportResult,
   AccountHubRpcError,
-  AccountHubSetConnectionInput,
+  AccountPool,
+  AccountPoolCreateInput,
+  AccountPoolDeleteInput,
+  AccountPoolImportInput,
+  AccountPoolRenameInput,
+  AccountPoolSetBackingInput,
 } from "./accountHub.ts"; // signalbox
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
@@ -375,9 +378,12 @@ export const WS_METHODS = {
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
   usageLimitSourceUpdateAccount: "usageLimitSource.updateAccount",
-  accountHubGetConnection: "accountHub.getConnection",
-  accountHubSetConnection: "accountHub.setConnection",
-  accountHubImportAccounts: "accountHub.importAccounts",
+  accountPoolSubscribe: "accountPool.subscribe",
+  accountPoolCreate: "accountPool.create",
+  accountPoolRename: "accountPool.rename",
+  accountPoolDelete: "accountPool.delete",
+  accountPoolSetBacking: "accountPool.setBacking",
+  accountPoolImportAccounts: "accountPool.importAccounts",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -611,21 +617,37 @@ const WsUsageLimitSourceUpdateAccountRpc = Rpc.make(WS_METHODS.usageLimitSourceU
   error: Schema.Union([UsageLimitSourceError, EnvironmentAuthorizationError]),
 });
 
-// signalbox: the account hub's connection and account import.
-const AccountHubRpcFailure = Schema.Union([AccountHubRpcError, EnvironmentAuthorizationError]);
-const WsAccountHubGetConnectionRpc = Rpc.make(WS_METHODS.accountHubGetConnection, {
-  success: AccountHubConnection,
-  error: AccountHubRpcFailure,
+// signalbox: account pools.
+const AccountPoolRpcFailure = Schema.Union([AccountHubRpcError, EnvironmentAuthorizationError]);
+const WsAccountPoolSubscribeRpc = Rpc.make(WS_METHODS.accountPoolSubscribe, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AccountPool),
+  error: AccountPoolRpcFailure,
+  stream: true,
 });
-const WsAccountHubSetConnectionRpc = Rpc.make(WS_METHODS.accountHubSetConnection, {
-  payload: AccountHubSetConnectionInput,
-  success: AccountHubConnection,
-  error: AccountHubRpcFailure,
+const WsAccountPoolCreateRpc = Rpc.make(WS_METHODS.accountPoolCreate, {
+  payload: AccountPoolCreateInput,
+  success: AccountPool,
+  error: AccountPoolRpcFailure,
 });
-const WsAccountHubImportAccountsRpc = Rpc.make(WS_METHODS.accountHubImportAccounts, {
-  payload: AccountHubImportInput,
+const WsAccountPoolRenameRpc = Rpc.make(WS_METHODS.accountPoolRename, {
+  payload: AccountPoolRenameInput,
+  success: AccountPool,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolDeleteRpc = Rpc.make(WS_METHODS.accountPoolDelete, {
+  payload: AccountPoolDeleteInput,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolSetBackingRpc = Rpc.make(WS_METHODS.accountPoolSetBacking, {
+  payload: AccountPoolSetBackingInput,
+  success: AccountPool,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolImportAccountsRpc = Rpc.make(WS_METHODS.accountPoolImportAccounts, {
+  payload: AccountPoolImportInput,
   success: AccountHubImportResult,
-  error: AccountHubRpcFailure,
+  error: AccountPoolRpcFailure,
 });
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
@@ -1740,9 +1762,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
   WsUsageLimitSourceUpdateAccountRpc,
-  WsAccountHubGetConnectionRpc,
-  WsAccountHubSetConnectionRpc,
-  WsAccountHubImportAccountsRpc,
+  WsAccountPoolSubscribeRpc,
+  WsAccountPoolCreateRpc,
+  WsAccountPoolRenameRpc,
+  WsAccountPoolDeleteRpc,
+  WsAccountPoolSetBackingRpc,
+  WsAccountPoolImportAccountsRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,

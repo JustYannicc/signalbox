@@ -1,34 +1,25 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { DownloadIcon, PlusIcon, ServerIcon } from "lucide-react";
+import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
+import { useNavigate } from "@tanstack/react-router";
+import { PlusIcon, Settings2Icon } from "lucide-react";
 import { useState } from "react";
 
-import { usePrimaryEnvironmentId } from "../../state/environments";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
-import { AccountHubConnectionDialog } from "./AccountHubConnectionDialog";
 import { AddHubAccountDialog } from "./AddHubAccountDialog";
 import { HUB_INSTANCES, type HubAccountKind } from "./hubInstances";
 
-/**
- * "Add account" on Limits. Accounts go to the hub on the environment being
- * looked at; with several selected, the primary one.
- */
+/** "Add account" for one pool: pick the provider and sign in. */
 export function AddHubAccountMenu({
-  environmentIds,
+  environmentId,
+  poolId = PERSONAL_POOL_ID,
 }: {
-  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly environmentId: EnvironmentId;
+  readonly poolId?: string;
 }) {
-  const primary = usePrimaryEnvironmentId();
+  const navigate = useNavigate();
   const [adding, setAdding] = useState<HubAccountKind | null>(null);
-  const [hubDialog, setHubDialog] = useState<"connect" | "import" | null>(null);
-  const environmentId =
-    environmentIds.length === 1
-      ? environmentIds[0]
-      : primary && environmentIds.includes(primary)
-        ? primary
-        : environmentIds[0];
-  if (!environmentId) return null;
   return (
     <>
       <Menu>
@@ -49,27 +40,17 @@ export function AddHubAccountMenu({
             </MenuItem>
           ))}
           <MenuSeparator />
-          <MenuItem onClick={() => setHubDialog("import")}>
-            <DownloadIcon aria-hidden />
-            Import from CLIProxyAPI
-          </MenuItem>
-          <MenuItem onClick={() => setHubDialog("connect")}>
-            <ServerIcon aria-hidden />
-            Account hub…
+          <MenuItem onClick={() => void navigate({ to: "/settings/pools" })}>
+            <Settings2Icon aria-hidden />
+            Manage pools
           </MenuItem>
         </MenuPopup>
       </Menu>
-      {hubDialog ? (
-        <AccountHubConnectionDialog
-          environmentId={environmentId}
-          initialTab={hubDialog}
-          onClose={() => setHubDialog(null)}
-        />
-      ) : null}
       {adding ? (
         <AddHubAccountDialog
           environmentId={environmentId}
           kind={adding}
+          poolId={poolId}
           onClose={() => setAdding(null)}
         />
       ) : null}

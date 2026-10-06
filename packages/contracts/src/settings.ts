@@ -590,6 +590,10 @@ export const CodexSettings = makeProviderSettingsSchema(
     hubRevision: Schema.optionalKey(Schema.Number).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -655,6 +659,10 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     ),
     // signalbox: bumped when the hub changes, so the instance is rebuilt against it.
     hubRevision: Schema.optionalKey(Schema.Number).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     enabled: Schema.Boolean.pipe(
@@ -749,6 +757,10 @@ export const GrokSettings = makeProviderSettingsSchema(
     hubRevision: Schema.optionalKey(Schema.Number).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     // Off by default (like Cursor and OpenCode): the binding is not yet
     // stable enough to probe on every install. Users opt in from Settings.
     enabled: Schema.Boolean.pipe(
@@ -797,6 +809,10 @@ export const AntigravitySettings = makeProviderSettingsSchema(
     ),
     // signalbox: bumped when the hub changes, so the instance is rebuilt against it.
     hubRevision: Schema.optionalKey(Schema.Number).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    // signalbox: the pool whose accounts this instance runs on; absent means the personal pool.
+    poolId: Schema.optionalKey(Schema.String).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     enabled: Schema.Boolean.pipe(
