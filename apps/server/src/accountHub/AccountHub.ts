@@ -51,6 +51,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import { isProcessAlive } from "../serverRuntimeState.ts";
 import * as Management from "./accountHubManagement.ts";
 import { AccountHubError, type AccountHubEndpoint } from "./accountHubManagement.ts";
 import {
@@ -155,6 +156,9 @@ export function renderAccountHubConfig(options: {
   return [
     "# Written by Signalbox on every start. Edits here are overwritten.",
     "config-version: 8",
+    // The hub logs to <auth-dir>/logs instead of a pipe; see `spawn`.
+    "logging-to-file: true",
+    "logs-max-total-size-mb: 20",
     "server:",
     '  host: "127.0.0.1"',
     `  port: ${options.port}`,
@@ -284,14 +288,19 @@ const make = Effect.gen(function* () {
     // A recycled pid belongs to something else; only our own config marks our hub.
     if (!command.includes(configPath)) return;
     yield* Effect.logWarning("stopping account hub left by a previous server", { pid });
-    yield* Effect.sync(() => {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Already gone.
-      }
-    });
+    const signal = (name: NodeJS.Signals) =>
+      Effect.try(() => process.kill(pid, name)).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false), // Already gone.
+      );
+    const alive = Effect.sync(() => isProcessAlive(pid));
+    if (!(yield* signal("SIGTERM"))) return;
     yield* Effect.sleep("500 millis");
+    // A hub stuck in shutdown ignores SIGTERM and keeps a core busy.
+    if (yield* alive) {
+      yield* Effect.sleep("2 seconds");
+      if (yield* alive) yield* signal("SIGKILL");
+    }
   });
 
   const spawn = Effect.gen(function* () {
@@ -299,6 +308,8 @@ const make = Effect.gen(function* () {
       Effect.provideContext(installContext),
     );
     const { managementKey, clientKey } = yield* keys;
+    // First, so an orphan neither holds the saved port nor sees its config rewritten.
+    yield* stopPreviousHub;
     const port = yield* stablePort;
     yield* fs.makeDirectory(authDir, { recursive: true });
     yield* fs.makeDirectory(pluginsDir, { recursive: true });
@@ -313,7 +324,6 @@ const make = Effect.gen(function* () {
       clientKey,
     };
     // MANAGEMENT_PASSWORD would add a second key and open management to the network.
-    yield* stopPreviousHub;
     const { MANAGEMENT_PASSWORD: _ignored, ...childEnvironment } = environment;
     const scope = yield* Scope.make("sequential");
     const child = yield* spawner
@@ -323,8 +333,12 @@ const make = Effect.gen(function* () {
           env: childEnvironment,
           shell: false,
           detached: false,
-          stdout: "pipe",
-          stderr: "pipe",
+          // No pipes: with a Go plugin loaded, CLIProxyAPI spins at full CPU forever when
+          // its output pipe closes during shutdown. And should it ever hang, SIGKILL.
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+          forceKillAfter: "5 seconds",
         }),
       )
       .pipe(
@@ -332,15 +346,6 @@ const make = Effect.gen(function* () {
         Effect.tapError(() => Scope.close(scope, Exit.void)),
       );
     yield* fs.writeFileString(pidPath, `${Number(child.pid)}\n`);
-    // Drain output so a chatty hub never blocks on a full pipe.
-    yield* Effect.forkIn(
-      Stream.merge(child.stdout, child.stderr).pipe(
-        Stream.decodeText(),
-        Stream.splitLines,
-        Stream.runForEach((line) => Effect.logDebug("account hub", { line })),
-      ),
-      scope,
-    );
     // Stop waiting as soon as the hub exits (bad config, taken port) instead of timing out.
     const ready = yield* Effect.raceFirst(
       probe(endpoint).pipe(Effect.retry(Schedule.spaced("150 millis")), Effect.as(true)),
