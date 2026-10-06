@@ -6,27 +6,20 @@ TypeScript package. It does not use Cursor's ACP transport for V2 execution.
 ## Prerequisites
 
 - Node.js 22.13 or newer. The repository's supported Node version satisfies this requirement.
-- Sign in with Cursor in **Settings > Providers > Cursor**, or provide a Cursor API key in
-  `CURSOR_API_KEY`.
+- A Cursor account or Cursor API key in a pool. See
+  [Use several subscription accounts](./usage.md#use-several-subscription-accounts).
 - A model accepted by the Cursor SDK. `auto` is sent to the SDK as its `default` model selection.
 
 The adapter currently uses the SDK's local-agent runtime so runs operate in the selected Signalbox
 workspace. Cursor cloud agents need repository and cloud-environment configuration that Signalbox does
 not expose yet.
 
-## Sign in
+## Accounts
 
-Choose **Sign in**, then open the sign-in page and complete it in your browser. Signalbox
-updates automatically when sign-in finishes. This works when connected to a remote environment too.
-On mobile, use **Settings > Provider accounts** for an already configured Cursor instance.
-
-Each provider instance keeps its own login on the environment that runs it. Your Cursor editor and
-CLI login are separate. A configured `CURSOR_API_KEY` overrides browser sign-in; remove that override
-to use the browser flow.
-
-Use **Change account** or **Sign out** in the same settings section. Both stop that
-instance's running threads and keep their history. Sign-out forgets the saved credential; to revoke
-the generated key before it expires, remove it from your Cursor dashboard's API keys.
+Cursor accounts live in a pool. On **Usage → Limits**, choose **Add account → Cursor** and sign in in
+your browser, or **Add account → API key** and paste a key from your Cursor dashboard. Signalbox
+hands each Cursor session a key from the pool in turn. It never reads the Cursor editor's or CLI's
+login on the server.
 
 ## V2 Capability Mapping
 

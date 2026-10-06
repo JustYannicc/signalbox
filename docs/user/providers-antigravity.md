@@ -1,53 +1,15 @@
 # Antigravity
 
 Signalbox runs Google's official Antigravity ACP agent on your selected environment.
-It has its own sign-in, separate from the Antigravity IDE or CLI. Google controls
+Its accounts live in a pool, separate from the Antigravity IDE or CLI. Google controls
 which models and account access are available through this agent.
 
 ## Set up Antigravity
 
-On web or desktop, open **Settings > Providers**, choose the environment that runs
-your project, and enable Antigravity. Install its runtime there, then choose
-**Sign in** and complete the browser sign-in. Wait for Signalbox to confirm
-account access and load models before starting a thread. Once the runtime is installed,
-you can also sign in from **Settings > Provider accounts** in the mobile app.
-
-Installation continues if you leave settings or reconnect. Setup requires
-permission to operate the environment; update an older server if it does not offer
-Antigravity setup.
-
-### Sign in from a remote device
-
-Google returns to a `127.0.0.1` address. It can finish directly when your browser is
-on the environment's machine. From another device, the final page will usually
-fail to load because the sign-in listener is on the environment.
-
-Copy the full return address, including everything after `?`, into the return URL
-field in the client where you started sign-in, then choose
-**Continue**. Keep the original address; do not replace it with the server's
-hostname. Only that Signalbox sign-in session can finish the attempt. If it expires,
-retry sign-in and use the new link.
-
-The return URL contains a temporary sign-in code. Paste it only into the setup
-field. A successful callback page alone does not confirm account access; wait for
-Signalbox's confirmation.
-
-### Other sign-in methods
-
-Choose **Sign-in method** in the Antigravity provider settings:
-
-| Method                     | Credentials                                                                                  |
-| -------------------------- | -------------------------------------------------------------------------------------------- |
-| Google account             | Personal Google sign-in in the browser                                                       |
-| Gemini Enterprise          | Browser sign-in, GCP project, and GCP location                                               |
-| Gemini API key             | API key; choose Connect without a browser                                                    |
-| Agent Platform / Vertex AI | API key, or GCP project and location with Application Default Credentials on the environment |
-
-The Antigravity API key field is stored in plain text in settings on the
-environment. The agent uses the method and credentials selected for this instance;
-ambient `GEMINI_API_KEY` and Google credential variables do not override them.
-Changing the method stops the instance's sessions. Sign out before replacing an
-account.
+Antigravity accounts and Gemini API keys live in a pool. On **Usage → Limits**, choose **Add account →
+Antigravity** to sign in with Google, or **Add account → API key** for a Gemini key. The pool's
+**Antigravity** provider then appears in the model picker. See
+[Use several subscription accounts](./usage.md#use-several-subscription-accounts).
 
 ## Runtime installation
 
@@ -105,19 +67,9 @@ inspect activity.
 
 ## Accounts and removal
 
-Add an Antigravity provider instance for each Google account in
-**Settings > Providers** on web or desktop. Each has its own sign-in; downloaded
-runtimes are shared on the environment.
-
-| Action                    | Effect                                                            |
-| ------------------------- | ----------------------------------------------------------------- |
-| Disable                   | Stops the instance's sessions and keeps its Google sign-in.       |
-| Sign out                  | Stops the instance's sessions and removes its saved Google login. |
-| Remove downloaded runtime | Removes the shared installation and keeps Google credentials.     |
-
-All three keep thread history and workspace files. Sending `/logout` by itself in
-a thread signs out its instance, including stopping that instance's other sessions.
-Sign out, then sign in again to replace an account.
+Each Google account is an account in a pool; add, pause, or remove it on **Usage → Limits**.
+Disabling the provider stops its sessions and keeps the accounts. Removing the downloaded runtime
+keeps the accounts and thread history.
 
 Before removing a managed runtime, disable its instances and cancel any active
 installation. Clear any explicit binary path pointing into that runtime. Removal
@@ -129,8 +81,8 @@ A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
-provider settings, or **Refresh models** in mobile thread settings. If asked to
-sign in again, use provider settings on web or desktop, or **Provider accounts** on mobile.
+provider settings, or **Refresh models** in mobile thread settings. If an account
+is signed out, choose **Sign in again** on it in **Usage → Limits**.
 
 If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit,
 follow the provider's message and any retry time. See [Google's account plans][plans]

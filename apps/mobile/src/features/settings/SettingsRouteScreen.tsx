@@ -177,7 +177,12 @@ function SettingsIndexSections() {
       </SettingsSection>
 
       <SettingsSection title="Server settings">
-        {/* signalbox: no native provider sign-in; accounts live in pools (Usage → Limits). */}
+        <SettingsRow
+          icon="person.crop.circle"
+          label="Provider accounts"
+          target="SettingsProviderAccounts"
+          disabled={noServerTargets}
+        />
         <SettingsRow
           icon="text.bubble"
           label="New threads"

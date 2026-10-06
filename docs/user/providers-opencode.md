@@ -5,6 +5,14 @@ enable it in **Settings > Providers**. See [provider setup](./install.md#provide
 Signalbox requires OpenCode 1.14.19 or newer, including when you connect an existing
 OpenCode server.
 
+## Run OpenCode on a pool
+
+In **Settings → Pools**, choose **Use with OpenCode** in a pool's menu. The pool gets an **OpenCode**
+provider whose models are every model the pool serves. It keeps its own OpenCode configuration and
+data, so it never uses an OpenCode login, API key, or provider configured on the server. Adding or
+removing accounts updates its models; OpenCode restarts to pick them up. Choose **Stop using with
+OpenCode** to remove it.
+
 ## OpenCode 2
 
 Signalbox supports OpenCode 2.0.18 and newer. It detects the version on its own, so
