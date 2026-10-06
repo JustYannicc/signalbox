@@ -198,6 +198,11 @@ and keeps the same address. When the host starts again or wakes, Signalbox Conne
 creates a replacement tunnel on its own. You do not need to pair again. Cleanup
 usually runs five to ten minutes after the tunnel goes down.
 
+Signalbox Connect also removes the tunnel of an environment running an older version of
+Signalbox once it has been offline for seven days. That environment shows a message
+asking you to update. Start Signalbox on that computer and update it to the latest
+version; it reconnects at the same address without pairing again.
+
 On a command-line host, `signalbox connect unlink` disables exposure while retaining
 your login; `signalbox connect logout` also clears that login. Background-service
 [removal](./background-service.md#manage-the-service) is separate.
