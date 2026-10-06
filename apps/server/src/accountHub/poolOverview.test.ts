@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { type AccountPool, AccountPoolId, poolSourceId } from "@t3tools/contracts/accountHub";
 
-import { buildPoolOverviews } from "./poolOverview.ts";
+import { buildPoolOverviews, pooledUsage } from "./poolOverview.ts";
 
 const pool = (id: string, name: string): AccountPool => ({
   id: AccountPoolId.make(id),
@@ -100,6 +100,7 @@ describe("buildPoolOverviews", () => {
       ]),
       source("work", [account("e", "claudeAgent", [{ id: "five_hour", used: 10 }])]),
     ],
+    now: Date.parse("2026-10-07T10:30:00.000Z"),
   });
 
   it("lists each pool with only the enabled providers it runs", () => {
@@ -139,6 +140,42 @@ describe("buildPoolOverviews", () => {
   it("marks a provider with no working account unavailable", () => {
     const codex = overviews[0]!.providers[1]!;
     expect(codex).toMatchObject({ available: false, usage: [] });
+  });
+
+  it("counts a window whose reset has passed since the last read as open again", () => {
+    const stale = [
+      account("f", "claudeAgent", [
+        { id: "five_hour", used: 100, resetsAt: "2026-10-07T10:00:00.000Z" },
+      ]),
+    ];
+    expect(pooledUsage(stale, Date.parse("2026-10-07T10:30:00.000Z"))).toEqual([
+      { label: "5 hours", kind: "session", remainingPercent: 100 },
+    ]);
+  });
+
+  it("marks a provider whose every account is used up unavailable", () => {
+    const [overview] = buildPoolOverviews({
+      pools: [pool("work", "Work")],
+      instances: {
+        claude_hub_work: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { setupMode: "hub", poolId: "work" },
+        },
+      },
+      providers: [provider("claude_hub_work", "claudeAgent")],
+      sources: [
+        source("work", [
+          account("g", "claudeAgent", [
+            { id: "five_hour", used: 100, resetsAt: "2026-10-07T12:00:00.000Z" },
+          ]),
+        ]),
+      ],
+      now: Date.parse("2026-10-07T10:30:00.000Z"),
+    });
+    expect(overview!.providers[0]).toMatchObject({
+      available: false,
+      usage: [{ remainingPercent: 0, nextResetAt: "2026-10-07T12:00:00.000Z" }],
+    });
   });
 
   it("never carries account counts, emails, plans, or banked resets", () => {

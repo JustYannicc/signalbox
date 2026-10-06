@@ -69,6 +69,12 @@ describe("pickerPools", () => {
     expect(initialPickerPool(pools, ProviderInstanceId.make("codex_hub"))).toBe("personal");
   });
 
+  it("keeps providers of a pool it does not know under Not in a pool", () => {
+    const withoutWork = pickerPools([pool("personal", "Personal")], entries, providerInstances);
+    expect(withoutWork.at(-1)).toMatchObject({ name: "Not in a pool" });
+    expect([...withoutWork.at(-1)!.instanceIds]).toEqual(["claude_hub_work", "cursor"]);
+  });
+
   it("shows no pool switcher while there is nothing to choose between", () => {
     expect(
       pickerPools([pool("personal", "Personal")], entries.slice(0, 2), providerInstances),

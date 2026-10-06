@@ -19,6 +19,7 @@ import {
   type AccountPoolUsageWindow,
   hubInstancePoolId,
 } from "@t3tools/contracts/accountHub";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -37,30 +38,42 @@ const KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
 const takesTurns = (account: UsageLimitSourceAccount) => !account.disabled && !account.signedOut;
 
 /**
+ * A window as it stands at `now`: one whose reset has passed since the last
+ * read is open again, and has no reset ahead.
+ */
+const asOf = (window: ServerProviderUsageWindow, now: number): ServerProviderUsageWindow => {
+  const { resetsAt, ...rest } = window;
+  if (resetsAt === undefined) return window;
+  const at = Date.parse(resetsAt);
+  if (!Number.isFinite(at)) return rest;
+  return at > now ? window : { ...rest, usedPercent: 0 };
+};
+
+/**
  * One provider's windows pooled across its accounts: the mean share left, as
  * the Limits view shows it, and the soonest reset that hands quota back.
  */
 export function pooledUsage(
   accounts: ReadonlyArray<UsageLimitSourceAccount>,
+  now: number,
 ): ReadonlyArray<AccountPoolUsageWindow> {
   const byWindow = new Map<string, ServerProviderUsageWindow[]>();
   for (const account of accounts) {
     for (const window of account.usageLimits.windows) {
       const key = `${window.kind}:${window.id}`;
-      byWindow.set(key, [...(byWindow.get(key) ?? []), window]);
+      const windows = byWindow.get(key) ?? [];
+      windows.push(asOf(window, now));
+      byWindow.set(key, windows);
     }
   }
   return [...byWindow.values()]
     .map((windows) => {
       const first = windows[0]!;
-      const used =
-        windows.reduce((sum, window) => sum + Math.max(0, Math.min(100, window.usedPercent)), 0) /
-        windows.length;
+      const used = windows.reduce((sum, window) => sum + window.usedPercent, 0) / windows.length;
       // An untouched account's reset gives nothing back.
       const nextResetAt = windows
-        .filter((window) => window.usedPercent > 0 && window.resetsAt !== undefined)
-        .map((window) => window.resetsAt!)
-        .filter((at) => Number.isFinite(Date.parse(at)))
+        .filter((window) => window.usedPercent > 0)
+        .flatMap((window) => (window.resetsAt === undefined ? [] : [window.resetsAt]))
         .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
       return {
         label: first.label,
@@ -72,12 +85,17 @@ export function pooledUsage(
     .sort((left, right) => KIND_ORDER[left.kind] - KIND_ORDER[right.kind]);
 }
 
-/** Pools with the enabled providers each one runs, from settings, the registry, and usage. */
+/** Whether an account has quota left in every window it reports. */
+const hasQuota = (account: UsageLimitSourceAccount, now: number) =>
+  account.usageLimits.windows.every((window) => asOf(window, now).usedPercent < 100);
+
+/** Pools with the enabled providers each one runs, from settings, the registry, and usage at `now`. */
 export function buildPoolOverviews(input: {
   readonly pools: ReadonlyArray<AccountPool>;
   readonly instances: Readonly<Record<string, ProviderInstanceConfig>>;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly sources: ReadonlyArray<UsageLimitSourceSnapshot>;
+  readonly now: number;
 }): ReadonlyArray<AccountPoolOverview> {
   return input.pools.map((pool) => {
     const accounts = (
@@ -95,8 +113,8 @@ export function buildPoolOverviews(input: {
           providerInstanceId: provider.instanceId,
           driver: provider.driver,
           displayName: provider.displayName ?? provider.driver,
-          available: own.length > 0,
-          usage: pooledUsage(own),
+          available: own.some((account) => hasQuota(account, input.now)),
+          usage: pooledUsage(own, input.now),
         };
       });
     return { id: pool.id, name: pool.name, providers };
@@ -114,5 +132,6 @@ export const listPoolOverviews = Effect.gen(function* () {
     instances: (yield* settings.getSettings).providerInstances,
     providers: yield* registry.getProviders,
     sources: yield* usage.current,
+    now: yield* Clock.currentTimeMillis,
   });
 });

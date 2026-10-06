@@ -29,9 +29,11 @@ export function pickerPools(
 ): ReadonlyArray<PickerPool> {
   const byPool = new Map<string, Set<ProviderInstanceId>>();
   const outside = new Set<ProviderInstanceId>();
+  const known = new Set<string>(accountPools.map((pool) => pool.id));
   for (const entry of entries) {
     const poolId = hubInstancePoolId(providerInstances[entry.instanceId]?.config);
-    if (poolId === null) {
+    // A pool not listed yet (or gone) never hides its providers.
+    if (poolId === null || !known.has(poolId)) {
       outside.add(entry.instanceId);
       continue;
     }
