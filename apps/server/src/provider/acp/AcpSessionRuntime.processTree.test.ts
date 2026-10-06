@@ -654,8 +654,10 @@ describe("terminatePosixOwnedProcessTree", () => {
 
   it.live("rotates more than 64 live parents without scanning retained tombstones", () =>
     Effect.gen(function* () {
+      // Above Linux's pid_max so no fake parent can share the test runner's own pid,
+      // which termination deliberately never signals.
       const parents = Array.from({ length: 130 }, (_, index) =>
-        identity(1_000 + index, 100, 1_000 + index, 1_000 + index),
+        identity(5_000_000 + index, 100, 5_000_000 + index, 5_000_000 + index),
       );
       let childListReads = 0;
       let identityCalls = 0;
