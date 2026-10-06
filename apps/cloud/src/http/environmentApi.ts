@@ -14,6 +14,7 @@ import {
   EnvironmentResourceNotFoundError,
   EnvironmentScopeRequiredError,
   type EnvironmentSessionPrincipalShape,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
@@ -28,6 +29,8 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import * as Environment from "../environment.ts";
+import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import type { ThreadObjectError } from "../thread/ThreadDirectory.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { NO_STORE_HEADERS, requestCredentials, sessionCookie, traceId } from "./credentials.ts";
 
@@ -237,19 +240,28 @@ const layerOrchestration = HttpApiBuilder.group(
   "orchestration",
   Effect.fnUntraced(function* (handlers) {
     const users = yield* UserDirectory.UserDirectory;
-    // No threads exist in the cloud yet, so every thread read is a miss.
-    const threadNotFound = () =>
-      requireScope(AuthOrchestrationReadScope).pipe(
-        Effect.andThen(traceId),
-        Effect.flatMap((id) =>
-          Effect.fail(
-            new EnvironmentResourceNotFoundError({
-              code: "not_found",
-              reason: "thread_not_found",
-              traceId: id,
-            }),
-          ),
-        ),
+    const threads = yield* CloudThreadService.CloudThreadService;
+    const threadNotFound = Effect.flatMap(traceId, (id) =>
+      Effect.fail(
+        new EnvironmentResourceNotFoundError({
+          code: "not_found",
+          reason: "thread_not_found",
+          traceId: id,
+        }),
+      ),
+    );
+    const threadFailure = {
+      ThreadNotFoundError: () => threadNotFound,
+      ThreadObjectError: (error: ThreadObjectError) =>
+        internal("orchestration_snapshot_failed", error),
+    };
+    const actorOf = Effect.map(requireScope(AuthOrchestrationReadScope), (principal) => ({
+      userId: userIdOf(principal),
+    }));
+    const snapshotOf = (threadId: ThreadId) =>
+      actorOf.pipe(
+        Effect.flatMap((actor) => threads.threadSnapshot(actor, threadId)),
+        Effect.catchTags(threadFailure),
       );
     return handlers
       .handle("shellSnapshot", () =>
@@ -260,9 +272,14 @@ const layerOrchestration = HttpApiBuilder.group(
           }),
         ),
       )
-      .handle("threadSnapshot", threadNotFound)
-      .handle("threadBoundedSnapshot", threadNotFound)
-      .handle("threadHistoryPage", threadNotFound);
+      .handle("threadSnapshot", ({ params }) => snapshotOf(params.threadId))
+      .handle("threadBoundedSnapshot", ({ params }) => snapshotOf(params.threadId))
+      .handle("threadHistoryPage", ({ params }) =>
+        actorOf.pipe(
+          Effect.flatMap((actor) => threads.threadHistoryPage(actor, params.threadId)),
+          Effect.catchTags(threadFailure),
+        ),
+      );
   }),
 );
 

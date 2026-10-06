@@ -1,9 +1,10 @@
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
-import type { UserObjectNamespace } from "./user/UserDirectory.ts";
+import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 
+export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
 
 /**
@@ -13,8 +14,7 @@ export { UserObject } from "./user/UserObject.ts";
  * list the Vite dev proxy forwards) reach this Worker.
  */
 
-export interface CloudEnv extends UserObjectEnv {
-  readonly USERS: UserObjectNamespace;
+export interface CloudEnv extends UserObjectEnv, ThreadObjectEnv {
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
 }
 
@@ -38,7 +38,14 @@ export default {
     if (localWorkerd && !LOOPBACK_HOSTS.has(hostname)) {
       return new Response("LOCAL_WORKERD is set on a non-local host", { status: 503 });
     }
-    app ??= makeCloudApp(layerServices({ vars: stringVars(env), users: env.USERS, localWorkerd }));
+    app ??= makeCloudApp(
+      layerServices({
+        vars: stringVars(env),
+        users: env.USERS,
+        threads: env.THREADS,
+        localWorkerd,
+      }),
+    );
     if (pathname === "/ws") return app.webSocket(request);
     if (isDevProxiedPath(pathname)) return app.http(request);
     return env.ASSETS.fetch(request);
