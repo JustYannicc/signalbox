@@ -15,14 +15,14 @@ import * as Schema from "effect/Schema";
 import { HttpClient, type HttpServerRequest } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as AccountConfig from "./AccountConfig.ts";
-import * as AccountFlow from "./AccountFlow.ts";
+import * as AccountConfig from "@signalbox/account/AccountConfig";
+import * as AccountFlow from "@signalbox/account/AccountFlow";
 import type * as AccountHandoffs from "./AccountHandoffs.ts";
 import type * as AccountRepository from "./AccountRepository.ts";
 import * as AccountSessions from "./AccountSessions.ts";
 import * as AccountVerifications from "./AccountVerifications.ts";
 import { makeExpiringStore } from "./ExpiringStore.ts";
-import * as WorkOSClient from "./WorkOSClient.ts";
+import * as WorkOSClient from "@signalbox/account/WorkOSClient";
 
 const ATTEMPT_TTL = Duration.minutes(10);
 const MAX_PENDING_ATTEMPTS = 1_000;

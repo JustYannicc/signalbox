@@ -1,0 +1,93 @@
+# Signalbox-only: deploys Signalbox Cloud (apps/cloud) to Cloudflare. Its own
+# file so upstream merges never touch it. Setup: docs/operations/cloud.md.
+name: Deploy Signalbox Cloud
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - apps/cloud/**
+      - apps/web/**
+      - packages/account/**
+      - packages/client-runtime/**
+      - packages/contracts/**
+      - packages/shared/**
+      - pnpm-lock.yaml
+      - .github/workflows/deploy-cloud.yml
+      # Every deploy reconnects every client, so skip what never ships.
+      - "!**/*.test.ts"
+      - "!**/*.test.tsx"
+      - "!**/*.md"
+  # Redeploys main, e.g. after rotating a secret.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-production
+  cancel-in-progress: false
+
+jobs:
+  deploy_cloud:
+    name: Deploy production cloud
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Only main deploys; the environment's branch rule enforces the same.
+    environment:
+      name: cloud-production
+      url: ${{ vars.CLOUD_URL }}
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+              - --filter=@t3tools/web...
+
+      # The cloud serves this build from its own origin.
+      - name: Build web app
+        run: vp run --filter @t3tools/web build
+        env:
+          # Sourcemaps change every build and would be served publicly.
+          T3CODE_WEB_SOURCEMAP: "false"
+
+      - name: Write Worker secrets
+        run: |
+          umask 077
+          jq -n \
+            --arg SESSION_SECRET "$SESSION_SECRET" \
+            --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
+            '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
+        env:
+          SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
+          T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
+
+      # Secrets ship with the version, so no deploy runs without them.
+      - name: Deploy
+        working-directory: apps/cloud
+        run: >-
+          ./node_modules/.bin/wrangler deploy
+          --secrets-file "$RUNNER_TEMP/cloud-secrets.json"
+          --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+
+      - name: Remove secrets file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cloud-secrets.json"

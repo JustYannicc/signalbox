@@ -88,6 +88,26 @@ export type WorkOSGrant =
       readonly pendingToken: Redacted.Redacted<string>;
     };
 
+/** Either way a grant can fail. */
+export type WorkOSGrantError = WorkOSAuthenticateError | WorkOSEmailVerificationRequired;
+
+/**
+ * How a failed email-code exchange affects a paused sign-in. WorkOS does not
+ * document its wrong-code error, so any other 4xx counts as a wrong code; 5xx
+ * and network failures leave the attempt untouched. A dead pending token
+ * (observed: `invalid_pending_authentication_token`) cannot be retried, so it
+ * is expired.
+ */
+export const classifyEmailVerificationFailure = (
+  error: WorkOSGrantError,
+): "invalid-code" | "expired" | "failed" => {
+  if (error._tag === "WorkOSEmailVerificationRequired") return "invalid-code";
+  if (error.status === undefined || error.status >= 500) return "failed";
+  return /expire|pending_authentication_token/i.test(`${error.code ?? ""} ${error.error ?? ""}`)
+    ? "expired"
+    : "invalid-code";
+};
+
 const grantBody = (grant: WorkOSGrant) =>
   grant.kind === "authorization-code"
     ? {

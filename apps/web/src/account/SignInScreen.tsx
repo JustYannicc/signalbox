@@ -10,10 +10,12 @@ import {
   cancelNativeSignIn,
   completeNativeSignIn,
   isDesktop,
+  readPendingEnvironmentSignIn,
   readAccountSession,
   startAccountSignIn,
   startNativeSignIn,
 } from "./accountSession";
+import { useFinishEnvironmentSignIn } from "./AccountEnvironmentSignIn";
 import { appForwardUrl, type AppForward } from "./appForward";
 import { SignInFrame, SignInNotice } from "./SignInFrame";
 import { parseVerifyRequest } from "./verifyEmail";
@@ -58,19 +60,25 @@ export function SignInScreen({
   const [waitingOn, setWaitingOn] = useState<DesktopScreenHint | null>(null);
   const [completing, setCompleting] = useState(false);
   const redeemedHandoff = useRef<string | null>(null);
+  const finishEnvironmentSignIn = useFinishEnvironmentSignIn();
 
   // A return can land on first load or, on desktop, as a hash change while this
   // screen is already waiting. Adopt each new one during render so the first
   // paint shows it; the effect below does the I/O.
   const [adoptedSearch, setAdoptedSearch] = useState<string | null>(null);
   const accountReturn = forward || verifyRequest ? null : parseReturn(searchStr);
+  // Signing in to add an environment (started in Connections) comes back here too.
+  const environmentReturn =
+    desktop && accountReturn !== null && readPendingEnvironmentSignIn() !== null;
   if (adoptedSearch !== searchStr) {
     setAdoptedSearch(searchStr);
     if (accountReturn) {
       setPending(null);
       setWaitingOn(null);
-      setCompleting(accountReturn._tag === "handoff" && desktop);
-      if (accountReturn._tag === "error") {
+      setCompleting((accountReturn._tag === "handoff" && desktop) || environmentReturn);
+      if (environmentReturn) {
+        // Its outcome is reported in Connections, not as a sign-in notice.
+      } else if (accountReturn._tag === "error") {
         setNotice(accountReturn.error);
       } else if (!desktop) {
         // A web handoff without a valid app link has nowhere to go.
@@ -80,17 +88,26 @@ export function SignInScreen({
   }
 
   const handoff = desktop && accountReturn?._tag === "handoff" ? accountReturn.handoff : null;
+  const returnError = accountReturn?._tag === "error" ? accountReturn.error : null;
   const hasReturn = accountReturn !== null;
   useEffect(() => {
     if (!hasReturn) return;
     onConsumed();
+    if (environmentReturn) {
+      if (handoff && redeemedHandoff.current === handoff) return;
+      if (handoff) redeemedHandoff.current = handoff;
+      finishEnvironmentSignIn(
+        handoff ? { _tag: "handoff", handoff } : { _tag: "error", error: returnError ?? "failed" },
+      );
+      return;
+    }
     if (!handoff || redeemedHandoff.current === handoff) return;
     redeemedHandoff.current = handoff;
     completeNativeSignIn(handoff).catch((error: unknown) => {
       setCompleting(false);
       setNotice(error instanceof AccountFlowError ? error.code : "failed");
     });
-  }, [handoff, hasReturn, onConsumed]);
+  }, [environmentReturn, finishEnvironmentSignIn, handoff, hasReturn, onConsumed, returnError]);
 
   // Back from the provider via bfcache: the page is restored mid-"pending".
   useEffect(() => {
