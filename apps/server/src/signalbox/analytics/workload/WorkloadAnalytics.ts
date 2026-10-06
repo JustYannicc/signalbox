@@ -42,11 +42,11 @@ import { lookupCwds } from "./processCwd.ts";
 import { sampleProject } from "./projectSample.ts";
 import { isWorkingRun, makeWorkloadTurns, type CompletedTurn } from "./workloadTurns.ts";
 
-export const TURN_EVENT = "workload.turn.completed";
-export const PROJECT_EVENT = "workload.project.sampled";
+const TURN_EVENT = "workload.turn.completed";
+const PROJECT_EVENT = "workload.project.sampled";
 
 /** Fork-owned state file: when projects were last sampled. */
-export const WORKLOAD_STATE_FILE = "signalbox-workload-analytics.json";
+const WORKLOAD_STATE_FILE = "signalbox-workload-analytics.json";
 const PROCESS_SAMPLE_INTERVAL = Duration.seconds(5);
 const FINAL_SAMPLE_TIMEOUT = Duration.seconds(2);
 const PROJECT_SAMPLE_INTERVAL = Duration.days(7);
@@ -60,7 +60,7 @@ const decodeState = Schema.decodeEffect(fromLenientJson(WorkloadState));
 const encodeState = Schema.encodeEffect(fromJsonStringPretty(WorkloadState));
 
 /** One-way, so events can be grouped by thread or project without naming either. */
-export const hashId = (id: string) =>
+const hashId = (id: string) =>
   Crypto.Crypto.pipe(
     Effect.flatMap((crypto) =>
       crypto.digest("SHA-256", new TextEncoder().encode(`signalbox-workload:${id}`)),
@@ -68,7 +68,7 @@ export const hashId = (id: string) =>
     Effect.map((digest) => Hex.encode(digest).slice(0, 16)),
   );
 
-export const turnProperties = Effect.fn("WorkloadAnalytics.turnProperties")(function* (
+const turnProperties = Effect.fn("WorkloadAnalytics.turnProperties")(function* (
   turn: CompletedTurn,
   secondsSincePreviousTurn: number | undefined,
 ) {

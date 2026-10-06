@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { fetchTurns, toReplayTurn } from "../workload-cost-replay.ts";
+import { fetchTurns, toReplayTurn } from "./workload-events.ts";
 import type { MachinePrice } from "./workload-prices.ts";
 import { cloudCpuSeconds, formatReplayTable, replay, type ReplayTurn } from "./workload-replay.ts";
 

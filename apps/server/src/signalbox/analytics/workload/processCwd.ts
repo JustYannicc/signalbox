@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as ProcessRunner from "../../../processRunner.ts";
 
 /** `lsof -Fn` output: a `p<pid>` line, then the fd's `n<path>`. */
-export function parseLsofCwds(stdout: string): ReadonlyMap<number, string> {
+function parseLsofCwds(stdout: string): ReadonlyMap<number, string> {
   const cwds = new Map<number, string>();
   let pid: number | undefined;
   for (const line of stdout.split("\n")) {

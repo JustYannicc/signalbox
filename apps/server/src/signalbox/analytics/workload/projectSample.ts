@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import * as ProcessRunner from "../../../processRunner.ts";
 
 /** Directories that hold installed dependencies or build output, not source. */
-export const CACHE_DIRECTORIES = [
+const CACHE_DIRECTORIES = [
   "node_modules",
   "target",
   ".venv",
@@ -32,7 +32,7 @@ export const CACHE_DIRECTORIES = [
   ".cache",
 ] as const;
 
-export const LOCKFILES: Readonly<Record<string, string>> = {
+const LOCKFILES: Readonly<Record<string, string>> = {
   "package-lock.json": "npm",
   "npm-shrinkwrap.json": "npm",
   "pnpm-lock.yaml": "pnpm",
@@ -65,7 +65,7 @@ const MAX_CACHE_DIRECTORIES = 2_000;
 const MEASURE_TIMEOUT = "5 minutes";
 
 /** `du -sk` lines (`<KiB>\t<path>`) as bytes per path. */
-export function parseDuOutput(stdout: string): ReadonlyMap<string, number> {
+function parseDuOutput(stdout: string): ReadonlyMap<string, number> {
   const sizes = new Map<string, number>();
   for (const line of stdout.split("\n")) {
     const match = /^(\d+)\s+(.+)$/.exec(line);
