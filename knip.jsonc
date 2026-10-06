@@ -32,6 +32,8 @@
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
+        "scripts/verify-automations-live.ts", // signalbox: automations
+        "scripts/verify-automations-tickets.ts", // signalbox: automations
         "src/provider/testFixtures/*.mjs",
       ],
       // Keep the transitive Effect runtime pinned for standalone npm installs.

@@ -18,7 +18,7 @@ import type { AutomationRow, RunRow, WorkflowStore } from "./WorkflowStore.ts";
  */
 
 /** Restarts per chain per hour before the chain fails; a loop with no wait between passes hits it. */
-export const MAX_RESTARTS_PER_HOUR = 30;
+const MAX_RESTARTS_PER_HOUR = 30;
 const HOUR_MS = 60 * 60 * 1000;
 
 export interface RestartDependencies {

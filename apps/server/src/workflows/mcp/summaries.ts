@@ -134,7 +134,7 @@ export const RunReadResult = Schema.Struct({
 });
 
 /** One line per trigger: `cron 0 9 * * 1 (Europe/Zurich)`, `webhook`, `on turn.finished (all projects)`. */
-export function describeTrigger(trigger: WorkflowTrigger): string {
+function describeTrigger(trigger: WorkflowTrigger): string {
   if ("cron" in trigger)
     return `cron ${trigger.cron}${trigger.timezone ? ` (${trigger.timezone})` : ""}`;
   if ("webhook" in trigger) return "webhook";

@@ -26,7 +26,7 @@ import type { AutomationRow, RunSummaryRow, StepRow, WaitingAskRow } from "./Wor
  * with the automation id as the hook id, so it shares the relay URL, held
  * requests and limits. `relayHookBaseUrl` is set while linked to Signalbox Connect.
  */
-export function automationWebhook(
+function automationWebhook(
   row: Pick<AutomationRow, "automation_id" | "webhook_token" | "webhook_secret_set">,
   relayHookBaseUrl: string | null,
 ): ScheduledTaskWebhookEndpoint {

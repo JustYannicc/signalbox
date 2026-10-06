@@ -33,7 +33,7 @@ import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
 const TASK_PREFIX = "automation-run:";
 
 /** Whether a pending task is an attached automation run, for clients that show their own. */
-export const isAttachedRunTask = (task: Pick<PendingBackgroundWorkTask, "taskId">) =>
+const isAttachedRunTask = (task: Pick<PendingBackgroundWorkTask, "taskId">) =>
   task.taskId.startsWith(TASK_PREFIX);
 
 /** Thread events that end the thread's attached runs. */

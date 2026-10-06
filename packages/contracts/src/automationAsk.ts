@@ -66,7 +66,7 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 /** "dueDate" / "due_date" → "Due date". */
-export function automationAskFieldLabel(name: string): string {
+function automationAskFieldLabel(name: string): string {
   const words = name
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")

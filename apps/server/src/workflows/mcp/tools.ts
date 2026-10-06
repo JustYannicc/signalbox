@@ -74,7 +74,7 @@ const tool = <Name extends string, P extends Schema.Struct.Fields, S extends Sch
     .annotate(Tool.Destructive, options.destructive ?? false)
     .annotate(Tool.OpenWorld, false);
 
-export const AutomationReferenceTool = tool("automation_reference", {
+const AutomationReferenceTool = tool("automation_reference", {
   title: "Automation reference",
   description:
     "The signalbox-automations skill, for harnesses that don't load skills: how to write, save, run and fix an automation. Read it before writing or changing one. No topic returns the main page; topics: steps, control-flow, triggers, runs, patterns, or an example file name such as work-through-tickets.",
@@ -87,7 +87,7 @@ export const AutomationReferenceTool = tool("automation_reference", {
   readonly: true,
 });
 
-export const AutomationValidateTool = tool("automation_validate", {
+const AutomationValidateTool = tool("automation_validate", {
   title: "Check an automation",
   description:
     "Compile an automation without saving it. Returns the diagram as an outline, or the errors to fix with line numbers and hints.",
@@ -96,7 +96,7 @@ export const AutomationValidateTool = tool("automation_validate", {
   readonly: true,
 });
 
-export const AutomationSaveTool = tool("automation_save", {
+const AutomationSaveTool = tool("automation_save", {
   title: "Save automation",
   description:
     "Save an automation in projectId, else the calling thread's project; callers outside a Signalbox thread must pass projectId. It goes live immediately: cron and webhook triggers start firing. With draft: true it's saved without going live: the automation keeps running its live version (a new one stays off) until the user or automation_publish publishes the draft; prefer a draft when changing an automation people rely on and the user hasn't asked for the change to go live. Saving live replaces any pending draft. Its agent steps use the calling thread's provider and model (the project's default model without a thread) and your modes, unless the code names others. Saving a file whose meta.name matches an automation in that project saves a new version of it; runs already going keep their version. Updating an automation that runs with more access than you have is refused. Compile errors come back as diagnostics instead of saving.",
@@ -119,7 +119,7 @@ export const AutomationSaveTool = tool("automation_save", {
   readonly: false,
 });
 
-export const AutomationListTool = tool("automation_list", {
+const AutomationListTool = tool("automation_list", {
   title: "List automations",
   description:
     "Every automation with its project, whether it's on, its triggers, next run, and last run, plus the built-in automations Signalbox ships.",
@@ -127,7 +127,7 @@ export const AutomationListTool = tool("automation_list", {
   readonly: true,
 });
 
-export const AutomationReadTool = tool("automation_read", {
+const AutomationReadTool = tool("automation_read", {
   title: "Read automation",
   description:
     "An automation's live source, its diagram as an outline, the user's original request (intent), its pending draft if any, and its recent runs. Built-ins read by their `builtin:<slug>` id too.",
@@ -136,7 +136,7 @@ export const AutomationReadTool = tool("automation_read", {
   readonly: true,
 });
 
-export const AutomationRunTool = tool("automation_run", {
+const AutomationRunTool = tool("automation_run", {
   title: "Run automation",
   description:
     "Start a run now, even while the automation is turned off. `input` is passed to the workflow as its second argument. With `attach`, the run is bound to a thread: the thread stays in Working while it runs, settling, archiving or stopping the thread cancels it, and a second run with the same key returns the running one. A `builtin:<slug>` id runs the project's customized copy if there is one, else the built-in, in the attached thread's project, else projectId, else yours. Refused when the automation runs with more access than you have.",
@@ -152,7 +152,7 @@ export const AutomationRunTool = tool("automation_run", {
   readonly: false,
 });
 
-export const AutomationRunReadTool = tool("automation_run_read", {
+const AutomationRunReadTool = tool("automation_run_read", {
   title: "Read automation run",
   description:
     "A run's status, each step with its status, attempt, result, error (with why and fix when known) and agent thread, the diagram outline with step statuses, the output, and the code's newest console lines. Steps waiting on the user show status waiting with verb ask; only the user can answer them, in Signalbox.",
@@ -161,7 +161,7 @@ export const AutomationRunReadTool = tool("automation_run_read", {
   readonly: true,
 });
 
-export const AutomationSetEnabledTool = tool("automation_set_enabled", {
+const AutomationSetEnabledTool = tool("automation_set_enabled", {
   title: "Turn automation on or off",
   description: "Pause or resume an automation's triggers. Runs already going continue.",
   parameters: Schema.Struct({ automationId: AutomationId, enabled: Schema.Boolean }),
@@ -169,7 +169,7 @@ export const AutomationSetEnabledTool = tool("automation_set_enabled", {
   readonly: false,
 });
 
-export const AutomationCancelRunTool = tool("automation_cancel_run", {
+const AutomationCancelRunTool = tool("automation_cancel_run", {
   title: "Cancel automation run",
   description:
     "Stop a run: its agents, requests and processes stop, and runs it started with w.start are cancelled too. Agent threads keep their history.",
@@ -179,7 +179,7 @@ export const AutomationCancelRunTool = tool("automation_cancel_run", {
   destructive: true,
 });
 
-export const AutomationRunRetryTool = tool("automation_run_retry", {
+const AutomationRunRetryTool = tool("automation_run_retry", {
   title: "Retry automation run",
   description:
     'Retry a failed or cancelled run as a new run. Steps that succeeded are reused while the code reaches them the same way (same call site, verb and label); the failed step and everything after it run again. version: "same" (default) replays the run\'s own version; "latest" uses the live version, e.g. after saving a fix. Refused when the automation runs with more access than you have.',
@@ -191,7 +191,7 @@ export const AutomationRunRetryTool = tool("automation_run_retry", {
   readonly: false,
 });
 
-export const AutomationPublishTool = tool("automation_publish", {
+const AutomationPublishTool = tool("automation_publish", {
   title: "Publish automation draft",
   description:
     "Make an automation's pending draft its live version. Triggers and new runs use it from now on; runs already going keep their version. A never-published automation turns on.",
@@ -200,7 +200,7 @@ export const AutomationPublishTool = tool("automation_publish", {
   readonly: false,
 });
 
-export const AutomationDiscardDraftTool = tool("automation_discard_draft", {
+const AutomationDiscardDraftTool = tool("automation_discard_draft", {
   title: "Discard automation draft",
   description: "Drop an automation's pending draft. The live version stays as it is.",
   parameters: Schema.Struct({ automationId: AutomationId }),
@@ -209,7 +209,7 @@ export const AutomationDiscardDraftTool = tool("automation_discard_draft", {
   destructive: true,
 });
 
-export const AutomationDeleteTool = tool("automation_delete", {
+const AutomationDeleteTool = tool("automation_delete", {
   title: "Delete automation",
   description:
     "Delete an automation with its versions, runs and memory. Only when the user asked for it.",
@@ -219,7 +219,7 @@ export const AutomationDeleteTool = tool("automation_delete", {
   destructive: true,
 });
 
-export const AutomationEmitTool = tool("automation_emit", {
+const AutomationEmitTool = tool("automation_emit", {
   title: "Send automation event",
   description:
     "Deliver an event to every run waiting on it with w.waitFor. Returns how many runs it woke.",
@@ -228,7 +228,7 @@ export const AutomationEmitTool = tool("automation_emit", {
   readonly: false,
 });
 
-export const AutomationSetWebhookSecretTool = tool("automation_set_webhook_secret", {
+const AutomationSetWebhookSecretTool = tool("automation_set_webhook_secret", {
   title: "Set automation webhook secret",
   description:
     "Set the signing secret a webhook trigger's `signature` checks requests against. Ask the user for it with request_secret and pass the secretRef you get back; you never see the value, and it is never shown again. Until it's set, signed webhooks turn every request away. Rotating the URL keeps it.",
@@ -240,7 +240,7 @@ export const AutomationSetWebhookSecretTool = tool("automation_set_webhook_secre
   readonly: false,
 });
 
-export const AutomationCustomizeTool = tool("automation_customize", {
+const AutomationCustomizeTool = tool("automation_customize", {
   title: "Customize built-in automation",
   description:
     "Make a built-in automation the project's own (projectId, default: your thread's project): its row there stops being built in, or a copy is saved under its name if it never ran there. From then on that project runs its own version wherever the built-in was used; change it with automation_save.",

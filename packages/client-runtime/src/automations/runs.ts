@@ -136,7 +136,7 @@ export type RunChatItem =
     };
 
 /** Steps in the order they started; ties keep the server's order. */
-export function stepsInRunOrder(steps: ReadonlyArray<AutomationStep>): AutomationStep[] {
+function stepsInRunOrder(steps: ReadonlyArray<AutomationStep>): AutomationStep[] {
   return steps
     .map((step, position) => ({ step, position }))
     .sort(

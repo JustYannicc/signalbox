@@ -53,7 +53,7 @@ export function automationRunDeepLink(environmentId: string, runId: string): str
 }
 
 /** The run a deep link names, or null for any other path, so an alert can't open somewhere arbitrary. */
-export function parseAutomationRunDeepLink(
+function parseAutomationRunDeepLink(
   value: string,
 ): { readonly environmentId: string; readonly runId: string } | null {
   if (value.trim() !== value || value.includes("?") || value.includes("#")) return null;

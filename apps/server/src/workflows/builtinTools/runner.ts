@@ -11,10 +11,10 @@ import { TransientFailure } from "../stepPolicy.ts";
  * (see layer.ts); the engine only knows this narrow seam.
  */
 
-export const BUILTIN_TOOL_PREFIX = "signalbox.";
+const BUILTIN_TOOL_PREFIX = "signalbox.";
 
 /** The `service` the compiler gives built-in tool steps, for their logo. */
-export const BUILTIN_TOOL_SERVICE = "signalbox";
+const BUILTIN_TOOL_SERVICE = "signalbox";
 
 export const isBuiltinToolOperation = (operation: string) =>
   operation.startsWith(BUILTIN_TOOL_PREFIX);

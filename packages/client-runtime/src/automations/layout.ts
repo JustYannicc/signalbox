@@ -17,7 +17,7 @@ import type {
  * draw the same picture.
  */
 
-export const LAYOUT = {
+const LAYOUT = {
   cardWidth: 248,
   cardHeight: 60,
   decisionHeight: 52,

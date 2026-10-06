@@ -46,7 +46,7 @@ export const DEFAULTS: AutomationDefaults = {
   interactionMode: "default",
 };
 export const PROJECT = ProjectId.make("project-automations");
-export const PROJECT_ROOT = import.meta.dirname;
+const PROJECT_ROOT = import.meta.dirname;
 
 /** Fake agent threads `thread-1`, `thread-2`, … that finish when the test says so. */
 export function fakeThreads() {
