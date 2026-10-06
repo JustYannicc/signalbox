@@ -22,13 +22,17 @@ const sectionsLayer = Sections.layer.pipe(
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 
-const createProject = (projects: ProjectStore.ProjectStoreV2["Service"], id: ProjectId) =>
+const createProject = (
+  projects: ProjectStore.ProjectStoreV2["Service"],
+  id: ProjectId,
+  timestamp = createdAt,
+) =>
   projects.apply({
     sequence: 1,
     eventId: EventId.make(`event-${id}`),
     aggregateKind: "project",
     aggregateId: id,
-    occurredAt: createdAt,
+    occurredAt: timestamp,
     commandId: null,
     causationEventId: null,
     correlationId: null,
@@ -40,8 +44,8 @@ const createProject = (projects: ProjectStore.ProjectStoreV2["Service"], id: Pro
       workspaceRoot: `/tmp/${id}`,
       defaultModelSelection: null,
       scripts: [],
-      createdAt,
-      updatedAt: createdAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
     },
   });
 
@@ -58,7 +62,9 @@ it.layer(sectionsLayer)("Sections", (it) => {
   it.effect("nests and reorders sections while rejecting cycles", () =>
     Effect.gen(function* () {
       const sections = yield* Sections.Sections;
+      const initial = yield* sections.snapshot;
       const alphaSnapshot = yield* sections.create({ name: "Alpha", parentId: null });
+      assert.strictEqual(alphaSnapshot.revision, initial.revision + 1);
       const alpha = alphaSnapshot.sections.find((section) => section.name === "Alpha")!;
       const invalidName = yield* Effect.flip(sections.create({ name: "   ", parentId: null }));
       assert.strictEqual(invalidName._tag, "SectionInvalidNameError");
@@ -111,11 +117,13 @@ it.layer(sectionsLayer)("Sections", (it) => {
         [beta.id, alpha.id, gamma.id],
       );
 
+      const beforeReorder = yield* sections.snapshot;
       const reordered = yield* sections.move({
         id: alpha.id,
         parentId: null,
         beforeId: beta.id,
       });
+      assert.strictEqual(reordered.revision, beforeReorder.revision + 1);
       assert.deepStrictEqual(
         reordered.sections
           .filter((section) => section.parentId === null)
@@ -134,6 +142,17 @@ it.layer(sectionsLayer)("Sections", (it) => {
         "Nested",
       );
       assert.strictEqual(renamed.revision, beforeRename.revision + 1);
+
+      const sameName = yield* sections.update({ id: child.id, name: " Nested " });
+      assert.strictEqual(sameName.revision, renamed.revision);
+      const selfAnchored = yield* sections.move({
+        id: alpha.id,
+        parentId: null,
+        beforeId: alpha.id,
+      });
+      assert.strictEqual(selfAnchored.revision, renamed.revision);
+      const appendedLast = yield* sections.move({ id: gamma.id, parentId: null });
+      assert.strictEqual(appendedLast.revision, renamed.revision);
     }),
   );
 
@@ -158,10 +177,12 @@ it.layer(sectionsLayer)("Sections", (it) => {
         (section) => section.name === "Grandchild",
       )!;
 
+      const beforeProjectMove = yield* sections.snapshot;
       const placed = yield* sections.moveProject({
         projectId: projectA,
         sectionId: grandchild.id,
       });
+      assert.strictEqual(placed.revision, beforeProjectMove.revision + 1);
       assert.deepStrictEqual(
         placed.projectPlacements.find((placement) => placement.projectId === projectA),
         { projectId: projectA, sectionId: grandchild.id, position: 0 },
@@ -185,8 +206,22 @@ it.layer(sectionsLayer)("Sections", (it) => {
       );
       assert.strictEqual(missingProject._tag, "SectionProjectNotFoundError");
       yield* sections.moveProject({ projectId: projectB, sectionId: child.id });
+      const afterProjectMove = yield* sections.snapshot;
+      const sameProjectOrder = yield* sections.moveProject({
+        projectId: projectB,
+        sectionId: child.id,
+      });
+      assert.strictEqual(sameProjectOrder.revision, afterProjectMove.revision);
+      const projectSelfAnchor = yield* sections.moveProject({
+        projectId: projectB,
+        sectionId: child.id,
+        beforeProjectId: projectB,
+      });
+      assert.strictEqual(projectSelfAnchor.revision, afterProjectMove.revision);
 
+      const beforeDelete = yield* sections.snapshot;
       const deleted = yield* sections.delete({ id: child.id });
+      assert.strictEqual(deleted.revision, beforeDelete.revision + 1);
       const movedGrandchild = deleted.sections.find((section) => section.id === grandchild.id)!;
       assert.strictEqual(movedGrandchild.parentId, root.id);
       assert.strictEqual(
@@ -320,6 +355,35 @@ it.layer(sectionsLayer)("Sections", (it) => {
         new Set(allPlacements.map((placement) => placement.projectId)).size,
         allPlacements.length,
       );
+    }),
+  );
+
+  it.effect("does not revise an unchanged root project order", () =>
+    Effect.gen(function* () {
+      const sections = yield* Sections.Sections;
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      const projectA = ProjectId.make("project-noop-a");
+      const projectB = ProjectId.make("project-noop-b");
+      const laterTimestamp = "2027-01-01T00:00:00.000Z";
+      yield* createProject(projects, projectA, laterTimestamp);
+      yield* createProject(projects, projectB, laterTimestamp);
+
+      const rootSnapshot = yield* sections.create({ name: "Root", parentId: null });
+      const beforeAppend = yield* sections.snapshot;
+      const appendedLast = yield* sections.moveProject({ projectId: projectB, sectionId: null });
+      assert.strictEqual(appendedLast.revision, rootSnapshot.revision);
+      assert.deepStrictEqual(appendedLast.projectPlacements, beforeAppend.projectPlacements);
+
+      const movedBefore = yield* sections.moveProject({
+        projectId: projectB,
+        sectionId: null,
+        beforeProjectId: projectA,
+      });
+      assert.strictEqual(movedBefore.revision, rootSnapshot.revision + 1);
+      const rootOrder = movedBefore.projectPlacements
+        .filter((placement) => placement.sectionId === null)
+        .map((placement) => placement.projectId);
+      assert.ok(rootOrder.indexOf(projectB) < rootOrder.indexOf(projectA));
     }),
   );
 });

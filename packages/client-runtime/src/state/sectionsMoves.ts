@@ -100,20 +100,20 @@ export function siblingProjectMove(input: {
     .slice()
     .sort(comparePlacementPosition)
     .map((placement) => placement.projectId);
-  const siblingIds =
-    input.sectionId !== null
-      ? explicitSiblings
-      : [
-          ...explicitSiblings,
-          ...input.projects
-            .map((project) => project.id)
-            .filter(
-              (projectId) =>
-                !input.snapshot.projectPlacements.some(
-                  (placement) => placement.projectId === projectId,
-                ),
-            ),
-        ];
+  let siblingIds: ProjectId[];
+  if (input.sectionId !== null) {
+    siblingIds = explicitSiblings;
+  } else {
+    const placedProjectIds = new Set(
+      input.snapshot.projectPlacements.map((placement) => placement.projectId),
+    );
+    siblingIds = [
+      ...explicitSiblings,
+      ...input.projects
+        .map((project) => project.id)
+        .filter((projectId) => !placedProjectIds.has(projectId)),
+    ];
+  }
   const index = siblingIds.findIndex((projectId) => projectId === input.projectId);
   if (index < 0) return null;
 

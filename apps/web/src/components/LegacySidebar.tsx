@@ -218,16 +218,14 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { projectExpansionPreferenceKeys } from "../sidebarProjectExpansion";
 import {
   SectionSidebarActionsProvider,
   useSectionSidebarActions,
 } from "./sidebar/sections/SectionSidebarActions";
 import { SectionsProjectTree } from "./sidebar/sections/SectionsProjectTree";
 import { useSectionsSidebar } from "./sidebar/sections/useSectionsSidebar";
-import {
-  sectionProjectExpansionPreferenceKeys,
-  visibleSectionThreadKeys,
-} from "./sidebar/sections/sectionSidebarViewModel";
+import { visibleSectionThreadKeys } from "./sidebar/sections/sectionSidebarViewModel";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -274,14 +272,6 @@ function formatProjectMemberActionLabel(
   return member.environmentLabel
     ? `${member.environmentLabel} — ${member.workspaceRoot}`
     : member.workspaceRoot;
-}
-
-function projectExpansionPreferenceKeys(project: SidebarProjectSnapshot): string[] {
-  return [
-    project.projectKey,
-    ...project.memberProjects.map((member) => member.physicalProjectKey),
-    ...project.memberProjects.map((member) => legacyProjectCwdPreferenceKey(member.workspaceRoot)),
-  ];
 }
 
 function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): string {
@@ -1291,13 +1281,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
   const projectThreads = sidebarThreads;
   const projectPreferenceKeys = useMemo(
-    () =>
-      sectionRowKey
-        ? sectionProjectExpansionPreferenceKeys({
-            sidebarProjectKey: sectionRowKey,
-            project,
-          })
-        : projectExpansionPreferenceKeys(project),
+    () => projectExpansionPreferenceKeys(project, sectionRowKey),
     [project, sectionRowKey],
   );
   const projectListKey = sectionRowKey ?? project.projectKey;

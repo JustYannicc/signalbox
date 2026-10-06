@@ -1,6 +1,6 @@
 import type { SectionTreeNode } from "@t3tools/client-runtime/state/sections";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { Section, SectionsSnapshot } from "@t3tools/contracts/sections";
+import type { Section, SectionId, SectionsSnapshot } from "@t3tools/contracts/sections";
 import { useCallback, useMemo } from "react";
 import { Pressable, View } from "react-native";
 
@@ -16,7 +16,6 @@ const MAX_VISUAL_DEPTH = 5;
 export interface SectionNavigationRowProps {
   readonly environmentId: EnvironmentId;
   readonly snapshot: SectionsSnapshot | null;
-  readonly projects: ReadonlyArray<{ readonly id: ProjectId }>;
   readonly selectedProjectKey: string | null;
   readonly collapsedSections: ReadonlySet<string>;
   readonly onProjectChange: (projectKey: string | null) => void;
@@ -55,22 +54,18 @@ export function SectionNodeRow(
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${collapsed ? "Expand" : "Collapse"} section ${sectionPath}`}
-          className="size-10 items-center justify-center rounded-full active:bg-subtle"
-          onPress={() => props.onToggle(section.id)}
-        >
-          <SymbolView
-            name={collapsed ? "chevron.right" : "chevron.down"}
-            size={14}
-            tintColorClassName="accent-icon-muted"
-          />
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${collapsed ? "Expand" : "Collapse"} section ${sectionPath}`}
+          accessibilityLabel={`Section ${sectionPath}`}
+          accessibilityState={{ expanded: !collapsed }}
           className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 active:opacity-75"
           onPress={() => props.onToggle(section.id)}
         >
+          <View className="size-10 items-center justify-center">
+            <SymbolView
+              name={collapsed ? "chevron.right" : "chevron.down"}
+              size={14}
+              tintColorClassName="accent-icon-muted"
+            />
+          </View>
           <SymbolView name="folder" size={16} tintColorClassName="accent-icon-muted" />
           <AppText className="min-w-0 flex-1 font-t3-medium text-foreground" numberOfLines={1}>
             {section.name}
@@ -106,13 +101,15 @@ export function SectionNodeRow(
               ancestorPath={sectionPath}
             />
           ))}
-          {props.node.projects.map((project) => (
+          {props.node.projects.map((project, siblingIndex) => (
             <ProjectRow
               key={project.id}
               project={project}
               environmentId={props.environmentId}
-              projects={props.projects}
               depth={props.depth + 1}
+              siblingIndex={siblingIndex}
+              siblingCount={props.node.projects.length}
+              sectionId={section.id}
               sectionPath={sectionPath}
               snapshot={props.snapshot}
               selectedProjectKey={props.selectedProjectKey}
@@ -129,8 +126,10 @@ export function SectionNodeRow(
 export function ProjectRow(props: {
   readonly project: SectionProject;
   readonly environmentId: EnvironmentId;
-  readonly projects: ReadonlyArray<{ readonly id: ProjectId }>;
   readonly depth: number;
+  readonly siblingIndex: number;
+  readonly siblingCount: number;
+  readonly sectionId: SectionId | null;
   readonly sectionPath: string;
   readonly snapshot: SectionsSnapshot | null;
   readonly selectedProjectKey: string | null;
@@ -148,10 +147,11 @@ export function ProjectRow(props: {
         ? []
         : projectMoveMenuActions({
             snapshot: props.snapshot,
-            projectId,
-            projects: props.projects,
+            sectionId: props.sectionId,
+            siblingIndex: props.siblingIndex,
+            siblingCount: props.siblingCount,
           }),
-    [projectId, props.projects, props.snapshot],
+    [props.sectionId, props.siblingCount, props.siblingIndex, props.snapshot],
   );
   const handleMenuAction = useCallback(
     (event: { readonly nativeEvent: { readonly event: string } }) =>

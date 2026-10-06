@@ -1990,4 +1990,4 @@ export const WsRpcGroup = RpcGroup.make(
   ...SectionRpcs, // signalbox: sections
 ).middleware(RpcScopeAuthorization);
 
-export { SECTION_WS_METHODS, SectionRpcs };
+export { SECTION_WS_METHODS };

@@ -1,6 +1,6 @@
 import type { SectionTree, SectionTreeNode } from "@t3tools/client-runtime/state/sections";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, OrchestrationProjectShell } from "@t3tools/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
 
 import type {
   SidebarProjectGroupMember,
@@ -96,7 +96,9 @@ function groupedRows(
     { readonly source: SidebarProjectSnapshot; readonly member: SidebarProjectGroupMember }
   >();
   for (const project of projects) {
-    const source = groupByProjectId.get(`${environmentId}:${project.id}`);
+    const source = groupByProjectId.get(
+      scopedProjectKey(scopeProjectRef(environmentId, project.id)),
+    );
     if (!source) continue;
     const member = source.memberProjects.find(
       (candidate) => candidate.environmentId === environmentId && candidate.id === project.id,
@@ -168,7 +170,10 @@ export function buildSectionSidebarEnvironment(input: {
   const projectGroupsById = new Map<string, SidebarProjectSnapshot>();
   for (const group of input.projectGroups) {
     for (const member of group.memberProjects) {
-      projectGroupsById.set(`${member.environmentId}:${member.id}`, group);
+      projectGroupsById.set(
+        scopedProjectKey(scopeProjectRef(member.environmentId, member.id)),
+        group,
+      );
     }
   }
 
@@ -220,6 +225,6 @@ export function buildSectionSidebarEnvironment(input: {
   };
 }
 
-function sectionSidebarProjectKey(environmentId: EnvironmentId, projectId: string): string {
-  return `section-project:${environmentId}:${projectId}`;
+function sectionSidebarProjectKey(environmentId: EnvironmentId, projectId: ProjectId): string {
+  return `section-project:${scopedProjectKey(scopeProjectRef(environmentId, projectId))}`;
 }

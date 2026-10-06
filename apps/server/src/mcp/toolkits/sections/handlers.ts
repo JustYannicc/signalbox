@@ -25,7 +25,7 @@ const mutate = Effect.gen(function* () {
   return yield* Sections.Sections;
 });
 
-const layer = SectionsToolkit.toLayer({
+export const layer = SectionsToolkit.toLayer({
   t3_section_list: () =>
     read.pipe(
       Effect.flatMap((sections) => sections.snapshot),

@@ -102,6 +102,9 @@ function SectionTreeEnvironment(props: {
     () => props.projects.filter((project) => project.environmentId === environmentId),
     [environmentId, props.projects],
   );
+  const rootProjects = sectionsSupported
+    ? [...tree.rootProjects, ...tree.unplacedProjects]
+    : tree.unplacedProjects;
   const { requestCreateSection, onProjectAction, onSectionAction } = useSectionActions({
     environmentId,
     snapshot,
@@ -179,7 +182,6 @@ function SectionTreeEnvironment(props: {
               ancestorPath=""
               environmentId={environmentId}
               snapshot={snapshot}
-              projects={environmentProjects}
               selectedProjectKey={props.selectedProjectKey}
               collapsedSections={collapsedSections}
               onProjectChange={props.onProjectChange}
@@ -189,27 +191,15 @@ function SectionTreeEnvironment(props: {
             />
           ))
         : null}
-      {(sectionsSupported ? tree.rootProjects : []).map((project) => (
+      {rootProjects.map((project, siblingIndex) => (
         <ProjectRow
           key={project.id}
           project={project}
           environmentId={environmentId}
-          projects={environmentProjects}
           depth={0}
-          sectionPath=""
-          snapshot={snapshot}
-          selectedProjectKey={props.selectedProjectKey}
-          onSelect={props.onProjectChange}
-          onAction={onProjectAction}
-        />
-      ))}
-      {tree.unplacedProjects.map((project) => (
-        <ProjectRow
-          key={project.id}
-          project={project}
-          environmentId={environmentId}
-          projects={environmentProjects}
-          depth={0}
+          siblingIndex={siblingIndex}
+          siblingCount={rootProjects.length}
+          sectionId={null}
           sectionPath=""
           snapshot={sectionsSupported ? snapshot : null}
           selectedProjectKey={props.selectedProjectKey}

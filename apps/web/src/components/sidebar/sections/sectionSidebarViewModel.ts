@@ -10,21 +10,10 @@ import {
 } from "@t3tools/client-runtime/environment";
 
 import { sortThreads } from "../../../lib/threadSort";
-import { legacyProjectCwdPreferenceKey, resolveProjectExpanded } from "../../../uiStateStore";
+import { projectExpansionPreferenceKeys } from "../../../sidebarProjectExpansion";
+import { resolveProjectExpanded } from "../../../uiStateStore";
 import type { SidebarThreadSummary } from "../../../types";
 import type { SectionSidebarVisibleProjectRow } from "./sectionProjectTree";
-
-export function sectionProjectExpansionPreferenceKeys(
-  project: Pick<SectionSidebarVisibleProjectRow["project"], "sidebarProjectKey" | "project">,
-): string[] {
-  return [
-    project.sidebarProjectKey,
-    ...project.project.memberProjects.map((member) => member.physicalProjectKey),
-    ...project.project.memberProjects.map((member) =>
-      legacyProjectCwdPreferenceKey(member.workspaceRoot),
-    ),
-  ];
-}
 
 export function visibleSectionThreadKeys(input: {
   rows: ReadonlyArray<SectionSidebarVisibleProjectRow>;
@@ -52,7 +41,7 @@ export function visibleSectionThreadKeys(input: {
     );
     const projectExpanded = resolveProjectExpanded(
       input.projectExpandedById,
-      sectionProjectExpansionPreferenceKeys(project),
+      projectExpansionPreferenceKeys(project.project, project.sidebarProjectKey),
     );
     const pinnedCollapsedThread =
       !projectExpanded && input.activeThreadKey

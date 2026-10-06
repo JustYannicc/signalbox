@@ -1,6 +1,10 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { Section, SectionId, SectionsSnapshot } from "@t3tools/contracts/sections";
-import * as Cause from "effect/Cause";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { useCallback } from "react";
 import { Alert } from "react-native";
 
@@ -31,23 +35,18 @@ export function useSectionActions(input: {
     reportFailure: false,
   });
 
-  const reportFailure = useCallback(
-    (title: string, detail: string, cause: Cause.Cause<unknown>) => {
-      const error = Cause.squash(cause);
-      Alert.alert(title, error instanceof Error && error.message.trim() ? error.message : detail);
-    },
-    [],
-  );
+  const reportFailure = useCallback((title: string, detail: string, error: unknown) => {
+    Alert.alert(title, error instanceof Error && error.message.trim() ? error.message : detail);
+  }, []);
   const run = useCallback(
-    async <E>(
-      title: string,
-      detail: string,
-      operation: Promise<
-        { readonly _tag: "Success" } | { readonly _tag: "Failure"; readonly cause: Cause.Cause<E> }
-      >,
-    ) => {
+    async <A, E>(title: string, detail: string, operation: Promise<AtomCommandResult<A, E>>) => {
       const result = await operation;
-      if (result._tag === "Failure") reportFailure(title, detail, result.cause);
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          reportFailure(title, detail, squashAtomCommandFailure(result));
+        }
+        return false;
+      }
       return result._tag === "Success";
     },
     [reportFailure],

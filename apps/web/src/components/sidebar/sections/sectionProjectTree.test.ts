@@ -7,8 +7,14 @@ import { buildSidebarProjectSnapshots } from "../../../sidebarProjectGrouping";
 import type { Project } from "../../../types";
 import { sectionTreeFromSnapshot } from "@t3tools/client-runtime/state/sections";
 import type { SectionsSnapshot } from "@t3tools/contracts/sections";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { makeThreadFixture } from "../../../test-fixtures";
+import { legacyProjectCwdPreferenceKey } from "../../../uiStateStore";
 import { visibleSectionThreadKeys } from "./sectionSidebarViewModel";
 import {
   buildSectionSidebarEnvironment,
@@ -140,6 +146,16 @@ describe("section sidebar project adapter", () => {
     };
     expect(visibleSectionThreadKeys(collapsed)).toEqual([keyA]);
     expect(visibleSectionThreadKeys({ ...collapsed, activeThreadKey: keyB })).toEqual([keyB, keyA]);
+    const savedPathPreference = { [legacyProjectCwdPreferenceKey(a.workspaceRoot)]: false };
+    expect(
+      visibleSectionThreadKeys({ ...input, projectExpandedById: savedPathPreference }),
+    ).toEqual([keyB]);
+    expect(
+      visibleSectionThreadKeys({
+        ...input,
+        projectExpandedById: { ...savedPathPreference, [rows[1]!.project.sidebarProjectKey]: true },
+      }),
+    ).toEqual([keyB, keyA]);
   });
 
   it("keeps same-ID projects scoped to their environment and as physical rows", () => {
@@ -160,6 +176,9 @@ describe("section sidebar project adapter", () => {
     }).tree.unplacedProjects[0]!;
 
     expect(row.id).toBe(ProjectId.make("shared-project"));
+    expect(row.sidebarProjectKey).toBe(
+      `section-project:${scopedProjectKey(scopeProjectRef(environmentA, environmentAProject.id))}`,
+    );
     expect(row.project.workspaceRoot).toBe("/work/environment-a");
     expect(row.project.memberProjects.map((member) => member.environmentId)).toEqual([
       environmentA,

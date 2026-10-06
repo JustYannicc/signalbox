@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { sectionMenuActions } from "./section-navigation-model";
+import { projectMoveMenuActions, sectionMenuActions } from "./section-navigation-model";
 
 const snapshot = {
   revision: 1,
@@ -26,5 +26,27 @@ describe("mobile section parent choices", () => {
       "section:parent:a",
       "section:parent:d",
     ]);
+  });
+
+  it("uses visible sibling bounds for project reordering and preserves the current parent", () => {
+    const rootActions = projectMoveMenuActions({
+      snapshot,
+      sectionId: null,
+      siblingIndex: 0,
+      siblingCount: 2,
+    });
+    const rootDestinations = rootActions[0]?.subactions ?? [];
+    expect(rootActions.map((action) => action.id)).toEqual(["project:move", "project:down"]);
+    expect(rootDestinations.find((action) => action.id === "project:root")?.state).toBe("on");
+
+    const childActions = projectMoveMenuActions({
+      snapshot,
+      sectionId: snapshot.sections[1]!.id,
+      siblingIndex: 1,
+      siblingCount: 2,
+    });
+    const childDestinations = childActions[0]?.subactions ?? [];
+    expect(childActions.map((action) => action.id)).toEqual(["project:move", "project:up"]);
+    expect(childDestinations.find((action) => action.id === "project:section:x")?.state).toBe("on");
   });
 });

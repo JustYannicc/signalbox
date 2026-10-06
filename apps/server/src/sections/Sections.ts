@@ -48,6 +48,9 @@ const insertBefore = <A extends string>(ids: ReadonlyArray<A>, id: A, beforeId?:
     : [...withoutMoving.slice(0, index), id, ...withoutMoving.slice(index)];
 };
 
+const hasSameOrder = <A>(left: ReadonlyArray<A>, right: ReadonlyArray<A>) =>
+  left.length === right.length && left.every((id, index) => id === right[index]);
+
 const projectOrder = (
   sectionId: SectionId | null,
   placements: ReadonlyArray<ProjectSectionPlacement>,
@@ -127,6 +130,7 @@ const make = Effect.gen(function* () {
                   position: 0,
                 });
                 yield* transaction.setSectionOrder(input.parentId, next ?? [...siblings, id]);
+                return true;
               }),
             );
           }),
@@ -138,9 +142,12 @@ const make = Effect.gen(function* () {
     validateName(input.name).pipe(
       Effect.flatMap((name) =>
         store.mutate("update", (transaction) =>
-          requiredSection(transaction, input.id).pipe(
-            Effect.andThen(transaction.renameSection(input.id, name)),
-          ),
+          Effect.gen(function* () {
+            const current = yield* requiredSection(transaction, input.id);
+            if (current.name === name) return false;
+            yield* transaction.renameSection(input.id, name);
+            return true;
+          }),
         ),
       ),
     );
@@ -192,18 +199,18 @@ const make = Effect.gen(function* () {
             anchorId: input.beforeId,
           });
         }
-        if (input.beforeId === input.id && isSameParent) return;
+        if (input.beforeId === input.id && isSameParent) return false;
         const next = insertBefore(targetSiblings, input.id, input.beforeId);
+        const nextSiblings = next ?? [...targetWithoutMoving, input.id];
+        if (isSameParent && hasSameOrder(targetSiblings, nextSiblings)) return false;
         if (!isSameParent) {
           yield* transaction.setSectionOrder(
             sourceParent,
             sourceSiblings.filter((id) => id !== input.id),
           );
         }
-        yield* transaction.setSectionOrder(
-          input.parentId,
-          next ?? [...targetWithoutMoving, input.id],
-        );
+        yield* transaction.setSectionOrder(input.parentId, nextSiblings);
+        return true;
       }),
     );
 
@@ -243,6 +250,7 @@ const make = Effect.gen(function* () {
         yield* transaction.setSectionOrder(parentId, nextSections);
         yield* transaction.setProjectOrder(parentId, nextProjects);
         yield* transaction.deleteSection(input.id);
+        return true;
       }),
     );
 
@@ -294,22 +302,22 @@ const make = Effect.gen(function* () {
             anchorId: input.beforeProjectId,
           });
         }
-        if (input.beforeProjectId === input.projectId && sameSection) return;
+        if (input.beforeProjectId === input.projectId && sameSection) return false;
         const nextDestination = insertBefore(
           destinationSiblings,
           input.projectId,
           input.beforeProjectId,
         );
+        const nextProjects = nextDestination ?? [...destinationWithoutMoving, input.projectId];
+        if (sameSection && hasSameOrder(destinationSiblings, nextProjects)) return false;
         if (!sameSection) {
           yield* transaction.setProjectOrder(
             sourceSectionId,
             sourceSiblings.filter((projectId) => projectId !== input.projectId),
           );
         }
-        yield* transaction.setProjectOrder(
-          input.sectionId,
-          nextDestination ?? [...destinationWithoutMoving, input.projectId],
-        );
+        yield* transaction.setProjectOrder(input.sectionId, nextProjects);
+        return true;
       }),
     );
 

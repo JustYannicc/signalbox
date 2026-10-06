@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
+import type { SectionStorageOperation } from "./SectionsError.ts";
 import { SectionStorageError } from "./SectionsError.ts";
 
 type SectionRow = {
@@ -71,7 +72,10 @@ const toPlacement = (row: PlacementRow): ProjectSectionPlacement => ({
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const changed = yield* Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown);
+  const changed = yield* Effect.acquireRelease(
+    PubSub.sliding<SectionsSnapshot>(1),
+    PubSub.shutdown,
+  );
   const gate = yield* Semaphore.make(1);
 
   yield* Effect.gen(function* () {
@@ -257,29 +261,33 @@ const make = Effect.gen(function* () {
       );
 
   const mutate: SectionsStore["Service"]["mutate"] = (operation, use) =>
-    gate
-      .withPermit(
-        Effect.uninterruptible(
-          sql
-            .withTransaction(
-              Effect.gen(function* () {
-                yield* use(transaction());
-                yield* sql`
+    gate.withPermit(
+      Effect.uninterruptible(
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const didChange = yield* use(transaction());
+              if (!didChange) return { didChange, snapshot: yield* readSnapshot };
+              yield* sql`
                   UPDATE signalbox_sections_metadata
                   SET revision = revision + 1
                   WHERE singleton = 1
                 `;
-              }),
-            )
-            .pipe(
-              Effect.mapError((cause) =>
-                SqlError.isSqlError(cause) ? new SectionStorageError({ operation, cause }) : cause,
-              ),
-              Effect.tap(() => PubSub.publish(changed, undefined)),
+              return { didChange, snapshot: yield* readSnapshot };
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              SqlError.isSqlError(cause) ? new SectionStorageError({ operation, cause }) : cause,
             ),
-        ),
-      )
-      .pipe(Effect.andThen(snapshot));
+            Effect.flatMap(({ didChange, snapshot }) =>
+              didChange
+                ? PubSub.publish(changed, snapshot).pipe(Effect.as(snapshot))
+                : Effect.succeed(snapshot),
+            ),
+          ),
+      ),
+    );
 
   const changes = Stream.unwrap(
     Effect.gen(function* () {
@@ -287,7 +295,9 @@ const make = Effect.gen(function* () {
       const first = yield* snapshot;
       return Stream.concat(
         Stream.make(first),
-        Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => snapshot)),
+        Stream.fromSubscription(subscription).pipe(
+          Stream.filter((next) => next.revision > first.revision),
+        ),
       );
     }),
   );
@@ -301,12 +311,12 @@ export class SectionsStore extends Context.Service<
     readonly snapshot: Effect.Effect<SectionsSnapshot, SectionStorageError>;
     readonly changes: Stream.Stream<SectionsSnapshot, SectionStorageError>;
     readonly read: <A, E>(
-      operation: string,
+      operation: SectionStorageOperation,
       use: (transaction: SectionsTransaction) => Effect.Effect<A, E | SqlError.SqlError>,
     ) => Effect.Effect<A, E | SectionStorageError>;
     readonly mutate: <E>(
-      operation: string,
-      use: (transaction: SectionsTransaction) => Effect.Effect<void, E | SqlError.SqlError>,
+      operation: SectionStorageOperation,
+      use: (transaction: SectionsTransaction) => Effect.Effect<boolean, E | SqlError.SqlError>,
     ) => Effect.Effect<SectionsSnapshot, E | SectionStorageError>;
   }
 >()("t3/sections/SectionsStore") {}

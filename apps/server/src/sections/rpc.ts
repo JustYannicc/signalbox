@@ -56,7 +56,7 @@ const toRpcError = (error: SectionError): SectionsRpcError => {
 
 const aggregate = { "rpc.aggregate": "sections" } as const;
 
-export const makeSectionsWsHandlers = Effect.gen(function* () {
+const makeSectionsWsHandlers = Effect.gen(function* () {
   const sections = yield* Sections.Sections;
   return {
     [WS_METHODS.sectionsSubscribe]: () =>
