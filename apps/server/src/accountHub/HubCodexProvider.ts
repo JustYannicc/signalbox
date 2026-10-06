@@ -44,7 +44,7 @@ import {
 import { makeManagedServerProvider } from "../provider/makeManagedServerProvider.ts";
 import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
 import { reauthAccountName, reauthMethods } from "./hubReauth.ts";
-import { runHubReauth } from "./hubSignIn.ts";
+import { runHubLogin, runHubReauth } from "./hubSignIn.ts";
 import type { ProviderDriverCreateInput, ProviderInstance } from "../provider/ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -155,7 +155,7 @@ export const makeHubCodexProvider = Effect.fn("makeHubCodexProvider")(function* 
         {
           id: "chatgpt-change-account",
           name: "Add a ChatGPT account",
-          description: "Sign in with ChatGPT. The account joins this pool.",
+          description: "Sign in to ChatGPT. The account joins this pool.",
           type: "agent" as const,
         },
         ...reauth,
@@ -164,11 +164,21 @@ export const makeHubCodexProvider = Effect.fn("makeHubCodexProvider")(function* 
     authenticate: (method, context) =>
       Effect.gen(function* () {
         const accountName = reauthAccountName(method);
-        // A Sign in with ChatGPT file is named by email, so signing in again below replaces it.
-        if (accountName && !accountName.startsWith(`${ACCOUNT_HUB_CHATGPT_TYPE}-`)) {
+        if (!accountName) {
+          // The hub's own Codex login: works on any CLIProxyAPI, no plugin needed, and the
+          // desktop app finishes it in one click.
+          return yield* runHubLogin({
+            instanceId,
+            context,
+            start: (login) => hub.startOAuthLogin("codex", login),
+          });
+        }
+        if (!accountName.startsWith(`${ACCOUNT_HUB_CHATGPT_TYPE}-`)) {
           return yield* runHubReauth({ hub, instanceId, accountName, context });
         }
-        yield* chatGpt.authenticate(method, context);
+        // Accounts added with Sign in with ChatGPT sign in the same way again; the file is
+        // named by email, so the new login replaces the dead one.
+        yield* chatGpt.authenticate("chatgpt-change-account", context);
         const profile = yield* chatGpt.exportProfile;
         const credential = chatGptCredentialFile(profile, hostId);
         yield* hub

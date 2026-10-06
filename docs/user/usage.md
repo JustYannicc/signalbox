@@ -119,12 +119,10 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 Signalbox can spread work across several ChatGPT, Claude, Grok, and Antigravity accounts. Open
 **Usage → Limits**, choose **Add account**, pick the provider, and sign in with the account to add.
-Repeat for each account. ChatGPT accounts use Sign in with ChatGPT; Grok shows a code to enter on
-xAI's page.
+Repeat for each account. Grok shows a code to enter on xAI's page.
 
-When Signalbox runs on the same machine as your browser, browser sign-ins finish on their own. From
-another device, the provider ends on a page that cannot load; copy that page's full address and paste
-it into Signalbox to finish.
+In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
+cannot load; copy that page's full address and paste it into Signalbox to finish.
 
 The first account of each provider adds a provider such as **Claude accounts** to the model picker.
 Pick it to use every account you added: each conversation stays on one account, and work moves to

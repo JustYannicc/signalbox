@@ -6,7 +6,7 @@ import {
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { CopyIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
@@ -64,6 +64,11 @@ export function HubSignIn({
   const acceptsCallback = interaction?.type === "browser" && interaction.acceptsCallback === true;
   const flowId = auth?.flowId ?? null;
   const callbackUrl = pasted.flowId === flowId ? pasted.value : "";
+  // In the desktop app the app itself catches the provider's localhost redirect: one click.
+  const desktopReceive = window.desktopBridge?.receiveProviderAuthCallback;
+  const receiving = useRef<string | null>(null);
+  // Only a sign-in started here opens the browser; one from another device or tab does not.
+  const startedHere = useRef(false);
 
   async function run(command: () => Promise<AtomCommandResult<unknown, unknown>>) {
     if (pendingRef.current) return;
@@ -80,12 +85,42 @@ export function HubSignIn({
     setPending(false);
   }
 
+  const finishOnThisComputer = useEffectEvent((url: string, flow: string) => {
+    if (!desktopReceive || !startedHere.current || receiving.current === url) return;
+    receiving.current = url;
+    void desktopReceive(url)
+      .then((received) =>
+        run(() =>
+          complete({ environmentId, input: { instanceId, flowId: flow, callbackUrl: received } }),
+        ),
+      )
+      .catch(() => {
+        // Cancelled or replaced on purpose: nothing went wrong.
+        if (receiving.current !== url) return;
+        receiving.current = null;
+        setError("Could not finish sign-in on this computer. Paste the page's address below.");
+      });
+  });
+  const interactionUrl = active && acceptsCallback ? (interaction?.url ?? null) : null;
+  useEffect(() => {
+    if (!interactionUrl || !flowId) return;
+    finishOnThisComputer(interactionUrl, flowId);
+    // Leaving the dialog, or the sign-in ending, frees the port for the next try.
+    return () => {
+      if (receiving.current !== interactionUrl) return;
+      receiving.current = null;
+      void window.desktopBridge?.cancelProviderAuthCallback?.(interactionUrl);
+    };
+  }, [interactionUrl, flowId]);
+
   const description = active
     ? auth?.phase === "verifying"
       ? "Checking the account…"
       : userCode
         ? `Open the sign-in page and enter this code to ${methodId ? "sign in to" : "add"} the ${account} account.`
-        : `Sign in to ${account} in your browser. If it ends on a page that cannot load, copy that page's address and paste it below.`
+        : desktopReceive
+          ? `Finish signing in to ${account} in your browser.`
+          : `Sign in to ${account} in your browser. If it ends on a page that cannot load, copy that page's address and paste it below.`
     : auth?.phase === "failed"
       ? (auth.message ?? "Sign-in failed. Try again.")
       : methodId
@@ -128,9 +163,13 @@ export function HubSignIn({
                 size="sm"
                 variant="ghost-muted"
                 disabled={pending}
-                onClick={() =>
-                  void run(() => cancel({ environmentId, input: { instanceId, flowId } }))
-                }
+                onClick={() => {
+                  if (interaction && receiving.current === interaction.url) {
+                    receiving.current = null;
+                    void window.desktopBridge?.cancelProviderAuthCallback?.(interaction.url);
+                  }
+                  void run(() => cancel({ environmentId, input: { instanceId, flowId } }));
+                }}
               >
                 Cancel
               </Button>
@@ -138,18 +177,21 @@ export function HubSignIn({
               <Button
                 size="sm"
                 disabled={disabled || pending || !auth}
-                onClick={() =>
+                onClick={() => {
+                  startedHere.current = true;
                   void run(() =>
                     start({
                       environmentId,
                       input: {
                         instanceId,
-                        callbackMode: local ? "server" : "client",
+                        // The desktop app or a pasted address finishes it; a local hub must not
+                        // hold the redirect port the desktop app listens on.
+                        callbackMode: local && !desktopReceive ? "server" : "client",
                         ...(methodId ? { methodId } : {}),
                       },
                     }),
-                  )
-                }
+                  );
+                }}
               >
                 {auth?.phase === "failed"
                   ? "Try again"
