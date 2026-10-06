@@ -1,3 +1,7 @@
+import { AccountHubRpcError } from "@t3tools/contracts/accountHub"; // signalbox
+import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
+import type { AccountHubError } from "./accountHub/accountHubManagement.ts"; // signalbox
+
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -249,6 +253,15 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+
+// signalbox: one pool operation, with hub errors mapped for the wire.
+const accountPool = <A>(
+  operation: (pools: AccountPools.AccountPools["Service"]) => Effect.Effect<A, AccountHubError>,
+) =>
+  AccountPools.AccountPools.pipe(
+    Effect.flatMap(operation),
+    Effect.mapError((error) => new AccountHubRpcError({ detail: error.detail })),
+  );
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -2444,6 +2457,49 @@ const layerWsRpc = (
               );
               return { outcome };
             }),
+            { "rpc.aggregate": "provider" },
+          ),
+        // signalbox: account pools.
+        [WS_METHODS.accountPoolSubscribe]: () =>
+          observeRpcStream(
+            WS_METHODS.accountPoolSubscribe,
+            Stream.unwrap(AccountPools.AccountPools.pipe(Effect.map((pools) => pools.changes))),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolCreate,
+            accountPool((pools) => pools.create(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolRename]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolRename,
+            accountPool((pools) => pools.rename(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolDelete,
+            accountPool((pools) => pools.remove(input.poolId)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolSetBacking]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolSetBacking,
+            accountPool((pools) => pools.setBacking(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolImportAccounts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolImportAccounts,
+            accountPool((pools) => pools.importAccounts(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.usageLimitSourceUpdateAccount]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.usageLimitSourceUpdateAccount,
+            usageLimitSources.updateAccount(input),
             { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.providerAuthStart]: (input) =>

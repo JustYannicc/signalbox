@@ -343,6 +343,14 @@
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"
     },
+    "./limitProblems": {
+      "types": "./src/limitProblems.ts",
+      "import": "./src/limitProblems.ts"
+    },
+    "./usageLimitWindows": {
+      "types": "./src/usageLimitWindows.ts",
+      "import": "./src/usageLimitWindows.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
@@ -402,6 +410,10 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./hubAuthCallback": {
+      "types": "./src/hubAuthCallback.ts",
+      "import": "./src/hubAuthCallback.ts"
     }
   },
   "scripts": {

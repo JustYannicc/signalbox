@@ -23,6 +23,8 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
+import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
+import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
 import * as ProductAnalytics from "./signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
@@ -584,6 +586,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
       CodexInstallation.CodexInstallation.layer,
+      // signalbox: account pools, each on its own hub; the personal pool's is today's hub.
+      AccountPools.layer.pipe(
+        Layer.provideMerge(AccountHub.layer),
+        Layer.provide(NetService.layer),
+      ),
     ),
   ),
 );

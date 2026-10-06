@@ -79,7 +79,11 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
       : yield* decodeAntigravitySettings(entries[instanceId]?.config ?? {}).pipe(
           Effect.mapError(invalidConfig),
         );
-    if (isCodex && (!("setupMode" in config) || config.setupMode !== "managed")) {
+    // signalbox: hub instances run the same Signalbox-installed Codex as managed ones.
+    if (
+      isCodex &&
+      (!("setupMode" in config) || (config.setupMode !== "managed" && config.setupMode !== "hub"))
+    ) {
       return yield* new ProviderSetupError({
         instanceId,
         operation,

@@ -8,7 +8,6 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   BellIcon,
   BlocksIcon,
-  ChartNoAxesColumnIcon,
   HouseIcon,
   LibraryIcon,
   MoonIcon,
@@ -22,6 +21,7 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarFeedbackButton } from "./feedback/SidebarFeedbackButton";
 import type { SidebarView } from "./sidebarView";
+import { UsageNavIcon } from "../usage/UsageNavIcon";
 
 type RailEntry =
   | { kind: "view"; view: SidebarView; label: string; icon: LucideIcon }
@@ -127,7 +127,7 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
             void navigate({ to: "/usage" });
           }}
         >
-          <ChartNoAxesColumnIcon />
+          <UsageNavIcon />
         </RailButton>
         <SidebarMenuItem>
           <SidebarFeedbackButton />
