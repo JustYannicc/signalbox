@@ -118,7 +118,7 @@ const TEST_CASE_NAME_RULES = [...NAME_RULES, ...COMMAND_RULES, HOME_RULE, SHORT_
  * OpenAI's ChatGPT consent flow registers the agent by `agent_name_hint`.
  */
 export const EXTERNAL_CONTRACT_PROPERTIES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "apps/server/src/provider/Layers/CodexProvider.ts": ["name", "title"],
+  "apps/server/src/provider/CodexProvider.ts": ["name", "title"],
   "apps/server/src/provider/CodexChatGptAuth.ts": ["agent_name_hint"],
   // The t3.json format is shared with upstream; its schema keeps its name.
   "packages/contracts/src/t3ProjectFile.ts": ["title"],

@@ -4,13 +4,13 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse, type HttpServerRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse, type HttpServerRequest } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import * as AccountFlow from "./AccountFlow.ts";
 import * as AccountService from "./AccountService.ts";
 
@@ -110,9 +110,9 @@ export const workosStubLayer = (
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), { prefix: "t3-account-test-" });
 
 export const environmentAuthLayer = EnvironmentAuth.layer.pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(Sqlite.layerMemory),
   Layer.provide(ServerSecretStore.layer),
-  Layer.provide(ServerEnvironment.identityLayer),
+  Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(serverConfigLayer),
   Layer.provideMerge(NodeServices.layer),
 );

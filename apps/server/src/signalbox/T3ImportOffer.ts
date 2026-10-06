@@ -5,7 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Prompt } from "effect/unstable/cli";
+import { Prompt } from "effect/cli";
 
 import type { CliServerFlags } from "../cli/config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
@@ -58,7 +58,7 @@ export const offerT3ImportOnServerStart = Effect.fn("T3Import.offerOnServerStart
   const paths = yield* defaultT3ImportPaths(yield* resolveBaseDir(undefined));
   const available = yield* checkT3Import(paths).pipe(
     Effect.as(true),
-    Effect.catchTag("T3ImportUnavailableError", () => Effect.succeed(false)),
+    Effect.catchTags({ T3ImportUnavailableError: () => Effect.succeed(false) }),
   );
   if (!available) return;
 
@@ -73,7 +73,7 @@ export const offerT3ImportOnServerStart = Effect.fn("T3Import.offerOnServerStart
       initial: true,
     }),
   ).pipe(
-    Effect.catchTag("QuitError", () => Effect.fail(new T3ImportCancelledError())),
+    Effect.catchTags({ QuitError: () => Effect.fail(new T3ImportCancelledError()) }),
     Effect.timeoutOption(PROMPT_TIMEOUT),
     Effect.provide(NodeTerminal.layer),
   );
