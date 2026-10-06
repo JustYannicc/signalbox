@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 import {
   HostProcessArchitecture,
@@ -15,6 +15,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Settings from "../serverSettings.ts";
 import * as AccountHub from "./AccountHub.ts";
 import * as AccountPools from "./AccountPools.ts";
@@ -48,6 +49,11 @@ const poolsLayer = (baseDir: string) =>
     Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
     Layer.provide(Layer.succeed(HostProcessArchitecture, "arm64")),
     Layer.provide(Layer.succeed(HostProcessEnvironment, process.env)),
+    Layer.provide(
+      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("test-environment")),
+      }),
+    ),
   );
 
 /** The hub address a pool's provider instance would hand its harness. */

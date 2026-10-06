@@ -647,7 +647,8 @@ export function getAntigravitySendBlockReason(
     return "Install Antigravity in provider settings before sending.";
   }
   if (provider.auth.status === "unauthenticated") {
-    return "Sign in to Antigravity in provider settings before sending.";
+    // signalbox: accounts live in pools.
+    return "Add an Antigravity account to its pool from Usage → Limits before sending.";
   }
   const slug = model.trim();
   if (slug.length === 0) return "Choose an Antigravity model before sending.";

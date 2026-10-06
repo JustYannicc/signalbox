@@ -86,6 +86,7 @@ import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import { PoolAgentsSetup } from "../accountPool/PoolAgentsSetup"; // signalbox
 
 /**
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
@@ -647,12 +648,13 @@ function AgentsStep({
   return (
     <StepShell
       title="Connect your agents"
-      description="Choose an agent to start coding. You can add more later."
+      description="Add the accounts your agents work with. You can add more later."
     >
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
           {environmentIds.map((environmentId) => (
-            <ConnectedAgentsStep
+            // signalbox: agents run on pool accounts; onboarding never signs a CLI in.
+            <PoolAgentsSetup
               key={environmentId}
               environmentId={environmentId}
               machineLabel={

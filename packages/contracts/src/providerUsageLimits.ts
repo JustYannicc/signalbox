@@ -112,6 +112,8 @@ export const UsageLimitSourceAccount = Schema.Struct({
   disabled: Schema.optional(Schema.Boolean),
   /** signalbox: the login died (revoked or expired refresh token); it needs a new sign-in. */
   signedOut: Schema.optional(Schema.Boolean),
+  /** signalbox: an API key, not a login: it never signs out and can only be removed. */
+  apiKey: Schema.optional(Schema.Boolean),
 });
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 

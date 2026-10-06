@@ -7,6 +7,10 @@ import {
   AccountPoolImportInput,
   AccountPoolRenameInput,
   AccountPoolSetBackingInput,
+  AccountPoolAddApiKeyInput,
+  AccountPoolMoveNativeLoginsInput,
+  AccountPoolMoveNativeLoginsResult,
+  AccountPoolSetOpenCodeInput,
 } from "./accountHub.ts"; // signalbox
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
@@ -389,6 +393,9 @@ export const WS_METHODS = {
   accountPoolDelete: "accountPool.delete",
   accountPoolSetBacking: "accountPool.setBacking",
   accountPoolImportAccounts: "accountPool.importAccounts",
+  accountPoolAddApiKey: "accountPool.addApiKey",
+  accountPoolMoveNativeLogins: "accountPool.moveNativeLogins",
+  accountPoolSetOpenCode: "accountPool.setOpenCode",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -656,6 +663,19 @@ const WsAccountPoolSetBackingRpc = Rpc.make(WS_METHODS.accountPoolSetBacking, {
 const WsAccountPoolImportAccountsRpc = Rpc.make(WS_METHODS.accountPoolImportAccounts, {
   payload: AccountPoolImportInput,
   success: AccountHubImportResult,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolAddApiKeyRpc = Rpc.make(WS_METHODS.accountPoolAddApiKey, {
+  payload: AccountPoolAddApiKeyInput,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolSetOpenCodeRpc = Rpc.make(WS_METHODS.accountPoolSetOpenCode, {
+  payload: AccountPoolSetOpenCodeInput,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolMoveNativeLoginsRpc = Rpc.make(WS_METHODS.accountPoolMoveNativeLogins, {
+  payload: AccountPoolMoveNativeLoginsInput,
+  success: AccountPoolMoveNativeLoginsResult,
   error: AccountPoolRpcFailure,
 });
 
@@ -1804,6 +1824,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsAccountPoolDeleteRpc,
   WsAccountPoolSetBackingRpc,
   WsAccountPoolImportAccountsRpc,
+  WsAccountPoolAddApiKeyRpc,
+  WsAccountPoolMoveNativeLoginsRpc,
+  WsAccountPoolSetOpenCodeRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,

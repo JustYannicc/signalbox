@@ -16,6 +16,7 @@
 import type { UsageLimitSourceConfig, UsageLimitSourceId } from "@t3tools/contracts";
 import {
   ACCOUNT_HUB_SOURCE_ID,
+  type AccountPoolAddApiKeyInput,
   type AccountHubConnection,
   type AccountHubImportInput,
   type AccountHubImportResult,
@@ -53,7 +54,17 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { isProcessAlive } from "../serverRuntimeState.ts";
 import * as Management from "./accountHubManagement.ts";
-import { AccountHubError, type AccountHubEndpoint } from "./accountHubManagement.ts";
+import {
+  addApiKey as addHubApiKey,
+  apiKeySections,
+  type ApiKeyInstanceKind,
+} from "./hubApiKeys.ts";
+import {
+  AccountHubError,
+  type AccountHubEndpoint,
+  isAccountHubError,
+  normalizeHubUrl,
+} from "./accountHubManagement.ts";
 import {
   ACCOUNT_HUB_VERSION,
   AccountHubInstallError,
@@ -103,6 +114,17 @@ export class AccountHub extends Context.Service<
       provider: Management.AccountHubOAuthProvider,
       options: { readonly localCallback: boolean },
     ) => Effect.Effect<AccountHubOAuthLogin, AccountHubError>;
+    /**
+     * Adds an API key the hub routes alongside its logins, starting the hub if
+     * needed. Resolves to the pool provider kind that uses it.
+     */
+    readonly addApiKey: (
+      input: Omit<AccountPoolAddApiKeyInput, "poolId" | "provider"> & {
+        readonly provider: Exclude<AccountPoolAddApiKeyInput["provider"], "cursor">;
+      },
+    ) => Effect.Effect<ApiKeyInstanceKind, AccountHubError>;
+    /** One credential file's content, for accounts the hub keeps but does not route (Cursor). */
+    readonly readCredential: (name: string) => Effect.Effect<string, AccountHubError>;
     /** Removes one account's credential file from the hub. */
     readonly removeCredential: (name: string) => Effect.Effect<void, AccountHubError>;
     /** Accounts in the running hub. Empty when the hub is off. */
@@ -156,7 +178,6 @@ export const PERSONAL_HUB: AccountHubPlacement = {
 const StoredConnection = Schema.Struct({ mode: Schema.Literal("external"), url: Schema.String });
 const decodeStoredConnection = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredConnection));
 const encodeStoredConnection = Schema.encodeEffect(Schema.fromJsonString(StoredConnection));
-const normalizeHubUrl = (url: string) => url.trim().replace(/\/+$/u, "");
 // A hub that exits before this long counts as a crash loop and backs off.
 const STABLE_UPTIME = Duration.seconds(30);
 const RESTART_BACKOFF_MIN = Duration.seconds(1);
@@ -164,7 +185,6 @@ const RESTART_BACKOFF_MAX = Duration.minutes(2);
 const backoff = (previous: Duration.Duration) =>
   Duration.min(Duration.max(RESTART_BACKOFF_MIN, Duration.times(previous, 2)), RESTART_BACKOFF_MAX);
 
-const isAccountHubError = Schema.is(AccountHubError);
 const isAccountHubInstallError = Schema.is(AccountHubInstallError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeCredentialFile = Schema.decodeUnknownEffect(
@@ -346,9 +366,12 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
     const port = yield* stablePort;
     yield* fs.makeDirectory(authDir, { recursive: true });
     yield* fs.makeDirectory(pluginsDir, { recursive: true });
+    // API keys live in the config the hub saves; carry them over the rewrite.
+    const previous = yield* fs.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
     yield* fs.writeFileString(
       configPath,
-      renderAccountHubConfig({ port, managementKey, clientKey, authDir, pluginsDir }),
+      renderAccountHubConfig({ port, managementKey, clientKey, authDir, pluginsDir }) +
+        apiKeySections(previous),
       { mode: 0o600 },
     );
     const endpoint: AccountHubEndpoint = {
@@ -710,7 +733,14 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
     ),
   );
 
+  const addApiKey: AccountHub["Service"]["addApiKey"] = (input) =>
+    ensureRunning.pipe(
+      Effect.flatMap((hub) => withHttp(addHubApiKey(hub, input))),
+      Effect.tap(() => markAccountsChanged),
+    );
+
   return AccountHub.of({
+    addApiKey,
     connection,
     setConnection,
     importAccounts,
@@ -718,6 +748,10 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
     endpoint,
     saveCredential,
     startOAuthLogin,
+    readCredential: (name) =>
+      ensureRunning.pipe(
+        Effect.flatMap((hub) => withHttp(Management.downloadCredential(hub, name))),
+      ),
     removeCredential: (name) =>
       ensureRunning.pipe(
         Effect.flatMap((hub) => withHttp(Management.deleteCredential(hub, name))),

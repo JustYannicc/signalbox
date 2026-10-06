@@ -124,26 +124,24 @@ before sharing.
 
 ## Providers
 
-Open **Settings → Providers** in the web or desktop app, select the environment,
-and enable the provider you want. Installation, login, and configuration belong
-to that environment's machine, even when you connect from a phone or another
-computer.
+Accounts live in pools, not in each provider: add them on **Usage → Limits** (see
+[Use several subscription accounts](./usage.md#use-several-subscription-accounts)). The providers
+themselves still run on the environment's machine, so install the ones you use there, even when you
+connect from a phone or another computer.
 
-| Provider    | Install and authenticate                                                                                                                                  |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex       | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. |
-| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
-| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |
-| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
-| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
-| Antigravity | Install and sign in with Google from Signalbox's provider settings.                                                                                       |
-| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.                                                                    |
+| Provider    | Install                                                                                |
+| ----------- | -------------------------------------------------------------------------------------- |
+| Codex       | Signalbox installs it.                                                                 |
+| Claude      | Install [Claude Code](https://claude.com/product/claude-code).                         |
+| Cursor      | Nothing to install: it runs inside Signalbox.                                          |
+| Grok Build  | Install [Grok Build CLI](https://x.ai/cli).                                            |
+| OpenCode    | Install [OpenCode](https://opencode.ai), then turn it on for a pool.                   |
+| Antigravity | Install its runtime from Signalbox's provider settings.                                |
+| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup. |
 
 Provider CLIs must be on the server's `PATH`. If Signalbox cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
-Cursor's executable is `cursor-agent`, although its login command is
-`agent login`. Codex connected through ChatGPT and Antigravity can use their
-managed runtimes without a `PATH` entry.
+Codex and Antigravity use their managed runtimes without a `PATH` entry.
 
 Signalbox warns when a provider version has known compatibility problems with your
 release. Check **Settings → Providers** on that environment for the recommended
@@ -159,10 +157,9 @@ mise through mise. Cursor and Antigravity update with Signalbox. Homebrew instal
 compare against the version Homebrew offers, which can trail the npm release by
 a few hours.
 
-Add another provider instance for a separate account or configuration. Each
-instance can have its own environment variables, such as API keys or a custom
-base URL. Mark secret values as sensitive; after saving, Signalbox does not display
-their original values.
+Add another provider instance for a separate configuration. Each instance can
+have its own environment variables. Mark secret values as sensitive; after saving,
+Signalbox does not display their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
