@@ -15,7 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";

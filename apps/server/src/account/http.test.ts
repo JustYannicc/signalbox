@@ -3,10 +3,12 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpRouter from "effect/http/HttpRouter";
 
 import * as AccountHttp from "./http.ts";
-import { WORKOS_TEST_ENV, environmentAuthLayer, workosStubLayer } from "./testing.ts";
+import { WORKOS_TEST_ENV, workosStubLayer } from "@signalbox/account/WorkOSTesting";
+
+import { environmentAuthLayer } from "./testing.ts";
 
 const ORIGIN = "http://127.0.0.1:5733";
 

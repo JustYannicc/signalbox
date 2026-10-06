@@ -21,7 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -40,7 +40,7 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
-} from "../provider/Layers/CodexProvider.ts";
+} from "../provider/CodexProvider.ts";
 import { makeManagedServerProvider } from "../provider/makeManagedServerProvider.ts";
 import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
 import { reauthAccountName, reauthMethods } from "./hubReauth.ts";

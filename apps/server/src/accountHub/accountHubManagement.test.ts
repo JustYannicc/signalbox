@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeNet from "node:net";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
 import { listCredentials } from "./accountHubManagement.ts";
 

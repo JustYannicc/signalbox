@@ -128,6 +128,13 @@ export default mergeConfig(
         __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: JSON.stringify(
           repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ?? "",
         ),
+        // signalbox: our PostHog project, beside T3 Code's (src/signalbox/analytics)
+        __SIGNALBOX_BUILD_POSTHOG_KEY__: JSON.stringify(
+          repoEnv.SIGNALBOX_POSTHOG_KEY?.trim() ?? "",
+        ),
+        __SIGNALBOX_BUILD_POSTHOG_HOST__: JSON.stringify(
+          repoEnv.SIGNALBOX_POSTHOG_HOST?.trim() ?? "",
+        ),
       },
     },
     test: {

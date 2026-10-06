@@ -108,8 +108,11 @@ function formatMcpContent(result: unknown): string {
       if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
     }
   }
+  // Most Signalbox tools mirror structuredContent in a text block. Repeating it would
+  // leave Signalbox's own output parsing two JSON documents instead of one.
   if (record.structuredContent !== undefined) {
-    texts.push(JSON.stringify(record.structuredContent));
+    const structured = JSON.stringify(record.structuredContent);
+    if (!texts.includes(structured)) texts.push(structured);
   }
   if (texts.length > 0) return texts.join("\\n");
   return JSON.stringify(result);
@@ -228,7 +231,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (changed) return replacement;
   });
 
-  // Pi deliberately leaves permission policy to extensions. T3's injected
+  // Pi deliberately leaves permission policy to extensions. Signalbox's injected
   // bridge uses Pi's public blocking tool hook so the shared runtime modes
   // keep their normal meaning without replacing or shadowing Pi's runtime.
   pi.on("tool_call", async (event, ctx) => {

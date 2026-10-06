@@ -1,7 +1,7 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
 import {
@@ -134,7 +134,8 @@ export function FirstRunGate({
         environmentCount: environments.length,
       })
     : resolveFirstRunDecision({
-        enabled,
+        // signalbox: the cloud has no computers, agents or projects to set up yet.
+        enabled: enabled && serverConfig?.environment.capabilities.signalboxCloud !== true,
         hydrated,
         completed: onboardingCompletedAt !== null,
         bootstrapped,

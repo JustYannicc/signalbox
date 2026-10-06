@@ -62,14 +62,15 @@ const settle = <A, E, R>(effect: Effect.Effect<A, E | NotYetUpdated, R>) =>
       schedule: Schedule.spaced("1 second"),
       times: 5,
     }),
-    Effect.catchTag("NotYetUpdated", () =>
-      Effect.fail(
-        new AccountHubError({
-          detail:
-            "The sign-in finished, but this account is still signed out. Make sure you sign in with the same account; another account already in the pool only gets refreshed.",
-        }),
-      ),
-    ),
+    Effect.catchTags({
+      NotYetUpdated: () =>
+        Effect.fail(
+          new AccountHubError({
+            detail:
+              "The sign-in finished, but this account is still signed out. Make sure you sign in with the same account; another account already in the pool only gets refreshed.",
+          }),
+        ),
+    }),
   );
 
 const sameEmail = (a: AccountHubAccount, b: AccountHubAccount) =>

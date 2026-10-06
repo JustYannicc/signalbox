@@ -11,13 +11,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import { codexPlanLabel } from "../provider/Layers/CodexProvider.ts";
-import { codexRateLimitsToLimits } from "../provider/Layers/codexUsageLimits.ts";
-import { claudeUsageResponseToLimits } from "../provider/Layers/claudeUsageLimits.ts";
+import { codexPlanLabel } from "../provider/CodexProvider.ts";
+import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
+import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits, makeUsageLimits } from "../provider/providerUsageLimits.ts";
-import { grokUsageResponseToLimits } from "../provider/Layers/grokUsageLimits.ts";
+import { grokUsageResponseToLimits } from "../provider/grokUsageLimits.ts";
 import { isSignedOutAuthFile } from "../accountHub/accountHubManagement.ts";
 import {
   HubProviderRateLimited,

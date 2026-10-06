@@ -23,7 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { formatClaudeSubscriptionAuthLabel } from "../provider/Layers/ClaudeProvider.ts";
+import { formatClaudeSubscriptionAuthLabel } from "../provider/ClaudeProvider.ts";
 import {
   CLAIM_OUTCOMES,
   ClaimResponse,
@@ -31,7 +31,7 @@ import {
   RESET_CREDIT_FAILURES,
   claudeResetCreditsToContract,
   liveClaudeResetGrants,
-} from "../provider/Layers/claudeResetCredits.ts";
+} from "../provider/claudeResetCredits.ts";
 
 const API_BASE = "https://api.anthropic.com";
 

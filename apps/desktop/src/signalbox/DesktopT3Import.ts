@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";

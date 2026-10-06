@@ -31,7 +31,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -46,8 +46,8 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -270,10 +270,8 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
   const keys = Effect.all({
     managementKey: secrets
       .getOrCreateRandom(MANAGEMENT_KEY_SECRET, 32)
-      .pipe(Effect.map(Encoding.encodeHex)),
-    clientKey: secrets
-      .getOrCreateRandom(CLIENT_KEY_SECRET, 32)
-      .pipe(Effect.map(Encoding.encodeHex)),
+      .pipe(Effect.map(Hex.encode)),
+    clientKey: secrets.getOrCreateRandom(CLIENT_KEY_SECRET, 32).pipe(Effect.map(Hex.encode)),
   });
 
   // Claude instances bake the hub URL into their environment, so keep the

@@ -84,12 +84,13 @@ const PROSE_CLI_RULE: Rule = {
 };
 
 /**
- * The product's short name in prose ("Open T3 to connect", "a T3 thread"). Not
- * "T3 Tools" (the company), "T3 Chat" (another product), or the "T3 home" term.
+ * The product's short name in prose ("Open T3 to connect", "a T3 thread", "T3's
+ * browser"). Not "T3 Tools" (the company), "T3 Chat" (another product), or the
+ * "T3 home" term.
  */
 const SHORT_NAME_RULE: Rule = {
   pattern:
-    /(?<![\w@./:#$\\-])T3(?= [a-z])(?! home\b)|(?<=[A-Za-z,] )T3(?![\w@./:#$\\-]| (?:Tools|Code|Connect|Chat|home)\b)/g,
+    /(?<![\w@./:#$\\-])T3(?= [a-z]|'s\b)(?! home\b)|(?<=[A-Za-z,] )T3(?![\w@./:#$\\-]| (?:Tools|Code|Connect|Chat|home)\b)/g,
   replace: "Signalbox",
 };
 
@@ -118,7 +119,7 @@ const TEST_CASE_NAME_RULES = [...NAME_RULES, ...COMMAND_RULES, HOME_RULE, SHORT_
  * OpenAI's ChatGPT consent flow registers the agent by `agent_name_hint`.
  */
 export const EXTERNAL_CONTRACT_PROPERTIES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "apps/server/src/provider/Layers/CodexProvider.ts": ["name", "title"],
+  "apps/server/src/provider/CodexProvider.ts": ["name", "title"],
   "apps/server/src/provider/CodexChatGptAuth.ts": ["agent_name_hint"],
   // The t3.json format is shared with upstream; its schema keeps its name.
   "packages/contracts/src/t3ProjectFile.ts": ["title"],
@@ -153,6 +154,7 @@ const EXCLUDED = [
   /^scripts\/upstream-sync\//, // names upstream T3 Code on purpose
   /^docs\/operations\/upstream-sync\.md$/, // names the old identifiers on purpose
   /^apps\/(?:server|desktop)\/src\/signalbox\/(?:(?:Desktop)?T3Import(?:Offer)?|importT3Command|T3WorktreeGuard)\./, // imports from T3 Code by name
+  /^apps\/web\/src\/analytics\/ProductAnalyticsSettingsSection\.tsx$/, // names T3 Code's PostHog project, a destination
   /(^|\/)UPSTREAM\.md$/,
   /^(README|AGENTS|CLAUDE|CONTRIBUTING)\.md$/, // fork-owned or upstream policy
   /^LICENSE/,

@@ -1,5 +1,5 @@
 import { collectLimitProblems } from "@t3tools/shared/limitProblems";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { environmentPresentations } from "./presentation";
 

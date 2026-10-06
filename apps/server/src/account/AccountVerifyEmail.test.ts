@@ -1,5 +1,6 @@
 import type { AccountAuthorizeParams } from "@t3tools/contracts/account";
 import { describe, expect, it } from "@effect/vitest";
+import { EMAIL_VERIFICATION_GRANT, WORKOS_TEST_ENV } from "@signalbox/account/WorkOSTesting";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -7,13 +8,11 @@ import * as SessionStore from "../auth/SessionStore.ts";
 import * as AccountService from "./AccountService.ts";
 import {
   CODES,
-  EMAIL_VERIFICATION_GRANT,
   VERIFIER,
   anonymousRequest,
   browserParams,
   cookieRequest,
   nativeParams,
-  WORKOS_TEST_ENV,
   runAccountTest,
   signIn,
 } from "./testing.ts";

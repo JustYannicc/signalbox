@@ -124,6 +124,17 @@ This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
 memory. The action is available only when the provider supports rewind.
 
+## Lock sending
+
+On web and desktop, click the shackle above the send button to lock sending for
+the current draft. While it is locked, Enter adds a new line and nothing sends,
+so you can write a long prompt without sending it early. Click the shackle again
+to unlock. Each draft keeps its own lock, including after a reload. Answering an
+agent's question or a proposed plan is never locked.
+
+To lock and unlock from the keyboard, bind **Composer: Toggle Send Lock** in
+Settings > Keybindings.
+
 ## Prompt stash
 
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save
@@ -192,6 +203,19 @@ Provider commands must start the message to run. Signalbox commands such as
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
+
+## Goals
+
+With Codex and Claude, send `/goal` followed by what "done" means, for example
+`/goal all tests in packages/api pass`. The agent keeps working across turns
+until it judges the goal met. The thread shows **Goal** while it works, and a
+row above the composer shows the goal and its progress.
+
+- `/goal` alone shows the current goal. `/goal clear` removes it.
+- Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
+  pauses it.
+- Stopping Claude ends the current turn, but the goal stays set. Claude checks it
+  again at the end of your next message.
 
 ## Context in your message
 

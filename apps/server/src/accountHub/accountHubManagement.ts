@@ -11,7 +11,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 export class AccountHubError extends Schema.TaggedError<AccountHubError>()("AccountHubError", {
   detail: Schema.String,

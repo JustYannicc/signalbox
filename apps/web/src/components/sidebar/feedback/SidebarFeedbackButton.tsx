@@ -8,7 +8,10 @@
 import { ImageOffIcon, MessageSquareHeartIcon } from "lucide-react";
 import { useId, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 
+import { recordProductAnalyticsEvent } from "../../../analytics/productAnalytics";
 import { APP_BASE_NAME } from "../../../branding";
+import { usePrimaryEnvironmentId } from "../../../state/environments";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
 import { Checkbox } from "../../ui/checkbox";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../ui/popover";
@@ -79,6 +82,11 @@ export function SidebarFeedbackButton() {
   const [sending, setSending] = useState(false);
   const [attachScreenshot, setAttachScreenshot] = useState(true);
   const [attachLogs, setAttachLogs] = useState(true);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const recordAnalyticsEvent = useAtomCommand(recordProductAnalyticsEvent, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const {
     screenshot,
     start: captureScreenshot,
@@ -114,10 +122,18 @@ export function SidebarFeedbackButton() {
     if (message.length === 0 || sending) return;
     setSending(true);
     try {
-      await sendFeedback({
-        message,
-        ...(await resolveAttachments()),
-      });
+      const attachments = await resolveAttachments();
+      await sendFeedback({ message, ...attachments });
+      if (primaryEnvironmentId !== null) {
+        void recordAnalyticsEvent({
+          environmentId: primaryEnvironmentId,
+          input: {
+            event: "feedback.sent",
+            screenshotAttached: attachments.screenshot !== null,
+            serverLogsAttached: attachments.serverLogs !== null,
+          },
+        });
+      }
       setDraft("");
       changeOpen(false);
       toastManager.add({ type: "success", title: "Feedback sent", description: "Thanks." });

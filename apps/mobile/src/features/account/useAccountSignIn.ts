@@ -10,7 +10,7 @@ import type {
   AccountSessionState,
   AccountSignInError,
 } from "@t3tools/contracts/account";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import Constants from "expo-constants";
 import * as ExpoCrypto from "expo-crypto";
 import * as Haptics from "expo-haptics";

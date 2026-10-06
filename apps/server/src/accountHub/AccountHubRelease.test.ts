@@ -4,7 +4,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 

@@ -1,0 +1,46 @@
+import { isDevProxiedPath } from "@t3tools/shared/devProxy";
+
+import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
+import type { UserObjectNamespace } from "./user/UserDirectory.ts";
+import type { UserObjectEnv } from "./user/UserObject.ts";
+
+export { UserObject } from "./user/UserObject.ts";
+
+/**
+ * Signalbox Cloud: an environment that runs on Cloudflare. Clients connect to
+ * it exactly as they connect to a self-hosted server. The web app is served
+ * from the same origin as static assets; the paths a server owns (the same
+ * list the Vite dev proxy forwards) reach this Worker.
+ */
+
+export interface CloudEnv extends UserObjectEnv {
+  readonly USERS: UserObjectNamespace;
+  readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
+}
+
+/** Plain string vars and secrets, for the config provider. Bindings are objects. */
+function stringVars(env: CloudEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+let app: CloudApp | undefined;
+
+export default {
+  fetch(request, env) {
+    const { hostname, pathname } = new URL(request.url);
+    // The local switch drops the EU jurisdiction. A deployment carrying it by
+    // mistake serves nothing rather than storing anyone's data elsewhere.
+    const localWorkerd = env.LOCAL_WORKERD === "1";
+    if (localWorkerd && !LOOPBACK_HOSTS.has(hostname)) {
+      return new Response("LOCAL_WORKERD is set on a non-local host", { status: 503 });
+    }
+    app ??= makeCloudApp(layerServices({ vars: stringVars(env), users: env.USERS, localWorkerd }));
+    if (pathname === "/ws") return app.webSocket(request);
+    if (isDevProxiedPath(pathname)) return app.http(request);
+    return env.ASSETS.fetch(request);
+  },
+} satisfies ExportedHandler<CloudEnv>;

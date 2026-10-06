@@ -3,7 +3,7 @@ import {
   AccountProvider,
   type AccountSignInError,
 } from "@t3tools/contracts/account";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 
 /**
  * Pure pieces of mobile account sign-in: which server, where WorkOS sends the
@@ -82,12 +82,12 @@ export interface PkceCrypto {
 
 /** RFC 7636 S256: base64url(SHA-256(ASCII(verifier))), unpadded. */
 export async function pkceChallenge(verifier: string, crypto: PkceCrypto): Promise<string> {
-  return Encoding.encodeBase64Url(await crypto.sha256(new TextEncoder().encode(verifier)));
+  return Base64Url.encode(await crypto.sha256(new TextEncoder().encode(verifier)));
 }
 
 /** 32 random bytes give a 43-character verifier, the RFC minimum length. */
 export async function createPkcePair(crypto: PkceCrypto) {
-  const verifier = Encoding.encodeBase64Url(crypto.randomBytes(32));
+  const verifier = Base64Url.encode(crypto.randomBytes(32));
   return { verifier, challenge: await pkceChallenge(verifier, crypto) };
 }
 

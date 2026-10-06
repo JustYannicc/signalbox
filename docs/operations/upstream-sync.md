@@ -3,7 +3,7 @@
 Signalbox renames what users see, type, or install. Code identifiers stay upstream's so upstream
 patches apply cleanly: `@t3tools/*` packages, `T3CODE_*` env vars, symbol and file names, lint rule
 ids, the `t3.json` format, protocol paths such as `/.well-known/t3/environment`, and the
-`t3code/<hex>` worktree branch format.
+`t3/<hex>` worktree branch format.
 
 ## What renames what
 
