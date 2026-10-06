@@ -442,13 +442,9 @@ const make = Effect.gen(function* () {
     Effect.provideService(HttpClient.HttpClient, http),
     Effect.ignoreCause({ log: true }),
   );
-  yield* Stream.merge(
-    Stream.merge(Stream.fromPubSub(activity), Stream.fromPubSub(changed)),
-    settings.streamChanges.pipe(
-      Stream.map((next) => next.providerInstances),
-      Stream.changes,
-    ),
-  ).pipe(
+  // A hub coming up or changing accounts is what changes its models. An instance built while its
+  // hub already runs reads the models itself.
+  yield* Stream.merge(Stream.fromPubSub(activity), Stream.fromPubSub(changed)).pipe(
     Stream.debounce("1 second"),
     Stream.runForEach(() => syncOpenCodeModels),
     Effect.forkScoped,
