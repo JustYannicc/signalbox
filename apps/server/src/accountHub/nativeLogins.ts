@@ -11,10 +11,14 @@
  * @module accountHub/nativeLogins
  */
 import * as NodeCrypto from "node:crypto";
-import * as NodeOS from "node:os";
 
-import type { ProviderInstanceConfig, ProviderInstanceId } from "@t3tools/contracts";
-import type { PoolApiKeyProvider } from "@t3tools/contracts/accountHub";
+import {
+  ClaudeSettings,
+  CodexSettings,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
+import type { PoolApiKeyProvider, PoolInstanceKind } from "@t3tools/contracts/accountHub";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { decodeJwt } from "jose";
 import * as DateTime from "effect/DateTime";
@@ -28,12 +32,17 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { claudeAccountConfigPath } from "../provider/claudeResetCredits.ts";
 import { makeCodexChatGptAuth } from "../provider/CodexChatGptAuth.ts";
 import { makeCursorCredentialStore } from "../provider/CursorCredentialStore.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import { expandHomePath } from "../pathExpansion.ts";
+import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { AccountHubError } from "./accountHubManagement.ts";
-import { chatGptCredentialFile } from "./hubCredentials.ts";
+import {
+  chatGptCredentialFile,
+  claudeCredentialFile,
+  codexCredentialFile,
+} from "./hubCredentials.ts";
 
 /** What one native login becomes in a pool. */
 export type PoolCredential =
@@ -57,21 +66,11 @@ export type PoolCredential =
 
 export interface NativeLogin {
   readonly credentials: ReadonlyArray<PoolCredential>;
-  /** The pool provider kind (`poolInstanceId`) that runs these credentials. */
-  readonly kind: "claude" | "codex" | "cursor";
+  /** The pool provider that runs these credentials. */
+  readonly kind: Extract<PoolInstanceKind, "claude" | "codex" | "cursor">;
   /** Clears what Signalbox itself stored, once the pool holds the login. */
   readonly release: Effect.Effect<void>;
 }
-
-const slug = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/[^a-z0-9@.+-]+/gu, "-")
-    .replace(/^[.-]+|-+$/gu, "")
-    .slice(0, 96);
-
-const fingerprint = (value: string) =>
-  NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 12);
 
 const notFound = (what: string) =>
   new AccountHubError({ detail: `No ${what} login was found for this provider.` });
@@ -80,53 +79,53 @@ const notFound = (what: string) =>
 const instanceVariable = (instance: ProviderInstanceConfig, name: string) =>
   instance.environment?.find((variable) => variable.name === name)?.value.trim() || undefined;
 
-const configString = (config: unknown, key: string) =>
-  config !== null &&
-  typeof config === "object" &&
-  key in config &&
-  typeof (config as Record<string, unknown>)[key] === "string"
-    ? ((config as Record<string, unknown>)[key] as string).trim()
-    : "";
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+const DEFAULT_CODEX_SETTINGS = Schema.decodeUnknownSync(CodexSettings)({});
 
-const readJson = (path: string) =>
+const isoFromMillis = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
+
+const readJson = <A>(path: string, decode: (input: unknown) => Option.Option<A>) =>
   FileSystem.FileSystem.pipe(
     Effect.flatMap((fs) => fs.readFileString(path)),
-    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))),
-    Effect.option,
+    Effect.map(decode),
+    Effect.orElseSucceed(() => Option.none<A>()),
   );
 
-const ClaudeCredentials = Schema.Struct({
-  claudeAiOauth: Schema.Struct({
-    accessToken: Schema.String,
-    refreshToken: Schema.String,
-    expiresAt: Schema.optional(Schema.Number),
+const ClaudeCredentials = Schema.fromJsonString(
+  Schema.Struct({
+    claudeAiOauth: Schema.Struct({
+      accessToken: Schema.String,
+      refreshToken: Schema.String,
+      expiresAt: Schema.optional(Schema.Number),
+    }),
   }),
-});
-const decodeClaudeCredentials = Schema.decodeUnknownOption(ClaudeCredentials);
-const decodeClaudeCredentialsJson = Schema.decodeUnknownOption(
-  Schema.fromJsonString(ClaudeCredentials),
 );
-const ClaudeAccount = Schema.Struct({
-  oauthAccount: Schema.Struct({
-    emailAddress: Schema.optional(Schema.String),
-    accountUuid: Schema.optional(Schema.String),
-    organizationUuid: Schema.optional(Schema.String),
-    organizationName: Schema.optional(Schema.String),
-  }),
-});
-const decodeClaudeAccount = Schema.decodeUnknownOption(ClaudeAccount);
+const decodeClaudeCredentials = Schema.decodeUnknownOption(ClaudeCredentials);
+const decodeClaudeAccount = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      oauthAccount: Schema.Struct({
+        emailAddress: Schema.optional(Schema.String),
+        accountUuid: Schema.optional(Schema.String),
+        organizationUuid: Schema.optional(Schema.String),
+        organizationName: Schema.optional(Schema.String),
+      }),
+    }),
+  ),
+);
 
 /**
  * Claude Code keeps its login in the macOS keychain, under a name that
- * carries a hash of the config directory when it is not the default one.
+ * carries a hash of the config directory when one is set explicitly.
  * Reading it may ask the user to allow access on the server machine.
  */
-const readClaudeKeychain = (configDir: string, isDefault: boolean) =>
+const readClaudeKeychain = (configDir: string | undefined) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const service = isDefault
-      ? "Claude Code-credentials"
-      : `Claude Code-credentials-${NodeCrypto.createHash("sha256").update(configDir).digest("hex").slice(0, 8)}`;
+    const service = configDir
+      ? `Claude Code-credentials-${NodeCrypto.createHash("sha256").update(configDir).digest("hex").slice(0, 8)}`
+      : "Claude Code-credentials";
     const output = yield* spawner
       .spawn(
         ChildProcess.make("security", ["find-generic-password", "-s", service, "-w"], {
@@ -139,57 +138,47 @@ const readClaudeKeychain = (configDir: string, isDefault: boolean) =>
         Effect.timeout("60 seconds"),
         Effect.orElseSucceed(() => ""),
       );
-    return decodeClaudeCredentialsJson(output.trim());
+    return decodeClaudeCredentials(output.trim());
   });
 
 const readClaude = (instance: ProviderInstanceConfig) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const homePath = configString(instance.config, "homePath");
+    const settings = decodeClaudeSettings(instance.config ?? {});
+    const homePath = Option.isSome(settings) ? settings.value.homePath : "";
     const inheritedDir = instanceVariable(instance, "CLAUDE_CONFIG_DIR");
-    const configDir = yield* resolveClaudeHomePath(
+    const resolvedDir = yield* resolveClaudeHomePath(
       { homePath },
       inheritedDir ? { CLAUDE_CONFIG_DIR: inheritedDir } : {},
     );
-    const defaultDir = path.resolve(path.join(NodeOS.homedir(), ".claude"));
-    const isDefault = configDir === defaultDir;
-    const fromFile = (yield* readJson(path.join(configDir, ".credentials.json"))).pipe(
-      Option.flatMap(decodeClaudeCredentials),
+    // Like the Claude driver: only a directory set on purpose moves the account and keychain names.
+    const configDir = homePath.trim() || inheritedDir ? resolvedDir : undefined;
+    const fromFile = yield* readJson(
+      path.join(resolvedDir, ".credentials.json"),
+      decodeClaudeCredentials,
     );
     const platform = yield* HostProcessPlatform;
     const oauth = Option.isSome(fromFile)
       ? fromFile
       : platform === "darwin"
-        ? yield* readClaudeKeychain(configDir, isDefault)
+        ? yield* readClaudeKeychain(configDir)
         : Option.none();
-    const account = (yield* readJson(
-      isDefault
-        ? path.join(NodeOS.homedir(), ".claude.json")
-        : path.join(configDir, ".claude.json"),
-    )).pipe(Option.flatMap(decodeClaudeAccount));
+    const account = yield* readJson(yield* claudeAccountConfigPath(configDir), decodeClaudeAccount);
     const credentials: PoolCredential[] = [];
     if (Option.isSome(oauth)) {
       const token = oauth.value.claudeAiOauth;
       const info = Option.isSome(account) ? account.value.oauthAccount : undefined;
-      const email = info?.emailAddress;
-      const now = DateTime.formatIso(yield* DateTime.now);
-      credentials.push({
-        kind: "file",
-        name: `claude-${(email && slug(email)) || fingerprint(token.refreshToken)}.json`,
-        content: {
-          type: "claude",
-          access_token: token.accessToken,
-          refresh_token: token.refreshToken,
-          last_refresh: now,
-          ...(token.expiresAt === undefined
-            ? {}
-            : { expired: DateTime.formatIso(DateTime.makeUnsafe(token.expiresAt)) }),
-          ...(email ? { email } : {}),
-          ...(info?.accountUuid ? { account_uuid: info.accountUuid } : {}),
-          ...(info?.organizationUuid ? { organization_uuid: info.organizationUuid } : {}),
-          ...(info?.organizationName ? { organization_name: info.organizationName } : {}),
-        },
+      const file = claudeCredentialFile({
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken,
+        expiresAt: token.expiresAt === undefined ? undefined : isoFromMillis(token.expiresAt),
+        lastRefresh: DateTime.formatIso(yield* DateTime.now),
+        email: info?.emailAddress,
+        accountUuid: info?.accountUuid,
+        organizationUuid: info?.organizationUuid,
+        organizationName: info?.organizationName,
       });
+      credentials.push({ kind: "file", ...file });
     }
     const apiKey = instanceVariable(instance, "ANTHROPIC_API_KEY");
     if (apiKey) credentials.push({ kind: "apiKey", provider: "anthropic", apiKey });
@@ -197,27 +186,31 @@ const readClaude = (instance: ProviderInstanceConfig) =>
     return { credentials, kind: "claude", release: Effect.void } satisfies NativeLogin;
   });
 
-const CodexAuth = Schema.Struct({
-  OPENAI_API_KEY: Schema.optional(Schema.NullOr(Schema.String)),
-  tokens: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        id_token: Schema.String,
-        access_token: Schema.String,
-        refresh_token: Schema.String,
-        account_id: Schema.optional(Schema.NullOr(Schema.String)),
-      }),
-    ),
+const decodeCodexAuth = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      OPENAI_API_KEY: Schema.optional(Schema.NullOr(Schema.String)),
+      tokens: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            id_token: Schema.String,
+            access_token: Schema.String,
+            refresh_token: Schema.String,
+            account_id: Schema.optional(Schema.NullOr(Schema.String)),
+          }),
+        ),
+      ),
+      last_refresh: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
   ),
-  last_refresh: Schema.optional(Schema.NullOr(Schema.String)),
-});
-const decodeCodexAuth = Schema.decodeUnknownOption(CodexAuth);
+);
 
-const jwtClaim = (token: string, read: (claims: Record<string, unknown>) => unknown) => {
+/** A JWT's claims, without verifying it: the token only travels to the hub that issued use of it. */
+const jwtClaims = (token: string): Record<string, unknown> => {
   try {
-    return read(decodeJwt(token) as Record<string, unknown>);
+    return decodeJwt(token);
   } catch {
-    return undefined;
+    return {};
   }
 };
 
@@ -225,43 +218,31 @@ const jwtClaim = (token: string, read: (claims: Record<string, unknown>) => unkn
 const readCodexCli = (instance: ProviderInstanceConfig) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const shadow = configString(instance.config, "shadowHomePath");
-    const home =
-      configString(instance.config, "homePath") ||
-      instanceVariable(instance, "CODEX_HOME") ||
-      path.join(NodeOS.homedir(), ".codex");
-    const directory = path.resolve(expandHomePath(shadow || home));
-    const auth = (yield* readJson(path.join(directory, "auth.json"))).pipe(
-      Option.flatMap(decodeCodexAuth),
+    const settings = Option.getOrElse(
+      decodeCodexSettings(instance.config ?? {}),
+      () => DEFAULT_CODEX_SETTINGS,
     );
+    const codexHome = instanceVariable(instance, "CODEX_HOME");
+    const layout = yield* resolveCodexHomeLayout(
+      settings.homePath.trim() || !codexHome ? settings : { ...settings, homePath: codexHome },
+    );
+    const directory = layout.effectiveHomePath ?? layout.sharedHomePath;
+    const auth = yield* readJson(path.join(directory, "auth.json"), decodeCodexAuth);
     const credentials: PoolCredential[] = [];
     const tokens = Option.isSome(auth) ? auth.value.tokens : undefined;
     if (tokens) {
-      const email = jwtClaim(tokens.id_token, (claims) =>
-        typeof claims.email === "string" ? claims.email : undefined,
-      ) as string | undefined;
-      const expiresAt = jwtClaim(tokens.access_token, (claims) =>
-        typeof claims.exp === "number" ? claims.exp : undefined,
-      ) as number | undefined;
-      const accountId = tokens.account_id ?? undefined;
-      credentials.push({
-        kind: "file",
-        name: `codex-${(email && slug(email)) || (accountId && slug(accountId)) || fingerprint(tokens.refresh_token)}.json`,
-        content: {
-          type: "codex",
-          id_token: tokens.id_token,
-          access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token,
-          ...(accountId ? { account_id: accountId } : {}),
-          ...(Option.isSome(auth) && auth.value.last_refresh
-            ? { last_refresh: auth.value.last_refresh }
-            : {}),
-          ...(email ? { email } : {}),
-          ...(expiresAt === undefined
-            ? {}
-            : { expired: DateTime.formatIso(DateTime.makeUnsafe(expiresAt * 1000)) }),
-        },
+      const email = jwtClaims(tokens.id_token).email;
+      const expiresAt = jwtClaims(tokens.access_token).exp;
+      const file = codexCredentialFile({
+        idToken: tokens.id_token,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        accountId: tokens.account_id ?? undefined,
+        lastRefresh: (Option.isSome(auth) && auth.value.last_refresh) || undefined,
+        email: typeof email === "string" ? email : undefined,
+        expiresAt: typeof expiresAt === "number" ? isoFromMillis(expiresAt * 1000) : undefined,
       });
+      credentials.push({ kind: "file", ...file });
     }
     const apiKey =
       (Option.isSome(auth) ? auth.value.OPENAI_API_KEY?.trim() : undefined) ||
@@ -300,6 +281,7 @@ const readCursor = (instanceId: ProviderInstanceId, instance: ProviderInstanceCo
     }
     const { stateDir } = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
+    // The same store, and legacy file, the Cursor driver opens for this instance.
     const stored = yield* makeCursorCredentialStore(
       instanceId,
       path.join(stateDir, "provider-auth", encodeURIComponent(instanceId), "cursor.json"),
@@ -336,15 +318,21 @@ export const readNativeLogin = (
   | Effect.Services<ReturnType<typeof readCodexCli>>
   | Effect.Services<ReturnType<typeof readCodexManaged>>
   | Effect.Services<ReturnType<typeof readCursor>>
-> =>
-  instance.driver === "claudeAgent"
-    ? readClaude(instance)
-    : instance.driver === "codex"
-      ? configString(instance.config, "setupMode") === "managed"
+> => {
+  switch (instance.driver) {
+    case "claudeAgent":
+      return readClaude(instance);
+    case "codex":
+      return decodeCodexSettings(instance.config ?? {}).pipe(
+        Option.exists((settings) => settings.setupMode === "managed"),
+      )
         ? readCodexManaged(instanceId)
-        : readCodexCli(instance)
-      : instance.driver === "cursor"
-        ? readCursor(instanceId, instance)
-        : Effect.fail(
-            new AccountHubError({ detail: "This provider's login can't move into a pool yet." }),
-          );
+        : readCodexCli(instance);
+    case "cursor":
+      return readCursor(instanceId, instance);
+    default:
+      return Effect.fail(
+        new AccountHubError({ detail: "This provider's login can't move into a pool yet." }),
+      );
+  }
+};

@@ -10,13 +10,11 @@
  *
  * @module accountHub/hubOpenCode
  */
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { AccountHubEndpoint } from "./accountHubManagement.ts";
+import { listModels } from "./hubApiKeys.ts";
 
 /** The OpenCode provider id the pool's models appear under (`signalbox/<model>`). */
 export const OPENCODE_POOL_PROVIDER = "signalbox";
@@ -31,23 +29,9 @@ export const openCodeInstanceDirectory = (path: Path.Path, stateDir: string, ins
 export const openCodeConfigPath = (path: Path.Path, directory: string) =>
   path.join(directory, "opencode.json");
 
-const Models = Schema.Struct({ data: Schema.Array(Schema.Struct({ id: Schema.String })) });
-const decodeModels = Schema.decodeUnknownEffect(Models);
-
-/** The models the hub serves now, sorted so two reads compare equal. */
+/** The models the hub serves now. */
 export const hubModels = (endpoint: AccountHubEndpoint) =>
-  Effect.gen(function* () {
-    const http = yield* HttpClient.HttpClient;
-    const response = yield* http
-      .execute(
-        HttpClientRequest.get(`${endpoint.baseUrl}/v1/models`).pipe(
-          HttpClientRequest.bearerToken(endpoint.clientKey),
-        ),
-      )
-      .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk), Effect.timeout("10 seconds"));
-    const models = yield* response.json.pipe(Effect.flatMap(decodeModels));
-    return [...new Set(models.data.map((model) => model.id))].toSorted();
-  });
+  listModels(`${endpoint.baseUrl}/v1`, endpoint.clientKey);
 
 export function renderOpenCodeConfig(options: {
   readonly baseUrl: string;
@@ -87,16 +71,15 @@ const ConfiguredModels = Schema.fromJsonString(
     }),
   }),
 );
-const decodeConfiguredModels = Schema.decodeUnknownEffect(ConfiguredModels);
+const decodeConfiguredModels = Schema.decodeUnknownOption(ConfiguredModels);
 
-/** The models an instance's config lists, or none when it has no config yet. */
-export const configuredModels = (configPath: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs.readFileString(configPath);
-    const config = yield* decodeConfiguredModels(text);
-    return Object.keys(config.provider[OPENCODE_POOL_PROVIDER].models).toSorted();
-  }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+/** The models an instance's config lists; none when it is unreadable. */
+export const configuredModels = (configText: string): ReadonlyArray<string> => {
+  const config = decodeConfiguredModels(configText);
+  return config._tag === "Some"
+    ? Object.keys(config.value.provider[OPENCODE_POOL_PROVIDER].models).toSorted()
+    : [];
+};
 
 export const sameModels = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
   left.length === right.length && left.every((model, index) => model === right[index]);

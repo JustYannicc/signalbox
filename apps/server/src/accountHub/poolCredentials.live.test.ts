@@ -24,7 +24,7 @@ import * as Settings from "../serverSettings.ts";
 import * as AccountHub from "./AccountHub.ts";
 import * as AccountPools from "./AccountPools.ts";
 import { listApiKeys } from "./hubApiKeys.ts";
-import { makeCursorPoolStore, saveCursorAccount } from "./hubCursor.ts";
+import { makeCursorPool, saveCursorAccount } from "./hubCursor.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -137,11 +137,11 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("pool credential
           yield* saveCursorAccount(hub, { apiKey: "key_one", email: "one@example.com" });
           yield* saveCursorAccount(hub, { apiKey: "key_two", email: "two@example.com" });
           yield* eventually(hub.accounts, (list) => list.length === 3);
-          const store = yield* makeCursorPoolStore(hub);
-          const handed = [
-            (yield* Effect.promise(() => store.load()))?.apiKey,
-            (yield* Effect.promise(() => store.load()))?.apiKey,
-          ].toSorted();
+          const pool = yield* makeCursorPool(hub);
+          // Status checks read the current account without moving on; sessions take turns.
+          const current = (yield* Effect.promise(() => pool.store.load()))?.apiKey;
+          expect((yield* Effect.promise(() => pool.store.load()))?.apiKey).toBe(current);
+          const handed = [(yield* pool.next)?.apiKey, (yield* pool.next)?.apiKey].toSorted();
           expect(handed).toEqual(["key_one", "key_two"]);
         }).pipe(Effect.provide(poolsLayer(baseDir)));
 

@@ -1,5 +1,14 @@
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import { PERSONAL_POOL_ID, poolInstanceId } from "@t3tools/contracts/accountHub";
+import { ProviderInstanceId, type ProviderDriverKind } from "@t3tools/contracts";
+import {
+  PERSONAL_POOL_ID,
+  POOL_INSTANCE_KINDS,
+  poolInstanceId,
+} from "@t3tools/contracts/accountHub";
+
+const accountKind = <K extends keyof typeof POOL_INSTANCE_KINDS>(kind: K) => ({
+  ...POOL_INSTANCE_KINDS[kind],
+  account: POOL_INSTANCE_KINDS[kind].displayName,
+});
 
 /**
  * The kinds of accounts a pool holds. Each pool runs one provider instance per
@@ -7,31 +16,11 @@ import { PERSONAL_POOL_ID, poolInstanceId } from "@t3tools/contracts/accountHub"
  * never grows a row per account.
  */
 export const HUB_INSTANCES = {
-  codex: {
-    driver: ProviderDriverKind.make("codex"),
-    displayName: "ChatGPT",
-    account: "ChatGPT",
-  },
-  claude: {
-    driver: ProviderDriverKind.make("claudeAgent"),
-    displayName: "Claude",
-    account: "Claude",
-  },
-  grok: {
-    driver: ProviderDriverKind.make("grok"),
-    displayName: "Grok",
-    account: "Grok",
-  },
-  antigravity: {
-    driver: ProviderDriverKind.make("antigravity"),
-    displayName: "Antigravity",
-    account: "Antigravity",
-  },
-  cursor: {
-    driver: ProviderDriverKind.make("cursor"),
-    displayName: "Cursor",
-    account: "Cursor",
-  },
+  codex: accountKind("codex"),
+  claude: accountKind("claude"),
+  grok: accountKind("grok"),
+  antigravity: accountKind("antigravity"),
+  cursor: accountKind("cursor"),
 } as const;
 
 export type HubAccountKind = keyof typeof HUB_INSTANCES;

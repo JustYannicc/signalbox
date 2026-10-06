@@ -30,9 +30,11 @@ import { ProviderDriverError } from "../provider/Errors.ts";
 import type { ProviderDriverCreateInput, ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as AccountHub from "./AccountHub.ts";
 import type { AccountHubEndpoint, AccountHubOAuthProvider } from "./accountHubManagement.ts";
-import { CursorPoolCredentials, makeCursorPoolSignIn, makeCursorPoolStore } from "./hubCursor.ts";
+import * as CursorAgentSdk from "../orchestration-v2/Adapters/CursorAgentSdk.ts";
+import { CursorPoolCredentials, makeCursorPool, makeCursorPoolSignIn } from "./hubCursor.ts";
 import {
   OPENCODE_POOL_KEY_VARIABLE,
+  configuredModels,
   hubModels,
   openCodeConfigPath,
   openCodeInstanceDirectory,
@@ -205,15 +207,30 @@ export const makeHubCursorInstance = <E, R>(
     if (input.enabled) {
       yield* hub.ensureRunning.pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
     }
-    const store = yield* makeCursorPoolStore(hub);
+    const pool = yield* makeCursorPool(hub);
+    const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
     const instance = yield* create({
       ...input,
       config: { ...input.config, setupMode: "existing" as const },
       environment: withHubVariables(input.environment, { CURSOR_API_KEY: { value: "" } }),
     }).pipe(
       Effect.provideService(CursorPoolCredentials, {
-        store,
+        store: pool.store,
         binding: { owner: "t3", key: `account-hub:${input.instanceId}` },
+      }),
+      // Each session takes the pool's next account, so sessions spread across it.
+      Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+        ...runner,
+        open: (open) =>
+          pool.next.pipe(
+            Effect.flatMap((credential) =>
+              runner.open(
+                credential
+                  ? { ...open, options: { ...open.options, apiKey: credential.apiKey } }
+                  : open,
+              ),
+            ),
+          ),
       }),
     );
     const auth = yield* makeCursorPoolSignIn({
@@ -264,25 +281,25 @@ export const makeHubOpenCodeInstance = <E, R>(
     const configPath = openCodeConfigPath(path, directory);
     // A running hub names its models now; otherwise the last list stands until it comes up.
     const running = yield* hub.endpoint;
-    const models = Option.isSome(running)
+    const served = Option.isSome(running)
       ? yield* hubModels(running.value).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
           Effect.option,
         )
       : Option.none();
-    const hasConfig = yield* fs.exists(configPath).pipe(Effect.orElseSucceed(() => false));
-    if (Option.isSome(models) || !hasConfig) {
+    const previous = yield* fs.readFileString(configPath).pipe(Effect.option);
+    const contents = renderOpenCodeConfig({
+      baseUrl: endpoint.baseUrl,
+      name: input.displayName ?? "Pool",
+      models: Option.isSome(served)
+        ? served.value
+        : Option.isSome(previous)
+          ? configuredModels(previous.value)
+          : [],
+    });
+    if (Option.getOrUndefined(previous) !== contents) {
       yield* fs.makeDirectory(directory, { recursive: true }).pipe(
-        Effect.andThen(
-          writeFileStringAtomically({
-            filePath: configPath,
-            contents: renderOpenCodeConfig({
-              baseUrl: endpoint.baseUrl,
-              name: input.displayName ?? "Pool",
-              models: Option.getOrElse(models, () => []),
-            }),
-          }),
-        ),
+        Effect.andThen(writeFileStringAtomically({ filePath: configPath, contents })),
         Effect.mapError(
           (cause) =>
             new ProviderDriverError({

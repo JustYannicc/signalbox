@@ -2,21 +2,17 @@ import type { ProviderInstanceConfig, ServerProvider } from "@t3tools/contracts"
 import { MOVABLE_NATIVE_DRIVERS, hubInstancePoolId } from "@t3tools/contracts/accountHub";
 
 /**
- * Providers signed in on the server machine itself (native logins) that can
- * move into a pool: enabled, signed in, and not already a pool's provider.
+ * Whether a provider signs in on the server machine itself (a native login)
+ * and can move into a pool: enabled, signed in, and not already a pool's.
  */
-export function movableNativeLogins(
-  providers: ReadonlyArray<ServerProvider> | null | undefined,
+export const isMovableNativeLogin = (
+  provider: ServerProvider,
   instances: Readonly<Record<string, ProviderInstanceConfig>>,
-): ReadonlyArray<ServerProvider> {
-  return (providers ?? []).filter(
-    (provider) =>
-      provider.enabled &&
-      provider.auth.status === "authenticated" &&
-      MOVABLE_NATIVE_DRIVERS.includes(provider.driver) &&
-      hubInstancePoolId(instances[provider.instanceId]?.config) === null,
-  );
-}
+) =>
+  provider.enabled &&
+  provider.auth.status === "authenticated" &&
+  MOVABLE_NATIVE_DRIVERS.includes(provider.driver) &&
+  hubInstancePoolId(instances[provider.instanceId]?.config) === null;
 
 /** "Claude (me@example.com)", or just the provider's name when it has no email. */
 export function nativeLoginLabel(provider: ServerProvider) {

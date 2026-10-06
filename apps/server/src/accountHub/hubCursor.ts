@@ -2,38 +2,38 @@
  * Cursor accounts in a pool. CLIProxyAPI cannot route Cursor, but it keeps
  * any credential file it is given, so a pool's Cursor accounts are `cursor`
  * files in its hub like every other account: they list, pause, move, and go
- * with the pool whatever its backing. The pool's Cursor instance takes one per
- * session from the hub, in rotation, and never reads a Cursor login on the
+ * with the pool whatever its backing. The pool's Cursor instance hands each
+ * new session the next account in turn, and never reads a Cursor login on the
  * server machine.
  *
  * @module accountHub/hubCursor
  */
-import type { SdkCredentialStore } from "@cursor/sdk";
+import type { SdkCredentialStore, StoredSdkCredentials } from "@cursor/sdk";
 import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { Cursor } from "../provider/cursorSdk.ts";
+import { liveProbes as cursorProbes } from "../provider/CursorSdkCatalog.ts";
 import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
 import type * as AccountHub from "./AccountHub.ts";
-import { AccountHubError } from "./accountHubManagement.ts";
-import { cursorCredentialFile, CURSOR_CREDENTIAL_TYPE } from "./hubCredentials.ts";
+import { AccountHubError, isAccountHubError } from "./accountHubManagement.ts";
+import {
+  CURSOR_CREDENTIAL_TYPE,
+  CursorCredentialFile,
+  cursorCredentialFile,
+} from "./hubCredentials.ts";
 
 type Hub = AccountHub.AccountHub["Service"];
 
 const DEFAULT_BACKEND_URL = "https://api2.cursor.sh";
 
-const CursorFile = Schema.Struct({
-  api_key: Schema.String,
-  email: Schema.optional(Schema.String),
-  backend_url: Schema.optional(Schema.String),
-  created_at_ms: Schema.optional(Schema.Number),
-  api_key_expires_at_ms: Schema.optional(Schema.Number),
-});
-const decodeCursorFile = Schema.decodeUnknownEffect(Schema.fromJsonString(CursorFile));
+const decodeCursorFile = Schema.decodeUnknownEffect(Schema.fromJsonString(CursorCredentialFile));
 
 /**
  * The credential store a pool's Cursor instance reads instead of its own.
@@ -61,44 +61,86 @@ export const saveCursorAccount = (
 
 /** Checks a pasted Cursor API key and finds whose it is. */
 export const verifyCursorApiKey = (apiKey: string) =>
-  Effect.tryPromise({
-    try: () => Cursor.me({ apiKey }),
-    catch: (cause) => new AccountHubError({ detail: "Cursor did not accept that API key.", cause }),
-  }).pipe(
+  cursorProbes.readUser(apiKey).pipe(
     Effect.timeoutOrElse({
       duration: "15 seconds",
       orElse: () => Effect.fail(new AccountHubError({ detail: "Cursor did not answer in time." })),
     }),
+    Effect.mapError((cause) =>
+      isAccountHubError(cause)
+        ? cause
+        : new AccountHubError({
+            detail: cause.authenticationFailure
+              ? "Cursor did not accept that API key."
+              : "Could not reach Cursor to check the key. Try again.",
+            cause,
+          }),
+    ),
     Effect.map((user) => ({ email: user.userEmail?.trim() || undefined })),
   );
 
 /**
- * A credential store over the pool's Cursor accounts. Each load hands out the
- * next account that is not paused, so sessions spread across the pool.
+ * The pool's Cursor accounts as the SDK's credentials. `store` is what status
+ * checks and one-off text generation read; `next` moves on to the next account
+ * and is taken once per session, so sessions spread across the pool. Paused,
+ * expired, and unreadable accounts are skipped. Files are read once and kept
+ * until the pool's accounts change.
  */
-export const makeCursorPoolStore = Effect.fn("makeCursorPoolStore")(function* (hub: Hub) {
+export const makeCursorPool = Effect.fn("makeCursorPool")(function* (hub: Hub) {
   const turn = yield* Ref.make(0);
-  const next = Effect.gen(function* () {
-    const accounts = (yield* hub.accounts).filter(
-      (account) => account.type === CURSOR_CREDENTIAL_TYPE && !account.disabled,
+  const files = yield* Ref.make(new Map<string, StoredSdkCredentials | null>());
+  yield* hub.accountChanges.pipe(
+    Stream.runForEach(() => Ref.set(files, new Map())),
+    Effect.forkScoped,
+  );
+
+  const read = (name: string) =>
+    Effect.gen(function* () {
+      const cached = (yield* Ref.get(files)).get(name);
+      if (cached !== undefined) return cached;
+      const credential = yield* hub.readCredential(name).pipe(
+        Effect.flatMap(decodeCursorFile),
+        Effect.map((file): StoredSdkCredentials => ({
+          version: 1,
+          backendUrl: file.backend_url ?? DEFAULT_BACKEND_URL,
+          apiKey: file.api_key,
+          createdAtMs: file.created_at_ms,
+          ...(file.api_key_expires_at_ms === undefined
+            ? {}
+            : { apiKeyExpiresAtMs: file.api_key_expires_at_ms }),
+          ...(file.email ? { email: file.email } : {}),
+        })),
+        Effect.orElseSucceed(() => null),
+      );
+      yield* Ref.update(files, (current) => new Map(current).set(name, credential));
+      return credential;
+    });
+
+  const usable = Effect.gen(function* () {
+    const names = (yield* hub.accounts.pipe(Effect.orElseSucceed(() => [])))
+      .filter((account) => account.type === CURSOR_CREDENTIAL_TYPE && !account.disabled)
+      .map((account) => account.name);
+    const now = yield* Clock.currentTimeMillis;
+    const credentials = yield* Effect.forEach(names, read);
+    return credentials.filter(
+      (credential): credential is StoredSdkCredentials =>
+        credential !== null &&
+        (credential.apiKeyExpiresAtMs === undefined || credential.apiKeyExpiresAtMs > now),
     );
-    if (accounts.length === 0) return undefined;
-    const index = yield* Ref.getAndUpdate(turn, (current) => current + 1);
-    const account = accounts[index % accounts.length]!;
-    const file = yield* decodeCursorFile(yield* hub.readCredential(account.name));
-    return {
-      version: 1 as const,
-      backendUrl: file.backend_url ?? DEFAULT_BACKEND_URL,
-      apiKey: file.api_key,
-      createdAtMs: file.created_at_ms ?? 0,
-      ...(file.api_key_expires_at_ms === undefined
-        ? {}
-        : { apiKeyExpiresAtMs: file.api_key_expires_at_ms }),
-      ...(file.email ? { email: file.email } : {}),
-    };
   });
+
+  const pick = (advance: boolean) =>
+    Effect.gen(function* () {
+      const credentials = yield* usable;
+      if (credentials.length === 0) return undefined;
+      const index = advance
+        ? yield* Ref.getAndUpdate(turn, (current) => current + 1)
+        : yield* Ref.get(turn);
+      return credentials[index % credentials.length];
+    });
+
   const store: SdkCredentialStore = {
-    load: () => Effect.runPromise(next),
+    load: () => Effect.runPromise(pick(false)),
     save: (credentials) =>
       Effect.runPromise(
         saveCursorAccount(hub, {
@@ -111,7 +153,7 @@ export const makeCursorPoolStore = Effect.fn("makeCursorPoolStore")(function* (h
     // Accounts leave the pool from Usage → Limits, never through an instance's sign-out.
     clear: () => Promise.resolve(),
   };
-  return store;
+  return { store, next: pick(true) };
 });
 
 /**
@@ -145,6 +187,20 @@ export const makeCursorPoolSignIn = (options: {
             detail,
             cause,
           });
+        // The SDK reports the sign-in page from a callback; the flow shows it from its own scope.
+        const urls = yield* Queue.unbounded<string>();
+        yield* Queue.take(urls).pipe(
+          Effect.flatMap((url) =>
+            context.setInteraction({
+              type: "browser",
+              id: context.flowId,
+              url,
+              requiresConsent: false,
+            }),
+          ),
+          Effect.forever,
+          Effect.forkScoped,
+        );
         const result = yield* Effect.tryPromise({
           try: (signal) =>
             Cursor.auth.login({
@@ -154,14 +210,7 @@ export const makeCursorPoolSignIn = (options: {
               signal,
               apiKeyName: `Signalbox - ${options.displayName}`,
               onLoginUrl: (url) => {
-                Effect.runFork(
-                  context.setInteraction({
-                    type: "browser",
-                    id: context.flowId,
-                    url,
-                    requiresConsent: false,
-                  }),
-                );
+                Queue.offerUnsafe(urls, url);
               },
             }),
           catch: failed("Cursor sign-in failed. Start sign-in again."),

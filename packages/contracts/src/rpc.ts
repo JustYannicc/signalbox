@@ -10,6 +10,7 @@ import {
   AccountPoolAddApiKeyInput,
   AccountPoolMoveNativeLoginsInput,
   AccountPoolMoveNativeLoginsResult,
+  AccountPoolSetOpenCodeInput,
 } from "./accountHub.ts"; // signalbox
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
@@ -394,6 +395,7 @@ export const WS_METHODS = {
   accountPoolImportAccounts: "accountPool.importAccounts",
   accountPoolAddApiKey: "accountPool.addApiKey",
   accountPoolMoveNativeLogins: "accountPool.moveNativeLogins",
+  accountPoolSetOpenCode: "accountPool.setOpenCode",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -665,6 +667,10 @@ const WsAccountPoolImportAccountsRpc = Rpc.make(WS_METHODS.accountPoolImportAcco
 });
 const WsAccountPoolAddApiKeyRpc = Rpc.make(WS_METHODS.accountPoolAddApiKey, {
   payload: AccountPoolAddApiKeyInput,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolSetOpenCodeRpc = Rpc.make(WS_METHODS.accountPoolSetOpenCode, {
+  payload: AccountPoolSetOpenCodeInput,
   error: AccountPoolRpcFailure,
 });
 const WsAccountPoolMoveNativeLoginsRpc = Rpc.make(WS_METHODS.accountPoolMoveNativeLogins, {
@@ -1820,6 +1826,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAccountPoolImportAccountsRpc,
   WsAccountPoolAddApiKeyRpc,
   WsAccountPoolMoveNativeLoginsRpc,
+  WsAccountPoolSetOpenCodeRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,

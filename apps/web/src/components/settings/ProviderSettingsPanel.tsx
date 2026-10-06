@@ -1075,13 +1075,6 @@ export function EnvironmentProviderSettings({
               provider={liveProvider}
               readOnly={readOnly}
             />
-          ) : mode === "editor" && row.driver !== "acpRegistry" ? (
-            // signalbox: no native sign-in; a signed-in provider can move into a pool.
-            <NativeProviderSetup
-              environmentId={environmentId}
-              instanceId={row.instanceId}
-              provider={liveProvider}
-            />
           ) : mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection
               environmentId={environmentId}
@@ -1093,6 +1086,13 @@ export function EnvironmentProviderSettings({
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+            />
+          ) : mode === "editor" && row.driver !== "acpRegistry" ? (
+            // signalbox: no native sign-in; a signed-in provider can move into a pool.
+            <NativeProviderSetup
+              environmentId={environmentId}
+              provider={liveProvider}
+              readOnly={readOnly}
             />
           ) : mode === "editor" &&
             row.driver === "codex" &&

@@ -18,7 +18,7 @@ import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits, makeUsageLimits } from "../provider/providerUsageLimits.ts";
 import { grokUsageResponseToLimits } from "../provider/grokUsageLimits.ts";
-import { isSignedOutAuthFile } from "../accountHub/accountHubManagement.ts";
+import { isSignedOutAuthFile, normalizeHubUrl } from "../accountHub/accountHubManagement.ts";
 import { isApiKeyAccountId, listApiKeys, removeApiKey } from "../accountHub/hubApiKeys.ts";
 import {
   HubProviderRateLimited,
@@ -143,6 +143,12 @@ const driverForProvider = (provider: string) =>
   ProviderDriverKind.make(DRIVER_BY_PROVIDER[provider] ?? "codex");
 
 const needsSignIn = isSignedOutAuthFile; // signalbox
+
+// signalbox: the source as a management endpoint for the hub helpers.
+const hubEndpoint = (config: UsageLimitSourceConfig) => ({
+  baseUrl: normalizeHubUrl(config.url),
+  managementKey: config.managementKey,
+});
 
 const notProbed = (
   account: typeof AuthFile.Type,
@@ -496,23 +502,25 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    // signalbox: API keys route like accounts; they report no quota.
-    const hub = { baseUrl: config.url.replace(/\/+$/u, ""), managementKey: config.managementKey };
-    const apiKeys = (yield* listApiKeys(hub).pipe(
+    // signalbox: API keys route like accounts; they report no quota. Read beside the logins.
+    const apiKeys = listApiKeys(hubEndpoint(config)).pipe(
       Effect.provideService(HttpClient.HttpClient, client),
       Effect.orElseSucceed(() => []),
-    )).map((key): UsageLimitSourceAccount => ({
-      id: key.id,
-      driver: ProviderDriverKind.make(key.driver),
-      plan: key.label,
-      apiKey: true,
-      usageLimits: makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "unsupported",
-        message: "API keys are billed per use and have no usage limit.",
-      }),
-    }));
-    const logins = yield* Effect.forEach(
+      Effect.map((keys) =>
+        keys.map((key): UsageLimitSourceAccount => ({
+          id: key.id,
+          driver: ProviderDriverKind.make(key.driver),
+          plan: key.label,
+          apiKey: true,
+          usageLimits: makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "unsupported",
+            message: "API keys are billed per use and have no usage limit.",
+          }),
+        })),
+      ),
+    );
+    const logins = Effect.forEach(
       accounts.filter((account) => SUPPORTED_PROVIDERS.has(account.provider)),
       (account) =>
         // Paused accounts are listed so they can be resumed, without spending a usage probe.
@@ -545,7 +553,8 @@ export const makeCliproxyApi = Effect.gen(function* () {
                 : readAccount(config, account),
       { concurrency: 4 },
     );
-    return [...logins, ...apiKeys];
+    const [loginAccounts, keyAccounts] = yield* Effect.all([logins, apiKeys], { concurrency: 2 });
+    return [...loginAccounts, ...keyAccounts];
   });
 
   // The hub answers an unknown name with an error status, so there is no list-then-act race.
@@ -559,10 +568,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       if (action !== "remove") {
         return yield* new UsageLimitSourceError({ detail: "API keys can only be removed." });
       }
-      return yield* removeApiKey(
-        { baseUrl: config.url.replace(/\/+$/u, ""), managementKey: config.managementKey },
-        accountId,
-      ).pipe(
+      return yield* removeApiKey(hubEndpoint(config), accountId).pipe(
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.mapError((error) => new UsageLimitSourceError({ detail: error.detail })),
       );

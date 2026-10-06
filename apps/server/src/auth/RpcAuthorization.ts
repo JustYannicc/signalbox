@@ -59,6 +59,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accountPoolImportAccounts]: AuthOrchestrationOperateScope,
   [WS_METHODS.accountPoolAddApiKey]: AuthOrchestrationOperateScope,
   [WS_METHODS.accountPoolMoveNativeLogins]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolSetOpenCode]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthComplete]: AuthOrchestrationOperateScope,
   [WS_METHODS.chatGptReconnectProfile]: AuthOrchestrationOperateScope,
   [WS_METHODS.chatGptImportProfile]: AuthOrchestrationOperateScope,

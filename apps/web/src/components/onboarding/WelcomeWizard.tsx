@@ -86,7 +86,6 @@ import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
-import { NATIVE_SIGN_IN } from "../accountPool/nativeLogins"; // signalbox
 import { PoolAgentsSetup } from "../accountPool/PoolAgentsSetup"; // signalbox
 
 /**
@@ -649,36 +648,21 @@ function AgentsStep({
   return (
     <StepShell
       title="Connect your agents"
-      description={
-        NATIVE_SIGN_IN
-          ? "Choose an agent to start coding. You can add more later."
-          : "Add the accounts your agents work with. You can add more later."
-      }
+      description="Add the accounts your agents work with. You can add more later."
     >
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
-          {environmentIds.map((environmentId) =>
+          {environmentIds.map((environmentId) => (
             // signalbox: agents run on pool accounts; onboarding never signs a CLI in.
-            NATIVE_SIGN_IN ? (
-              <ConnectedAgentsStep
-                key={environmentId}
-                environmentId={environmentId}
-                machineLabel={
-                  environments.find((environment) => environment.environmentId === environmentId)
-                    ?.label ?? "Computer"
-                }
-              />
-            ) : (
-              <PoolAgentsSetup
-                key={environmentId}
-                environmentId={environmentId}
-                machineLabel={
-                  environments.find((environment) => environment.environmentId === environmentId)
-                    ?.label ?? "Computer"
-                }
-              />
-            ),
-          )}
+            <PoolAgentsSetup
+              key={environmentId}
+              environmentId={environmentId}
+              machineLabel={
+                environments.find((environment) => environment.environmentId === environmentId)
+                  ?.label ?? "Computer"
+              }
+            />
+          ))}
         </div>
       </ScrollArea>
       <div className="mt-6 flex justify-end">

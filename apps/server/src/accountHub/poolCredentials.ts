@@ -9,14 +9,14 @@ import type { ProviderInstanceConfig, ProviderInstanceId } from "@t3tools/contra
 import {
   type AccountPoolAddApiKeyInput,
   type AccountPoolMoveNativeLoginsResult,
+  type PoolInstanceKind,
   hubInstancePoolId,
 } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
 
 import type * as AccountHub from "./AccountHub.ts";
 import { saveCursorAccount, verifyCursorApiKey } from "./hubCursor.ts";
-import { type PoolCredential, readNativeLogin } from "./nativeLogins.ts";
-import type { PoolInstanceKind } from "./poolInstances.ts";
+import { type NativeLogin, type PoolCredential, readNativeLogin } from "./nativeLogins.ts";
 
 type Hub = AccountHub.AccountHub["Service"];
 
@@ -41,41 +41,56 @@ export const addApiKey = (
       )
     : hub.addApiKey({ ...input, provider: input.provider });
 
+type Failure = AccountPoolMoveNativeLoginsResult["failed"][number];
+
 /**
- * Moves each native login into the pool's hub, one instance at a time so one
- * failure leaves the others moved. The caller turns the moved instances off
- * and adds the pool providers named in `kinds`.
+ * Reads each native login, one instance at a time so one failure leaves the
+ * others readable. Run inside a scope that outlives `saveNativeLogins`: a
+ * login's `release` needs it.
  */
-export const moveNativeLogins = Effect.fn("poolCredentials.moveNativeLogins")(function* (
-  hub: Hub,
+export const readNativeLogins = Effect.fn("poolCredentials.readNativeLogins")(function* (
   instances: Readonly<Record<string, ProviderInstanceConfig>>,
   instanceIds: ReadonlyArray<ProviderInstanceId>,
 ) {
-  const moved: ProviderInstanceId[] = [];
-  const failed: Array<AccountPoolMoveNativeLoginsResult["failed"][number]> = [];
-  const kinds = new Set<PoolInstanceKind>();
+  const logins: Array<{ readonly instanceId: ProviderInstanceId; readonly login: NativeLogin }> =
+    [];
+  const failed: Failure[] = [];
   for (const instanceId of instanceIds) {
     const instance = instances[instanceId];
     if (!instance || hubInstancePoolId(instance.config) !== null) {
       failed.push({ instanceId, reason: "That provider no longer signs in on its own." });
       continue;
     }
-    const result = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const login = yield* readNativeLogin(instanceId, instance);
-        yield* Effect.forEach(login.credentials, (credential) => save(hub, credential), {
-          discard: true,
-        });
-        yield* login.release;
-        return login.kind;
-      }),
-    ).pipe(Effect.result);
-    if (result._tag === "Success") {
-      moved.push(instanceId);
-      kinds.add(result.success);
-    } else {
-      failed.push({ instanceId, reason: result.failure.detail });
+    const login = yield* readNativeLogin(instanceId, instance).pipe(Effect.result);
+    if (login._tag === "Success") logins.push({ instanceId, login: login.success });
+    else failed.push({ instanceId, reason: login.failure.detail });
+  }
+  return { logins, failed };
+});
+
+/**
+ * Saves read logins into the pool's hub, then clears what Signalbox itself
+ * kept of each. The caller turns the moved instances off and adds the pool
+ * providers named in `kinds`.
+ */
+export const saveNativeLogins = Effect.fn("poolCredentials.saveNativeLogins")(function* (
+  hub: Hub,
+  logins: ReadonlyArray<{ readonly instanceId: ProviderInstanceId; readonly login: NativeLogin }>,
+) {
+  const moved: ProviderInstanceId[] = [];
+  const failed: Failure[] = [];
+  const kinds = new Set<PoolInstanceKind>();
+  for (const { instanceId, login } of logins) {
+    const saved = yield* Effect.forEach(login.credentials, (credential) => save(hub, credential), {
+      discard: true,
+    }).pipe(Effect.result);
+    if (saved._tag === "Failure") {
+      failed.push({ instanceId, reason: saved.failure.detail });
+      continue;
     }
+    yield* login.release;
+    moved.push(instanceId);
+    kinds.add(login.kind);
   }
   return { moved, failed, kinds };
 });

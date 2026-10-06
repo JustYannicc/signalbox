@@ -59,7 +59,12 @@ import {
   apiKeySections,
   type ApiKeyInstanceKind,
 } from "./hubApiKeys.ts";
-import { AccountHubError, type AccountHubEndpoint } from "./accountHubManagement.ts";
+import {
+  AccountHubError,
+  type AccountHubEndpoint,
+  isAccountHubError,
+  normalizeHubUrl,
+} from "./accountHubManagement.ts";
 import {
   ACCOUNT_HUB_VERSION,
   AccountHubInstallError,
@@ -173,7 +178,6 @@ export const PERSONAL_HUB: AccountHubPlacement = {
 const StoredConnection = Schema.Struct({ mode: Schema.Literal("external"), url: Schema.String });
 const decodeStoredConnection = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredConnection));
 const encodeStoredConnection = Schema.encodeEffect(Schema.fromJsonString(StoredConnection));
-const normalizeHubUrl = (url: string) => url.trim().replace(/\/+$/u, "");
 // A hub that exits before this long counts as a crash loop and backs off.
 const STABLE_UPTIME = Duration.seconds(30);
 const RESTART_BACKOFF_MIN = Duration.seconds(1);
@@ -181,7 +185,6 @@ const RESTART_BACKOFF_MAX = Duration.minutes(2);
 const backoff = (previous: Duration.Duration) =>
   Duration.min(Duration.max(RESTART_BACKOFF_MIN, Duration.times(previous, 2)), RESTART_BACKOFF_MAX);
 
-const isAccountHubError = Schema.is(AccountHubError);
 const isAccountHubInstallError = Schema.is(AccountHubInstallError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeCredentialFile = Schema.decodeUnknownEffect(

@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 import { useState } from "react";
 
@@ -12,7 +12,7 @@ import { SettingsRow } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
-import { movableNativeLogins, nativeLoginLabel } from "./nativeLogins";
+import { isMovableNativeLogin, nativeLoginLabel } from "./nativeLogins";
 import { failureText } from "./PoolDialogs";
 
 /**
@@ -21,12 +21,9 @@ import { failureText } from "./PoolDialogs";
  */
 export function MoveNativeLogins({
   environmentId,
-  instanceIds,
   framed = false,
 }: {
   readonly environmentId: EnvironmentId;
-  /** Only these providers; all movable ones when absent. */
-  readonly instanceIds?: ReadonlyArray<ProviderInstanceId>;
   /** Framed as its own group, for the top of a settings page. */
   readonly framed?: boolean;
 }) {
@@ -36,9 +33,7 @@ export function MoveNativeLogins({
   const move = useAtomCommand(serverEnvironment.moveNativeLogins, { reportFailure: false });
   const [poolId, setPoolId] = useState<string>(PERSONAL_POOL_ID);
   const [pending, setPending] = useState(false);
-  const logins = movableNativeLogins(providers, instances).filter(
-    (provider) => !instanceIds || instanceIds.includes(provider.instanceId),
-  );
+  const logins = (providers ?? []).filter((provider) => isMovableNativeLogin(provider, instances));
   if (logins.length === 0 || pools.length === 0) return null;
   const pool = pools.find((candidate) => candidate.id === poolId) ?? pools[0]!;
 

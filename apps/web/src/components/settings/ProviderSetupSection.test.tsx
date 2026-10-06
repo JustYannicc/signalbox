@@ -77,6 +77,8 @@ vi.mock("../../localApi", () => ({
 
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { ProviderSetupSection } from "./ProviderSetupSection";
+// signalbox: native sign-in is off; accounts are added to pools.
+import { NATIVE_SIGN_IN } from "../accountPool/nativeLogins";
 
 const environmentId = EnvironmentId.make("remote-google");
 const instanceId = ProviderInstanceId.make("antigravity_work");
@@ -236,89 +238,103 @@ describe("Antigravity setup", () => {
     setup.confirm.mockReset().mockResolvedValue(false);
   });
 
-  it("waits for verified auth after submitting a callback to the selected environment", async () => {
-    const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
-    setCallback(renderSetup(), callbackUrl);
-    submitCallback(renderSetup());
-    await flushPromises();
+  it.skipIf(!NATIVE_SIGN_IN)(
+    "waits for verified auth after submitting a callback to the selected environment",
+    async () => {
+      const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
+      setCallback(renderSetup(), callbackUrl);
+      submitCallback(renderSetup());
+      await flushPromises();
 
-    expect(setup.completeAuth).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, flowId: "flow-1", callbackUrl },
-    });
-    let view = renderSetup();
-    expect(visitElements(view, (element) => element.props.children === "Signed in.")).toBeNull();
-    expect(
-      visitElements(view, (element) => element.props.id === `provider-callback-${instanceId}`)
-        ?.props.value,
-    ).toBe("");
+      expect(setup.completeAuth).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, flowId: "flow-1", callbackUrl },
+      });
+      let view = renderSetup();
+      expect(visitElements(view, (element) => element.props.children === "Signed in.")).toBeNull();
+      expect(
+        visitElements(view, (element) => element.props.id === `provider-callback-${instanceId}`)
+          ?.props.value,
+      ).toBe("");
 
-    setup.auth = authState({ phase: "verifying", authorizationUrl: null });
-    expect(
-      visitElements(renderSetup(), (element) => element.props.children === "Signed in."),
-    ).toBeNull();
-    setup.auth = authState({ phase: "succeeded", authorizationUrl: null });
-    view = renderSetup({
-      provider: { ...provider, status: "ready", auth: { status: "authenticated" } },
-    });
-    expect(
-      visitElements(view, (element) => element.props.children === "Signed in."),
-    ).not.toBeNull();
-  });
+      setup.auth = authState({ phase: "verifying", authorizationUrl: null });
+      expect(
+        visitElements(renderSetup(), (element) => element.props.children === "Signed in."),
+      ).toBeNull();
+      setup.auth = authState({ phase: "succeeded", authorizationUrl: null });
+      view = renderSetup({
+        provider: { ...provider, status: "ready", auth: { status: "authenticated" } },
+      });
+      expect(
+        visitElements(view, (element) => element.props.children === "Signed in."),
+      ).not.toBeNull();
+    },
+  );
 
-  it("offers sign-in again when credentials expire after a completed auth flow", () => {
-    setup.auth = authState({
-      phase: "succeeded",
-      authorizationUrl: null,
-      message: "Google sign-in complete.",
-    });
-    renderSetup({
-      provider: { ...provider, status: "ready", auth: { status: "authenticated" } },
-    });
-    const expired = renderSetup();
-    expect(button(expired, "Sign in")).not.toBeNull();
-    expect(visitElements(expired, (element) => element.props.children === "Signed in.")).toBeNull();
-    expect(
-      visitElements(expired, (element) => element.props.children === "Google sign-in complete."),
-    ).toBeNull();
-  });
+  it.skipIf(!NATIVE_SIGN_IN)(
+    "offers sign-in again when credentials expire after a completed auth flow",
+    () => {
+      setup.auth = authState({
+        phase: "succeeded",
+        authorizationUrl: null,
+        message: "Google sign-in complete.",
+      });
+      renderSetup({
+        provider: { ...provider, status: "ready", auth: { status: "authenticated" } },
+      });
+      const expired = renderSetup();
+      expect(button(expired, "Sign in")).not.toBeNull();
+      expect(
+        visitElements(expired, (element) => element.props.children === "Signed in."),
+      ).toBeNull();
+      expect(
+        visitElements(expired, (element) => element.props.children === "Google sign-in complete."),
+      ).toBeNull();
+    },
+  );
 
-  it("does not send a callback left over from a replaced sign-in flow", async () => {
-    const interaction = {
-      type: "browser" as const,
-      id: "same-interaction",
-      url: "https://example.com/login",
-      requiresConsent: false,
-      acceptsCallback: true,
-    };
-    setup.auth = authState({ interaction });
-    setCallback(renderSetup(), "http://127.0.0.1:5555/?state=old-flow&code=test-only");
-    setup.auth = authState({ flowId: "flow-2", interaction });
-    submitCallback(renderSetup());
-    await flushPromises();
+  it.skipIf(!NATIVE_SIGN_IN)(
+    "does not send a callback left over from a replaced sign-in flow",
+    async () => {
+      const interaction = {
+        type: "browser" as const,
+        id: "same-interaction",
+        url: "https://example.com/login",
+        requiresConsent: false,
+        acceptsCallback: true,
+      };
+      setup.auth = authState({ interaction });
+      setCallback(renderSetup(), "http://127.0.0.1:5555/?state=old-flow&code=test-only");
+      setup.auth = authState({ flowId: "flow-2", interaction });
+      submitCallback(renderSetup());
+      await flushPromises();
 
-    expect(setup.completeAuth).not.toHaveBeenCalled();
-    expect(setup.authState).toHaveBeenLastCalledWith({ environmentId, input: { instanceId } });
-  });
+      expect(setup.completeAuth).not.toHaveBeenCalled();
+      expect(setup.authState).toHaveBeenLastCalledWith({ environmentId, input: { instanceId } });
+    },
+  );
 
-  it("coalesces repeated sign-in clicks while start is pending", async () => {
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    let completeStart: (value: { _tag: "Success"; value: undefined }) => void = () => {
-      throw new Error("Missing start resolver.");
-    };
-    const pending = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
-      completeStart = resolve;
-    });
-    setup.startAuth.mockReturnValueOnce(pending);
-    const view = renderSetup();
-    click(view, "Sign in");
-    click(view, "Sign in");
+  it.skipIf(!NATIVE_SIGN_IN)(
+    "coalesces repeated sign-in clicks while start is pending",
+    async () => {
+      setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+      let completeStart: (value: { _tag: "Success"; value: undefined }) => void = () => {
+        throw new Error("Missing start resolver.");
+      };
+      const pending = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
+        completeStart = resolve;
+      });
+      setup.startAuth.mockReturnValueOnce(pending);
+      const view = renderSetup();
+      click(view, "Sign in");
+      click(view, "Sign in");
 
-    expect(setup.startAuth).toHaveBeenCalledTimes(1);
-    expect(setup.startAuth).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
-    completeStart({ _tag: "Success", value: undefined });
-    await flushPromises();
-  });
+      expect(setup.startAuth).toHaveBeenCalledTimes(1);
+      expect(setup.startAuth).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
+      completeStart({ _tag: "Success", value: undefined });
+      await flushPromises();
+    },
+  );
 
   it("shows a repeated runtime status message only once", () => {
     setup.installation = {
@@ -356,7 +372,7 @@ describe("Antigravity setup", () => {
     expect(setup.removeInstall).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
   });
 
-  it.each([true, false])(
+  it.skipIf(!NATIVE_SIGN_IN).each([true, false])(
     "can sign out a verified account when its instance is enabled=%s",
     async (enabled) => {
       setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
@@ -377,7 +393,7 @@ describe("Antigravity setup", () => {
     },
   );
 
-  it.each(["unauthenticated", "unknown"] as const)(
+  it.skipIf(!NATIVE_SIGN_IN).each(["unauthenticated", "unknown"] as const)(
     "does not offer sign-out for an unverified %s account",
     (status) => {
       setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
@@ -390,28 +406,34 @@ describe("Antigravity setup", () => {
     },
   );
 
-  it("offers account actions after verified login when discovery cannot identify auth", () => {
-    setup.auth = authState({ phase: "succeeded", flowId: null, authorizationUrl: null });
-    const view = renderSetup({ provider: { ...provider, auth: { status: "unknown" } } });
-    expect(button(view, "Change account")).not.toBeNull();
-    expect(button(view, "Sign out")).not.toBeNull();
-    expect(button(view, "Sign in")).toBeNull();
-  });
+  it.skipIf(!NATIVE_SIGN_IN)(
+    "offers account actions after verified login when discovery cannot identify auth",
+    () => {
+      setup.auth = authState({ phase: "succeeded", flowId: null, authorizationUrl: null });
+      const view = renderSetup({ provider: { ...provider, auth: { status: "unknown" } } });
+      expect(button(view, "Change account")).not.toBeNull();
+      expect(button(view, "Sign out")).not.toBeNull();
+      expect(button(view, "Sign in")).toBeNull();
+    },
+  );
 
-  it("does not let a shared managed install hide an invalid custom binary path", () => {
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    setup.installation = {
-      ...setup.installation!,
-      installedVersion: "test-version",
-      canRemove: true,
-    };
-    const view = renderSetup({
-      provider: { ...provider, installed: false },
-      binaryPath: "/missing/antigravity",
-    });
-    expect(button(view, "Sign in")?.props.disabled).toBe(true);
-    expect(setup.startAuth).not.toHaveBeenCalled();
-  });
+  it.skipIf(!NATIVE_SIGN_IN)(
+    "does not let a shared managed install hide an invalid custom binary path",
+    () => {
+      setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+      setup.installation = {
+        ...setup.installation!,
+        installedVersion: "test-version",
+        canRemove: true,
+      };
+      const view = renderSetup({
+        provider: { ...provider, installed: false },
+        binaryPath: "/missing/antigravity",
+      });
+      expect(button(view, "Sign in")?.props.disabled).toBe(true);
+      expect(setup.startAuth).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["read-only", "older-server"] as const)(
     "does not open private setup subscriptions for a %s view",

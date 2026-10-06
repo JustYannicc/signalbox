@@ -1,5 +1,5 @@
-import { ProviderDriverKind, ProviderInstanceId, type EnvironmentId } from "@t3tools/contracts";
-import { PERSONAL_POOL_ID, poolInstanceId, type AccountPool } from "@t3tools/contracts/accountHub";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { poolInstanceId, type AccountPool } from "@t3tools/contracts/accountHub";
 import {
   CodeIcon,
   DownloadIcon,
@@ -38,36 +38,11 @@ import { failureText, PoolBackingDialog, PoolImportDialog, PoolNameDialog } from
  */
 function useOpenCodeOnPool(environmentId: EnvironmentId) {
   const instances = useEnvironmentSettings(environmentId, (settings) => settings.providerInstances);
-  const update = useAtomCommand(serverEnvironment.updateSettings, "Change OpenCode");
+  const setOpenCode = useAtomCommand(serverEnvironment.setAccountPoolOpenCode, "Change OpenCode");
   return {
     isOn: (pool: AccountPool) => poolInstanceId("opencode", pool.id) in instances,
-    set: (pool: AccountPool, on: boolean) => {
-      const id = ProviderInstanceId.make(poolInstanceId("opencode", pool.id));
-      const { [id]: _previous, ...rest } = instances;
-      void update({
-        environmentId,
-        input: {
-          patch: {
-            providerInstances: on
-              ? {
-                  ...instances,
-                  [id]: {
-                    driver: ProviderDriverKind.make("opencode"),
-                    displayName:
-                      pool.id === PERSONAL_POOL_ID ? "OpenCode" : `OpenCode · ${pool.name}`,
-                    enabled: true,
-                    config: {
-                      enabled: true,
-                      setupMode: "hub",
-                      ...(pool.id === PERSONAL_POOL_ID ? {} : { poolId: pool.id }),
-                    },
-                  },
-                }
-              : rest,
-          },
-        },
-      });
-    },
+    set: (pool: AccountPool, enabled: boolean) =>
+      void setOpenCode({ environmentId, input: { poolId: pool.id, enabled } }),
   };
 }
 

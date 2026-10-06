@@ -5,6 +5,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { POOL_DRIVERS } from "@t3tools/contracts/accountHub"; // signalbox
 
 /** Unsupported and broken versions fail mid-turn, so they warn even when ready. */
 function getIncompatibleVersion(status: ServerProvider) {
@@ -73,9 +74,17 @@ export function getProviderStatusMessage(status: ServerProvider): string {
   if (!status.installed && hasProviderSetup(status)) {
     return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
   }
-  if (status.auth.status === "unauthenticated") {
-    // signalbox: accounts live in pools; nothing signs in on the server machine.
+  // signalbox: a pool's providers sign in by adding an account to the pool.
+  if (status.auth.status === "unauthenticated" && POOL_DRIVERS.includes(status.driver)) {
     return "Add an account to its pool from Usage → Limits.";
+  }
+  if (status.auth.status === "unauthenticated") {
+    if (hasProviderSetup(status)) {
+      return status.driver === "antigravity"
+        ? "Open provider setup to sign in with Google."
+        : "Open provider setup to sign in.";
+    }
+    return "Sign in via the CLI to authenticate again.";
   }
   return status.status === "ready"
     ? "No models are available for this provider."

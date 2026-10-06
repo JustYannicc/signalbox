@@ -53,6 +53,11 @@ const Status = Schema.Struct({
 const decodeAuthUrl = Schema.decodeUnknownEffect(AuthUrl);
 const decodeStatus = Schema.decodeUnknownEffect(Status);
 
+export const isAccountHubError = Schema.is(AccountHubError);
+
+/** A hub URL as Signalbox stores and compares it: trimmed, without a trailing slash. */
+export const normalizeHubUrl = (url: string) => url.trim().replace(/\/+$/u, "");
+
 export type ManagementEndpoint = Pick<AccountHubEndpoint, "baseUrl" | "managementKey">;
 
 const hostOf = (endpoint: ManagementEndpoint) =>

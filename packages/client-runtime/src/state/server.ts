@@ -1179,6 +1179,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:add-account-pool-api-key",
       tag: WS_METHODS.accountPoolAddApiKey,
     }),
+    setAccountPoolOpenCode: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-account-pool-opencode",
+      tag: WS_METHODS.accountPoolSetOpenCode,
+    }),
     moveNativeLogins: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:move-native-logins",
       tag: WS_METHODS.accountPoolMoveNativeLogins,
