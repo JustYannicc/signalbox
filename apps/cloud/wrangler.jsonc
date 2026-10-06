@@ -7,8 +7,10 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-30",
   "compatibility_flags": ["nodejs_compat"],
-  "workers_dev": true,
+  // One origin: sign-in callbacks, cookies and saved connections all key on it.
+  "workers_dev": false,
   "preview_urls": false,
+  "routes": [{ "pattern": "app.signalbox.run", "custom_domain": true }],
   "assets": {
     // The web app, built by `vp run deploy`. Same origin as the API.
     "directory": "../web/dist",
@@ -26,4 +28,16 @@
     "ENVIRONMENT_LABEL": "Signalbox Cloud",
   },
   "observability": { "enabled": true },
+  "env": {
+    // A pull request preview: its own Worker and Durable Objects, so it never
+    // shares state with production. The workflow passes the name, domain and
+    // identity per pull request.
+    "preview": {
+      "routes": [],
+      "durable_objects": {
+        "bindings": [{ "name": "USERS", "class_name": "UserObject" }],
+      },
+      "vars": {},
+    },
+  },
 }

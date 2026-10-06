@@ -51,7 +51,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
   platform: { os: "linux", arch: "other", machine: "cloud" },
   serverVersion: CLOUD_VERSION,
   orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-  capabilities: { repositoryIdentity: false, connectionProbe: true },
+  capabilities: { repositoryIdentity: false, connectionProbe: true, signalboxCloud: true },
 });
 
 export const serverConfig = (identity: CloudEnvironmentIdentity): ServerConfig => ({

@@ -27,13 +27,20 @@ web dev with `T3CODE_PORT=8787` so the Vite proxy forwards to the Worker.
 
 ## Deploying
 
-`.github/workflows/deploy-cloud.yml` deploys on every push to `main` that
-touches the cloud or what it serves, and on a manual run from `main`. It builds
-the web app, then runs `wrangler deploy` with the Worker's secrets attached to
-the new version.
+`.github/workflows/deploy-cloud.yml` builds the web app and runs `wrangler
+deploy` with the Worker's secrets attached to the new version:
 
-Everything it needs lives in the `cloud-production` GitHub environment, which
-only `main` can use:
+- **Production:** every push to `main` that touches the cloud or what it serves,
+  and manual runs from `main`, deploy `app.signalbox.run`.
+- **Previews:** same-repository pull requests opened by `JustYannicc` deploy
+  `preview-<number>.signalbox.run`. Each preview is its own Worker
+  (`signalbox-cloud-pr-<number>`, the `preview` environment in
+  `wrangler.jsonc`) with its own Durable Objects, so it never shares users or
+  sessions with production. Closing the pull request deletes it.
+
+Both read from a GitHub environment. `cloud-production` is limited to `main`;
+`cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
+which each preview derives its own session secret.
 
 | Name                      | Kind     | What                                                                    |
 | ------------------------- | -------- | ----------------------------------------------------------------------- |
@@ -42,10 +49,10 @@ only `main` can use:
 | `CLOUD_SESSION_SECRET`    | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out. |
 | `T3CODE_WORKOS_CLIENT_ID` | variable | WorkOS client id                                                        |
 | `T3CODE_WORKOS_API_KEY`   | secret   | WorkOS API key, needed to finish email verification (GitHub sign-ins)   |
-| `CLOUD_URL`               | variable | The deployed origin, shown on deployments                               |
 
-A custom domain additionally needs Zone › Workers Routes: Edit on that zone,
-and the domain's `/api/account/callback` registered as a WorkOS redirect URI.
+WorkOS must list each origin's `/api/account/callback` as a redirect URI:
+`https://app.signalbox.run/...` for production and
+`https://*.signalbox.run/...` for previews.
 
 `ENVIRONMENT_ID` in `wrangler.jsonc` is the cloud's identity. Clients key saved
 connections on it, so never change it for a live deployment.
