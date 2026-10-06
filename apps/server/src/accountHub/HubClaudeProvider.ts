@@ -11,16 +11,15 @@
  */
 import {
   ProviderDriverKind,
-  ProviderSetupError,
   type ClaudeSettings,
   type ProviderInstanceEnvironment,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { ProviderDriverError } from "../provider/Errors.ts";
-import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
 import type { ProviderDriverCreateInput, ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as AccountHub from "./AccountHub.ts";
+import { makeHubSignIn } from "./hubSignIn.ts";
 
 const DRIVER = ProviderDriverKind.make("claudeAgent");
 
@@ -62,44 +61,7 @@ export const makeHubClaudeProvider = Effect.fn("makeHubClaudeProvider")(function
     environment: hubClaudeEnvironment(input.environment, endpoint),
   });
 
-  const setupError = (operation: string, detail: string) =>
-    new ProviderSetupError({ instanceId, operation, detail });
-  const auth = yield* ProviderAuthFlow.make({
-    instanceId,
-    credentialBinding: { owner: "t3", key: `account-hub:${instanceId}` },
-    methods: Effect.succeed([
-      {
-        id: "claude-add-account",
-        name: "Add a Claude account",
-        description: "Sign in with Claude. The account joins this pool.",
-        type: "agent" as const,
-      },
-    ]),
-    authenticate: (_method, context) =>
-      Effect.gen(function* () {
-        // The hub can only catch the redirect itself when the browser runs on this machine.
-        const login = yield* hub
-          .startOAuthLogin("claude", { localCallback: context.callbackMode === "server" })
-          .pipe(Effect.mapError((error) => setupError("start", error.detail)));
-        yield* Effect.addFinalizer(() => login.cancel);
-        yield* context.setInteraction(
-          {
-            type: "browser",
-            id: context.flowId,
-            url: login.url,
-            requiresConsent: false,
-            acceptsCallback: true,
-          },
-          undefined,
-          (callbackUrl) =>
-            login
-              .complete(callbackUrl)
-              .pipe(Effect.mapError((error) => setupError("complete", error.detail))),
-        );
-        yield* login.await.pipe(Effect.mapError((error) => setupError("save", error.detail)));
-      }),
-    logout: Effect.succeed("Accounts stay in the pool. Remove or pause them from Usage → Limits."),
-  });
+  const auth = yield* makeHubSignIn({ hub, instanceId, provider: "claude" });
 
   // Reset credits belong to a single login; the pool has no single account to redeem for.
   const { consumeResetCredit: _single, ...pooled } = instance;

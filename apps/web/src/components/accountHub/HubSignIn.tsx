@@ -53,7 +53,12 @@ export function HubSignIn({
 
   const active =
     auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
-  const interaction = auth?.interaction?.type === "browser" ? auth.interaction : null;
+  const interaction =
+    auth?.interaction?.type === "browser" || auth?.interaction?.type === "deviceCode"
+      ? auth.interaction
+      : null;
+  const userCode = interaction?.type === "deviceCode" ? interaction.userCode : null;
+  const acceptsCallback = interaction?.type === "browser" && interaction.acceptsCallback === true;
   const flowId = auth?.flowId ?? null;
   const callbackUrl = pasted.flowId === flowId ? pasted.value : "";
 
@@ -75,9 +80,11 @@ export function HubSignIn({
   const description = active
     ? auth?.phase === "verifying"
       ? "Checking the account…"
-      : local
-        ? `Finish signing in to ${account} in your browser.`
-        : `Sign in to ${account} in your browser. It then opens a page that cannot load: copy that page's address and paste it below.`
+      : userCode
+        ? `Open the sign-in page and enter this code to add the ${account} account.`
+        : local
+          ? `Finish signing in to ${account} in your browser.`
+          : `Sign in to ${account} in your browser. It then opens a page that cannot load: copy that page's address and paste it below.`
     : auth?.phase === "failed"
       ? (auth.message ?? "Sign-in failed. Try again.")
       : `Sign in with the ${account} account you want to add.`;
@@ -143,7 +150,23 @@ export function HubSignIn({
           </div>
         }
       />
-      {active && interaction?.acceptsCallback && !local && flowId ? (
+      {active && userCode ? (
+        <div className="flex items-center gap-2 px-3 py-3 sm:px-4">
+          <code className="select-all rounded-md bg-muted px-3 py-1.5 font-mono text-lg tracking-widest text-foreground">
+            {userCode}
+          </code>
+          <Button
+            aria-label="Copy code"
+            size="icon-sm"
+            variant="ghost-muted"
+            onClick={() => void writeTextToClipboard(userCode, "Sign-in code")}
+          >
+            <CopyIcon />
+          </Button>
+        </div>
+      ) : null}
+      {/* Offered locally too: the redirect only reaches the hub when the browser runs beside it. */}
+      {active && acceptsCallback && flowId ? (
         <form
           className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4"
           onSubmit={(event) => {
@@ -159,7 +182,9 @@ export function HubSignIn({
         >
           <Input
             aria-label="Address of the page that did not load"
-            placeholder="Paste the full address"
+            placeholder={
+              local ? "Page didn't finish? Paste its full address" : "Paste the full address"
+            }
             className="min-w-0 flex-1"
             value={callbackUrl}
             onChange={(event) => setPasted({ flowId, value: event.target.value })}

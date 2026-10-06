@@ -53,6 +53,7 @@ function fixture(
         status?: string;
         unavailable?: boolean;
         next_retry_after?: string;
+        project_id?: string;
         id_token?: (typeof accounts)[number]["id_token"];
       }
     >;
@@ -348,6 +349,76 @@ describe("CLIProxyAPI built-in management API", () => {
       const [signedOut, cooling] = yield* api.readAccounts(config);
       expect(signedOut?.usageLimits.unavailable?.message).toBe("Signed out. Sign in again.");
       expect(cooling?.usageLimits.unavailable?.message).not.toContain("Signed out");
+    }),
+  );
+
+  it.effect("reads Grok billing and Antigravity quota through the hub", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { id: "xai-a.json", auth_index: "x", provider: "xai", email: "x@example.com" },
+          {
+            id: "antigravity-a.json",
+            auth_index: "g",
+            provider: "antigravity",
+            email: "g@example.com",
+            project_id: "proj-1",
+          },
+        ],
+        upstream: (request) =>
+          request.url?.includes("grok.com")
+            ? {
+                status: 200,
+                body: {
+                  config: {
+                    creditUsagePercent: 40,
+                    currentPeriod: {
+                      type: "USAGE_PERIOD_TYPE_WEEKLY",
+                      end: "2099-01-01T00:00:00Z",
+                    },
+                  },
+                },
+              }
+            : request.url?.startsWith("https://daily-cloudcode-pa.googleapis.com")
+              ? { status: 503, body: {} }
+              : {
+                  status: 200,
+                  body: {
+                    groups: [
+                      {
+                        displayName: "Gemini",
+                        buckets: [
+                          {
+                            bucketId: "g5h",
+                            displayName: "5 hours",
+                            window: "5h",
+                            remainingFraction: 0.25,
+                            resetTime: "2099-01-01T00:00:00Z",
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+      });
+      const api = yield* test.api;
+      const [grok, antigravity] = yield* api.readAccounts(config);
+      expect(grok).toMatchObject({
+        driver: "grok",
+        email: "x@example.com",
+        usageLimits: { windows: [{ kind: "weekly", usedPercent: 40 }] },
+      });
+      expect(antigravity).toMatchObject({
+        driver: "antigravity",
+        usageLimits: {
+          windows: [{ id: "g5h", kind: "session", label: "5 hours", usedPercent: 75 }],
+        },
+      });
+      const quotaCall = test.requests.find((request) =>
+        request.body?.url?.includes("cloudcode-pa"),
+      );
+      expect(quotaCall?.body?.method).toBe("POST");
+      expect(quotaCall?.body?.data).toBe('{"project":"proj-1"}');
     }),
   );
 

@@ -56,6 +56,8 @@ import {
 /** A login in progress inside the hub. */
 export interface AccountHubOAuthLogin {
   readonly url: string;
+  /** Set for device flows: the code to enter at `url`. */
+  readonly userCode?: string;
   /** Finishes a login whose redirect could not reach the hub, from the pasted URL. */
   readonly complete: (redirectUrl: string) => Effect.Effect<void, AccountHubError>;
   /** Resolves once the hub saved the account. */
@@ -456,6 +458,7 @@ const make = Effect.gen(function* () {
     const login = yield* withHttp(Management.startOAuthLogin(hub, provider, options.localCallback));
     return {
       url: login.url,
+      ...(login.flow === "device" && login.user_code ? { userCode: login.user_code } : {}),
       complete: (redirectUrl: string) =>
         withHttp(Management.completeOAuthLogin(hub, provider, redirectUrl)),
       await: withHttp(Management.awaitOAuthLogin(hub, login.state)).pipe(

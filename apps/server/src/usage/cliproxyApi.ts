@@ -16,7 +16,8 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import { codexPlanLabel } from "../provider/Layers/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/Layers/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/Layers/claudeUsageLimits.ts";
-import { makeUnavailableUsageLimits } from "../provider/providerUsageLimits.ts";
+import { makeUnavailableUsageLimits, makeUsageLimits } from "../provider/providerUsageLimits.ts";
+import { grokUsageResponseToLimits } from "../provider/Layers/grokUsageLimits.ts";
 
 const AuthFile = Schema.Struct({
   id: Schema.String,
@@ -27,6 +28,7 @@ const AuthFile = Schema.Struct({
   status: Schema.optional(Schema.String),
   unavailable: Schema.optional(Schema.Boolean),
   next_retry_after: Schema.optional(Schema.Unknown),
+  project_id: Schema.optional(Schema.String),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -102,11 +104,18 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 
 // signalbox: accounts from Signalbox's Sign in with ChatGPT plugin run Codex too.
 const CHATGPT_SIWC = "chatgpt-siwc";
-const SUPPORTED_PROVIDERS = new Set(["codex", "claude", CHATGPT_SIWC]);
+const SUPPORTED_PROVIDERS = new Set(["codex", "claude", CHATGPT_SIWC, "xai", "antigravity"]);
 
-// Codex and Sign in with ChatGPT accounts both run Codex; everything else listed is Claude.
+// signalbox: the hub's provider names, mapped to the T3 harness that runs each account.
+const DRIVER_BY_PROVIDER: Record<string, string> = {
+  codex: "codex",
+  [CHATGPT_SIWC]: "codex",
+  claude: "claudeAgent",
+  xai: "grok",
+  antigravity: "antigravity",
+};
 const driverForProvider = (provider: string) =>
-  ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : "codex");
+  ProviderDriverKind.make(DRIVER_BY_PROVIDER[provider] ?? "codex");
 
 // The hub marks an account whose refresh token died as an error with no retry time;
 // a cooldown always carries `next_retry_after`.
@@ -129,6 +138,78 @@ const notProbed = (
     ...(externalUsage ? { externalUsage } : {}),
   },
 });
+
+const GROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const GrokUsage = Schema.Struct({
+  config: Schema.optional(
+    Schema.Struct({
+      creditUsagePercent: Schema.optional(Schema.Number),
+      currentPeriod: Schema.optional(
+        Schema.Struct({
+          type: Schema.optional(Schema.String),
+          end: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
+});
+const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsage));
+
+// The quota host and client identity CLIProxyAPI's own Management Center uses.
+const ANTIGRAVITY_QUOTA_URLS = [
+  "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+  "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
+  "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+];
+const ANTIGRAVITY_USER_AGENT = "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)";
+const AntigravityQuota = Schema.Struct({
+  groups: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        displayName: Schema.optional(Schema.String),
+        buckets: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              bucketId: Schema.optional(Schema.String),
+              displayName: Schema.optional(Schema.String),
+              window: Schema.optional(Schema.String),
+              resetTime: Schema.optional(Schema.String),
+              remainingFraction: Schema.optional(Schema.Union([Schema.Number, Schema.String])),
+            }),
+          ),
+        ),
+      }),
+    ),
+  ),
+});
+const decodeAntigravityQuota = Schema.decodeUnknownEffect(Schema.fromJsonString(AntigravityQuota));
+
+/** One window per quota bucket, labelled by its group when there are several. */
+export function antigravityQuotaToLimits(quota: typeof AntigravityQuota.Type, checkedAt: string) {
+  const groups = quota.groups ?? [];
+  const windows = groups.flatMap((group, groupIndex) =>
+    (group.buckets ?? []).flatMap((bucket, bucketIndex) => {
+      const remaining = Number(bucket.remainingFraction);
+      if (!Number.isFinite(remaining)) return [];
+      const name = bucket.displayName ?? bucket.window ?? "Quota";
+      const window = (bucket.window ?? "").toLowerCase();
+      return [
+        {
+          id: bucket.bucketId ?? `${groupIndex}:${bucketIndex}`,
+          kind: window.includes("week")
+            ? ("weekly" as const)
+            : window.includes("h") || window.includes("session")
+              ? ("session" as const)
+              : ("other" as const),
+          label: groups.length > 1 && group.displayName ? `${group.displayName} · ${name}` : name,
+          usedPercent: Math.round(Math.max(0, Math.min(1, 1 - remaining)) * 100),
+          ...(bucket.resetTime ? { resetsAt: bucket.resetTime } : {}),
+        },
+      ];
+    }),
+  );
+  return makeUsageLimits({ checkedAt, windows });
+}
 
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
@@ -191,17 +272,25 @@ export const makeCliproxyApi = Effect.gen(function* () {
     data?: unknown,
   ) {
     const header =
-      account.provider === "codex"
-        ? {
-            Authorization: "Bearer $TOKEN$",
-            "Content-Type": "application/json",
-            "OpenAI-Beta": "codex-1",
-            Originator: "Codex Desktop",
-            ...(account.id_token?.chatgpt_account_id
-              ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
-              : {}),
-          }
-        : { Authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" };
+      account.provider === "xai"
+        ? { Authorization: "Bearer $TOKEN$" }
+        : account.provider === "antigravity"
+          ? {
+              Authorization: "Bearer $TOKEN$",
+              "Content-Type": "application/json",
+              "User-Agent": ANTIGRAVITY_USER_AGENT,
+            }
+          : account.provider === "codex"
+            ? {
+                Authorization: "Bearer $TOKEN$",
+                "Content-Type": "application/json",
+                "OpenAI-Beta": "codex-1",
+                Originator: "Codex Desktop",
+                ...(account.id_token?.chatgpt_account_id
+                  ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
+                  : {}),
+              }
+            : { Authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" };
     const raw = yield* management(config, "api-call", {
       body: {
         auth_index: account.auth_index,
@@ -248,6 +337,30 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ...(account.email ? { email: account.email } : {}),
     };
     const read = Effect.gen(function* () {
+      // signalbox: Grok and Antigravity accounts the hub pools.
+      if (account.provider === "xai") {
+        const body = yield* apiCall(config, account, GROK_BILLING_URL);
+        return {
+          ...base,
+          plan: "Grok",
+          usageLimits: grokUsageResponseToLimits(yield* decodeGrokUsage(body), checkedAt),
+        };
+      }
+      if (account.provider === "antigravity") {
+        if (!account.project_id) {
+          return yield* new UsageLimitSourceError({ detail: "No Antigravity project." });
+        }
+        const data = { project: account.project_id };
+        // Google serves the quota from one of several hosts; the first that answers wins.
+        const body = yield* Effect.firstSuccessOf(
+          ANTIGRAVITY_QUOTA_URLS.map((url) => apiCall(config, account, url, data)),
+        );
+        return {
+          ...base,
+          plan: "Antigravity",
+          usageLimits: antigravityQuotaToLimits(yield* decodeAntigravityQuota(body), checkedAt),
+        };
+      }
       if (account.provider === "claude") {
         const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
         const usage = yield* decodeClaudeUsage(body);

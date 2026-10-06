@@ -29,9 +29,16 @@ export interface AccountHubEndpoint {
   readonly clientKey: string;
 }
 
-export type AccountHubOAuthProvider = "claude";
+/** Logins the hub runs itself. ChatGPT is not here: Signalbox runs Sign in with ChatGPT. */
+export type AccountHubOAuthProvider = "claude" | "xai" | "antigravity";
 
-const AuthUrl = Schema.Struct({ url: Schema.String, state: Schema.String });
+const AuthUrl = Schema.Struct({
+  url: Schema.String,
+  state: Schema.String,
+  // Device flows (xAI) return a code the user enters on the provider's page.
+  flow: Schema.optional(Schema.String),
+  user_code: Schema.optional(Schema.String),
+});
 const Status = Schema.Struct({
   status: Schema.String,
   error: Schema.optional(Schema.String),
