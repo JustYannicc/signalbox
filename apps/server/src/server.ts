@@ -22,6 +22,9 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
+import * as AutomationHttp from "./workflows/http.ts"; // signalbox: automations
+import * as AutomationPush from "./workflows/AutomationPush.ts"; // signalbox: automations
+import * as AutomationSkill from "./workflows/skill/installSkill.ts"; // signalbox: automations
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
@@ -509,6 +512,8 @@ const ProviderInstallationRefreshLive = Layer.effectDiscard(
 
 const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   AgentAwarenessRelay.layer,
+  AutomationPush.layer, // signalbox: automations
+  AutomationSkill.layer, // signalbox: automations
   ThreadSettlementWorkerLive,
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
@@ -648,6 +653,7 @@ const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     AccountHttp.layer, // signalbox: accounts routes
+    AutomationHttp.layer, // signalbox: automation webhooks
     assetRouteLayer,
     attachmentUploadRouteLayer,
     deviceHubProxyRouteLayer,

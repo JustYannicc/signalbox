@@ -1,3 +1,5 @@
+import { AUTOMATION_MCP_TOOLS } from "./automationMcpTools.ts"; // signalbox: automations
+
 export type T3McpToolLogo = "t3-code";
 
 export interface T3McpToolPresentation {
@@ -58,7 +60,8 @@ export type T3McpToolSummaryAction =
   | "watch-pr"
   | "unwatch-pr"
   | "browser"
-  | "device";
+  | "device"
+  | "automation"; // signalbox: automations
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -287,6 +290,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "attachment-discard",
   ),
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
+  ...AUTOMATION_MCP_TOOLS, // signalbox: automations
 };
 
 /**

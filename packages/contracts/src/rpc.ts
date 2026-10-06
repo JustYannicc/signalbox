@@ -315,6 +315,7 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import { AUTOMATION_WS_METHODS, AutomationRpcs } from "./automationRpc.ts"; // signalbox: automations
 import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
@@ -533,6 +534,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  ...AUTOMATION_WS_METHODS, // signalbox: automations
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1874,4 +1876,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
+  ...AutomationRpcs, // signalbox: automations
 ).middleware(RpcScopeAuthorization);

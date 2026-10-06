@@ -33,8 +33,10 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as ChatAutomationsIndexRouteImport } from './routes/_chat.automations.index'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatAutomationsEnvironmentIdAutomationIdRouteImport } from './routes/_chat.automations.$environmentId.$automationId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -156,6 +158,11 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatAutomationsIndexRoute = ChatAutomationsIndexRouteImport.update({
+  id: '/automations/',
+  path: '/automations/',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -165,6 +172,12 @@ const ChatEnvironmentIdThreadIdRoute =
   ChatEnvironmentIdThreadIdRouteImport.update({
     id: '/$environmentId/$threadId',
     path: '/$environmentId/$threadId',
+    getParentRoute: () => ChatRoute,
+  } as any)
+const ChatAutomationsEnvironmentIdAutomationIdRoute =
+  ChatAutomationsEnvironmentIdAutomationIdRouteImport.update({
+    id: '/automations/$environmentId/$automationId',
+    path: '/automations/$environmentId/$automationId',
     getParentRoute: () => ChatRoute,
   } as any)
 
@@ -194,6 +207,8 @@ export interface FileRoutesByFullPath {
   '/settings/storage': typeof SettingsStorageRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/automations/': typeof ChatAutomationsIndexRoute
+  '/automations/$environmentId/$automationId': typeof ChatAutomationsEnvironmentIdAutomationIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -221,6 +236,8 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/automations': typeof ChatAutomationsIndexRoute
+  '/automations/$environmentId/$automationId': typeof ChatAutomationsEnvironmentIdAutomationIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -250,6 +267,8 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/_chat/automations/': typeof ChatAutomationsIndexRoute
+  '/_chat/automations/$environmentId/$automationId': typeof ChatAutomationsEnvironmentIdAutomationIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -279,6 +298,8 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/automations/'
+    | '/automations/$environmentId/$automationId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -306,6 +327,8 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/automations'
+    | '/automations/$environmentId/$automationId'
   id:
     | '__root__'
     | '/_chat'
@@ -334,6 +357,8 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/_chat/automations/'
+    | '/_chat/automations/$environmentId/$automationId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -517,6 +542,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/automations/': {
+      id: '/_chat/automations/'
+      path: '/automations'
+      fullPath: '/automations/'
+      preLoaderRoute: typeof ChatAutomationsIndexRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -531,6 +563,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/automations/$environmentId/$automationId': {
+      id: '/_chat/automations/$environmentId/$automationId'
+      path: '/automations/$environmentId/$automationId'
+      fullPath: '/automations/$environmentId/$automationId'
+      preLoaderRoute: typeof ChatAutomationsEnvironmentIdAutomationIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
   }
 }
 
@@ -539,6 +578,8 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatAutomationsIndexRoute: typeof ChatAutomationsIndexRoute
+  ChatAutomationsEnvironmentIdAutomationIdRoute: typeof ChatAutomationsEnvironmentIdAutomationIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -546,6 +587,9 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatAutomationsIndexRoute: ChatAutomationsIndexRoute,
+  ChatAutomationsEnvironmentIdAutomationIdRoute:
+    ChatAutomationsEnvironmentIdAutomationIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

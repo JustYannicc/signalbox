@@ -607,6 +607,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
+  // signalbox: automations
+  {
+    id: "connected-services",
+    title: "Connected services",
+    to: "/settings/integrations",
+    searchTerms: ["executor automations w.call accounts gmail github api key connect"],
+  },
   {
     id: "device-hosts",
     title: "Device hosts",

@@ -39,6 +39,8 @@ import {
   resolveT3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
 
+import { AutomationToolkit } from "../../workflows/mcp/tools.ts"; // signalbox: automations
+
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
@@ -54,6 +56,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     PreviewControlsToolkit,
     DeviceToolkit,
     PullRequestsToolkit,
+    AutomationToolkit, // signalbox: automations
   ]) {
     for (const tool of Object.values(toolkit.tools)) {
       expect(names.has(tool.name)).toBe(false);

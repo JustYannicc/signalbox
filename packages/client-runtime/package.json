@@ -119,6 +119,62 @@
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
     },
+    "./automations/connectedServices": {
+      "types": "./src/automations/connectedServices.ts",
+      "default": "./src/automations/connectedServices.ts"
+    },
+    "./automations/layout": {
+      "types": "./src/automations/layout.ts",
+      "default": "./src/automations/layout.ts"
+    },
+    "./automations/ask": {
+      "types": "./src/automations/ask.ts",
+      "default": "./src/automations/ask.ts"
+    },
+    "./automations/diagram": {
+      "types": "./src/automations/diagram.ts",
+      "default": "./src/automations/diagram.ts"
+    },
+    "./automations/labels": {
+      "types": "./src/automations/labels.ts",
+      "default": "./src/automations/labels.ts"
+    },
+    "./automations/list": {
+      "types": "./src/automations/list.ts",
+      "default": "./src/automations/list.ts"
+    },
+    "./automations/prompts": {
+      "types": "./src/automations/prompts.ts",
+      "default": "./src/automations/prompts.ts"
+    },
+    "./automations/runState": {
+      "types": "./src/automations/runState.ts",
+      "default": "./src/automations/runState.ts"
+    },
+    "./automations/services": {
+      "types": "./src/automations/services.ts",
+      "default": "./src/automations/services.ts"
+    },
+    "./automations/status": {
+      "types": "./src/automations/status.ts",
+      "default": "./src/automations/status.ts"
+    },
+    "./automations/triggers": {
+      "types": "./src/automations/triggers.ts",
+      "default": "./src/automations/triggers.ts"
+    },
+    "./automations/sourceDiff": {
+      "types": "./src/automations/sourceDiff.ts",
+      "default": "./src/automations/sourceDiff.ts"
+    },
+    "./automations/runs": {
+      "types": "./src/automations/runs.ts",
+      "default": "./src/automations/runs.ts"
+    },
+    "./state/automations": {
+      "types": "./src/state/automations.ts",
+      "default": "./src/state/automations.ts"
+    },
     "./state/auth": {
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
@@ -383,6 +439,7 @@
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "diff": "8.0.3",
     "effect": "catalog:",
     "mdast-util-directive": "^3.1.0",
     "micromark-extension-directive": "^4.0.0",

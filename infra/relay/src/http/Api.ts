@@ -1448,7 +1448,7 @@ type CatchTagCases<E, Cases> = {
   ) => Effect.Effect<never, MappedTagError<Cases>>;
 } & (unknown extends E ? {} : { readonly [K in Exclude<keyof Cases, TaggedErrorTag<E>>]: never });
 
-function mapErrorTags<
+export function mapErrorTags<
   E,
   Cases extends MapErrorTagCases<E> &
     (unknown extends E ? {} : { readonly [K in Exclude<keyof Cases, TaggedErrorTag<E>>]: never }),

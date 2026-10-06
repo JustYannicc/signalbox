@@ -24,6 +24,7 @@ import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { WorkflowEngine } from "../../../workflows/WorkflowEngine.ts"; // signalbox: automations
 
 const StubServicesLive = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -38,6 +39,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(WorkflowEngine)({ validate: () => ({ ok: true, graph: { nodes: [] } }) }), // signalbox: automations
 );
 
 const ToolsListPayload = Schema.fromJsonString(

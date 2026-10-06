@@ -51,6 +51,8 @@ import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.t
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
 import { layer as scheduledTaskServiceLayer } from "../scheduledTasks/ScheduledTaskService.ts";
+import * as WorkflowEngine from "../workflows/WorkflowEngine.ts"; // signalbox: automations
+import * as AutomationConnections from "../workflows/connectionSettings.ts"; // signalbox: automations
 
 /** The shared application event log and its command receipts. */
 export const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
@@ -314,6 +316,12 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   threadLaunchProvided,
   threadLifecycleProvided,
   scheduledTaskProvided,
+  WorkflowEngine.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(threadLaunchProvided, threadManagementProvided, ProjectServiceLayerLive),
+    ),
+  ), // signalbox: automations
+  AutomationConnections.layer, // signalbox: automations
   UsageLimitRecoveryWorker.workerLive.pipe(
     Layer.provide(Layer.mergeAll(projectionStoreLayer, threadManagementProvided)),
   ),

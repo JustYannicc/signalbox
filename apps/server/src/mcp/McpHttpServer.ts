@@ -58,6 +58,8 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
+import { AutomationToolkit } from "../workflows/mcp/tools.ts"; // signalbox: automations
+import { AutomationToolkitHandlersLive } from "../workflows/mcp/handlers.ts"; // signalbox: automations
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -726,4 +728,5 @@ export const layer = Layer.mergeAll(
   WorktreeToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
+  McpServer.toolkit(AutomationToolkit).pipe(Layer.provide(AutomationToolkitHandlersLive)), // signalbox: automations
 ).pipe(Layer.provideMerge(McpTransportLive));

@@ -119,6 +119,8 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as WorkflowEngine from "./workflows/WorkflowEngine.ts"; // signalbox: automations
+import { automationRpcHandlers } from "./workflows/rpcHandlers.ts"; // signalbox: automations
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1216,6 +1218,7 @@ const makeWsRpcLayer = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const automations = yield* WorkflowEngine.WorkflowEngine; // signalbox: automations
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2081,6 +2084,7 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "scheduledTasks",
             "scheduled_task.id": input.id,
           }),
+        ...automationRpcHandlers(automations), // signalbox: automations
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {
             "rpc.aggregate": "server",

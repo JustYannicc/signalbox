@@ -36,6 +36,8 @@ import {
   tokenApi,
   withoutCapturedParentSpan,
 } from "./http/Api.ts";
+import { automationNotificationsApi } from "./http/automationNotificationsApi.ts"; // signalbox: automations
+import * as AutomationNotifications from "./agentActivity/AutomationNotifications.ts"; // signalbox: automations
 import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
 import { makeRelayTraceLayer, RelayObservability } from "./observability.ts";
 import * as DeliveryAttempts from "./agentActivity/DeliveryAttempts.ts";
@@ -105,6 +107,7 @@ const relayApiLayer = Layer.mergeAll(
   tokenApi,
   dpopClientApi,
   serverApi,
+  automationNotificationsApi, // signalbox: automations
 );
 
 const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
@@ -222,7 +225,7 @@ export const ApiLive = Api.make(
 
     const runtimeLayer = Layer.empty.pipe(
       Layer.provideMerge(MobileRegistrations.layer),
-      Layer.provideMerge(AgentActivityPublisher.layer),
+      Layer.provideMerge(Layer.merge(AgentActivityPublisher.layer, AutomationNotifications.layer)), // signalbox: automations
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
       Layer.provideMerge(

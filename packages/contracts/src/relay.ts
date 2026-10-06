@@ -15,6 +15,8 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { RelayAutomationNotificationPublishRequest } from "./relayAutomationNotification.ts"; // signalbox: automations
+export * from "./relayAutomationNotification.ts"; // signalbox: automations
 
 export const RelayAgentAwarenessPlatform = Schema.Literals(["ios", "android"]);
 export type RelayAgentAwarenessPlatform = typeof RelayAgentAwarenessPlatform.Type;
@@ -1175,6 +1177,23 @@ const RelayServerGroup = HttpApiGroup.make("server")
   .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
   .middleware(RelayEnvironmentAuth);
 
+// signalbox: automations. Its own group so the relay handler lives in a fork module.
+const RelayAutomationNotificationGroup = HttpApiGroup.make("automationNotifications")
+  .add(
+    HttpApiEndpoint.post(
+      "publishAutomationNotification",
+      "/v1/environments/:environmentId/automation-notifications",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: RelayAutomationNotificationPublishRequest,
+        success: RelayPublishResponse,
+        error: RelayAgentActivityPublishErrors,
+      },
+    ).annotate(OpenApi.Summary, "Send an automation notification"),
+  )
+  .annotate(OpenApi.Description, "Environment-authenticated automation alerts.")
+  .middleware(RelayEnvironmentAuth);
+
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
@@ -1184,6 +1203,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayTokenGroup,
     RelayDpopClientGroup,
     RelayServerGroup,
+    RelayAutomationNotificationGroup, // signalbox: automations
   )
   .annotate(OpenApi.Title, "Signalbox Relay API")
   .annotate(OpenApi.Version, "1.0.0")
