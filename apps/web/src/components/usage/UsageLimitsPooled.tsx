@@ -136,47 +136,53 @@ function PoolSection({
           {pool.accounts.length} {pool.accounts.length === 1 ? "account" : "accounts"}
         </span>
       </h2>
-      <div className="flex min-w-0 flex-col gap-4">
-        {windows.map((window, windowIndex) => {
-          const details =
-            pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-          return (
-            <div
-              key={`${window.kind}:${window.id}`}
-              className={cn(windowIndex > 0 && "border-t border-border/60 pt-4")}
-            >
-              <PoolWindowSummary
-                pool={window}
-                color={color}
-                now={now}
-                label={details?.label}
-                description={details?.description}
-              />
-            </div>
-          );
-        })}
-      </div>
-      <dl className="flex flex-col gap-1 border-t border-border/60 pt-3 text-xs">
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="shrink-0 text-muted-foreground">Next reset</dt>
-          <dd className="min-w-0 text-end text-foreground tabular-nums">
-            {summary.nextReset
-              ? `${summary.nextReset.at <= now ? "now" : formatDuration(summary.nextReset.at - now)} · +${summary.nextReset.restoresPercent}%${windows.length > 1 ? ` ${nextResetWindowLabel}` : ""}`
-              : "—"}
-          </dd>
-        </div>
-        {summary.bankedResets.availableCount > 0 ? (
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="shrink-0 text-muted-foreground">Banked resets</dt>
-            <dd className="min-w-0 text-end text-foreground tabular-nums">
-              {summary.bankedResets.availableCount}
-              {summary.bankedResets.nextExpiresAt
-                ? ` · first expires in ${formatDuration(Date.parse(summary.bankedResets.nextExpiresAt) - now)}`
-                : ""}
-            </dd>
+      {windows.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No limits reported.</p>
+      ) : (
+        <>
+          <div className="flex min-w-0 flex-col gap-4">
+            {windows.map((window, windowIndex) => {
+              const details =
+                pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+              return (
+                <div
+                  key={`${window.kind}:${window.id}`}
+                  className={cn(windowIndex > 0 && "border-t border-border/60 pt-4")}
+                >
+                  <PoolWindowSummary
+                    pool={window}
+                    color={color}
+                    now={now}
+                    label={details?.label}
+                    description={details?.description}
+                  />
+                </div>
+              );
+            })}
           </div>
-        ) : null}
-      </dl>
+          <dl className="flex flex-col gap-1 border-t border-border/60 pt-3 text-xs">
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="shrink-0 text-muted-foreground">Next reset</dt>
+              <dd className="min-w-0 text-end text-foreground tabular-nums">
+                {summary.nextReset
+                  ? `${summary.nextReset.at <= now ? "now" : formatDuration(summary.nextReset.at - now)} · +${summary.nextReset.restoresPercent}%${windows.length > 1 ? ` ${nextResetWindowLabel}` : ""}`
+                  : "—"}
+              </dd>
+            </div>
+            {summary.bankedResets.availableCount > 0 ? (
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="shrink-0 text-muted-foreground">Banked resets</dt>
+                <dd className="min-w-0 text-end text-foreground tabular-nums">
+                  {summary.bankedResets.availableCount}
+                  {summary.bankedResets.nextExpiresAt
+                    ? ` · first expires in ${formatDuration(Date.parse(summary.bankedResets.nextExpiresAt) - now)}`
+                    : ""}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </>
+      )}
     </section>
   );
 }
