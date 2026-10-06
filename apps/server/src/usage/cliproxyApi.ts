@@ -20,6 +20,12 @@ import { makeUnavailableUsageLimits, makeUsageLimits } from "../provider/provide
 import { grokUsageResponseToLimits } from "../provider/Layers/grokUsageLimits.ts";
 import { isSignedOutAuthFile } from "../accountHub/accountHubManagement.ts";
 import {
+  HubProviderRateLimited,
+  RATE_LIMITED_DETAIL,
+  isHubProviderRateLimited,
+  makeHubProbeCache,
+} from "./hubProbeCache.ts";
+import {
   HUB_CLAUDE_HEADERS,
   HUB_CLAUDE_USAGE_URL,
   consumeHubClaude,
@@ -233,6 +239,9 @@ export function creditRedeemRequestId(accountId: string, creditId: string): stri
 }
 
 export const makeCliproxyApi = Effect.gen(function* () {
+  const probes = yield* makeHubProbeCache; // signalbox
+  const probeKey = (config: UsageLimitSourceConfig, accountId: string) =>
+    `${config.url}:${accountId}`;
   const client = yield* HttpClient.HttpClient;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
@@ -306,6 +315,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       },
     });
     const response = yield* decodeApiResponse(raw);
+    if (response.status_code === 429) {
+      return yield* new HubProviderRateLimited({ detail: RATE_LIMITED_DETAIL });
+    }
     if (response.status_code < 200 || response.status_code >= 300) {
       return yield* new UsageLimitSourceError({
         detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
@@ -448,15 +460,19 @@ export const makeCliproxyApi = Effect.gen(function* () {
         },
       };
     });
-    return yield* read.pipe(
-      Effect.orElseSucceed(() => ({
-        ...base,
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
+    return yield* probes.read(probeKey(config, account.id), read).pipe(
+      Effect.catch((error) =>
+        Effect.succeed({
+          ...base,
+          usageLimits: makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: isHubProviderRateLimited(error)
+              ? error.detail
+              : "The hub could not read this account's usage.",
+          }),
         }),
-      })),
+      ),
     );
   });
 
@@ -520,6 +536,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           }),
       ),
     );
+    yield* probes.expire(probeKey(config, accountId)); // signalbox: a resumed account reads fresh
   });
 
   const consumeCodex = Effect.fn("CliproxyApi.consumeCodex")(function* (
@@ -561,14 +578,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
           detail: "The hub account is missing or disabled.",
         });
       }
-      const outcome =
+      const outcome = yield* (
         account.provider === "claude"
-          ? yield* consumeHubClaude(
+          ? consumeHubClaude(
               (url, data) => apiCall(config, account, url, data),
               creditId,
               creditRedeemRequestId(account.id, creditId),
             )
-          : yield* consumeCodex(config, account, creditId);
+          : consumeCodex(config, account, creditId)
+      ).pipe(
+        // The credit may be spent even when the answer is lost; the next read checks.
+        Effect.ensuring(probes.expire(probeKey(config, account.id))),
+      );
       if (outcome !== "reset" && outcome !== "alreadyRedeemed") return { outcome };
       const cleared = yield* management(config, "reset-quota", {
         body: { auth_index: account.auth_index },
@@ -588,7 +609,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
         isUsageLimitSourceError(error)
           ? error
           : new UsageLimitSourceError({
-              detail: "The hub returned an unexpected reset-credit response.",
+              detail: isHubProviderRateLimited(error)
+                ? "The provider is rate limiting requests. Try again in a few minutes."
+                : "The hub returned an unexpected reset-credit response.",
             }),
       ),
     );
