@@ -450,7 +450,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       yield* initRepoWithCommit(tmp);
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
       const scopeId = CheckpointScopeId.make("shared-v2-scope");
-      const signalboxRef = checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 0 });
+      const signalboxRef = yield* checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 0 });
       const t3Ref = CheckpointRef.make(signalboxRef.replace("refs/signalbox/", "refs/t3/"));
       expect(signalboxRef).toContain("refs/signalbox/orchestration-v2/checkpoints/");
 

@@ -7,6 +7,7 @@
  *
  * @module accountHub/hubCredentials
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- file names hash synchronously.
 import * as NodeCrypto from "node:crypto";
 
 import type { ChatGptTransferredProfile } from "@t3tools/contracts";

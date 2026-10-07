@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- PKCE verifier and challenge are built synchronously.
 import * as NodeCrypto from "node:crypto";
 
 import {
