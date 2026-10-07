@@ -138,19 +138,33 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const update: Sections["Service"]["update"] = (input) =>
-    validateName(input.name).pipe(
+  const update: Sections["Service"]["update"] = (input) => {
+    const validName: Effect.Effect<string | undefined, SectionInvalidNameError> =
+      input.name === undefined ? Effect.succeed(undefined) : validateName(input.name);
+    return validName.pipe(
       Effect.flatMap((name) =>
         store.mutate("update", (transaction) =>
           Effect.gen(function* () {
             const current = yield* requiredSection(transaction, input.id);
-            if (current.name === name) return false;
-            yield* transaction.renameSection(input.id, name);
-            return true;
+            let changed = false;
+            if (name !== undefined && current.name !== name) {
+              yield* transaction.renameSection(input.id, name);
+              changed = true;
+            }
+            // signalbox: the pool new threads in this section start on; null inherits again.
+            if (
+              input.defaultPoolId !== undefined &&
+              (current.defaultPoolId ?? null) !== input.defaultPoolId
+            ) {
+              yield* transaction.setSectionDefaultPool(input.id, input.defaultPoolId);
+              changed = true;
+            }
+            return changed;
           }),
         ),
       ),
     );
+  };
 
   const move: Sections["Service"]["move"] = (input: SectionMoveInput) =>
     store.mutate("move-section", (transaction) =>

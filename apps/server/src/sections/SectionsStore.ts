@@ -1,4 +1,5 @@
 import { ProjectId } from "@t3tools/contracts";
+import type { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type {
   ProjectSectionPlacement,
   Section,
@@ -23,6 +24,7 @@ type SectionRow = {
   readonly name: string;
   readonly parentId: string | null;
   readonly position: number;
+  readonly defaultPoolId: string | null;
 };
 
 type PlacementRow = {
@@ -46,6 +48,10 @@ export interface SectionsTransaction {
   ) => Effect.Effect<ReadonlyArray<ProjectSectionPlacement>, SqlError.SqlError>;
   readonly insertSection: (section: Section) => Effect.Effect<void, SqlError.SqlError>;
   readonly renameSection: (id: SectionId, name: string) => Effect.Effect<void, SqlError.SqlError>;
+  readonly setSectionDefaultPool: (
+    id: SectionId,
+    poolId: AccountPoolId | null,
+  ) => Effect.Effect<void, SqlError.SqlError>;
   readonly setSectionOrder: (
     parentId: SectionId | null,
     sectionIds: ReadonlyArray<SectionId>,
@@ -62,6 +68,7 @@ const toSection = (row: SectionRow): Section => ({
   name: row.name,
   parentId: row.parentId as SectionId | null,
   position: row.position,
+  ...(row.defaultPoolId === null ? {} : { defaultPoolId: row.defaultPoolId as AccountPoolId }),
 });
 
 const toPlacement = (row: PlacementRow): ProjectSectionPlacement => ({
@@ -87,6 +94,11 @@ const make = Effect.gen(function* () {
         position INTEGER NOT NULL CHECK (position >= 0)
       )
     `;
+    // Added after sections first shipped, so existing tables gain it here.
+    const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(signalbox_sections)`;
+    if (!columns.some((column) => column.name === "default_pool_id")) {
+      yield* sql`ALTER TABLE signalbox_sections ADD COLUMN default_pool_id TEXT`;
+    }
     yield* sql`
       CREATE INDEX IF NOT EXISTS signalbox_sections_parent_order
       ON signalbox_sections(parent_id, position, id)
@@ -115,7 +127,7 @@ const make = Effect.gen(function* () {
   }).pipe(Effect.mapError((cause) => new SectionStorageError({ operation: "initialize", cause })));
 
   const sections = sql<SectionRow>`
-    SELECT id, name, parent_id AS "parentId", position
+    SELECT id, name, parent_id AS "parentId", position, default_pool_id AS "defaultPoolId"
     FROM signalbox_sections
     ORDER BY COALESCE(parent_id, ''), position, id
   `.pipe(Effect.map((rows) => rows.map(toSection)));
@@ -123,13 +135,13 @@ const make = Effect.gen(function* () {
   const children = (parentId: SectionId | null) =>
     (parentId === null
       ? sql<SectionRow>`
-          SELECT id, name, parent_id AS "parentId", position
+          SELECT id, name, parent_id AS "parentId", position, default_pool_id AS "defaultPoolId"
           FROM signalbox_sections
           WHERE parent_id IS NULL
           ORDER BY position, id
         `
       : sql<SectionRow>`
-          SELECT id, name, parent_id AS "parentId", position
+          SELECT id, name, parent_id AS "parentId", position, default_pool_id AS "defaultPoolId"
           FROM signalbox_sections
           WHERE parent_id = ${parentId}
           ORDER BY position, id
@@ -138,7 +150,7 @@ const make = Effect.gen(function* () {
 
   const section = (id: SectionId) =>
     sql<SectionRow>`
-      SELECT id, name, parent_id AS "parentId", position
+      SELECT id, name, parent_id AS "parentId", position, default_pool_id AS "defaultPoolId"
       FROM signalbox_sections
       WHERE id = ${id}
     `.pipe(Effect.map((rows) => Option.fromUndefinedOr(rows[0]).pipe(Option.map(toSection))));
@@ -203,6 +215,10 @@ const make = Effect.gen(function* () {
     `,
     renameSection: (id, name) =>
       sql`UPDATE signalbox_sections SET name = ${name} WHERE id = ${id}`.pipe(Effect.asVoid),
+    setSectionDefaultPool: (id, poolId) =>
+      sql`UPDATE signalbox_sections SET default_pool_id = ${poolId} WHERE id = ${id}`.pipe(
+        Effect.asVoid,
+      ),
     setSectionOrder,
     setProjectOrder,
     deleteSection: (id) => sql`DELETE FROM signalbox_sections WHERE id = ${id}`.pipe(Effect.asVoid),

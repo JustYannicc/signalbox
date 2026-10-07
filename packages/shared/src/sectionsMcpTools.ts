@@ -22,7 +22,7 @@ export function sectionMcpToolDefinitions(
       "section-chain",
     ),
     t3_section_create: define(["Create", "Creating", "Created", "a section"], "section-create"),
-    t3_section_update: define(["Rename", "Renaming", "Renamed", "a section"], "section-update"),
+    t3_section_update: define(["Update", "Updating", "Updated", "a section"], "section-update"),
     t3_section_move: define(["Move", "Moving", "Moved", "a section"], "section-move"),
     t3_section_delete: define(["Delete", "Deleting", "Deleted", "a section"], "section-delete"),
     t3_project_move_to_section: define(
