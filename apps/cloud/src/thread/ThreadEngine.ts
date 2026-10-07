@@ -151,6 +151,8 @@ export class ThreadEngine extends Context.Service<
         ctx: DecisionContext,
       ) => Effect.Effect<EngineDecision<A>>,
     ) => Effect.Effect<A>;
+    /** The committed projection, read without the lock, for checks that decide nothing. */
+    readonly projection: Effect.Effect<OrchestrationV2ThreadProjection | null>;
     /** Runs one scripted provider step. True while turn work remains. */
     readonly step: Effect.Effect<boolean>;
     readonly hasTurnWork: Effect.Effect<boolean>;
@@ -411,6 +413,11 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const projection: ThreadEngine["Service"]["projection"] = Effect.map(
+    Ref.get(state),
+    (current) => current.thread?.projection ?? null,
+  );
+
   const hasTurnWork: ThreadEngine["Service"]["hasTurnWork"] = Effect.map(
     Ref.get(state),
     (current) => current.thread !== null && hasPendingTurnWork(current.thread.projection),
@@ -463,6 +470,7 @@ const make = Effect.gen(function* () {
     snapshot,
     subscribe,
     apply,
+    projection,
     step,
     hasTurnWork,
     summary,

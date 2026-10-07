@@ -17,6 +17,9 @@ import { HttpClient, HttpClientRequest } from "effect/http";
  * machine (`node apps/server/src/signalbox/runner/main.ts`), reached at `LOCAL_RUNNER_URL`. It
  * only counts under `LOCAL_WORKERD`, so a deployed Worker never calls a URL
  * someone left in its vars.
+ *
+ * Machines hold no provider keys, so a backend is only usable together with a
+ * ModelGateway (`MODEL_GATEWAY_URL`), which every machine is told about.
  */
 
 export interface MachineBackendEnv {
@@ -24,6 +27,8 @@ export interface MachineBackendEnv {
   readonly LOCAL_WORKERD?: string;
   /** A local Runner host, e.g. `http://localhost:8790`. */
   readonly LOCAL_RUNNER_URL?: string;
+  /** The ModelGateway Worker's origin, e.g. `http://127.0.0.1:8788`. */
+  readonly MODEL_GATEWAY_URL?: string;
 }
 
 export class MachineBackendError extends Schema.TaggedError<MachineBackendError>()(
@@ -36,30 +41,49 @@ export class MachineBackend extends Context.Service<
   {
     /** Null when this cloud has no backend, so it cannot run Claude or Codex. */
     readonly ensure:
-      | ((request: MachineEnsureRequest) => Effect.Effect<void, MachineBackendError>)
+      | ((
+          request: Omit<MachineEnsureRequest, "modelGatewayUrl">,
+        ) => Effect.Effect<void, MachineBackendError>)
       | null;
   }
 >()("@signalbox/cloud/thread/runner/MachineBackend") {}
 
-/** The local Runner host's URL, when the environment configures one. */
-export const localRunnerUrl = (env: MachineBackendEnv) =>
-  env.LOCAL_WORKERD === "1" && env.LOCAL_RUNNER_URL !== undefined && env.LOCAL_RUNNER_URL !== ""
-    ? env.LOCAL_RUNNER_URL
-    : null;
+const nonEmpty = (value: string | undefined) =>
+  value === undefined || value === "" ? null : value;
+
+/** The local Runner host and the gateway its harnesses use, when the environment configures both. */
+export const localMachines = (env: MachineBackendEnv) => {
+  const runnerUrl = env.LOCAL_WORKERD === "1" ? nonEmpty(env.LOCAL_RUNNER_URL) : null;
+  const modelGatewayUrl = nonEmpty(env.MODEL_GATEWAY_URL);
+  return runnerUrl === null || modelGatewayUrl === null ? null : { runnerUrl, modelGatewayUrl };
+};
 
 export const layerFromEnv = (env: MachineBackendEnv) =>
   Layer.effect(
     MachineBackend,
     Effect.gen(function* () {
-      const url = localRunnerUrl(env);
-      if (url === null) return MachineBackend.of({ ensure: null });
+      const machines = localMachines(env);
+      if (machines === null) {
+        if (env.LOCAL_WORKERD === "1" && nonEmpty(env.LOCAL_RUNNER_URL) !== null) {
+          yield* Effect.logWarning(
+            "LOCAL_RUNNER_URL is set without MODEL_GATEWAY_URL, so Claude and Codex stay off.",
+          );
+        }
+        return MachineBackend.of({ ensure: null });
+      }
       const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
       return MachineBackend.of({
         ensure: (request) =>
           client
             .execute(
-              HttpClientRequest.post(new URL("/machines/ensure", url)).pipe(
-                HttpClientRequest.bodyText(machineEnsureJson.encode(request), "application/json"),
+              HttpClientRequest.post(new URL("/machines/ensure", machines.runnerUrl)).pipe(
+                HttpClientRequest.bodyText(
+                  machineEnsureJson.encode({
+                    ...request,
+                    modelGatewayUrl: machines.modelGatewayUrl,
+                  }),
+                  "application/json",
+                ),
               ),
             )
             .pipe(

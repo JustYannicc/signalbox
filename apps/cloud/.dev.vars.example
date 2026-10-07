@@ -5,3 +5,7 @@ SESSION_SECRET=
 T3CODE_WORKOS_CLIENT_ID=
 # Optional, but GitHub sign-ins need it to finish email verification.
 T3CODE_WORKOS_API_KEY=
+# Optional: Claude and Codex turns. A local Runner host (see
+# docs/operations/cloud.md) and the ModelGateway that holds the provider keys.
+# LOCAL_RUNNER_URL=http://127.0.0.1:8790
+# MODEL_GATEWAY_URL=http://127.0.0.1:8788

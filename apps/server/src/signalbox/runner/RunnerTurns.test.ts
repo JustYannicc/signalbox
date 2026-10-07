@@ -91,14 +91,15 @@ describe("RunnerTurns", () => {
             threadId,
             adapters: new Map([[instanceId, fake.adapter]]),
             cwd: "/tmp",
+            useModelToken: () => Effect.void,
             emit: (item) => Effect.sync(() => void reported.push(item)),
           });
           yield* Deferred.succeed(fake.loaded, undefined);
-          yield* turns.start(turnFor(1));
+          yield* turns.start(turnFor(1), "token-1");
           yield* Effect.yieldNow;
           // Stopped before the harness reported its turn id, then the next run starts.
           yield* turns.interrupt(RunId.make("run-1"));
-          yield* turns.start(turnFor(2));
+          yield* turns.start(turnFor(2), "token-2");
           yield* Effect.yieldNow;
           yield* Queue.offer(fake.events, providerTurnStarted(1));
           yield* Queue.offer(fake.events, providerTurnStarted(2));
@@ -118,9 +119,10 @@ describe("RunnerTurns", () => {
           threadId,
           adapters: new Map([[instanceId, fake.adapter]]),
           cwd: "/tmp",
+          useModelToken: () => Effect.void,
           emit: (item) => Effect.sync(() => void reported.push(item)),
         });
-        yield* turns.start(turnFor(1));
+        yield* turns.start(turnFor(1), "token-1");
         yield* Effect.yieldNow;
         // A reconnect's welcome says nothing is live any more.
         yield* turns.keepOnly(null);
@@ -129,6 +131,33 @@ describe("RunnerTurns", () => {
 
         expect(fake.calls).toEqual([]);
         expect(reported).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("hands the harness each turn's model token before the turn reaches it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: (token) => Effect.sync(() => void fake.calls.push(`token ${token}`)),
+          emit: () => Effect.void,
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start(turnFor(1), "token-1");
+        for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+        yield* turns.start(turnFor(2), "token-2");
+        for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+
+        expect(fake.calls).toEqual([
+          "token token-1",
+          "start run-1",
+          "token token-2",
+          "start run-2",
+        ]);
       }),
     ),
   );

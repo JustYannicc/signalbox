@@ -46,6 +46,8 @@
       "ignoreDependencies": ["@effect/platform-node-shared", "@t3tools/web"],
     },
     "apps/cloud": {
+      // The ModelGateway Worker's entry, named in `wrangler.model-gateway.jsonc`.
+      "entry": ["src/modelGateway/worker.ts!"],
       // `cloudflare:workers` is a Workers runtime module, not a package.
       "ignoreDependencies": ["cloudflare"],
     },

@@ -131,7 +131,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       case "ack":
         return acknowledge(message.sequence);
       case "turn.start":
-        return turns.start(message.turn);
+        return turns.start(message.turn, message.modelToken);
       case "interrupt":
         return turns.interrupt(message.runId);
       case "end":
