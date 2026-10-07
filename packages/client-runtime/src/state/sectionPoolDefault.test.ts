@@ -11,16 +11,15 @@ import type { SectionId, SectionsSnapshot } from "@t3tools/contracts/sections";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  projectDefaultModelSelectionWithSectionPool,
-  sectionDefaultPoolId,
-} from "./sectionPoolDefault.ts";
+import { sectionDefaultPoolId, sectionPoolModelSelection } from "./sectionPoolDefault.ts";
 
 const provider = (instanceId: string, driver: string, models: ReadonlyArray<string>) =>
   ({
     instanceId: ProviderInstanceId.make(instanceId),
     driver: ProviderDriverKind.make(driver),
     enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
     models: models.map((slug, index) => ({
       slug,
       name: slug,
@@ -66,7 +65,7 @@ const sonnet: ModelSelection = {
   options: [{ id: "effort", value: "high" }],
 };
 
-const settings = (projectOverride?: ModelSelection) => ({
+const settings = (projectOverride?: ModelSelection | null) => ({
   ...DEFAULT_SERVER_SETTINGS,
   defaultModelSelection: sonnet,
   providerInstances: {
@@ -75,17 +74,18 @@ const settings = (projectOverride?: ModelSelection) => ({
     claude_hub_work: hub("claudeAgent", "work"),
     codex_hub_lab: hub("codex", "lab"),
   },
-  projectSettingsOverrides: projectOverride
-    ? { [project]: { defaultModelSelection: projectOverride } }
-    : {},
+  projectSettingsOverrides:
+    projectOverride === undefined ? {} : { [project]: { defaultModelSelection: projectOverride } },
 });
 
 const resolve = (input: {
   readonly sections: ReturnType<typeof section>[];
   readonly sectionId: string | null;
-  readonly projectOverride?: ModelSelection;
+  readonly projectOverride?: ModelSelection | null;
+  readonly selection?: ModelSelection | null;
 }) =>
-  projectDefaultModelSelectionWithSectionPool({
+  sectionPoolModelSelection({
+    selection: input.selection === undefined ? sonnet : input.selection,
     resolved: resolveProjectSettings(settings(input.projectOverride), project),
     snapshot: snapshot(input.sections, input.sectionId),
     projectId: project,
@@ -104,7 +104,7 @@ describe("section pool defaults", () => {
     expect(sectionDefaultPoolId(snapshot(sections, null), project)).toBeNull();
   });
 
-  it("moves the environment default onto the section's pool, keeping model and options", () => {
+  it("moves the starting model onto the section's pool, keeping model and options", () => {
     expect(resolve({ sections: [section("work", null, "work")], sectionId: "work" })).toEqual({
       ...sonnet,
       instanceId: "claude_hub_work",
@@ -118,7 +118,7 @@ describe("section pool defaults", () => {
     });
   });
 
-  it("leaves a project's own default model alone", () => {
+  it("doesn't apply when the project picks its own default model", () => {
     const own: ModelSelection = {
       instanceId: ProviderInstanceId.make("codex_hub"),
       model: "gpt-6-astra",
@@ -129,13 +129,18 @@ describe("section pool defaults", () => {
         sectionId: "work",
         projectOverride: own,
       }),
-    ).toEqual(own);
+    ).toBeNull();
   });
 
-  it("keeps the default when the section has no pool or its pool has no providers", () => {
-    expect(resolve({ sections: [section("plain", null)], sectionId: "plain" })).toEqual(sonnet);
-    expect(resolve({ sections: [section("gone", null, "gone")], sectionId: "gone" })).toEqual(
-      sonnet,
-    );
+  it("still applies when the project's default is Automatic, or nothing else was picked", () => {
+    const work = [section("work", null, "work")];
+    expect(
+      resolve({ sections: work, sectionId: "work", projectOverride: null, selection: null }),
+    ).toEqual({ instanceId: "claude_hub_work", model: "claude-opus-5-5" });
+  });
+
+  it("doesn't apply without a section pool or when the pool has no usable provider", () => {
+    expect(resolve({ sections: [section("plain", null)], sectionId: "plain" })).toBeNull();
+    expect(resolve({ sections: [section("gone", null, "gone")], sectionId: "gone" })).toBeNull();
   });
 });

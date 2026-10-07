@@ -31,7 +31,7 @@ import {
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
-import { readProjectDefaultModelSelection } from "../state/sectionPoolDefault"; // signalbox
+import { draftModelSelection, useSectionPoolModelSelection } from "../state/sectionPoolDefault"; // signalbox
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -59,6 +59,7 @@ export function useNewThreadHandler() {
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
+  const sectionPool = useSectionPoolModelSelection(); // signalbox
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
     return resolveThreadRouteTarget(currentRouteParams);
@@ -136,15 +137,9 @@ export function useNewThreadHandler() {
         project?.id ?? null,
         project,
       );
-      // signalbox: a project without its own default runs on its section's pool.
-      const projectDefaultModelSelection = readProjectDefaultModelSelection({
-        environmentId: projectRef.environmentId,
-        projectId: project?.id ?? null,
-        resolved: projectSettings,
-        providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
-      });
+      const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
       const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
-      const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
+      const resolveUpstreamModelSelectionOverride = (destinationDraftId: DraftId) =>
         resolveNewThreadModelSelectionOverride({
           projectDefaultSelection: projectDefaultModelSelection ?? null,
           carrySelection: carryModelSelection,
@@ -152,6 +147,19 @@ export function useNewThreadHandler() {
             currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
           destinationDraftId,
         });
+      // signalbox: unless the project picks its own default, the thread starts on its section's pool.
+      const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
+        const override = resolveUpstreamModelSelectionOverride(destinationDraftId);
+        return (
+          sectionPool({
+            environmentId: projectRef.environmentId,
+            projectId: project?.id ?? null,
+            selection: override ?? draftModelSelection(getComposerDraft(destinationDraftId)),
+            resolved: projectSettings,
+            providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+          }) ?? override
+        );
+      };
       // The shared resolver owns the priority order. The t3.json read is
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
@@ -437,7 +445,7 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router],
+    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router, sectionPool],
   );
 }
 

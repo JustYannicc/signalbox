@@ -1,8 +1,9 @@
 /**
  * signalbox: section pool defaults. A section may name the pool its projects'
- * new threads run on. The pool chain is composer choice, then the project's
- * own default model, then the nearest section with a pool, then the
- * environment default; this module is the section step.
+ * new threads run on. The pool chain is the project's own default model, then
+ * the nearest section with a pool, then whatever the thread would otherwise
+ * start on (environment default, carried or sticky model); this module is the
+ * section step.
  */
 import type { ModelSelection, ProjectId, ServerProvider } from "@t3tools/contracts";
 import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
@@ -29,10 +30,25 @@ export function sectionDefaultPoolId(
   return null;
 }
 
+/** Whether a provider can take a new thread now. */
+const usable = (provider: ServerProvider) =>
+  provider.enabled &&
+  provider.installed &&
+  provider.availability !== "unavailable" &&
+  provider.auth.status !== "unauthenticated";
+
+/** The provider's default model, preferring built-in models over custom ones. */
+const defaultModel = (provider: ServerProvider) =>
+  (
+    provider.models.find((model) => model.isDefault && !model.isCustom) ??
+    provider.models.find((model) => !model.isCustom) ??
+    provider.models[0]
+  )?.slug;
+
 /**
  * `selection` moved onto the pool: the pool's provider of the same kind with
  * the same model and options, else its first usable provider and that
- * provider's default model. Unchanged when the pool has no usable provider.
+ * provider's default model. Null when the pool has no usable provider.
  */
 export function modelSelectionOnPool(input: {
   readonly selection: ModelSelection | null;
@@ -42,8 +58,7 @@ export function modelSelectionOnPool(input: {
 }): ModelSelection | null {
   const candidates = input.providers.filter(
     (provider) =>
-      provider.enabled &&
-      provider.availability !== "unavailable" &&
+      usable(provider) &&
       hubInstancePoolId(input.providerInstances[provider.instanceId]?.config) === input.poolId,
   );
   const selection = input.selection;
@@ -61,31 +76,33 @@ export function modelSelectionOnPool(input: {
     if (offersModel) return { ...selection, instanceId: sameKind.instanceId };
   }
   const target = sameKind ?? candidates[0];
-  const model = target?.models.find((entry) => entry.isDefault) ?? target?.models[0];
-  return target && model ? { instanceId: target.instanceId, model: model.slug } : selection;
+  const model = target && defaultModel(target);
+  return target && model ? { instanceId: target.instanceId, model } : null;
 }
 
 /**
- * The default model for a new thread in a project: the project's own default
- * when it set one, else the environment default moved onto the pool of the
- * project's nearest section, when one names a pool.
+ * The section step of a new thread's pool: `selection`, the model the thread
+ * would otherwise start on, moved onto the pool of the project's nearest
+ * section. Null when the step doesn't apply: the project set its own default
+ * model, no section names a pool, or the pool has nothing usable.
  */
-export function projectDefaultModelSelectionWithSectionPool(input: {
+export function sectionPoolModelSelection(input: {
+  readonly selection: ModelSelection | null;
   readonly resolved: Pick<ResolvedProjectSettings, "settings" | "sources">;
   readonly snapshot: SectionsSnapshot | null;
   readonly projectId: ProjectId | null;
   readonly providers: ReadonlyArray<ServerProvider>;
 }): ModelSelection | null {
-  const selection = input.resolved.settings.defaultModelSelection;
-  if (input.resolved.sources.defaultModelSelection === "project" && selection !== null) {
-    return selection;
+  const { settings, sources } = input.resolved;
+  if (sources.defaultModelSelection === "project" && settings.defaultModelSelection !== null) {
+    return null;
   }
   const poolId = sectionDefaultPoolId(input.snapshot, input.projectId);
-  if (poolId === null) return selection;
+  if (poolId === null) return null;
   return modelSelectionOnPool({
-    selection,
+    selection: input.selection,
     poolId,
-    providerInstances: input.resolved.settings.providerInstances,
+    providerInstances: settings.providerInstances,
     providers: input.providers,
   });
 }

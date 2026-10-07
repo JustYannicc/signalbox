@@ -15,8 +15,6 @@ import type { SectionNavigationEnvironment } from "./sectionNavigationTypes";
 import { SectionNodeRow, ProjectRow } from "./SectionNavigationRows";
 import { useSectionActions } from "./use-section-actions";
 
-const NO_POOLS: ReadonlyArray<{ readonly id: string; readonly name: string }> = [];
-
 export function SectionNavigationPanel(props: {
   readonly environments: ReadonlyArray<SectionNavigationEnvironment>;
   readonly selectedEnvironmentId: EnvironmentId | null;
@@ -102,10 +100,16 @@ function SectionTreeEnvironment(props: {
   const retrySections = useAtomSet(environmentSections.retry);
   const config = useEnvironmentServerConfig(environmentId);
   const sectionsSupported = config?.environment.capabilities.sections === true;
-  // signalbox: pools a section can send its new threads to.
-  const pools =
-    useEnvironmentQuery(serverEnvironment.accountPoolViewsLive({ environmentId, input: {} }))
-      .data ?? NO_POOLS;
+  // signalbox: pools a section can send its new threads to; names only, so usage updates don't
+  // re-render every row.
+  const poolViews = useEnvironmentQuery(
+    sectionsSupported ? serverEnvironment.accountPoolViewsLive({ environmentId, input: {} }) : null,
+  ).data;
+  const poolKey = JSON.stringify((poolViews ?? []).map((pool) => [pool.id, pool.name]));
+  const pools = useMemo(
+    () => (JSON.parse(poolKey) as Array<[string, string]>).map(([id, name]) => ({ id, name })),
+    [poolKey],
+  );
   const environmentProjects = useMemo(
     () => props.projects.filter((project) => project.environmentId === environmentId),
     [environmentId, props.projects],

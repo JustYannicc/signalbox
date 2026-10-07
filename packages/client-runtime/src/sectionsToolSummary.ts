@@ -22,7 +22,7 @@ export function summarizeSectionToolAction(
     case "section-create":
       return phrase("Created", "create", created);
     case "section-update":
-      return phrase("Renamed", "rename", sections);
+      return phrase("Updated", "update", sections);
     case "section-move":
       return phrase("Moved", "move", sections);
     case "section-delete":

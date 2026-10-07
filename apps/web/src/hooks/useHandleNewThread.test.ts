@@ -173,6 +173,11 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
+vi.mock("../state/sectionPoolDefault", () => ({
+  // signalbox: no section pools in these tests.
+  draftModelSelection: () => null,
+  useSectionPoolModelSelection: () => () => null,
+}));
 vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
