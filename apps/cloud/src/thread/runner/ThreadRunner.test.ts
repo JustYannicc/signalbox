@@ -22,6 +22,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -36,7 +37,7 @@ import * as ThreadEngine from "../ThreadEngine.ts";
 import * as ThreadRunner from "./ThreadRunner.ts";
 
 const owner = { userId: "user_1" };
-const personal = { contextId: "personal" };
+const personal = { contextId: PERSONAL_CONTEXT_ID };
 const threadId = ThreadId.make("thread-claude");
 const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-fable-5-1" };
 const claudeDriver = ProviderDriverKind.make("claudeAgent");
