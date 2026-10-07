@@ -1,8 +1,11 @@
 import {
   type EnvironmentId,
   type ExecutionEnvironmentDescriptor,
+  type OrchestrationProjectShell,
   ORCHESTRATION_PROTOCOL_VERSION,
   type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadShell,
+  ProjectId,
   type ServerAuthDescriptor,
   type ServerConfig,
 } from "@t3tools/contracts";
@@ -10,6 +13,12 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import webPackage from "../../web/package.json" with { type: "json" };
+import {
+  SCRIPTED_DRIVER,
+  SCRIPTED_INSTANCE_ID,
+  scriptedModelSelection,
+  scriptedServerProvider,
+} from "./thread/scriptedProvider.ts";
 
 /**
  * How the cloud describes itself to clients. It is an environment like any
@@ -27,6 +36,25 @@ const SHELL_SCHEMA_VERSION = 2;
 
 /** Placeholder for the path-shaped config fields; the cloud has no host paths. */
 const CLOUD_ROOT = "/";
+
+/**
+ * Every user's one project until drives land (#140): Scratch, which clients
+ * show as "No project". Its root only has to match `scratchWorkspaceRoot`.
+ */
+export const SCRATCH_PROJECT_ID = ProjectId.make("scratch");
+const SCRATCH_ROOT = "/scratch";
+/** Scratch has no history of its own; it dates from the cloud's first threads. */
+const SCRATCH_CREATED_AT = "2026-10-07T00:00:00.000Z";
+
+const scratchProject: OrchestrationProjectShell = {
+  id: SCRATCH_PROJECT_ID,
+  title: "Scratch",
+  workspaceRoot: SCRATCH_ROOT,
+  defaultModelSelection: scriptedModelSelection,
+  scripts: [],
+  createdAt: SCRATCH_CREATED_AT,
+  updatedAt: SCRATCH_CREATED_AT,
+};
 
 export const DEFAULT_ENVIRONMENT_LABEL = "Signalbox Cloud";
 
@@ -51,17 +79,27 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
   platform: { os: "linux", arch: "other", machine: "cloud" },
   serverVersion: CLOUD_VERSION,
   orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-  capabilities: { repositoryIdentity: false, connectionProbe: true, signalboxCloud: true },
+  capabilities: {
+    repositoryIdentity: false,
+    connectionProbe: true,
+    signalboxCloud: true,
+    // The thread object picks start or queue itself, so clients skip reading the projection first.
+    serverResolvedCommandContext: true,
+  },
 });
 
-export const serverConfig = (identity: CloudEnvironmentIdentity): ServerConfig => ({
+/** `checkedAt`: when the connection asked; the scripted provider is always ready. */
+export const serverConfig = (
+  identity: CloudEnvironmentIdentity,
+  checkedAt: string,
+): ServerConfig => ({
   environment: descriptor(identity),
   auth: authDescriptor,
   cwd: CLOUD_ROOT,
   keybindingsConfigPath: CLOUD_ROOT,
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
   issues: [],
-  providers: [],
+  providers: [scriptedServerProvider(checkedAt)],
   availableEditors: [],
   observability: {
     logsDirectoryPath: CLOUD_ROOT,
@@ -70,8 +108,14 @@ export const serverConfig = (identity: CloudEnvironmentIdentity): ServerConfig =
     otlpMetricsEnabled: false,
     otlpLogsEnabled: false,
   },
-  settings: DEFAULT_SERVER_SETTINGS,
+  settings: {
+    ...DEFAULT_SERVER_SETTINGS,
+    // Clients enable a provider instance only when settings list it.
+    providerInstances: { [SCRIPTED_INSTANCE_ID]: { driver: SCRIPTED_DRIVER, enabled: true } },
+  },
   shellResumeCompletionMarker: true,
+  threadResumeCompletionMarker: true,
+  scratchWorkspaceRoot: SCRATCH_ROOT,
 });
 
 /** Nothing to bootstrap: a cloud user starts with an empty sidebar. */
@@ -82,11 +126,14 @@ export const welcome = (identity: CloudEnvironmentIdentity) => ({
   bootstrapStatus: "complete" as const,
 });
 
-/** A user's shell before the cloud holds any threads. */
-export const emptyShellSnapshot: OrchestrationV2ShellSnapshot = {
+/** A user's sidebar: their project and the threads in their index, at `sequence`. */
+export const shellSnapshot = (input: {
+  readonly sequence: number;
+  readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+}): OrchestrationV2ShellSnapshot => ({
   schemaVersion: SHELL_SCHEMA_VERSION,
-  snapshotSequence: 0,
-  projects: [],
-  threads: [],
-  archivedThreads: [],
-};
+  snapshotSequence: input.sequence,
+  projects: [scratchProject],
+  threads: input.threads.filter((thread) => thread.archivedAt === null),
+  archivedThreads: input.threads.filter((thread) => thread.archivedAt !== null),
+});

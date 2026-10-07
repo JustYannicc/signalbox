@@ -1,32 +1,99 @@
 import {
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   type AuthEnvironmentScope,
+  CommandId,
   EnvironmentId,
+  MessageId,
   ORCHESTRATION_V2_WS_METHODS,
+  ProjectId,
+  ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import * as Environment from "../environment.ts";
+import { makeMemoryCloud } from "../testing.ts";
+import { scriptedModelSelection, scriptedReply } from "../thread/scriptedProvider.ts";
 import * as CloudRpc from "./rpc.ts";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
+const userId = "user_1";
+const threadId = ThreadId.make("thread-1");
 
-const client = (scopes: ReadonlyArray<AuthEnvironmentScope> = [AuthOrchestrationReadScope]) =>
-  RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        CloudRpc.layerHandlers({
-          identity,
-          shellSnapshot: Effect.succeed(Environment.emptyShellSnapshot),
-        }),
-        CloudRpc.layerScopeAuthorization(scopes),
+/** A socket to `userId`'s object in a fresh in-memory cloud, as the RPC test client. */
+const connect = (
+  scopes: ReadonlyArray<AuthEnvironmentScope> = [
+    AuthOrchestrationReadScope,
+    AuthOrchestrationOperateScope,
+  ],
+) =>
+  Effect.gen(function* () {
+    const cloud = makeMemoryCloud();
+    yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
+    const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          CloudRpc.layerHandlers({ identity, actor: { userId } }),
+          CloudRpc.layerScopeAuthorization(scopes),
+        ).pipe(Layer.provide(Layer.mergeAll(cloud.layer, cloud.userObject(userId)))),
       ),
-    ),
+    );
+    return { cloud, rpc };
+  });
+
+const client = (scopes?: ReadonlyArray<AuthEnvironmentScope>) =>
+  Effect.map(connect(scopes), ({ rpc }) => rpc);
+
+type Rpc = Effect.Success<ReturnType<typeof client>>;
+
+const launch = (rpc: Rpc, commandId = "launch-1") =>
+  rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+    commandId: CommandId.make(commandId),
+    threadId,
+    projectId: Environment.SCRATCH_PROJECT_ID,
+    title: "Hello",
+    modelSelection: scriptedModelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    workspaceStrategy: { type: "root" },
+    initialMessage: { messageId: MessageId.make("message-1"), text: "Hello", attachments: [] },
+  });
+
+const send = (rpc: Rpc, commandId: string, text: string) =>
+  rpc[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+    type: "message.dispatch",
+    commandId: CommandId.make(commandId),
+    createdBy: "user",
+    creationSource: "web",
+    threadId,
+    messageId: MessageId.make(`message-${commandId}`),
+    text,
+    attachments: [],
+    dispatchMode: { type: "start_immediately" },
+    deliveryIntent: "auto",
+  });
+
+/** The thread as a client opening it sees it: catch-up through the completion marker. */
+const openThread = (rpc: Rpc) =>
+  rpc[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+    threadId,
+    requestCompletionMarker: true,
+  }).pipe(
+    Stream.takeUntil((item) => item.kind === "synchronized"),
+    Stream.runCollect,
+  );
+
+const sidebar = (rpc: Rpc) =>
+  rpc[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({}).pipe(
+    Stream.take(1),
+    Stream.runCollect,
+    Effect.map(([item]) => (item?.kind === "snapshot" ? item.snapshot : null)),
   );
 
 describe("cloud RPC", () => {
@@ -73,6 +140,108 @@ describe("cloud RPC", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("creates a thread whose scripted reply streams and lists it in the sidebar", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      const launched = yield* launch(rpc);
+      expect(launched.threadId).toBe(threadId);
+      yield* cloud.settle;
+
+      const [snapshot, marker] = yield* openThread(rpc);
+      expect(marker?.kind).toBe("synchronized");
+      if (snapshot?.kind !== "snapshot") throw new Error("expected a snapshot");
+      expect(snapshot.projection.messages.map((message) => [message.role, message.text])).toEqual([
+        ["user", "Hello"],
+        ["assistant", scriptedReply("Hello")],
+      ]);
+
+      const shell = yield* sidebar(rpc);
+      expect(shell?.projects.map((project) => project.id)).toEqual([
+        Environment.SCRATCH_PROJECT_ID,
+      ]);
+      expect(shell?.threads.map((thread) => [thread.id, thread.status])).toEqual([
+        [threadId, "completed"],
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("streams a follow-up's events to an open thread after its catch-up", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      yield* launch(rpc);
+      yield* cloud.settle;
+      const live = yield* rpc[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+        threadId,
+        requestCompletionMarker: true,
+      }).pipe(
+        Stream.takeUntil(
+          (item) =>
+            item.kind === "event" &&
+            item.event.type === "run.updated" &&
+            item.event.payload.ordinal === 2 &&
+            item.event.payload.status === "completed",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* send(rpc, "send-2", "More");
+      yield* cloud.settle;
+      const items = yield* Fiber.join(live);
+      expect(items.map((item) => item.kind).slice(0, 2)).toEqual(["snapshot", "synchronized"]);
+      const sequences = items.flatMap((item) => (item.kind === "event" ? [item.sequence] : []));
+      expect(sequences).toEqual(sequences.toSorted((left, right) => left - right));
+      expect(new Set(sequences).size).toBe(sequences.length);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("starts one turn for a command id however often it is sent", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      yield* launch(rpc);
+      expect((yield* launch(rpc)).resumed).toBe(true);
+      yield* cloud.settle;
+      const first = yield* send(rpc, "send-2", "More");
+      const again = yield* send(rpc, "send-2", "More");
+      expect(again).toEqual(first);
+      yield* cloud.settle;
+
+      const projection = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId });
+      expect(projection.runs.map((run) => run.status)).toEqual(["completed", "completed"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rebuilds the sidebar index from the thread objects to the same rows", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      yield* launch(rpc);
+      yield* cloud.settle;
+      const before = yield* sidebar(rpc);
+
+      expect(yield* cloud.userDirectory.forUser(userId).rebuildThreadIndex()).toBe(1);
+      const after = yield* sidebar(rpc);
+      expect(after?.threads).toEqual(before?.threads);
+      expect(after?.snapshotSequence).toBeGreaterThan(before?.snapshotSequence ?? 0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rejects threads in a project the user does not have", () =>
+    Effect.gen(function* () {
+      const rpc = yield* client();
+      const failure = yield* rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+        commandId: CommandId.make("launch-x"),
+        threadId,
+        projectId: ProjectId.make("someone-elses"),
+        title: "Hello",
+        modelSelection: scriptedModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+      }).pipe(Effect.flip);
+      expect(failure._tag).toBe("OrchestrationV2ThreadLaunchError");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("authorizes every RPC against the connection's scopes", () =>
     Effect.gen(function* () {
       const rpc = yield* client([]);
@@ -81,6 +250,9 @@ describe("cloud RPC", () => {
         _tag: "EnvironmentAuthorizationError",
         requiredScope: AuthOrchestrationReadScope,
       });
+      const readOnly = yield* client([AuthOrchestrationReadScope]);
+      const send = yield* launch(readOnly).pipe(Effect.flip);
+      expect(send).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
     }).pipe(Effect.scoped),
   );
 });

@@ -1,4 +1,4 @@
-import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, AuthSettingsWriteScope } from "@t3tools/contracts";
 import {
   SIGNALBOX_ANALYTICS_WS_METHODS,
   type ProductAnalyticsClientEvent,
@@ -10,7 +10,7 @@ import { AnalyticsPreference } from "./ProductAnalytics.ts";
 
 export const SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES = {
   [SIGNALBOX_ANALYTICS_WS_METHODS.getSettings]: AuthOrchestrationReadScope,
-  [SIGNALBOX_ANALYTICS_WS_METHODS.setEnabled]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_ANALYTICS_WS_METHODS.setEnabled]: AuthSettingsWriteScope,
   // Read-only clients still use the app; counting that is not an operation.
   [SIGNALBOX_ANALYTICS_WS_METHODS.recordClientEvent]: AuthOrchestrationReadScope,
 } as const;

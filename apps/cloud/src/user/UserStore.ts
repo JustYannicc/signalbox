@@ -1,7 +1,10 @@
 import {
   type AuthEnvironmentScope,
   AuthEnvironmentScopes,
+  type OrchestrationV2ThreadShell,
+  OrchestrationV2ThreadShellJson,
   type ServerAuthSessionMethod,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import * as Clock from "effect/Clock";
@@ -14,11 +17,17 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import type { ThreadSummary } from "../thread/ThreadEngine.ts";
+
 /**
- * Everything one user's Durable Object persists about who they are: their
- * WorkOS profile, their environment sessions, and the one-time grants that
- * turn a sign-in into a session. Each user's object has its own SQLite
- * database, so no row here ever names another user.
+ * Everything one user's Durable Object persists: their WorkOS profile, their
+ * environment sessions, the one-time grants that turn a sign-in into a
+ * session, and the index of their threads that the sidebar reads. Each user's
+ * object has its own SQLite database, so no row here ever names another user.
+ *
+ * The thread index is derived: thread objects deliver their summaries through
+ * an outbox, and dropping the index and pulling every member thread's summary
+ * again rebuilds it. Membership is the record of which threads to pull.
  */
 
 /** Wrong verifiers burn a handoff, as on the self-hosted server. */
@@ -82,6 +91,30 @@ export class UserStore extends Context.Service<
       readonly label?: string;
       readonly ttlMs: number;
     }) => Effect.Effect<SessionRecord | null, SqlError>;
+    /**
+     * Records a thread's summary unless the index already holds that revision
+     * or a newer one, so redelivery and reordering change nothing. Returns the
+     * index's new sequence when the row changed, null otherwise.
+     */
+    readonly recordThreadSummary: (
+      summary: ThreadSummary,
+    ) => Effect.Effect<number | null, SqlError>;
+    readonly threadIndex: Effect.Effect<
+      { readonly sequence: number; readonly threads: ReadonlyArray<OrchestrationV2ThreadShell> },
+      SqlError
+    >;
+    readonly threadMembers: Effect.Effect<ReadonlyArray<ThreadId>, SqlError>;
+    /**
+     * Replaces every indexed summary (not membership) with `summaries`, in one
+     * transaction, so readers see the old index or the new one, never a part.
+     * Returns each summary with the index sequence it was recorded at.
+     */
+    readonly replaceThreadIndex: (
+      summaries: ReadonlyArray<ThreadSummary>,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly summary: ThreadSummary; readonly sequence: number }>,
+      SqlError
+    >;
   }
 >()("@signalbox/cloud/user/UserStore") {}
 
@@ -114,6 +147,28 @@ const migrations = Migrator.fromRecord({
       used_at INTEGER
     )`;
   }),
+  // 0002 belongs to contexts and sections (#139).
+  "0003_thread_index": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE thread_members (
+      thread_id TEXT PRIMARY KEY,
+      added_at INTEGER NOT NULL
+    )`;
+    // `context_id` is not read yet: contexts (#139) group the sidebar by it.
+    yield* sql`CREATE TABLE thread_index (
+      thread_id TEXT PRIMARY KEY,
+      context_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      shell TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`;
+    // Orders shell updates for subscribers; every index change moves it.
+    yield* sql`CREATE TABLE thread_index_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      sequence INTEGER NOT NULL
+    )`;
+    yield* sql`INSERT INTO thread_index_state (id, sequence) VALUES (1, 0)`;
+  }),
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */
@@ -143,6 +198,17 @@ const GrantRow = Schema.Struct({
   expires_at: Schema.Number,
   used_at: Schema.NullOr(Schema.Number),
 });
+
+const ShellJson = Schema.fromJsonString(OrchestrationV2ThreadShellJson);
+const encodeShell = Schema.encodeSync(ShellJson);
+const IndexRow = Schema.Struct({ shell: ShellJson });
+const decodeIndexRows = Schema.decodeUnknownSync(Schema.Array(IndexRow));
+const decodeMemberRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ thread_id: ThreadId })),
+);
+const decodeSequenceRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ sequence: Schema.Number })),
+);
 
 const decodeProfileRows = Schema.decodeUnknownSync(Schema.Array(ProfileRow));
 const decodeSessionRows = Schema.decodeUnknownSync(Schema.Array(SessionRow));
@@ -285,7 +351,59 @@ const make = Effect.gen(function* () {
     return yield* createSession(session);
   }, sql.withTransaction);
 
+  const bumpIndexSequence = sql`UPDATE thread_index_state SET sequence = sequence + 1
+    WHERE id = 1 RETURNING sequence`.pipe(
+    Effect.map((rows) => decodeSequenceRows(rows)[0]?.sequence ?? 0),
+  );
+
+  const recordThreadSummary: UserStore["Service"]["recordThreadSummary"] = Effect.fn(
+    "UserStore.recordThreadSummary",
+  )(function* (summary) {
+    const now = yield* Clock.currentTimeMillis;
+    yield* sql`INSERT INTO thread_members (thread_id, added_at) VALUES (${summary.threadId}, ${now})
+      ON CONFLICT (thread_id) DO NOTHING`;
+    const written = yield* sql`INSERT INTO thread_index
+        (thread_id, context_id, revision, shell, updated_at)
+      VALUES (${summary.threadId}, ${summary.contextId}, ${summary.revision},
+        ${encodeShell(summary.shell)}, ${now})
+      ON CONFLICT (thread_id) DO UPDATE SET context_id = excluded.context_id,
+        revision = excluded.revision, shell = excluded.shell, updated_at = excluded.updated_at
+      WHERE excluded.revision > thread_index.revision
+      RETURNING thread_id`;
+    return written.length > 0 ? yield* bumpIndexSequence : null;
+  }, sql.withTransaction);
+
+  const threadIndex: UserStore["Service"]["threadIndex"] = Effect.all({
+    sequence: sql`SELECT sequence FROM thread_index_state WHERE id = 1`.pipe(
+      Effect.map((rows) => decodeSequenceRows(rows)[0]?.sequence ?? 0),
+    ),
+    threads: sql`SELECT shell FROM thread_index ORDER BY thread_id`.pipe(
+      Effect.map((rows) => decodeIndexRows(rows).map((row) => row.shell)),
+    ),
+  }).pipe(sql.withTransaction);
+
+  const threadMembers: UserStore["Service"]["threadMembers"] =
+    sql`SELECT thread_id FROM thread_members ORDER BY thread_id`.pipe(
+      Effect.map((rows) => decodeMemberRows(rows).map((row) => row.thread_id)),
+    );
+
+  const replaceThreadIndex: UserStore["Service"]["replaceThreadIndex"] = Effect.fn(
+    "UserStore.replaceThreadIndex",
+  )(function* (summaries) {
+    yield* sql`DELETE FROM thread_index`;
+    const recorded: Array<{ readonly summary: ThreadSummary; readonly sequence: number }> = [];
+    for (const summary of summaries) {
+      const sequence = yield* recordThreadSummary(summary);
+      if (sequence !== null) recorded.push({ summary, sequence });
+    }
+    return recorded;
+  }, sql.withTransaction);
+
   return UserStore.of({
+    recordThreadSummary,
+    threadIndex,
+    threadMembers,
+    replaceThreadIndex,
     recordSignIn,
     profile,
     createSession,

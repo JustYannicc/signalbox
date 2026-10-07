@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthStandardClientScopes,
@@ -83,9 +84,10 @@ const poolProviders = [provider("claude_hub_team", "claudeAgent"), provider("cod
 const ownProvider = provider("claudeAgent", "claudeAgent");
 
 describe("poolRole", () => {
-  it("makes a session that may operate the environment an admin, and a read-only one a member", () => {
+  it("makes a session that may manage providers an admin, and anyone else a member", () => {
     expect(poolRole(AuthStandardClientScopes)).toBe("admin");
     expect(poolRole(READ_ONLY)).toBe("member");
+    expect(poolRole([...READ_ONLY, AuthOrchestrationOperateScope])).toBe("member");
   });
 
   it("only lets admins redeem resets or manage pools and accounts", () => {
@@ -103,7 +105,6 @@ describe("poolRole", () => {
       WS_METHODS.accountPoolSetOpenCode,
       WS_METHODS.providerAuthStart,
       WS_METHODS.providerAuthSubscribe,
-      WS_METHODS.serverRefreshProviders,
       WS_METHODS.serverUpdateProvider,
     ] as const;
     for (const method of adminOnly) {

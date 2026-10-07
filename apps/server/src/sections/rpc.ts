@@ -1,9 +1,8 @@
-import { SectionsRpcError, SectionsWsRpcGroup, WS_METHODS } from "@t3tools/contracts";
+import { SectionsRpcError, WS_METHODS } from "@t3tools/contracts";
 import type { SectionId } from "@t3tools/contracts/sections";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import * as RpcInstrumentation from "../observability/RpcInstrumentation.ts";
 import * as Sections from "./Sections.ts";
 import type { SectionError } from "./SectionsError.ts";
 
@@ -39,48 +38,21 @@ const toRpcError = (error: SectionError): SectionsRpcError => {
   }
 };
 
-const aggregate = { "rpc.aggregate": "sections" } as const;
-
-const makeSectionsWsHandlers = Effect.gen(function* () {
+/** WebSocket handlers for the sections RPCs, served by `signalbox/wsRpc.ts`. */
+export const makeSectionsWsHandlers = Effect.gen(function* () {
   const sections = yield* Sections.Sections;
   return {
-    [WS_METHODS.sectionsSubscribe]: () =>
-      RpcInstrumentation.observeRpcStream(
-        WS_METHODS.sectionsSubscribe,
-        sections.changes.pipe(Stream.mapError(toRpcError)),
-        aggregate,
-      ),
+    [WS_METHODS.sectionsSubscribe]: (_input: {}) =>
+      sections.changes.pipe(Stream.mapError(toRpcError)),
     [WS_METHODS.sectionsCreate]: (input: Parameters<typeof sections.create>[0]) =>
-      RpcInstrumentation.observeRpcEffect(
-        WS_METHODS.sectionsCreate,
-        sections.create(input).pipe(Effect.mapError(toRpcError)),
-        aggregate,
-      ),
+      sections.create(input).pipe(Effect.mapError(toRpcError)),
     [WS_METHODS.sectionsUpdate]: (input: Parameters<typeof sections.update>[0]) =>
-      RpcInstrumentation.observeRpcEffect(
-        WS_METHODS.sectionsUpdate,
-        sections.update(input).pipe(Effect.mapError(toRpcError)),
-        aggregate,
-      ),
+      sections.update(input).pipe(Effect.mapError(toRpcError)),
     [WS_METHODS.sectionsMove]: (input: Parameters<typeof sections.move>[0]) =>
-      RpcInstrumentation.observeRpcEffect(
-        WS_METHODS.sectionsMove,
-        sections.move(input).pipe(Effect.mapError(toRpcError)),
-        aggregate,
-      ),
+      sections.move(input).pipe(Effect.mapError(toRpcError)),
     [WS_METHODS.sectionsDelete]: (input: Parameters<typeof sections.delete>[0]) =>
-      RpcInstrumentation.observeRpcEffect(
-        WS_METHODS.sectionsDelete,
-        sections.delete(input).pipe(Effect.mapError(toRpcError)),
-        aggregate,
-      ),
+      sections.delete(input).pipe(Effect.mapError(toRpcError)),
     [WS_METHODS.sectionsMoveProject]: (input: Parameters<typeof sections.moveProject>[0]) =>
-      RpcInstrumentation.observeRpcEffect(
-        WS_METHODS.sectionsMoveProject,
-        sections.moveProject(input).pipe(Effect.mapError(toRpcError)),
-        aggregate,
-      ),
+      sections.moveProject(input).pipe(Effect.mapError(toRpcError)),
   };
 });
-
-export const layer = SectionsWsRpcGroup.toLayer(makeSectionsWsHandlers);

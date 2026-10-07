@@ -929,6 +929,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
+  readonly license: string;
   readonly homepage: string;
   readonly author: string;
   readonly main: string;
@@ -2762,6 +2763,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    // electron-builder 26 defaults to its legacy AppImage runtime, which
+    // dynamically loads the system libfuse2 library. Pin the static runtime so
+    // the AppImage also launches on distributions that only provide FUSE 3.
+    buildConfig.toolsets = { appimage: "1.0.3" };
+    const path = yield* Path.Path;
+    const repoRoot = yield* RepoRoot;
     buildConfig.linux = {
       // The .deb is built from the same unpacked app after the AppImage.
       // electron-builder lists both in latest-linux.yml and writes
@@ -2790,6 +2797,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       },
     };
     buildConfig.deb = {
+      // FPM runs outside the staged app directory, so source paths must be absolute.
+      // AppStream consumers associate this metadata with our signalbox.desktop entry.
+      // signalbox: Signalbox's metainfo; upstream's com.t3tools.t3code file stays unused.
+      fpm: [
+        `${path.join(repoRoot, "apps/desktop/resources/linux/com.justyannicc.signalbox.metainfo.xml")}=/usr/share/metainfo/com.justyannicc.signalbox.metainfo.xml`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/signalbox/copyright`,
+      ],
       // Electron's runtime libraries. Debian 13 and Ubuntu 24.04 renamed some
       // for 64-bit time; the old name is the fallback for older releases.
       depends: [
@@ -3698,7 +3712,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "Signalbox desktop build",
+    description:
+      "Signalbox is one app for working with AI. Start a thread, say what you want, and agents do the work on a server and tell you when they need you.",
+    license: "MIT",
     // Required by the .deb control file.
     homepage: "https://github.com/JustYannicc/signalbox",
     author: "Signalbox",

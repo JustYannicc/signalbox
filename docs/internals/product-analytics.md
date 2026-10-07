@@ -58,6 +58,18 @@ The Settings opt-out is checked at record time and again at send time. Retries m
 batch can sit for minutes; checking only at record time would send it after the user
 opted out.
 
+## Workload usage
+
+`workload.*` events record the raw resource use that the cost replay
+(`scripts/workload-cost-replay.ts`) prices against machine providers (#116). They go only to
+Signalbox's project and follow the same opt-out.
+
+[Process usage](../../apps/server/src/signalbox/analytics/workload/processAttribution.ts) is
+charged by ownership, not by directory: threads without a worktree share the project root, and the
+idle harnesses of other threads in that root would otherwise inflate every turn's memory. It is
+sampled on demand while a run is in flight. Subscribing to the resource monitor's live stream would
+count as a viewer and keep it at its 1 s rate for as long as the server runs.
+
 ## Collection boundary
 
 Keep analytics payloads to product metadata and normalized measurements. Do not

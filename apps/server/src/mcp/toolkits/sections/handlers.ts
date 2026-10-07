@@ -1,11 +1,10 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import { McpServer } from "effect/ai";
 
 import * as Sections from "../../../sections/Sections.ts";
 import type { SectionError } from "../../../sections/SectionsError.ts";
-import { readCaller, readFullAccessCaller, unavailable } from "../../threadAccess.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import { readCaller, unavailable } from "../../threadAccess.ts";
 import { SectionsToolkit } from "./tools.ts";
 
 const sectionFailure = (error: SectionError | OrchestratorMcpFailure) =>
@@ -20,47 +19,38 @@ const read = Effect.gen(function* () {
   return yield* Sections.Sections;
 });
 
-const mutate = Effect.gen(function* () {
-  yield* readFullAccessCaller("Section changes require a live full-access/default caller.");
-  return yield* Sections.Sections;
-});
+// Sections organize every project in the environment, so changing them is an
+// environment change: the declaration requires a full-access caller.
+const mutate = <A>(
+  change: (sections: Sections.Sections["Service"]) => Effect.Effect<A, SectionError>,
+) => Sections.Sections.pipe(Effect.flatMap(change), Effect.mapError(sectionFailure));
 
-export const layer = SectionsToolkit.toLayer({
-  t3_section_list: () =>
+export const layer = McpToolAccess.toLayer(SectionsToolkit, {
+  t3_section_list: McpToolAccess.reads(() =>
     read.pipe(
       Effect.flatMap((sections) => sections.snapshot),
       Effect.mapError(sectionFailure),
     ),
-  t3_project_section_chain: ({ projectId }) =>
+  ),
+  t3_project_section_chain: McpToolAccess.reads(({ projectId }) =>
     read.pipe(
       Effect.flatMap((sections) => sections.getProjectSectionChain(projectId)),
       Effect.mapError(sectionFailure),
     ),
-  t3_section_create: (input) =>
-    mutate.pipe(
-      Effect.flatMap((sections) => sections.create(input)),
-      Effect.mapError(sectionFailure),
-    ),
-  t3_section_update: (input) =>
-    mutate.pipe(
-      Effect.flatMap((sections) => sections.update(input)),
-      Effect.mapError(sectionFailure),
-    ),
-  t3_section_move: (input) =>
-    mutate.pipe(
-      Effect.flatMap((sections) => sections.move(input)),
-      Effect.mapError(sectionFailure),
-    ),
-  t3_section_delete: (input) =>
-    mutate.pipe(
-      Effect.flatMap((sections) => sections.delete(input)),
-      Effect.mapError(sectionFailure),
-    ),
-  t3_project_move_to_section: (input) =>
-    mutate.pipe(
-      Effect.flatMap((sections) => sections.moveProject(input)),
-      Effect.mapError(sectionFailure),
-    ),
+  ),
+  t3_section_create: McpToolAccess.writesEnvironment((input) =>
+    mutate((sections) => sections.create(input)),
+  ),
+  t3_section_update: McpToolAccess.writesEnvironment((input) =>
+    mutate((sections) => sections.update(input)),
+  ),
+  t3_section_move: McpToolAccess.writesEnvironment((input) =>
+    mutate((sections) => sections.move(input)),
+  ),
+  t3_section_delete: McpToolAccess.writesEnvironment((input) =>
+    mutate((sections) => sections.delete(input)),
+  ),
+  t3_project_move_to_section: McpToolAccess.writesEnvironment((input) =>
+    mutate((sections) => sections.moveProject(input)),
+  ),
 });
-
-export const layerRegistration = McpServer.toolkit(SectionsToolkit).pipe(Layer.provide(layer));

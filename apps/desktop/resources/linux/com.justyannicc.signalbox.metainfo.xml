@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.justyannicc.signalbox</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Signalbox</name>
+  <summary>One app for working with AI</summary>
+  <developer id="com.justyannicc">
+    <name>Signalbox</name>
+  </developer>
+  <description>
+    <p>
+      Signalbox is one app for working with AI. Start a thread, say what you
+      want, and agents do the work on a server and tell you when they need you.
+    </p>
+    <p>
+      Connect from desktop, web, or mobile to continue working remotely.
+    </p>
+  </description>
+  <launchable type="desktop-id">signalbox.desktop</launchable>
+  <icon type="stock">signalbox</icon>
+  <provides>
+    <binary>signalbox</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <url type="homepage">https://github.com/JustYannicc/signalbox</url>
+  <url type="bugtracker">https://github.com/JustYannicc/signalbox/issues</url>
+  <url type="vcs-browser">https://github.com/JustYannicc/signalbox</url>
+</component>

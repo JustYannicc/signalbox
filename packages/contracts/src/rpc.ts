@@ -137,6 +137,7 @@ import {
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   VcsStatusInput,
+  VcsStatusSubscriptionInput,
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "./git.ts";
@@ -233,6 +234,7 @@ import {
 } from "./project.ts";
 import {
   TerminalAttachInput,
+  TerminalObserveInput,
   TerminalAttachStreamEvent,
   TerminalClearInput,
   TerminalCloseInput,
@@ -441,6 +443,7 @@ export const WS_METHODS = {
   // Terminal methods
   terminalOpen: "terminal.open",
   terminalAttach: "terminal.attach",
+  terminalObserve: "terminal.observe",
   terminalWrite: "terminal.write",
   terminalResize: "terminal.resize",
   terminalClear: "terminal.clear",
@@ -694,6 +697,21 @@ const WsAccountPoolMoveNativeLoginsRpc = Rpc.make(WS_METHODS.accountPoolMoveNati
   success: AccountPoolMoveNativeLoginsResult,
   error: AccountPoolRpcFailure,
 });
+
+/** Pool and hub-account RPCs. */
+const ACCOUNT_POOL_RPCS = [
+  WsUsageLimitSourceUpdateAccountRpc,
+  WsAccountPoolSubscribeRpc,
+  WsAccountPoolSubscribeViewsRpc,
+  WsAccountPoolCreateRpc,
+  WsAccountPoolRenameRpc,
+  WsAccountPoolDeleteRpc,
+  WsAccountPoolSetBackingRpc,
+  WsAccountPoolImportAccountsRpc,
+  WsAccountPoolAddApiKeyRpc,
+  WsAccountPoolMoveNativeLoginsRpc,
+  WsAccountPoolSetOpenCodeRpc,
+] as const;
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
   payload: ProviderAuthStartInput,
@@ -1331,7 +1349,7 @@ const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, 
 });
 
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
-  payload: VcsStatusInput,
+  payload: VcsStatusSubscriptionInput,
   success: VcsStatusStreamEvent,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
   stream: true,
@@ -1440,6 +1458,13 @@ const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
 
 const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
   payload: TerminalAttachInput,
+  success: TerminalAttachStreamEvent,
+  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTerminalObserveRpc = Rpc.make(WS_METHODS.terminalObserve, {
+  payload: TerminalObserveInput,
   success: TerminalAttachStreamEvent,
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
   stream: true,
@@ -1826,27 +1851,25 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+/** The sections RPCs as one authorized group, for serving them on their own in tests. */
 export const SectionsWsRpcGroup =
   UnauthenticatedSectionsWsRpcGroup.middleware(RpcScopeAuthorization);
 
+/** Signalbox's RPCs; the server serves them from `signalbox/wsRpc.ts`. */
+export const SIGNALBOX_WS_RPCS = [
+  ...SIGNALBOX_ANALYTICS_RPCS,
+  ...ACCOUNT_POOL_RPCS,
+  ...AutomationRpcs,
+  ...SectionRpcs,
+] as const;
+
 export const WsRpcGroup = RpcGroup.make(
-  ...SIGNALBOX_ANALYTICS_RPCS, // signalbox: analytics
+  ...SIGNALBOX_WS_RPCS, // signalbox: analytics, account pools, automations, sections
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
-  WsUsageLimitSourceUpdateAccountRpc,
-  WsAccountPoolSubscribeRpc,
-  WsAccountPoolSubscribeViewsRpc,
-  WsAccountPoolCreateRpc,
-  WsAccountPoolRenameRpc,
-  WsAccountPoolDeleteRpc,
-  WsAccountPoolSetBackingRpc,
-  WsAccountPoolImportAccountsRpc,
-  WsAccountPoolAddApiKeyRpc,
-  WsAccountPoolMoveNativeLoginsRpc,
-  WsAccountPoolSetOpenCodeRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,
@@ -1975,6 +1998,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
+  WsTerminalObserveRpc,
   WsTerminalWriteRpc,
   WsTerminalResizeRpc,
   WsTerminalClearRpc,
@@ -2019,8 +2043,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
-  ...AutomationRpcs, // signalbox: automations
-  ...SectionRpcs, // signalbox: sections
 ).middleware(RpcScopeAuthorization);
 
 export { SECTION_WS_METHODS };
