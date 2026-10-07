@@ -50,7 +50,7 @@ const defaultModel = (provider: ServerProvider) =>
  * the same model and options, else its first usable provider and that
  * provider's default model. Null when the pool has no usable provider.
  */
-export function modelSelectionOnPool(input: {
+function modelSelectionOnPool(input: {
   readonly selection: ModelSelection | null;
   readonly poolId: string;
   readonly providerInstances: Readonly<Record<string, { readonly config?: unknown }>>;
