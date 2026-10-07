@@ -7,6 +7,7 @@ import {
   AccountPoolImportInput,
   AccountPoolRenameInput,
   AccountPoolSetBackingInput,
+  AccountPoolView,
 } from "./accountHub.ts"; // signalbox
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
@@ -384,6 +385,7 @@ export const WS_METHODS = {
   providerConsumeResetCredit: "provider.consumeResetCredit",
   usageLimitSourceUpdateAccount: "usageLimitSource.updateAccount",
   accountPoolSubscribe: "accountPool.subscribe",
+  accountPoolSubscribeViews: "accountPool.subscribeViews",
   accountPoolCreate: "accountPool.create",
   accountPoolRename: "accountPool.rename",
   accountPoolDelete: "accountPool.delete",
@@ -631,6 +633,13 @@ const AccountPoolRpcFailure = Schema.Union([AccountHubRpcError, EnvironmentAutho
 const WsAccountPoolSubscribeRpc = Rpc.make(WS_METHODS.accountPoolSubscribe, {
   payload: Schema.Struct({}),
   success: Schema.Array(AccountPool),
+  error: AccountPoolRpcFailure,
+  stream: true,
+});
+/** Every pool as the caller may see it; members get no account-level data. */
+const WsAccountPoolSubscribeViewsRpc = Rpc.make(WS_METHODS.accountPoolSubscribeViews, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AccountPoolView),
   error: AccountPoolRpcFailure,
   stream: true,
 });
@@ -1799,6 +1808,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderConsumeResetCreditRpc,
   WsUsageLimitSourceUpdateAccountRpc,
   WsAccountPoolSubscribeRpc,
+  WsAccountPoolSubscribeViewsRpc,
   WsAccountPoolCreateRpc,
   WsAccountPoolRenameRpc,
   WsAccountPoolDeleteRpc,

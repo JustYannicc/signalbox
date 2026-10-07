@@ -4,7 +4,7 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { useMemo } from "react";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { useAccountPools } from "../../state/accountPools";
+import { usePoolViews } from "../../state/accountPools";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 /** One pool in the model picker: its name and the provider instances that run on it. */
@@ -23,7 +23,7 @@ const NOT_IN_A_POOL = "not-in-a-pool";
  * environment's setting, which says each instance's pool.
  */
 export function pickerPools(
-  accountPools: ReadonlyArray<AccountPool>,
+  accountPools: ReadonlyArray<Pick<AccountPool, "id" | "name">>,
   entries: ReadonlyArray<ProviderInstanceEntry>,
   providerInstances: UnifiedSettings["providerInstances"],
 ): ReadonlyArray<PickerPool> {
@@ -58,7 +58,7 @@ export function usePickerPools(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   providerInstances: UnifiedSettings["providerInstances"],
 ): ReadonlyArray<PickerPool> {
-  const accountPools = useAccountPools(environmentId);
+  const accountPools = usePoolViews(environmentId);
   return useMemo(
     () => pickerPools(accountPools, entries, providerInstances),
     [accountPools, entries, providerInstances],

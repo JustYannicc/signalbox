@@ -151,6 +151,21 @@ export const AccountPoolOverview = Schema.Struct({
 });
 export type AccountPoolOverview = typeof AccountPoolOverview.Type;
 
+/**
+ * What a caller may do with a pool. Admins see and manage its accounts:
+ * emails, plans, per-account bars, banked resets. Members see only the
+ * pool's overview. The server builds every payload for the caller's role.
+ */
+export const AccountPoolRole = Schema.Literals(["admin", "member"]);
+export type AccountPoolRole = typeof AccountPoolRole.Type;
+
+/** A pool as one caller sees it: its overview and the caller's role in it. */
+export const AccountPoolView = Schema.Struct({
+  ...AccountPoolOverview.fields,
+  role: AccountPoolRole,
+});
+export type AccountPoolView = typeof AccountPoolView.Type;
+
 /** The usage limit source a pool's accounts report under. */
 export const poolSourceId = (poolId: string) =>
   UsageLimitSourceId.make(

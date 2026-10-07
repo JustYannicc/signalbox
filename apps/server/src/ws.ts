@@ -1,6 +1,7 @@
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub"; // signalbox
 import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
 import type { AccountHubError } from "./accountHub/accountHubManagement.ts"; // signalbox
+import * as PoolAccess from "./accountHub/poolAccess.ts"; // signalbox: pool views per caller
 
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -1204,6 +1205,7 @@ const layerWsRpc = (
   ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const poolRole = PoolAccess.poolRole(currentSession.scopes); // signalbox: pool views per caller
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -1693,9 +1695,15 @@ const layerWsRpc = (
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.loadConfigState;
-          const currentProviders = yield* providerRegistry.getProviders;
+          const currentProviders = yield* PoolAccess.providersFor(
+            poolRole,
+            yield* providerRegistry.getProviders,
+          ); // signalbox: pool views per caller
           const providers = options.usageLimitsCommand
-            ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
+            ? withUsageLimitsCommands(
+                currentProviders,
+                PoolAccess.visibleUsageLimitSources(poolRole, yield* usageLimitSources.current), // signalbox
+              )
             : currentProviders;
           const settings = ServerSettings.redactServerSettingsForClient(
             yield* serverSettings.getSettings,
@@ -2468,6 +2476,14 @@ const layerWsRpc = (
           observeRpcStream(
             WS_METHODS.accountPoolSubscribe,
             Stream.unwrap(AccountPools.AccountPools.pipe(Effect.map((pools) => pools.changes))),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolSubscribeViews]: () =>
+          observeRpcStream(
+            WS_METHODS.accountPoolSubscribeViews,
+            PoolAccess.poolViews(poolRole).pipe(
+              Stream.mapError((error) => new AccountHubRpcError({ detail: error.message })),
+            ),
             { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.accountPoolCreate]: (input) =>
@@ -3689,8 +3705,11 @@ const layerWsRpc = (
                 Stream.concat(
                   Stream.fromEffect(providerRegistry.getProviders),
                   providerRegistry.streamChanges,
-                ),
+                ).pipe(
+                  Stream.mapEffect((providers) => PoolAccess.providersFor(poolRole, providers)),
+                ), // signalbox
                 usageLimitSources.streamChanges.pipe(
+                  Stream.map((sources) => PoolAccess.visibleUsageLimitSources(poolRole, sources)), // signalbox
                   // Quota updates already have their own stream. Republish the model
                   // catalog only when the set of providers offered the command changes.
                   Stream.changesWith(
@@ -3736,6 +3755,9 @@ const layerWsRpc = (
               const usageLimitSourceUpdates =
                 input.usageLimitSources === true
                   ? usageLimitSources.streamChanges.pipe(
+                      Stream.map((sources) =>
+                        PoolAccess.visibleUsageLimitSources(poolRole, sources),
+                      ), // signalbox
                       Stream.map((sources) => ({
                         version: 1 as const,
                         type: "usageLimitSourcesUpdated" as const,
