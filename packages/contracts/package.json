@@ -27,6 +27,10 @@
       "types": "./src/accountHub.ts",
       "import": "./src/accountHub.ts"
     },
+    "./sections": {
+      "types": "./src/sections.ts",
+      "import": "./src/sections.ts"
+    },
     "./signalboxAnalytics": {
       "types": "./src/signalboxAnalytics.ts",
       "import": "./src/signalboxAnalytics.ts"

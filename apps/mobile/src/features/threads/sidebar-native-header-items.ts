@@ -5,6 +5,7 @@ import type {
 
 import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
+import { createSectionNavigationHeaderItem } from "../sections/SectionNavigationToggle";
 
 type NativeHeaderMenuItems = NativeStackHeaderItemMenu["menu"]["items"];
 type NativeHeaderIcon = NonNullable<Extract<NativeStackHeaderItem, { type: "button" }>["icon"]>;
@@ -39,6 +40,8 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
 export function createSidebarHeaderItems(input: {
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;
+  readonly sectionsOpen: boolean;
+  readonly onOpenSections: () => void;
   readonly onOpenSettings: () => void;
 }): NativeStackHeaderItem[] {
   return [
@@ -51,6 +54,10 @@ export function createSidebarHeaderItems(input: {
         title: input.filterMenu.title,
         items: toNativeHeaderMenuItems(input.filterMenu.items),
       },
+    }),
+    createSectionNavigationHeaderItem({
+      open: input.sectionsOpen,
+      onPress: input.onOpenSections,
     }),
     withNativeGlassHeaderItem({
       type: "button",

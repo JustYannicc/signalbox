@@ -21,8 +21,10 @@ import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
-import { contextOfProject, layerThreadContexts, ThreadContexts } from "./user/contextProjects.ts";
+import { contextOfProject } from "./user/contextProjects.ts";
+import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
+import * as UserSections from "./user/UserSections.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
 import * as UserShell from "./user/UserShell.ts";
@@ -43,7 +45,8 @@ export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_E
   );
 
 /** A user object's storage services on a fresh in-memory database, migrated. */
-export const layerMemoryStore = Layer.mergeAll(UserStore.layer, UserContexts.layer).pipe(
+export const layerMemoryStore = UserSections.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
   Layer.provideMerge(Layer.effectDiscard(UserStore.migrate)),
   Layer.provideMerge(
     Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
@@ -52,8 +55,8 @@ export const layerMemoryStore = Layer.mergeAll(UserStore.layer, UserContexts.lay
 
 /** Resolves contexts for a user who has only Personal, with no storage behind it. */
 export const layerPersonalThreadContexts = Layer.succeed(
-  ThreadContexts,
-  ThreadContexts.of({
+  ThreadContexts.ThreadContexts,
+  ThreadContexts.ThreadContexts.of({
     contextOfProject: (projectId) =>
       Effect.succeed(contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId)),
   }),
@@ -172,7 +175,7 @@ export const makeMemoryCloud = () => {
     /** The thread service as `userId`'s object runs it, with that user's contexts. */
     layerFor: (userId: string) =>
       threadService.pipe(
-        Layer.provideMerge(layerThreadContexts),
+        Layer.provideMerge(ThreadContexts.layer),
         Layer.provideMerge(userObject(userId)),
       ),
     /** The thread service for tests where the user has only Personal. */

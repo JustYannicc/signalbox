@@ -7,6 +7,7 @@ import {
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
+  SECTION_WS_METHODS,
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -18,11 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
-import {
-  SIGNALBOX_CONTEXTS_WS_METHODS,
-  SignalboxContextId,
-  SignalboxSectionId,
-} from "@t3tools/contracts/signalboxContexts";
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
@@ -310,11 +307,10 @@ describe("cloud RPC", () => {
       );
       yield* Deferred.await(subscribed);
       // Sections alone don't touch the sidebar's projects.
-      yield* rpc[SIGNALBOX_CONTEXTS_WS_METHODS.createSection]({
-        sectionId: SignalboxSectionId.make("s1"),
-        contextId: SignalboxContextId.make("personal"),
-        parentId: null,
+      yield* rpc[SECTION_WS_METHODS.sectionsCreate]({
         name: "Inbox",
+        parentId: null,
+        contextId: "personal",
       });
       yield* cloud.userDirectory
         .forUser(userId)

@@ -16,7 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { ThreadContexts } from "../user/contextProjects.ts";
+import { ThreadContexts } from "../user/threadContexts.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import {

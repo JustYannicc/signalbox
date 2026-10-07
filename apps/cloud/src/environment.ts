@@ -84,6 +84,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     repositoryIdentity: false,
     connectionProbe: true,
     signalboxCloud: true,
+    // Sections live in each user's object (`user/UserSections.ts`).
+    sections: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
   },

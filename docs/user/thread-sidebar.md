@@ -14,23 +14,28 @@ sidebar toggle step through where you've been.
 To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
 **Settings**.
 
-## Contexts and sections
+## Organize projects into sections
 
-When you're signed in to Signalbox Cloud, the top of **Home** shows Personal and every
-work organization you belong to, side by side. You don't switch accounts.
+On web and desktop, choose **Create section** beside **Projects**. Use a section's menu to add a
+subsection, rename it, move it, change its order, or delete it. Deleting a section moves its
+projects and child sections to its parent; deleting a top-level section moves them to the project
+root. Use a project's move menu to place it in a section or back at the root. This organization is
+shared by clients connected to the same environment. On mobile, choose **Browse sections** from
+Home to navigate the project tree.
 
-Sections are your own folders inside each context. Use **New section** under a
-context, then drag a section to reorder it, drop it onto another section to nest
-it, or drop it on the context's name to move it back to the top. The **⋯** menu
-on a section does the same from the keyboard. Deleting a section keeps its
-subsections. Sections only organize: moving something never changes where it's
-stored or who can see it. They sync to all your devices. On mobile you can see them
-but not change them yet.
+These sections organize projects. **Pinned**, **Active**, **Snoozed**, and **Settled** in Pipeline
+are thread status groups.
 
-A thread acts as the context it starts in, for good: a work thread uses that
-organization's identity and connections, a personal one uses yours. New threads
-start in Personal. To start one in a work context, pick the organization in
-**New thread in…**. Organizations you join show up the next time you sign in.
+### Contexts in Signalbox Cloud
+
+When you're signed in to Signalbox Cloud, Home shows Personal and every work organization you
+belong to, side by side. You don't switch accounts. Each context has its own sections: use the
+**New section** button beside a context's name. Sections and projects stay in their own context.
+Organizations you join show up the next time you sign in.
+
+A thread acts as the context it starts in, for good: a work thread uses that organization's
+identity and connections, a personal one uses yours. New threads start in Personal. To start one
+in a work context, pick the organization in **New thread in…**.
 
 ## Start a thread
 
@@ -93,7 +98,7 @@ scroll position instead of following the thread to its new place in the list.
 
 Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
-On web and desktop, drag a thread between sections to change its state. Drag a thread up into
+In Pipeline on web and desktop, drag a thread between status groups to change its state. Drag a thread up into
 the pinned section to pin it at the spot you drop it; drag a pinned thread down into the active
 list to unpin it. Dragging a thread onto the **Settled** header settles it, and dragging a settled
 thread into the active list un-settles it. A snoozed thread can be dragged out of the snoozed

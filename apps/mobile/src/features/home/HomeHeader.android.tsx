@@ -3,6 +3,7 @@ import { useCallback, useMemo } from "react";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { MaterialThreadListToolbar } from "./MaterialThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
+import { SectionNavigationToggle } from "../sections/SectionNavigationToggle";
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -103,6 +104,13 @@ export function HomeHeader(props: HomeHeaderProps) {
         onFilterAction={handleMenuAction}
         onOpenSettings={props.onOpenSettings}
         onOpenEnvironments={props.onOpenEnvironments}
+        trailingAction={
+          <SectionNavigationToggle
+            open={props.sectionsOpen}
+            onPress={props.onOpenSections}
+            variant="android-header"
+          />
+        }
       />
     </>
   );

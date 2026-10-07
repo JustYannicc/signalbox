@@ -29,6 +29,7 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { PoolsToolkit } from "./toolkits/pools/tools.ts"; // signalbox: account pools
 import * as PoolsHandlers from "./toolkits/pools/handlers.ts"; // signalbox
+import * as SectionHandlers from "./toolkits/sections/handlers.ts"; // signalbox
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -863,6 +864,7 @@ export const layer = Layer.mergeAll(
   layerProjectRegistration,
   layerEnvironmentRegistration,
   layerPoolsRegistration, // signalbox
+  SectionHandlers.layerRegistration, // signalbox
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,

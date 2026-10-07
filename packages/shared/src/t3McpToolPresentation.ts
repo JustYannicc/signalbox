@@ -1,3 +1,4 @@
+import { sectionMcpToolDefinitions, type SectionMcpToolSummaryAction } from "./sectionsMcpTools.ts";
 import { AUTOMATION_MCP_TOOLS } from "./automationMcpTools.ts"; // signalbox: automations
 
 export type T3McpToolLogo = "t3-code";
@@ -53,6 +54,7 @@ export type T3McpToolSummaryAction =
   | "environment-read"
   | "environment-update"
   | "pool-list" // signalbox
+  | SectionMcpToolSummaryAction
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -301,6 +303,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "environment-read",
   ),
   t3_pool_list: tool(["List", "Listing", "Listed", "account pools"], "pool-list"), // signalbox
+  ...sectionMcpToolDefinitions(tool), // signalbox
   t3_environment_preferences_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",

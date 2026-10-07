@@ -9,6 +9,8 @@ import {
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
   RpcScopeAuthorization,
+  SECTION_WS_METHODS,
+  SectionsRpcError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -27,12 +29,13 @@ import * as Environment from "../environment.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as UserSections from "./UserSections.ts";
 import * as UserShell from "./UserShell.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
  * for a client to connect, render the user's sidebar with its contexts and
- * sections (see `UserContexts`), and work in threads. The
+ * sections (see `UserContexts` and `UserSections`), and work in threads. The
  * group is `WsRpcGroup` itself with everything else omitted, so every payload
  * and stream item is the contract's own schema. A client calling anything
  * else gets a per-request "unknown request tag" failure rather than a dropped
@@ -52,6 +55,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
   WS_METHODS.projectsEnsureScratch,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
+  ...Object.values(SECTION_WS_METHODS),
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -81,6 +85,13 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
+  // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
+  [SECTION_WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
+  [SECTION_WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
+  [SECTION_WS_METHODS.sectionsUpdate]: AuthOrchestrationOperateScope,
+  [SECTION_WS_METHODS.sectionsMove]: AuthOrchestrationOperateScope,
+  [SECTION_WS_METHODS.sectionsDelete]: AuthOrchestrationOperateScope,
+  [SECTION_WS_METHODS.sectionsMoveProject]: AuthOrchestrationOperateScope,
 } as const satisfies Record<ServedTag, AuthEnvironmentScope>;
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
@@ -128,11 +139,21 @@ const threadCall = <A, E>(
     Effect.mapError((error) => toError(failureMessage(error))),
   );
 
+/** The contract's storage failure; the cause stays in the object's logs. */
+const sectionsStorageFailure = () =>
+  new SectionsRpcError({ code: "storage-failed", detail: "Could not load or update sections." });
+
+const storageFailed = (cause: unknown) =>
+  Effect.logError("cloud sections storage failed", { cause }).pipe(
+    Effect.andThen(Effect.fail(sectionsStorageFailure())),
+  );
+
 /**
  * Handlers for one connection, acting for `actor`. Every thread RPC is one
  * `CloudThreadService` call with its errors mapped to the contract's; the
  * sidebar comes from the user's own `UserShell`, and contexts from their
- * `UserContexts`, so every connection sees every other connection's changes.
+ * `UserContexts` and sections from their `UserSections`, so every connection
+ * sees every other connection's changes.
  * Storage failures are bugs, not answers a client can act on.
  */
 export const layerHandlers = (input: {
@@ -144,6 +165,7 @@ export const layerHandlers = (input: {
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
       const contexts = yield* UserContexts.UserContexts;
+      const sections = yield* UserSections.UserSections;
       const { actor, identity } = input;
       const config = Effect.map(Clock.currentTimeMillis, (now) =>
         Environment.serverConfig(identity, DateTime.formatIso(DateTime.makeUnsafe(now))),
@@ -236,14 +258,21 @@ export const layerHandlers = (input: {
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
-        [SIGNALBOX_CONTEXTS_WS_METHODS.createSection]: (request) =>
-          contexts.createSection(request).pipe(Effect.catchTags({ SqlError: Effect.die })),
-        [SIGNALBOX_CONTEXTS_WS_METHODS.renameSection]: (request) =>
-          contexts.renameSection(request).pipe(Effect.catchTags({ SqlError: Effect.die })),
-        [SIGNALBOX_CONTEXTS_WS_METHODS.moveSection]: (request) =>
-          contexts.moveSection(request).pipe(Effect.catchTags({ SqlError: Effect.die })),
-        [SIGNALBOX_CONTEXTS_WS_METHODS.deleteSection]: (request) =>
-          contexts.deleteSection(request).pipe(Effect.catchTags({ SqlError: Effect.die })),
+        [SECTION_WS_METHODS.sectionsSubscribe]: () =>
+          sections.changes.pipe(
+            Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),
+            Stream.mapError(sectionsStorageFailure),
+          ),
+        [SECTION_WS_METHODS.sectionsCreate]: (request) =>
+          sections.create(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
+        [SECTION_WS_METHODS.sectionsUpdate]: (request) =>
+          sections.update(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
+        [SECTION_WS_METHODS.sectionsMove]: (request) =>
+          sections.move(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
+        [SECTION_WS_METHODS.sectionsDelete]: (request) =>
+          sections.delete(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
+        [SECTION_WS_METHODS.sectionsMoveProject]: (request) =>
+          sections.moveProject(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
       };
     }),
   );

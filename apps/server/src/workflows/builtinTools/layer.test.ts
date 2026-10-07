@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,6 +9,10 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
+import * as Sqlite from "../../persistence/Sqlite.ts";
+import * as Sections from "../../sections/Sections.ts";
+import * as SectionsStore from "../../sections/SectionsStore.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -38,6 +43,12 @@ const stubs = Layer.mergeAll(
   Layer.mock(ServerEnvironment.ServerEnvironment)({
     getEnvironmentId: Effect.succeed("environment-test" as never),
   }),
+  Sections.layer.pipe(
+    Layer.provide(SectionsStore.layer),
+    Layer.provide(ProjectStore.layer),
+    Layer.provide(Sqlite.layerMemory),
+    Layer.provide(NodeCrypto.layer),
+  ),
 );
 
 it.effect("hands the engine Signalbox's MCP handlers, calling as a thread-less client", () => {
@@ -74,5 +85,37 @@ it.effect("hands the engine Signalbox's MCP handlers, calling as a thread-less c
         .pipe(Effect.asVoid),
     );
     expect(failure.message).toContain("Pass threadId");
+
+    const sectionCall = {
+      automationId: "automation-1",
+      automationName: "Organize projects",
+      requestKey: "run-1/sections",
+    };
+    const denied = yield* Effect.flip(
+      registered!
+        .call({
+          ...sectionCall,
+          tool: "t3_section_create",
+          args: { name: "Scheduled", parentId: null },
+          runtimeMode: "approval-required",
+        })
+        .pipe(Effect.asVoid),
+    );
+    expect(denied.message).toContain("full-access");
+
+    const created = yield* registered!.call({
+      ...sectionCall,
+      tool: "t3_section_create",
+      args: { name: "Scheduled", parentId: null },
+      runtimeMode: "full-access",
+    });
+    expect(created).toMatchObject({ revision: 1, sections: [{ name: "Scheduled" }] });
+    const listed = yield* registered!.call({
+      ...sectionCall,
+      tool: "t3_section_list",
+      args: {},
+      runtimeMode: "approval-required",
+    });
+    expect(listed).toEqual(created);
   }).pipe(Effect.scoped);
 });

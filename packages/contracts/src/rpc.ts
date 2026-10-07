@@ -359,6 +359,11 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  SECTION_WS_METHODS,
+  SectionRpcs,
+  SectionsWsRpcGroup as UnauthenticatedSectionsWsRpcGroup,
+} from "./sectionsRpc.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -373,6 +378,8 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
+
+  ...SECTION_WS_METHODS, // signalbox: sections
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -1853,6 +1860,9 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_CONTEXTS_RPCS,
 ] as const;
 
+export const SectionsWsRpcGroup =
+  UnauthenticatedSectionsWsRpcGroup.middleware(RpcScopeAuthorization);
+
 export const WsRpcGroup = RpcGroup.make(
   ...SIGNALBOX_WS_RPCS, // signalbox: analytics, account pools, automations
   WsServerProbeRpc,
@@ -2033,4 +2043,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
+  ...SectionRpcs, // signalbox: sections
 ).middleware(RpcScopeAuthorization);
+
+export { SECTION_WS_METHODS };

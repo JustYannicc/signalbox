@@ -18,6 +18,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as UserContexts from "./UserContexts.ts";
+import * as UserSections from "./UserSections.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 
 /**
@@ -170,7 +171,7 @@ const migrations = Migrator.fromRecord({
     )`;
     yield* sql`INSERT INTO thread_index_state (id, sequence) VALUES (1, 0)`;
   }),
-  "0004_contexts_sections": UserContexts.createTables,
+  "0004_contexts_sections": Effect.andThen(UserContexts.createTables, UserSections.createTables),
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */

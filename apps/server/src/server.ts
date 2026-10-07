@@ -28,6 +28,8 @@ import * as AutomationPush from "./workflows/AutomationPush.ts"; // signalbox: a
 import * as AutomationSkill from "./workflows/skill/installSkill.ts"; // signalbox: automations
 import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
 import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
+import * as Sections from "./sections/Sections.ts"; // signalbox: sections
+import * as SectionsStore from "./sections/SectionsStore.ts"; // signalbox: sections
 import * as ProductAnalytics from "./signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
 import * as WorkloadAnalytics from "./signalbox/analytics/workload/WorkloadAnalytics.ts"; // signalbox: workload analytics
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -571,7 +573,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Core Services
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
-  Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+  Layer.provideMerge(
+    Sections.layer.pipe(
+      Layer.provideMerge(SectionsStore.layer),
+      Layer.provideMerge(ProjectStore.layer),
+    ),
+  ),
+  Layer.provideMerge(ThreadSearch.layer),
   Layer.provideMerge(layerServerSettings),
   // The asset route uses the registry's GitHub credential for private PR media.
   Layer.provideMerge(layerSourceControlProviderRegistry),

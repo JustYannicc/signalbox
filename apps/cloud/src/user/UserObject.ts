@@ -20,9 +20,10 @@ import {
   USER_OBJECT_JURISDICTION,
   type UserObjectApi,
 } from "./UserDirectory.ts";
-import { layerThreadContexts } from "./contextProjects.ts";
+import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
+import * as UserSections from "./UserSections.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 
@@ -50,8 +51,8 @@ const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
   ManagedRuntime.make(
-    Layer.mergeAll(UserShell.layer, CloudThreadService.layer).pipe(
-      Layer.provideMerge(layerThreadContexts),
+    Layer.mergeAll(UserShell.layer, CloudThreadService.layer, UserSections.layer).pipe(
+      Layer.provideMerge(ThreadContexts.layer),
       Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
       Layer.provideMerge(
         ThreadDirectory.layerDurableObjects(env.THREADS, {
