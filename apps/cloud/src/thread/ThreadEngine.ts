@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -75,10 +76,17 @@ export interface Actor {
   readonly userId: string;
 }
 
-/** Fixed when a thread is created: the context it acts as for its whole life. */
+/**
+ * Fixed when a thread is created: the context it acts as for its whole life.
+ * Null when the command names a project that is none of the actor's contexts:
+ * a retry of a command that already landed still replays, a new thread is
+ * rejected.
+ */
 export interface ThreadCreation {
-  readonly contextId: string;
+  readonly contextId: SignalboxContextId | null;
 }
+
+const NO_CONTEXT = "That project does not exist in this environment.";
 
 /**
  * A thread's sidebar row as its owner's index stores it. `revision` grows with
@@ -301,6 +309,10 @@ const make = Effect.gen(function* () {
         if (receipt?._tag === "rejected") {
           return yield* ThreadCommandRejectedError.forCommand(command, receipt.message);
         }
+        const { contextId } = creation;
+        if (current.thread === null && contextId === null) {
+          return yield* ThreadCommandRejectedError.forCommand(command, NO_CONTEXT);
+        }
         const decision = decideWith(current.thread?.projection ?? null, yield* context);
         if (decision._tag === "rejected") {
           // Only a thread that exists keeps receipts; an unknown id leaves no trace.
@@ -312,7 +324,7 @@ const make = Effect.gen(function* () {
         const sequence = yield* commit({
           events: decision.events,
           command,
-          owner: { userId: actor.userId, contextId: creation.contextId },
+          ...(contextId === null ? {} : { owner: { userId: actor.userId, contextId } }),
         });
         return { sequence, replayed: false };
       }),

@@ -14,7 +14,7 @@ import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/sta
 
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
-import { makeMemoryCloud } from "../testing.ts";
+import { layerPersonalThreadContexts, makeMemoryCloud } from "../testing.ts";
 import * as CloudThreadService from "./CloudThreadService.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
@@ -47,6 +47,7 @@ describe("CloudThreadService", () => {
           // Fresh: the cloud's own layer already built one over the reliable directory.
           Layer.fresh(CloudThreadService.layer).pipe(
             Layer.provide(Layer.succeed(ThreadDirectory.ThreadDirectory, flaky)),
+            Layer.provide(layerPersonalThreadContexts),
             Layer.provide(Platform.layerCrypto),
           ),
         ),

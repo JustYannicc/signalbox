@@ -31,6 +31,7 @@ import * as EnvironmentApi from "./http/environmentApi.ts";
 import * as Platform from "./platform.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
+import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 
 /**
@@ -62,6 +63,8 @@ export const layerServices = (input: {
   readonly localWorkerd: boolean;
 }) =>
   Layer.mergeAll(CloudAccounts.layer, CloudThreadService.layer).pipe(
+    // The Worker only reads threads; they are created in their user's object.
+    Layer.provideMerge(ThreadContexts.layerWorker),
     Layer.provideMerge(CloudSessions.layer),
     Layer.provideMerge(CloudTokens.layer),
     Layer.provideMerge(CloudConfig.layer),

@@ -26,6 +26,17 @@ Home to navigate the project tree.
 These sections organize projects. **Pinned**, **Active**, **Snoozed**, and **Settled** in Pipeline
 are thread status groups.
 
+### Contexts in Signalbox Cloud
+
+When you're signed in to Signalbox Cloud, Home shows Personal and every work organization you
+belong to, side by side. You don't switch accounts. Each context has its own sections: use the
+**New section** button beside a context's name. Sections and projects stay in their own context.
+Organizations you join show up the next time you sign in.
+
+A thread acts as the context it starts in, for good: a work thread uses that organization's
+identity and connections, a personal one uses yours. New threads start in Personal. To start one
+in a work context, pick the organization in **New thread in…**.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model

@@ -58,7 +58,9 @@ export function sectionMoveDestinations(
     (destination) =>
       destination.section.id !== sectionId &&
       destination.section.id !== section.parentId &&
-      !destination.ancestorIds.has(sectionId),
+      !destination.ancestorIds.has(sectionId) &&
+      // signalbox: sections never leave their context (absent outside the cloud).
+      destination.section.contextId === section.contextId,
   );
 }
 
@@ -68,8 +70,10 @@ export function siblingSectionMove(input: {
   readonly direction: "up" | "down";
   readonly sections: ReadonlyArray<Section>;
 }): { readonly parentId: SectionId | null; readonly beforeId?: SectionId } | null {
+  // signalbox: siblings share a context too (absent outside the cloud).
+  const contextId = input.sections.find((section) => section.id === input.sectionId)?.contextId;
   const siblings = input.sections
-    .filter((section) => section.parentId === input.parentId)
+    .filter((section) => section.parentId === input.parentId && section.contextId === contextId)
     .slice()
     .sort(compareSectionPosition);
   const index = siblings.findIndex((section) => section.id === input.sectionId);

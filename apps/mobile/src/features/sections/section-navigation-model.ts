@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/sections";
 import type { Section, SectionId, SectionsSnapshot } from "@t3tools/contracts/sections";
 import type { MenuAction } from "@react-native-menu/menu";
+import { projectSectionDestinations } from "@t3tools/client-runtime/state/signalboxContexts"; // signalbox: contexts
 
 export { projectSiblingMoveInput, sectionSiblingMoveInput };
 
@@ -20,14 +21,19 @@ export function projectMoveMenuActions(input: {
   readonly sectionId: SectionId | null;
   readonly siblingIndex: number;
   readonly siblingCount: number;
+  /** signalbox: a top-level project's cloud context; inside a section, the section's. */
+  readonly contextId?: string;
 }): MenuAction[] {
+  const contextId =
+    input.contextId ??
+    input.snapshot.sections.find((section) => section.id === input.sectionId)?.contextId;
   const destinations: MenuAction[] = [
     {
       id: "project:root",
       title: "Top level",
       state: input.sectionId === null ? "on" : undefined,
     },
-    ...sectionDestinations(input.snapshot).map((destination) => ({
+    ...projectSectionDestinations(input.snapshot, contextId).map((destination) => ({
       id: `project:section:${destination.section.id}`,
       title: sectionPath(destination),
       state: input.sectionId === destination.section.id ? ("on" as const) : undefined,

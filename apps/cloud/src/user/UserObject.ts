@@ -21,7 +21,10 @@ import {
   USER_OBJECT_JURISDICTION,
   type UserObjectApi,
 } from "./UserDirectory.ts";
+import * as ThreadContexts from "./threadContexts.ts";
+import * as UserContexts from "./UserContexts.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
+import * as UserSections from "./UserSections.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 
@@ -49,8 +52,9 @@ const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
   ManagedRuntime.make(
-    Layer.mergeAll(UserShell.layer, CloudThreadService.layer).pipe(
-      Layer.provideMerge(UserStore.layer),
+    Layer.mergeAll(UserShell.layer, CloudThreadService.layer, UserSections.layer).pipe(
+      Layer.provideMerge(ThreadContexts.layer),
+      Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
       Layer.provideMerge(
         ThreadDirectory.layerDurableObjects(env.THREADS, {
           localWorkerd: env.LOCAL_WORKERD === "1",
@@ -121,6 +125,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   exchangeCredential(input: Parameters<UserObjectApi["exchangeCredential"]>[0]) {
     return this.api.exchangeCredential(input);
+  }
+
+  syncOrganizations(organizations: Parameters<UserObjectApi["syncOrganizations"]>[0]) {
+    return this.api.syncOrganizations(organizations);
   }
 
   shellSnapshot() {

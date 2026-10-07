@@ -8,6 +8,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback } from "react";
 import { Alert } from "react-native";
+import { projectsInContextOf } from "@t3tools/client-runtime/state/signalboxContexts"; // signalbox: contexts
+import type { SignalboxContextsSnapshot } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
 
 import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
 import { environmentSections } from "../../state/sections";
@@ -18,8 +20,10 @@ export function useSectionActions(input: {
   readonly environmentId: EnvironmentId;
   readonly snapshot: SectionsSnapshot | null;
   readonly projects: ReadonlyArray<{ readonly id: ProjectId }>;
+  /** signalbox: Signalbox Cloud's contexts; projects reorder within their own. */
+  readonly contexts?: SignalboxContextsSnapshot | null;
 }) {
-  const { environmentId, snapshot, projects } = input;
+  const { environmentId, snapshot, projects, contexts } = input;
   const createSection = useAtomCommand(environmentSections.createSection, {
     reportFailure: false,
   });
@@ -54,7 +58,7 @@ export function useSectionActions(input: {
   );
 
   const requestCreateSection = useCallback(
-    (parentId: SectionId | null) => {
+    (parentId: SectionId | null, contextId?: string) => {
       showTextInputDialog({
         title: parentId === null ? "New section" : "New nested section",
         initialValue: "",
@@ -63,7 +67,11 @@ export function useSectionActions(input: {
           void run(
             "Could not create section",
             "The section could not be created.",
-            createSection({ environmentId, input: { name, parentId } }),
+            createSection({
+              environmentId,
+              // signalbox: the cloud context a top-level section organizes.
+              input: { name, parentId, ...(contextId === undefined ? {} : { contextId }) },
+            }),
           );
         },
       });
@@ -88,7 +96,7 @@ export function useSectionActions(input: {
           projectId,
           direction: event === "project:up" ? "up" : "down",
           snapshot,
-          projects,
+          projects: projectsInContextOf(contexts ?? null, projectId, projects),
         });
         if (input !== null) {
           void run(
@@ -108,7 +116,7 @@ export function useSectionActions(input: {
         moveProject({ environmentId, input: { projectId, sectionId } }),
       );
     },
-    [environmentId, moveProject, projects, run, snapshot],
+    [contexts, environmentId, moveProject, projects, run, snapshot],
   );
 
   const onSectionAction = useCallback(

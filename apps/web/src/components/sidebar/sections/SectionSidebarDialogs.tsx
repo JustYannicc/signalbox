@@ -22,6 +22,8 @@ export type SectionEditor =
       readonly environmentId: EnvironmentId | null;
       readonly parentId: string | null;
       readonly name: string;
+      /** signalbox: the cloud context a top-level section organizes. */
+      readonly contextId?: string;
     }
   | {
       readonly kind: "rename";

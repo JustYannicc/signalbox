@@ -15,15 +15,21 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as Environment from "../environment.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
+import { contextProjects } from "./contextProjects.ts";
+import * as UserContexts from "./UserContexts.ts";
 import * as UserStore from "./UserStore.ts";
 
 /**
  * A user's sidebar, served from their object's thread index: the snapshot
  * `GET /api/orchestration/shell` and `subscribeShell` start from, and the
  * `thread.updated` items that follow as thread objects deliver summaries.
+ * Its projects are the user's contexts' (see `contextProjects`); when those
+ * change, open subscriptions get a fresh snapshot.
  */
 
 type ShellItem = Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }>;
+type ShellUpdate = ShellItem | { readonly kind: "projects.changed" };
+const PROJECTS_CHANGED: ShellUpdate = { kind: "projects.changed" };
 
 export class UserShell extends Context.Service<
   UserShell,
@@ -48,12 +54,37 @@ export class UserShell extends Context.Service<
 
 const make = Effect.gen(function* () {
   const store = yield* UserStore.UserStore;
+  const contexts = yield* UserContexts.UserContexts;
   const directory = yield* ThreadDirectory.ThreadDirectory;
-  const updates = yield* PubSub.unbounded<ShellItem>();
+  // Thread updates and project changes share one queue, so a subscriber sees
+  // them in the order they happened.
+  const updates = yield* PubSub.unbounded<ShellUpdate>();
 
-  const snapshot: UserShell["Service"]["snapshot"] = Effect.map(store.threadIndex, (index) =>
-    Environment.shellSnapshot(index),
+  const snapshot: UserShell["Service"]["snapshot"] = Effect.gen(function* () {
+    const projects = contextProjects(yield* contexts.contexts);
+    // The index last, so the snapshot is as recent as the thread updates around it.
+    return Environment.shellSnapshot({ ...(yield* store.threadIndex), projects });
+  });
+
+  yield* contexts.contextsChanged.pipe(
+    Stream.runForEach(() => PubSub.publish(updates, PROJECTS_CHANGED)),
+    Effect.forkScoped,
   );
+
+  /** A subscriber's next item for `update`; a project change becomes a fresh snapshot. */
+  const toItem = (update: ShellUpdate) =>
+    update.kind === "projects.changed"
+      ? snapshot.pipe(
+          Effect.map((next): OrchestrationV2ShellStreamItem | null => ({
+            kind: "snapshot",
+            snapshot: next,
+          })),
+          // The next change or reconnect brings the projects; the thread updates keep flowing.
+          Effect.catch((cause) =>
+            Effect.as(Effect.logWarning("cloud shell project update failed", { cause }), null),
+          ),
+        )
+      : Effect.succeed(update);
 
   const publish = (summary: ThreadSummary, sequence: number) => {
     const item: ShellItem = {
@@ -85,7 +116,12 @@ const make = Effect.gen(function* () {
       return Stream.concat(
         Stream.fromIterable(head),
         Stream.fromSubscription(subscription).pipe(
-          Stream.filter((item) => item.sequence > current.snapshotSequence),
+          Stream.filter(
+            (update) =>
+              update.kind === "projects.changed" || update.sequence > current.snapshotSequence,
+          ),
+          Stream.mapEffect(toItem),
+          Stream.filter((item) => item !== null),
         ),
       ).pipe(Stream.ensuring(Scope.close(scope, Exit.void)));
     });

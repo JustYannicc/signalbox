@@ -9,6 +9,7 @@ import {
 } from "../../../connection/desktopLocal";
 import { environmentServerConfigsAtom } from "../../../state/server";
 import { environmentSectionTreesAtom } from "../../../state/sections";
+import { environmentContextsAtom } from "../../../state/signalboxContexts"; // signalbox: contexts
 import type { EnvironmentPresentation } from "../../../state/environments";
 import type { Project } from "../../../types";
 import type { SectionEnvironmentOption } from "./SectionSidebarActions";
@@ -28,6 +29,7 @@ export function useSectionsSidebar(input: {
 }) {
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const serverViews = useAtomValue(environmentSectionTreesAtom);
+  const contextsByEnvironment = useAtomValue(environmentContextsAtom); // signalbox: contexts
   const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<string>>(() => new Set());
   const toggleSection = useCallback((environmentId: EnvironmentId, sectionId: string) => {
     const sectionKey = sectionSidebarSectionKey(environmentId, sectionId);
@@ -60,19 +62,25 @@ export function useSectionsSidebar(input: {
         return [];
       }
       return [
-        buildSectionSidebarEnvironment({
-          environmentId: environment.environmentId,
-          label: environment.label,
-          primaryEnvironmentId: input.primaryEnvironmentId,
-          isDesktopLocalEnvironment: isDesktopLocalConnectionTarget(environment.entry.target),
-          isWslEnvironment: isWslConnectionTarget(environment.entry.target),
-          projects,
-          projectGroups: input.projectGroups,
-          serverView,
-        }),
+        {
+          ...buildSectionSidebarEnvironment({
+            environmentId: environment.environmentId,
+            label: environment.label,
+            primaryEnvironmentId: input.primaryEnvironmentId,
+            isDesktopLocalEnvironment: isDesktopLocalConnectionTarget(environment.entry.target),
+            isWslEnvironment: isWslConnectionTarget(environment.entry.target),
+            projects,
+            projectGroups: input.projectGroups,
+            serverView,
+          }),
+          contexts: contextsByEnvironment.get(environment.environmentId) ?? null, // signalbox
+        },
       ];
     });
-    const hasSavedSectionState = hasAnySavedSectionSidebarState(environments);
+    const hasSavedSectionState =
+      hasAnySavedSectionSidebarState(environments) ||
+      // signalbox: Signalbox Cloud always shows its contexts, sections or not.
+      environments.some((environment) => environment.contexts);
     const visibleProjectRows = visibleSectionProjectRows(environments, collapsedSections);
     const failures = input.environments.flatMap((environment) => {
       const status = serverViews.get(environment.environmentId)?.status;
@@ -109,6 +117,7 @@ export function useSectionsSidebar(input: {
     collapsedSections,
     serverConfigs,
     serverViews,
+    contextsByEnvironment,
     toggleSection,
   ]);
 }

@@ -3,6 +3,7 @@ import {
   OrchestrationV2ShellSnapshot,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
+import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -72,6 +73,8 @@ export interface UserObjectApi {
     readonly label?: string;
     readonly ttlMs: number;
   }) => Promise<SessionRecord | null>;
+  /** Makes the user's work contexts exactly these organizations (see `UserContexts`). */
+  readonly syncOrganizations: (organizations: ReadonlyArray<WorkOSOrganization>) => Promise<void>;
   /**
    * The user's sidebar, as `GET /api/orchestration/shell` and `subscribeShell`
    * serve it, in its JSON encoding (`shellSnapshotWire`).
@@ -118,6 +121,7 @@ const METHODS = Object.keys({
   issueGrant: true,
   redeemHandoff: true,
   exchangeCredential: true,
+  syncOrganizations: true,
   shellSnapshot: true,
   recordThreadSummary: true,
   rebuildThreadIndex: true,

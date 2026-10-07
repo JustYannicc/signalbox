@@ -8,6 +8,13 @@ export type SectionId = typeof SectionId.Type;
 
 const SectionName = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
+/**
+ * The Signalbox Cloud context (Personal or a work organization) a section
+ * organizes. Subsections share their parent's. Absent on self-hosted servers,
+ * which have no contexts.
+ */
+const SectionContextId = TrimmedNonEmptyString;
+
 export const Section = Schema.Struct({
   id: SectionId,
   name: SectionName,
@@ -18,6 +25,7 @@ export const Section = Schema.Struct({
    * project picks its own default model. Absent inherits the parent section.
    */
   defaultPoolId: Schema.optional(AccountPoolId),
+  contextId: Schema.optionalKey(SectionContextId),
 });
 export type Section = typeof Section.Type;
 
@@ -49,6 +57,11 @@ export const SectionCreateInput = Schema.Struct({
   name: SectionName,
   parentId: Schema.NullOr(SectionId),
   beforeId: Schema.optional(SectionId),
+  /**
+   * The context a top-level section organizes; servers with contexts use their
+   * default one when absent, and other servers ignore it.
+   */
+  contextId: Schema.optionalKey(SectionContextId),
 });
 export type SectionCreateInput = typeof SectionCreateInput.Type;
 

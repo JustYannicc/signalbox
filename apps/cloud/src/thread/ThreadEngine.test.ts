@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -27,7 +28,7 @@ import * as ThreadStore from "./ThreadStore.ts";
 
 const owner = { userId: "user_1" };
 const stranger = { userId: "user_2" };
-const personal = { contextId: "personal" };
+const personal = { contextId: PERSONAL_CONTEXT_ID };
 const threadId = ThreadId.make("thread-1");
 
 const directories: Array<string> = [];

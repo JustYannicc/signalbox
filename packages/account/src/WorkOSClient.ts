@@ -4,10 +4,10 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 /**
- * The one WorkOS endpoint the server calls: exchanging an authorization code
- * (or, when WorkOS asks for it, an email verification code) for the user.
- * WorkOS tokens in the response are ignored; the server issues its own
- * environment session.
+ * The WorkOS endpoints Signalbox calls: exchanging an authorization code (or,
+ * when WorkOS asks for it, an email verification code) for the user, and
+ * listing the organizations that user belongs to. WorkOS tokens in the
+ * response are ignored; the server issues its own environment session.
  *
  * Never log the request or the raw response: they carry the code, the PKCE
  * verifier, the client secret, and WorkOS tokens.
@@ -181,4 +181,74 @@ export const authenticate = Effect.fn("WorkOS.authenticate")(function* (
     ...(lastName ? { lastName } : {}),
     ...(avatarUrl ? { avatarUrl } : {}),
   } satisfies WorkOSUser;
+});
+
+export interface WorkOSOrganization {
+  readonly id: string;
+  readonly name: string;
+}
+
+export class WorkOSOrganizationsError extends Schema.TaggedError<WorkOSOrganizationsError>()(
+  "WorkOSOrganizationsError",
+  {
+    /** HTTP status, absent when the request never got a response. */
+    status: Schema.optional(Schema.Number),
+  },
+) {
+  override get message(): string {
+    return `Listing WorkOS organization memberships failed (${this.status ?? "no response"}).`;
+  }
+}
+
+const MembershipsPage = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({ organization_id: Schema.String, organization_name: Schema.String }),
+  ),
+  list_metadata: Schema.Struct({ after: Schema.optional(Schema.NullOr(Schema.String)) }),
+});
+
+/** WorkOS's page size limit. */
+const MEMBERSHIPS_PAGE_SIZE = 100;
+/** Far beyond any real user; stops a misbehaving cursor from looping forever. */
+const MAX_MEMBERSHIP_PAGES = 20;
+
+/**
+ * `GET /user_management/organization_memberships`: the organizations the user
+ * is an active member of. Needs the API key.
+ */
+export const listOrganizations = Effect.fn("WorkOS.listOrganizations")(function* (
+  config: WorkOSConfig & { readonly apiKey: Redacted.Redacted<string> },
+  userId: string,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const organizations: Array<WorkOSOrganization> = [];
+  let after: string | undefined;
+  for (let page = 0; page < MAX_MEMBERSHIP_PAGES; page++) {
+    const url = new URL("/user_management/organization_memberships", config.apiBaseUrl);
+    url.searchParams.set("user_id", userId);
+    url.searchParams.set("statuses", "active");
+    url.searchParams.set("limit", String(MEMBERSHIPS_PAGE_SIZE));
+    if (after) url.searchParams.set("after", after);
+    const response = yield* httpClient
+      .execute(
+        HttpClientRequest.get(url).pipe(
+          HttpClientRequest.acceptJson,
+          HttpClientRequest.bearerToken(Redacted.value(config.apiKey)),
+        ),
+      )
+      .pipe(Effect.mapError(() => new WorkOSOrganizationsError({})));
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new WorkOSOrganizationsError({ status: response.status });
+    }
+    const body = yield* HttpClientResponse.schemaBodyJson(MembershipsPage)(response).pipe(
+      Effect.mapError(() => new WorkOSOrganizationsError({ status: response.status })),
+    );
+    for (const membership of body.data) {
+      organizations.push({ id: membership.organization_id, name: membership.organization_name });
+    }
+    after = body.list_metadata.after ?? undefined;
+    if (!after || body.data.length === 0) return organizations;
+  }
+  // A partial list would read as leaving every organization it missed.
+  return yield* new WorkOSOrganizationsError({});
 });

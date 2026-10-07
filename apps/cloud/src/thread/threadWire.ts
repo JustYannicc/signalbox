@@ -9,6 +9,7 @@ import {
   OrchestrationV2ThreadStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Schema from "effect/Schema";
 
 /**
@@ -35,7 +36,7 @@ export const jsonCodec = <
 
 export const ThreadSummaryWire = Schema.Struct({
   threadId: ThreadId,
-  contextId: Schema.String,
+  contextId: SignalboxContextId,
   revision: NonNegativeInt,
   shell: OrchestrationV2ThreadShell,
 });

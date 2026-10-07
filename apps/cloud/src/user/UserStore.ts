@@ -17,6 +17,8 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import * as UserContexts from "./UserContexts.ts";
+import * as UserSections from "./UserSections.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 
 /**
@@ -147,7 +149,7 @@ const migrations = Migrator.fromRecord({
       used_at INTEGER
     )`;
   }),
-  // 0002 belongs to contexts and sections (#139).
+  // 0002 is unused: contexts took 0004 after this landed (#139).
   "0003_thread_index": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE thread_members (
@@ -169,6 +171,7 @@ const migrations = Migrator.fromRecord({
     )`;
     yield* sql`INSERT INTO thread_index_state (id, sequence) VALUES (1, 0)`;
   }),
+  "0004_contexts_sections": Effect.andThen(UserContexts.createTables, UserSections.createTables),
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */

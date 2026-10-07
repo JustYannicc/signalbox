@@ -42,7 +42,7 @@ export interface SectionEnvironmentOption {
 
 export interface SectionSidebarActions {
   readonly environments: ReadonlyArray<SectionEnvironmentOption>;
-  openCreate: (environmentId?: EnvironmentId, parentId?: string | null) => void;
+  openCreate: (environmentId?: EnvironmentId, parentId?: string | null, contextId?: string) => void;
   openRename: (environmentId: EnvironmentId, section: Section) => void;
   openDelete: (environmentId: EnvironmentId, section: Section, parentName: string | null) => void;
   createSection: (environmentId: EnvironmentId, input: SectionCreateInput) => Promise<boolean>;
@@ -124,7 +124,7 @@ export function SectionSidebarActionsProvider(props: {
     [props.environments],
   );
   const openCreate = useCallback(
-    (environmentId?: EnvironmentId, parentId: string | null = null) => {
+    (environmentId?: EnvironmentId, parentId: string | null = null, contextId?: string) => {
       if (editorPendingRef.current || deletePendingRef.current) return;
       setEditor({
         kind: "create",
@@ -133,6 +133,7 @@ export function SectionSidebarActionsProvider(props: {
           (props.environments.length === 1 ? props.environments[0]!.environmentId : null),
         parentId,
         name: "",
+        ...(contextId === undefined ? {} : { contextId }), // signalbox: contexts
       });
     },
     [props.environments],
@@ -177,7 +178,11 @@ export function SectionSidebarActionsProvider(props: {
     try {
       const saved =
         editor.kind === "create"
-          ? await commands.create(environmentId, { name, parentId: editor.parentId })
+          ? await commands.create(environmentId, {
+              name,
+              parentId: editor.parentId,
+              ...(editor.contextId === undefined ? {} : { contextId: editor.contextId }), // signalbox: contexts
+            })
           : await commands.update(environmentId, { id: editor.sectionId, name });
       if (saved) setEditor((current) => (current === editor ? null : current));
     } finally {

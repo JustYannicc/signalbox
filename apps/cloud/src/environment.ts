@@ -34,15 +34,16 @@ const SHELL_SCHEMA_VERSION = 2;
 const CLOUD_ROOT = "/";
 
 /**
- * Every user's one project until drives land (#140): Scratch, which clients
- * show as "No project". Its root only has to match `scratchWorkspaceRoot`.
+ * Scratch, which clients show as "No project": the Personal context's project
+ * until drives land (#140). Its root only has to match `scratchWorkspaceRoot`.
+ * Work contexts have their own projects (see `user/contextProjects.ts`).
  */
 export const SCRATCH_PROJECT_ID = ProjectId.make("scratch");
 const SCRATCH_ROOT = "/scratch";
 /** Scratch has no history of its own; it dates from the cloud's first threads. */
 const SCRATCH_CREATED_AT = "2026-10-07T00:00:00.000Z";
 
-const scratchProject: OrchestrationProjectShell = {
+export const scratchProject: OrchestrationProjectShell = {
   id: SCRATCH_PROJECT_ID,
   title: "Scratch",
   workspaceRoot: SCRATCH_ROOT,
@@ -81,6 +82,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     repositoryIdentity: false,
     connectionProbe: true,
     signalboxCloud: true,
+    // Sections live in each user's object (`user/UserSections.ts`).
+    sections: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
   },
@@ -124,14 +127,15 @@ export const welcome = (identity: CloudEnvironmentIdentity) => ({
   bootstrapStatus: "complete" as const,
 });
 
-/** A user's sidebar: their project and the threads in their index, at `sequence`. */
+/** A user's sidebar: their projects and the threads in their index, at `sequence`. */
 export const shellSnapshot = (input: {
   readonly sequence: number;
+  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
 }): OrchestrationV2ShellSnapshot => ({
   schemaVersion: SHELL_SCHEMA_VERSION,
   snapshotSequence: input.sequence,
-  projects: [scratchProject],
+  projects: input.projects,
   threads: input.threads.filter((thread) => thread.archivedAt === null),
   archivedThreads: input.threads.filter((thread) => thread.archivedAt !== null),
 });

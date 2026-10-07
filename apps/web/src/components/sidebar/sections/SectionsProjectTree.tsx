@@ -3,13 +3,14 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { ChevronRightIcon, FolderClosedIcon } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 
-import { SidebarMenu, SidebarMenuItem } from "../../ui/sidebar";
+import { SidebarMenuItem } from "../../ui/sidebar";
 import {
   sectionSidebarSectionKey,
   type SectionSidebarEnvironment,
   type SectionSidebarProject,
 } from "./sectionProjectTree";
 import { ProjectPlacementMenu, SectionMoveMenu } from "./SectionPlacementMenus";
+import { ContextSectionGroups } from "../contexts/ContextSectionGroups"; // signalbox: contexts
 
 type RenderProject = (
   environmentId: EnvironmentId,
@@ -56,7 +57,11 @@ function SectionNode(props: {
   const expanded = !props.collapsedSections.has(sectionKey);
   const snapshot = props.environment.snapshot;
   const section = props.node.section;
-  const siblings = snapshot?.sections.filter((item) => item.parentId === section.parentId) ?? [];
+  // signalbox: siblings share a context too (absent outside the cloud).
+  const siblings =
+    snapshot?.sections.filter(
+      (item) => item.parentId === section.parentId && item.contextId === section.contextId,
+    ) ?? [];
 
   return (
     <SidebarMenuItem>
@@ -135,8 +140,13 @@ export function SectionsProjectTree(props: {
                 {environment.label}
               </h3>
             ) : null}
-            <SidebarMenu>
-              {environment.tree.roots.map((node) => (
+            {/* signalbox: a cloud environment groups its sections by context */}
+            <ContextSectionGroups
+              environment={environment}
+              collapsedSections={props.collapsedSections}
+              onToggleSection={props.onToggleSection}
+              rootRows={rootRows}
+              renderSection={(node) => (
                 <SectionNode
                   key={`${environment.environmentId}:${node.section.id}`}
                   environment={environment}
@@ -145,14 +155,16 @@ export function SectionsProjectTree(props: {
                   onToggleSection={props.onToggleSection}
                   renderProject={props.renderProject}
                 />
-              ))}
-              <ProjectRows
-                environment={environment}
-                rows={rootRows}
-                sectionId={null}
-                renderProject={props.renderProject}
-              />
-            </SidebarMenu>
+              )}
+              renderProjects={(rows) => (
+                <ProjectRows
+                  environment={environment}
+                  rows={rows}
+                  sectionId={null}
+                  renderProject={props.renderProject}
+                />
+              )}
+            />
           </section>
         );
       })}

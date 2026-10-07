@@ -11,15 +11,19 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection, scriptedReply } from "../thread/scriptedProvider.ts";
+import { projectIdForContext } from "./contextProjects.ts";
 import * as CloudRpc from "./rpc.ts";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
@@ -41,7 +45,7 @@ const connect = (
         Layer.mergeAll(
           CloudRpc.layerHandlers({ identity, actor: { userId } }),
           CloudRpc.layerScopeAuthorization(scopes),
-        ).pipe(Layer.provide(Layer.mergeAll(cloud.layer, cloud.userObject(userId)))),
+        ).pipe(Layer.provide(cloud.layerFor(userId))),
       ),
     );
     return { cloud, rpc };
@@ -239,6 +243,78 @@ describe("cloud RPC", () => {
         workspaceStrategy: { type: "root" },
       }).pipe(Effect.flip);
       expect(failure._tag).toBe("OrchestrationV2ThreadLaunchError");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("records the context each new thread acts as, from the project it starts in", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      const user = cloud.userDirectory.forUser(userId);
+      yield* user.syncOrganizations([{ id: "org_acme", name: "Acme" }]);
+      const acmeProject = projectIdForContext(SignalboxContextId.make("org_acme"));
+      const shell = yield* sidebar(rpc);
+      expect(shell?.projects.map((project) => [project.id, project.title])).toEqual([
+        [Environment.SCRATCH_PROJECT_ID, "Scratch"],
+        [acmeProject, "Acme"],
+      ]);
+
+      const launchIn = (id: ThreadId, projectId: ProjectId) =>
+        rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+          commandId: CommandId.make(`launch-${id}`),
+          threadId: id,
+          projectId,
+          title: "Hello",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+        });
+      const work = ThreadId.make("thread-work");
+      yield* launchIn(work, acmeProject);
+      yield* launchIn(threadId, Environment.SCRATCH_PROJECT_ID);
+      const contextOf = (id: ThreadId) =>
+        cloud.threadDirectory
+          .forThread(id)
+          .summary({ userId })
+          .pipe(Effect.map((summary) => summary?.contextId));
+      expect(yield* contextOf(work)).toBe("org_acme");
+      expect(yield* contextOf(threadId)).toBe("personal");
+
+      // Leaving the organization closes its project to new threads, but a
+      // thread keeps the context it was created as.
+      yield* user.syncOrganizations([]);
+      const rejected = yield* launchIn(ThreadId.make("thread-late"), acmeProject).pipe(Effect.flip);
+      expect(rejected._tag).toBe("OrchestrationV2ThreadLaunchError");
+      expect(yield* contextOf(work)).toBe("org_acme");
+      // A retry of the launch that already landed still replays.
+      const retried = yield* launchIn(work, acmeProject);
+      expect(retried.resumed).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends an open sidebar the new projects when the user's organizations change", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc } = yield* connect();
+      const subscribed = yield* Deferred.make<void>();
+      const projectsSeen = yield* rpc[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({}).pipe(
+        Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+        Stream.filter((item) => item.kind === "snapshot"),
+        Stream.map((item) => (item.kind === "snapshot" ? item.snapshot.projects.length : 0)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(subscribed);
+      // Sections alone don't touch the sidebar's projects.
+      yield* rpc[WS_METHODS.sectionsCreate]({
+        name: "Inbox",
+        parentId: null,
+        contextId: "personal",
+      });
+      yield* cloud.userDirectory
+        .forUser(userId)
+        .syncOrganizations([{ id: "org_acme", name: "Acme" }]);
+      expect(yield* Fiber.join(projectsSeen)).toEqual([1, 2]);
     }).pipe(Effect.scoped),
   );
 

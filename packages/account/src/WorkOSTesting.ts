@@ -1,7 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
+
+import type { WorkOSOrganization } from "./WorkOSClient.ts";
 
 /**
  * A fake WorkOS for tests of anything that signs in through `WorkOSClient`:
@@ -41,15 +43,46 @@ const decodeBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-/** Fake `POST /user_management/authenticate`. Records each request body. */
+/** Each user's active organizations, in the order WorkOS lists them. */
+export type WorkOSMemberships = Readonly<Record<string, ReadonlyArray<WorkOSOrganization>>>;
+
+/** Fake `GET /user_management/organization_memberships`, paged by `limit` and `after`. */
+const listMemberships = (url: URL, memberships: WorkOSMemberships): Response => {
+  const all = (memberships[url.searchParams.get("user_id") ?? ""] ?? []).map(
+    (organization, index) => ({
+      id: `om_${index}`,
+      organization_id: organization.id,
+      organization_name: organization.name,
+    }),
+  );
+  const after = url.searchParams.get("after");
+  const start = after ? all.findIndex((membership) => membership.id === after) + 1 : 0;
+  const page = all.slice(start, start + Number(url.searchParams.get("limit") ?? 10));
+  const last = page.at(-1);
+  return Response.json({
+    object: "list",
+    data: page,
+    list_metadata: { after: last && start + page.length < all.length ? last.id : null },
+  });
+};
+
+/**
+ * Fake WorkOS: `POST /user_management/authenticate` (recording each request
+ * body) and the membership listing.
+ */
 export const workosStubLayer = (
   codes: WorkOSCodes,
   exchanges: Array<Record<string, unknown>> = [],
+  memberships: WorkOSMemberships = {},
 ) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
       Effect.sync(() => {
+        const url = new URL(`${request.url}?${UrlParams.toString(request.urlParams)}`);
+        if (url.pathname === "/user_management/organization_memberships") {
+          return HttpClientResponse.fromWeb(request, listMemberships(url, memberships));
+        }
         const body =
           request.body._tag === "Uint8Array"
             ? decodeBody(new TextDecoder().decode(request.body.body))

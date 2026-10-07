@@ -14,6 +14,8 @@ import { environmentSections } from "../../state/sections";
 import type { SectionNavigationEnvironment } from "./sectionNavigationTypes";
 import { SectionNodeRow, ProjectRow } from "./SectionNavigationRows";
 import { useSectionActions } from "./use-section-actions";
+import { ContextSections } from "../contexts/ContextSections"; // signalbox: contexts
+import { useEnvironmentContexts } from "../../state/signalboxContexts"; // signalbox: contexts
 
 export function SectionNavigationPanel(props: {
   readonly environments: ReadonlyArray<SectionNavigationEnvironment>;
@@ -117,10 +119,12 @@ function SectionTreeEnvironment(props: {
   const rootProjects = sectionsSupported
     ? [...tree.rootProjects, ...tree.unplacedProjects]
     : tree.unplacedProjects;
+  const contexts = useEnvironmentContexts(environmentId); // signalbox: contexts
   const { requestCreateSection, onProjectAction, onSectionAction } = useSectionActions({
     environmentId,
     snapshot,
     projects: environmentProjects,
+    contexts, // signalbox: contexts
   });
   const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<string>>(() => new Set());
   const toggleSection = useCallback((sectionId: string) => {
@@ -185,41 +189,50 @@ function SectionTreeEnvironment(props: {
           Projects without a section stay at the top level.
         </AppText>
       ) : null}
-      {sectionsSupported
-        ? tree.roots.map((node) => (
-            <SectionNodeRow
-              key={node.section.id}
-              node={node}
-              depth={0}
-              ancestorPath=""
+      {/* signalbox: a cloud environment groups its sections by context */}
+      <ContextSections
+        contexts={contexts}
+        roots={sectionsSupported ? tree.roots : []}
+        projects={rootProjects}
+        tree={tree}
+        onCreateSection={(contextId) => requestCreateSection(null, contextId)}
+        renderSection={(node) => (
+          <SectionNodeRow
+            key={node.section.id}
+            node={node}
+            depth={0}
+            ancestorPath=""
+            environmentId={environmentId}
+            snapshot={snapshot}
+            selectedProjectKey={props.selectedProjectKey}
+            collapsedSections={collapsedSections}
+            onProjectChange={props.onProjectChange}
+            onToggle={toggleSection}
+            onSectionAction={onSectionAction}
+            onProjectAction={onProjectAction}
+            pools={pools}
+          />
+        )}
+        renderProjects={(groupProjects, contextId) =>
+          groupProjects.map((project, siblingIndex) => (
+            <ProjectRow
+              key={project.id}
+              project={project}
               environmentId={environmentId}
-              snapshot={snapshot}
+              depth={0}
+              siblingIndex={siblingIndex}
+              siblingCount={groupProjects.length}
+              sectionId={null}
+              sectionPath=""
+              snapshot={sectionsSupported ? snapshot : null}
+              {...(contextId === undefined ? {} : { contextId })}
               selectedProjectKey={props.selectedProjectKey}
-              collapsedSections={collapsedSections}
-              onProjectChange={props.onProjectChange}
-              onToggle={toggleSection}
-              onSectionAction={onSectionAction}
-              onProjectAction={onProjectAction}
-              pools={pools}
+              onSelect={props.onProjectChange}
+              onAction={onProjectAction}
             />
           ))
-        : null}
-      {rootProjects.map((project, siblingIndex) => (
-        <ProjectRow
-          key={project.id}
-          project={project}
-          environmentId={environmentId}
-          depth={0}
-          siblingIndex={siblingIndex}
-          siblingCount={rootProjects.length}
-          sectionId={null}
-          sectionPath=""
-          snapshot={sectionsSupported ? snapshot : null}
-          selectedProjectKey={props.selectedProjectKey}
-          onSelect={props.onProjectChange}
-          onAction={onProjectAction}
-        />
-      ))}
+        }
+      />
     </View>
   );
 }

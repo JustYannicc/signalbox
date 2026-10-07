@@ -3,6 +3,7 @@ import {
   type OrchestrationV2DomainEvent,
   OrchestrationV2DomainEventJson,
 } from "@t3tools/contracts";
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -32,8 +33,8 @@ export interface StoredEvent {
 
 export interface ThreadOwner {
   readonly userId: string;
-  /** The context the thread acts as. Every thread is Personal until contexts land (#139). */
-  readonly contextId: string;
+  /** The context the thread acts as, fixed at creation (see `CloudThreadService`). */
+  readonly contextId: SignalboxContextId;
 }
 
 export type CommandReceipt =
@@ -166,7 +167,7 @@ const EventRow = Schema.Struct({
   format: Schema.Number,
   event: Schema.String,
 });
-const OwnerRow = Schema.Struct({ user_id: Schema.String, context_id: Schema.String });
+const OwnerRow = Schema.Struct({ user_id: Schema.String, context_id: SignalboxContextId });
 const ReceiptRow = Schema.Struct({
   status: Schema.Literals(["accepted", "rejected"]),
   result_sequence: Schema.NullOr(Schema.Number),

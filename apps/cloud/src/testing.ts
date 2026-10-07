@@ -1,6 +1,7 @@
 import {
   WORKOS_TEST_ENV,
   type WorkOSCodes,
+  type WorkOSMemberships,
   workosStubLayer,
 } from "@signalbox/account/WorkOSTesting";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -21,6 +22,10 @@ import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
+import { contextOfProject } from "./user/contextProjects.ts";
+import * as ThreadContexts from "./user/threadContexts.ts";
+import * as UserContexts from "./user/UserContexts.ts";
+import * as UserSections from "./user/UserSections.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
 import * as UserShell from "./user/UserShell.ts";
@@ -40,12 +45,22 @@ export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_E
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
   );
 
-/** A user store on a fresh in-memory database, migrated. */
-export const layerMemoryStore = UserStore.layer.pipe(
+/** A user object's storage services on a fresh in-memory database, migrated. */
+export const layerMemoryStore = UserSections.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
   Layer.provideMerge(Layer.effectDiscard(UserStore.migrate)),
   Layer.provideMerge(
     Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
   ),
+);
+
+/** Resolves contexts for a user who has only Personal, with no storage behind it. */
+export const layerPersonalThreadContexts = Layer.succeed(
+  ThreadContexts.ThreadContexts,
+  ThreadContexts.ThreadContexts.of({
+    contextOfProject: (projectId) =>
+      Effect.succeed(contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId)),
+  }),
 );
 
 /**
@@ -129,6 +144,17 @@ export const makeMemoryCloud = () => {
     threads.set(threadId, object);
     return object;
   };
+  const userObject = (userId: string) =>
+    Layer.effectContext(Effect.orDie(userFor(userId).runtime.contextEffect));
+  const threadService = CloudThreadService.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.succeed(UserDirectory.UserDirectory, userDirectory),
+        Layer.succeed(ThreadDirectory.ThreadDirectory, threadDirectory),
+      ),
+    ),
+    Layer.provideMerge(Platform.layerCrypto),
+  );
   const settle = Effect.promise(async () => {
     for (const { run } of threads.values()) {
       await run(
@@ -147,17 +173,15 @@ export const makeMemoryCloud = () => {
     threadDirectory,
     settle,
     /** The services inside `userId`'s object, for handlers that run there (the socket's RPC). */
-    userObject: (userId: string) =>
-      Layer.effectContext(Effect.orDie(userFor(userId).runtime.contextEffect)),
-    layer: CloudThreadService.layer.pipe(
-      Layer.provideMerge(
-        Layer.mergeAll(
-          Layer.succeed(UserDirectory.UserDirectory, userDirectory),
-          Layer.succeed(ThreadDirectory.ThreadDirectory, threadDirectory),
-        ),
+    userObject,
+    /** The thread service as `userId`'s object runs it, with that user's contexts. */
+    layerFor: (userId: string) =>
+      threadService.pipe(
+        Layer.provideMerge(ThreadContexts.layer),
+        Layer.provideMerge(userObject(userId)),
       ),
-      Layer.provideMerge(Platform.layerCrypto),
-    ),
+    /** The thread service for tests where the user has only Personal. */
+    layer: threadService.pipe(Layer.provideMerge(layerPersonalThreadContexts)),
   };
 };
 
@@ -167,11 +191,15 @@ const layerMemoryUsers = Layer.sync(
 );
 
 /** The sign-in stack with everything it uses exposed for assertions. */
-export const layerAccounts = (codes: WorkOSCodes, env?: Readonly<Record<string, string>>) =>
+export const layerAccounts = (
+  codes: WorkOSCodes,
+  env?: Readonly<Record<string, string>>,
+  memberships?: WorkOSMemberships,
+) =>
   CloudAccounts.layer.pipe(
     Layer.provideMerge(CloudSessions.layer),
     Layer.provideMerge(CloudTokens.layer),
     Layer.provideMerge(layerConfig(env)),
     Layer.provideMerge(layerMemoryUsers),
-    Layer.provideMerge(workosStubLayer(codes)),
+    Layer.provideMerge(workosStubLayer(codes, [], memberships)),
   );

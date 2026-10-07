@@ -7,6 +7,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { SIGNALBOX_CONTEXTS_WS_METHODS } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
 import type { AutomationSubscriptionRpcTag } from "@t3tools/contracts"; // signalbox: automations
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -73,7 +74,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeProjectClones
   | typeof WS_METHODS.terminalAttach
   | typeof WS_METHODS.terminalObserve
-  | AutomationSubscriptionRpcTag; // signalbox: automations
+  | AutomationSubscriptionRpcTag // signalbox: automations
+  | typeof SIGNALBOX_CONTEXTS_WS_METHODS.subscribe; // signalbox: contexts
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe

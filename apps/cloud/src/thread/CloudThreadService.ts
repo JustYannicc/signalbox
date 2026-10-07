@@ -6,7 +6,6 @@ import {
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadStreamItem,
-  type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -17,7 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import * as Environment from "../environment.ts";
+import { ThreadContexts } from "../user/threadContexts.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import {
@@ -100,51 +99,32 @@ const cursorAfter = (batch: Batch): number | undefined => {
   return cursor;
 };
 
-/**
- * The context a new thread in `projectId` acts as, fixed at creation. Every
- * user has one project today (Scratch) and every thread is Personal; contexts
- * (#139) map each context's project to its id here. A project that is not
- * one of the user's must be rejected, never defaulted.
- */
-function contextIdForProject(projectId: ProjectId): string | null {
-  return projectId === Environment.SCRATCH_PROJECT_ID ? "personal" : null;
-}
-
-const unknownProject = (command: { readonly id: string; readonly type: string }) =>
-  ThreadCommandRejectedError.forCommand(
-    command,
-    "That project does not exist in this environment.",
-  );
-
 const make = Effect.gen(function* () {
   const directory = yield* ThreadDirectory.ThreadDirectory;
   const crypto = yield* Crypto.Crypto;
+  const threadContexts = yield* ThreadContexts;
 
-  const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) => {
-    const threadId = commandThreadId(command);
-    if (threadId === null) {
-      return Effect.fail(
-        ThreadCommandRejectedError.forCommand(
+  const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) =>
+    Effect.gen(function* () {
+      const threadId = commandThreadId(command);
+      if (threadId === null) {
+        return yield* ThreadCommandRejectedError.forCommand(
           { id: command.commandId, type: command.type },
           unsupported(command.type),
-        ),
-      );
-    }
-    // Only a create can make a thread; for anything else the context is never read.
-    const contextId =
-      command.type === "thread.create" ? contextIdForProject(command.projectId) : "personal";
-    if (contextId === null) {
-      return Effect.fail(unknownProject({ id: command.commandId, type: command.type }));
-    }
-    return directory.forThread(threadId).dispatch(actor, command, { contextId });
-  };
+        );
+      }
+      // Only a create can make a thread, so only a create names its context. The
+      // thread object rejects a new thread without one, after replaying retries.
+      const contextId =
+        command.type === "thread.create"
+          ? yield* threadContexts.contextOfProject(command.projectId)
+          : null;
+      return yield* directory.forThread(threadId).dispatch(actor, command, { contextId });
+    });
 
   const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
     Effect.gen(function* () {
-      const contextId = contextIdForProject(input.projectId);
-      if (contextId === null) {
-        return yield* unknownProject({ id: input.commandId, type: "thread.launch" });
-      }
+      const contextId = yield* threadContexts.contextOfProject(input.projectId);
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =

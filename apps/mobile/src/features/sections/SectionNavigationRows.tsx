@@ -136,6 +136,8 @@ export function ProjectRow(props: {
   readonly sectionId: SectionId | null;
   readonly sectionPath: string;
   readonly snapshot: SectionsSnapshot | null;
+  /** signalbox: a top-level project's cloud context. */
+  readonly contextId?: string;
   readonly selectedProjectKey: string | null;
   readonly onSelect: (projectKey: string | null) => void;
   readonly onAction: (projectId: ProjectId, event: string) => void;
@@ -154,8 +156,9 @@ export function ProjectRow(props: {
             sectionId: props.sectionId,
             siblingIndex: props.siblingIndex,
             siblingCount: props.siblingCount,
+            ...(props.contextId === undefined ? {} : { contextId: props.contextId }),
           }),
-    [props.sectionId, props.siblingCount, props.siblingIndex, props.snapshot],
+    [props.contextId, props.sectionId, props.siblingCount, props.siblingIndex, props.snapshot],
   );
   const handleMenuAction = useCallback(
     (event: { readonly nativeEvent: { readonly event: string } }) =>

@@ -213,4 +213,44 @@ describe("CloudAccounts", () => {
       ),
     ),
   );
+  /** The sidebar's projects after `user_ada` signs in: one per context. */
+  const projectsAfterSignIn = Effect.gen(function* () {
+    yield* signIn(browserParams, { code: "code-ada" });
+    const users = yield* UserDirectory.UserDirectory;
+    const shell = (yield* users.forUser("user_ada").shellSnapshot()) as {
+      readonly projects: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+    };
+    return shell.projects.map((project) => `${project.id} ${project.title}`);
+  });
+
+  it.effect("signing in shows Personal and every organization the user belongs to", () =>
+    Effect.gen(function* () {
+      expect(yield* projectsAfterSignIn).toEqual([
+        "scratch Scratch",
+        "context:org_acme Acme",
+        "context:org_globex Globex",
+        "context:org_initech Initech",
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerAccounts(CODES, withKey, {
+          user_ada: [
+            { id: "org_initech", name: "Initech" },
+            { id: "org_acme", name: "Acme" },
+            { id: "org_globex", name: "Globex" },
+          ],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("without the WorkOS API key, signing in shows Personal only", () =>
+    Effect.gen(function* () {
+      expect(yield* projectsAfterSignIn).toEqual(["scratch Scratch"]);
+    }).pipe(
+      Effect.provide(
+        layerAccounts(CODES, undefined, { user_ada: [{ id: "org_acme", name: "Acme" }] }),
+      ),
+    ),
+  );
 });
