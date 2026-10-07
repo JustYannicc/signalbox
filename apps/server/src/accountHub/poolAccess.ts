@@ -4,13 +4,13 @@
  * when it next resets, with no account count, email, plan, or banked reset.
  * Every read payload that carries pool accounts passes through here on its
  * way to a client, so a client hiding a field is never the guard. Redeeming
- * resets and managing accounts need the operate scope, which makes a caller
- * an admin (see `RpcAuthorization.ts`).
+ * resets and managing accounts need the providers scope, which makes a caller
+ * an admin (see `poolRpcScopes.ts`).
  *
  * @module accountHub/poolAccess
  */
 import {
-  AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   type AuthEnvironmentScope,
   type ServerProvider,
   type UsageLimitSourceSnapshot,
@@ -33,11 +33,11 @@ export type PoolRole = "admin" | "member";
 
 /**
  * The caller's role in this environment's pools. Until pools are shared, a
- * session that may operate the environment administers them: it can already
- * run code beside their credentials. Anyone else is a member.
+ * session that may manage providers administers them: it can already sign
+ * accounts in and out. Anyone else is a member.
  */
 export const poolRole = (scopes: ReadonlyArray<AuthEnvironmentScope>): PoolRole =>
-  scopes.includes(AuthOrchestrationOperateScope) ? "admin" : "member";
+  scopes.includes(AuthProvidersManageScope) ? "admin" : "member";
 
 const NO_SOURCES: ReadonlyArray<UsageLimitSourceSnapshot> = [];
 

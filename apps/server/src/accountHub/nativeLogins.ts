@@ -10,6 +10,7 @@
  *
  * @module accountHub/nativeLogins
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Claude Code's keychain service name hashes synchronously.
 import * as NodeCrypto from "node:crypto";
 
 import {

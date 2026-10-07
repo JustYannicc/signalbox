@@ -16,4 +16,6 @@ events to both projects, including any not yet sent. The setting belongs to each
 applies to the environments selected in Settings.
 
 On a server you run yourself, you can also set `T3CODE_TELEMETRY_ENABLED=false` in its environment
-before starting it.
+before starting it. The desktop app reads the variable from your shell profile (for example
+`~/.zshrc`) on macOS and Linux, so export it there and restart the app. On Windows, set it as a
+user environment variable.
