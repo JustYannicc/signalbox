@@ -1,10 +1,4 @@
-import {
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-  SectionsRpcError,
-  SectionsWsRpcGroup,
-  WS_METHODS,
-} from "@t3tools/contracts";
+import { SectionsRpcError, SectionsWsRpcGroup, WS_METHODS } from "@t3tools/contracts";
 import type { SectionId } from "@t3tools/contracts/sections";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -12,15 +6,6 @@ import * as Stream from "effect/Stream";
 import * as RpcInstrumentation from "../observability/RpcInstrumentation.ts";
 import * as Sections from "./Sections.ts";
 import type { SectionError } from "./SectionsError.ts";
-
-export const SECTIONS_RPC_REQUIRED_SCOPES = {
-  [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
-  [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
-  [WS_METHODS.sectionsUpdate]: AuthOrchestrationOperateScope,
-  [WS_METHODS.sectionsMove]: AuthOrchestrationOperateScope,
-  [WS_METHODS.sectionsDelete]: AuthOrchestrationOperateScope,
-  [WS_METHODS.sectionsMoveProject]: AuthOrchestrationOperateScope,
-} as const;
 
 const toRpcError = (error: SectionError): SectionsRpcError => {
   switch (error._tag) {

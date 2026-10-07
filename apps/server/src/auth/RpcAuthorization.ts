@@ -19,7 +19,7 @@ import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import { SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES } from "../signalbox/analytics/rpc.ts"; // signalbox: analytics
-import { SECTIONS_RPC_REQUIRED_SCOPES } from "../sections/rpc.ts"; // signalbox: sections
+import { SECTIONS_RPC_REQUIRED_SCOPES } from "../sections/rpcScopes.ts"; // signalbox: sections
 
 import { AUTOMATION_RPC_SCOPES } from "../workflows/rpcScopes.ts"; // signalbox: automations
 
