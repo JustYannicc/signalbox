@@ -40,6 +40,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { draftModelSelection, useSectionPoolModelSelection } from "../../state/sectionPoolDefault"; // signalbox
 
 // Menu value for "No project"; real entries are keyed by logical project key.
 const NO_PROJECT_VALUE = "no-project";
@@ -67,6 +68,7 @@ export function DraftHeroHeadline({
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const sectionPool = useSectionPoolModelSelection(); // signalbox
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -199,8 +201,22 @@ export function DraftHeroHeadline({
         ? resolveProjectSettings(environmentSettings, project.id, project).settings
             .defaultModelSelection
         : project.defaultModelSelection;
-      if (defaultModelSelection) {
-        setModelSelection(draftId, defaultModelSelection, {
+      // signalbox: unless the project picks its own default, the draft runs on its section's pool.
+      const environmentConfig = environments.find(
+        (environment) => environment.environmentId === project.environmentId,
+      )?.serverConfig;
+      const startingModelSelection =
+        (environmentConfig &&
+          sectionPool({
+            environmentId: project.environmentId,
+            projectId: project.id,
+            selection: defaultModelSelection ?? draftModelSelection(getComposerDraft(draftId)),
+            resolved: resolveProjectSettings(environmentConfig.settings, project.id, project),
+            providers: environmentConfig.providers,
+          })) ||
+        defaultModelSelection;
+      if (startingModelSelection) {
+        setModelSelection(draftId, startingModelSelection, {
           replaceOptions: true,
         });
       }

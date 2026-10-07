@@ -287,8 +287,12 @@ const make = Effect.gen(function* () {
     mutate((current) =>
       Effect.gen(function* () {
         const section = yield* requireSection(current, input.id);
-        const name = input.name.trim();
-        if (section.name === name) return false;
+        // The cloud has no account pools yet, so there is no pool to pick; clearing one is a no-op.
+        if (input.defaultPoolId !== undefined && input.defaultPoolId !== null) {
+          return yield* fail("invalid-move", "Signalbox Cloud has no account pools yet.");
+        }
+        const name = input.name?.trim();
+        if (name === undefined || section.name === name) return false;
         yield* sql`UPDATE sections SET name = ${name} WHERE id = ${input.id}`;
         return true;
       }),

@@ -8,6 +8,8 @@ import { AppText } from "../../components/AppText";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { SymbolView } from "../../components/AppSymbol";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { environmentSections } from "../../state/sections";
 import type { SectionNavigationEnvironment } from "./sectionNavigationTypes";
 import { SectionNodeRow, ProjectRow } from "./SectionNavigationRows";
@@ -100,6 +102,16 @@ function SectionTreeEnvironment(props: {
   const retrySections = useAtomSet(environmentSections.retry);
   const config = useEnvironmentServerConfig(environmentId);
   const sectionsSupported = config?.environment.capabilities.sections === true;
+  // signalbox: pools a section can send its new threads to; names only, so usage updates don't
+  // re-render every row.
+  const poolViews = useEnvironmentQuery(
+    sectionsSupported ? serverEnvironment.accountPoolViewsLive({ environmentId, input: {} }) : null,
+  ).data;
+  const poolKey = JSON.stringify((poolViews ?? []).map((pool) => [pool.id, pool.name]));
+  const pools = useMemo(
+    () => (JSON.parse(poolKey) as Array<[string, string]>).map(([id, name]) => ({ id, name })),
+    [poolKey],
+  );
   const environmentProjects = useMemo(
     () => props.projects.filter((project) => project.environmentId === environmentId),
     [environmentId, props.projects],
@@ -198,6 +210,7 @@ function SectionTreeEnvironment(props: {
             onToggle={toggleSection}
             onSectionAction={onSectionAction}
             onProjectAction={onProjectAction}
+            pools={pools}
           />
         )}
         renderProjects={(groupProjects, contextId) =>

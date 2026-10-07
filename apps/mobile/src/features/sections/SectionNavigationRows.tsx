@@ -22,6 +22,8 @@ export interface SectionNavigationRowProps {
   readonly onToggle: (sectionId: string) => void;
   readonly onSectionAction: (section: Section, event: string) => void;
   readonly onProjectAction: (projectId: ProjectId, event: string) => void;
+  /** signalbox: pools a section's new threads can default to. */
+  readonly pools: ReadonlyArray<{ readonly id: string; readonly name: string }>;
 }
 
 export function SectionNodeRow(
@@ -37,8 +39,10 @@ export function SectionNodeRow(
   const collapsed = props.collapsedSections.has(section.id);
   const sectionActions = useMemo(
     () =>
-      props.snapshot === null ? [] : sectionMenuActions({ section, snapshot: props.snapshot }),
-    [props.snapshot, section],
+      props.snapshot === null
+        ? []
+        : sectionMenuActions({ section, snapshot: props.snapshot, pools: props.pools }),
+    [props.pools, props.snapshot, section],
   );
   const handleSectionMenuAction = useCallback(
     (event: { readonly nativeEvent: { readonly event: string } }) =>

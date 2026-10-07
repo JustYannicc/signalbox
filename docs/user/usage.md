@@ -138,7 +138,9 @@ Flash models this way.
 
 With several pools, the model picker asks for the pool first and then shows that pool's models. A
 conversation stays on its pool. To start a project's new conversations on a pool, pick a model from
-that pool as the project's default model in its settings. Agents can see each pool's providers and
+that pool as the project's default model in its settings. To do it for every project in a section,
+choose **Pool for new threads** in the section's menu; nested sections use their parent's pool
+unless they pick their own, and a project's own default model still wins. Agents can see each pool's providers and
 how much of their usage is left, so they can pick a pool for the work they hand off.
 
 Cursor accounts in a pool run the pool's **Cursor** provider. To run OpenCode on a pool, choose **Use

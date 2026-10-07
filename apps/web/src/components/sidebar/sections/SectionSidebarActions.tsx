@@ -1,10 +1,12 @@
 import { useAtomSet } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type {
   Section,
   SectionCreateInput,
   SectionDeleteInput,
   SectionMoveInput,
+  SectionId,
   SectionProjectMoveInput,
   SectionUpdateInput,
 } from "@t3tools/contracts/sections";
@@ -45,6 +47,12 @@ export interface SectionSidebarActions {
   openDelete: (environmentId: EnvironmentId, section: Section, parentName: string | null) => void;
   createSection: (environmentId: EnvironmentId, input: SectionCreateInput) => Promise<boolean>;
   updateSection: (environmentId: EnvironmentId, input: SectionUpdateInput) => Promise<boolean>;
+  /** The pool new threads in the section's projects start on; null inherits it again. */
+  setSectionPool: (
+    environmentId: EnvironmentId,
+    sectionId: SectionId,
+    defaultPoolId: AccountPoolId | null,
+  ) => Promise<boolean>;
   moveSection: (environmentId: EnvironmentId, input: SectionMoveInput) => Promise<boolean>;
   deleteSection: (environmentId: EnvironmentId, input: SectionDeleteInput) => Promise<boolean>;
   moveProject: (environmentId: EnvironmentId, input: SectionProjectMoveInput) => Promise<boolean>;
@@ -82,6 +90,11 @@ function useSectionCommands() {
         run("Could not create section", create({ environmentId, input })),
       update: (environmentId: EnvironmentId, input: SectionUpdateInput) =>
         run("Could not rename section", update({ environmentId, input })),
+      setPool: (environmentId: EnvironmentId, id: SectionId, defaultPoolId: AccountPoolId | null) =>
+        run(
+          "Could not change the section's pool",
+          update({ environmentId, input: { id, defaultPoolId } }),
+        ),
       move: (environmentId: EnvironmentId, input: SectionMoveInput) =>
         run("Could not move section", move({ environmentId, input })),
       remove: (environmentId: EnvironmentId, input: SectionDeleteInput) =>
@@ -144,6 +157,7 @@ export function SectionSidebarActionsProvider(props: {
       openDelete,
       createSection: commands.create,
       updateSection: commands.update,
+      setSectionPool: commands.setPool,
       moveSection: commands.move,
       deleteSection: commands.remove,
       moveProject: commands.moveProject,

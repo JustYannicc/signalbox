@@ -54,6 +54,8 @@ export function projectMoveMenuActions(input: {
 export function sectionMenuActions(input: {
   readonly section: Section;
   readonly snapshot: SectionsSnapshot;
+  /** signalbox: pools new threads in the section can default to. */
+  readonly pools?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
 }): MenuAction[] {
   const { section, snapshot } = input;
   const parentOptions: MenuAction[] = [];
@@ -78,6 +80,25 @@ export function sectionMenuActions(input: {
   }
   if (parentOptions.length > 0) {
     actions.push({ id: "section:move", title: "Move under", subactions: parentOptions });
+  }
+  const pools = input.pools ?? [];
+  if (pools.length > 1) {
+    actions.push({
+      id: "section:pool",
+      title: "Pool for new threads",
+      subactions: [
+        {
+          id: "section:pool:inherit",
+          title: section.parentId === null ? "Default" : "Same as parent section",
+          state: section.defaultPoolId === undefined ? "on" : undefined,
+        },
+        ...pools.map((pool) => ({
+          id: `section:pool:${pool.id}`,
+          title: pool.name,
+          state: section.defaultPoolId === pool.id ? ("on" as const) : undefined,
+        })),
+      ],
+    });
   }
   actions.push({
     id: "section:delete",

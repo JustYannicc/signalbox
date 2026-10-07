@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type { Section, SectionId, SectionsSnapshot } from "@t3tools/contracts/sections";
 import {
   isAtomCommandInterrupted,
@@ -139,6 +140,18 @@ export function useSectionActions(input: {
             );
           },
         });
+        return;
+      }
+      // signalbox: the pool new threads in this section's projects start on.
+      if (event.startsWith("section:pool:")) {
+        const poolId = event.slice("section:pool:".length);
+        const defaultPoolId = poolId === "inherit" ? null : AccountPoolId.make(poolId);
+        if ((section.defaultPoolId ?? null) === defaultPoolId) return;
+        void run(
+          "Could not change the section's pool",
+          "The section's pool could not be changed.",
+          updateSection({ environmentId, input: { id: section.id, defaultPoolId } }),
+        );
         return;
       }
       if (event === "section:delete") {

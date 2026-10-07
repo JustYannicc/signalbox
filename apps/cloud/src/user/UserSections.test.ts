@@ -117,6 +117,14 @@ describe("UserSections", () => {
 
       snapshot = yield* sections.delete({ id: idOf(snapshot, "B") });
       expect(outline(snapshot)).toEqual(["A", "B1"]);
+      // The cloud has no pools to pick from; clearing one changes nothing.
+      expect(
+        yield* codeOf(
+          sections.update({ id: idOf(snapshot, "A"), defaultPoolId: "pool_1" as never }),
+        ),
+      ).toBe("invalid-move");
+      const unchanged = yield* sections.update({ id: idOf(snapshot, "A"), defaultPoolId: null });
+      expect(unchanged.revision).toBe(snapshot.revision);
       expect(snapshot.projectPlacements).toEqual([
         { projectId: SCRATCH, sectionId: null, position: 0 },
       ]);

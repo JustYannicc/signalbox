@@ -121,6 +121,9 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
+import { useSectionPoolModelSelection } from "../sections/useSectionPoolModelSelection"; // signalbox
+
+const NO_PROVIDERS: ReadonlyArray<ServerProvider> = []; // signalbox
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -569,11 +572,19 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
   );
+  const storedStickyModelSelection = useStickyComposerModelSelection();
+  // signalbox: unless the project picks its own default, the task starts on its section's pool.
+  const sectionPoolSelection = useSectionPoolModelSelection({
+    environmentId: selectedProject?.environmentId ?? null,
+    projectId: selectedProject?.id ?? null,
+    selection: projectSettings.settings.defaultModelSelection ?? storedStickyModelSelection,
+    resolved: projectSettings,
+    providers: selectedEnvironmentServerConfig?.providers ?? NO_PROVIDERS,
+  });
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    projectSettings.settings.defaultModelSelection,
+    sectionPoolSelection ?? projectSettings.settings.defaultModelSelection,
   );
-  const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
