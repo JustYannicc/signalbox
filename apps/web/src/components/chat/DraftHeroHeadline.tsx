@@ -40,6 +40,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { readProjectDefaultModelSelection } from "../../state/sectionPoolDefault"; // signalbox
 
 // Menu value for "No project"; real entries are keyed by logical project key.
 const NO_PROJECT_VALUE = "no-project";
@@ -192,12 +193,17 @@ export function DraftHeroHeadline({
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
       applyStickyState(draftId);
-      const environmentSettings = environments.find(
+      const environmentConfig = environments.find(
         (environment) => environment.environmentId === project.environmentId,
-      )?.serverConfig?.settings;
-      const defaultModelSelection = environmentSettings
-        ? resolveProjectSettings(environmentSettings, project.id, project).settings
-            .defaultModelSelection
+      )?.serverConfig;
+      // signalbox: a project without its own default runs on its section's pool.
+      const defaultModelSelection = environmentConfig
+        ? readProjectDefaultModelSelection({
+            environmentId: project.environmentId,
+            projectId: project.id,
+            resolved: resolveProjectSettings(environmentConfig.settings, project.id, project),
+            providers: environmentConfig.providers,
+          })
         : project.defaultModelSelection;
       if (defaultModelSelection) {
         setModelSelection(draftId, defaultModelSelection, {

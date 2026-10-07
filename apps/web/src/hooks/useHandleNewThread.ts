@@ -31,6 +31,7 @@ import {
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
+import { readProjectDefaultModelSelection } from "../state/sectionPoolDefault"; // signalbox
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -135,7 +136,13 @@ export function useNewThreadHandler() {
         project?.id ?? null,
         project,
       );
-      const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
+      // signalbox: a project without its own default runs on its section's pool.
+      const projectDefaultModelSelection = readProjectDefaultModelSelection({
+        environmentId: projectRef.environmentId,
+        projectId: project?.id ?? null,
+        resolved: projectSettings,
+        providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+      });
       const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
         resolveNewThreadModelSelectionOverride({

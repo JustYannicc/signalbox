@@ -121,6 +121,9 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
+import { useProjectDefaultModelSelection } from "../sections/useProjectDefaultModelSelection"; // signalbox
+
+const NO_PROVIDERS: ReadonlyArray<ServerProvider> = []; // signalbox
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -569,9 +572,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
   );
+  // signalbox: a project without its own default runs on its section's pool.
+  const sectionedDefaultModelSelection = useProjectDefaultModelSelection({
+    environmentId: selectedProject?.environmentId ?? null,
+    projectId: selectedProject?.id ?? null,
+    resolved: projectSettings,
+    providers: selectedEnvironmentServerConfig?.providers ?? NO_PROVIDERS,
+  });
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    projectSettings.settings.defaultModelSelection,
+    sectionedDefaultModelSelection,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(

@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 
+import { AccountPoolId } from "./accountHub.ts";
 import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const SectionId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
@@ -12,6 +13,11 @@ export const Section = Schema.Struct({
   name: SectionName,
   parentId: Schema.NullOr(SectionId),
   position: NonNegativeInt,
+  /**
+   * The pool new threads in this section's projects run on, unless the
+   * project picks its own default model. Absent inherits the parent section.
+   */
+  defaultPoolId: Schema.optional(AccountPoolId),
 });
 export type Section = typeof Section.Type;
 
@@ -46,9 +52,11 @@ export const SectionCreateInput = Schema.Struct({
 });
 export type SectionCreateInput = typeof SectionCreateInput.Type;
 
+/** Changes the given fields; `defaultPoolId: null` makes the section inherit its pool again. */
 export const SectionUpdateInput = Schema.Struct({
   id: SectionId,
-  name: SectionName,
+  name: Schema.optional(SectionName),
+  defaultPoolId: Schema.optional(Schema.NullOr(AccountPoolId)),
 });
 export type SectionUpdateInput = typeof SectionUpdateInput.Type;
 

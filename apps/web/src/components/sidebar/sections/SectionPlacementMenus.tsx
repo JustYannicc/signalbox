@@ -5,11 +5,13 @@ import {
   sectionSiblingMoveInput,
 } from "@t3tools/client-runtime/state/sections";
 import type { ProjectId } from "@t3tools/contracts";
+import { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type { Section, SectionsSnapshot } from "@t3tools/contracts/sections";
 import {
   EllipsisIcon,
   FolderInputIcon,
   FolderPlusIcon,
+  LayersIcon,
   PencilIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -19,14 +21,19 @@ import {
   Menu,
   MenuItem,
   MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
   MenuSub,
   MenuSubPopup,
   MenuSubTrigger,
   MenuTrigger,
 } from "../../ui/menu";
+import { usePoolViews } from "../../../state/accountPools";
 import { useSectionSidebarActions } from "./SectionSidebarActions";
 import type { SectionSidebarEnvironment, SectionSidebarProject } from "./sectionProjectTree";
+
+const INHERIT_POOL = "inherit";
 
 export function SectionMoveMenu(props: {
   environmentId: SectionSidebarEnvironment["environmentId"];
@@ -35,6 +42,7 @@ export function SectionMoveMenu(props: {
   siblings: ReadonlyArray<Section>;
 }) {
   const actions = useSectionSidebarActions();
+  const pools = usePoolViews(props.environmentId);
   const destinations = sectionMoveDestinations(props.snapshot, props.section.id);
   const currentIndex = props.siblings.findIndex((sibling) => sibling.id === props.section.id);
   const parent = props.section.parentId
@@ -106,6 +114,35 @@ export function SectionMoveMenu(props: {
             ))}
           </MenuSubPopup>
         </MenuSub>
+        {pools.length > 1 ? (
+          <MenuSub>
+            <MenuSubTrigger>
+              <LayersIcon />
+              Pool for new threads
+            </MenuSubTrigger>
+            <MenuSubPopup>
+              <MenuRadioGroup
+                value={props.section.defaultPoolId ?? INHERIT_POOL}
+                onValueChange={(value) =>
+                  void actions.setSectionPool(
+                    props.environmentId,
+                    props.section.id,
+                    value === INHERIT_POOL ? null : AccountPoolId.make(value),
+                  )
+                }
+              >
+                <MenuRadioItem value={INHERIT_POOL}>
+                  {props.section.parentId === null ? "Default" : "Same as parent section"}
+                </MenuRadioItem>
+                {pools.map((pool) => (
+                  <MenuRadioItem key={pool.id} value={pool.id}>
+                    {pool.name}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
         <MenuSeparator />
         <MenuItem disabled={currentIndex <= 0} onClick={() => moveOrder("up")}>
           Move up

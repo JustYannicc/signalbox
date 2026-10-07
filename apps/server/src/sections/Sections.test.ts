@@ -2,11 +2,14 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EventId, ProjectId } from "@t3tools/contracts";
+import { AccountPoolId } from "@t3tools/contracts/accountHub";
+import type { SectionId } from "@t3tools/contracts/sections";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -478,6 +481,79 @@ it.live("keeps section snapshots and revisions after reopening the SQLite store"
     assert.deepStrictEqual(afterRestart.chain, {
       section: beforeRestart.sections[1]!,
       ancestors: [beforeRestart.sections[0]!],
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// signalbox: a section's default pool, on a database from before sections had one.
+it.live("adds the default pool to existing sections and keeps it through rename and restart", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "signalbox-section-pools-" });
+    const databasePath = path.join(directory, "sections.sqlite");
+    const layerAt = () =>
+      Sections.layer.pipe(
+        Layer.provideMerge(SectionsStore.layer),
+        Layer.provideMerge(ProjectStore.layer),
+        Layer.provideMerge(SqlitePersistence.layerFromPath(databasePath)),
+        Layer.provide(NodeCrypto.layer),
+      );
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        CREATE TABLE signalbox_sections (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          parent_id TEXT REFERENCES signalbox_sections(id),
+          position INTEGER NOT NULL CHECK (position >= 0)
+        )
+      `;
+      yield* sql`INSERT INTO signalbox_sections VALUES ('old', 'Old', NULL, 0)`;
+    }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerFromPath(databasePath)));
+
+    const sectionId = "old" as SectionId;
+    const work = AccountPoolId.make("work");
+    const project = ProjectId.make("pooled-project");
+    const result = yield* Effect.gen(function* () {
+      const sections = yield* Sections.Sections;
+      yield* createProject(yield* ProjectStore.ProjectStoreV2, project);
+      const before = yield* sections.snapshot;
+      assert.deepStrictEqual(before.sections, [
+        { id: sectionId, name: "Old", parentId: null, position: 0 },
+      ]);
+      const pooled = yield* sections.update({ id: sectionId, defaultPoolId: work });
+      // Setting the same pool again is not a change.
+      const unchanged = yield* sections.update({ id: sectionId, defaultPoolId: work });
+      const renamed = yield* sections.update({ id: sectionId, name: "Renamed" });
+      yield* sections.moveProject({ projectId: project, sectionId });
+      return { before, pooled, unchanged, renamed };
+    }).pipe(Effect.scoped, Effect.provide(layerAt()));
+
+    assert.strictEqual(result.pooled.revision, result.before.revision + 1);
+    assert.strictEqual(result.unchanged.revision, result.pooled.revision);
+    assert.deepStrictEqual(result.renamed.sections[0], {
+      id: sectionId,
+      name: "Renamed",
+      parentId: null,
+      position: 0,
+      defaultPoolId: work,
+    });
+
+    const afterRestart = yield* Effect.gen(function* () {
+      const sections = yield* Sections.Sections;
+      const chain = yield* sections.getProjectSectionChain(project);
+      const cleared = yield* sections.update({ id: sectionId, defaultPoolId: null });
+      return { chain, cleared };
+    }).pipe(Effect.scoped, Effect.provide(layerAt()));
+
+    assert.strictEqual(afterRestart.chain.section?.defaultPoolId, work);
+    assert.deepStrictEqual(afterRestart.cleared.sections[0], {
+      id: sectionId,
+      name: "Renamed",
+      parentId: null,
+      position: 0,
     });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

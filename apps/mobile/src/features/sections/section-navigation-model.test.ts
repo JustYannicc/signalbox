@@ -50,3 +50,31 @@ describe("mobile section parent choices", () => {
     expect(childDestinations.find((action) => action.id === "project:section:x")?.state).toBe("on");
   });
 });
+
+describe("mobile section pool choices", () => {
+  const pools = [
+    { id: "personal", name: "Personal" },
+    { id: "work", name: "Work" },
+  ];
+
+  it("offers the pools with the section's own choice checked", () => {
+    const pooled = { ...snapshot.sections[1], defaultPoolId: "work" };
+    const choices = sectionMenuActions({ section: pooled, snapshot, pools }).find(
+      (action) => action.id === "section:pool",
+    )?.subactions;
+    expect(choices?.map((action) => [action.title, action.state])).toEqual([
+      ["Same as parent section", undefined],
+      ["Personal", undefined],
+      ["Work", "on"],
+    ]);
+  });
+
+  it("hides the choice while there is only one pool", () => {
+    const actions = sectionMenuActions({
+      section: snapshot.sections[0],
+      snapshot,
+      pools: pools.slice(0, 1),
+    });
+    expect(actions.some((action) => action.id === "section:pool")).toBe(false);
+  });
+});

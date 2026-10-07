@@ -51,7 +51,8 @@ export const SectionsToolkit = Toolkit.make(
   }).annotate(Tool.Destructive, false),
   Tool.make("t3_section_update", {
     ...shared,
-    description: "Rename a section. Requires full access.",
+    description:
+      "Rename a section, or set the account pool new threads in its projects start on (defaultPoolId; null inherits from the parent section). t3_pool_list lists the pools. A project's own default model still wins. Requires full access.",
     parameters: SectionUpdateInput,
   }).annotate(Tool.Destructive, false),
   Tool.make("t3_section_move", {
