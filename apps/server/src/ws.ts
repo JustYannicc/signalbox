@@ -101,7 +101,6 @@ import {
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
-  SECTION_WS_METHODS,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -250,7 +249,6 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
-import * as SectionsRpc from "./sections/rpc.ts"; // signalbox: sections
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -545,11 +543,8 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
-// signalbox: Signalbox's RPCs are served by SignalboxWsRpc.layer, sections by SectionsRpc.layer.
-const UpstreamWsRpcGroup = ServerWsRpcGroup.omit(
-  ...SignalboxWsRpc.SIGNALBOX_WS_RPC_TAGS,
-  ...Object.values(SECTION_WS_METHODS),
-);
+// signalbox: Signalbox's RPCs are served by SignalboxWsRpc.layer.
+const UpstreamWsRpcGroup = ServerWsRpcGroup.omit(...SignalboxWsRpc.SIGNALBOX_WS_RPC_TAGS);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -3122,7 +3117,7 @@ const layerWsRpc = (
       });
       return handlers;
     }),
-  ).pipe(Layer.merge(SectionsRpc.layer)); // signalbox: sections
+  );
 
 // A defect in a handler's effect fails only its own request. RpcServer's default
 // sends a socket-level Defect frame instead, and the client ends every pending

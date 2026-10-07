@@ -7,7 +7,6 @@ import {
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
-  SECTION_WS_METHODS,
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -307,7 +306,7 @@ describe("cloud RPC", () => {
       );
       yield* Deferred.await(subscribed);
       // Sections alone don't touch the sidebar's projects.
-      yield* rpc[SECTION_WS_METHODS.sectionsCreate]({
+      yield* rpc[WS_METHODS.sectionsCreate]({
         name: "Inbox",
         parentId: null,
         contextId: "personal",

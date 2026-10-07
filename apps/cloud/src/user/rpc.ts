@@ -9,7 +9,6 @@ import {
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
   RpcScopeAuthorization,
-  SECTION_WS_METHODS,
   SectionsRpcError,
   WS_METHODS,
   WsRpcGroup,
@@ -42,6 +41,16 @@ import * as UserShell from "./UserShell.ts";
  * connection.
  */
 
+/** `WS_METHODS`' sections RPCs (`sectionsRpc.ts`), all served from the user's `UserSections`. */
+const SECTION_METHODS = [
+  WS_METHODS.sectionsSubscribe,
+  WS_METHODS.sectionsCreate,
+  WS_METHODS.sectionsUpdate,
+  WS_METHODS.sectionsMove,
+  WS_METHODS.sectionsDelete,
+  WS_METHODS.sectionsMoveProject,
+] as const;
+
 const SERVED = [
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
@@ -55,7 +64,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
   WS_METHODS.projectsEnsureScratch,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
-  ...Object.values(SECTION_WS_METHODS),
+  ...SECTION_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -86,12 +95,12 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
-  [SECTION_WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
-  [SECTION_WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
-  [SECTION_WS_METHODS.sectionsUpdate]: AuthOrchestrationOperateScope,
-  [SECTION_WS_METHODS.sectionsMove]: AuthOrchestrationOperateScope,
-  [SECTION_WS_METHODS.sectionsDelete]: AuthOrchestrationOperateScope,
-  [SECTION_WS_METHODS.sectionsMoveProject]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sectionsUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sectionsMove]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sectionsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sectionsMoveProject]: AuthOrchestrationOperateScope,
 } as const satisfies Record<ServedTag, AuthEnvironmentScope>;
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
@@ -258,20 +267,20 @@ export const layerHandlers = (input: {
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
-        [SECTION_WS_METHODS.sectionsSubscribe]: () =>
+        [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),
             Stream.mapError(sectionsStorageFailure),
           ),
-        [SECTION_WS_METHODS.sectionsCreate]: (request) =>
+        [WS_METHODS.sectionsCreate]: (request) =>
           sections.create(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
-        [SECTION_WS_METHODS.sectionsUpdate]: (request) =>
+        [WS_METHODS.sectionsUpdate]: (request) =>
           sections.update(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
-        [SECTION_WS_METHODS.sectionsMove]: (request) =>
+        [WS_METHODS.sectionsMove]: (request) =>
           sections.move(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
-        [SECTION_WS_METHODS.sectionsDelete]: (request) =>
+        [WS_METHODS.sectionsDelete]: (request) =>
           sections.delete(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
-        [SECTION_WS_METHODS.sectionsMoveProject]: (request) =>
+        [WS_METHODS.sectionsMoveProject]: (request) =>
           sections.moveProject(request).pipe(Effect.catchTags({ SqlError: storageFailed })),
       };
     }),

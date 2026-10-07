@@ -8,15 +8,17 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Sections from "../../../sections/Sections.ts";
 import { SectionStorageError } from "../../../sections/SectionsError.ts";
+import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Handlers from "./handlers.ts";
+import { SectionsToolkit } from "./tools.ts";
 
 const scope: McpInvocationContext.McpInvocationScope = {
   environmentId: EnvironmentId.make("sections-test"),
   requestNamespace: "sections-test",
   issuedAt: 0,
   thread: undefined,
-  client: { sessionId: "session", label: "Test", runtimeModeCeiling: "full-access" },
+  client: { sessionId: "session", label: "Test", access: "full-access" },
   capabilities: new Set(["orchestration"]),
 };
 
@@ -33,7 +35,7 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-const testLayer = Handlers.layerRegistration.pipe(
+const testLayer = McpHttpServer.toolkitRegistration(SectionsToolkit, Handlers.layer).pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
 );
@@ -86,7 +88,7 @@ it.effect("allows section reads but rejects organization changes below full acce
     Effect.provideService(McpSchema.McpServerClient, client),
     Effect.provideService(McpInvocationContext.McpInvocationContext, {
       ...scope,
-      client: { sessionId: "session", label: "Test", runtimeModeCeiling: "approval-required" },
+      client: { sessionId: "session", label: "Test", access: "approval-required" },
     }),
   ),
 );

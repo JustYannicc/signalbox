@@ -28,7 +28,9 @@ const layerState = Sections.layer.pipe(
   Layer.provide(Sqlite.layerMemory),
   Layer.provide(NodeCrypto.layer),
 );
-const layerHandlers = SectionsRpc.layer.pipe(Layer.provide(layerState));
+const layerHandlers = group
+  .toLayer(SectionsRpc.makeSectionsWsHandlers)
+  .pipe(Layer.provide(layerState));
 
 it.effect("pushes a committed section change to two independent RPC clients", () =>
   Effect.gen(function* () {
