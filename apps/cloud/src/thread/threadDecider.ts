@@ -10,12 +10,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import {
-  activeRun,
-  interruptRunEvents,
-  resumeQueueEvents,
-  startRunEvents,
-} from "./scriptedTurn.ts";
+import { isHarnessInstance } from "./providerCatalog.ts";
+import { activeRun, resumeQueueEvents, startRunEvents } from "./runLifecycle.ts";
+import { interruptRunEvents } from "./scriptedTurn.ts";
 import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
@@ -42,6 +39,9 @@ type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
   OrchestrationV2Command,
   { readonly type: T }
 >;
+
+export const HARNESS_MODES_UNSUPPORTED =
+  "Claude and Codex in the cloud run with full access and without plan mode for now: approvals can't reach cloud machines yet.";
 
 /** The rejection for a command the cloud does not serve yet. */
 export const unsupported = (commandType: string) =>
@@ -113,6 +113,15 @@ function dispatchMessage(
     updates.push(threadEvent(ctx, "thread.model-selection-updated", current));
   }
 
+  // Cloud machines have no way to answer an approval or a question yet, so a
+  // harness turn that could stop to ask would wait until someone pressed Stop.
+  if (
+    isHarnessInstance(current.providerInstanceId) &&
+    (current.runtimeMode !== "full-access" || current.interactionMode === "plan")
+  ) {
+    return reject(HARNESS_MODES_UNSUPPORTED);
+  }
+
   const ordinal = projection.runs.length + 1;
   const runId = ids.run(thread.id, ordinal);
   const live = activeRun(projection);
@@ -127,8 +136,8 @@ function dispatchMessage(
     userMessageId: command.messageId,
     rootNodeId: null,
     activeAttemptId: null,
-    // The scripted provider cannot steer or restart a live turn, so any
-    // message that arrives while one runs waits its turn.
+    // Cloud runs cannot steer or restart a live turn yet, so any message
+    // that arrives while one runs waits its turn.
     status: live === undefined ? "starting" : "queued",
     queuePosition: live === undefined ? null : queuePosition,
     requestedAt: ctx.now,

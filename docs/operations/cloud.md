@@ -25,6 +25,25 @@ To use the real web UI against it, build the web app once
 (`vp run --filter @t3tools/web build`) and open `http://localhost:8787`, or run
 web dev with `T3CODE_PORT=8787` so the Vite proxy forwards to the Worker.
 
+### Real Claude and Codex turns
+
+Claude and Codex turns run in a Runner on a machine, never in the Worker. Until
+the cloud starts machines itself (#130), your own machine can be one:
+
+```sh
+vp run --filter t3 runner          # Runner host on http://127.0.0.1:8790
+```
+
+and add `LOCAL_RUNNER_URL=http://127.0.0.1:8790` to `apps/cloud/.dev.vars`. The
+cloud then offers Claude and Codex next to the scripted provider, and each
+thread that runs on them gets its own Runner, driving this machine's `claude`
+and `codex` as they are signed in. Threads work in `apps/server/.t3/runner/`
+(`--home` moves it). `LOCAL_RUNNER_URL` only counts with `LOCAL_WORKERD`, so a
+deployment never calls it.
+
+`POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
+to watch one reconnect mid-turn and resend what the thread has not acknowledged.
+
 ## Deploying
 
 `.github/workflows/deploy-cloud.yml` builds the web app and runs `wrangler

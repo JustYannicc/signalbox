@@ -6,10 +6,10 @@ import {
 } from "@t3tools/contracts";
 
 /**
- * The scripted provider: a stand-in for a real harness until the Runner (#128)
- * drives Claude Code and Codex on a machine. Its reply is a pure function of
- * the user's message, so a turn can stop anywhere (an evicted object, a
- * redeploy) and continue from whatever its events already recorded.
+ * The scripted provider: a stand-in harness that runs inside the thread's own
+ * object, for clouds without machines and for testing. Its reply is a pure
+ * function of the user's message, so a turn can stop anywhere (an evicted
+ * object, a redeploy) and continue from whatever its events already recorded.
  */
 
 export const SCRIPTED_INSTANCE_ID = ProviderInstanceId.make("scripted");

@@ -16,6 +16,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/bin.ts",
+    "runner": "node src/signalbox/runner/main.ts",
     "build:bundle": "vp pack",
     "build:exe": "node scripts/cli.ts build-exe",
     "start": "node dist/bin.mjs",
@@ -59,6 +60,7 @@
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@signalbox/account": "workspace:*",
+    "@signalbox/runner-protocol": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",

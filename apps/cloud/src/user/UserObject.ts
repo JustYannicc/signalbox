@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import { localRunnerUrl, type MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { serveConnection } from "./connection.ts";
 import {
@@ -35,7 +36,7 @@ import * as UserStore from "./UserStore.ts";
  * while a client is connected.
  */
 
-export interface UserObjectEnv {
+export interface UserObjectEnv extends MachineBackendEnv {
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
@@ -76,6 +77,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     this.identity = {
       environmentId: decodeEnvironmentId(env.ENVIRONMENT_ID),
       label: env.ENVIRONMENT_LABEL ?? Environment.DEFAULT_ENVIRONMENT_LABEL,
+      harnesses: localRunnerUrl(env) !== null,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));

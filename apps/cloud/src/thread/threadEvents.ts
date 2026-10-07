@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
@@ -33,6 +34,9 @@ export interface DecisionContext {
  * the engine stamps a fresh one on each before it commits them.
  */
 const UNSTAMPED_EVENT_ID = EventId.make("unstamped");
+
+/** Marks an event the engine has not stamped yet. */
+export const unstampedEventId = UNSTAMPED_EVENT_ID;
 
 export const ids = {
   run: (threadId: ThreadId, ordinal: number) => RunId.make(`run:${threadId}:${ordinal}`),
@@ -118,6 +122,18 @@ export const providerThreadEvent = (
   providerInstanceId: providerThread.providerInstanceId,
   type: "provider-thread.updated",
   payload: providerThread,
+});
+
+export const providerSessionEvent = (
+  ctx: DecisionContext,
+  threadId: ThreadId,
+  providerSession: OrchestrationV2ProviderSession,
+): OrchestrationV2DomainEvent => ({
+  ...base(ctx, threadId),
+  driver: providerSession.driver,
+  providerInstanceId: providerSession.providerInstanceId,
+  type: "provider-session.updated",
+  payload: providerSession,
 });
 
 export const messageEvent = (
