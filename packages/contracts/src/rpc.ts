@@ -5,9 +5,13 @@ import {
   AccountPoolCreateInput,
   AccountPoolDeleteInput,
   AccountPoolImportInput,
+  AccountPoolOverview,
   AccountPoolRenameInput,
   AccountPoolSetBackingInput,
-  AccountPoolView,
+  AccountPoolAddApiKeyInput,
+  AccountPoolMoveNativeLoginsInput,
+  AccountPoolMoveNativeLoginsResult,
+  AccountPoolSetOpenCodeInput,
 } from "./accountHub.ts"; // signalbox
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
@@ -391,6 +395,9 @@ export const WS_METHODS = {
   accountPoolDelete: "accountPool.delete",
   accountPoolSetBacking: "accountPool.setBacking",
   accountPoolImportAccounts: "accountPool.importAccounts",
+  accountPoolAddApiKey: "accountPool.addApiKey",
+  accountPoolMoveNativeLogins: "accountPool.moveNativeLogins",
+  accountPoolSetOpenCode: "accountPool.setOpenCode",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -636,10 +643,10 @@ const WsAccountPoolSubscribeRpc = Rpc.make(WS_METHODS.accountPoolSubscribe, {
   error: AccountPoolRpcFailure,
   stream: true,
 });
-/** Every pool as the caller may see it; members get no account-level data. */
+/** Every pool's overview, kept live. It carries no account data, so read-only sessions get it too. */
 const WsAccountPoolSubscribeViewsRpc = Rpc.make(WS_METHODS.accountPoolSubscribeViews, {
   payload: Schema.Struct({}),
-  success: Schema.Array(AccountPoolView),
+  success: Schema.Array(AccountPoolOverview),
   error: AccountPoolRpcFailure,
   stream: true,
 });
@@ -665,6 +672,19 @@ const WsAccountPoolSetBackingRpc = Rpc.make(WS_METHODS.accountPoolSetBacking, {
 const WsAccountPoolImportAccountsRpc = Rpc.make(WS_METHODS.accountPoolImportAccounts, {
   payload: AccountPoolImportInput,
   success: AccountHubImportResult,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolAddApiKeyRpc = Rpc.make(WS_METHODS.accountPoolAddApiKey, {
+  payload: AccountPoolAddApiKeyInput,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolSetOpenCodeRpc = Rpc.make(WS_METHODS.accountPoolSetOpenCode, {
+  payload: AccountPoolSetOpenCodeInput,
+  error: AccountPoolRpcFailure,
+});
+const WsAccountPoolMoveNativeLoginsRpc = Rpc.make(WS_METHODS.accountPoolMoveNativeLogins, {
+  payload: AccountPoolMoveNativeLoginsInput,
+  success: AccountPoolMoveNativeLoginsResult,
   error: AccountPoolRpcFailure,
 });
 
@@ -1814,6 +1834,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsAccountPoolDeleteRpc,
   WsAccountPoolSetBackingRpc,
   WsAccountPoolImportAccountsRpc,
+  WsAccountPoolAddApiKeyRpc,
+  WsAccountPoolMoveNativeLoginsRpc,
+  WsAccountPoolSetOpenCodeRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,

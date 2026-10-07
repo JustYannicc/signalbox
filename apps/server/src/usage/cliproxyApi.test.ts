@@ -59,6 +59,8 @@ function fixture(
     >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
+    /** API-key lists by name, such as `claude-api-key`. */
+    apiKeyLists?: Record<string, ReadonlyArray<unknown>>;
   } = {},
 ) {
   const requests: Array<{ method: string; path: string; search: string; body?: RequestBody }> = [];
@@ -66,6 +68,13 @@ function fixture(
     Effect.sync(() => {
       expect(request.headers.authorization).toBe("Bearer management-secret");
       const { pathname: path, search } = new URL(request.url);
+      // signalbox: API-key lists; kept out of `requests` so call assertions stay about accounts.
+      const list = path.slice("/v0/management/".length);
+      if (/-api-key$|^openai-compatibility$/u.test(list) && request.method === "GET")
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ [list]: options.apiKeyLists?.[list] ?? [] }),
+        );
       const body =
         request.body._tag === "Uint8Array" && !path.endsWith("/auth-files/status")
           ? decodeRequest(new TextDecoder().decode(request.body.body))
@@ -512,6 +521,55 @@ describe("CLIProxyAPI built-in management API", () => {
       );
       const missing = yield* api.updateAccount(config, "gone.json", "remove").pipe(Effect.flip);
       expect(missing.detail).toContain("could not update");
+    }),
+  );
+
+  it.effect("lists API keys and Cursor accounts beside logins, and removes a key by its id", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "cursor-me@example.com.json",
+            auth_index: "c",
+            provider: "cursor",
+            email: "me@example.com",
+          },
+        ],
+        apiKeyLists: {
+          "claude-api-key": [{ "api-key": "sk-ant-api03-abcd1234", "base-url": "" }],
+          "openai-compatibility": [
+            {
+              name: "openrouter-x",
+              "base-url": "https://openrouter.ai/api/v1",
+              "api-key-entries": [{ "api-key": "sk-or-wxyz" }],
+            },
+          ],
+        },
+      });
+      const api = yield* test.api;
+      const listed = yield* api.readAccounts(config);
+      expect(listed).toMatchObject([
+        {
+          id: "cursor-me@example.com.json",
+          driver: "cursor",
+          email: "me@example.com",
+          usageLimits: { externalUsage: { label: "Cursor usage" } },
+        },
+        { driver: "claudeAgent", plan: "Anthropic API key ····1234", apiKey: true },
+        { driver: "codex", plan: "OpenRouter API key ····wxyz", apiKey: true },
+      ]);
+      expect(listed.flatMap((account) => [account.id, account.plan ?? ""]).join(" ")).not.toContain(
+        "sk-ant-api03",
+      );
+      const claudeKey = listed[1]!.id;
+      const paused = yield* api.updateAccount(config, claudeKey, "pause").pipe(Effect.flip);
+      expect(paused.detail).toBe("API keys can only be removed.");
+      yield* api.updateAccount(config, claudeKey, "remove");
+      expect(test.requests.at(-1)).toMatchObject({
+        method: "DELETE",
+        path: "/v0/management/claude-api-key",
+        search: "?api-key=sk-ant-api03-abcd1234&base-url=",
+      });
     }),
   );
 

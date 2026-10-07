@@ -162,6 +162,8 @@ export interface LimitAccount {
     readonly disabled: boolean;
     /** The hub's copy needs a new sign-in, even when a native login of the same account works. */
     readonly signedOut: boolean;
+    /** An API key: it can only be removed. */
+    readonly apiKey: boolean;
   };
 }
 
@@ -290,9 +292,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           {
             key: `${source.id}:${account.id}`,
             driver: account.driver,
-            displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+            // An API key is named by its label (`Anthropic API key ····abcd`), never its id.
+            displayName: account.apiKey
+              ? (account.plan ?? "API key")
+              : account.email
+                ? null
+                : account.id.replace(/\.json$/i, ""),
             email: account.email,
-            plan: account.plan,
+            plan: account.apiKey ? undefined : account.plan,
             accentColor: undefined,
             environments: [],
             sourceLabel,
@@ -313,6 +320,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
               accountId: account.id,
               disabled: account.disabled === true,
               signedOut: account.signedOut === true,
+              apiKey: account.apiKey === true,
             },
           },
         );

@@ -62,11 +62,16 @@ export function HubAccountActions({ account }: { readonly account: LimitAccount 
           <EllipsisIcon aria-hidden />
         </MenuTrigger>
         <MenuPopup align="end">
-          <MenuItem onClick={() => void run(hub.disabled ? "resume" : "pause")}>
-            {hub.disabled ? <PlayIcon aria-hidden /> : <PauseIcon aria-hidden />}
-            {hub.disabled ? "Resume" : "Pause"}
-          </MenuItem>
-          <MenuSeparator />
+          {/* API keys have nothing to pause: the hub keeps them in its config. */}
+          {hub.apiKey ? null : (
+            <>
+              <MenuItem onClick={() => void run(hub.disabled ? "resume" : "pause")}>
+                {hub.disabled ? <PlayIcon aria-hidden /> : <PauseIcon aria-hidden />}
+                {hub.disabled ? "Resume" : "Pause"}
+              </MenuItem>
+              <MenuSeparator />
+            </>
+          )}
           <MenuItem variant="destructive" onClick={() => setConfirmRemove(true)}>
             <Trash2Icon aria-hidden />
             Remove

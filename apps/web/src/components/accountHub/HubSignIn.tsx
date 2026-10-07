@@ -118,7 +118,7 @@ export function HubSignIn({
       ? "Checking the account…"
       : userCode
         ? `Open the sign-in page and enter this code to ${methodId ? "sign in to" : "add"} the ${account} account.`
-        : desktopReceive
+        : desktopReceive || !acceptsCallback
           ? `Finish signing in to ${account} in your browser.`
           : `Sign in to ${account} in your browser. If it ends on a page that cannot load, copy that page's address and paste it below.`
     : auth?.phase === "failed"

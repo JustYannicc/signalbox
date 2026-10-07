@@ -6,16 +6,16 @@ import {
   AuthStandardClientScopes,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderInstanceConfig,
   type ServerProvider,
   type UsageLimitSourceSnapshot,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { type AccountPool, AccountPoolId, poolSourceId } from "@t3tools/contracts/accountHub";
+import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts/settings";
 
 import { RPC_REQUIRED_SCOPES } from "../auth/RpcAuthorization.ts";
 import { buildPoolOverviews } from "./poolOverview.ts";
-import { poolRole, visibleProviders, visibleUsageLimitSources, withRole } from "./poolAccess.ts";
+import { poolRole, visibleProviders, visibleUsageLimitSources } from "./poolAccess.ts";
 
 const EMAIL = "secret-account@example.com";
 const READ_ONLY = [AuthOrchestrationReadScope, AuthAccessReadScope, AuthRelayReadScope];
@@ -28,10 +28,14 @@ const pool: AccountPool = {
   personal: false,
 };
 
-const instances = {
-  claude_hub_team: { driver: "claude", config: { setupMode: "hub", poolId: "team" } },
-  claude: { driver: "claude" },
-} as unknown as Record<string, ProviderInstanceConfig>;
+const settings = {
+  ...DEFAULT_SERVER_SETTINGS,
+  providerInstances: {
+    claude_hub_team: { driver: "claudeAgent", config: { setupMode: "hub", poolId: "team" } },
+  },
+  // A legacy entry runs on the personal pool with no `providerInstances` entry.
+  providers: { ...DEFAULT_SERVER_SETTINGS.providers, codex: { setupMode: "hub" } },
+} as unknown as ServerSettings;
 
 const usageLimits = {
   checkedAt: "2026-10-07T10:00:00.000Z",
@@ -47,10 +51,10 @@ const usageLimits = {
   resetCredits: { availableCount: 2 },
 };
 
-const provider = (instanceId: string): ServerProvider =>
+const provider = (instanceId: string, driver: string): ServerProvider =>
   ({
     instanceId: ProviderInstanceId.make(instanceId),
-    driver: ProviderDriverKind.make("claude"),
+    driver: ProviderDriverKind.make(driver),
     displayName: "Claude",
     enabled: true,
     auth: { status: "authenticated", label: "3 accounts", email: EMAIL, profileId: "max" },
@@ -66,7 +70,7 @@ const sources: ReadonlyArray<UsageLimitSourceSnapshot> = [
     accounts: [
       {
         id: "a",
-        driver: ProviderDriverKind.make("claude"),
+        driver: ProviderDriverKind.make("claudeAgent"),
         email: EMAIL,
         plan: "Max",
         usageLimits,
@@ -75,7 +79,8 @@ const sources: ReadonlyArray<UsageLimitSourceSnapshot> = [
   } as unknown as UsageLimitSourceSnapshot,
 ];
 
-const providers = [provider("claude_hub_team"), provider("claude")];
+const poolProviders = [provider("claude_hub_team", "claudeAgent"), provider("codex", "codex")];
+const ownProvider = provider("claudeAgent", "claudeAgent");
 
 describe("poolRole", () => {
   it("makes a session that may operate the environment an admin, and a read-only one a member", () => {
@@ -93,6 +98,9 @@ describe("poolRole", () => {
       WS_METHODS.accountPoolDelete,
       WS_METHODS.accountPoolSetBacking,
       WS_METHODS.accountPoolImportAccounts,
+      WS_METHODS.accountPoolAddApiKey,
+      WS_METHODS.accountPoolMoveNativeLogins,
+      WS_METHODS.accountPoolSetOpenCode,
       WS_METHODS.providerAuthStart,
       WS_METHODS.providerAuthSubscribe,
       WS_METHODS.serverRefreshProviders,
@@ -112,18 +120,17 @@ describe("poolRole", () => {
 describe("member payloads", () => {
   const overviews = buildPoolOverviews({
     pools: [pool],
-    instances,
-    providers,
+    instances: settings.providerInstances,
+    providers: poolProviders,
     sources,
     now: Date.parse("2026-10-07T10:00:00.000Z"),
   });
 
   it("carry no account count, email, plan, or reset credit", () => {
     const wire = JSON.stringify({
-      // The operator's own non-pool sign-in is not a pool's to hide.
-      providers: visibleProviders("member", [providers[0]!], instances),
+      providers: visibleProviders("member", poolProviders, settings),
       usageLimitSources: visibleUsageLimitSources("member", sources),
-      pools: withRole("member", overviews),
+      pools: overviews,
     });
     expect(wire).not.toContain(EMAIL);
     expect(wire).not.toContain("3 accounts");
@@ -133,39 +140,25 @@ describe("member payloads", () => {
   });
 
   it("still say what is left in each pool and when it resets", () => {
-    expect(withRole("member", overviews)).toEqual([
+    expect(overviews[0]?.providers[0]?.usage).toEqual([
       {
-        id: "team",
-        name: "Team",
-        role: "member",
-        providers: [
-          {
-            providerInstanceId: "claude_hub_team",
-            driver: "claude",
-            displayName: "Claude",
-            available: true,
-            usage: [
-              {
-                label: "5 hours",
-                kind: "session",
-                remainingPercent: 60,
-                nextResetAt: "2026-10-07T12:00:00.000Z",
-              },
-            ],
-          },
-        ],
+        label: "5 hours",
+        kind: "session",
+        remainingPercent: 60,
+        nextResetAt: "2026-10-07T12:00:00.000Z",
       },
     ]);
   });
 
   it("leave providers that run on no pool alone", () => {
-    expect(visibleProviders("member", providers, instances)[1]).toBe(providers[1]);
+    expect(visibleProviders("member", [ownProvider], settings)[0]).toBe(ownProvider);
   });
 });
 
 describe("admin payloads", () => {
   it("are what an admin sees today", () => {
-    expect(visibleProviders("admin", providers, instances)).toBe(providers);
+    const providers = [...poolProviders, ownProvider];
+    expect(visibleProviders("admin", providers, settings)).toBe(providers);
     expect(visibleUsageLimitSources("admin", sources)).toBe(sources);
   });
 });

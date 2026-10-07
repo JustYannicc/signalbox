@@ -1,80 +1,17 @@
 # Codex
 
-Use your ChatGPT plan or an existing Codex CLI login to code in Signalbox.
+Signalbox runs Codex on the accounts in a pool: ChatGPT accounts and OpenAI API keys.
 
-## Connect with ChatGPT
+## Accounts
 
-Connect during onboarding or in **Settings → Providers**. For a remote machine,
-select that environment first. Signalbox handles Codex installation; sign in on
-OpenAI and allow sharing of your ChatGPT plan.
+On **Usage → Limits**, choose **Add account → ChatGPT** to sign in, or **Add account → API key** for
+an OpenAI or OpenRouter key. With several accounts in a pool, each conversation stays on one account,
+and work moves to another when one runs out. See
+[Use several subscription accounts](./usage.md#use-several-subscription-accounts).
 
-Manage shared usage and credits in ChatGPT through **Manage usage** in Signalbox.
-If a request uses a feature that ChatGPT sharing does not support, use another
-provider for that request.
-
-When reconnecting, choose the same account in Signalbox and on OpenAI's sign-in
-page. Disconnecting stops running threads but keeps their history and lets you
-reconnect later.
-
-If remote sign-in cannot return automatically, paste the full URL from the final
-localhost page into the sign-in panel, even if that page could not load.
-
-## Use an existing Codex login
-
-Signalbox can use your installed Codex and its existing login. Run `codex login`
-on the environment's machine to sign in. [Provider setup](./install.md#providers)
-covers installation and custom configuration.
-
-## Use multiple accounts
-
-Add another ChatGPT account in **Settings → Providers**, then select the account
-from the thread's model picker. Compatible accounts can continue the same thread.
-Connecting accounts through Signalbox leaves your CLI login unchanged.
-
-### Multiple CLI logins
-
-A shared Codex home with a shadow home lets work and personal accounts continue
-the same threads. The accounts share Codex sessions and configuration while keeping
-their own login and available models.
-
-Keep your first account in `~/.codex`. On the environment's machine, sign the
-second account into a fresh directory:
-
-```bash
-mkdir -p ~/.codex_personal
-CODEX_HOME=~/.codex_personal codex login
-```
-
-Then add a second Codex instance in **Settings > Providers**:
-
-| Instance       | CODEX_HOME path | Shadow home path    |
-| -------------- | --------------- | ------------------- |
-| Codex Work     | `~/.codex`      | Leave empty         |
-| Codex Personal | `~/.codex`      | `~/.codex_personal` |
-
-Both instances must use the same **CODEX_HOME path**. Signalbox prepares the shared
-state in the shadow directory; do not populate it by copying your whole Codex
-home.
-
-The shadow account needs its own `auth.json` file. If Codex uses an OS credential
-store, configure file storage for this setup. See
-[OpenAI's credential storage guide](https://learn.chatgpt.com/docs/auth#credential-storage).
-
-Use a completely separate **CODEX_HOME path**, with no shadow home, when you want
-separate Codex sessions and configuration. That instance cannot continue threads
-from the other home.
-
-## Switch accounts in an existing thread
-
-Choose the other account from the thread's model picker. Signalbox offers compatible
-Codex instances that share the thread's **CODEX_HOME path**. Changing accounts does
-not move the conversation into a separate Codex home.
-
-If the account is missing from the picker, compare the home paths in provider
-settings. If two instances show the same unexpected account or models, check their
-reported accounts, refresh provider status, and confirm the second instance has
-its own shadow path and login. A shadow-home conflict usually means the directory
-contains a copied Codex setup. Use a fresh shadow directory and sign in again.
+If Codex is already signed in on the server, with `codex login` or with Signalbox's own ChatGPT
+sign-in, choose **Move into** a pool in **Settings → Providers**. Signalbox then stops using that
+login directly.
 
 ## Answer questions while Codex works
 

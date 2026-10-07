@@ -33,17 +33,13 @@ If Signalbox cannot read your saved settings, it shows **Could not read settings
 Select **Retry** after storage becomes available. Setup does not replace
 unreadable settings with defaults.
 
-## Check your agents
+## Add your accounts
 
-Signalbox checks each selected computer for Claude Code and Codex. If an agent is
-not installed or signed in, select its action to open a terminal with the
-correct command ready to run. Install uses the vendor's own installer, which
-keeps **Update now** working in Settings. Other providers can be enabled in
-Settings.
-
-The setup terminal uses the home directory and environment configured for the
-selected provider instance. Sensitive values remain redacted in Settings and
-terminal metadata while the terminal process can use them.
+Agents run on the accounts in your pool. If a selected computer already has
+Claude Code, Codex, or Cursor signed in, choose **Move into** to move those
+sign-ins into the pool in one click. Otherwise choose **Add account** to sign in
+with a ChatGPT, Claude, Grok, Antigravity, or Cursor account, or to add an API
+key. You can add more later on **Usage → Limits**.
 
 ## Import your projects
 

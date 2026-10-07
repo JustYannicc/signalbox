@@ -1,12 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { AccountPool, AccountPoolView } from "@t3tools/contracts/accountHub";
+import type { AccountPool, AccountPoolOverview } from "@t3tools/contracts/accountHub";
 
 import { useEnvironment } from "./environments";
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
 
 const NO_POOLS: ReadonlyArray<AccountPool> = [];
-const NO_VIEWS: ReadonlyArray<AccountPoolView> = [];
+const NO_VIEWS: ReadonlyArray<AccountPoolOverview> = [];
 
 function useConnectedEnvironmentId(environmentId: EnvironmentId | null | undefined) {
   const environment = useEnvironment(environmentId ?? null);
@@ -26,7 +26,7 @@ export function useAccountPools(environmentId: EnvironmentId | null | undefined)
   return query.data ?? NO_POOLS;
 }
 
-/** Every pool of an environment as this session may see it, kept live; empty until it connects. */
+/** Every pool's overview in an environment, kept live; any session may read it. Empty until it connects. */
 export function usePoolViews(environmentId: EnvironmentId | null | undefined) {
   const connectedId = useConnectedEnvironmentId(environmentId);
   const query = useEnvironmentQuery(

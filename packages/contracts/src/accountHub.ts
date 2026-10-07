@@ -7,7 +7,11 @@
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderInstanceConfig,
+} from "./providerInstance.ts";
 import { ServerProviderUsageWindow } from "./providerUsageLimits.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
@@ -152,19 +156,79 @@ export const AccountPoolOverview = Schema.Struct({
 export type AccountPoolOverview = typeof AccountPoolOverview.Type;
 
 /**
- * What a caller may do with a pool. Admins see and manage its accounts:
- * emails, plans, per-account bars, banked resets. Members see only the
- * pool's overview. The server builds every payload for the caller's role.
+ * API keys a pool takes. The hub routes every kind but Cursor, whose key is
+ * handed to the pool's Cursor provider per turn instead.
  */
-export const AccountPoolRole = Schema.Literals(["admin", "member"]);
-export type AccountPoolRole = typeof AccountPoolRole.Type;
+const POOL_API_KEY_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "xai",
+  "gemini",
+  "openrouter",
+  "openai-compatible",
+  "cursor",
+] as const;
+export const PoolApiKeyProvider = Schema.Literals(POOL_API_KEY_PROVIDERS);
+export type PoolApiKeyProvider = typeof PoolApiKeyProvider.Type;
 
-/** A pool as one caller sees it: its overview and the caller's role in it. */
-export const AccountPoolView = Schema.Struct({
-  ...AccountPoolOverview.fields,
-  role: AccountPoolRole,
+export const AccountPoolAddApiKeyInput = Schema.Struct({
+  poolId: AccountPoolId,
+  provider: PoolApiKeyProvider,
+  apiKey: HubKey,
+  /** Required for `openai-compatible`: where the endpoint answers, such as `https://host/v1`. */
+  baseUrl: Schema.optional(HubUrl),
 });
-export type AccountPoolView = typeof AccountPoolView.Type;
+export type AccountPoolAddApiKeyInput = typeof AccountPoolAddApiKeyInput.Type;
+
+/**
+ * Moves the logins of provider instances that sign in on the server machine
+ * (native logins) into a pool. Each instance is turned off once its login is
+ * in the pool, so the pool is the only place that refreshes it.
+ */
+export const AccountPoolMoveNativeLoginsInput = Schema.Struct({
+  poolId: AccountPoolId,
+  instanceIds: Schema.Array(ProviderInstanceId).check(Schema.isMinLength(1)),
+});
+export type AccountPoolMoveNativeLoginsInput = typeof AccountPoolMoveNativeLoginsInput.Type;
+
+export const AccountPoolMoveNativeLoginsResult = Schema.Struct({
+  moved: Schema.Array(ProviderInstanceId),
+  failed: Schema.Array(Schema.Struct({ instanceId: ProviderInstanceId, reason: Schema.String })),
+});
+export type AccountPoolMoveNativeLoginsResult = typeof AccountPoolMoveNativeLoginsResult.Type;
+
+export const AccountPoolSetOpenCodeInput = Schema.Struct({
+  poolId: AccountPoolId,
+  enabled: Schema.Boolean,
+});
+export type AccountPoolSetOpenCodeInput = typeof AccountPoolSetOpenCodeInput.Type;
+
+/**
+ * The provider instances a pool runs: one per kind of account it holds, plus
+ * OpenCode when turned on. Adding the first account of a kind adds that kind's
+ * instance, so the model picker never grows a row per account.
+ */
+export const POOL_INSTANCE_KINDS = {
+  codex: { driver: ProviderDriverKind.make("codex"), displayName: "ChatGPT" },
+  claude: { driver: ProviderDriverKind.make("claudeAgent"), displayName: "Claude" },
+  grok: { driver: ProviderDriverKind.make("grok"), displayName: "Grok" },
+  antigravity: { driver: ProviderDriverKind.make("antigravity"), displayName: "Antigravity" },
+  cursor: { driver: ProviderDriverKind.make("cursor"), displayName: "Cursor" },
+  opencode: { driver: ProviderDriverKind.make("opencode"), displayName: "OpenCode" },
+} as const;
+export type PoolInstanceKind = keyof typeof POOL_INSTANCE_KINDS;
+
+/** Drivers whose native login can move into a pool. */
+export const MOVABLE_NATIVE_DRIVERS: ReadonlyArray<ProviderDriverKind> = [
+  POOL_INSTANCE_KINDS.claude.driver,
+  POOL_INSTANCE_KINDS.codex.driver,
+  POOL_INSTANCE_KINDS.cursor.driver,
+];
+
+/** Drivers a pool can run: a signed-out one is fixed by adding an account to its pool. */
+export const POOL_DRIVERS: ReadonlyArray<ProviderDriverKind> = Object.values(
+  POOL_INSTANCE_KINDS,
+).map((kind) => kind.driver);
 
 /** The usage limit source a pool's accounts report under. */
 export const poolSourceId = (poolId: string) =>
@@ -189,6 +253,30 @@ export const hubInstancePoolId = (config: unknown): string | null => {
     : PERSONAL_POOL_ID;
 };
 
-/** The provider instance id of a pool's instance for one kind (`codex`, `claude`, `grok`, `antigravity`). */
+/**
+ * The provider instance id of a pool's instance for one kind (`codex`,
+ * `claude`, `grok`, `antigravity`, `cursor`, `opencode`).
+ */
 export const poolInstanceId = (kind: string, poolId: string) =>
   poolId === PERSONAL_POOL_ID ? `${kind}_hub` : `${kind}_hub_${poolId}`;
+
+/**
+ * The instance of `kind` in a pool, ready to save. Outside the personal pool
+ * it carries the pool's name, so the picker can tell pools apart.
+ */
+export function poolInstanceEntry(
+  kind: PoolInstanceKind,
+  pool: { readonly id: string; readonly name: string | undefined },
+): readonly [ProviderInstanceId, ProviderInstanceConfig] {
+  const { driver, displayName } = POOL_INSTANCE_KINDS[kind];
+  const personal = pool.id === PERSONAL_POOL_ID;
+  return [
+    ProviderInstanceId.make(poolInstanceId(kind, pool.id)),
+    {
+      driver,
+      displayName: personal || !pool.name ? displayName : `${displayName} · ${pool.name}`,
+      enabled: true,
+      config: { enabled: true, setupMode: "hub", ...(personal ? {} : { poolId: pool.id }) },
+    },
+  ];
+}

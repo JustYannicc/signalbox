@@ -54,6 +54,7 @@ import { ProviderWizardAuthenticationStep } from "./ProviderWizardAuthentication
 import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
 import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
+import { NATIVE_SIGN_IN } from "../accountPool/nativeLogins"; // signalbox
 
 /**
  * Normalize a user-provided label into a slug suffix for the instance id.
@@ -675,7 +676,7 @@ export function AddProviderInstanceDialog({
               >
                 {wizardStep === 0 ? "Cancel" : "Back"}
               </Button>
-              {wizardStep === 0 && driver === "codex" ? (
+              {wizardStep === 0 && driver === "codex" && NATIVE_SIGN_IN ? (
                 <>
                   <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
                     Configure manually

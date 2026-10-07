@@ -62,10 +62,15 @@ export function HubAccountActions({ account }: { readonly account: LimitAccount 
       disabled={busy}
       onPress={() =>
         Alert.alert(name, undefined, [
-          {
-            text: hub.disabled ? "Resume" : "Pause",
-            onPress: () => void run(hub.disabled ? "resume" : "pause"),
-          },
+          // API keys have nothing to pause: the hub keeps them in its config.
+          ...(hub.apiKey
+            ? []
+            : [
+                {
+                  text: hub.disabled ? "Resume" : "Pause",
+                  onPress: () => void run(hub.disabled ? "resume" : "pause"),
+                },
+              ]),
           { text: "Remove", style: "destructive", onPress: confirmRemove },
           { text: "Cancel", style: "cancel" },
         ])
