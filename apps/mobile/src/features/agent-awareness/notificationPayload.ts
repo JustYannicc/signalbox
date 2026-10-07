@@ -1,3 +1,5 @@
+import { normalizeAutomationRunDeepLink } from "@t3tools/contracts/relay"; // signalbox: automations
+
 function dataFromNotificationResponse(response: unknown): Record<string, unknown> | null {
   if (typeof response !== "object" || response === null) {
     return null;
@@ -86,7 +88,8 @@ export function extractAgentNotificationDeepLink(response: unknown): string | nu
   const data = dataFromNotificationResponse(response);
   const deepLink = data?.deepLink;
   if (typeof deepLink === "string") {
-    const normalizedDeepLink = normalizeThreadDeepLink(deepLink);
+    const normalizedDeepLink =
+      normalizeThreadDeepLink(deepLink) ?? normalizeAutomationRunDeepLink(deepLink); // signalbox: automations
     if (normalizedDeepLink) {
       return normalizedDeepLink;
     }

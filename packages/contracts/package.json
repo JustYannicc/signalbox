@@ -23,6 +23,10 @@
       "types": "./src/account.ts",
       "import": "./src/account.ts"
     },
+    "./accountHub": {
+      "types": "./src/accountHub.ts",
+      "import": "./src/accountHub.ts"
+    },
     "./signalboxAnalytics": {
       "types": "./src/signalboxAnalytics.ts",
       "import": "./src/signalboxAnalytics.ts"

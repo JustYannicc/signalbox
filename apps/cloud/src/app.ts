@@ -29,6 +29,9 @@ import * as AccountRoutes from "./http/accountRoutes.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
 import * as EnvironmentApi from "./http/environmentApi.ts";
 import * as Platform from "./platform.ts";
+import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
+import { layerNoThreadContexts } from "./user/contextProjects.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 
 /**
@@ -56,14 +59,20 @@ const layerCors = HttpRouter.cors({
 export const layerServices = (input: {
   readonly vars: Record<string, string>;
   readonly users: UserDirectory.UserObjectNamespace;
+  readonly threads: ThreadDirectory.ThreadObjectNamespace;
   readonly localWorkerd: boolean;
 }) =>
-  CloudAccounts.layer.pipe(
+  Layer.mergeAll(CloudAccounts.layer, CloudThreadService.layer).pipe(
+    // The Worker only reads threads; they are created in their user's object.
+    Layer.provideMerge(layerNoThreadContexts),
     Layer.provideMerge(CloudSessions.layer),
     Layer.provideMerge(CloudTokens.layer),
     Layer.provideMerge(CloudConfig.layer),
     Layer.provideMerge(
-      UserDirectory.layerDurableObjects(input.users, { localWorkerd: input.localWorkerd }),
+      Layer.mergeAll(
+        UserDirectory.layerDurableObjects(input.users, { localWorkerd: input.localWorkerd }),
+        ThreadDirectory.layerDurableObjects(input.threads, { localWorkerd: input.localWorkerd }),
+      ),
     ),
     Layer.provideMerge(
       Layer.mergeAll(FetchHttpClient.layer, Platform.layerCrypto, Platform.layerHttp),

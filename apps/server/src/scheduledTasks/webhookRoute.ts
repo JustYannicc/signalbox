@@ -1,5 +1,6 @@
 import { EnvironmentHttpApi } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
@@ -20,6 +21,25 @@ export const WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 /** Response header naming what happened to the request; the relay records it. */
 const WEBHOOK_OUTCOME_HEADER = "x-t3-hook-outcome";
 
+/**
+ * Takes webhook requests for something other than scheduled tasks: hook ids
+ * starting with `hookIdPrefix` go to `trigger` instead of the task service.
+ * It gets the same request (body cap, relay proof) and is answered the same
+ * way, so it checks its own token, signature, rate limit and age.
+ */
+export interface WebhookReceiver {
+  readonly hookIdPrefix: string;
+  readonly trigger: (
+    request: ScheduledTaskService.WebhookTriggerRequest,
+  ) => Effect.Effect<ScheduledTaskService.WebhookTriggerResult, Error>;
+}
+
+/** Every extra webhook receiver; none by default. */
+export class WebhookReceivers extends Context.Reference<ReadonlyArray<WebhookReceiver>>(
+  "t3/scheduledTasks/WebhookReceivers",
+  { defaultValue: () => [] },
+) {}
+
 const json = (status: number, body: Record<string, string>, outcome: string) =>
   HttpServerResponse.jsonUnsafe(body, { status, headers: { [WEBHOOK_OUTCOME_HEADER]: outcome } });
 
@@ -29,6 +49,11 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
     const relayDeliveryProof = yield* RelayDeliveryProof.RelayDeliveryProof;
+    const receivers = yield* WebhookReceivers;
+    const receiverFor = (hookId: string) =>
+      receivers.find((receiver) => hookId.startsWith(receiver.hookIdPrefix)) ?? {
+        trigger: scheduledTasks.triggerWebhook,
+      };
     /**
      * Handles `/api/hooks/:hookId/:token` for every accepted method. The endpoint
      * is raw so the signature is checked over the exact body bytes; the service
@@ -85,8 +110,8 @@ export const layer = HttpApiBuilder.group(
         const relayParent = Option.isSome(relay)
           ? HttpTraceContext.fromHeaders(request.headers)
           : Option.none<Tracer.ExternalSpan>();
-        const result = yield* scheduledTasks
-          .triggerWebhook({
+        const result = yield* receiverFor(params.hookId)
+          .trigger({
             hookId: params.hookId,
             token: params.token,
             method: request.method,

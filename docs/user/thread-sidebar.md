@@ -27,7 +27,10 @@ subsections. Sections only organize: moving something never changes where it's
 stored or who can see it. They sync to all your devices. On mobile you can see them
 but not change them yet.
 
-Organizations you join show up the next time you sign in.
+A thread acts as the context it starts in, for good: a work thread uses that
+organization's identity and connections, a personal one uses yours. New threads
+start in Personal. To start one in a work context, pick the organization in
+**New thread in…**. Organizations you join show up the next time you sign in.
 
 ## Start a thread
 

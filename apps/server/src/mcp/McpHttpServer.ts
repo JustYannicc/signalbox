@@ -25,6 +25,8 @@ import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
+import { PoolsToolkit } from "./toolkits/pools/tools.ts"; // signalbox: account pools
+import * as PoolsHandlers from "./toolkits/pools/handlers.ts"; // signalbox
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -55,6 +57,9 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import { AutomationToolkit } from "../workflows/mcp/tools.ts"; // signalbox: automations
+import * as AutomationHandlers from "../workflows/mcp/handlers.ts"; // signalbox: automations
+import * as AutomationBuiltinTools from "../workflows/builtinTools/layer.ts"; // signalbox: automations
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -730,6 +735,11 @@ const layerEnvironmentRegistration = McpServer.toolkit(EnvironmentToolkit).pipe(
   Layer.provide(EnvironmentHandlers.layer),
 );
 
+// signalbox: account pools
+const layerPoolsRegistration = McpServer.toolkit(PoolsToolkit).pipe(
+  Layer.provide(PoolsHandlers.layer),
+);
+
 const layerProjectRegistration = McpServer.toolkit(ProjectToolkit).pipe(
   Layer.provide(ProjectHandlers.layer),
 );
@@ -769,9 +779,12 @@ export const layer = Layer.mergeAll(
   layerAttachmentRegistration,
   layerProjectRegistration,
   layerEnvironmentRegistration,
+  layerPoolsRegistration, // signalbox
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  McpServer.toolkit(AutomationToolkit).pipe(Layer.provide(AutomationHandlers.layer)), // signalbox: automations
+  AutomationBuiltinTools.layer, // signalbox: automations call Signalbox's tools as steps
 ).pipe(Layer.provideMerge(layerMcpTransport));

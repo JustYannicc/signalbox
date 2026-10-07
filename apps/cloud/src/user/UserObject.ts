@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
+import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { serveConnection } from "./connection.ts";
 import {
   CONNECTION_HEADER,
@@ -18,15 +20,18 @@ import {
   USER_OBJECT_JURISDICTION,
   type UserObjectApi,
 } from "./UserDirectory.ts";
+import { layerThreadContexts } from "./contextProjects.ts";
 import * as UserContexts from "./UserContexts.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
+import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 
 /**
  * One per WorkOS user, named by their user id, always in the EU jurisdiction.
  * It owns that user's state (see `UserStore`) and terminates their clients'
- * RPC sockets. The Worker authenticates every request before it gets here and
- * forwards a socket's session in `CONNECTION_HEADER`.
+ * RPC sockets, reaching their threads through `CloudThreadService`. The Worker
+ * authenticates every request before it gets here and forwards a socket's
+ * session in `CONNECTION_HEADER`.
  *
  * Sockets use the standard (non-hibernating) API, so an object stays in memory
  * while a client is connected.
@@ -37,14 +42,22 @@ export interface UserObjectEnv {
   readonly ENVIRONMENT_LABEL?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
+  readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
-const makeRuntime = (storage: DurableObjectStorage) =>
+const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
   ManagedRuntime.make(
-    Layer.mergeAll(UserStore.layer, UserContexts.layer).pipe(
+    Layer.mergeAll(UserShell.layer, CloudThreadService.layer).pipe(
+      Layer.provideMerge(layerThreadContexts),
+      Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
+      Layer.provideMerge(
+        ThreadDirectory.layerDurableObjects(env.THREADS, {
+          localWorkerd: env.LOCAL_WORKERD === "1",
+        }),
+      ),
       Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
     ),
   );
@@ -67,7 +80,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       environmentId: decodeEnvironmentId(env.ENVIRONMENT_ID),
       label: env.ENVIRONMENT_LABEL ?? Environment.DEFAULT_ENVIRONMENT_LABEL,
     };
-    this.runtime = makeRuntime(ctx.storage);
+    this.runtime = makeRuntime(ctx.storage, env);
     void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));
   }
 
@@ -119,6 +132,14 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.shellSnapshot();
   }
 
+  recordThreadSummary(summary: unknown) {
+    return this.api.recordThreadSummary(summary);
+  }
+
+  rebuildThreadIndex() {
+    return this.api.rebuildThreadIndex();
+  }
+
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
@@ -126,7 +147,8 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     // The Worker checked only the token's signature; the record is the authority.
     const { sid } = decodeConnectionInfo(request.headers.get(CONNECTION_HEADER));
     const session = await this.findSession(sid);
-    if (!session) return new Response("Unauthorized", { status: 401 });
+    const profile = await this.profile();
+    if (!session || !profile) return new Response("Unauthorized", { status: 401 });
 
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     server.accept();
@@ -137,7 +159,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
         webSocket: server,
         scopes: session.scopes,
         identity: this.identity,
-        shellSnapshot: Effect.promise(() => this.shellSnapshot()),
+        actor: { userId: profile.id },
       }).pipe(
         // An open socket never outlives its session.
         Effect.raceFirst(

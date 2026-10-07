@@ -23,6 +23,11 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as AccountHttp from "./account/http.ts"; // signalbox: accounts
+import * as AutomationHttp from "./workflows/http.ts"; // signalbox: automations
+import * as AutomationPush from "./workflows/AutomationPush.ts"; // signalbox: automations
+import * as AutomationSkill from "./workflows/skill/installSkill.ts"; // signalbox: automations
+import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
+import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
 import * as ProductAnalytics from "./signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
@@ -526,6 +531,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
+  AutomationPush.layer, // signalbox: automations
+  AutomationSkill.layer, // signalbox: automations
   layerThreadSettlementWorker,
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
@@ -584,6 +591,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
       CodexInstallation.CodexInstallation.layer,
+      // signalbox: account pools, each on its own hub; the personal pool's is today's hub.
+      AccountPools.layer.pipe(
+        Layer.provideMerge(AccountHub.layer),
+        Layer.provide(NetService.layer),
+      ),
     ),
   ),
 );
@@ -659,7 +671,12 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(PullRequestHttp.layer),
       Layer.provide(ProjectHttp.layer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
-      Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
+      Layer.provide(
+        WebhookRoute.layer.pipe(
+          Layer.provide(RelayDeliveryProof.layer),
+          Layer.provide(AutomationHttp.layerWebhookReceiver), // signalbox: automation webhooks
+        ),
+      ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,

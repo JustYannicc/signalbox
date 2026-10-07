@@ -1,3 +1,5 @@
+import { AUTOMATION_MCP_TOOLS } from "./automationMcpTools.ts"; // signalbox: automations
+
 export type T3McpToolLogo = "t3-code";
 
 export interface T3McpToolPresentation {
@@ -50,6 +52,7 @@ export type T3McpToolSummaryAction =
   | "project-clone"
   | "environment-read"
   | "environment-update"
+  | "pool-list" // signalbox
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -61,7 +64,8 @@ export type T3McpToolSummaryAction =
   | "browser"
   | "device"
   | "html-preview"
-  | "html-render";
+  | "html-render"
+  | "automation"; // signalbox: automations
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -296,6 +300,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Read", "Reading", "Read", "environment preferences"],
     "environment-read",
   ),
+  t3_pool_list: tool(["List", "Listing", "Listed", "account pools"], "pool-list"), // signalbox
   t3_environment_preferences_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
@@ -318,6 +323,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  ...AUTOMATION_MCP_TOOLS, // signalbox: automations
 };
 
 /**

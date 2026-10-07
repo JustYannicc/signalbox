@@ -259,7 +259,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         // Keep the active instance visible when it is locked or needs setup.
         return props.activeInstanceId;
       }
-      return favorites.length > 0 ? "favorites" : props.activeInstanceId;
+      // Favorites open first only when one of them is among the providers shown.
+      return favorites.some((favorite) =>
+        props.instanceEntries.some((entry) => entry.instanceId === favorite.provider),
+      )
+        ? "favorites"
+        : props.activeInstanceId;
     },
   );
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(

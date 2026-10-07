@@ -31,6 +31,7 @@ import {
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
+import { AutomationAndroidJob, automationAlertAllowed } from "./automationAndroidAlert.ts"; // signalbox: automations
 
 export const FcmDeliveryJob = Schema.Struct({
   userId: Schema.String,
@@ -39,6 +40,7 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
+  automation: Schema.optional(AutomationAndroidJob), // signalbox: automations
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -122,6 +124,7 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
+      readonly automation?: AutomationAndroidJob; // signalbox: automations
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -171,6 +174,7 @@ export const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
+          ...(input.automation ? { automation: input.automation } : {}), // signalbox: automations
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -200,6 +204,7 @@ export const make = Effect.gen(function* () {
       if (!target) return;
       const preferences = decodePreferences(target.preferences_json);
       if (Option.isNone(preferences)) return;
+      if (job.automation && !automationAlertAllowed(job.automation.kind, preferences.value)) return; // signalbox: automations
 
       // Re-read links and state when consuming: queued messages must honor
       // sign-out, token rotation, disabled publishing, and newer thread states.
@@ -287,6 +292,7 @@ export const make = Effect.gen(function* () {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
         }
       }
+      if (job.automation) alert = job.automation.alert; // signalbox: automations
       const displayedAggregate =
         preferences.value.notificationsEnabled && preferences.value.liveActivitiesEnabled
           ? aggregate

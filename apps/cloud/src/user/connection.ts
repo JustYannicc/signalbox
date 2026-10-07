@@ -1,4 +1,4 @@
-import type { AuthEnvironmentScope, OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
+import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,6 +9,7 @@ import * as Socket from "effect/socket/Socket";
 import * as SocketServer from "effect/socket/SocketServer";
 
 import type * as Environment from "../environment.ts";
+import type { Actor } from "../thread/ThreadEngine.ts";
 import * as CloudRpc from "./rpc.ts";
 
 /**
@@ -25,7 +26,7 @@ export const serveConnection = (input: {
   readonly webSocket: WebSocket;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly identity: Environment.CloudEnvironmentIdentity;
-  readonly shellSnapshot: Effect.Effect<OrchestrationV2ShellSnapshot>;
+  readonly actor: Actor;
 }) =>
   Effect.gen(function* () {
     const socket = yield* Socket.fromWebSocket(Effect.succeed(input.webSocket));
@@ -46,7 +47,7 @@ export const serveConnection = (input: {
       Effect.provideService(RpcServer.Protocol, protocol),
       Effect.provide(
         Layer.mergeAll(
-          CloudRpc.layerHandlers({ identity: input.identity, shellSnapshot: input.shellSnapshot }),
+          CloudRpc.layerHandlers({ identity: input.identity, actor: input.actor }),
           CloudRpc.layerScopeAuthorization(input.scopes),
         ),
       ),

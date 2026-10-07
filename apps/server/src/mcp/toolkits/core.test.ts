@@ -33,6 +33,7 @@ import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
 import { EnvironmentToolkit } from "./environment/tools.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
+import { PoolsToolkit } from "./pools/tools.ts"; // signalbox
 import { ProjectToolkit } from "./project/tools.ts";
 import { AttachmentToolkit } from "./attachment/tools.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
@@ -55,6 +56,8 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
+import { AutomationToolkit } from "../../workflows/mcp/tools.ts"; // signalbox: automations
+
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
@@ -67,10 +70,12 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     AttachmentToolkit,
     ProjectToolkit,
     EnvironmentToolkit,
+    PoolsToolkit, // signalbox
     PreviewControlsToolkit,
     DeviceToolkit,
     PullRequestsToolkit,
     HtmlToolkit,
+    AutomationToolkit, // signalbox: automations
   ]) {
     for (const tool of Object.values(toolkit.tools)) {
       expect(names.has(tool.name)).toBe(false);

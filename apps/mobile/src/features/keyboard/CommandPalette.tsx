@@ -38,6 +38,7 @@ import {
 } from "./commandPaletteItems";
 import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
+import { automationPaletteActions } from "../automations/palette"; // signalbox: automations
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "commandPalette",
@@ -226,6 +227,7 @@ export function CommandPalette(props: {
             params: { screen: "SettingsEnvironments" },
           }),
       },
+      ...automationPaletteActions(navigation), // signalbox: automations
       {
         key: "scheduledTasks",
         kind: "action",

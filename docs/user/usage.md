@@ -74,18 +74,19 @@ the dialog.
 ## Track subscription limits
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
-or Claude accounts across your environments and hubs you read one number per window rather than a
-list. Each window card shows how much of the pool is left and a bar with one segment per account,
-kept in the same column across windows. Accounts are ordered by their 5-hour reset, soonest
-first, or by the first available window when no account reports a 5-hour limit. A gap means the
-account does not report that window. When the provider reports reset times, the card also says
-when the next reset lands and how much it hands back. The hatched
-part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
-where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
-with banked reset credits show a ticket count and the **Use reset** action in the account details.
-Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
-Keychain. On narrow screens, numbered rows below
-the bar show each account's quota, countdown, and credits. Tap a row to open its details.
+or Claude accounts across your environments and hubs, the provider summary shows how much is left
+in each pooled window. Each bar has one segment per account, kept in the same column across windows.
+Accounts are ordered by their 5-hour reset, soonest first, or by the first available window when no
+account reports a 5-hour limit. A gap means the account does not report that window. The summary
+shows the soonest reset that restores quota and the total banked reset credits, with the next expiry
+when one is reported. The hatched part of a segment is what that account's reset restores. Tap a
+segment for the account's plan, email, environment or hub, and reset time. On web, you can hover too.
+
+Below the summary, **Accounts** lists each subscription account once with its individual window
+bars, plan, and environment or hub source. Available reset credits include **Use reset** when that
+account can redeem them. On mobile, use **Details** in a row or tap a segment to open the account
+screen. Claude resets are not available when the server runs on macOS, where Claude keeps its login
+in the Keychain.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
@@ -114,13 +115,59 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Use several subscription accounts
+
+Signalbox spreads work across several ChatGPT, Claude, Grok, and Antigravity accounts. Accounts live
+in **pools**: everyone starts with one pool, and you can add more, for example one for work. Open
+**Usage → Limits**, choose **Add account**, pick the provider, and sign in with the account to add.
+With several pools, each pool has its own **Add account**. Grok shows a code to enter on xAI's page.
+
+In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
+cannot load; copy that page's full address and paste it into Signalbox to finish.
+
+The first account of each provider in a pool adds that provider, such as **Claude**, to the model
+picker. Pick it to use every account of that kind in the pool: each conversation stays on one
+account, and work moves to another account when one runs out. Antigravity accounts offer only its
+Flash models this way.
+
+With several pools, the model picker asks for the pool first and then shows that pool's models. A
+conversation stays on its pool. To start a project's new conversations on a pool, pick a model from
+that pool as the project's default model in its settings. Agents can see each pool's providers and
+how much of their usage is left, so they can pick a pool for the work they hand off.
+
+Each account appears on **Usage → Limits** under its pool. Use its menu to pause, resume, or remove
+it. ChatGPT accounts added with Sign in with ChatGPT link to ChatGPT's usage page instead of showing
+bars.
+
+When an account's login expires, it shows **Signed out**, Usage gets a red dot, and Signalbox tells
+you. Choose **Sign in again** on the account and sign in with the same account; it keeps its place in
+the pool. Using the same account directly in Codex or Claude Code as well can sign it out of the
+pool, because each sign-in replaces the other's login.
+
+### Manage pools
+
+Open **Settings → Pools** to create, rename, or delete pools. Each pool keeps its logins with
+Signalbox, or in a CLIProxyAPI you already run: choose **Where it keeps logins** in the pool's menu
+and enter that instance's URL, management key, and one of its API keys. Signalbox then sends the
+pool's work through your instance and adds new accounts to it.
+
+To bring accounts from a CLIProxyAPI you run into a pool, choose **Import from CLIProxyAPI** in the
+pool's menu. Leave **Remove them from that CLIProxyAPI** on unless you stop using that instance:
+two places refreshing the same account sign each other out.
+
+Deleting a pool removes its providers from the model picker, and threads on it stop working. The
+accounts Signalbox keeps for it are removed; a pool that keeps its logins in your CLIProxyAPI leaves
+them there.
+
 ## Connect a CLIProxyAPI hub
 
-To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
-environment that will connect to the hub and enter its URL and management key.
+To see the accounts of a CLIProxyAPI hub you run yourself, open **Settings → Providers → Usage
+providers → Add hub**. Choose the environment that will connect to the hub and enter its URL and
+management key.
 
-The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
-account and choose **Use reset** to redeem one. No hub plugin is required.
+The accounts appear under **Usage → Limits**, where you can pause, resume, or remove them. Codex
+accounts show banked reset credits; select an account and choose **Use reset** to redeem one. No
+hub plugin is required.
 
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same

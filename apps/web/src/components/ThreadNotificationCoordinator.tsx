@@ -22,6 +22,7 @@ import {
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
+import { AutomationNotices } from "./automations/AutomationNotices"; // signalbox: automations
 import { toastManager } from "./ui/toast";
 
 export function ThreadNotificationCoordinator() {
@@ -243,5 +244,12 @@ function EnvironmentNotifications({
     threads,
   ]);
 
-  return null;
+  // signalbox: automations
+  return (
+    <AutomationNotices
+      environmentId={environmentId}
+      live={threads !== null}
+      onNotification={onNotification}
+    /> // signalbox: automations
+  );
 }

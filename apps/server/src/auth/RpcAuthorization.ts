@@ -21,6 +21,8 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import { SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES } from "../signalbox/analytics/rpc.ts"; // signalbox: analytics
 import { SIGNALBOX_CONTEXTS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
 
+import { AUTOMATION_RPC_SCOPES } from "../workflows/rpcScopes.ts"; // signalbox: automations
+
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
@@ -50,6 +52,13 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverUpdateProvider]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerConsumeResetCredit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.usageLimitSourceUpdateAccount]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolSubscribe]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolRename]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolSetBacking]: AuthOrchestrationOperateScope,
+  [WS_METHODS.accountPoolImportAccounts]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthComplete]: AuthOrchestrationOperateScope,
   [WS_METHODS.chatGptReconnectProfile]: AuthOrchestrationOperateScope,
   [WS_METHODS.chatGptImportProfile]: AuthOrchestrationOperateScope,
@@ -213,6 +222,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
+  ...AUTOMATION_RPC_SCOPES, // signalbox: automations
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

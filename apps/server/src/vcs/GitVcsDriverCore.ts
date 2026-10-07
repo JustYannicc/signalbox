@@ -30,6 +30,7 @@ import {
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
@@ -3604,6 +3605,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { headCommit: input.targetCommit, moved: true, onTarget: true };
     });
 
+  // Concurrent fetches into one repository (worktrees share its refs) race for ref locks.
+  const fetchLocks = yield* KeyedLock.make<string>();
+  const oneFetchAtATime = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    resolveRepositoryPaths(cwd).pipe(
+      Effect.map((paths) => paths?.gitCommonDir ?? path.resolve(cwd)),
+      Effect.orElseSucceed(() => path.resolve(cwd)),
+      Effect.flatMap((key) => fetchLocks.withLock(key, effect)),
+    );
+
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
       const args = ["fetch", "--quiet", input.remoteName];
@@ -4008,7 +4018,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ensureRemote: (input) => withListRefsInvalidation(input.cwd, ensureRemote(input)),
     resolvePrimaryRemoteName,
     resolveDefaultBranchName,
-    fetchRemote: (input) => withListRefsInvalidation(input.cwd, fetchRemote(input)),
+    fetchRemote: (input) =>
+      withListRefsInvalidation(input.cwd, oneFetchAtATime(input.cwd, fetchRemote(input))),
     remoteExists,
     remoteBranchExists,
     resolveRemoteTrackingCommit,

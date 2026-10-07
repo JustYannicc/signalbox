@@ -6,8 +6,7 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
-import { CLOUD_TEST_ENV, layerAccounts, MemoryUserObjects } from "../testing.ts";
-import * as UserContexts from "../user/UserContexts.ts";
+import { CLOUD_TEST_ENV, layerAccounts } from "../testing.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as CloudAccounts from "./CloudAccounts.ts";
 
@@ -214,19 +213,23 @@ describe("CloudAccounts", () => {
       ),
     ),
   );
+  /** The sidebar's projects after `user_ada` signs in: one per context. */
+  const projectsAfterSignIn = Effect.gen(function* () {
+    yield* signIn(browserParams, { code: "code-ada" });
+    const users = yield* UserDirectory.UserDirectory;
+    const shell = (yield* users.forUser("user_ada").shellSnapshot()) as {
+      readonly projects: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+    };
+    return shell.projects.map((project) => `${project.id} ${project.title}`);
+  });
+
   it.effect("signing in shows Personal and every organization the user belongs to", () =>
     Effect.gen(function* () {
-      const objects = yield* MemoryUserObjects;
-      yield* signIn(browserParams, { code: "code-ada" });
-      const { contexts } = yield* objects.run(
-        "user_ada",
-        UserContexts.UserContexts.use((store) => store.snapshot),
-      );
-      expect(contexts.map((context) => context.name)).toEqual([
-        "Personal",
-        "Acme",
-        "Globex",
-        "Initech",
+      expect(yield* projectsAfterSignIn).toEqual([
+        "scratch Scratch",
+        "context:org_acme Acme",
+        "context:org_globex Globex",
+        "context:org_initech Initech",
       ]);
     }).pipe(
       Effect.provide(
@@ -243,13 +246,7 @@ describe("CloudAccounts", () => {
 
   it.effect("without the WorkOS API key, signing in shows Personal only", () =>
     Effect.gen(function* () {
-      const objects = yield* MemoryUserObjects;
-      yield* signIn(browserParams, { code: "code-ada" });
-      const { contexts } = yield* objects.run(
-        "user_ada",
-        UserContexts.UserContexts.use((store) => store.snapshot),
-      );
-      expect(contexts.map((context) => context.id)).toEqual(["personal"]);
+      expect(yield* projectsAfterSignIn).toEqual(["scratch Scratch"]);
     }).pipe(
       Effect.provide(
         layerAccounts(CODES, undefined, { user_ada: [{ id: "org_acme", name: "Acme" }] }),

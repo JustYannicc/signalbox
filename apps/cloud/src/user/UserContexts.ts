@@ -28,7 +28,7 @@ import type { SqlError } from "effect/sql/SqlError";
  * who can reach it.
  */
 
-const PERSONAL_CONTEXT: SignalboxContext = {
+export const PERSONAL_CONTEXT: SignalboxContext = {
   id: PERSONAL_CONTEXT_ID,
   kind: "personal",
   name: "Personal",
@@ -44,6 +44,10 @@ export class UserContexts extends Context.Service<
     readonly syncOrganizations: (
       organizations: ReadonlyArray<WorkOSOrganization>,
     ) => Effect.Effect<void, SqlError>;
+    /** The user's current contexts, Personal first. Cheaper than a snapshot: no sections. */
+    readonly contexts: Effect.Effect<ReadonlyArray<SignalboxContext>, SqlError>;
+    /** Fires after each change to the contexts themselves, never for a section. */
+    readonly contextsChanged: Stream.Stream<void>;
     readonly snapshot: Effect.Effect<SignalboxContextsSnapshot, SqlError>;
     /** The snapshot now, then again after every change. */
     readonly changes: Stream.Stream<SignalboxContextsSnapshot, SqlError>;
@@ -108,6 +112,7 @@ const make = Effect.gen(function* () {
   // Sliding at one: a client that falls behind needs only the latest state.
   const changed = yield* PubSub.sliding<void>(1);
   const notify = PubSub.publish(changed, undefined);
+  const organizationsChanged = yield* PubSub.sliding<void>(1);
 
   const organizations = sql`SELECT id, name FROM organizations WHERE member = 1
     ORDER BY name COLLATE NOCASE, id`.pipe(Effect.map(decodeOrganizationRows));
@@ -171,8 +176,13 @@ const make = Effect.gen(function* () {
     return true;
   });
 
+  const contexts: UserContexts["Service"]["contexts"] = Effect.map(organizations, (orgs) => [
+    PERSONAL_CONTEXT,
+    ...orgs.map((org) => ({ id: org.id, kind: "organization" as const, name: org.name })),
+  ]);
+
   const snapshot: UserContexts["Service"]["snapshot"] = Effect.gen(function* () {
-    const orgs = yield* organizations;
+    const current = yield* contexts;
     // Sections of contexts the user left stay stored but out of sight.
     const sections = decodeSectionRows(
       yield* sql`SELECT s.id, s.context_id, s.parent_id, s.name FROM sections s
@@ -181,10 +191,7 @@ const make = Effect.gen(function* () {
         ORDER BY s.position, s.created_at`,
     );
     return {
-      contexts: [
-        PERSONAL_CONTEXT,
-        ...orgs.map((org) => ({ id: org.id, kind: "organization" as const, name: org.name })),
-      ],
+      contexts: current,
       sections: sections.map((row) => ({
         id: row.id,
         contextId: row.context_id,
@@ -230,6 +237,7 @@ const make = Effect.gen(function* () {
           );
         }),
       );
+      yield* PubSub.publish(organizationsChanged, undefined);
     }).pipe(Effect.withSpan("UserContexts.syncOrganizations"));
 
   const createSection: UserContexts["Service"]["createSection"] = (input) =>
@@ -299,6 +307,8 @@ const make = Effect.gen(function* () {
 
   return UserContexts.of({
     syncOrganizations,
+    contexts,
+    contextsChanged: Stream.fromPubSub(organizationsChanged),
     snapshot,
     changes,
     createSection,
