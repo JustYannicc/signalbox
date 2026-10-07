@@ -1143,6 +1143,11 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:account-pools:live",
       tag: WS_METHODS.accountPoolSubscribe,
     }),
+    // Every pool as this session may see it; read-only sessions get no account data.
+    accountPoolViewsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:account-pool-views:live",
+      tag: WS_METHODS.accountPoolSubscribeViews,
+    }),
     createAccountPool: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:create-account-pool",
       tag: WS_METHODS.accountPoolCreate,
