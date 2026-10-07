@@ -925,7 +925,7 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       ) : null}
     </>,
-  ); // signalbox: automations
+  );
 
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.
