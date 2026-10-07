@@ -1526,7 +1526,7 @@ describe("resolveComposerProviderSelection", () => {
     expect(selection.selectedProviderEntry?.instanceId).toBe(signedOutEntry.instanceId);
     expect(
       getAntigravitySendBlockReason(selection.selectedProviderEntry?.snapshot, "gemini-pro"),
-    ).toBe("Sign in to Antigravity in provider settings before sending.");
+    ).toBe("Add an Antigravity account to its pool from Usage → Limits before sending.");
   });
 
   it("blocks sends until the selected Antigravity profile is installed", () => {

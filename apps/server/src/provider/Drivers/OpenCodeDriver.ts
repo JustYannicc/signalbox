@@ -47,6 +47,8 @@ import {
 } from "../OpenCodeProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
+import { makeHubOpenCodeInstance } from "../../accountHub/HubDriverInstance.ts"; // signalbox
+import { withAccountHub } from "../../accountHub/hubInstance.ts"; // signalbox
 import {
   makeOpenCodeRuntimeProbe,
   probeOpenCodeRuntime,
@@ -193,6 +195,17 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
   defaultConfig: (): OpenCodeSettings => decodeOpenCodeSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      // signalbox: pool instances run this same driver against their pool's hub.
+      if (config.setupMode === "hub")
+        return yield* withAccountHub(
+          DRIVER_KIND,
+          instanceId,
+          config.poolId,
+          makeHubOpenCodeInstance(
+            { instanceId, displayName, accentColor, environment, enabled, config },
+            OpenCodeDriver.create,
+          ),
+        );
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;

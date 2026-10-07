@@ -2503,6 +2503,24 @@ const layerWsRpc = (
             accountPool((pools) => pools.importAccounts(input)),
             { "rpc.aggregate": "provider" },
           ),
+        [WS_METHODS.accountPoolAddApiKey]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolAddApiKey,
+            accountPool((pools) => pools.addApiKey(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolSetOpenCode]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolSetOpenCode,
+            accountPool((pools) => pools.setOpenCode(input)),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.accountPoolMoveNativeLogins]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.accountPoolMoveNativeLogins,
+            accountPool((pools) => pools.moveNativeLogins(input)),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.usageLimitSourceUpdateAccount]: (input) =>
           observeRpcEffect(
             WS_METHODS.usageLimitSourceUpdateAccount,

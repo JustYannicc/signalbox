@@ -61,15 +61,7 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("cursor"),
     label: "Cursor",
     settingsSchema: CursorSettings,
-    environmentFields: [
-      {
-        name: "CURSOR_API_KEY",
-        label: "Cursor API key",
-        description: "Optional. Overrides browser sign-in for this provider.",
-        placeholder: "Paste API key",
-        sensitive: true,
-      },
-    ],
+    environmentFields: [], // signalbox: a key here would be a native login; Cursor keys go into a pool.
   },
   {
     value: ProviderDriverKind.make("grok"),

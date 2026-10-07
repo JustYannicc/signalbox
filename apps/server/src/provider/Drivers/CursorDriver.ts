@@ -9,6 +9,7 @@
 import { CursorSettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -45,6 +46,9 @@ import {
 } from "../providerUpdateSettings.ts";
 import { probeCursorSkills } from "./CursorSkills.ts";
 import { makeCursorAuth } from "../CursorAuth.ts";
+import { CursorPoolCredentials } from "../../accountHub/hubCursor.ts"; // signalbox
+import { makeHubCursorInstance } from "../../accountHub/HubDriverInstance.ts"; // signalbox
+import { withAccountHub } from "../../accountHub/hubInstance.ts"; // signalbox
 import * as CursorCredentialStore from "../CursorCredentialStore.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
@@ -78,6 +82,17 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   defaultConfig: (): CursorSettings => decodeCursorSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      // signalbox: pool instances run this same driver on their pool's Cursor accounts.
+      if (config.setupMode === "hub")
+        return yield* withAccountHub(
+          DRIVER_KIND,
+          instanceId,
+          config.poolId,
+          makeHubCursorInstance(
+            { instanceId, displayName, accentColor, environment, enabled, config },
+            CursorDriver.create,
+          ),
+        );
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -96,25 +111,28 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
-      const credentials = yield* CursorCredentialStore.makeCursorCredentialStore(
-        instanceId,
-        path.join(
-          (yield* ServerConfig.ServerConfig).stateDir,
-          "provider-auth",
-          encodeURIComponent(instanceId),
-          "cursor.json",
-        ),
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Could not open the Cursor credential store.",
-              cause,
-            }),
-        ),
-      );
+      const poolCredentials = yield* Effect.serviceOption(CursorPoolCredentials); // signalbox
+      const credentials = Option.isSome(poolCredentials)
+        ? poolCredentials.value
+        : yield* CursorCredentialStore.makeCursorCredentialStore(
+            instanceId,
+            path.join(
+              (yield* ServerConfig.ServerConfig).stateDir,
+              "provider-auth",
+              encodeURIComponent(instanceId),
+              "cursor.json",
+            ),
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: "Could not open the Cursor credential store.",
+                  cause,
+                }),
+            ),
+          );
       const auth = yield* makeCursorAuth({
         instanceId,
         displayName: displayName ?? "Cursor",

@@ -117,10 +117,16 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 ## Use several subscription accounts
 
-Signalbox spreads work across several ChatGPT, Claude, Grok, and Antigravity accounts. Accounts live
-in **pools**: everyone starts with one pool, and you can add more, for example one for work. Open
-**Usage → Limits**, choose **Add account**, pick the provider, and sign in with the account to add.
-With several pools, each pool has its own **Add account**. Grok shows a code to enter on xAI's page.
+Every account Signalbox's agents use lives in a **pool**: ChatGPT, Claude, Grok, Antigravity, and
+Cursor accounts, and API keys. Everyone starts with one pool, and you can add more, for example one
+for work. Open **Usage → Limits**, choose **Add account**, pick the provider, and sign in with the
+account to add. With several pools, each pool has its own **Add account**. Grok shows a code to
+enter on xAI's page.
+
+To add an API key, choose **Add account → API key**, pick the provider (Anthropic, OpenAI, xAI,
+Gemini, OpenRouter, Cursor, or another OpenAI-compatible API), and paste the key. A key works beside
+the pool's logins of the same provider: an Anthropic key and a Claude subscription in one pool both
+take Claude conversations. Keys never report usage limits, and their menu only offers **Remove**.
 
 In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
 cannot load; copy that page's full address and paste it into Signalbox to finish.
@@ -135,6 +141,10 @@ conversation stays on its pool. To start a project's new conversations on a pool
 that pool as the project's default model in its settings. Agents can see each pool's providers and
 how much of their usage is left, so they can pick a pool for the work they hand off.
 
+Cursor accounts in a pool run the pool's **Cursor** provider. To run OpenCode on a pool, choose **Use
+with OpenCode** in the pool's menu in **Settings → Pools**: OpenCode then offers every model the pool
+serves and uses only the pool's accounts, never an OpenCode login on the server.
+
 Each account appears on **Usage → Limits** under its pool. Use its menu to pause, resume, or remove
 it. ChatGPT accounts added with Sign in with ChatGPT link to ChatGPT's usage page instead of showing
 bars.
@@ -143,6 +153,17 @@ When an account's login expires, it shows **Signed out**, Usage gets a red dot, 
 you. Choose **Sign in again** on the account and sign in with the same account; it keeps its place in
 the pool. Using the same account directly in Codex or Claude Code as well can sign it out of the
 pool, because each sign-in replaces the other's login.
+
+### Move sign-ins into a pool
+
+Providers that sign in on the server itself, such as Claude Code's or Codex's own login, Signalbox's
+own ChatGPT or Cursor sign-in, or an API key in a provider's environment, can move into a pool in one
+click. **Settings → Providers**, **Settings → Pools**, and the welcome wizard offer **Move into** a
+pool while any are left. On macOS, the server can ask once for permission to read Claude Code's
+login from the keychain.
+
+Moving turns that provider off, and the pool's provider takes over. Using the same account directly
+on the server afterwards, for example running `claude` there, can sign it out of the pool.
 
 ### Manage pools
 

@@ -42,9 +42,8 @@ export function SettingsProviderAccountsRouteScreen() {
               <SettingsSection key={environment.environmentId} title={environment.label}>
                 {environment.serverConfig.providers
                   .filter(
-                    (provider) =>
-                      provider.setup?.canAuthenticate ||
-                      (provider.driver === "acpRegistry" && provider.installed),
+                    // signalbox: provider accounts live in pools; only ACP agents sign in here.
+                    (provider) => provider.driver === "acpRegistry" && provider.installed,
                   )
                   .map((provider) => (
                     <ProviderAccount
@@ -54,12 +53,10 @@ export function SettingsProviderAccountsRouteScreen() {
                     />
                   ))}
                 {!environment.serverConfig.providers.some(
-                  (provider) =>
-                    provider.setup?.canAuthenticate ||
-                    (provider.driver === "acpRegistry" && provider.installed),
+                  (provider) => provider.driver === "acpRegistry" && provider.installed,
                 ) ? (
                   <Text className="p-4 text-foreground-muted">
-                    Configure a provider with in-app sign-in in web or desktop Settings.
+                    Accounts live in pools on Usage → Limits. ACP agents that sign in show here.
                   </Text>
                 ) : null}
               </SettingsSection>

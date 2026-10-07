@@ -36,6 +36,8 @@ vi.mock("../../hooks/useSettings", () => ({
 }));
 
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+// signalbox: native sign-in is off; accounts are added to pools.
+import { NATIVE_SIGN_IN } from "../accountPool/nativeLogins";
 
 const remoteEnvironmentId = EnvironmentId.make("remote-device");
 const preparedAgent: AcpRegistrySearchAgent = {
@@ -110,31 +112,34 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
   });
 
-  it("chooses an unused identity for another account without replacing configured instances", async () => {
-    settingsHooks.read.mockReturnValue({
-      providerInstances: {
-        codex_2: { driver: "codex", enabled: false },
-      },
-    });
-    let tree = render();
-    // Codex offers ChatGPT sign-in first; manual setup keeps the existing CLI flow.
-    (findByChildren(tree, "Configure manually").props.onClick as () => void)();
-    tree = render();
-    (findByChildren(tree, "Next").props.onClick as () => void)();
-    tree = render();
-    (findByChildren(tree, "Add instance").props.onClick as () => void)();
-    await Promise.resolve();
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "codex_3",
-      instance: {
-        driver: "codex",
-        enabled: true,
-        displayName: "Codex",
-        config: { setupMode: "existing" },
-      },
-    });
-  });
+  it.skipIf(!NATIVE_SIGN_IN)(
+    "chooses an unused identity for another account without replacing configured instances",
+    async () => {
+      settingsHooks.read.mockReturnValue({
+        providerInstances: {
+          codex_2: { driver: "codex", enabled: false },
+        },
+      });
+      let tree = render();
+      // Codex offers ChatGPT sign-in first; manual setup keeps the existing CLI flow.
+      (findByChildren(tree, "Configure manually").props.onClick as () => void)();
+      tree = render();
+      (findByChildren(tree, "Next").props.onClick as () => void)();
+      tree = render();
+      (findByChildren(tree, "Add instance").props.onClick as () => void)();
+      await Promise.resolve();
+      expect(settingsHooks.mutate).toHaveBeenCalledWith({
+        operation: "create",
+        instanceId: "codex_3",
+        instance: {
+          driver: "codex",
+          enabled: true,
+          displayName: "Codex",
+          config: { setupMode: "existing" },
+        },
+      });
+    },
+  );
 
   it("reads and writes settings through the supplied environment", () => {
     render();

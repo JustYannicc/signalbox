@@ -18,7 +18,8 @@ import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits, makeUsageLimits } from "../provider/providerUsageLimits.ts";
 import { grokUsageResponseToLimits } from "../provider/grokUsageLimits.ts";
-import { isSignedOutAuthFile } from "../accountHub/accountHubManagement.ts";
+import { isSignedOutAuthFile, normalizeHubUrl } from "../accountHub/accountHubManagement.ts";
+import { isApiKeyAccountId, listApiKeys, removeApiKey } from "../accountHub/hubApiKeys.ts";
 import {
   HubProviderRateLimited,
   RATE_LIMITED_DETAIL,
@@ -118,7 +119,16 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 
 // signalbox: accounts from Signalbox's Sign in with ChatGPT plugin run Codex too.
 const CHATGPT_SIWC = "chatgpt-siwc";
-const SUPPORTED_PROVIDERS = new Set(["codex", "claude", CHATGPT_SIWC, "xai", "antigravity"]);
+// signalbox: Cursor accounts sit in the hub with the pool's other accounts; the hub never routes them.
+const CURSOR = "cursor";
+const SUPPORTED_PROVIDERS = new Set([
+  "codex",
+  "claude",
+  CHATGPT_SIWC,
+  "xai",
+  "antigravity",
+  CURSOR,
+]);
 
 // signalbox: the hub's provider names, mapped to the T3 harness that runs each account.
 const DRIVER_BY_PROVIDER: Record<string, string> = {
@@ -127,11 +137,18 @@ const DRIVER_BY_PROVIDER: Record<string, string> = {
   claude: "claudeAgent",
   xai: "grok",
   antigravity: "antigravity",
+  [CURSOR]: "cursor",
 };
 const driverForProvider = (provider: string) =>
   ProviderDriverKind.make(DRIVER_BY_PROVIDER[provider] ?? "codex");
 
 const needsSignIn = isSignedOutAuthFile; // signalbox
+
+// signalbox: the source as a management endpoint for the hub helpers.
+const hubEndpoint = (config: UsageLimitSourceConfig) => ({
+  baseUrl: normalizeHubUrl(config.url),
+  managementKey: config.managementKey,
+});
 
 const notProbed = (
   account: typeof AuthFile.Type,
@@ -485,7 +502,25 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    return yield* Effect.forEach(
+    // signalbox: API keys route like accounts; they report no quota. Read beside the logins.
+    const apiKeys = listApiKeys(hubEndpoint(config)).pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.orElseSucceed(() => []),
+      Effect.map((keys) =>
+        keys.map((key): UsageLimitSourceAccount => ({
+          id: key.id,
+          driver: ProviderDriverKind.make(key.driver),
+          plan: key.label,
+          apiKey: true,
+          usageLimits: makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "unsupported",
+            message: "API keys are billed per use and have no usage limit.",
+          }),
+        })),
+      ),
+    );
+    const logins = Effect.forEach(
       accounts.filter((account) => SUPPORTED_PROVIDERS.has(account.provider)),
       (account) =>
         // Paused accounts are listed so they can be resumed, without spending a usage probe.
@@ -496,21 +531,30 @@ export const makeCliproxyApi = Effect.gen(function* () {
                 ...notProbed(account, checkedAt, "Signed out. Sign in again."),
                 signedOut: true,
               })
-            : account.provider === CHATGPT_SIWC
+            : account.provider === CURSOR
               ? Effect.succeed(
-                  notProbed(
-                    account,
-                    checkedAt,
-                    "ChatGPT does not share usage with connected apps.",
-                    {
-                      label: "ChatGPT usage",
-                      url: "https://chatgpt.com/#settings/Usage",
-                    },
-                  ),
+                  notProbed(account, checkedAt, "Cursor shows usage on its dashboard.", {
+                    label: "Cursor usage",
+                    url: "https://cursor.com/dashboard?tab=usage",
+                  }),
                 )
-              : readAccount(config, account),
+              : account.provider === CHATGPT_SIWC
+                ? Effect.succeed(
+                    notProbed(
+                      account,
+                      checkedAt,
+                      "ChatGPT does not share usage with connected apps.",
+                      {
+                        label: "ChatGPT usage",
+                        url: "https://chatgpt.com/#settings/Usage",
+                      },
+                    ),
+                  )
+                : readAccount(config, account),
       { concurrency: 4 },
     );
+    const [loginAccounts, keyAccounts] = yield* Effect.all([logins, apiKeys], { concurrency: 2 });
+    return [...loginAccounts, ...keyAccounts];
   });
 
   // The hub answers an unknown name with an error status, so there is no list-then-act race.
@@ -519,6 +563,16 @@ export const makeCliproxyApi = Effect.gen(function* () {
     accountId: string,
     action: UsageLimitSourceUpdateAccountInput["action"],
   ) {
+    // signalbox: API keys live in the hub's config and can only be removed.
+    if (isApiKeyAccountId(accountId)) {
+      if (action !== "remove") {
+        return yield* new UsageLimitSourceError({ detail: "API keys can only be removed." });
+      }
+      return yield* removeApiKey(hubEndpoint(config), accountId).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.mapError((error) => new UsageLimitSourceError({ detail: error.detail })),
+      );
+    }
     yield* (
       action === "remove"
         ? management(config, `auth-files?name=${encodeURIComponent(accountId)}`, {

@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { PERSONAL_POOL_ID, hubReauthMethodId } from "@t3tools/contracts/accountHub";
+import {
+  PERSONAL_POOL_ID,
+  hubReauthMethodId,
+  poolInstanceEntry,
+} from "@t3tools/contracts/accountHub";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -13,7 +17,7 @@ import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
-import { HUB_INSTANCES, type HubAccountKind, hubInstanceId } from "./hubInstances";
+import { HUB_INSTANCES, type HubAccountKind } from "./hubInstances";
 import { HubSignIn } from "./HubSignIn";
 
 /**
@@ -40,11 +44,8 @@ export function AddHubAccountDialog({
   const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const update = useAtomCommand(serverEnvironment.updateSettings, `Add ${hub.account} account`);
-  const instanceId = hubInstanceId(kind, poolId);
-  // Outside the personal pool, the provider is named with its pool so the picker can tell them apart.
   const poolName = useAccountPools(environmentId).find((pool) => pool.id === poolId)?.name;
-  const displayName =
-    poolId === PERSONAL_POOL_ID || !poolName ? hub.displayName : `${hub.displayName} · ${poolName}`;
+  const [instanceId, instanceEntry] = poolInstanceEntry(kind, { id: poolId, name: poolName });
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
   const exists = instanceId in settings.providerInstances;
   const creating = useRef(false);
@@ -58,16 +59,7 @@ export function AddHubAccountDialog({
         patch: {
           providerInstances: {
             ...settings.providerInstances,
-            [instanceId]: {
-              driver: hub.driver,
-              displayName,
-              enabled: true,
-              config: {
-                enabled: true,
-                setupMode: "hub",
-                ...(poolId === PERSONAL_POOL_ID ? {} : { poolId }),
-              },
-            },
+            [instanceId]: instanceEntry,
           },
         },
       },
