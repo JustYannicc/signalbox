@@ -36,6 +36,8 @@ const state = vi.hoisted(() => ({
   refreshScan: vi.fn(),
 }));
 
+// signalbox: the agents step adds pool accounts; this test covers the wizard's flow.
+vi.mock("../accountPool/PoolAgentsSetup", () => ({ PoolAgentsSetup: () => null }));
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
 vi.mock("@t3tools/client-runtime/state/session", () => ({
   createEnvironmentSessionAtoms: () => ({

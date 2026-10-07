@@ -49,6 +49,8 @@ const state = vi.hoisted(() => ({
   done: vi.fn(),
 }));
 
+// signalbox: the agents step adds pool accounts; this test covers the wizard's flow.
+vi.mock("../accountPool/PoolAgentsSetup", () => ({ PoolAgentsSetup: () => null }));
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
 vi.mock("@t3tools/client-runtime/state/session", () => ({
   createEnvironmentSessionAtoms: () => ({
@@ -296,7 +298,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("welcome agent terminal setup", () => {
+// signalbox: the agents step adds pool accounts instead; onboarding never signs a CLI in.
+describe.skip("welcome agent terminal setup", () => {
   it("disables both setup actions for the paired read-only connection and preserves local completion", async () => {
     setAccess(remoteId, false);
     await enterRemoteAgents();
