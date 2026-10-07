@@ -1,19 +1,22 @@
 import {
+  type ModelGatewayProvider,
   RUNNER_PROTOCOL_VERSION,
   type RunnerHello,
   type RunnerItem,
   type RunnerRefusal,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import type { RunId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { gatewayProviderFor } from "../providerCatalog.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import * as ThreadStore from "../ThreadStore.ts";
+import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
 import {
   failRunEvents,
   harnessRun,
@@ -33,6 +36,9 @@ import {
  * (`reconcile`): a live run on Claude or Codex gets a machine at the next
  * generation, a run whose machine never connects or is lost fails with a
  * reason, and an idle machine is released after its tail.
+ *
+ * The thread also answers the ModelGateway: a model token is good while the
+ * run it was minted for is live on the machine holding the lease.
  */
 
 /** How long a requested machine has to say hello. */
@@ -62,6 +68,10 @@ export type BatchResult =
   /** A gap: the Runner must reconnect and resend after `ackedSequence`. */
   | { readonly _tag: "out_of_order"; readonly ackedSequence: number };
 
+export type ModelAuthorization =
+  | { readonly _tag: "granted"; readonly runId: RunId }
+  | { readonly _tag: "denied"; readonly reason: string };
+
 /** What the object must do for the lease, and when to look again. */
 export interface MachinePlan {
   /** Ask the backend for this machine. Idempotent per generation. */
@@ -78,6 +88,8 @@ export interface RunnerWork {
   readonly needsUpkeep: boolean;
   /** The turn to start, while its run waits for the Runner. */
   readonly turn: RunnerTurn | null;
+  /** `turn`'s credential at the ModelGateway. */
+  readonly modelToken: string | null;
   readonly activeRunId: RunId | null;
 }
 
@@ -100,10 +112,24 @@ export class ThreadRunner extends Context.Service<
     readonly ensured: (generation: number) => Effect.Effect<void>;
     readonly work: Effect.Effect<RunnerWork>;
     readonly reconcile: Effect.Effect<MachinePlan>;
+    /** Whether the ModelGateway may serve `token` for `provider` right now. */
+    readonly authorizeModel: (
+      token: string,
+      provider: ModelGatewayProvider,
+    ) => Effect.Effect<ModelAuthorization>;
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
 const IDLE: MachinePlan = { ensure: null, release: null, wakeAt: null };
+
+/** What the live harness run's model token is for, if a run is live. */
+const modelGrantFor = (projection: OrchestrationV2ThreadProjection): ModelGrant | undefined => {
+  const run = harnessRun(projection);
+  const provider = run === undefined ? undefined : gatewayProviderFor(run.providerInstanceId);
+  return run === undefined || provider === undefined
+    ? undefined
+    : { threadId: projection.thread.id, runId: run.id, provider };
+};
 
 /** Mirrors `reconcile`: true exactly when it would act or needs to schedule a check. */
 const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean) => {
@@ -277,18 +303,42 @@ const make = Effect.gen(function* () {
     );
 
   const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }) =>
-    Effect.succeed(
-      keep<RunnerWork>({
+    Effect.gen(function* () {
+      const turn = projection === null ? null : runnerTurnFor(projection);
+      const grant = projection === null ? undefined : modelGrantFor(projection);
+      return keep<RunnerWork>({
         generation: lease.generation,
         needsUpkeep: needsUpkeep(
           lease,
           projection !== null && harnessRun(projection) !== undefined,
         ),
-        turn: projection === null ? null : runnerTurnFor(projection),
+        turn,
+        modelToken:
+          turn === null || grant === undefined || lease.token === null
+            ? null
+            : yield* modelToken(lease.token, grant),
         activeRunId: projection === null ? null : (harnessRun(projection)?.id ?? null),
-      }),
-    ),
+      });
+    }),
   );
+
+  // Reads committed state without the thread's lock: model requests arrive all
+  // through a turn and must not queue behind the Runner's batch commits.
+  const authorizeModel: ThreadRunner["Service"]["authorizeModel"] = (token, provider) =>
+    Effect.gen(function* () {
+      const deny = (reason: string): ModelAuthorization => ({ _tag: "denied", reason });
+      const projection = yield* engine.projection;
+      const grant = projection === null ? undefined : modelGrantFor(projection);
+      // A thread that does not exist yet has no tables to read a lease from.
+      const leaseToken = grant === undefined ? null : (yield* lease).token;
+      if (grant === undefined || leaseToken === null) {
+        return deny("No turn is running on this thread.");
+      }
+      if (grant.provider !== provider) return deny(`The running turn does not use ${provider}.`);
+      return (yield* isModelToken(token, leaseToken, grant))
+        ? ({ _tag: "granted", runId: grant.runId } satisfies ModelAuthorization)
+        : deny("This token is not for the running turn.");
+    });
 
   const reconcile: ThreadRunner["Service"]["reconcile"] = withLease(
     ({ projection, lease, now }, ctx) =>
@@ -350,7 +400,16 @@ const make = Effect.gen(function* () {
       }),
   );
 
-  return ThreadRunner.of({ hello, batch, ended, disconnected, ensured, work, reconcile });
+  return ThreadRunner.of({
+    hello,
+    batch,
+    ended,
+    disconnected,
+    ensured,
+    work,
+    reconcile,
+    authorizeModel,
+  });
 });
 
 export const layer = Layer.effect(ThreadRunner, make);

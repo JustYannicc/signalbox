@@ -1,5 +1,6 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import {
+  type ModelGatewayProvider,
   RUNNER_HEARTBEAT_PING,
   RUNNER_HEARTBEAT_PONG,
 } from "@signalbox/runner-protocol/RunnerProtocol";
@@ -120,6 +121,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   summary(...args: Parameters<ThreadObjectApi["summary"]>) {
     return this.api.summary(...args);
+  }
+
+  /** The ModelGateway asking whether a harness's token is good right now (see `modelGrants.ts`). */
+  authorizeModel(token: string, provider: ModelGatewayProvider) {
+    return this.runtime.runPromise(
+      ThreadRunner.ThreadRunner.use((runner) => runner.authorizeModel(token, provider)),
+    );
   }
 
   /** The Runner's socket. The Worker forwards only upgrades on `RUNNER_CONNECT_PATH` here. */

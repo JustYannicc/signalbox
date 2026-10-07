@@ -1,3 +1,4 @@
+import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type {
   OrchestrationV2Command,
   OrchestrationV2SubscribeThreadInput,
@@ -11,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { ModelAuthorization } from "./runner/ThreadRunner.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
@@ -176,6 +178,10 @@ export interface ThreadObjectNamespace {
   readonly get: (id: DurableObjectId) => ThreadObjectApi & {
     /** The object's own HTTP entry: the Runner's socket. */
     readonly fetch: (request: Request) => Promise<Response>;
+    readonly authorizeModel: (
+      token: string,
+      provider: ModelGatewayProvider,
+    ) => Promise<ModelAuthorization>;
   };
 }
 

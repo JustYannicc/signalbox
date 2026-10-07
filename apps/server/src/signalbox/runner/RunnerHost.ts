@@ -20,6 +20,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import { makeRunnerAdapters } from "./RunnerAdapters.ts";
+import { writeModelToken } from "./RunnerModelAccess.ts";
 import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
 import { runnerConnectUrl, webSocketTransport } from "./runnerSocket.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
@@ -27,9 +28,12 @@ import { makeRunnerTurns } from "./RunnerTurns.ts";
 /**
  * A development machine backend: this machine, serving every thread that
  * asks. The cloud's `local` backend posts `/machines/ensure` with a thread,
- * generation and token; the host runs that thread's Runner until the thread
- * lets it go, and a higher generation replaces the thread's older Runner.
- * Real machines run one Runner per thread VM (#130); this stands in for them.
+ * generation, token and ModelGateway; the host runs that thread's Runner until
+ * the thread lets it go, and a higher generation replaces the thread's older
+ * Runner. Real machines run one Runner per thread VM (#130); this stands in
+ * for them, giving each thread a machine directory of its own
+ * (`machines/<thread>`: home, harness config, model token) so no thread's
+ * harnesses see this machine's own logins or another thread's token.
  *
  * `/machines/drop-sockets` closes every Runner's socket, as a network drop
  * would, so reconnecting mid-turn can be tried by hand.
@@ -39,7 +43,7 @@ export interface RunnerHostConfig {
   /** The cloud's origin, e.g. `http://localhost:8787`. */
   readonly cloudUrl: string;
   readonly port: number;
-  /** Where threads' working directories and adapter state live. */
+  /** Where threads' working directories and machine state live. */
   readonly home: string;
   readonly machineId: string;
   readonly imageVersion: string;
@@ -55,7 +59,6 @@ export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: Runne
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const hostScope = yield* Effect.scope;
-  const adapters = yield* makeRunnerAdapters(config.home);
   const runners = new Map<ThreadId, HostedRunner>();
   const lock = yield* Semaphore.make(1);
 
@@ -77,15 +80,35 @@ export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: Runne
         const cwd = path.join(config.home, "threads", request.threadId);
         yield* fs.makeDirectory(cwd, { recursive: true });
         const scope = yield* Scope.fork(hostScope);
-        const session = yield* makeRunnerSession({
-          threadId: request.threadId,
-          generation: request.generation,
-          token: request.token,
-          machineId: config.machineId,
-          imageVersion: config.imageVersion,
-          transport: webSocketTransport(runnerConnectUrl(config.cloudUrl, request.threadId)),
-          makeTurns: (emit) => makeRunnerTurns({ threadId: request.threadId, adapters, cwd, emit }),
-        }).pipe(Scope.provide(scope));
+        const session = yield* Effect.gen(function* () {
+          const { adapters, layout } = yield* makeRunnerAdapters({
+            root: path.join(config.home, "machines", request.threadId),
+            gatewayUrl: request.modelGatewayUrl,
+          });
+          return yield* makeRunnerSession({
+            threadId: request.threadId,
+            generation: request.generation,
+            token: request.token,
+            machineId: config.machineId,
+            imageVersion: config.imageVersion,
+            transport: webSocketTransport(runnerConnectUrl(config.cloudUrl, request.threadId)),
+            makeTurns: (emit) =>
+              makeRunnerTurns({
+                threadId: request.threadId,
+                adapters,
+                cwd,
+                useModelToken: (token) =>
+                  writeModelToken(layout, token).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                  ),
+                emit,
+              }),
+          });
+        }).pipe(
+          Scope.provide(scope),
+          // A machine that failed to come up leaves nothing running behind.
+          Effect.onError(() => Scope.close(scope, Exit.void)),
+        );
         const runner: HostedRunner = { generation: request.generation, scope, session };
         runners.set(request.threadId, runner);
         yield* Effect.logInfo("runner started", {

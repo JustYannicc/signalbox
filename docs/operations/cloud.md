@@ -27,19 +27,41 @@ web dev with `T3CODE_PORT=8787` so the Vite proxy forwards to the Worker.
 
 ### Real Claude and Codex turns
 
-Claude and Codex turns run in a Runner on a machine, never in the Worker. Until
-the cloud starts machines itself (#130), your own machine can be one:
+Claude and Codex turns run in a Runner on a machine, never in the Worker, and
+the machine holds no provider keys: its `claude` and `codex` reach their models
+through the ModelGateway, a second Worker that holds the keys. Locally you run
+both. Put the keys in `apps/cloud/.dev.vars.model-gateway` (gitignored):
 
 ```sh
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
+# Optional: an Anthropic- or OpenAI-compatible endpoint instead of the provider's own API.
+# ANTHROPIC_UPSTREAM_URL=https://...
+# OPENAI_UPSTREAM_URL=https://...
+```
+
+and start the gateway next to `vp run dev`:
+
+```sh
+cd apps/cloud && vp run dev:gateway             # ModelGateway on http://127.0.0.1:8788
 node apps/server/src/signalbox/runner/main.ts   # Runner host on http://127.0.0.1:8790
 ```
 
-and add `LOCAL_RUNNER_URL=http://127.0.0.1:8790` to `apps/cloud/.dev.vars`. The
-cloud then offers Claude and Codex next to the scripted provider, and each
-thread that runs on them gets its own Runner, driving this machine's `claude`
-and `codex` as they are signed in. Threads work in `apps/server/.t3/runner/`
-(`--home` moves it). `LOCAL_RUNNER_URL` only counts with `LOCAL_WORKERD`, so a
-deployment never calls it.
+Then add `LOCAL_RUNNER_URL=http://127.0.0.1:8790` and
+`MODEL_GATEWAY_URL=http://127.0.0.1:8788` to `apps/cloud/.dev.vars`. The cloud
+offers Claude and Codex only when both are set. Each thread gets its own Runner
+and its own machine directory under `apps/server/.t3/runner/machines/` (`--home`
+moves it), with a home, Claude and Codex config, and the current turn's model
+token, so the harnesses never see this machine's own logins or keys.
+`LOCAL_RUNNER_URL` only counts with `LOCAL_WORKERD`, so a deployment never calls
+it.
+
+A model token is good for one thread, one provider and one turn: the gateway
+asks the thread before each request, and the thread grants it only while that
+turn runs. The gateway logs every request as `model_gateway.request`, with
+`authMs` (its own time before forwarding) and `firstChunkMs` (the upstream's
+time to first token). If the upstream uses a private CA, start the gateway with
+`NODE_EXTRA_CA_CERTS` pointing at it.
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.

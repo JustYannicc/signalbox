@@ -11,6 +11,7 @@ import {
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import type * as PlatformError from "effect/PlatformError";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -35,6 +36,9 @@ import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOu
  * order. Adapter events pass the same filters the server applies before it
  * stores them (assistant streaming cadence, tool output images), then go out
  * in their JSON encoding.
+ *
+ * Each turn hands the harnesses its model token before anything else, so every
+ * model request the turn makes carries that turn's credential.
  */
 
 export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("RunnerTurnError", {
@@ -43,7 +47,7 @@ export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("Runn
 
 export interface RunnerTurns {
   /** Starts a turn. A run already started is ignored, so the thread can repeat itself. */
-  readonly start: (turn: RunnerTurn) => Effect.Effect<void>;
+  readonly start: (turn: RunnerTurn, modelToken: string) => Effect.Effect<void>;
   /** Stops `runId`, wherever it is: loading, or running on the harness. */
   readonly interrupt: (runId: RunId) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
@@ -70,6 +74,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly adapters: ReadonlyMap<ProviderInstanceId, ProviderAdapterV2Shape>;
   /** The thread's working directory on this machine. */
   readonly cwd: string;
+  /** Makes `token` the one the harnesses present to the ModelGateway. */
+  readonly useModelToken: (token: string) => Effect.Effect<void, PlatformError.PlatformError>;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
 }) {
   const scope = yield* Effect.scope;
@@ -203,7 +209,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     }));
   };
 
-  const run = (turn: RunnerTurn, state: Turn) =>
+  const run = (turn: RunnerTurn, modelToken: string, state: Turn) =>
     Effect.gen(function* () {
       const adapter = input.adapters.get(turn.modelSelection.instanceId);
       if (adapter === undefined) {
@@ -217,6 +223,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         cwd: input.cwd,
       };
       latestRunId = turn.runId;
+      yield* input.useModelToken(modelToken);
       const session = yield* sessionFor(adapter, turn, runtimePolicy);
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
       // Stopped while the session loaded: the thread already ended the run.
@@ -260,7 +267,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       ),
     );
 
-  const start: RunnerTurns["start"] = (turn) =>
+  const start: RunnerTurns["start"] = (turn, modelToken) =>
     Effect.suspend(() => {
       if (taken.has(turn.runId)) return Effect.void;
       taken.add(turn.runId);
@@ -272,7 +279,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         providerTurnId: null,
       };
       turns.set(turn.runId, state);
-      return Effect.asVoid(run(turn, state).pipe(Effect.forkIn(scope)));
+      return Effect.asVoid(run(turn, modelToken, state).pipe(Effect.forkIn(scope)));
     });
 
   const interrupt: RunnerTurns["interrupt"] = (runId) =>

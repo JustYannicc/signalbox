@@ -450,6 +450,77 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("grants model requests only with the running turn's token", () =>
+    Effect.gen(function* () {
+      const tokenElsewhere = yield* withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          yield* connect(runner);
+          return (yield* runner.work).modelToken ?? "";
+        }),
+      );
+      yield* withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const machine = yield* connect(runner);
+          const work = yield* runner.work;
+          const turn = yield* liveTurn(runner);
+          const token = work.modelToken ?? "";
+          expect(token).toMatch(/^sbm1\./);
+
+          expect(yield* runner.authorizeModel(token, "anthropic")).toEqual({
+            _tag: "granted",
+            runId: turn.runId,
+          });
+          // Claude's turn, so not Codex's API; and nothing but the exact token.
+          expect((yield* runner.authorizeModel(token, "openai"))._tag).toBe("denied");
+          expect((yield* runner.authorizeModel(`${token}x`, "anthropic"))._tag).toBe("denied");
+          // The same thread on another machine lease: a different token.
+          expect((yield* runner.authorizeModel(tokenElsewhere, "anthropic"))._tag).toBe("denied");
+
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.full, report.terminal],
+          });
+          expect(yield* runner.authorizeModel(token, "anthropic")).toEqual({
+            _tag: "denied",
+            reason: "No turn is running on this thread.",
+          });
+
+          yield* engine.dispatch(
+            owner,
+            {
+              type: "message.dispatch",
+              commandId: CommandId.make("send-2"),
+              createdBy: "user",
+              creationSource: "web",
+              threadId,
+              messageId: MessageId.make("message-2"),
+              text: "Again",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              deliveryIntent: "auto",
+            },
+            personal,
+          );
+          const next = yield* runner.work;
+          const nextToken = next.modelToken ?? "";
+          expect(next.turn?.runId).not.toBe(turn.runId);
+          expect(nextToken).not.toBe(token);
+          // The machine is the same, the turn is not: the ended turn's token stays dead.
+          expect((yield* runner.authorizeModel(token, "anthropic"))._tag).toBe("denied");
+          expect((yield* runner.authorizeModel(nextToken, "anthropic"))._tag).toBe("granted");
+
+          // Releasing the machine ends every token it held.
+          yield* runner.ended(machine.generation);
+          expect((yield* runner.authorizeModel(nextToken, "anthropic"))._tag).toBe("denied");
+        }),
+      );
+    }),
+  );
+
   it.effect("fails the run when no machine connects, and lets the next message try again", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {

@@ -1,6 +1,9 @@
+import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
+import { WorkerEntrypoint } from "cloudflare:workers";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
+import { authorizeModel } from "./thread/runner/modelGrants.ts";
 import { connectRunner, isRunnerConnectPath } from "./thread/runner/runnerRoute.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
@@ -53,3 +56,15 @@ export default {
     return env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<CloudEnv>;
+
+/**
+ * Asked by the ModelGateway Worker, over its service binding, before it serves
+ * a harness's model request. Service bindings never reach the internet.
+ */
+export class ModelGrants extends WorkerEntrypoint<CloudEnv> {
+  authorize(token: string, provider: ModelGatewayProvider) {
+    return authorizeModel(this.env.THREADS, token, provider, {
+      localWorkerd: this.env.LOCAL_WORKERD === "1",
+    });
+  }
+}

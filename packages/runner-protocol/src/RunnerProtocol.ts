@@ -38,9 +38,14 @@ import * as Schema from "effect/Schema";
  * the bare text `ping` and the thread answers `pong`, without waking a
  * hibernating object. A Runner that hears nothing for a while treats the
  * socket as dead and reconnects, since a dropped network sends no close.
+ *
+ * The machine holds no provider keys. Its harnesses reach the models through
+ * the ModelGateway named in `MachineEnsureRequest`, with the model token each
+ * `turn.start` carries. That token works for that thread, provider and turn
+ * only, and stops working when the turn ends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 1;
+export const RUNNER_PROTOCOL_VERSION = 2;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -149,7 +154,12 @@ export const ThreadMessage = Schema.Union([
     message: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
-  Schema.Struct({ type: Schema.Literal("turn.start"), turn: RunnerTurn }),
+  Schema.Struct({
+    type: Schema.Literal("turn.start"),
+    turn: RunnerTurn,
+    /** The harness's credential at the ModelGateway, for this turn only. */
+    modelToken: Schema.String,
+  }),
   Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
@@ -157,14 +167,20 @@ export type ThreadMessage = typeof ThreadMessage.Type;
 
 /**
  * What a thread asks a machine backend for: a Runner for this thread at this
- * generation, holding this token. Asking again for the same generation is a
- * no-op; a higher generation replaces the thread's older Runner.
+ * generation, holding this token, whose harnesses reach their models through
+ * `modelGatewayUrl`. Asking again for the same generation is a no-op; a higher
+ * generation replaces the thread's older Runner.
  */
 export const MachineEnsureRequest = Schema.Struct({
   threadId: ThreadId,
   generation: PositiveInt,
   token: Schema.String,
+  modelGatewayUrl: Schema.String,
 });
+
+/** Where the gateway serves each provider's API, under its origin. */
+export const MODEL_GATEWAY_PATHS = { anthropic: "/anthropic", openai: "/openai" } as const;
+export type ModelGatewayProvider = keyof typeof MODEL_GATEWAY_PATHS;
 export type MachineEnsureRequest = typeof MachineEnsureRequest.Type;
 
 const frameCodec = <
