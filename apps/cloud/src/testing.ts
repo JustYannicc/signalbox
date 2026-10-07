@@ -14,8 +14,15 @@ import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import * as Platform from "./platform.ts";
+import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
+import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
+import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
+import * as ThreadStore from "./thread/ThreadStore.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
+import * as UserShell from "./user/UserShell.ts";
 import * as UserStore from "./user/UserStore.ts";
 
 /** Test wiring: fixed config, a fake WorkOS, and user objects on in-memory SQLite. */
@@ -40,22 +47,122 @@ export const layerMemoryStore = UserStore.layer.pipe(
   ),
 );
 
-/** One in-memory user object per user id, running the same API the Durable Object does. */
-const layerMemoryUsers = Layer.sync(UserDirectory.UserDirectory, () => {
-  const objects = new Map<string, UserDirectory.UserObjectApi>();
-  const objectFor = (userId: string) => {
-    const existing = objects.get(userId);
-    if (existing) return existing;
-    const runtime = ManagedRuntime.make(layerMemoryStore);
-    const api = makeUserObjectApi((effect) => runtime.runPromise(effect));
-    objects.set(userId, api);
-    return api;
-  };
-  return UserDirectory.UserDirectory.of({
-    forUser: (userId) => UserDirectory.handleFor(objectFor(userId)),
+/**
+ * One thread object's engine on SQLite at `filename`. Building the layer again
+ * on the same file is what a Durable Object waking after eviction does.
+ */
+export const layerThreadObject = (filename: string) =>
+  ThreadEngine.layer.pipe(
+    Layer.provideMerge(ThreadStore.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
+  );
+
+const makeUserRuntime = (threads: ThreadDirectory.ThreadDirectory["Service"]) =>
+  ManagedRuntime.make(
+    UserShell.layer.pipe(
+      Layer.provideMerge(layerMemoryStore),
+      Layer.provideMerge(Layer.succeed(ThreadDirectory.ThreadDirectory, threads)),
+    ),
+  );
+
+/**
+ * The cloud's objects in memory: a user object per user id and a thread
+ * object per thread id, running the same APIs the Durable Objects do and
+ * reaching each other through the same directories. `settle` does what the
+ * thread objects' alarms do: drive every turn to the end and deliver every
+ * pending summary.
+ */
+export const makeMemoryCloud = () => {
+  const users = new Map<
+    string,
+    {
+      readonly api: UserDirectory.UserObjectApi;
+      readonly runtime: ReturnType<typeof makeUserRuntime>;
+    }
+  >();
+  const threads = new Map<
+    string,
+    {
+      readonly api: ThreadDirectory.ThreadObjectApi;
+      readonly run: <A, E>(
+        effect: Effect.Effect<
+          A,
+          E,
+          ThreadEngine.ThreadEngine | ThreadStore.ThreadStore | UserDirectory.UserDirectory
+        >,
+      ) => Promise<A>;
+    }
+  >();
+  const userDirectory: UserDirectory.UserDirectory["Service"] = {
+    forUser: (userId) => UserDirectory.handleFor(userFor(userId).api),
     connect: () => Effect.die("Sockets are not part of these tests"),
+  };
+  const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
+    forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),
+  };
+  const userFor = (userId: string) => {
+    const existing = users.get(userId);
+    if (existing) return existing;
+    const runtime = makeUserRuntime(threadDirectory);
+    const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
+    users.set(userId, object);
+    return object;
+  };
+  const threadFor = (threadId: string) => {
+    const existing = threads.get(threadId);
+    if (existing) return existing;
+    const runtime = ManagedRuntime.make(
+      layerThreadObject(":memory:").pipe(
+        Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, userDirectory)),
+      ),
+    );
+    const run = <A, E>(
+      effect: Effect.Effect<
+        A,
+        E,
+        ThreadEngine.ThreadEngine | ThreadStore.ThreadStore | UserDirectory.UserDirectory
+      >,
+    ) => runtime.runPromise(effect);
+    const object = { api: makeThreadObjectApi(run, async () => {}), run };
+    threads.set(threadId, object);
+    return object;
+  };
+  const settle = Effect.promise(async () => {
+    for (const { run } of threads.values()) {
+      await run(
+        Effect.gen(function* () {
+          const engine = yield* ThreadEngine.ThreadEngine;
+          while (yield* engine.step) {
+            // One provider step per alarm in production; here, until the turn ends.
+          }
+          yield* deliverPendingSummary;
+        }),
+      );
+    }
   });
-});
+  return {
+    userDirectory,
+    threadDirectory,
+    settle,
+    /** The services inside `userId`'s object, for handlers that run there (the socket's RPC). */
+    userObject: (userId: string) =>
+      Layer.effectContext(Effect.orDie(userFor(userId).runtime.contextEffect)),
+    layer: CloudThreadService.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(UserDirectory.UserDirectory, userDirectory),
+          Layer.succeed(ThreadDirectory.ThreadDirectory, threadDirectory),
+        ),
+      ),
+      Layer.provideMerge(Platform.layerCrypto),
+    ),
+  };
+};
+
+const layerMemoryUsers = Layer.sync(
+  UserDirectory.UserDirectory,
+  () => makeMemoryCloud().userDirectory,
+);
 
 /** The sign-in stack with everything it uses exposed for assertions. */
 export const layerAccounts = (codes: WorkOSCodes, env?: Readonly<Record<string, string>>) =>

@@ -1,7 +1,7 @@
-import type {
-  AuthEnvironmentScope,
+import {
+  type AuthEnvironmentScope,
   OrchestrationV2ShellSnapshot,
-  ServerAuthSessionMethod,
+  type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import * as Context from "effect/Context";
@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { jsonCodec } from "../thread/threadWire.ts";
 import type { GrantKind, HandoffRedemption, SessionRecord } from "./UserStore.ts";
 
 /**
@@ -39,6 +40,9 @@ export class UserObjectError extends Schema.TaggedError<UserObjectError>()("User
   }
 }
 
+/** The shell crosses Durable Object RPC in its JSON encoding, which keeps its dates. */
+export const shellSnapshotWire = jsonCodec(OrchestrationV2ShellSnapshot);
+
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
@@ -68,16 +72,25 @@ export interface UserObjectApi {
     readonly label?: string;
     readonly ttlMs: number;
   }) => Promise<SessionRecord | null>;
-  /** The user's sidebar, as `GET /api/orchestration/shell` and `subscribeShell` serve it. */
-  readonly shellSnapshot: () => Promise<OrchestrationV2ShellSnapshot>;
+  /**
+   * The user's sidebar, as `GET /api/orchestration/shell` and `subscribeShell`
+   * serve it, in its JSON encoding (`shellSnapshotWire`).
+   */
+  readonly shellSnapshot: () => Promise<unknown>;
+  /** A thread object's summary outbox delivery, in its JSON encoding. */
+  readonly recordThreadSummary: (summary: unknown) => Promise<void>;
+  /** Drops the thread index and rebuilds it from the user's thread objects. */
+  readonly rebuildThreadIndex: () => Promise<number>;
 }
 
 type Method = keyof UserObjectApi;
 
 export type UserHandle = {
-  readonly [K in Method]: (
+  readonly [K in Exclude<Method, "shellSnapshot">]: (
     ...args: Parameters<UserObjectApi[K]>
   ) => Effect.Effect<Awaited<ReturnType<UserObjectApi[K]>>, UserObjectError>;
+} & {
+  readonly shellSnapshot: () => Effect.Effect<OrchestrationV2ShellSnapshot, UserObjectError>;
 };
 
 export class UserDirectory extends Context.Service<
@@ -106,7 +119,14 @@ const METHODS = Object.keys({
   redeemHandoff: true,
   exchangeCredential: true,
   shellSnapshot: true,
+  recordThreadSummary: true,
+  rebuildThreadIndex: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
+
+/** Results that cross RPC encoded, decoded on arrival. */
+const DECODERS: Partial<Record<Method, (value: unknown) => unknown>> = {
+  shellSnapshot: shellSnapshotWire.decode,
+};
 
 /** Wraps any `UserObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: UserObjectApi): UserHandle {
@@ -114,8 +134,13 @@ export function handleFor(api: UserObjectApi): UserHandle {
     (operation: Method) =>
     (...args: ReadonlyArray<unknown>) =>
       Effect.tryPromise({
-        try: () =>
-          (api[operation] as (...input: ReadonlyArray<unknown>) => Promise<unknown>)(...args),
+        try: async () => {
+          const result = await (
+            api[operation] as (...input: ReadonlyArray<unknown>) => Promise<unknown>
+          )(...args);
+          const decode = DECODERS[operation];
+          return decode ? decode(result) : result;
+        },
         catch: (cause) => new UserObjectError({ operation, cause }),
       });
   return Object.fromEntries(METHODS.map((method) => [method, call(method)])) as UserHandle;

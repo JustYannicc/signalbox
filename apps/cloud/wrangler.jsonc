@@ -19,9 +19,15 @@
     "run_worker_first": ["/api/*", "/oauth/*", "/.well-known/*", "/ws"],
   },
   "durable_objects": {
-    "bindings": [{ "name": "USERS", "class_name": "UserObject" }],
+    "bindings": [
+      { "name": "USERS", "class_name": "UserObject" },
+      { "name": "THREADS", "class_name": "ThreadObject" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UserObject"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["UserObject"] },
+    { "tag": "v2", "new_sqlite_classes": ["ThreadObject"] },
+  ],
   "vars": {
     // Production identity. Never reuse it for another deployment.
     "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
@@ -35,7 +41,10 @@
     "preview": {
       "routes": [],
       "durable_objects": {
-        "bindings": [{ "name": "USERS", "class_name": "UserObject" }],
+        "bindings": [
+          { "name": "USERS", "class_name": "UserObject" },
+          { "name": "THREADS", "class_name": "ThreadObject" },
+        ],
       },
       "vars": {},
     },
