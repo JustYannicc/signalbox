@@ -1,6 +1,7 @@
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
+import { connectRunner, isRunnerConnectPath } from "./thread/runner/runnerRoute.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 
@@ -47,6 +48,7 @@ export default {
       }),
     );
     if (pathname === "/ws") return app.webSocket(request);
+    if (isRunnerConnectPath(pathname)) return connectRunner(env.THREADS, request, { localWorkerd });
     if (isDevProxiedPath(pathname)) return app.http(request);
     return env.ASSETS.fetch(request);
   },

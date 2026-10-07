@@ -173,19 +173,29 @@ export interface ThreadObjectNamespace {
   readonly jurisdiction: (name: typeof THREAD_OBJECT_JURISDICTION) => {
     readonly idFromName: (name: string) => DurableObjectId;
   };
-  readonly get: (id: DurableObjectId) => ThreadObjectApi;
+  readonly get: (id: DurableObjectId) => ThreadObjectApi & {
+    /** The object's own HTTP entry: the Runner's socket. */
+    readonly fetch: (request: Request) => Promise<Response>;
+  };
 }
 
 /** `localWorkerd`: local workerd has no jurisdictions, so `wrangler dev` uses the plain namespace. */
-export const layerDurableObjects = (
+export const threadObjectStub = (
   namespace: ThreadObjectNamespace,
+  threadId: ThreadId,
   options: { readonly localWorkerd: boolean },
 ) => {
   const ids = options.localWorkerd ? namespace : namespace.jurisdiction(THREAD_OBJECT_JURISDICTION);
-  return Layer.succeed(
+  return namespace.get(ids.idFromName(threadId));
+};
+
+export const layerDurableObjects = (
+  namespace: ThreadObjectNamespace,
+  options: { readonly localWorkerd: boolean },
+) =>
+  Layer.succeed(
     ThreadDirectory,
     ThreadDirectory.of({
-      forThread: (threadId) => handleFor(namespace.get(ids.idFromName(threadId))),
+      forThread: (threadId) => handleFor(threadObjectStub(namespace, threadId, options)),
     }),
   );
-};

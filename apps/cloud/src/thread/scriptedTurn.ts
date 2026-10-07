@@ -1,13 +1,13 @@
 import type {
   OrchestrationV2DomainEvent,
-  OrchestrationV2ProviderThread,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
-  OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
 
-import { nextScriptedPrefix, SCRIPTED_DRIVER, scriptedReply } from "./scriptedProvider.ts";
+import { isHarnessInstance } from "./providerCatalog.ts";
+import { activeRun, finishRunEvents, nextQueuedRun, startRunEvents } from "./runLifecycle.ts";
+import { nextScriptedPrefix, scriptedReply } from "./scriptedProvider.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -15,164 +15,28 @@ import {
   itemOrdinal,
   messageEvent,
   nodeEvent,
-  providerThreadEvent,
   runEvent,
   turnItemEvent,
 } from "./threadEvents.ts";
 
 /**
  * A run's life on the scripted provider, decided from the projection alone:
- * start, stream one chunk per step, complete, or be interrupted, then hand the
- * thread to the next queued run. Every step is a pure function of what the
- * thread's events already say, so replaying a step after a crash either
- * repeats nothing (the step landed) or produces the same events (it did not).
+ * start, stream one chunk per step, complete, or be interrupted. Every step is
+ * a pure function of what the thread's events already say, so replaying a
+ * step after a crash either repeats nothing (the step landed) or produces the
+ * same events (it did not). Runs on Claude or Codex belong to the Runner.
  */
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = OrchestrationV2Run;
 
-type LiveRun = Run & { readonly status: "preparing" | "starting" | "running" | "waiting" };
+const isScripted = (run: Run) => !isHarnessInstance(run.providerInstanceId);
 
-/** A run the provider is (or is about to be) working on. */
-export const isLiveRun = (run: Run): run is LiveRun =>
-  run.status === "preparing" ||
-  run.status === "starting" ||
-  run.status === "running" ||
-  run.status === "waiting";
-
-/** The run the provider is working on, if any. */
-export const activeRun = (projection: Projection): Run | undefined =>
-  projection.runs.filter(isLiveRun).toSorted((left, right) => right.ordinal - left.ordinal)[0];
-
-const queuedRuns = (projection: Projection): ReadonlyArray<Run> =>
-  projection.runs
-    .filter((run) => run.status === "queued")
-    .toSorted((left, right) => left.ordinal - right.ordinal);
-
-/** Whether a step has anything to do: a live run to drive, or a queued one ready to start. */
-export const hasPendingTurnWork = (projection: Projection): boolean =>
-  activeRun(projection) !== undefined ||
-  queuedRuns(projection).some((run) => run.queueHeld !== true);
-
-const providerThread = (
-  projection: Projection,
-  run: Run,
-  status: OrchestrationV2ProviderThread["status"],
-  ctx: DecisionContext,
-): OrchestrationV2ProviderThread => {
-  const id = ids.providerThread(projection.thread.id);
-  const current = projection.providerThreads.find((candidate) => candidate.id === id);
-  return {
-    id,
-    driver: current?.driver ?? SCRIPTED_DRIVER,
-    providerInstanceId: run.providerInstanceId,
-    providerSessionId: null,
-    appThreadId: projection.thread.id,
-    ownerNodeId: null,
-    nativeThreadRef: null,
-    nativeConversationHeadRef: null,
-    status,
-    firstRunOrdinal: current?.firstRunOrdinal ?? run.ordinal,
-    lastRunOrdinal: run.ordinal,
-    handoffIds: [],
-    forkedFrom: null,
-    pendingBackgroundTasks: [],
-    contextUsage: null,
-    nativeMetadata: null,
-    goal: null,
-    createdAt: current?.createdAt ?? ctx.now,
-    updatedAt: ctx.now,
-  };
+/** Whether a step has anything to do: a scripted run to drive, or a queued run ready to start. */
+export const hasPendingTurnWork = (projection: Projection): boolean => {
+  const live = activeRun(projection);
+  return live === undefined ? nextQueuedRun(projection) !== undefined : isScripted(live);
 };
-
-/**
- * Hands a run to the provider: its attempt, root node and the user message's
- * transcript row. `run` is the run as it stands (new, or queued until now).
- */
-export function startRunEvents(
-  projection: Projection,
-  run: Run,
-  inputIntent: OrchestrationV2UserMessageInputIntent,
-  ctx: DecisionContext,
-): ReadonlyArray<OrchestrationV2DomainEvent> {
-  const threadId = projection.thread.id;
-  const attemptId = ids.attempt(run.id);
-  const rootNodeId = ids.rootNode(run.id);
-  const providerThreadId = ids.providerThread(threadId);
-  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  const started: Run = {
-    ...run,
-    status: "starting",
-    providerThreadId,
-    rootNodeId,
-    activeAttemptId: attemptId,
-    queuePosition: null,
-  };
-  const userItem: OrchestrationV2TurnItem = {
-    id: ids.userItem(run.id),
-    threadId,
-    runId: run.id,
-    nodeId: rootNodeId,
-    providerThreadId,
-    providerTurnId: null,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal: itemOrdinal(run.ordinal, 0),
-    status: "completed",
-    title: null,
-    startedAt: run.requestedAt,
-    completedAt: run.requestedAt,
-    updatedAt: ctx.now,
-    type: "user_message",
-    createdBy: message?.createdBy ?? "user",
-    creationSource: message?.creationSource ?? "web",
-    messageId: run.userMessageId,
-    inputIntent,
-    text: message?.text ?? "",
-    attachments: message?.attachments ?? [],
-    ...(message?.context === undefined ? {} : { context: message.context }),
-  };
-  return [
-    providerThreadEvent(ctx, threadId, providerThread(projection, run, "active", ctx)),
-    runEvent(
-      ctx,
-      projection.runs.some((candidate) => candidate.id === run.id) ? "run.updated" : "run.created",
-      started,
-    ),
-    attemptEvent(ctx, threadId, "run-attempt.created", {
-      id: attemptId,
-      runId: run.id,
-      attemptOrdinal: 1,
-      rootNodeId,
-      providerInstanceId: run.providerInstanceId,
-      providerThreadId,
-      providerTurnId: null,
-      reason: "initial",
-      status: "pending",
-      startedAt: null,
-      completedAt: null,
-    }),
-    nodeEvent(ctx, {
-      id: rootNodeId,
-      threadId,
-      runId: run.id,
-      parentNodeId: null,
-      rootNodeId,
-      kind: "root_turn",
-      status: "pending",
-      countsForRun: true,
-      providerThreadId,
-      providerTurnId: null,
-      nativeItemRef: null,
-      runtimeRequestId: null,
-      checkpointScopeId: null,
-      startedAt: null,
-      completedAt: null,
-    }),
-    ...(message === undefined ? [] : [messageEvent(ctx, { ...message, nodeId: rootNodeId })]),
-    turnItemEvent(ctx, userItem),
-  ];
-}
 
 const assistantItemOf = (projection: Projection, run: Run) =>
   projection.turnItems.find(
@@ -211,75 +75,43 @@ const assistantItem = (
   };
 };
 
-/** Ends `run` (completed or interrupted) and starts the next queued run unless the queue is held. */
-function finishRunEvents(
+const userTextOf = (projection: Projection, run: Run) =>
+  projection.messages.find((message) => message.id === run.userMessageId)?.text ?? "";
+
+/** The scripted reply's final transcript rows: the whole reply, or what was shown when stopped. */
+function settleAssistant(
   projection: Projection,
   run: Run,
   status: "completed" | "interrupted",
   ctx: DecisionContext,
-  options: { readonly holdQueue?: boolean } = {},
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
-  const threadId = projection.thread.id;
   const current = assistantItemOf(projection, run);
-  const finalText =
+  if (status === "interrupted" && current === undefined) return [];
+  const text =
     status === "completed" ? scriptedReply(userTextOf(projection, run)) : (current?.text ?? "");
-  const assistant =
-    status === "completed" || current !== undefined
-      ? [
-          turnItemEvent(ctx, assistantItem(projection, run, finalText, status, ctx)),
-          messageEvent(ctx, {
-            createdBy: "agent",
-            creationSource: "provider",
-            id: ids.assistantMessage(run.id),
-            threadId,
-            runId: run.id,
-            nodeId: run.rootNodeId,
-            role: "assistant",
-            text: finalText,
-            attachments: [],
-            streaming: false,
-            createdAt: current?.startedAt ?? ctx.now,
-            updatedAt: ctx.now,
-          }),
-        ]
-      : [];
-  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
-  const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
-  const queued = queuedRuns(projection);
-  const holdQueue = options.holdQueue === true;
-  const [next, ...rest] = holdQueue
-    ? []
-    : queued.filter((candidate) => candidate.queueHeld !== true);
   return [
-    ...assistant,
-    ...(attempt === undefined
-      ? []
-      : [
-          attemptEvent(ctx, threadId, "run-attempt.updated", {
-            ...attempt,
-            status,
-            completedAt: ctx.now,
-          }),
-        ]),
-    runEvent(ctx, "run.updated", { ...run, status, completedAt: ctx.now }),
-    ...(node === undefined ? [] : [nodeEvent(ctx, { ...node, status, completedAt: ctx.now })]),
-    providerThreadEvent(ctx, threadId, providerThread(projection, run, "idle", ctx)),
-    ...(holdQueue
-      ? queued.map((candidate) => runEvent(ctx, "run.updated", { ...candidate, queueHeld: true }))
-      : []),
-    ...(next === undefined ? [] : startRunEvents(projection, next, "queued_turn", ctx)),
-    ...rest.map((candidate, index) =>
-      runEvent(ctx, "run.updated", { ...candidate, queuePosition: index + 1 }),
-    ),
+    turnItemEvent(ctx, assistantItem(projection, run, text, status, ctx)),
+    messageEvent(ctx, {
+      createdBy: "agent",
+      creationSource: "provider",
+      id: ids.assistantMessage(run.id),
+      threadId: projection.thread.id,
+      runId: run.id,
+      nodeId: run.rootNodeId,
+      role: "assistant",
+      text,
+      attachments: [],
+      streaming: false,
+      createdAt: current?.startedAt ?? ctx.now,
+      updatedAt: ctx.now,
+    }),
   ];
 }
 
-const userTextOf = (projection: Projection, run: Run) =>
-  projection.messages.find((message) => message.id === run.userMessageId)?.text ?? "";
-
 /**
- * One provider step: start the live run, stream its next chunk, or complete
- * it. Empty when nothing is live; a held queue waits for `queue.resume`.
+ * One provider step: start the next queued run, or start, stream or complete
+ * the live scripted run. Empty when there is nothing to do; a held queue
+ * waits for `queue.resume`, and a run on a harness waits for its Runner.
  */
 export function scriptedStep(
   projection: Projection,
@@ -287,9 +119,10 @@ export function scriptedStep(
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   const run = activeRun(projection);
   if (run === undefined) {
-    const next = queuedRuns(projection).find((candidate) => candidate.queueHeld !== true);
+    const next = nextQueuedRun(projection);
     return next === undefined ? [] : startRunEvents(projection, next, "queued_turn", ctx);
   }
+  if (!isScripted(run)) return [];
   const threadId = projection.thread.id;
   const reply = scriptedReply(userTextOf(projection, run));
   if (run.status === "starting" || run.status === "preparing") {
@@ -325,30 +158,23 @@ export function scriptedStep(
       ),
     ];
   }
-  return finishRunEvents(projection, run, "completed", ctx);
+  return finishRunEvents(projection, run, "completed", ctx, {
+    leading: settleAssistant(projection, run, "completed", ctx),
+  });
 }
 
-/** Stops the live run where it is. `holdQueue` (the Stop button) also holds queued messages. */
+/**
+ * Stops the live run where it is. `holdQueue` (the Stop button) also holds
+ * queued messages. A Runner's run keeps whatever transcript its harness wrote;
+ * the Runner hears about the stop from the thread object.
+ */
 export const interruptRunEvents = (
   projection: Projection,
   run: Run,
   ctx: DecisionContext,
   holdQueue: boolean,
-) => finishRunEvents(projection, run, "interrupted", ctx, { holdQueue });
-
-/** Releases a held queue: clears the hold and starts the first queued run if nothing is live. */
-export function resumeQueueEvents(
-  projection: Projection,
-  ctx: DecisionContext,
-): ReadonlyArray<OrchestrationV2DomainEvent> {
-  const released = queuedRuns(projection).map((run) => ({ ...run, queueHeld: false }));
-  const startNow = activeRun(projection) === undefined;
-  const [next, ...rest] = startNow ? released : [];
-  const waiting = startNow ? rest : released;
-  return [
-    ...(next === undefined ? [] : startRunEvents(projection, next, "queued_turn", ctx)),
-    ...waiting.map((run, index) =>
-      runEvent(ctx, "run.updated", { ...run, queuePosition: index + 1 }),
-    ),
-  ];
-}
+) =>
+  finishRunEvents(projection, run, "interrupted", ctx, {
+    holdQueue,
+    leading: isScripted(run) ? settleAssistant(projection, run, "interrupted", ctx) : [],
+  });

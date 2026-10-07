@@ -13,12 +13,8 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import webPackage from "../../web/package.json" with { type: "json" };
-import {
-  SCRIPTED_DRIVER,
-  SCRIPTED_INSTANCE_ID,
-  scriptedModelSelection,
-  scriptedServerProvider,
-} from "./thread/scriptedProvider.ts";
+import { cloudProviderInstances, cloudProviders } from "./thread/providerCatalog.ts";
+import { scriptedModelSelection } from "./thread/scriptedProvider.ts";
 
 /**
  * How the cloud describes itself to clients. It is an environment like any
@@ -64,6 +60,8 @@ export const SESSION_COOKIE_NAME = "signalbox_cloud_session";
 export interface CloudEnvironmentIdentity {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  /** Whether a machine backend can run Claude and Codex here. */
+  readonly harnesses?: boolean;
 }
 
 export const authDescriptor: ServerAuthDescriptor = {
@@ -88,7 +86,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
   },
 });
 
-/** `checkedAt`: when the connection asked; the scripted provider is always ready. */
+/** `checkedAt`: when the connection asked; the cloud's providers are always ready. */
 export const serverConfig = (
   identity: CloudEnvironmentIdentity,
   checkedAt: string,
@@ -99,7 +97,7 @@ export const serverConfig = (
   keybindingsConfigPath: CLOUD_ROOT,
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
   issues: [],
-  providers: [scriptedServerProvider(checkedAt)],
+  providers: [...cloudProviders({ checkedAt, harnesses: identity.harnesses === true })],
   availableEditors: [],
   observability: {
     logsDirectoryPath: CLOUD_ROOT,
@@ -111,7 +109,7 @@ export const serverConfig = (
   settings: {
     ...DEFAULT_SERVER_SETTINGS,
     // Clients enable a provider instance only when settings list it.
-    providerInstances: { [SCRIPTED_INSTANCE_ID]: { driver: SCRIPTED_DRIVER, enabled: true } },
+    providerInstances: cloudProviderInstances(identity.harnesses === true),
   },
   shellResumeCompletionMarker: true,
   threadResumeCompletionMarker: true,

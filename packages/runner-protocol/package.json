@@ -1,0 +1,21 @@
+{
+  "name": "@signalbox/runner-protocol",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./RunnerProtocol": {
+      "types": "./src/RunnerProtocol.ts",
+      "import": "./src/RunnerProtocol.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

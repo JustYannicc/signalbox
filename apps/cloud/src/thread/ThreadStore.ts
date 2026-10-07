@@ -40,6 +40,40 @@ export type CommandReceipt =
   | { readonly _tag: "accepted"; readonly sequence: number }
   | { readonly _tag: "rejected"; readonly message: string };
 
+/**
+ * The thread's machine lease. Each machine the thread asks for gets the next
+ * generation and a fresh token; only a Runner presenting both is let in, so a
+ * machine from an earlier generation can never write to the thread again.
+ * `ackedSequence` is the last Runner batch committed in this generation.
+ */
+export interface MachineLease {
+  readonly generation: number;
+  readonly token: string | null;
+  /** `none`: no machine. `requested`: asked for, no Runner yet. `connected`: a Runner said hello. */
+  readonly status: "none" | "requested" | "connected";
+  /** Counts the Runner's connections in this generation; the latest one is current. */
+  readonly connection?: number | undefined;
+  readonly requestedAt: number | null;
+  /** When the backend confirmed the request; null until then. */
+  readonly ensuredAt: number | null;
+  /** When the Runner's socket closed, while the lease still stands. */
+  readonly disconnectedAt: number | null;
+  /** When the machine last ran out of work. */
+  readonly idleSince: number | null;
+  readonly ackedSequence: number;
+}
+
+export const NO_MACHINE: MachineLease = {
+  generation: 0,
+  token: null,
+  status: "none",
+  requestedAt: null,
+  ensuredAt: null,
+  disconnectedAt: null,
+  idleSince: null,
+  ackedSequence: 0,
+};
+
 export interface OutboxState {
   /** The latest summary revision, the event sequence that last changed the thread's sidebar row. */
   readonly revision: number;
@@ -68,6 +102,8 @@ export class ThreadStore extends Context.Service<
       readonly command?: { readonly id: CommandId; readonly type: string };
       readonly owner?: ThreadOwner;
       readonly summaryChanged: boolean;
+      /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
+      readonly machine?: MachineLease;
     }) => Effect.Effect<number, SqlError>;
     readonly recordRejection: (input: {
       readonly command: { readonly id: CommandId; readonly type: string };
@@ -75,6 +111,8 @@ export class ThreadStore extends Context.Service<
     }) => Effect.Effect<void, SqlError>;
     readonly outbox: Effect.Effect<OutboxState, SqlError>;
     readonly acknowledgeSummary: (revision: number) => Effect.Effect<void, SqlError>;
+    readonly machine: Effect.Effect<MachineLease, SqlError>;
+    readonly saveMachine: (machine: MachineLease) => Effect.Effect<void, SqlError>;
   }
 >()("@signalbox/cloud/thread/ThreadStore") {}
 
@@ -107,6 +145,13 @@ const migrations = Migrator.fromRecord({
     )`;
     yield* sql`INSERT INTO outbox (id, revision, delivered) VALUES (1, 0, 0)`;
   }),
+  "0002_machine": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE machine (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      lease TEXT NOT NULL
+    )`;
+  }),
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */
@@ -132,6 +177,24 @@ const decodeEventRows = Schema.decodeUnknownSync(Schema.Array(EventRow));
 const decodeOwnerRows = Schema.decodeUnknownSync(Schema.Array(OwnerRow));
 const decodeReceiptRows = Schema.decodeUnknownSync(Schema.Array(ReceiptRow));
 const decodeOutboxRows = Schema.decodeUnknownSync(Schema.Array(OutboxRow));
+
+const MachineLeaseJson = Schema.fromJsonString(
+  Schema.Struct({
+    generation: Schema.Number,
+    token: Schema.NullOr(Schema.String),
+    status: Schema.Literals(["none", "requested", "connected"]),
+    connection: Schema.optional(Schema.Number),
+    requestedAt: Schema.NullOr(Schema.Number),
+    ensuredAt: Schema.NullOr(Schema.Number),
+    disconnectedAt: Schema.NullOr(Schema.Number),
+    idleSince: Schema.NullOr(Schema.Number),
+    ackedSequence: Schema.Number,
+  }),
+);
+const encodeMachine = Schema.encodeSync(MachineLeaseJson);
+const decodeMachineRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ lease: MachineLeaseJson })),
+);
 
 const toStoredEvent = (row: typeof EventRow.Type): StoredEvent => {
   if (row.format !== EVENT_FORMAT) {
@@ -167,6 +230,15 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const machine: ThreadStore["Service"]["machine"] =
+    sql`SELECT lease FROM machine WHERE id = 1`.pipe(
+      Effect.map((rows) => decodeMachineRows(rows)[0]?.lease ?? NO_MACHINE),
+    );
+
+  const saveMachine: ThreadStore["Service"]["saveMachine"] = (lease) =>
+    sql`INSERT INTO machine (id, lease) VALUES (1, ${encodeMachine(lease)})
+      ON CONFLICT (id) DO UPDATE SET lease = excluded.lease`.pipe(Effect.asVoid);
+
   const commit: ThreadStore["Service"]["commit"] = Effect.fn("ThreadStore.commit")(function* (
     input,
   ) {
@@ -188,6 +260,7 @@ const make = Effect.gen(function* () {
     if (input.summaryChanged) {
       yield* sql`UPDATE outbox SET revision = ${sequence} WHERE id = 1`;
     }
+    if (input.machine) yield* saveMachine(input.machine);
     return sequence;
   }, sql.withTransaction);
 
@@ -223,6 +296,8 @@ const make = Effect.gen(function* () {
     recordRejection,
     outbox,
     acknowledgeSummary,
+    machine,
+    saveMachine,
   });
 });
 

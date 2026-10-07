@@ -19,6 +19,7 @@ import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
+import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
@@ -52,7 +53,8 @@ export const layerMemoryStore = UserStore.layer.pipe(
  * on the same file is what a Durable Object waking after eviction does.
  */
 export const layerThreadObject = (filename: string) =>
-  ThreadEngine.layer.pipe(
+  ThreadRunner.layer.pipe(
+    Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(ThreadStore.layer),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );

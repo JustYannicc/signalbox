@@ -88,6 +88,13 @@ export type ThreadSummary = typeof ThreadSummaryWire.Type;
 
 export type ThreadSnapshot = typeof ThreadSnapshotWire.Type;
 
+/** What `apply` commits: events, the machine lease to store with them, and the caller's result. */
+export interface EngineDecision<A> {
+  readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  readonly machine?: ThreadStore.MachineLease;
+  readonly result: A;
+}
+
 /** Replays longer than this send a snapshot instead, as the self-hosted server does. */
 const MAX_REPLAY_EVENTS = 512;
 
@@ -125,6 +132,17 @@ export class ThreadEngine extends Context.Service<
       Stream.Stream<ReadonlyArray<OrchestrationV2ThreadStreamItem>>,
       ThreadNotFoundError
     >;
+    /**
+     * Decides and commits under the thread's lock, for work that is not a
+     * client command (a Runner's report, the machine lease). `decideWith`
+     * sees the projection, null before the thread exists.
+     */
+    readonly apply: <A>(
+      decideWith: (
+        projection: OrchestrationV2ThreadProjection | null,
+        ctx: DecisionContext,
+      ) => Effect.Effect<EngineDecision<A>>,
+    ) => Effect.Effect<A>;
     /** Runs one scripted provider step. True while turn work remains. */
     readonly step: Effect.Effect<boolean>;
     readonly hasTurnWork: Effect.Effect<boolean>;
@@ -175,8 +193,14 @@ const make = Effect.gen(function* () {
 
   // Storage failures inside an object are fatal for the request; the caller sees a defect.
   // An object whose thread was never created has no tables, and reads nothing.
+  // A thread created by an older build gets the tables added since.
   const initial = (yield* Effect.orDie(store.initialized))
-    ? yield* Effect.orDie(Effect.all({ events: store.events(0), owner: store.owner }))
+    ? yield* Effect.orDie(
+        Effect.andThen(
+          store.initialize,
+          Effect.all({ events: store.events(0), owner: store.owner }),
+        ),
+      )
     : { events: [], owner: null };
   const initialProjection = applyEvents(
     null,
@@ -206,6 +230,7 @@ const make = Effect.gen(function* () {
     readonly command?: { readonly id: CommandId; readonly type: string };
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
+    readonly machine?: ThreadStore.MachineLease;
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
@@ -223,6 +248,7 @@ const make = Effect.gen(function* () {
         events,
         ...(input.command ? { command: input.command } : {}),
         ...(current.thread === null ? { owner } : {}),
+        ...(input.machine ? { machine: input.machine } : {}),
         summaryChanged: nextKey !== current.summaryKey,
       }),
     );
@@ -345,6 +371,23 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const apply: ThreadEngine["Service"]["apply"] = (decideWith) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const decision = yield* decideWith(current.thread?.projection ?? null, yield* context);
+        if (decision.events.length > 0) {
+          yield* commit({
+            events: decision.events,
+            ...(decision.machine ? { machine: decision.machine } : {}),
+          });
+        } else if (decision.machine) {
+          yield* Effect.orDie(store.saveMachine(decision.machine));
+        }
+        return decision.result;
+      }),
+    );
+
   const step: ThreadEngine["Service"]["step"] = serialized(
     Effect.gen(function* () {
       const current = yield* Ref.get(state);
@@ -407,6 +450,7 @@ const make = Effect.gen(function* () {
     launch,
     snapshot,
     subscribe,
+    apply,
     step,
     hasTurnWork,
     summary,

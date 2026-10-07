@@ -9,7 +9,7 @@ import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/sta
 import { latestUnheldRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
-import { isLiveRun } from "./scriptedTurn.ts";
+import { isLiveRun } from "./runLifecycle.ts";
 
 /**
  * A cloud thread's read model. Events fold through the same projector every
