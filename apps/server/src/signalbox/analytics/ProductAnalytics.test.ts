@@ -63,13 +63,14 @@ const layerProductAnalytics = (options: {
   readonly failingHost?: string;
   readonly signalboxKey?: string;
   readonly baseDir: string;
+  readonly serverEnabled?: boolean;
 }) =>
   ProductAnalytics.layer.pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), options.baseDir)),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: true,
+          T3CODE_TELEMETRY_ENABLED: options.serverEnabled ?? true,
           T3CODE_POSTHOG_KEY: "phc_t3",
           T3CODE_POSTHOG_HOST: T3_HOST,
           ...(options.signalboxKey === undefined
@@ -254,6 +255,54 @@ it.layer(NodeServices.layer)("ProductAnalytics", (it) => {
 
       assert.deepEqual(eventsSentTo(sent, T3_HOST), ["client.connected"]);
       assert.deepEqual(eventsSentTo(sent, SIGNALBOX_HOST), []);
+    }),
+  );
+
+  it.effect("fork-only events go to Signalbox's project alone, and nowhere without a key", () =>
+    Effect.gen(function* () {
+      const recordWorkload = Effect.gen(function* () {
+        const signalbox = yield* ProductAnalytics.SignalboxAnalytics;
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        yield* signalbox.record("workload.turn.completed", { durationSeconds: 1 });
+        yield* analytics.flush;
+        return yield* signalbox.active;
+      });
+
+      const sent: Array<SentRequest> = [];
+      const active = yield* recordWorkload.pipe(
+        Effect.provide(
+          layerProductAnalytics({
+            sent,
+            signalboxKey: "phc_signalbox",
+            baseDir: yield* makeBaseDir,
+          }),
+        ),
+      );
+      assert.isTrue(active);
+      assert.deepEqual(eventsSentTo(sent, SIGNALBOX_HOST), ["workload.turn.completed"]);
+      assert.deepEqual(eventsSentTo(sent, T3_HOST), []);
+
+      const sentWithoutKey: Array<SentRequest> = [];
+      const activeWithoutKey = yield* recordWorkload.pipe(
+        Effect.provide(
+          layerProductAnalytics({ sent: sentWithoutKey, baseDir: yield* makeBaseDir }),
+        ),
+      );
+      assert.isFalse(activeWithoutKey);
+      assert.deepEqual(sentWithoutKey, []);
+
+      // The server-wide switch turns workload collection off too.
+      const activeWhenDisabled = yield* recordWorkload.pipe(
+        Effect.provide(
+          layerProductAnalytics({
+            sent: [],
+            signalboxKey: "phc_signalbox",
+            serverEnabled: false,
+            baseDir: yield* makeBaseDir,
+          }),
+        ),
+      );
+      assert.isFalse(activeWhenDisabled);
     }),
   );
 });
