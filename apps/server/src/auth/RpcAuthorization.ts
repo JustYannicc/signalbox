@@ -54,6 +54,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerConsumeResetCredit]: AuthOrchestrationOperateScope,
   [WS_METHODS.usageLimitSourceUpdateAccount]: AuthOrchestrationOperateScope,
   [WS_METHODS.accountPoolSubscribe]: AuthOrchestrationOperateScope,
+  // signalbox: overviews carry no account data, so anyone who can read may see them.
+  [WS_METHODS.accountPoolSubscribeViews]: AuthOrchestrationReadScope,
   [WS_METHODS.accountPoolCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.accountPoolRename]: AuthOrchestrationOperateScope,
   [WS_METHODS.accountPoolDelete]: AuthOrchestrationOperateScope,
