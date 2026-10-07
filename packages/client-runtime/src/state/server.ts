@@ -1143,6 +1143,11 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:account-pools:live",
       tag: WS_METHODS.accountPoolSubscribe,
     }),
+    // Every pool as this session may see it; read-only sessions get no account data.
+    accountPoolViewsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:account-pool-views:live",
+      tag: WS_METHODS.accountPoolSubscribeViews,
+    }),
     createAccountPool: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:create-account-pool",
       tag: WS_METHODS.accountPoolCreate,
@@ -1173,6 +1178,22 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.poolId]),
+      },
+    }),
+    addAccountPoolApiKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:add-account-pool-api-key",
+      tag: WS_METHODS.accountPoolAddApiKey,
+    }),
+    setAccountPoolOpenCode: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-account-pool-opencode",
+      tag: WS_METHODS.accountPoolSetOpenCode,
+    }),
+    moveNativeLogins: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:move-native-logins",
+      tag: WS_METHODS.accountPoolMoveNativeLogins,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
       },
     }),
     updateUsageLimitSourceAccount: createEnvironmentRpcCommand(runtime, {

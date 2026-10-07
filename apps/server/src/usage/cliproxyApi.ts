@@ -1,5 +1,3 @@
-import * as NodeCrypto from "node:crypto";
-
 import {
   ProviderDriverKind,
   UsageLimitSourceError,
@@ -8,8 +6,10 @@ import {
   type UsageLimitSourceConfig,
   type UsageLimitSourceUpdateAccountInput,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -18,7 +18,8 @@ import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits, makeUsageLimits } from "../provider/providerUsageLimits.ts";
 import { grokUsageResponseToLimits } from "../provider/grokUsageLimits.ts";
-import { isSignedOutAuthFile } from "../accountHub/accountHubManagement.ts";
+import { isSignedOutAuthFile, normalizeHubUrl } from "../accountHub/accountHubManagement.ts";
+import { isApiKeyAccountId, listApiKeys, removeApiKey } from "../accountHub/hubApiKeys.ts";
 import {
   HubProviderRateLimited,
   RATE_LIMITED_DETAIL,
@@ -118,7 +119,16 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 
 // signalbox: accounts from Signalbox's Sign in with ChatGPT plugin run Codex too.
 const CHATGPT_SIWC = "chatgpt-siwc";
-const SUPPORTED_PROVIDERS = new Set(["codex", "claude", CHATGPT_SIWC, "xai", "antigravity"]);
+// signalbox: Cursor accounts sit in the hub with the pool's other accounts; the hub never routes them.
+const CURSOR = "cursor";
+const SUPPORTED_PROVIDERS = new Set([
+  "codex",
+  "claude",
+  CHATGPT_SIWC,
+  "xai",
+  "antigravity",
+  CURSOR,
+]);
 
 // signalbox: the hub's provider names, mapped to the T3 harness that runs each account.
 const DRIVER_BY_PROVIDER: Record<string, string> = {
@@ -127,11 +137,18 @@ const DRIVER_BY_PROVIDER: Record<string, string> = {
   claude: "claudeAgent",
   xai: "grok",
   antigravity: "antigravity",
+  [CURSOR]: "cursor",
 };
 const driverForProvider = (provider: string) =>
   ProviderDriverKind.make(DRIVER_BY_PROVIDER[provider] ?? "codex");
 
 const needsSignIn = isSignedOutAuthFile; // signalbox
+
+// signalbox: the source as a management endpoint for the hub helpers.
+const hubEndpoint = (config: UsageLimitSourceConfig) => ({
+  baseUrl: normalizeHubUrl(config.url),
+  managementKey: config.managementKey,
+});
 
 const notProbed = (
   account: typeof AuthFile.Type,
@@ -225,24 +242,36 @@ function antigravityQuotaToLimits(quota: typeof AntigravityQuota.Type, checkedAt
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
 
+// 6f1c2a9e-2d4b-4c1e-9a7f-3b8d5e0c1a42
+const CREDIT_REDEEM_NAMESPACE = new Uint8Array([
+  0x6f, 0x1c, 0x2a, 0x9e, 0x2d, 0x4b, 0x4c, 0x1e, 0x9a, 0x7f, 0x3b, 0x8d, 0x5e, 0x0c, 0x1a, 0x42,
+]);
+
 // UUIDv5 per account and credit also deduplicates retries across T3 environments.
-export function creditRedeemRequestId(accountId: string, creditId: string): string {
-  const bytes = NodeCrypto.createHash("sha1")
-    .update(Buffer.from("6f1c2a9e2d4b4c1e9a7f3b8d5e0c1a42", "hex"))
-    .update(`${accountId}:${creditId}`)
-    .digest()
-    .subarray(0, 16);
+const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(function* (
+  accountId: string,
+  creditId: string,
+) {
+  const crypto = yield* Crypto.Crypto;
+  const name = new TextEncoder().encode(`${accountId}:${creditId}`);
+  const input = new Uint8Array(CREDIT_REDEEM_NAMESPACE.length + name.length);
+  input.set(CREDIT_REDEEM_NAMESPACE);
+  input.set(name, CREDIT_REDEEM_NAMESPACE.length);
+  const bytes = (yield* crypto.digest("SHA-1", input).pipe(Effect.orDie)).slice(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
+  const hex = Hex.encode(bytes);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+});
 
 export const makeCliproxyApi = Effect.gen(function* () {
   const probes = yield* makeHubProbeCache; // signalbox
   const probeKey = (config: UsageLimitSourceConfig, accountId: string) =>
     `${config.url}:${accountId}`;
   const client = yield* HttpClient.HttpClient;
+  const crypto = yield* Crypto.Crypto;
+  const redeemRequestId = (accountId: string, creditId: string) =>
+    creditRedeemRequestId(accountId, creditId).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
   const management = Effect.fn("CliproxyApi.management")(function* (
     config: UsageLimitSourceConfig,
@@ -485,7 +514,25 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    return yield* Effect.forEach(
+    // signalbox: API keys route like accounts; they report no quota. Read beside the logins.
+    const apiKeys = listApiKeys(hubEndpoint(config)).pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.orElseSucceed(() => []),
+      Effect.map((keys) =>
+        keys.map((key): UsageLimitSourceAccount => ({
+          id: key.id,
+          driver: ProviderDriverKind.make(key.driver),
+          plan: key.label,
+          apiKey: true,
+          usageLimits: makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "unsupported",
+            message: "API keys are billed per use and have no usage limit.",
+          }),
+        })),
+      ),
+    );
+    const logins = Effect.forEach(
       accounts.filter((account) => SUPPORTED_PROVIDERS.has(account.provider)),
       (account) =>
         // Paused accounts are listed so they can be resumed, without spending a usage probe.
@@ -496,21 +543,30 @@ export const makeCliproxyApi = Effect.gen(function* () {
                 ...notProbed(account, checkedAt, "Signed out. Sign in again."),
                 signedOut: true,
               })
-            : account.provider === CHATGPT_SIWC
+            : account.provider === CURSOR
               ? Effect.succeed(
-                  notProbed(
-                    account,
-                    checkedAt,
-                    "ChatGPT does not share usage with connected apps.",
-                    {
-                      label: "ChatGPT usage",
-                      url: "https://chatgpt.com/#settings/Usage",
-                    },
-                  ),
+                  notProbed(account, checkedAt, "Cursor shows usage on its dashboard.", {
+                    label: "Cursor usage",
+                    url: "https://cursor.com/dashboard?tab=usage",
+                  }),
                 )
-              : readAccount(config, account),
+              : account.provider === CHATGPT_SIWC
+                ? Effect.succeed(
+                    notProbed(
+                      account,
+                      checkedAt,
+                      "ChatGPT does not share usage with connected apps.",
+                      {
+                        label: "ChatGPT usage",
+                        url: "https://chatgpt.com/#settings/Usage",
+                      },
+                    ),
+                  )
+                : readAccount(config, account),
       { concurrency: 4 },
     );
+    const [loginAccounts, keyAccounts] = yield* Effect.all([logins, apiKeys], { concurrency: 2 });
+    return [...loginAccounts, ...keyAccounts];
   });
 
   // The hub answers an unknown name with an error status, so there is no list-then-act race.
@@ -519,6 +575,16 @@ export const makeCliproxyApi = Effect.gen(function* () {
     accountId: string,
     action: UsageLimitSourceUpdateAccountInput["action"],
   ) {
+    // signalbox: API keys live in the hub's config and can only be removed.
+    if (isApiKeyAccountId(accountId)) {
+      if (action !== "remove") {
+        return yield* new UsageLimitSourceError({ detail: "API keys can only be removed." });
+      }
+      return yield* removeApiKey(hubEndpoint(config), accountId).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.mapError((error) => new UsageLimitSourceError({ detail: error.detail })),
+      );
+    }
     yield* (
       action === "remove"
         ? management(config, `auth-files?name=${encodeURIComponent(accountId)}`, {
@@ -545,7 +611,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     creditId: string,
   ) {
     const body = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
-      redeem_request_id: creditRedeemRequestId(
+      redeem_request_id: yield* redeemRequestId(
         account.id_token?.chatgpt_account_id ?? account.id,
         creditId,
       ),
@@ -583,7 +649,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           ? consumeHubClaude(
               (url, data) => apiCall(config, account, url, data),
               creditId,
-              creditRedeemRequestId(account.id, creditId),
+              yield* redeemRequestId(account.id, creditId),
             )
           : consumeCodex(config, account, creditId)
       ).pipe(

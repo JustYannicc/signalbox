@@ -108,7 +108,12 @@ export function buildPoolOverviews(input: {
           hubInstancePoolId(input.instances[provider.instanceId]?.config) === pool.id,
       )
       .map((provider) => {
-        const own = accounts.filter((account) => account.driver === provider.driver);
+        // OpenCode runs on every model the hub routes, so every account but Cursor's serves it.
+        const own = accounts.filter((account) =>
+          provider.driver === "opencode"
+            ? account.driver !== "cursor"
+            : account.driver === provider.driver,
+        );
         return {
           providerInstanceId: provider.instanceId,
           driver: provider.driver,

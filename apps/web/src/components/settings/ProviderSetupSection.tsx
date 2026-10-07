@@ -21,6 +21,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+import { NATIVE_SIGN_IN } from "../accountPool/nativeLogins"; // signalbox
 
 interface ProviderSetupSectionProps {
   readonly environmentId: EnvironmentId;
@@ -292,13 +293,16 @@ function ProviderSetupActions({
         }
       />
 
-      <ProviderAuthenticationSection
-        environmentId={environmentId}
-        environmentLabel={environmentLabel}
-        instanceId={instanceId}
-        provider={provider}
-        readOnly={false}
-      />
+      {/* signalbox: Antigravity accounts are added to a pool; this section only installs. */}
+      {NATIVE_SIGN_IN ? (
+        <ProviderAuthenticationSection
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          instanceId={instanceId}
+          provider={provider}
+          readOnly={false}
+        />
+      ) : null}
 
       <p className="sr-only" role="status">
         {pendingLabel ? `${pendingLabel}.` : null}

@@ -185,7 +185,10 @@ export function resolveProactiveTurnDiffAction(input: {
   isGitRepo: boolean | undefined;
   activeSurfaceKind: RightPanelSurface["kind"] | null;
 }): "defer" | "ignore" | "open" {
-  if (input.activeSurfaceKind === "pull-request") return "ignore";
+  // An open diff already shows the work; reopening it would reset the chosen scope.
+  if (input.activeSurfaceKind === "pull-request" || input.activeSurfaceKind === "diff") {
+    return "ignore";
+  }
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
   if (input.isGitRepo === undefined) return "defer";
   if (
@@ -647,7 +650,8 @@ export function getAntigravitySendBlockReason(
     return "Install Antigravity in provider settings before sending.";
   }
   if (provider.auth.status === "unauthenticated") {
-    return "Sign in to Antigravity in provider settings before sending.";
+    // signalbox: accounts live in pools.
+    return "Add an Antigravity account to its pool from Usage → Limits before sending.";
   }
   const slug = model.trim();
   if (slug.length === 0) return "Choose an Antigravity model before sending.";

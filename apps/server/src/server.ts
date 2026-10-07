@@ -29,6 +29,7 @@ import * as AutomationSkill from "./workflows/skill/installSkill.ts"; // signalb
 import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
 import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
 import * as ProductAnalytics from "./signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
+import * as WorkloadAnalytics from "./signalbox/analytics/workload/WorkloadAnalytics.ts"; // signalbox: workload analytics
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
@@ -122,6 +123,8 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
+import * as McpOAuth from "./auth/McpOAuth.ts";
+import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import {
   relayHookBaseUrl,
   ScheduledTaskWebhookOrigin,
@@ -528,6 +531,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 );
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
+  WorkloadAnalytics.layer, // signalbox: workload analytics
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
@@ -570,7 +574,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
   // The asset route uses the registry's GitHub credential for private PR media.
-  Layer.provideMerge(Layer.mergeAll(layerSourceControlProviderRegistry, GitHubCli.layer)),
+  Layer.provideMerge(layerSourceControlProviderRegistry),
+  Layer.provideMerge(GitHubCli.layer),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
@@ -666,6 +671,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(AuthHttp.layer),
+      Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
       Layer.provide(CloudHttp.layer),
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),
@@ -695,6 +701,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // what dispatch can actually serve.
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+    Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients

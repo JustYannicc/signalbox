@@ -1526,7 +1526,7 @@ describe("resolveComposerProviderSelection", () => {
     expect(selection.selectedProviderEntry?.instanceId).toBe(signedOutEntry.instanceId);
     expect(
       getAntigravitySendBlockReason(selection.selectedProviderEntry?.snapshot, "gemini-pro"),
-    ).toBe("Sign in to Antigravity in provider settings before sending.");
+    ).toBe("Add an Antigravity account to its pool from Usage → Limits before sending.");
   });
 
   it("blocks sends until the selected Antigravity profile is installed", () => {
@@ -1783,6 +1783,26 @@ describe("proactive completed diff guard", () => {
         checkpoint: changedCheckpoint,
         isGitRepo: true,
         activeSurfaceKind: "pull-request",
+      }),
+    ).toBe("ignore");
+  });
+
+  it("leaves an already open diff and its chosen scope alone", () => {
+    const largeCheckpoint = {
+      status: "ready",
+      files: Array.from({ length: 3 }, (_, index) => ({
+        path: `src/app-${index}.ts`,
+        kind: "modified" as const,
+        additions: 20,
+        deletions: 0,
+      })),
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: largeCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: "diff",
       }),
     ).toBe("ignore");
   });

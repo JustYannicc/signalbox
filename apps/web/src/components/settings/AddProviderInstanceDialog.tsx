@@ -9,6 +9,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   DEFAULT_UNIFIED_SETTINGS,
   type AcpRegistrySearchAgent,
+  AuthProvidersManageScope,
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
@@ -24,6 +25,7 @@ import * as Equal from "effect/Equal";
 
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { Dialog } from "../ui/dialog";
@@ -54,6 +56,7 @@ import { ProviderWizardAuthenticationStep } from "./ProviderWizardAuthentication
 import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
 import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
+import { NATIVE_SIGN_IN } from "../accountPool/nativeLogins"; // signalbox
 
 /**
  * Normalize a user-provided label into a slug suffix for the instance id.
@@ -113,6 +116,7 @@ export function AddProviderInstanceDialog({
 }: AddProviderInstanceDialogProps) {
   const settings = useEnvironmentSettings(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
 
   const [wizardStep, setWizardStep] = useState(0);
   const [addingChatGptAccount, setAddingChatGptAccount] = useState(false);
@@ -308,6 +312,7 @@ export function AddProviderInstanceDialog({
   };
 
   const handleSave = async () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     if (isSaving || createdInstanceId) return;
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null || (isAcpRegistry && acpSelectionError !== null)) return;
@@ -675,7 +680,7 @@ export function AddProviderInstanceDialog({
               >
                 {wizardStep === 0 ? "Cancel" : "Back"}
               </Button>
-              {wizardStep === 0 && driver === "codex" ? (
+              {wizardStep === 0 && driver === "codex" && NATIVE_SIGN_IN ? (
                 <>
                   <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
                     Configure manually
@@ -694,7 +699,11 @@ export function AddProviderInstanceDialog({
                   Next
                 </Button>
               ) : (
-                <Button size="sm" disabled={isSaving} onClick={() => void handleSave()}>
+                <Button
+                  size="sm"
+                  disabled={isSaving || !canManageProviders}
+                  onClick={() => void handleSave()}
+                >
                   {isSaving
                     ? "Adding..."
                     : isAcpRegistry && !isLocalAcp

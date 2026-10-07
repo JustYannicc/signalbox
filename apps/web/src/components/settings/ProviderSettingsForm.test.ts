@@ -35,20 +35,13 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
-  it("uses a dedicated environment field instead of legacy Cursor CLI settings", () => {
+  // signalbox: Cursor keys go into a pool, so the provider offers no key field of its own.
+  it("offers no Cursor key or legacy CLI setting", () => {
     const cursor = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("cursor")];
 
     expect(cursor).toBeDefined();
     expect(deriveProviderSettingsFields(cursor!)).toEqual([]);
-    expect(cursor?.environmentFields).toEqual([
-      {
-        name: "CURSOR_API_KEY",
-        label: "Cursor API key",
-        description: "Optional. Overrides browser sign-in for this provider.",
-        placeholder: "Paste API key",
-        sensitive: true,
-      },
-    ]);
+    expect(cursor?.environmentFields).toEqual([]);
   });
 
   it("exposes ACP Registry as an instance-only configurable driver", () => {
@@ -71,27 +64,16 @@ describe("ProviderSettingsForm helpers", () => {
     ).toEqual(["source", "commandPath"]);
   });
 
-  it("derives a select control with its choices for the Antigravity sign-in method", () => {
+  // signalbox: Antigravity accounts and Gemini keys go into a pool, not the provider's settings.
+  it("hides the Antigravity sign-in method and API key", () => {
     const antigravity = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("antigravity")];
     expect(antigravity).toBeDefined();
 
-    const fields = deriveProviderSettingsFields(antigravity!);
-    expect(fields.map((field) => field.key)).toEqual([
-      "authMethod",
-      "apiKey",
+    expect(deriveProviderSettingsFields(antigravity!).map((field) => field.key)).toEqual([
       "gcpProject",
       "gcpLocation",
       "binaryPath",
     ]);
-    const authMethod = fields.find((field) => field.key === "authMethod");
-    expect(authMethod).toMatchObject({ control: "select", clearWhenEmpty: "omit" });
-    expect(authMethod?.options?.map((option) => option.value)).toEqual([
-      "oauth-personal",
-      "oauth-business",
-      "gemini-api-key",
-      "agent-platform",
-    ]);
-    expect(fields.find((field) => field.key === "apiKey")?.control).toBe("password");
   });
 
   it("shows the auto-compaction threshold for Claude providers", () => {

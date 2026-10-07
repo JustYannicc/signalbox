@@ -10,6 +10,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
+import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import type { McpCapability, McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../mcp/OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../mcp/ThreadMetadataMcpService.ts";
@@ -34,7 +35,7 @@ import type { BuiltinToolCall } from "./runner.ts";
  * merges this layer next to its toolkits; the handler layers are the same
  * values it uses, so they're built once.
  *
- * An automation calls as an MCP client without a thread whose ceiling is its
+ * An automation calls as an MCP client without a thread whose access is its
  * own runtime mode, so it can't borrow access, and tools that act as the
  * caller's thread need `threadId`. A thread can't be the caller even for runs
  * attached to one: thread callers need the thread's live turn to change
@@ -118,7 +119,7 @@ const register = Effect.gen(function* () {
         client: {
           sessionId: `automation:${input.automationId}`,
           label: `Automation "${input.automationName}"`,
-          runtimeModeCeiling: input.runtimeMode,
+          access: input.runtimeMode,
         },
       };
       const failed = (cause: unknown) =>
@@ -142,11 +143,11 @@ const register = Effect.gen(function* () {
 export const layer = Layer.effectDiscard(register).pipe(
   Layer.provide(
     Layer.mergeAll(
-      OrchestratorHandlers.layer,
-      ThreadHandlers.layer,
-      ProjectHandlers.layer,
-      PullRequestsHandlers.layer,
-      EnvironmentHandlers.layer,
+      McpToolAccess.HandlersLayer.layer(OrchestratorHandlers.layer),
+      McpToolAccess.HandlersLayer.layer(ThreadHandlers.layer),
+      McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer),
+      McpToolAccess.HandlersLayer.layer(PullRequestsHandlers.layer),
+      McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer),
     ),
   ),
   Layer.provide(Layer.mergeAll(OrchestratorMcpService.layer, ThreadMetadataMcpService.layer)),

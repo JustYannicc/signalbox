@@ -60,7 +60,8 @@ const sdkRequest = <A>(tryRequest: () => Promise<A>) =>
       }),
   });
 
-const liveProbes: CursorSdkCatalogProbes = {
+export const liveProbes: CursorSdkCatalogProbes = {
+  // signalbox: exported for pool key checks
   readUser: (apiKey) => sdkRequest(() => Cursor.me({ apiKey })),
   readModels: (apiKey) => sdkRequest(() => Cursor.models.list({ apiKey })),
 };
