@@ -14,6 +14,7 @@ on:
       - apps/cloud/**
       - apps/web/**
       - packages/account/**
+      - packages/runner-protocol/**
       - packages/client-runtime/**
       - packages/contracts/**
       - packages/shared/**

@@ -1,7 +1,7 @@
 /**
  * Runs a local Runner host for Signalbox Cloud development:
  *
- *   vp run --filter t3 runner -- --cloud http://localhost:8787 --port 8790
+ *   node apps/server/src/signalbox/runner/main.ts --cloud http://localhost:8787 --port 8790
  *
  * Point the cloud at it with `LOCAL_RUNNER_URL=http://localhost:8790` in
  * `apps/cloud/.dev.vars`. Turns run with this machine's own `claude` and

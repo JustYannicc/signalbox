@@ -14,7 +14,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
  * safe. Real backends (Cloudflare Containers, boat) come with #130 and #134.
  *
  * `local` is for development only: a Runner host on the developer's own
- * machine (`vp run --filter t3 runner`), reached at `LOCAL_RUNNER_URL`. It
+ * machine (`node apps/server/src/signalbox/runner/main.ts`), reached at `LOCAL_RUNNER_URL`. It
  * only counts under `LOCAL_WORKERD`, so a deployed Worker never calls a URL
  * someone left in its vars.
  */

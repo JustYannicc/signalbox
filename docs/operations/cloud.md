@@ -31,7 +31,7 @@ Claude and Codex turns run in a Runner on a machine, never in the Worker. Until
 the cloud starts machines itself (#130), your own machine can be one:
 
 ```sh
-vp run --filter t3 runner          # Runner host on http://127.0.0.1:8790
+node apps/server/src/signalbox/runner/main.ts   # Runner host on http://127.0.0.1:8790
 ```
 
 and add `LOCAL_RUNNER_URL=http://127.0.0.1:8790` to `apps/cloud/.dev.vars`. The
