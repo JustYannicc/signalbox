@@ -14,7 +14,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentServerConfigsAtom } from "./server";
 
-export const signalboxContexts = createSignalboxContextsAtoms(connectionAtomRuntime);
+const signalboxContexts = createSignalboxContextsAtoms(connectionAtomRuntime);
 
 /** Each connected Signalbox Cloud environment's contexts, once they've arrived. */
 export const environmentContextsAtom = Atom.make((get) => {

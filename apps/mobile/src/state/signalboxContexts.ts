@@ -6,7 +6,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentServerConfig } from "./entities";
 import { useEnvironmentQuery } from "./query";
 
-export const signalboxContexts = createSignalboxContextsAtoms(connectionAtomRuntime);
+const signalboxContexts = createSignalboxContextsAtoms(connectionAtomRuntime);
 
 /** The environment's contexts, or null when it isn't Signalbox Cloud or hasn't sent them yet. */
 export function useEnvironmentContexts(environmentId: EnvironmentId) {
