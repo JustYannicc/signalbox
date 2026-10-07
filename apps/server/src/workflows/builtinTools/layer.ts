@@ -20,6 +20,8 @@ import * as OrchestratorHandlers from "../../mcp/toolkits/orchestrator/handlers.
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import * as ProjectHandlers from "../../mcp/toolkits/project/handlers.ts";
 import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
+import * as SectionsHandlers from "../../mcp/toolkits/sections/handlers.ts";
+import { SectionsToolkit } from "../../mcp/toolkits/sections/tools.ts";
 import * as PullRequestsHandlers from "../../mcp/toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "../../mcp/toolkits/pullRequests/tools.ts";
 import * as ThreadHandlers from "../../mcp/toolkits/thread/handlers.ts";
@@ -96,6 +98,7 @@ const register = Effect.gen(function* () {
     (yield* ProjectToolkit) as unknown as HandledToolkit,
     (yield* PullRequestsToolkit) as unknown as HandledToolkit,
     (yield* EnvironmentToolkit) as unknown as HandledToolkit,
+    (yield* SectionsToolkit) as unknown as HandledToolkit,
   ];
   const routes = new Map<string, HandledToolkit>();
   for (const toolkit of toolkits)
@@ -148,6 +151,7 @@ export const layer = Layer.effectDiscard(register).pipe(
       McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer),
       McpToolAccess.HandlersLayer.layer(PullRequestsHandlers.layer),
       McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer),
+      McpToolAccess.HandlersLayer.layer(SectionsHandlers.layer),
     ),
   ),
   Layer.provide(Layer.mergeAll(OrchestratorMcpService.layer, ThreadMetadataMcpService.layer)),

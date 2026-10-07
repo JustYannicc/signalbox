@@ -358,6 +358,11 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  SECTION_WS_METHODS,
+  SectionRpcs,
+  SectionsWsRpcGroup as UnauthenticatedSectionsWsRpcGroup,
+} from "./sectionsRpc.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -372,6 +377,8 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
+
+  ...SECTION_WS_METHODS, // signalbox: sections
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -1844,15 +1851,20 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+/** The sections RPCs as one authorized group, for serving them on their own in tests. */
+export const SectionsWsRpcGroup =
+  UnauthenticatedSectionsWsRpcGroup.middleware(RpcScopeAuthorization);
+
 /** Signalbox's RPCs; the server serves them from `signalbox/wsRpc.ts`. */
 export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_ANALYTICS_RPCS,
   ...ACCOUNT_POOL_RPCS,
   ...AutomationRpcs,
+  ...SectionRpcs,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(
-  ...SIGNALBOX_WS_RPCS, // signalbox: analytics, account pools, automations
+  ...SIGNALBOX_WS_RPCS, // signalbox: analytics, account pools, automations, sections
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

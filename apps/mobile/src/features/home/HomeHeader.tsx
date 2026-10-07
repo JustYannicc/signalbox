@@ -10,6 +10,10 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { buildHomeListFilterMenu } from "./home-list-filter-menu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
+import {
+  createSectionNavigationHeaderItem,
+  SectionNavigationToggle,
+} from "../sections/SectionNavigationToggle";
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -31,12 +35,17 @@ export function HomeHeader(props: HomeHeaderProps) {
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={filterMenu.items}
+        optionsVersion={[filterMenu.items, props.sectionsOpen]}
         options={{
           // Static header config (glass, title, fonts) lives in Stack.tsx
           // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
           headerTintColor: iconColor,
           unstable_headerRightItems: () => [
+            createSectionNavigationHeaderItem({
+              open: props.sectionsOpen,
+              onPress: props.onOpenSections,
+              identifier: "home-sections",
+            }),
             withNativeGlassHeaderItem({
               accessibilityLabel: "Open settings",
               icon: { name: "ellipsis", type: "sfSymbol" } as const,
@@ -140,6 +149,11 @@ export function HomeHeader(props: HomeHeaderProps) {
               </NativeHeaderToolbar.Menu>
             ) : null}
           </NativeHeaderToolbar.Menu>
+          <SectionNavigationToggle
+            open={props.sectionsOpen}
+            onPress={props.onOpenSections}
+            variant="native-toolbar"
+          />
           <NativeHeaderToolbar.Spacer flexible />
           <NativeHeaderToolbar.Button
             accessibilityLabel="New task"

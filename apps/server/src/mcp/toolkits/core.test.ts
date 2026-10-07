@@ -44,6 +44,7 @@ import { PreviewControlsToolkit } from "./previewControls/tools.ts";
 import { EnvironmentToolkit } from "./environment/tools.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import { PoolsToolkit } from "./pools/tools.ts"; // signalbox
+import { SectionsToolkit } from "./sections/tools.ts"; // signalbox
 import { ProjectToolkit } from "./project/tools.ts";
 import { AttachmentToolkit } from "./attachment/tools.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
@@ -81,6 +82,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     ProjectToolkit,
     EnvironmentToolkit,
     PoolsToolkit, // signalbox
+    SectionsToolkit, // signalbox
     PreviewControlsToolkit,
     DeviceToolkit,
     PullRequestsToolkit,

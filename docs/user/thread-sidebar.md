@@ -14,6 +14,18 @@ sidebar toggle step through where you've been.
 To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
 **Settings**.
 
+## Organize projects into sections
+
+On web and desktop, choose **Create section** beside **Projects**. Use a section's menu to add a
+subsection, rename it, move it, change its order, or delete it. Deleting a section moves its
+projects and child sections to its parent; deleting a top-level section moves them to the project
+root. Use a project's move menu to place it in a section or back at the root. This organization is
+shared by clients connected to the same environment. On mobile, choose **Browse sections** from
+Home to navigate the project tree.
+
+These sections organize projects. **Pinned**, **Active**, **Snoozed**, and **Settled** in Pipeline
+are thread status groups.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model
@@ -75,7 +87,7 @@ scroll position instead of following the thread to its new place in the list.
 
 Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
-On web and desktop, drag a thread between sections to change its state. Drag a thread up into
+In Pipeline on web and desktop, drag a thread between status groups to change its state. Drag a thread up into
 the pinned section to pin it at the spot you drop it; drag a pinned thread down into the active
 list to unpin it. Dragging a thread onto the **Settled** header settles it, and dragging a settled
 thread into the active list un-settles it. A snoozed thread can be dragged out of the snoozed

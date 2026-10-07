@@ -1,4 +1,5 @@
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
+import { summarizeSectionToolAction } from "./sectionsToolSummary.ts";
 
 export interface T3ToolSummaryCall {
   readonly input: unknown;
@@ -417,6 +418,14 @@ export function summarizeT3ToolCalls(
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);
       break;
+    default:
+      label = summarizeSectionToolAction(action, {
+        phrase,
+        times,
+        created: quantity(selected.length, "section"),
+        sections: quantity(countEntities(entityIds("id")), "section"),
+        projects: quantity(countEntities(projectIds), "project"),
+      });
   }
   return { label, failedCount };
 }

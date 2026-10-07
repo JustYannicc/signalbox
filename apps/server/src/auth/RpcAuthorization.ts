@@ -34,6 +34,7 @@ import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import { SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES } from "../signalbox/analytics/rpc.ts"; // signalbox: analytics
+import { SECTIONS_RPC_REQUIRED_SCOPES } from "../sections/rpcScopes.ts"; // signalbox: sections
 import { ACCOUNT_POOL_RPC_SCOPES } from "../accountHub/poolRpcScopes.ts"; // signalbox: account pools
 
 import { AUTOMATION_RPC_SCOPES } from "../workflows/rpcScopes.ts"; // signalbox: automations
@@ -47,6 +48,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  */
 export const RPC_REQUIRED_SCOPES = {
   ...SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES, // signalbox: analytics
+  ...SECTIONS_RPC_REQUIRED_SCOPES, // signalbox: sections
   ...ACCOUNT_POOL_RPC_SCOPES, // signalbox: account pools
   ...CLIENT_GUARDED_RPC_SCOPES,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
