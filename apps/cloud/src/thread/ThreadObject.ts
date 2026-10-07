@@ -15,6 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as Platform from "../platform.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
+import { layerFromEnv as layerMachineBackend } from "./runner/machineBackends.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import {
   acceptRunnerSocket,
@@ -61,12 +62,11 @@ const makeRuntime = (storage: DurableObjectStorage, env: ThreadObjectEnv) =>
   ManagedRuntime.make(
     ThreadRunner.layer.pipe(
       Layer.provideMerge(ThreadEngine.layer),
+      Layer.provideMerge(layerMachineBackend(env).pipe(Layer.provide(FetchHttpClient.layer))),
+      Layer.provideMerge(ThreadStore.layerMachineRecords),
       Layer.provideMerge(ThreadStore.layer),
       Layer.provideMerge(
-        Layer.mergeAll(
-          UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-          MachineBackend.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
-        ),
+        UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
       ),
       Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
     ),
@@ -153,7 +153,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private stepFailures = 0;
   private deliveryFailures = 0;
   private nextDeliveryAt = 0;
-  private ensureFailures = 0;
+  private machineFailures = 0;
 
   private now() {
     return this.runtime.runPromise(Clock.currentTimeMillis);
@@ -176,7 +176,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         const engine = yield* ThreadEngine.ThreadEngine;
         const runner = work ?? (yield* (yield* ThreadRunner.ThreadRunner).work);
         return (
-          runner.needsUpkeep || (yield* engine.hasTurnWork) || (yield* engine.hasPendingSummary)
+          runner.needsUpkeep ||
+          (yield* engine.hasTurnWork) ||
+          (yield* engine.hasPendingSummary) ||
+          (yield* (yield* MachineBackend.MachineBackend).pending)
         );
       }),
     );
@@ -185,8 +188,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   /**
    * Moves the machine lease toward what the thread needs: asks the backend
-   * for a machine, ends a released one, and hands a connected Runner its
-   * work. Returns when to look again.
+   * for a machine until it runs the lease's Runner, ends a released one and
+   * stops its machine, and hands a connected Runner its work. Returns when to
+   * look again.
    */
   private async tendMachine(now: number): Promise<number | null> {
     const plan = await this.runtime.runPromise(
@@ -196,17 +200,30 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       endRunners(this.ctx, plan.release, "This machine is no longer needed.");
     let wakeAt = plan.wakeAt;
     const ensure = plan.ensure;
-    if (ensure !== null) {
-      const threadId = this.threadId();
+    const threadId = this.threadId();
+    if (ensure !== null || plan.stop) {
+      // `ok`: the backend did what it could; `false` backs off. A machine that is
+      // still coming up is retried at the plan's own pace.
       const ok = await this.runtime.runPromise(
         Effect.gen(function* () {
           const backend = yield* MachineBackend.MachineBackend;
-          if (backend.ensure === null) {
-            return yield* new MachineBackend.MachineBackendError({
-              message: "This cloud has no machine backend.",
-            });
+          if (ensure === null) {
+            const status = yield* backend.stop(threadId);
+            if (
+              status.actual === "none" ||
+              status.actual === "stopped" ||
+              status.actual === "stopping"
+            ) {
+              return true;
+            }
+            yield* Effect.logInfo("machine not stopped yet", status);
+            return false;
           }
-          yield* backend.ensure({ threadId, ...ensure });
+          const status = yield* backend.ensure({ threadId, ...ensure });
+          if (status.actual !== "running") {
+            yield* Effect.logInfo("machine not up yet", status);
+            return status.actual !== "failed";
+          }
           yield* ThreadRunner.ThreadRunner.use((runner) => runner.ensured(ensure.generation));
           return true;
         }).pipe(
@@ -218,14 +235,43 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           }),
         ),
       );
-      this.ensureFailures = ok ? 0 : this.ensureFailures + 1;
+      this.machineFailures = ok ? 0 : this.machineFailures + 1;
       if (!ok) {
-        const retryAt = now + retryDelay(this.ensureFailures);
-        wakeAt = wakeAt === null ? retryAt : Math.min(wakeAt, retryAt);
+        wakeAt = now + retryDelay(this.machineFailures);
       }
+    }
+    if (plan.busy) {
+      const due = await this.refreshMachine(now, threadId);
+      if (due !== null) wakeAt = wakeAt === null ? due : Math.min(wakeAt, due);
     }
     await pushRunnerWork(this.runnerHost);
     return wakeAt;
+  }
+
+  /**
+   * Pushes a working machine's TTL out when it is due; returns when it is due
+   * next. In memory: a woken object refreshes at once, which is harmless.
+   */
+  private lastRefreshAt = 0;
+  private async refreshMachine(now: number, threadId: ThreadId): Promise<number | null> {
+    const every = await this.runtime.runPromise(
+      MachineBackend.MachineBackend.use((backend) => Effect.succeed(backend.refreshEveryMs)),
+    );
+    if (every === null) return null;
+    if (now - this.lastRefreshAt >= every) {
+      const ok = await this.runtime.runPromise(
+        MachineBackend.MachineBackend.use((backend) => backend.refresh(threadId)).pipe(
+          Effect.as(true),
+          Effect.catchTags({
+            MachineBackendError: (error) =>
+              Effect.logError("machine TTL refresh failed", error.message).pipe(Effect.as(false)),
+          }),
+        ),
+      );
+      // A failed refresh is tried again after the usual backoff, well before the TTL.
+      this.lastRefreshAt = ok ? now : now - every + retryDelay(1);
+    }
+    return this.lastRefreshAt + every;
   }
 
   /** The thread's id: its object is named by it. */

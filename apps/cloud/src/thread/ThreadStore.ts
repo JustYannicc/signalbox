@@ -13,6 +13,8 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
+
 /**
  * What one thread's Durable Object persists: its event log, the receipt of
  * every command it decided, who owns it, and the summary outbox that feeds the
@@ -114,6 +116,9 @@ export class ThreadStore extends Context.Service<
     readonly acknowledgeSummary: (revision: number) => Effect.Effect<void, SqlError>;
     readonly machine: Effect.Effect<MachineLease, SqlError>;
     readonly saveMachine: (machine: MachineLease) => Effect.Effect<void, SqlError>;
+    /** The machine backend's record of the thread's machine (`MachineBackend.ts`). */
+    readonly machineRecord: Effect.Effect<MachineRecord, SqlError>;
+    readonly saveMachineRecord: (record: MachineRecord) => Effect.Effect<void, SqlError>;
   }
 >()("@signalbox/cloud/thread/ThreadStore") {}
 
@@ -151,6 +156,13 @@ const migrations = Migrator.fromRecord({
     yield* sql`CREATE TABLE machine (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       lease TEXT NOT NULL
+    )`;
+  }),
+  "0003_machine_record": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE machine_record (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      record TEXT NOT NULL
     )`;
   }),
 });
@@ -197,6 +209,19 @@ const decodeMachineRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ lease: MachineLeaseJson })),
 );
 
+const MachineRecordJson = Schema.fromJsonString(
+  Schema.Struct({
+    machineId: Schema.NullOr(Schema.String),
+    createKey: Schema.NullOr(Schema.String),
+    desired: Schema.Literals(["running", "stopped", "destroyed"]),
+    settled: Schema.Boolean,
+  }),
+);
+const encodeMachineRecord = Schema.encodeSync(MachineRecordJson);
+const decodeMachineRecordRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ record: MachineRecordJson })),
+);
+
 const toStoredEvent = (row: typeof EventRow.Type): StoredEvent => {
   if (row.format !== EVENT_FORMAT) {
     throw new Error(
@@ -239,6 +264,15 @@ const make = Effect.gen(function* () {
   const saveMachine: ThreadStore["Service"]["saveMachine"] = (lease) =>
     sql`INSERT INTO machine (id, lease) VALUES (1, ${encodeMachine(lease)})
       ON CONFLICT (id) DO UPDATE SET lease = excluded.lease`.pipe(Effect.asVoid);
+
+  const machineRecord: ThreadStore["Service"]["machineRecord"] =
+    sql`SELECT record FROM machine_record WHERE id = 1`.pipe(
+      Effect.map((rows) => decodeMachineRecordRows(rows)[0]?.record ?? NO_MACHINE_RECORD),
+    );
+
+  const saveMachineRecord: ThreadStore["Service"]["saveMachineRecord"] = (record) =>
+    sql`INSERT INTO machine_record (id, record) VALUES (1, ${encodeMachineRecord(record)})
+      ON CONFLICT (id) DO UPDATE SET record = excluded.record`.pipe(Effect.asVoid);
 
   const commit: ThreadStore["Service"]["commit"] = Effect.fn("ThreadStore.commit")(function* (
     input,
@@ -299,7 +333,35 @@ const make = Effect.gen(function* () {
     acknowledgeSummary,
     machine,
     saveMachine,
+    machineRecord,
+    saveMachineRecord,
   });
 });
 
 export const layer = Layer.effect(ThreadStore, make);
+
+/**
+ * The machine record in this store. A thread that does not exist yet has no
+ * tables and no machine.
+ */
+export const layerMachineRecords = Layer.effect(
+  MachineRecords,
+  Effect.gen(function* () {
+    const store = yield* ThreadStore;
+    // Tables, once created, stay: only a thread that does not exist yet asks again.
+    let ready = false;
+    return MachineRecords.of({
+      get: Effect.orDie(
+        Effect.suspend(() =>
+          ready
+            ? store.machineRecord
+            : Effect.flatMap(store.initialized, (exists) => {
+                ready = exists;
+                return exists ? store.machineRecord : Effect.succeed(NO_MACHINE_RECORD);
+              }),
+        ),
+      ),
+      save: (record) => Effect.orDie(store.saveMachineRecord(record)),
+    });
+  }),
+);

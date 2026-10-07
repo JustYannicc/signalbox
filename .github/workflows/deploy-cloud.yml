@@ -84,10 +84,13 @@ jobs:
           jq -n \
             --arg SESSION_SECRET "$SESSION_SECRET" \
             --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
+            --arg BOAT_API_KEY "$BOAT_API_KEY" \
             '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
         env:
           SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
           T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
+          # Optional: Claude and Codex on boat VMs (docs/operations/cloud.md).
+          BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
 
       # Secrets ship with the version, so no deploy runs without them.
       - name: Deploy
@@ -96,9 +99,14 @@ jobs:
           ./node_modules/.bin/wrangler deploy --env ""
           --secrets-file "$RUNNER_TEMP/cloud-secrets.json"
           --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
+          --var "CLOUD_URL:https://app.signalbox.run"
+          --var "MACHINE_BACKEND:$MACHINE_BACKEND"
+          --var "MODEL_GATEWAY_URL:$MODEL_GATEWAY_URL"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+          MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+          MODEL_GATEWAY_URL: ${{ vars.MODEL_GATEWAY_URL }}
 
       - &cleanup
         name: Remove secrets file
@@ -139,10 +147,12 @@ jobs:
           jq -n \
             --arg SESSION_SECRET "$session_secret" \
             --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
+            --arg BOAT_API_KEY "$BOAT_API_KEY" \
             '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
         env:
           PREVIEW_SESSION_SECRET: ${{ secrets.CLOUD_PREVIEW_SESSION_SECRET }}
           T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
+          BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
 
       - name: Deploy
         working-directory: apps/cloud
@@ -154,9 +164,14 @@ jobs:
           --var "ENVIRONMENT_ID:cloud-preview-$PR_NUMBER"
           --var "ENVIRONMENT_LABEL:Signalbox Cloud (PR #$PR_NUMBER)"
           --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
+          --var "CLOUD_URL:https://preview-$PR_NUMBER.signalbox.run"
+          --var "MACHINE_BACKEND:$MACHINE_BACKEND"
+          --var "MODEL_GATEWAY_URL:$MODEL_GATEWAY_URL"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+          MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+          MODEL_GATEWAY_URL: ${{ vars.MODEL_GATEWAY_URL }}
 
       - *cleanup
 

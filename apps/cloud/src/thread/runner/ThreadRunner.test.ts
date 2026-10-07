@@ -34,6 +34,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { layerThreadObject } from "../../testing.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
+import { CONNECT_TIMEOUT_MS } from "./MachineBackend.ts";
 import * as ThreadRunner from "./ThreadRunner.ts";
 
 const owner = { userId: "user_1" };
@@ -528,9 +529,9 @@ describe("ThreadRunner", () => {
         yield* launch(engine);
         const plan = yield* runner.reconcile;
         expect(plan.ensure?.generation).toBe(1);
-        yield* TestClock.adjust(ThreadRunner.CONNECT_TIMEOUT_MS + 1);
+        yield* TestClock.adjust(CONNECT_TIMEOUT_MS + 1);
         const timedOut = yield* runner.reconcile;
-        expect(timedOut.release).toBe(1);
+        expect(timedOut).toMatchObject({ release: 1, stop: true });
 
         const { projection } = yield* snapshot(engine);
         expect(projection.runs.map((run) => run.status)).toEqual(["failed"]);
@@ -551,6 +552,8 @@ describe("ThreadRunner", () => {
         yield* launch(engine);
         const machine = yield* connect(runner);
         const turn = yield* liveTurn(runner);
+        // While the turn runs, the machine is busy: its TTL is kept pushed out.
+        expect(yield* runner.reconcile).toMatchObject({ busy: true, stop: false });
         const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
         yield* runner.batch({
           generation: machine.generation,
@@ -558,11 +561,13 @@ describe("ThreadRunner", () => {
           items: [report.started, report.full, report.terminal],
         });
         const idle = yield* runner.reconcile;
-        expect(idle.release).toBeNull();
+        expect(idle).toMatchObject({ release: null, stop: false });
         expect(idle.wakeAt).toBe(ThreadRunner.IDLE_TAIL_MS);
         yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS);
-        expect((yield* runner.reconcile).release).toBe(machine.generation);
+        // The machine stops with the lease, and stays stopped until the next run.
+        expect(yield* runner.reconcile).toMatchObject({ release: machine.generation, stop: true });
         expect((yield* runner.work).needsUpkeep).toBe(false);
+        expect(yield* runner.reconcile).toMatchObject({ ensure: null, stop: true });
       }),
     ),
   );

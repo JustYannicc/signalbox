@@ -66,6 +66,65 @@ time to first token). If the upstream uses a private CA, start the gateway with
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.
 
+### Machines on boat
+
+With `MACHINE_BACKEND=boat`, each thread runs on its own [boat](https://docs.boat.dev)
+VM (`small`: 2 vCPU / 4 GB), started when a turn needs it and stopped after a
+10-minute idle tail. The VM's disk survives the stop, so the next message
+resumes the same VM with its checkout and caches. The Worker needs:
+
+| Name                | Kind   | What                                                                 |
+| ------------------- | ------ | -------------------------------------------------------------------- |
+| `MACHINE_BACKEND`   | var    | `boat`                                                               |
+| `BOAT_API_KEY`      | secret | A boat API key                                                       |
+| `CLOUD_URL`         | var    | The cloud's public origin, which machines dial. The deploy sets it.  |
+| `MODEL_GATEWAY_URL` | var    | The ModelGateway's public origin                                     |
+| `RUNNER_IMAGE`      | var    | Optional. Defaults to `ghcr.io/justyannicc/signalbox-runner:nightly` |
+| `BOAT_MACHINE_TYPE` | var    | Optional. `small` (default), `default` or `large`                    |
+| `BOAT_TTL_SECONDS`  | var    | Optional. Hard TTL, default 7200 (2 hours, boat's trial maximum)     |
+
+The deploy workflow passes `BOAT_API_KEY` from the GitHub environment's
+secrets and `MACHINE_BACKEND` and `MODEL_GATEWAY_URL` from its variables, so
+setting those three turns boat on for production or previews.
+
+How a machine comes up, in `apps/cloud/src/thread/runner/boat/`: the thread
+object records the machine it wants before every boat call, creates the VM with
+an idempotency key it keeps until boat names the VM, and resumes a stopped one.
+Its alarm retries until the machine is up or stopped, so a duplicate alarm or a
+lost boat response never makes a second VM. The VM is created `noEnv` with a
+setup script that installs the Runner as a systemd unit; the object then writes
+the Runner's config (generation, token, cloud and gateway URLs, image) to
+`/home/user/signalbox/machine.json`, and the Runner dials in. boat stops every
+VM at its TTL whatever the object does, so a thread object that is gone cannot
+leak one. While a turn runs, the object pushes that deadline out every quarter
+TTL, so only an abandoned VM reaches it.
+
+The boat key needs the actions `sandbox.create`, `sandbox.read`,
+`sandbox.update`, `sandbox.stop`, `sandbox.resume`, `sandbox.delete` and
+`file.write`.
+
+To try it locally, the machine must reach your `wrangler dev` and the gateway,
+for example through `cloudflared tunnel --url http://127.0.0.1:8787
+--http-host-header 127.0.0.1:8787` (the host header keeps `LOCAL_WORKERD`
+happy), with `CLOUD_URL` and `MODEL_GATEWAY_URL` set to the tunnels.
+
+### The Runner image
+
+`.github/workflows/runner-image.yml` builds the image every VM runs: Node, git,
+the bundled Runner (`vp run runner:bundle` in `apps/server`), and the `claude`
+and `codex` versions pinned in
+`apps/server/src/signalbox/runner/image/Dockerfile`. It publishes
+`ghcr.io/justyannicc/signalbox-runner` as `nightly` (and
+`nightly-<date>-<sha>`) every night from `main`, and as `X.Y.Z` and `stable`
+for every `vX.Y.Z` tag. Run it by hand to publish one now. Pull requests that
+change the Runner build the image without publishing it.
+
+Machines pull the image anonymously, so the package must be public: after its
+first publish, set its visibility once under the package's settings on GitHub.
+A machine follows `RUNNER_IMAGE` at its next wake. Bump the Runner protocol
+only together with a published image, since a machine on an older image is
+refused.
+
 ## Deploying
 
 `.github/workflows/deploy-cloud.yml` builds the web app and runs `wrangler

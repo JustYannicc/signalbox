@@ -26,23 +26,19 @@ import { runnerConnectUrl, webSocketTransport } from "./runnerSocket.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
 /**
- * A development machine backend: this machine, serving every thread that
- * asks. The cloud's `local` backend posts `/machines/ensure` with a thread,
- * generation, token and ModelGateway; the host runs that thread's Runner until
- * the thread lets it go, and a higher generation replaces the thread's older
- * Runner. Real machines run one Runner per thread VM (#130); this stands in
- * for them, giving each thread a machine directory of its own
+ * Runs threads' Runners on this machine. `ensure` starts a thread's Runner at
+ * a generation and keeps it until the thread lets it go; asking again for the
+ * same generation is a no-op, and a higher generation replaces the thread's
+ * older Runner. Each thread gets a machine directory of its own
  * (`machines/<thread>`: home, harness config, model token) so no thread's
  * harnesses see this machine's own logins or another thread's token.
  *
- * `/machines/drop-sockets` closes every Runner's socket, as a network drop
- * would, so reconnecting mid-turn can be tried by hand.
+ * Two fronts use it: `runRunnerHost`, a development machine backend serving
+ * every thread that asks over HTTP, and `runRunnerMachine`, the Runner on a
+ * thread's own VM (`RunnerMachine.ts`).
  */
 
 export interface RunnerHostConfig {
-  /** The cloud's origin, e.g. `http://localhost:8787`. */
-  readonly cloudUrl: string;
-  readonly port: number;
   /** Where threads' working directories and machine state live. */
   readonly home: string;
   readonly machineId: string;
@@ -55,7 +51,9 @@ interface HostedRunner {
   readonly session: RunnerSession;
 }
 
-export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: RunnerHostConfig) {
+export type EnsureOutcome = "started" | "running" | "superseded";
+
+export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: RunnerHostConfig) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const hostScope = yield* Effect.scope;
@@ -68,13 +66,14 @@ export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: Runne
       return Scope.close(runner.scope, Exit.void);
     });
 
-  const ensure = (request: MachineEnsureRequest) =>
+  /** Runs `request`'s Runner, dialing the cloud at `cloudUrl`. */
+  const ensure = (request: MachineEnsureRequest, cloudUrl: string) =>
     lock.withPermits(1)(
       Effect.gen(function* () {
         const existing = runners.get(request.threadId);
-        if (existing?.generation === request.generation) return "running" as const;
+        if (existing?.generation === request.generation) return "running";
         if (existing !== undefined && existing.generation > request.generation) {
-          return "superseded" as const;
+          return "superseded";
         }
         if (existing !== undefined) yield* stop(request.threadId, existing);
         const cwd = path.join(config.home, "threads", request.threadId);
@@ -91,7 +90,7 @@ export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: Runne
             token: request.token,
             machineId: config.machineId,
             imageVersion: config.imageVersion,
-            transport: webSocketTransport(runnerConnectUrl(config.cloudUrl, request.threadId)),
+            transport: webSocketTransport(runnerConnectUrl(cloudUrl, request.threadId)),
             makeTurns: (emit) =>
               makeRunnerTurns({
                 threadId: request.threadId,
@@ -122,9 +121,35 @@ export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: Runne
           Effect.andThen(lock.withPermits(1)(stop(request.threadId, runner))),
           Effect.forkIn(hostScope),
         );
-        return "started" as const;
+        return "started";
       }),
     );
+
+  /** Closes every Runner's socket, as a network drop would. Each reconnects. */
+  const dropSockets = Effect.suspend(() =>
+    Effect.as(
+      Effect.forEach(runners.values(), (runner) => runner.session.dropConnection),
+      runners.size,
+    ),
+  );
+
+  return { ensure, dropSockets };
+});
+
+export interface RunnerHttpHostConfig extends RunnerHostConfig {
+  /** The cloud's origin, e.g. `http://localhost:8787`. */
+  readonly cloudUrl: string;
+  readonly port: number;
+}
+
+/**
+ * A development machine backend: this machine, serving every thread that
+ * asks. The cloud's `local` backend posts `/machines/ensure` with a thread,
+ * generation, token and ModelGateway. `/machines/drop-sockets` closes every
+ * Runner's socket, so reconnecting mid-turn can be tried by hand.
+ */
+export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: RunnerHttpHostConfig) {
+  const host = yield* makeRunnerHost(config);
 
   const routes = Layer.mergeAll(
     HttpRouter.add(
@@ -132,7 +157,7 @@ export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: Runne
       "/machines/ensure",
       Effect.gen(function* () {
         const body = yield* (yield* HttpServerRequest.HttpServerRequest).text;
-        const outcome = yield* ensure(machineEnsureJson.decode(body));
+        const outcome = yield* host.ensure(machineEnsureJson.decode(body), config.cloudUrl);
         return outcome === "superseded"
           ? HttpServerResponse.text("A newer generation runs this thread.", { status: 409 })
           : HttpServerResponse.jsonUnsafe({ outcome });
@@ -147,10 +172,7 @@ export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: Runne
     HttpRouter.add(
       "POST",
       "/machines/drop-sockets",
-      Effect.gen(function* () {
-        yield* Effect.forEach(runners.values(), (runner) => runner.session.dropConnection);
-        return HttpServerResponse.jsonUnsafe({ dropped: runners.size });
-      }),
+      Effect.map(host.dropSockets, (dropped) => HttpServerResponse.jsonUnsafe({ dropped })),
     ),
   );
 
