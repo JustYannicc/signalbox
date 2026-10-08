@@ -61,7 +61,7 @@ export interface RunnerDrive {
 const BRANCH = "refs/heads/signalbox";
 const CONFIG = [
   ["user.name", "Signalbox"],
-  ["user.email", "agent@signalbox.run"],
+  ["user.email", "agent@signalbox.invalid"],
   ["gc.auto", "0"],
   ["core.quotepath", "false"],
 ] as const;
