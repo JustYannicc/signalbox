@@ -216,6 +216,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   serverBrowser: Schema.optionalKey(Schema.Boolean),
   /** Server persists organizational sections and per-project placements. */
   sections: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: Signalbox Cloud opens threads' dev servers through its PreviewGateway (`signalboxPreviews.ts`). */
+  signalboxPreviews: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

@@ -63,6 +63,8 @@ export interface CloudEnvironmentIdentity {
   readonly label: string;
   /** Whether a machine backend can run Claude and Codex here. */
   readonly harnesses?: boolean;
+  /** Whether the PreviewGateway serves threads' dev servers (`thread/preview/`). */
+  readonly previews?: boolean;
 }
 
 export const authDescriptor: ServerAuthDescriptor = {
@@ -86,6 +88,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     sections: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
+    signalboxPreviews: identity.previews === true,
     // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
     projectCloneTracking: true,
   },

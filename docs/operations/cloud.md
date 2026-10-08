@@ -15,7 +15,10 @@ vp run dev                       # wrangler dev on http://localhost:8787
 ```
 
 `wrangler dev` runs fully local: its Durable Object state lives in
-`apps/cloud/.wrangler/` and nothing reaches Cloudflare. Local workerd has no
+`apps/cloud/.wrangler/` and nothing reaches Cloudflare. It runs the `dev`
+environment in `wrangler.jsonc`, the production Worker without its route, so
+each request keeps its own host; with a route, `wrangler dev` rewrites every
+host to the route's, which would hide preview origins. Local workerd has no
 jurisdictions, so `vp run dev` sets `LOCAL_WORKERD=1` to use the plain
 namespace; the Worker refuses to serve with that flag on any host other than
 localhost. Use the WorkOS staging client, whose redirect URIs include
@@ -65,6 +68,46 @@ time to first token). If the upstream uses a private CA, start the gateway with
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.
+
+### Previews of dev servers
+
+The PreviewGateway (`apps/cloud/src/thread/preview/`) opens the web servers a
+thread's machine runs. The Runner keeps a second socket to its thread, the
+preview tunnel (`@signalbox/runner-protocol/PreviewTunnel`), reports the web
+servers it finds listening (upstream's port discovery, `lsof` in the image),
+and carries HTTP and WebSockets to them. The machine accepts no inbound
+connections.
+
+Each thread and port gets its own origin, `<label>.<PREVIEW_DOMAIN>`, because
+dev servers expect to own one (absolute paths, HMR sockets, cookies). Clients
+ask for a link (`signalbox.previews.open`); the link carries a ticket that the
+origin trades for an HttpOnly cookie. Tickets and cookies are signed with the
+machine's lease token, so a new generation voids all of them, and every request
+is checked against the thread's members. An open preview WebSocket (Vite's
+HMR) holds the machine's lease; the idle tail starts when the last one closes
+or the last request ends.
+
+Locally, add `PREVIEW_DOMAIN=localhost:8787` to `.dev.vars`: preview origins
+are `http://<label>.localhost:8787`, which browsers resolve to loopback. With
+the local Runner host, every thread sees the dev servers on your own machine.
+
+To turn previews on for a deployment, it needs a domain whose subdomains reach
+the Worker:
+
+1. Pick the domain. Use a registrable domain of its own (the way GitHub serves
+   user content from `githubusercontent.com`), so preview pages aren't
+   same-site with `app.signalbox.run`. Subdomains of `signalbox.run` also work,
+   but are same-site with the app.
+2. In its Cloudflare zone, add a proxied wildcard DNS record (`*`) and a
+   Worker route `*.<domain>/*` for `signalbox-cloud` (in `wrangler.jsonc`'s
+   `routes`, so deploys keep it). Universal SSL covers one level of
+   subdomains.
+3. Set the `PREVIEW_DOMAIN` variable in the `cloud-production` GitHub
+   environment. The deploy passes it; unset, previews are off and clients hide
+   the control.
+
+Pull request previews don't serve dev-server previews: each would need a
+wildcard domain of its own.
 
 ### Machines on boat
 
@@ -203,6 +246,36 @@ The deploy workflow passes the two variables and the secret from the GitHub
 environment, so setting them turns GitHub-backed drives on. Previews have
 their own origin, which the App's callback list does not include, so connect
 GitHub on production or locally.
+
+### Why a turn failed
+
+Every turn has a trace id: 32 hex characters derived from its run id. The
+same id is on the command receipt that started the turn, the `turn.start` the
+Runner gets (and its own logs), the ModelGateway's `model_gateway.request` log
+lines, and the turn's diagnostic record. The thread object writes that record
+as it goes. It holds the machine generations the turn ran on, with backend,
+machine id, image, digest, Runner revision and `claude`/`codex` versions, how
+each one woke and stopped, and every backend answer. It also holds the
+Runner's own error lines (redacted), each model request with its status and
+tokens, CPU and memory, and the harness's session refs.
+
+- Ask the thread's object, signed in as its owner:
+  `GET /api/cloud/threads/<thread id>/diagnostics` lists recent turns with
+  their trace ids and failures, and `.../diagnostics/<trace, run or command id>` returns
+  one record.
+- In Workers Logs, search for the trace id. When a turn ends, its object logs
+  the whole record as `cloud turn diagnostic`.
+
+### Usage analytics
+
+With `SIGNALBOX_POSTHOG_KEY` set (and `SIGNALBOX_POSTHOG_HOST` for a non-US
+project), thread objects send `cloud.turn.completed` per turn and
+`cloud.machine.session` per machine wake to Signalbox's PostHog. These are the
+#116 events the cost replay reads. Ids are hashed and nothing carries content,
+paths or command text. `T3CODE_TELEMETRY_ENABLED=false` turns them off. The
+deploy passes both variables from the `cloud-production` environment only, so
+previews send nothing. CPU, memory, disk and egress are measured in the
+Runner's container on the VM, so a local Runner host on a Mac reports none.
 
 ## Deploying
 

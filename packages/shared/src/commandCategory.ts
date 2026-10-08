@@ -1,6 +1,7 @@
 /**
- * Sorts an agent's shell command into a coarse workload category. Runs on the
- * server only: the command text never leaves it, just the category.
+ * Sorts an agent's shell command into a coarse workload category for usage
+ * analytics (#116), on the self-hosted server and in a cloud thread's object.
+ * The command text never leaves where it was classified, just the category.
  *
  * @module commandCategory
  */

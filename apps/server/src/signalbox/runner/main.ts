@@ -16,7 +16,9 @@
  *
  * It follows the config file its machine backend writes (`RunnerMachine.ts`)
  * and exits when that file names another image, so the machine restarts it on
- * that image. `SIGNALBOX_RUNNER_IMAGE` names the image it runs.
+ * that image. `SIGNALBOX_RUNNER_IMAGE` names the image it runs,
+ * `SIGNALBOX_RUNNER_IMAGE_DIGEST` its digest and `SIGNALBOX_RUNNER_REVISION`
+ * the commit it was built from.
  */
 // @effect-diagnostics nodeBuiltinImport:off - a CLI entrypoint reads argv, env, the hostname and the cwd.
 import * as NodeOS from "node:os";
@@ -25,9 +27,12 @@ import * as NodeUtil from "node:util";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { RunnerBuild } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as Effect from "effect/Effect";
+import { ChildProcess } from "effect/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
+import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
 import { runRunnerHost } from "./RunnerHost.ts";
 import { runRunnerMachine } from "./RunnerMachine.ts";
 
@@ -42,26 +47,50 @@ const { values, positionals } = NodeUtil.parseArgs({
 });
 
 const imageVersion = process.env.SIGNALBOX_RUNNER_IMAGE?.trim() || packageJson.version;
+const envValue = (name: string) => process.env[name]?.trim() || null;
 
-const program =
-  positionals[0] === "machine"
-    ? runRunnerMachine({
-        configPath: NodePath.resolve(values.config),
-        home: NodePath.resolve(values.home ?? NodePath.dirname(values.config)),
-        machineId: `vm:${NodeOS.hostname()}`,
-        imageVersion,
-      })
-    : Effect.suspend(() => {
-        const port = Number(values.port);
-        if (!Number.isInteger(port) || port <= 0)
-          throw new Error(`--port must be a port number, got ${values.port}.`);
-        return runRunnerHost({
-          cloudUrl: values.cloud,
-          port,
-          home: NodePath.resolve(values.home ?? NodePath.join(".t3", "runner")),
-          machineId: `local:${NodeOS.hostname()}`,
-          imageVersion,
-        });
-      });
+/** A harness CLI's `--version` output; empty when it is missing or fails. */
+const cliVersion = (command: string) =>
+  spawnAndCollect(command, ChildProcess.make(command, ["--version"], { stdin: "ignore" })).pipe(
+    Effect.map((result) => (result.code === 0 ? result.stdout.trim() : "")),
+    Effect.timeout("10 seconds"),
+    Effect.orElseSucceed(() => ""),
+  );
+
+const runnerBuild = Effect.gen(function* () {
+  const cliVersions: Record<string, string> = {};
+  for (const command of ["claude", "codex"]) {
+    const version = yield* cliVersion(command);
+    if (version !== "") cliVersions[command] = version;
+  }
+  return {
+    imageDigest: envValue("SIGNALBOX_RUNNER_IMAGE_DIGEST"),
+    revision: envValue("SIGNALBOX_RUNNER_REVISION"),
+    cliVersions,
+  } satisfies RunnerBuild;
+});
+
+const program = Effect.gen(function* () {
+  if (positionals[0] === "machine") {
+    return yield* runRunnerMachine({
+      configPath: NodePath.resolve(values.config),
+      home: NodePath.resolve(values.home ?? NodePath.dirname(values.config)),
+      machineId: `vm:${NodeOS.hostname()}`,
+      imageVersion,
+      build: yield* runnerBuild,
+    });
+  }
+  const port = Number(values.port);
+  if (!Number.isInteger(port) || port <= 0)
+    throw new Error(`--port must be a port number, got ${values.port}.`);
+  return yield* runRunnerHost({
+    cloudUrl: values.cloud,
+    port,
+    home: NodePath.resolve(values.home ?? NodePath.join(".t3", "runner")),
+    machineId: `local:${NodeOS.hostname()}`,
+    imageVersion,
+    build: yield* runnerBuild,
+  });
+});
 
 program.pipe(Effect.scoped, Effect.provide(NodeServices.layer), NodeRuntime.runMain);

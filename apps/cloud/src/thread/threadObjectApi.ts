@@ -1,20 +1,25 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 
+// Diagnostic records are plain JSON values already (ISO times, no class instances).
+const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 /**
- * A thread object's answers, given a way to run engine effects. The Durable
+ * A thread object's engine answers, given a way to run engine effects. The Durable
  * Object runs them on its own engine; tests run the same code in memory.
  * `afterChange` runs after anything that may have left work for the object
  * (a turn to drive, a summary to deliver).
  */
 export const makeThreadObjectApi = (
-  run: <A, E>(effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine>) => Promise<A>,
+  run: <A, E>(effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports>) => Promise<A>,
   afterChange: () => Promise<void>,
-): ThreadObjectApi => {
+): Omit<ThreadObjectApi, "previews" | "previewLink"> => {
   const reply = <A>(
     effect: Effect.Effect<
       A,
@@ -70,6 +75,18 @@ export const makeThreadObjectApi = (
             Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
           ),
         ),
+      ),
+    diagnostics: (actor, key) =>
+      run(
+        Effect.gen(function* () {
+          const { projection } = yield* (yield* engine).snapshot(actor);
+          const reports = yield* TurnReports;
+          const found =
+            key === null
+              ? { turns: yield* reports.list(projection) }
+              : yield* reports.turn(projection, key);
+          return found === null ? null : encodeRecord(found);
+        }).pipe(Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) })),
       ),
     summary: (actor) =>
       run(

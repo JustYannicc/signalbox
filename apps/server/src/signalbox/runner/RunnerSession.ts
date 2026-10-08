@@ -1,5 +1,6 @@
 import {
   RUNNER_PROTOCOL_VERSION,
+  type RunnerBuild,
   type RunnerItem,
   type RunnerMessage,
   type ThreadMessage,
@@ -15,6 +16,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
+import { runnerLog } from "./runnerLog.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
 
 /**
@@ -24,7 +26,8 @@ import type { RunnerTurns } from "./RunnerTurns.ts";
  * dropped socket loses nothing. Each reconnect says `hello` with the last
  * acknowledged batch, and once the thread answers with the last batch it
  * committed, everything after it is sent again in order. The thread ignores
- * anything it already has, so nothing arrives twice.
+ * anything it already has, so nothing arrives twice. A connection that took
+ * more than one try leaves a line saying so in the outbox.
  */
 
 export class RunnerConnectionError extends Schema.TaggedError<RunnerConnectionError>()(
@@ -50,6 +53,7 @@ export interface RunnerSessionInput {
   readonly token: string;
   readonly machineId: string;
   readonly imageVersion: string;
+  readonly build: RunnerBuild;
   readonly transport: RunnerTransport;
   /** Builds the turn driver once the session can take its reports. */
   readonly makeTurns: (
@@ -72,7 +76,7 @@ interface Batch {
 /** Most items in one batch. */
 const MAX_BATCH_ITEMS = 256;
 /** Reconnect backoff: 250 ms, doubling, at most 5 s. */
-const reconnectDelay = (failures: number) => Math.min(250 * 2 ** failures, 5_000);
+export const reconnectDelay = (failures: number) => Math.min(250 * 2 ** failures, 5_000);
 /** A thread unreachable for this long has no use for this machine. */
 const GIVE_UP_AFTER_MS = 5 * 60_000;
 
@@ -91,6 +95,11 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
   const current = yield* Ref.make<RunnerConnection | null>(null);
   /** Whether the latest connection got as far as `welcome`. */
   const welcomed = yield* Ref.make(false);
+  /** Connections that failed or dropped since the last `welcome`, and why the latest one did. */
+  const troubles = yield* Ref.make<{ readonly count: number; readonly cause: string | null }>({
+    count: 0,
+    cause: null,
+  });
 
   // Closing the session's scope (a newer generation replaced it) ends it too.
   yield* Effect.addFinalizer(() => Deferred.succeed(ended, "stopped"));
@@ -155,6 +164,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         generation: input.generation,
         token: input.token,
         lastAckedSequence: acked,
+        build: input.build,
       });
       const answer = yield* connection.receive;
       if (answer.type === "refused") {
@@ -168,6 +178,17 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       }
       yield* acknowledge(answer.ackedSequence);
       yield* Ref.set(welcomed, true);
+      const before = yield* Ref.getAndSet(troubles, { count: 0, cause: null });
+      if (before.count > 0) {
+        yield* Queue.offer(
+          items,
+          runnerLog(
+            null,
+            "info",
+            `connected after ${before.count} failed or dropped connection${before.count === 1 ? "" : "s"}; last: ${before.cause ?? "closed"}`,
+          ),
+        );
+      }
       yield* Effect.logInfo("runner connected", {
         threadId: input.threadId,
         ackedSequence: answer.ackedSequence,
@@ -197,9 +218,14 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       const now = yield* Clock.currentTimeMillis;
       const wasWelcomed = yield* Ref.get(welcomed);
       if (wasWelcomed) lastConnectedAt = now;
+      const cause = exit._tag === "Failure" ? Cause.pretty(exit.cause).split("\n")[0] : undefined;
+      yield* Ref.update(troubles, (before) => ({
+        count: before.count + 1,
+        cause: cause ?? before.cause,
+      }));
       yield* Effect.logInfo("runner connection closed", {
         threadId: input.threadId,
-        ...(exit._tag === "Failure" ? { cause: Cause.pretty(exit.cause).split("\n")[0] } : {}),
+        ...(cause === undefined ? {} : { cause }),
       });
       if (now - lastConnectedAt >= GIVE_UP_AFTER_MS) {
         yield* Deferred.succeed(ended, "The thread stayed unreachable.");

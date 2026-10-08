@@ -3,14 +3,12 @@ import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import type { ModelAuthorization } from "../thread/runner/ThreadRunner.ts";
-import {
-  handleModelRequest,
-  type ModelGatewayDeps,
-  type ModelGatewayRecord,
-} from "./modelGateway.ts";
+import { handleModelRequest, type ModelGatewayDeps } from "./modelGateway.ts";
+import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
 
 const LIVE = "sbm1.dGhyZWFkLWE.live";
 const runId = RunId.make("run-1");
+const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
 
 const makeGateway = (options: {
   readonly upstream?: (request: Request) => Response;
@@ -26,7 +24,7 @@ const makeGateway = (options: {
       (async (token, provider): Promise<ModelAuthorization> => {
         asked.push([token, provider]);
         return token === LIVE
-          ? { _tag: "granted", runId }
+          ? { _tag: "granted", runId, traceId }
           : { _tag: "denied", reason: "This token is not for the running turn." };
       }),
     upstreams: options.withoutKeys
@@ -166,7 +164,10 @@ describe("ModelGateway", () => {
     expect(openai.status).toBe(401);
     expect(await openai.json()).toMatchObject({ error: { code: "invalid_api_key" } });
     expect(gateway.forwarded).toEqual([]);
-    expect(gateway.logs.map((record) => record.status)).toEqual([401, 401]);
+    expect(gateway.logs).toMatchObject([
+      { status: 401, threadId: "thread-a", runId: null, traceId: null, usage: null },
+      { status: 401, threadId: "thread-a", runId: null, traceId: null, usage: null },
+    ]);
   });
 
   it("serves only a turn's model endpoints, and only with a token", async () => {
@@ -190,4 +191,69 @@ describe("ModelGateway", () => {
     expect((await unreachable.call("/anthropic/v1/messages", auth)).status).toBe(503);
     expect(unreachable.forwarded).toEqual([]);
   });
+
+  it("records the model and token usage an Anthropic stream reports", async () => {
+    const gateway = makeGateway({
+      upstream: () =>
+        sse([
+          'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-opus-5-5",',
+          '"usage":{"input_tokens":12,"cache_creation_input_tokens":300,"cache_read_input_tokens":4000,"output_tokens":1}}}\n\n',
+          'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"hi"}}\n\n',
+          'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":87}}\n\n',
+          'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+        ]),
+    });
+    const response = await gateway.call("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": LIVE },
+      body: "{}",
+    });
+    expect(await response.text()).toContain("message_stop");
+    expect(gateway.logs).toMatchObject([
+      {
+        outcome: "complete",
+        runId,
+        traceId,
+        model: "claude-opus-5-5",
+        usage: { input: 12, output: 87, cacheRead: 4000, cacheWrite: 300 },
+      },
+    ]);
+  });
+
+  it("records the model and token usage an OpenAI stream reports, cached input apart", async () => {
+    const gateway = makeGateway({
+      upstream: () =>
+        sse([
+          'event: response.created\ndata: {"type":"response.created","response":{"model":"gpt-6","usage":null}}\n\n',
+          'event: response.completed\ndata: {"type":"response.completed","response":{"model":"gpt-6-2026-09-01",',
+          '"usage":{"input_tokens":1500,"input_tokens_details":{"cached_tokens":1200},"output_tokens":40}}}\n\n',
+        ]),
+    });
+    const response = await gateway.call("/openai/v1/responses", {
+      method: "POST",
+      headers: { authorization: `Bearer ${LIVE}` },
+      body: "{}",
+    });
+    await response.text();
+    expect(gateway.logs).toMatchObject([
+      {
+        provider: "openai",
+        traceId,
+        model: "gpt-6-2026-09-01",
+        usage: { input: 300, output: 40, cacheRead: 1200, cacheWrite: 0 },
+      },
+    ]);
+  });
 });
+
+/** An event stream sent in the given pieces, which need not end on line boundaries. */
+const sse = (pieces: ReadonlyArray<string>) =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const piece of pieces) controller.enqueue(new TextEncoder().encode(piece));
+        controller.close();
+      },
+    }),
+    { headers: { "content-type": "text/event-stream; charset=utf-8" } },
+  );
