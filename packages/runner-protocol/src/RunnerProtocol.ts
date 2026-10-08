@@ -197,7 +197,8 @@ export const RunnerMachineConfig = Schema.Struct({
 });
 export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;
 
-const frameCodec = <
+/** A JSON text frame codec for one side's messages. */
+export const frameCodec = <
   S extends Schema.Top & { readonly DecodingServices: never; readonly EncodingServices: never },
 >(
   schema: S,

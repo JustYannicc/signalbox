@@ -28,6 +28,7 @@ import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SIGNALBOX_ANALYTICS_RPCS } from "./signalboxAnalytics.ts"; // signalbox: analytics
 import { SIGNALBOX_CONTEXTS_RPCS } from "./signalboxContexts.ts"; // signalbox: contexts
+import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: previews
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -1863,6 +1864,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...AutomationRpcs,
   ...SectionRpcs,
   ...SIGNALBOX_CONTEXTS_RPCS,
+  ...SIGNALBOX_PREVIEWS_RPCS,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(

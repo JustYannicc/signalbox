@@ -2,6 +2,7 @@
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import {
   machineEnsureJson,
   type MachineEnsureRequest,
@@ -21,8 +22,10 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import { makeRunnerAdapters } from "./RunnerAdapters.ts";
 import { writeModelToken } from "./RunnerModelAccess.ts";
+import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
+import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.ts";
 import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
-import { runnerConnectUrl, webSocketTransport } from "./runnerSocket.ts";
+import { runnerConnectUrl, threadSocketUrl, webSocketTransport } from "./runnerSocket.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
 /**
@@ -32,6 +35,9 @@ import { makeRunnerTurns } from "./RunnerTurns.ts";
  * older Runner. Each thread gets a machine directory of its own
  * (`machines/<thread>`: home, harness config, model token) so no thread's
  * harnesses see this machine's own logins or another thread's token.
+ *
+ * Each Runner also runs the PreviewGateway's tunnel for its thread, which
+ * starts and stops with that generation.
  *
  * Two fronts use it: `runRunnerHost`, a development machine backend serving
  * every thread that asks over HTTP, and `runRunnerMachine`, the Runner on a
@@ -59,6 +65,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
   const hostScope = yield* Effect.scope;
   const runners = new Map<ThreadId, HostedRunner>();
   const lock = yield* Semaphore.make(1);
+  const previewPorts = yield* makeDiscoveredPorts;
 
   const stop = (threadId: ThreadId, runner: HostedRunner) =>
     Effect.suspend(() => {
@@ -84,7 +91,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             root: path.join(config.home, "machines", request.threadId),
             gatewayUrl: request.modelGatewayUrl,
           });
-          return yield* makeRunnerSession({
+          const session = yield* makeRunnerSession({
             threadId: request.threadId,
             generation: request.generation,
             token: request.token,
@@ -103,6 +110,16 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 emit,
               }),
           });
+          yield* runPreviewTunnel({
+            threadId: request.threadId,
+            generation: request.generation,
+            token: request.token,
+            transport: previewTunnelTransport(
+              threadSocketUrl(cloudUrl, PREVIEW_TUNNEL_PATH, request.threadId),
+            ),
+            ports: previewPorts,
+          });
+          return session;
         }).pipe(
           Scope.provide(scope),
           // A machine that failed to come up leaves nothing running behind.

@@ -17,6 +17,12 @@ import {
   SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   SIGNALBOX_CONTEXTS_WS_METHODS,
 } from "@t3tools/contracts/signalboxContexts";
+import {
+  SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
+  SIGNALBOX_PREVIEWS_WS_METHODS,
+  SignalboxPreviewError,
+  SignalboxPreviewsUnavailableError,
+} from "@t3tools/contracts/signalboxPreviews";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -64,6 +70,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
   WS_METHODS.projectsEnsureScratch,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
+  ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...SECTION_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
@@ -94,6 +101,7 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
+  ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -267,6 +275,29 @@ export const layerHandlers = (input: {
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
+        [SIGNALBOX_PREVIEWS_WS_METHODS.subscribe]: ({ threadId }) =>
+          identity.previews !== true
+            ? Stream.fail(new SignalboxPreviewsUnavailableError())
+            : threads.previews(actor, threadId).pipe(
+                Stream.map((ports) => ({ threadId, ports })),
+                Stream.tapError(logUnavailable),
+                Stream.mapError(
+                  (error) => new SignalboxPreviewError({ message: failureMessage(error) }),
+                ),
+              ),
+        [SIGNALBOX_PREVIEWS_WS_METHODS.open]: ({ threadId, port }) =>
+          identity.previews !== true
+            ? Effect.fail(new SignalboxPreviewsUnavailableError())
+            : threadCall(
+                threads.openPreview(actor, threadId, port),
+                (message) => new SignalboxPreviewError({ message }),
+              ).pipe(
+                Effect.flatMap((link) =>
+                  link._tag === "ok"
+                    ? Effect.succeed({ url: link.url })
+                    : Effect.fail(new SignalboxPreviewError({ message: link.message })),
+                ),
+              ),
         [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),

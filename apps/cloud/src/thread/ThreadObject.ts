@@ -1,4 +1,5 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
+import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import {
   type ModelGatewayProvider,
   RUNNER_HEARTBEAT_PING,
@@ -14,6 +15,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as Platform from "../platform.ts";
+import { PreviewGateway } from "./preview/PreviewGateway.ts";
+import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { layerFromEnv as layerMachineBackend } from "./runner/machineBackends.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
@@ -44,9 +47,13 @@ import * as ThreadStore from "./ThreadStore.ts";
  * retried, and the object re-arms one whenever it wakes with work
  * outstanding, so neither an eviction nor a deploy strands a turn, a sidebar
  * update or a machine.
+ *
+ * It is also the PreviewGateway's brain (`preview/PreviewGateway.ts`): the
+ * Runner's tunnel lands here, and so does every request to the thread's
+ * preview origins.
  */
 
-export interface ThreadObjectEnv extends MachineBackend.MachineBackendEnv {
+export interface ThreadObjectEnv extends MachineBackend.MachineBackendEnv, PreviewEnv {
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
@@ -58,9 +65,19 @@ const STEP_INTERVAL_MS = 120;
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
 
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
-const makeRuntime = (storage: DurableObjectStorage, env: ThreadObjectEnv) =>
+const makeRuntime = (
+  storage: DurableObjectStorage,
+  env: ThreadObjectEnv,
+  previews: PreviewGateway,
+) =>
   ManagedRuntime.make(
     ThreadRunner.layer.pipe(
+      Layer.provide(
+        Layer.succeed(ThreadRunner.PreviewHold, {
+          held: Effect.sync(() => previews.held),
+          lastActiveAt: Effect.sync(() => previews.lastActiveAt),
+        }),
+      ),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(layerMachineBackend(env).pipe(Layer.provide(FetchHttpClient.layer))),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
@@ -74,8 +91,9 @@ const makeRuntime = (storage: DurableObjectStorage, env: ThreadObjectEnv) =>
 
 export class ThreadObject extends DurableObject<ThreadObjectEnv> implements ThreadObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
-  private readonly api: ThreadObjectApi;
+  private readonly api: ReturnType<typeof makeThreadObjectApi>;
   private readonly runnerHost: RunnerSocketHost;
+  private readonly gateway: PreviewGateway;
 
   constructor(ctx: DurableObjectState, env: ThreadObjectEnv) {
     super(ctx, env);
@@ -83,7 +101,21 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     if (env.LOCAL_WORKERD !== "1" && ctx.id.jurisdiction !== THREAD_OBJECT_JURISDICTION) {
       throw new Error("Thread objects must live in the EU jurisdiction.");
     }
-    this.runtime = makeRuntime(ctx.storage, env);
+    this.gateway = new PreviewGateway({
+      ctx,
+      settings: previewSettings(env),
+      threadId: () => this.threadId(),
+      leaseToken: (generation, token) =>
+        this.runtime.runPromise(
+          ThreadRunner.ThreadRunner.use((runner) => runner.leaseToken(generation, token)),
+        ),
+      canSee: (userId) =>
+        this.runtime.runPromise(
+          ThreadEngine.ThreadEngine.use((engine) => engine.canSee({ userId })),
+        ),
+      holdChanged: () => this.armAlarm(),
+    });
+    this.runtime = makeRuntime(ctx.storage, env, this.gateway);
     this.runnerHost = {
       ctx,
       run: (effect) => this.runtime.runPromise(effect),
@@ -130,22 +162,42 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
   }
 
-  /** The Runner's socket. The Worker forwards only upgrades on `RUNNER_CONNECT_PATH` here. */
-  override async fetch() {
+  previews(...[actor]: Parameters<ThreadObjectApi["previews"]>) {
+    return this.gateway.subscribe(actor.userId);
+  }
+
+  previewLink(...[actor, port]: Parameters<ThreadObjectApi["previewLink"]>) {
+    return this.gateway.link(actor.userId, port);
+  }
+
+  /**
+   * HTTP into the object, all routed by the Worker: requests to the thread's
+   * preview origins, the Runner's preview tunnel, and the Runner's socket.
+   */
+  override async fetch(request: Request) {
+    const preview = this.gateway.serve(request);
+    if (preview !== null) return preview;
+    if (new URL(request.url).pathname === PREVIEW_TUNNEL_PATH) return this.gateway.acceptTunnel();
     return acceptRunnerSocket(this.ctx);
   }
 
   override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
     if (isRunnerSocket(this.ctx, socket)) await onRunnerMessage(this.runnerHost, socket, message);
+    else if (this.gateway.isTunnel(socket)) await this.gateway.onTunnelMessage(socket, message);
+    else if (this.gateway.isClient(socket)) await this.gateway.onClientMessage(socket, message);
   }
 
   override async webSocketClose(socket: WebSocket, code: number, reason: string) {
     if (isRunnerSocket(this.ctx, socket))
       await onRunnerClose(this.runnerHost, socket, code, reason);
+    else if (this.gateway.isTunnel(socket)) await this.gateway.onTunnelClose(socket, code, reason);
+    else if (this.gateway.isClient(socket)) await this.gateway.onClientClose(socket, code, reason);
   }
 
   override async webSocketError(socket: WebSocket) {
     if (isRunnerSocket(this.ctx, socket)) await onRunnerClose(this.runnerHost, socket);
+    else if (this.gateway.isTunnel(socket)) await this.gateway.onTunnelClose(socket);
+    else if (this.gateway.isClient(socket)) await this.gateway.onClientClose(socket);
   }
 
   // Backoff for failing work, in memory: an evicted object starts over, which
@@ -196,8 +248,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     const plan = await this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.reconcile),
     );
-    if (plan.release !== null)
+    if (plan.release !== null) {
       endRunners(this.ctx, plan.release, "This machine is no longer needed.");
+      await this.gateway.release(plan.release);
+    }
     let wakeAt = plan.wakeAt;
     const ensure = plan.ensure;
     const threadId = this.threadId();

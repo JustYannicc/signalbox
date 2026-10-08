@@ -224,6 +224,18 @@ only reports what it would change.
 The browser always runs in Chrome's sandbox. Where you cannot change the host,
 set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
 
+### Dev servers in Signalbox Cloud
+
+In Signalbox Cloud, each thread runs on its own machine. When an agent starts a
+web server there, such as `vite`, the thread's header shows **Preview** with its
+port. Open it from web, desktop, or mobile: it opens in a browser tab at an
+address of its own, with hot reload. Only people in the thread can open it.
+
+A preview lasts as long as the machine. The machine stays up while a preview is
+open and goes to sleep about 10 minutes after the last one closes. After that,
+send a message to wake it, start the server again if needed, and open the
+preview from the header again; old links stop working.
+
 ## Connect an outside agent
 
 Claude Code, Codex, ChatGPT and other agents Signalbox did not start can drive

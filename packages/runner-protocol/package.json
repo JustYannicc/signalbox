@@ -6,6 +6,10 @@
     "./RunnerProtocol": {
       "types": "./src/RunnerProtocol.ts",
       "import": "./src/RunnerProtocol.ts"
+    },
+    "./PreviewTunnel": {
+      "types": "./src/PreviewTunnel.ts",
+      "import": "./src/PreviewTunnel.ts"
     }
   },
   "scripts": {

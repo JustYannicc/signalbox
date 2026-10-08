@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
+import { equalInConstantTime, leaseMac } from "./leaseMac.ts";
+
 /**
  * Model tokens: what a thread's harness presents to the ModelGateway. There is
  * one per thread, provider and turn, derived from the machine's lease token,
@@ -24,20 +26,10 @@ export interface ModelGrant {
   readonly provider: ModelGatewayProvider;
 }
 
-const encoder = new TextEncoder();
-
 export const modelToken = (leaseToken: string, grant: ModelGrant) =>
   Effect.promise(async () => {
-    const subtle = globalThis.crypto.subtle;
-    const key = await subtle.importKey(
-      "raw",
-      encoder.encode(leaseToken),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    );
-    const mac = await subtle.sign("HMAC", key, encoder.encode(`${grant.runId}\n${grant.provider}`));
-    return `${PREFIX}.${Base64Url.encode(grant.threadId)}.${Base64Url.encode(new Uint8Array(mac))}`;
+    const mac = await leaseMac(leaseToken, `${grant.runId}\n${grant.provider}`);
+    return `${PREFIX}.${Base64Url.encode(grant.threadId)}.${mac}`;
   });
 
 /** The thread a model token names, or null when it is not one. Says nothing about validity. */
@@ -50,11 +42,4 @@ export function threadOfModelToken(token: string): string | null {
 
 /** Whether `token` is `grant`'s, compared in constant time. */
 export const isModelToken = (token: string, leaseToken: string, grant: ModelGrant) =>
-  Effect.map(modelToken(leaseToken, grant), (expected) => {
-    if (token.length !== expected.length) return false;
-    let difference = 0;
-    for (let index = 0; index < expected.length; index++) {
-      difference |= token.charCodeAt(index) ^ expected.charCodeAt(index);
-    }
-    return difference === 0;
-  });
+  Effect.map(modelToken(leaseToken, grant), (expected) => equalInConstantTime(token, expected));
