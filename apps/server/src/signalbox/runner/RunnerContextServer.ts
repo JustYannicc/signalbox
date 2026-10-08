@@ -33,7 +33,7 @@ import { makeDrivesView } from "./RunnerDrivesView.ts";
  * replaces at every turn start along with the view of the drives.
  */
 
-export const MCP_PATH = "/mcp";
+const MCP_PATH = "/mcp";
 
 export interface ContextServer {
   /** The MCP endpoint the harnesses are configured with. */

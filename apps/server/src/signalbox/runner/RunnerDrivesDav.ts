@@ -37,7 +37,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const two = (n: number) => String(n).padStart(2, "0");
 
 /** Seconds since the epoch as an HTTP date: `Sun, 06 Nov 1994 08:49:37 GMT`. */
-export const httpDate = (seconds: number) => {
+const httpDate = (seconds: number) => {
   const p = DateTime.toPartsUtc(DateTime.makeUnsafe(seconds * 1000));
   return `${DAYS[p.weekDay]}, ${two(p.day)} ${MONTHS[p.month - 1]} ${p.year} ${two(p.hour)}:${two(p.minute)}:${two(p.second)} GMT`;
 };
@@ -72,7 +72,7 @@ const responseXml = (segments: ReadonlyArray<string>, entry: DrivesEntry) => {
  * them: null (serve the whole file) for no range, one that isn't valid, or an
  * empty file; "unsatisfiable" for one that starts past the end.
  */
-export const parseRange = (header: string | undefined, size: number) => {
+const parseRange = (header: string | undefined, size: number) => {
   const match = header === undefined ? null : /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (match === null || (match[1] === "" && match[2] === "") || size === 0) return null;
   const [first, last] = [match[1]!, match[2]!];

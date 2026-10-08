@@ -64,7 +64,7 @@ type Place =
   | { readonly _tag: "missing" };
 
 /** Path segments under `/drives`, or null for a path outside it or one that climbs out. */
-export const drivesSegments = (path: string): ReadonlyArray<string> | null => {
+const drivesSegments = (path: string): ReadonlyArray<string> | null => {
   const trimmed = path.trim();
   const relative =
     trimmed === DRIVES_ROOT || trimmed === `${DRIVES_ROOT}/`
