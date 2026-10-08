@@ -136,6 +136,8 @@ export const PRESERVED_TEST_LINES: Readonly<Record<string, ReadonlyArray<string>
   "apps/mobile/src/features/threads/new-task-project-selection.test.ts": ['title: "T3 Code"'],
   // Labels agents derive from our MCP server's internal name, `t3-code`.
   "packages/shared/src/t3McpToolPresentation.test.ts": ['"T3 Code ",', '"T3 Code delegate_task",'],
+  // A skill display name used as data; the expectation echoes it.
+  "packages/shared/src/threadFindText.test.ts": ['"Use T3 App Testing now."'],
   // Asserts the Codex clientInfo from CodexProvider.ts, and Codex echoes it in userAgent.
   "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts": [
     "clientInfo: {",

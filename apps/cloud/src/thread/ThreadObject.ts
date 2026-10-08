@@ -263,6 +263,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     await this.armAlarm();
   }
 
+  contextMatch(...args: Parameters<ThreadObjectApi["contextMatch"]>) {
+    return this.api.contextMatch(...args);
+  }
+
+  contextTurns(...args: Parameters<ThreadObjectApi["contextTurns"]>) {
+    return this.api.contextTurns(...args);
+  }
+
   /** The ModelGateway reporting a request it served for this thread (see `modelGrants.ts`). */
   async recordModelRequest(record: ModelGatewayRecord) {
     await this.runtime.runPromise(

@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { ThreadContextTurns, ThreadMatch } from "../context/threadContext.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type {
   DriveAuthorization,
@@ -75,6 +76,13 @@ export interface ThreadObjectApi {
   /** Newline-delimited `{ ports }` snapshots, or null when the actor cannot see the thread. */
   readonly previews: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
   readonly previewLink: (actor: Actor, port: number) => Promise<PreviewLinkResult>;
+  /** Which of `terms` the thread holds, for the context tool; null when none, or it's not the actor's to see. */
+  readonly contextMatch: (
+    actor: Actor,
+    terms: ReadonlyArray<string>,
+  ) => Promise<ThreadMatch | null>;
+  /** The thread's turns for the context tool (`turn`: just that one); null when the actor can't see it. */
+  readonly contextTurns: (actor: Actor, turn: number | null) => Promise<ThreadContextTurns | null>;
 }
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
@@ -115,6 +123,14 @@ export interface ThreadHandle {
     actor: Actor,
     port: number,
   ) => Effect.Effect<PreviewLinkResult, ThreadObjectError>;
+  readonly contextMatch: (
+    actor: Actor,
+    terms: ReadonlyArray<string>,
+  ) => Effect.Effect<ThreadMatch | null, ThreadObjectError>;
+  readonly contextTurns: (
+    actor: Actor,
+    turn: number | null,
+  ) => Effect.Effect<ThreadContextTurns | null, ThreadObjectError>;
 }
 
 export class ThreadDirectory extends Context.Service<
@@ -208,6 +224,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         (line) => wire.previews.decode(line).ports,
       ),
     previewLink: (actor, port) => call("previewLink", () => api.previewLink(actor, port)),
+    contextMatch: (actor, terms) => call("contextMatch", () => api.contextMatch(actor, terms)),
+    contextTurns: (actor, turn) => call("contextTurns", () => api.contextTurns(actor, turn)),
     summary: (actor) =>
       call("summary", () => api.summary(actor)).pipe(
         Effect.flatMap((value) =>

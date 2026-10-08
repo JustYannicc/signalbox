@@ -22,6 +22,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import type * as PlatformError from "effect/PlatformError";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
@@ -39,6 +40,7 @@ import {
 import { makeProviderFailure } from "../../orchestration-v2/ProviderFailure.ts";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { HarnessStderr } from "./harnessStderr.ts";
+import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
@@ -62,6 +64,8 @@ import { isUnmeasured } from "./RunnerUsage.ts";
  * A turn with a drive works in a checkout of it (`RunnerDrive.ts`): checked
  * out before the harness starts, saved after each tool item that may change
  * files, and landed before the turn's end is reported (`RunnerTurnDrive.ts`).
+ * Once the checkout is in place, its dependency trees are brought in step
+ * with their lockfiles (`RunnerDependencies.ts`), one turn at a time.
  *
  * The harness's own session leaves the machine as it is written
  * (`RunnerSessions.ts`): it is restored before the harness loads it, an event
@@ -143,12 +147,16 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** What the harness CLIs wrote to stderr, quoted in failure lines (`harnessStderr.ts`). */
   readonly stderr?: Pick<HarnessStderr, "mark" | "since">;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
+  /** Installs or reuses the dependencies in `cwd` before each turn. */
+  readonly dependencies?: RunnerDependencies;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
   readonly sessions?: RunnerSessions;
   /** This machine's class. On a light one, a turn that needs more moves up (`RunnerMachineClass.ts`). */
   readonly machineClass?: MachineClass;
+  /** Pins this turn's view of every drive the user can read (#141). Never fails. */
+  readonly pinDrives?: (access: DriveAccess) => Effect.Effect<void>;
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
@@ -223,6 +231,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       if (input.sessions !== undefined) yield* input.sessions.flush(driver);
       yield* input.emit({ kind: "machine.outgrown", runId, reason });
     });
+  /** One turn readies the working directory at a time, even after a stop left one installing. */
+  const preparing = yield* Semaphore.make(1);
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null
@@ -563,9 +573,24 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       };
       latestRunId = turn.runId;
       latestTraceId = turn.traceId;
-      // The harness starts in the thread's branch, as the drive last saved it.
+      // `/drives` and the context tool read one version of everything for the whole
+      // turn; the view is taken while the checkout and session load.
+      const pinning =
+        access === null || input.pinDrives === undefined
+          ? null
+          : yield* Effect.forkChild(input.pinDrives(access));
+      // The harness starts in the thread's branch, as the drive last saved it, with its dependencies.
       const opened = access === null ? null : yield* driveFor(access);
-      if (opened !== null && access !== null) yield* opened.prepare(access.remoteToken);
+      yield* preparing.withPermits(1)(
+        Effect.gen(function* () {
+          if (opened !== null && access !== null) yield* opened.prepare(access.remoteToken);
+          if (input.dependencies !== undefined) {
+            yield* input.dependencies.prepare((message) =>
+              input.emit({ kind: "drive.notice", runId: turn.runId, message }),
+            );
+          }
+        }),
+      );
       yield* input.useModelToken(modelToken);
       // The harness loads its session as last saved: on a new machine, from the store.
       if (input.sessions !== undefined && sessionAccess !== null) {
@@ -574,6 +599,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       }
       const session = yield* sessionFor(adapter, turn, runtimePolicy);
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
+      if (pinning !== null) yield* Fiber.join(pinning);
       const started = yield* ordered.withPermits(1)(
         Effect.gen(function* () {
           // Stopped while the session loaded: the thread already ended the run.

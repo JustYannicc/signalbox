@@ -71,22 +71,33 @@ const layerAdapterServices = (
 
 /**
  * One machine's adapters, each under the instance id a self-hosted server
- * gives it by default, with its state under `root`. The adapters and their
- * sessions live as long as the scope.
+ * gives it by default, with its state under `root`, and the environment
+ * their harnesses run in. The adapters and their sessions live as long as
+ * the scope.
  */
 export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (machine: {
   readonly root: string;
   readonly gatewayUrl: string;
   /** Claude's query runner; upstream's own by default. */
   readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
+  /** The Runner's context server, which Codex is configured with (Claude's query runner adds it). */
+  readonly contextMcpUrl?: string;
+  /** The machine's cache variables (`RunnerCaches.ts`), for the harnesses and what they run. */
+  readonly caches?: Readonly<Record<string, string>>;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
   const stderr = makeHarnessStderr();
-  yield* prepareMachine(layout, machine.gatewayUrl);
+  yield* prepareMachine(layout, machine.gatewayUrl, machine.contextMcpUrl ?? null);
+  const environment = harnessEnvironment(
+    yield* HostProcessEnvironment,
+    layout,
+    machine.gatewayUrl,
+    machine.caches,
+  );
   const services = yield* Layer.build(
     layerAdapterServices(
       machine.root,
-      harnessEnvironment(yield* HostProcessEnvironment, layout, machine.gatewayUrl),
+      environment,
       machine.claudeQueryRunner ?? layerClaudeQueryRunner,
       stderr,
     ),
@@ -105,6 +116,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   return {
     layout,
     stderr,
+    environment,
     adapters: new Map<ProviderInstanceId, ProviderAdapterV2Shape>([
       [claude.instanceId, claude],
       [codex.instanceId, codex],

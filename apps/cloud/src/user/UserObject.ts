@@ -246,6 +246,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.driveAccess(driveId);
   }
 
+  readableDrives() {
+    return this.api.readableDrives();
+  }
+
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });

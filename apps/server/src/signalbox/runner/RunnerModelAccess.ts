@@ -59,6 +59,8 @@ export function harnessEnvironment(
   host: NodeJS.ProcessEnv,
   layout: MachineLayout,
   gatewayUrl: string,
+  /** The machine's dependency and build caches (`RunnerCaches.ts`). */
+  caches: Readonly<Record<string, string>> = {},
 ): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of INHERITED) {
@@ -67,6 +69,7 @@ export function harnessEnvironment(
   }
   return {
     ...environment,
+    ...caches,
     HOME: layout.home,
     ANTHROPIC_BASE_URL: gatewayEndpoint(gatewayUrl, "anthropic"),
     // Telemetry and update checks would go to Anthropic directly, with no key.
@@ -82,8 +85,11 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 /** A TOML basic string. */
 const tomlString = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 
-/** Codex's model provider: the gateway's OpenAI endpoint, with the turn's token as bearer. */
-const codexConfig = (layout: MachineLayout, gatewayUrl: string) =>
+/**
+ * Codex's model provider: the gateway's OpenAI endpoint, with the turn's token
+ * as bearer; and the Runner's context server, when there is one.
+ */
+const codexConfig = (layout: MachineLayout, gatewayUrl: string, contextMcpUrl: string | null) =>
   [
     'model_provider = "signalbox"',
     "",
@@ -98,6 +104,9 @@ const codexConfig = (layout: MachineLayout, gatewayUrl: string) =>
     'command = "cat"',
     `args = [${tomlString(layout.tokenFile)}]`,
     "",
+    ...(contextMcpUrl === null
+      ? []
+      : ["[mcp_servers.signalbox]", `url = ${tomlString(contextMcpUrl)}`, ""]),
   ].join("\n");
 
 export const claudeSettings = (base: ClaudeSettings, layout: MachineLayout): ClaudeSettings => ({
@@ -119,10 +128,15 @@ const ClaudeUserSettingsJson = Schema.fromJsonString(
 );
 const encodeClaudeUserSettings = Schema.encodeEffect(ClaudeUserSettingsJson);
 
-/** Creates the machine's directories, Claude's `apiKeyHelper` and Codex's model provider. */
+/**
+ * Creates the machine's directories, Claude's `apiKeyHelper` and Codex's model
+ * provider, and points Codex at the context server (#141). Claude gets the
+ * context server per query (`withContextServer`).
+ */
 export const prepareMachine = Effect.fn("prepareMachine")(function* (
   layout: MachineLayout,
   gatewayUrl: string,
+  contextMcpUrl: string | null = null,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -135,7 +149,7 @@ export const prepareMachine = Effect.fn("prepareMachine")(function* (
   yield* fs.writeFileString(path.join(layout.claudeHome, "settings.json"), settings);
   yield* fs.writeFileString(
     path.join(layout.codexHome, "config.toml"),
-    codexConfig(layout, gatewayUrl),
+    codexConfig(layout, gatewayUrl, contextMcpUrl),
   );
   yield* writeModelToken(layout, "");
 });

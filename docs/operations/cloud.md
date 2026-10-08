@@ -252,6 +252,36 @@ cloud's objects rather than trusted to the Runner:
 created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
 and the same for `-preview`); without them the deploy fails.
 
+### What an agent reads beyond its drive
+
+An agent reads every drive its user can, across contexts, and changes only its
+own (#141). The Runner runs a context server on a loopback port
+(`apps/server/src/signalbox/runner/RunnerContextServer.ts`). It serves the
+`signalbox` MCP server, which Claude gets per query and Codex in its
+`config.toml`, and serves `/drives` as read-only WebDAV, which `rclone mount`
+turns into the folder `/drives/<context>/My Drive`, `…/Shared drives/<name>`
+and `…/Shared with me/<name>`. Both read through the cloud's context API
+(`apps/cloud/src/context/`, under `/api/drive/context/`) with the thread's
+drive token. The token never leaves the Runner, and the user's object is asked
+which drives they can read on every call. At each turn start the Runner takes
+a new view that pins every drive to its `main`, so a turn reads one version
+of everything.
+
+The context tool's search covers the user's own threads (titles, changed
+files, whole conversations), each drive's `main` history, and other threads'
+work that hasn't reconciled yet. Others' threads stay unnamed. Every source is
+capped, and the answer says how much it read. Results must hold most of the
+query's words (`context/contextMatch.ts`); otherwise the answer is
+`insufficient_evidence`.
+
+The mount needs FUSE. The Runner image ships `rclone` and `fuse3`, and boat's
+unit script runs the container with `/dev/fuse` and `SYS_ADMIN` when the VM
+has FUSE. A VM created before that script changed keeps its old unit and runs
+without the mount until it is recreated. Without FUSE, `list_drives` and
+`read_drive_file` read the same paths. To try the mount locally, run the
+Runner host in the image under Docker with `--device /dev/fuse --cap-add
+SYS_ADMIN --security-opt apparmor=unconfined` and `--drives /drives`.
+
 ### Drives backed by GitHub
 
 A user can import a GitHub repository (Settings › Source Control, then Add
@@ -360,6 +390,25 @@ paths or command text. `T3CODE_TELEMETRY_ENABLED=false` turns them off. The
 deploy passes both variables from the `cloud-production` environment only, so
 previews send nothing. CPU, memory, disk and egress are measured in the
 Runner's container on the VM, so a local Runner host on a Mac reports none.
+
+### Dependency and build caches
+
+A machine's caches live on its disk next to the checkouts, never in a drive.
+Package-manager stores and download caches (pnpm's store, npm's cache,
+Corepack, `XDG_CACHE_HOME`) are under `caches/<toolchain>` in the machine's
+home (`apps/server/src/signalbox/runner/RunnerCaches.ts`), one directory per
+OS, libc, architecture and Node major, and the harnesses see them through the
+environment. Before each turn, after the checkout is synced, the Runner finds
+every pnpm or npm lockfile up to two folders deep and keys it on the lockfile,
+the package manager's other install inputs and the toolchain
+(`RunnerDependencies.ts`). An unchanged key reuses `node_modules` and the
+build caches tools keep in it. A changed key, or an install that never
+finished, discards every `node_modules` under that folder and installs fresh
+from the warm store, so nothing built against the old dependencies survives.
+An install that failed is not retried until its key changes. A drive never
+saves `node_modules`, whatever the repository's own ignore files say. The
+image enables Corepack, so a project's `packageManager` picks the pnpm or
+yarn the agent's shell runs.
 
 ## Deploying
 

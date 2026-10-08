@@ -24,8 +24,12 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type { ChildProcessSpawner } from "effect/process";
 
 import { makeRunnerAdapters } from "./RunnerAdapters.ts";
+import { makeMachineCaches } from "./RunnerCaches.ts";
 import { layerSessionQueryRunner } from "./RunnerClaudeSessions.ts";
+import { makeContextClient } from "./RunnerContextClient.ts";
+import { startContextServer, withContextServer } from "./RunnerContextServer.ts";
 import { makeRunnerDrive } from "./RunnerDrive.ts";
+import { makeRunnerDependencies } from "./RunnerDependencies.ts";
 import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { machineLayout, writeModelToken } from "./RunnerModelAccess.ts";
 import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
@@ -59,6 +63,11 @@ export interface RunnerHostConfig {
   readonly imageVersion: string;
   /** Sent in every `hello`. */
   readonly build: RunnerBuild;
+  /**
+   * Where each Runner mounts `/drives` (#141): only on a thread's own VM,
+   * where one Runner runs at a time. Absent: the context tool alone reads it.
+   */
+  readonly drivesMountPoint?: string;
 }
 
 interface HostedRunner {
@@ -80,6 +89,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
   const runners = new Map<ThreadId, HostedRunner>();
   const lock = yield* Semaphore.make(1);
   const previewPorts = yield* makeDiscoveredPorts;
+  const caches = yield* makeMachineCaches(config.home);
 
   const stop = (threadId: ThreadId, runner: HostedRunner) =>
     Effect.suspend(() => {
@@ -107,11 +117,20 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             cloudUrl,
             codexHome: machineLayout(path, root).codexHome,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
-          const { adapters, layout, stderr } = yield* makeRunnerAdapters({
+          // Every drive the user can read, for the harnesses (#141).
+          const context = yield* startContextServer({
+            mountPoint: config.drivesMountPoint ?? null,
+          });
+          const { adapters, layout, stderr, environment } = yield* makeRunnerAdapters({
             root,
             gatewayUrl: request.modelGatewayUrl,
-            claudeQueryRunner: layerSessionQueryRunner(sessions.claude),
+            claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
+              withContextServer(runner, context.mcpUrl),
+            ),
+            contextMcpUrl: context.mcpUrl,
+            caches: caches.environment,
           });
+          const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
           const usage = yield* makeRunnerUsage(config.home);
           const session = yield* makeRunnerSession({
             threadId: request.threadId,
@@ -133,6 +152,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                   ),
                 usage: usage.sample,
                 emit,
+                dependencies,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
                     makeRunnerDrive({ cwd, client }),
@@ -140,6 +160,11 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 sessions,
                 // Each generation's class, as the thread asked for it.
                 machineClass: request.machineClass ?? "heavy",
+                pinDrives: (access) =>
+                  makeContextClient({ cloudUrl, access }).pipe(
+                    Effect.provide(FetchHttpClient.layer),
+                    Effect.flatMap(context.pin),
+                  ),
               }),
           });
           yield* runPreviewTunnel({

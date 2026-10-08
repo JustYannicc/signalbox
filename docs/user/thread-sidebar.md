@@ -45,6 +45,11 @@ its name to create a drive for the organization. To share a folder from My Drive
 Removing someone cuts their access everywhere at once. Threads stay private, even in a shared drive;
 only their file changes land in the drive.
 
+Agents read every drive you can, in every context, but change only the drive their thread works in.
+To reuse work, tell the agent where it happened, like "in Billing we added a dark mode toggle, do the
+same here". It finds the thread and its changes and redoes them in its own drive. If it can't find
+enough to go on, it says so instead of guessing.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model
