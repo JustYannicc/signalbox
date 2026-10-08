@@ -61,7 +61,8 @@ export interface DriveObjectApi {
     readonly name: string;
     readonly members: ReadonlyArray<DrivePerson & { readonly role: SignalboxDriveRole }>;
   }) => Promise<void>;
-  readonly name: () => Promise<string | null>;
+  /** Not `name`: a Durable Object stub has its own `name` property. */
+  readonly driveName: () => Promise<string | null>;
   readonly role: (userId: string) => Promise<SignalboxDriveRole | null>;
   readonly members: () => Promise<ReadonlyArray<SignalboxDriveMember>>;
   readonly share: (
@@ -117,7 +118,7 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     replaceMain: wrap("replaceMain"),
     shortcuts: wrap("shortcuts"),
     setup: wrap("setup"),
-    name: wrap("name"),
+    driveName: wrap("driveName"),
     role: wrap("role"),
     members: wrap("members"),
     share: wrap("share"),

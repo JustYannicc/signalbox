@@ -112,7 +112,7 @@ const make = Effect.gen(function* () {
   const listNow = (driveId: string, userId: string) =>
     Effect.gen(function* () {
       const drive = directory.forDrive(driveId);
-      const name = (yield* drive.name()) ?? "Drive";
+      const name = (yield* drive.driveName()) ?? "Drive";
       const entry = (yield* drive.pendingAccess()).find((pending) => pending.userId === userId);
       if (entry?.role) yield* index.record({ driveId, name, ...entry });
       const role = entry?.role ?? (yield* drive.role(userId));

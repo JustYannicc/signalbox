@@ -144,8 +144,8 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.setup(...args);
   }
 
-  name() {
-    return this.api.name();
+  driveName() {
+    return this.api.driveName();
   }
 
   role(...args: Parameters<DriveObjectApi["role"]>) {

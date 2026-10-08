@@ -37,7 +37,7 @@ export const makeDriveObjectApi = (
     replaceMain: (userId, request) => run(store.use((s) => s.replaceMain(userId, request))),
     shortcuts: () => run(store.use((s) => s.shortcuts)),
     setup: (input) => changingAccess(run(members.use((m) => m.setup(input)))),
-    name: () => run(members.use((m) => m.name)),
+    driveName: () => run(members.use((m) => m.name)),
     role: (userId) => run(members.use((m) => m.role(userId))),
     members: () => run(members.use((m) => m.members)),
     share: (by, person, role) => changingAccess(run(members.use((m) => m.share(by, person, role)))),
