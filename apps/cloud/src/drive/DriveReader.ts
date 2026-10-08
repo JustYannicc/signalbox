@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { DriveDirectory, type DriveObjectError } from "./DriveDirectory.ts";
 import { type DrivePackError, DrivePacks } from "./DrivePacks.ts";
-import { filePatch } from "./drivePatch.ts";
+import { filePatch, MAX_DIFF_BYTES } from "./drivePatch.ts";
 import type { ObjectLocation } from "./DriveStore.ts";
 import {
   type Commit,
@@ -62,15 +62,7 @@ const recall = (key: string) => {
   return object;
 };
 
-/** Splits a workspace-relative path; `""` is the root. Refuses anything that leaves it. */
-export const pathSegments = (path: string): ReadonlyArray<string> | null => {
-  const segments = path.split("/").filter((segment) => segment !== "" && segment !== ".");
-  return segments.some((segment) => segment === "..") ? null : segments;
-};
-
-/** Whether `path` is `folder` or inside it. Both are normalized drive paths. */
-export const isWithin = (path: string, folder: string) =>
-  path === folder || path.startsWith(`${folder}/`);
+export { isWithin, pathSegments } from "@signalbox/runner-protocol/drivePaths";
 
 export interface ChangedFile {
   readonly path: string;
@@ -212,15 +204,30 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (driveId: 
   const diff = (from: Oid | null, to: Oid, options: { readonly ignoreWhitespace: boolean }) =>
     Effect.gen(function* () {
       const changed = yield* changes(yield* treeOf(from), yield* treeOf(to));
+      const blobs = changed.flatMap((file) =>
+        [file.before, file.after].flatMap((entry) => (entry === null ? [] : [entry.oid])),
+      );
+      // A file too big to diff is never read: it shows as changed, without lines.
+      const sizes = new Map(
+        (blobs.length === 0 ? [] : yield* drive.locate(blobs)).map((found) => [
+          found.oid,
+          found.size,
+        ]),
+      );
       const side = (entry: TreeEntry | null, path: string) =>
         entry === null
           ? Effect.succeed(null)
-          : Effect.map(typed(entry.oid, "blob"), (content) => ({
-              path,
-              mode: entry.mode === "100755" || entry.mode === "120000" ? entry.mode : "100644",
-              oid: entry.oid,
-              content,
-            }));
+          : Effect.map(
+              (sizes.get(entry.oid) ?? 0) > MAX_DIFF_BYTES
+                ? Effect.succeed(null)
+                : typed(entry.oid, "blob"),
+              (content) => ({
+                path,
+                mode: entry.mode === "100755" || entry.mode === "120000" ? entry.mode : "100644",
+                oid: entry.oid,
+                content,
+              }),
+            );
       const patches = yield* Effect.forEach(
         changed,
         (file) =>

@@ -14,6 +14,7 @@ import type {
   RefWrite,
   Shortcut,
   StoredCommit,
+  UnreconciledWork,
   ThreadRefs,
 } from "./DriveStore.ts";
 
@@ -65,6 +66,10 @@ export interface DriveObjectApi {
     },
   ) => Promise<RefWrite>;
   readonly shortcuts: () => Promise<ReadonlyArray<Shortcut>>;
+  readonly unreconciled: (input: {
+    readonly limit: number;
+    readonly threadId?: string;
+  }) => Promise<ReadonlyArray<UnreconciledWork>>;
   /** Names the drive and seats its first members; idempotent. */
   readonly setup: (input: {
     readonly name: string;
@@ -129,6 +134,7 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     log: wrap("log"),
     replaceMain: wrap("replaceMain"),
     shortcuts: wrap("shortcuts"),
+    unreconciled: wrap("unreconciled"),
     setup: wrap("setup"),
     driveName: wrap("driveName"),
     role: wrap("role"),

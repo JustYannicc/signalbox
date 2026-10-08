@@ -18,6 +18,14 @@
     "./SessionProtocol": {
       "types": "./src/SessionProtocol.ts",
       "import": "./src/SessionProtocol.ts"
+    },
+    "./ContextProtocol": {
+      "types": "./src/ContextProtocol.ts",
+      "import": "./src/ContextProtocol.ts"
+    },
+    "./drivePaths": {
+      "types": "./src/drivePaths.ts",
+      "import": "./src/drivePaths.ts"
     }
   },
   "scripts": {

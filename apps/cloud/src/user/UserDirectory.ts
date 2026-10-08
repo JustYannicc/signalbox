@@ -5,8 +5,8 @@ import {
 } from "@t3tools/contracts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { AccountProfile } from "@t3tools/contracts/account";
-import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import type { SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
+import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type { SignalboxDrive, SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -104,6 +104,11 @@ export interface UserObjectApi {
   readonly recordDriveAccess: (entry: DriveAccessEntry) => Promise<void>;
   /** The user's role in a drive right now, or null when they can't open it (`UserDrives`). */
   readonly driveAccess: (driveId: string) => Promise<SignalboxDriveRole | null>;
+  /** The user's current contexts and every drive they can open in them (`UserDrives`). */
+  readonly readableDrives: () => Promise<{
+    readonly contexts: ReadonlyArray<SignalboxContext>;
+    readonly drives: ReadonlyArray<SignalboxDrive>;
+  }>;
 }
 
 type Method = keyof UserObjectApi;
@@ -152,6 +157,7 @@ const METHODS = Object.keys({
   contextIds: true,
   recordDriveAccess: true,
   driveAccess: true,
+  readableDrives: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** Results that cross RPC encoded, decoded on arrival. */

@@ -79,10 +79,12 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   readonly gatewayUrl: string;
   /** Claude's query runner; upstream's own by default. */
   readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
+  /** The Runner's context server, which Codex is configured with (Claude's query runner adds it). */
+  readonly contextMcpUrl?: string;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
   const stderr = makeHarnessStderr();
-  yield* prepareMachine(layout, machine.gatewayUrl);
+  yield* prepareMachine(layout, machine.gatewayUrl, machine.contextMcpUrl ?? null);
   const services = yield* Layer.build(
     layerAdapterServices(
       machine.root,

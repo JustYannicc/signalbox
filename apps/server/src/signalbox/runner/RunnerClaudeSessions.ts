@@ -219,12 +219,16 @@ export const withSessions = (
     ),
 });
 
-/** Upstream's query runner, wrapped by `withSessions`. */
-export const layerSessionQueryRunner = (sessions: ClaudeSessions) =>
+/** Upstream's query runner, wrapped by `withSessions` and then `wrap`. */
+export const layerSessionQueryRunner = (
+  sessions: ClaudeSessions,
+  wrap: (runner: ClaudeAgentSdkQueryRunnerShape) => ClaudeAgentSdkQueryRunnerShape = (runner) =>
+    runner,
+) =>
   Layer.effect(
     ClaudeAgentSdkQueryRunner,
     Effect.gen(function* () {
       const inner = yield* ClaudeAgentSdkQueryRunner;
-      return ClaudeAgentSdkQueryRunner.of(withSessions(inner, sessions));
+      return ClaudeAgentSdkQueryRunner.of(wrap(withSessions(inner, sessions)));
     }),
   ).pipe(Layer.provide(layerQueryRunner));
