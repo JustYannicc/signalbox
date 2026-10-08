@@ -153,6 +153,7 @@ const primaryEnvironment = {
   label: "This computer",
   connection: { phase: "connected" },
   entry: {
+    enabled: true,
     target: new PrimaryConnectionTarget({
       environmentId: primaryId,
       label: "This computer",
@@ -166,6 +167,7 @@ const remoteEnvironment = {
   label: "Paired computer",
   connection: { phase: "connected" },
   entry: {
+    enabled: true,
     target: new BearerConnectionTarget({
       environmentId: remoteId,
       label: "Paired computer",
