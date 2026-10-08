@@ -21,7 +21,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { driveCommandFailure } from "./driveCommandFailure";
 
 /** A folder name for a drive: path-unsafe characters and spaces become dashes. */
-export function shortcutFolderName(driveName: string): string {
+function shortcutFolderName(driveName: string): string {
   return driveName
     .trim()
     .toLowerCase()

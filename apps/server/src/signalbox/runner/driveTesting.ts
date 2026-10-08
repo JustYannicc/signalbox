@@ -27,7 +27,7 @@ const GIT_ENV = {
   GIT_INDEX_FILE: undefined,
 };
 
-export const gitRaw = (cwd: string, ...args: Array<string>) =>
+const gitRaw = (cwd: string, ...args: Array<string>) =>
   NodeChildProcess.execFileSync("git", args, {
     cwd,
     env: GIT_ENV,
@@ -283,7 +283,7 @@ export const makeFakeDrive = (
 
 export type FakeDrive = ReturnType<typeof makeFakeDrive>;
 
-export const makeRoot = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-drive-"));
+const makeRoot = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-drive-"));
 
 export const machine = (drive: FakeDrive, root: string, name: string, threadId: string) =>
   makeRunnerDrive({
