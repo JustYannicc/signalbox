@@ -22,7 +22,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
+import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -32,13 +32,16 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import { layerThreadObject } from "../../testing.ts";
+import { UserObjectError } from "../../user/UserDirectory.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { CONNECT_TIMEOUT_MS } from "./MachineBackend.ts";
 import * as ThreadRunner from "./ThreadRunner.ts";
 
-const owner = { userId: "user_1" };
-const personal = { contextId: PERSONAL_CONTEXT_ID };
+const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
+const personal = {
+  place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+};
 const threadId = ThreadId.make("thread-claude");
 const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-fable-5-1" };
 const claudeDriver = ProviderDriverKind.make("claudeAgent");
@@ -61,7 +64,7 @@ const withObject = <A, E>(
     engine: ThreadEngine.ThreadEngine["Service"],
     runner: ThreadRunner.ThreadRunner["Service"],
   ) => Effect.Effect<A, E>,
-  options: { readonly drives?: boolean } = {},
+  options: Parameters<typeof layerThreadObject>[2] = {},
 ) =>
   Effect.scoped(
     Layer.build(layerThreadObject(filename, undefined, options)).pipe(
@@ -700,6 +703,63 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("stops a machine's drive calls once its owner can't change the thread's drive", () => {
+    const design = "shared/org_acme/design";
+    let access: "writes" | "removed" | "unreachable" = "writes";
+    const acme = SignalboxContextId.make("org_acme");
+    const member = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID, acme] };
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* engine.launch(
+            member,
+            {
+              commandId: CommandId.make("launch-design"),
+              threadId,
+              projectId: ProjectId.make(`drive:${design}`),
+              title: "In a shared drive",
+              modelSelection: claude,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+              initialMessage: {
+                messageId: MessageId.make("message-1"),
+                text: "Hi",
+                attachments: [],
+              },
+            },
+            { place: { contextId: acme, driveId: design } },
+          );
+          yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.drive?.driveId).toBe(design);
+          const token = work.drive!.token;
+          expect(yield* runner.authorizeDrive(token)).toMatchObject({
+            _tag: "granted",
+            driveId: design,
+            userId: "user_1",
+          });
+          access = "unreachable";
+          expect(yield* runner.authorizeDrive(token)).toEqual({ _tag: "unavailable" });
+          access = "removed";
+          expect(yield* runner.authorizeDrive(token)).toEqual({
+            _tag: "denied",
+            reason: "You no longer have access to change this drive.",
+          });
+        }),
+      {
+        drives: true,
+        writes: (userId, driveId) => {
+          expect([userId, driveId]).toEqual(["user_1", design]);
+          return access === "unreachable"
+            ? Effect.fail(new UserObjectError({ operation: "driveAccess", cause: "down" }))
+            : Effect.succeed(access === "writes");
+        },
+      },
+    );
+  });
+
   it.effect("gives each machine a drive token that acts only for its own generation and turn", () =>
     withObject(
       freshDatabase(),
@@ -713,6 +773,7 @@ describe("ThreadRunner", () => {
           expect(yield* runner.authorizeDrive(token)).toEqual({
             _tag: "granted",
             threadId,
+            userId: "user_1",
             driveId: "my/personal/user_1",
             generation: machine.generation,
             live: true,

@@ -68,6 +68,10 @@ export const pathSegments = (path: string): ReadonlyArray<string> | null => {
   return segments.some((segment) => segment === "..") ? null : segments;
 };
 
+/** Whether `path` is `folder` or inside it. Both are normalized drive paths. */
+export const isWithin = (path: string, folder: string) =>
+  path === folder || path.startsWith(`${folder}/`);
+
 export interface ChangedFile {
   readonly path: string;
   readonly before: TreeEntry | null;

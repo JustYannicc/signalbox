@@ -26,6 +26,7 @@ import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import * as AccountRoutes from "./http/accountRoutes.ts";
+import * as WorkOSWebhook from "./http/workosWebhook.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
 import * as EnvironmentApi from "./http/environmentApi.ts";
 import * as Platform from "./platform.ts";
@@ -84,7 +85,7 @@ type Services = Layer.Success<ReturnType<typeof layerServices>>;
 
 // Raw account routes resolve services per request, from the context the web
 // handler is built with; the API groups take them when the router is built.
-const routes = Layer.mergeAll(EnvironmentApi.layer, AccountRoutes.layer).pipe(
+const routes = Layer.mergeAll(EnvironmentApi.layer, AccountRoutes.layer, WorkOSWebhook.layer).pipe(
   Layer.provide(layerCors),
 );
 

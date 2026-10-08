@@ -81,7 +81,14 @@ async function authorize(
   const verdict = await threadObjectStub(env.THREADS, threadId.value, {
     localWorkerd,
   }).authorizeDrive(token);
-  return verdict._tag === "granted" ? verdict : text(verdict.reason, 403);
+  switch (verdict._tag) {
+    case "granted":
+      return verdict;
+    case "denied":
+      return text(verdict.reason, 403);
+    case "unavailable":
+      return text("The drive is unavailable right now.", 503);
+  }
 }
 
 let runtime:
@@ -118,6 +125,7 @@ async function route(
   const packsAfter = Number(request.headers.get(PACKS_AFTER_HEADER) ?? 0);
   const writer: DriveWriter = {
     threadId: auth.threadId,
+    userId: auth.userId,
     generation: auth.generation,
     live: auth.live,
     packsAfter: Number.isSafeInteger(packsAfter) && packsAfter > 0 ? packsAfter : 0,

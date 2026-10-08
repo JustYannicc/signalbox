@@ -127,9 +127,11 @@ refused.
 
 ### Drives
 
-Each person has one drive per context (their My Drive), and every thread they
-start in that context works in it (`apps/cloud/src/drive/`). A drive is a git
-repository with no git server: packs in the `DRIVE_PACKS` R2 bucket
+Each person has a My Drive in every context, work organizations have shared
+drives, and a folder shared from a My Drive is split out into a drive of its
+own (`apps/cloud/src/drive/`). Every drive is a project in its owner's and
+members' sidebars, and a thread works in the drive it was started in. A drive
+is a git repository with no git server: packs in the `DRIVE_PACKS` R2 bucket
 (`signalbox-drives`, previews `signalbox-drives-preview`, both in the EU
 jurisdiction), refs in the drive's `DriveObject`. The Runner checks the
 thread's branch out as the harness's working directory, uploads one pack and
@@ -139,8 +141,8 @@ conflict goes back to the agent as one more step of the same turn. Clients
 browse `main` and each turn's diff through the Worker, with no machine
 running.
 
-Two invariants hold the store together, both enforced in the Worker and the
-drive object rather than trusted to the Runner:
+Three invariants hold the store together, all enforced by the Worker and the
+cloud's objects rather than trusted to the Runner:
 
 - **Objects before refs.** An upload is checked object by object, stored in
   R2, and only then indexed; a pack is refused unless everything its commits
@@ -151,6 +153,13 @@ drive object rather than trusted to the Runner:
   machine generation. That thread moves only `threads/<thread>` and
   `wip/<thread>`, and `main` only as a fast-forward to its own branch while its
   turn runs. An older generation writes nothing once a newer one has.
+- **Who reaches a drive.** Two authorities, asked on every request and cached
+  nowhere: the drive object's members (`drive/DriveMembers.ts`) and, for a
+  work organization's drive, the person's own contexts in their user object
+  (`user/UserDrives.ts`). Removing someone from either cuts browsing, their
+  threads' machines and new threads at once. The drive object delivers
+  membership changes to each person's sidebar from its alarm, but access never
+  waits on that delivery.
 
 `wrangler dev` keeps the bucket locally. Deployments need both buckets
 created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
@@ -173,18 +182,27 @@ Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
 which each preview derives its own session secret.
 
-| Name                       | Kind     | What                                                                    |
-| -------------------------- | -------- | ----------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`     | secret   | Account › Workers Scripts: Edit and Account › Account Settings: Read    |
-| `CLOUDFLARE_ACCOUNT_ID`    | variable | The Cloudflare account                                                  |
-| `CLOUD_SESSION_SECRET`     | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out. |
-| `T3CODE_WORKOS_CLIENT_ID`  | variable | WorkOS client id                                                        |
-| `T3CODE_WORKOS_API_KEY`    | secret   | WorkOS API key: email verification (GitHub sign-ins) and work contexts  |
-| `VITE_T3CODE_FEEDBACK_DSN` | variable | Sentry DSN for the sidebar feedback button, baked into the web build    |
+| Name                           | Kind     | What                                                                            |
+| ------------------------------ | -------- | ------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts: Edit and Account › Account Settings: Read            |
+| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                          |
+| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.         |
+| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                |
+| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing |
+| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                          |
+| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build            |
 
 WorkOS must list each origin's `/api/account/callback` as a redirect URI:
 `https://app.signalbox.run/...` for production and
 `https://*.signalbox.run/...` for previews.
+
+Leaving an organization takes away its drives and threads once the cloud
+hears of it. Without a webhook that's the person's next sign-in. To make it
+immediate, add a WorkOS webhook endpoint for
+`https://app.signalbox.run/api/workos/webhook` with the
+`organization_membership.created`, `.updated` and `.deleted` events, and store
+its signing secret as `T3CODE_WORKOS_WEBHOOK_SECRET`. Previews don't receive
+it.
 
 `ENVIRONMENT_ID` in `wrangler.jsonc` is the cloud's identity. Clients key saved
 connections on it, so never change it for a live deployment.

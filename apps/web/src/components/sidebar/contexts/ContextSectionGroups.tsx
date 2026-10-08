@@ -16,6 +16,8 @@ import { Button } from "../../ui/button";
 import { CollapsibleSectionHeader } from "../../ui/collapsible-section-header";
 import { SidebarMenu } from "../../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
+import { DriveShareDialogHost } from "../../drives/DriveProjectShareMenuItem";
+import { NewSharedDriveButton } from "../../drives/NewSharedDriveButton";
 import { useSectionSidebarActions } from "../sections/SectionSidebarActions";
 import {
   sectionSidebarSectionKey,
@@ -41,6 +43,7 @@ export function ContextSectionGroups(props: {
   if (!groups) {
     return (
       <SidebarMenu>
+        <DriveShareDialogHost environmentId={environmentId} />
         {tree.roots.map((node) => props.renderSection(node))}
         {props.renderProjects(props.rootRows)}
       </SidebarMenu>
@@ -49,6 +52,7 @@ export function ContextSectionGroups(props: {
 
   return (
     <div className="flex flex-col gap-1">
+      <DriveShareDialogHost environmentId={environmentId} />
       {groups.map(({ context, roots, projects }) => {
         const foldId = contextFoldId(context.id);
         const expanded = !props.collapsedSections.has(
@@ -80,6 +84,13 @@ export function ContextSectionGroups(props: {
                 </TooltipTrigger>
                 <TooltipPopup side="top">New section</TooltipPopup>
               </Tooltip>
+              {context.kind === "organization" ? (
+                <NewSharedDriveButton
+                  environmentId={environmentId}
+                  contextId={context.id}
+                  contextName={context.name}
+                />
+              ) : null}
             </div>
             {expanded ? (
               <SidebarMenu>

@@ -1,4 +1,7 @@
-import type { DriveFileChange } from "@signalbox/runner-protocol/DriveProtocol";
+import {
+  DRIVE_COMMIT_AUTHOR,
+  type DriveFileChange,
+} from "@signalbox/runner-protocol/DriveProtocol";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -60,8 +63,8 @@ export interface RunnerDrive {
 
 const BRANCH = "refs/heads/signalbox";
 const CONFIG = [
-  ["user.name", "Signalbox"],
-  ["user.email", "agent@signalbox.invalid"],
+  ["user.name", DRIVE_COMMIT_AUTHOR.name],
+  ["user.email", DRIVE_COMMIT_AUTHOR.email],
   ["gc.auto", "0"],
   ["core.quotepath", "false"],
 ] as const;

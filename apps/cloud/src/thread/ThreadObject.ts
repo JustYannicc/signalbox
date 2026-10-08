@@ -5,6 +5,7 @@ import {
   RUNNER_HEARTBEAT_PONG,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { DurableObject } from "cloudflare:workers";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -13,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
+import { canWrite, myDriveId } from "../drive/driveAccess.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
@@ -63,14 +65,24 @@ const STEP_INTERVAL_MS = 120;
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
 
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
+/** Drives, when bound, and the owner's access to one, asked of their own object. */
+const layerThreadDrives = (env: ThreadObjectEnv) =>
+  Layer.effect(
+    ThreadRunner.ThreadDrives,
+    Effect.map(UserDirectory.UserDirectory, (users) => ({
+      enabled: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
+      writes: (userId: string, driveId: string) =>
+        // One's own Personal My Drive needs no lookup: Personal never goes away.
+        driveId === myDriveId(PERSONAL_CONTEXT_ID, userId)
+          ? Effect.succeed(true)
+          : Effect.map(users.forUser(userId).driveAccess(driveId), canWrite),
+    })),
+  );
+
 const makeRuntime = (storage: DurableObjectStorage, env: ThreadObjectEnv) =>
   ManagedRuntime.make(
     ThreadRunner.layer.pipe(
-      Layer.provideMerge(
-        Layer.succeed(ThreadRunner.ThreadDrives, {
-          enabled: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
-        }),
-      ),
+      Layer.provideMerge(layerThreadDrives(env)),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(layerMachineBackend(env).pipe(Layer.provide(FetchHttpClient.layer))),
       Layer.provideMerge(ThreadStore.layerMachineRecords),

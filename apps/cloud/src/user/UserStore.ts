@@ -7,6 +7,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type { AccountProfile } from "@t3tools/contracts/account";
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -18,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as UserContexts from "./UserContexts.ts";
+import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserSections from "./UserSections.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 
@@ -101,8 +103,15 @@ export class UserStore extends Context.Service<
     readonly recordThreadSummary: (
       summary: ThreadSummary,
     ) => Effect.Effect<number | null, SqlError>;
+    /** Every indexed thread with the context it acts as; the shell shows current contexts' only. */
     readonly threadIndex: Effect.Effect<
-      { readonly sequence: number; readonly threads: ReadonlyArray<OrchestrationV2ThreadShell> },
+      {
+        readonly sequence: number;
+        readonly threads: ReadonlyArray<{
+          readonly contextId: SignalboxContextId;
+          readonly shell: OrchestrationV2ThreadShell;
+        }>;
+      },
       SqlError
     >;
     readonly threadMembers: Effect.Effect<ReadonlyArray<ThreadId>, SqlError>;
@@ -172,6 +181,7 @@ const migrations = Migrator.fromRecord({
     yield* sql`INSERT INTO thread_index_state (id, sequence) VALUES (1, 0)`;
   }),
   "0004_contexts_sections": Effect.andThen(UserContexts.createTables, UserSections.createTables),
+  "0005_drives": UserDriveIndex.createTables,
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */
@@ -204,7 +214,7 @@ const GrantRow = Schema.Struct({
 
 const ShellJson = Schema.fromJsonString(OrchestrationV2ThreadShellJson);
 const encodeShell = Schema.encodeSync(ShellJson);
-const IndexRow = Schema.Struct({ shell: ShellJson });
+const IndexRow = Schema.Struct({ context_id: SignalboxContextId, shell: ShellJson });
 const decodeIndexRows = Schema.decodeUnknownSync(Schema.Array(IndexRow));
 const decodeMemberRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ thread_id: ThreadId })),
@@ -380,8 +390,10 @@ const make = Effect.gen(function* () {
     sequence: sql`SELECT sequence FROM thread_index_state WHERE id = 1`.pipe(
       Effect.map((rows) => decodeSequenceRows(rows)[0]?.sequence ?? 0),
     ),
-    threads: sql`SELECT shell FROM thread_index ORDER BY thread_id`.pipe(
-      Effect.map((rows) => decodeIndexRows(rows).map((row) => row.shell)),
+    threads: sql`SELECT context_id, shell FROM thread_index ORDER BY thread_id`.pipe(
+      Effect.map((rows) =>
+        decodeIndexRows(rows).map((row) => ({ contextId: row.context_id, shell: row.shell })),
+      ),
     ),
   }).pipe(sql.withTransaction);
 

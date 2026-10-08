@@ -8,6 +8,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { SIGNALBOX_CONTEXTS_WS_METHODS } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
+import { SIGNALBOX_DRIVES_WS_METHODS } from "@t3tools/contracts/signalboxDrives"; // signalbox: drives
 import type { AutomationSubscriptionRpcTag } from "@t3tools/contracts"; // signalbox: automations
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -75,7 +76,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.terminalAttach
   | typeof WS_METHODS.terminalObserve
   | AutomationSubscriptionRpcTag // signalbox: automations
-  | typeof SIGNALBOX_CONTEXTS_WS_METHODS.subscribe; // signalbox: contexts
+  | typeof SIGNALBOX_CONTEXTS_WS_METHODS.subscribe // signalbox: contexts
+  | typeof SIGNALBOX_DRIVES_WS_METHODS.subscribe; // signalbox: drives
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe

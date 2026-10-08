@@ -28,6 +28,7 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { useDriveFolderShareMenu } from "../drives/useDriveFolderShareMenu"; // signalbox: drives
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -108,6 +109,7 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
+  const driveFolderShareMenu = useDriveFolderShareMenu(environmentId, cwd);
   const {
     entries: directoryEntries,
     load,
@@ -180,16 +182,22 @@ export default function FileBrowserPanel({
       : { x: anchorRect.left, y: anchorRect.bottom };
     const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
     const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+    const driveMenuItems = driveFolderShareMenu.buildItems(relativePath, item.path.endsWith("/"));
     try {
       const clicked = await api.contextMenu.show(
         [
           ...fileMenuItems,
+          ...driveMenuItems,
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
         ],
         position,
       );
       if (clicked === null) return;
+      if (clicked === "share-folder") {
+        driveFolderShareMenu.activate(clicked, relativePath);
+        return;
+      }
       // "Open with" submenu selections report the child id ("editor:<id>"),
       // which is not present in the top-level item list.
       const isFileMenuAction =
@@ -553,6 +561,7 @@ export default function FileBrowserPanel({
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
       />
+      {driveFolderShareMenu.dialog}
     </div>
   );
 }

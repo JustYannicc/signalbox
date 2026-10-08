@@ -12,19 +12,22 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { contextAllows } from "../drive/driveAccess.ts";
 import * as Environment from "../environment.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 import { contextProjects } from "./contextProjects.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserStore from "./UserStore.ts";
 
 /**
  * A user's sidebar, served from their object's thread index: the snapshot
  * `GET /api/orchestration/shell` and `subscribeShell` start from, and the
  * `thread.updated` items that follow as thread objects deliver summaries.
- * Its projects are the user's contexts' (see `contextProjects`); when those
- * change, open subscriptions get a fresh snapshot.
+ * Its projects are the drives of the user's contexts (see `contextProjects`);
+ * when those change, open subscriptions get a fresh snapshot. Threads of a
+ * context the user has left stay indexed but out of sight.
  */
 
 type ShellItem = Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }>;
@@ -55,15 +58,26 @@ export class UserShell extends Context.Service<
 const make = Effect.gen(function* () {
   const store = yield* UserStore.UserStore;
   const contexts = yield* UserContexts.UserContexts;
+  const driveIndex = yield* UserDriveIndex.UserDriveIndex;
+  const { contextIds } = contexts;
   const directory = yield* ThreadDirectory.ThreadDirectory;
   // Thread updates and project changes share one queue, so a subscriber sees
   // them in the order they happened.
   const updates = yield* PubSub.unbounded<ShellUpdate>();
 
   const snapshot: UserShell["Service"]["snapshot"] = Effect.gen(function* () {
-    const projects = contextProjects(yield* contexts.contexts);
+    const current = yield* contexts.contexts;
+    const ids = current.map((context) => context.id);
+    const projects = contextProjects(current, yield* driveIndex.drives);
     // The index last, so the snapshot is as recent as the thread updates around it.
-    return Environment.shellSnapshot({ ...(yield* store.threadIndex), projects });
+    const index = yield* store.threadIndex;
+    return Environment.shellSnapshot({
+      sequence: index.sequence,
+      threads: index.threads
+        .filter((thread) => contextAllows(ids, thread.contextId))
+        .map((thread) => thread.shell),
+      projects,
+    });
   });
 
   yield* contexts.contextsChanged.pipe(
@@ -96,10 +110,13 @@ const make = Effect.gen(function* () {
     return Effect.asVoid(PubSub.publish(updates, item));
   };
 
+  /** Indexes the summary; open sidebars hear of it only while its context is the user's. */
   const record = (summary: ThreadSummary) =>
-    Effect.flatMap(store.recordThreadSummary(summary), (sequence) =>
-      sequence === null ? Effect.void : publish(summary, sequence),
-    );
+    Effect.gen(function* () {
+      const sequence = yield* store.recordThreadSummary(summary);
+      if (sequence === null || !contextAllows(yield* contextIds, summary.contextId)) return;
+      yield* publish(summary, sequence);
+    });
 
   const subscribe: UserShell["Service"]["subscribe"] = (input) =>
     Effect.gen(function* () {
@@ -133,12 +150,17 @@ const make = Effect.gen(function* () {
     // fails the rebuild and leaves the current index as it was.
     const summaries = yield* Effect.forEach(
       yield* store.threadMembers,
-      (threadId) => directory.forThread(threadId).summary({ userId: profile.id }),
+      // Summaries of every context: the index keeps threads of contexts the user left.
+      (threadId) => directory.forThread(threadId).summary({ userId: profile.id, contextIds: [] }),
       { concurrency: 8 },
     );
     const present = summaries.filter((summary) => summary !== null);
     const recorded = yield* store.replaceThreadIndex(present);
-    yield* Effect.forEach(recorded, ({ summary, sequence }) => publish(summary, sequence));
+    const ids = yield* contextIds;
+    yield* Effect.forEach(
+      recorded.filter(({ summary }) => contextAllows(ids, summary.contextId)),
+      ({ summary, sequence }) => publish(summary, sequence),
+    );
     return present.length;
   });
 
