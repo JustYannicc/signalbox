@@ -43,6 +43,12 @@ type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
 export const HARNESS_MODES_UNSUPPORTED =
   "Claude and Codex in the cloud run with full access and without plan mode for now: approvals can't reach cloud machines yet.";
 
+/** A thread's own branch, and the path clients address its working tree by. */
+export interface ThreadWorktree {
+  readonly branch: string;
+  readonly path: string;
+}
+
 /** The rejection for a command the cloud does not serve yet. */
 export const unsupported = (commandType: string) =>
   `${commandType} is not available in the cloud yet.`;
@@ -273,6 +279,7 @@ export function decideLaunch(
   projection: Projection | null,
   input: OrchestrationV2ThreadLaunchInput & { readonly threadId: ThreadId },
   ctx: DecisionContext,
+  worktree: ThreadWorktree | null = null,
 ): Decision {
   if (input.workspaceStrategy.type !== "root") {
     return reject("Cloud threads have no worktrees yet.");
@@ -295,8 +302,8 @@ export function decideLaunch(
             modelSelection: input.modelSelection,
             runtimeMode: input.runtimeMode,
             interactionMode: input.interactionMode,
-            branch: null,
-            worktreePath: null,
+            branch: worktree?.branch ?? null,
+            worktreePath: worktree?.path ?? null,
           },
           ctx,
         )

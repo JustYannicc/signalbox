@@ -98,7 +98,11 @@ export const withObject = <A, E>(
     ),
   );
 
-export const launch = (engine: ThreadEngine.ThreadEngine["Service"], commandId = "launch-1") =>
+export const launch = (
+  engine: ThreadEngine.ThreadEngine["Service"],
+  commandId = "launch-1",
+  creation: ThreadEngine.ThreadCreation = personal,
+) =>
   engine.launch(
     owner,
     {
@@ -112,7 +116,7 @@ export const launch = (engine: ThreadEngine.ThreadEngine["Service"], commandId =
       workspaceStrategy: { type: "root" },
       initialMessage: { messageId: MessageId.make("message-1"), text: "Hi", attachments: [] },
     },
-    personal,
+    creation,
   );
 
 export const hello = (generation: number, token: string) => ({

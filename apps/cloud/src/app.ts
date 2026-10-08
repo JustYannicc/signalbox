@@ -25,6 +25,8 @@ import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
+import * as GitHub from "./github/GitHub.ts";
+import * as GitHubRoutes from "./github/githubRoutes.ts";
 import * as AccountRoutes from "./http/accountRoutes.ts";
 import * as WorkOSWebhook from "./http/workosWebhook.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
@@ -68,6 +70,9 @@ export const layerServices = (input: {
     // The Worker only reads threads; they are created in their user's object.
     Layer.provideMerge(ThreadContexts.layerWorker),
     Layer.provideMerge(CloudSessions.layer),
+    Layer.provideMerge(
+      GitHub.layer(GitHub.gitHubAppConfig(input.vars), GitHub.gitHubEndpoints(input.vars)),
+    ),
     Layer.provideMerge(CloudTokens.layer),
     Layer.provideMerge(CloudConfig.layer),
     Layer.provideMerge(
@@ -91,6 +96,7 @@ const routes = Layer.mergeAll(
   AccountRoutes.layer,
   DiagnosticsRoutes.layer,
   WorkOSWebhook.layer,
+  GitHubRoutes.layer,
 ).pipe(Layer.provide(layerCors));
 
 const json = (body: unknown, status: number) =>

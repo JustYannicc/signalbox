@@ -27,7 +27,7 @@ import * as Stream from "effect/Stream";
 
 import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
-import { type Decision, decide, decideLaunch } from "./threadDecider.ts";
+import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection } from "./threadProjection.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -91,6 +91,8 @@ export interface Actor {
  */
 export interface ThreadCreation {
   readonly place: { readonly contextId: SignalboxContextId; readonly driveId: string } | null;
+  /** The branch and worktree a new thread gets, when its drive has threads work on their own branch. */
+  readonly worktree?: ThreadWorktree | null;
 }
 
 const NO_CONTEXT =
@@ -377,7 +379,14 @@ const make = Effect.gen(function* () {
         type: command.type,
         createsThread: command.type === "thread.create",
       },
-      (projection, ctx) => decide(projection, command, ctx),
+      (projection, ctx) =>
+        decide(
+          projection,
+          command.type === "thread.create" && creation.worktree
+            ? { ...command, branch: creation.worktree.branch, worktreePath: creation.worktree.path }
+            : command,
+          ctx,
+        ),
     ).pipe(Effect.map(({ sequence }) => ({ sequence })));
 
   const launch: ThreadEngine["Service"]["launch"] = (actor, input, creation) =>
@@ -386,7 +395,7 @@ const make = Effect.gen(function* () {
         actor,
         creation,
         { id: input.commandId, type: "thread.launch", createsThread: true },
-        (projection, ctx) => decideLaunch(projection, input, ctx),
+        (projection, ctx) => decideLaunch(projection, input, ctx, creation.worktree ?? null),
       );
       const { projection } = yield* readable(actor);
       return { threadId: input.threadId, projection, resumed: result.replayed };

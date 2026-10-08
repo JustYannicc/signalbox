@@ -7,6 +7,7 @@ import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
@@ -15,6 +16,9 @@ import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
+import * as GitHub from "../github/GitHub.ts";
+import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as Platform from "../platform.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
@@ -49,7 +53,7 @@ import * as UserStore from "./UserStore.ts";
  * while a client is connected.
  */
 
-export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv {
+export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv {
   /**
    * Drives' objects and packs: clients browse and share them through this
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
@@ -104,13 +108,22 @@ const layerDrives = (env: UserObjectEnv) => {
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
   return ManagedRuntime.make(
-    Layer.mergeAll(
-      UserShell.layer,
-      CloudThreadService.layer,
-      UserSections.layer,
-      drives.services,
-    ).pipe(
+    GitHubBranches.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          UserShell.layer,
+          CloudThreadService.layer,
+          UserSections.layer,
+          drives.services,
+          GitHubConnection.layer,
+        ),
+      ),
       Layer.provideMerge(ThreadContexts.layer),
+      Layer.provideMerge(
+        GitHub.layer(GitHub.gitHubAppConfig(env), GitHub.gitHubEndpoints(env)).pipe(
+          Layer.provide(FetchHttpClient.layer),
+        ),
+      ),
       Layer.provideMerge(UserDrives.layer),
       Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives)),
       Layer.provideMerge(drives.store),
@@ -203,6 +216,22 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   rebuildThreadIndex() {
     return this.api.rebuildThreadIndex();
+  }
+
+  beginGitHubConnect(redirectUri: string) {
+    return this.api.beginGitHubConnect(redirectUri);
+  }
+
+  completeGitHubConnect(input: Parameters<UserObjectApi["completeGitHubConnect"]>[0]) {
+    return this.api.completeGitHubConnect(input);
+  }
+
+  disconnectGitHub() {
+    return this.api.disconnectGitHub();
+  }
+
+  githubAccessToken() {
+    return this.api.githubAccessToken();
   }
 
   contextIds() {

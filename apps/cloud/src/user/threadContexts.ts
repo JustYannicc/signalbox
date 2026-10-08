@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { canWrite, parseDriveId } from "../drive/driveAccess.ts";
+import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { driveOfProject } from "./contextProjects.ts";
 import * as UserDrives from "./UserDrives.ts";
 
@@ -12,6 +13,8 @@ import * as UserDrives from "./UserDrives.ts";
 export interface ThreadPlace {
   readonly contextId: SignalboxContextId;
   readonly driveId: string;
+  /** Whether the drive is backed by a remote repository, so each thread works on its own branch. */
+  readonly remote: boolean;
 }
 
 /** What `CloudThreadService` needs to know about contexts and drives: where a new thread works. */
@@ -32,6 +35,7 @@ export const layer = Layer.effect(
   ThreadContexts,
   Effect.gen(function* () {
     const drives = yield* UserDrives.UserDrives;
+    const directory = yield* Effect.serviceOption(DriveDirectory);
     return ThreadContexts.of({
       placeOfProject: (projectId) =>
         Effect.gen(function* () {
@@ -40,9 +44,13 @@ export const layer = Layer.effect(
           const parsed = driveId === null ? null : parseDriveId(driveId);
           if (driveId === null || parsed === null) return null;
           // `access` also says whether the user is still in the drive's context.
-          return canWrite(yield* drives.access(driveId))
-            ? { contextId: parsed.contextId, driveId }
-            : null;
+          if (!canWrite(yield* drives.access(driveId))) return null;
+          // A My Drive is always its own home; any other drive says whether a remote is.
+          const remote =
+            parsed.kind !== "my" &&
+            directory._tag === "Some" &&
+            (yield* directory.value.forDrive(driveId).remote()) !== null;
+          return { contextId: parsed.contextId, driveId, remote };
         }).pipe(
           // A storage or drive failure is a bug or an outage, not a rejected command.
           Effect.orDie,

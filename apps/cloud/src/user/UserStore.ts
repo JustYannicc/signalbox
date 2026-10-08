@@ -18,6 +18,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserSections from "./UserSections.ts";
@@ -182,6 +183,7 @@ const migrations = Migrator.fromRecord({
   }),
   "0004_contexts_sections": Effect.andThen(UserContexts.createTables, UserSections.createTables),
   "0005_drives": UserDriveIndex.createTables,
+  "0006_github": GitHubConnection.createTables,
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */

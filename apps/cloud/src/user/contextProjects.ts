@@ -1,4 +1,4 @@
-import { type OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
+import { type OrchestrationProjectShell, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   PERSONAL_CONTEXT_ID,
   type SignalboxContext,
@@ -7,6 +7,7 @@ import {
 
 import { myDriveId, parseDriveId } from "../drive/driveAccess.ts";
 import * as Environment from "../environment.ts";
+import type { ThreadWorktree } from "../thread/threadDecider.ts";
 import type { IndexedDrive } from "./UserDriveIndex.ts";
 
 /**
@@ -105,3 +106,35 @@ export const contextProjects = (
         workspaceRoot: `${DRIVE_ROOT_PREFIX}${drive.driveId}`,
       })),
   ]);
+
+/** A drive's root, as its project's workspace root. */
+export const driveRoot = (driveId: string) => `${DRIVE_ROOT_PREFIX}${driveId}`;
+
+const THREADS_SEGMENT = "/threads/";
+
+/**
+ * A thread's own branch on its drive's remote (#135), and the path clients
+ * address its working tree by. The branch name only has to be stable and
+ * unlikely to collide within one repository.
+ */
+export const remoteThreadWorktree = (driveId: string, threadId: ThreadId): ThreadWorktree => ({
+  branch: `signalbox/${threadId
+    .replace(/[^0-9a-zA-Z]/g, "")
+    .slice(-8)
+    .toLowerCase()}`,
+  path: `${driveRoot(driveId)}${THREADS_SEGMENT}${threadId}`,
+});
+
+/** The drive and thread a working tree from `remoteThreadWorktree` names, or null for any other path. */
+export const threadWorktreeAt = (
+  cwd: string,
+): { readonly driveId: string; readonly threadId: ThreadId } | null => {
+  if (!cwd.startsWith(DRIVE_ROOT_PREFIX)) return null;
+  const at = cwd.indexOf(THREADS_SEGMENT, DRIVE_ROOT_PREFIX.length);
+  if (at === -1) return null;
+  const driveId = cwd.slice(DRIVE_ROOT_PREFIX.length, at);
+  const threadId = cwd.slice(at + THREADS_SEGMENT.length);
+  return parseDriveId(driveId) === null || threadId === ""
+    ? null
+    : { driveId, threadId: ThreadId.make(threadId) };
+};

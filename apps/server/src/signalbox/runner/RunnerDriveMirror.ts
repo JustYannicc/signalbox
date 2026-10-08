@@ -11,7 +11,9 @@ import type { RunnerGit } from "./RunnerGit.ts";
  * between them. `refs/drive/{main,thread,wip}` mirror the drive's refs as
  * last seen, and only ever name commits the drive has, so a pack of what a
  * commit reaches `^` those refs is closed: everything it points at is in the
- * pack or already in the drive.
+ * pack or already in the drive. A remote-backed drive's `main` is the
+ * remote's head, fetched one commit deep (the repository is shallow there),
+ * so a pack of it holds its whole tree and leaves its parents on the remote.
  */
 
 const REF_ATTEMPTS = 3;
@@ -29,6 +31,17 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
   const packDir = path.join(gitDir, "objects", "pack");
   let known: DriveRefs = { main: null, thread: null, wip: null };
 
+  /** Lists commits whose parents stay on the remote, so git never looks for them. */
+  const markShallow = (oids: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const file = path.join(gitDir, "shallow");
+      const current = (yield* fs.exists(file)) ? yield* fs.readFileString(file) : "";
+      const listed = new Set(current.split("\n").filter((line) => line.length > 0));
+      const missing = oids.filter((oid) => !listed.has(oid));
+      if (missing.length === 0) return;
+      yield* fs.writeFileString(file, [...listed, ...missing, ""].join("\n"));
+    });
+
   /** One index over every pack, so lookups stay fast as auto-saves pile packs up. */
   const indexPacks = git.run(["multi-pack-index", "write"]).pipe(Effect.asVoid);
 
@@ -39,6 +52,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         concurrency: 8,
         discard: true,
       });
+      if (state.shallow.length > 0) yield* markShallow(state.shallow);
       if (state.packs.length > 0) {
         client.havePacksThrough(Math.max(...state.packs.map((pack) => pack.seq)));
         yield* indexPacks;
@@ -50,7 +64,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
     });
 
   /** Uploads what `commit` reaches that the drive lacks, as one full (not thin) pack. */
-  const upload = (commit: string) =>
+  const upload = (commit: string, options: { readonly remoteHead?: boolean } = {}) =>
     Effect.gen(function* () {
       const have = [known.main, known.thread, known.wip].filter((oid) => oid !== null);
       const fresh = yield* git.run(["rev-list", "--count", commit, "--not", ...have]);
@@ -70,6 +84,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         const result = yield* client.uploadPack(
           yield* fs.readFile(file("idx")),
           yield* fs.readFile(file("pack")),
+          options.remoteHead === true ? { remoteHead: commit } : {},
         );
         // Kept, so the next `open` does not download it back. The index goes last.
         yield* fs.rename(file("pack"), path.join(packDir, `pack-${result.name}.pack`));
@@ -103,6 +118,27 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
       Effect.map(() => known),
     ),
     adopt,
+    /** Reads the drive and mirrors it, without opening it for the thread. */
+    refresh: client.state.pipe(
+      Effect.tap(adopt),
+      Effect.map((state) => state.remote),
+    ),
+    /**
+     * Uploads the remote's head and moves `main` to it. Another thread may
+     * have done the same meanwhile; answers a refusal's reason, or null.
+     */
+    mirrorMain: (head: string) =>
+      Effect.gen(function* () {
+        if (known.main === head) return null;
+        yield* upload(head, { remoteHead: true });
+        for (let attempt = 0; attempt < REF_ATTEMPTS; attempt++) {
+          const result = yield* client.mirror({ expectedMain: known.main, newMain: head });
+          if (result._tag === "refused") return result.reason;
+          yield* adopt(result.state);
+          if (result._tag === "ok") return null;
+        }
+        return "main kept moving.";
+      }),
     /** Saves `commit` as the auto-save. */
     saveWip: (commit: string) =>
       upload(commit).pipe(Effect.andThen(moveRefs([{ ref: "wip", to: commit }]))),

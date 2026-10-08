@@ -15,7 +15,11 @@ import * as Stream from "effect/Stream";
 
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
-import type { DriveAuthorization, ModelAuthorization } from "./runner/ThreadRunner.ts";
+import type {
+  DriveAuthorization,
+  ModelAuthorization,
+  RemoteAuthorization,
+} from "./runner/ThreadRunner.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
@@ -230,6 +234,7 @@ export interface ThreadObjectNamespace {
     ) => Promise<ModelAuthorization>;
     readonly recordModelRequest: (record: ModelGatewayRecord) => Promise<void>;
     readonly authorizeDrive: (token: string) => Promise<DriveAuthorization>;
+    readonly authorizeRemote: (token: string) => Promise<RemoteAuthorization>;
   };
 }
 

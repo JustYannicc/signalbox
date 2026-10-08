@@ -519,7 +519,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       latestTraceId = turn.traceId;
       // The harness starts in the thread's branch, as the drive last saved it.
       const opened = access === null ? null : yield* driveFor(access);
-      if (opened !== null) yield* opened.prepare;
+      if (opened !== null && access !== null) yield* opened.prepare(access.remoteToken);
       yield* input.useModelToken(modelToken);
       // The harness loads its session as last saved: on a new machine, from the store.
       if (input.sessions !== undefined && sessionAccess !== null) {

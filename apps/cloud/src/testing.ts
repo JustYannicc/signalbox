@@ -9,6 +9,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
@@ -42,6 +43,9 @@ import * as DrivePeople from "./user/DrivePeople.ts";
 import * as DriveSharing from "./user/DriveSharing.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
+import * as GitHub from "./github/GitHub.ts";
+import * as GitHubBranches from "./github/GitHubBranches.ts";
+import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as UserSections from "./user/UserSections.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import * as UserDrives from "./user/UserDrives.ts";
@@ -80,7 +84,9 @@ export const layerPersonalThreadContexts = (userId: string) =>
       placeOfProject: (projectId) => {
         const contextId = contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId);
         return Effect.succeed(
-          contextId === null ? null : { contextId, driveId: myDriveId(contextId, userId) },
+          contextId === null
+            ? null
+            : { contextId, driveId: myDriveId(contextId, userId), remote: false },
         );
       },
     }),
@@ -141,16 +147,25 @@ export const layerThreadObject = (
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
+/** GitHub with no App and no network, for tests that never reach it. */
+const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.layer));
+
 const makeUserRuntime = (
   threads: ThreadDirectory.ThreadDirectory["Service"],
   drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
   people: Layer.Layer<DrivePeople.DrivePeople>,
+  github: Layer.Layer<GitHub.GitHub>,
 ) =>
   ManagedRuntime.make(
-    Layer.mergeAll(UserShell.layer, DriveFiles.layer, DriveSharing.layer).pipe(
+    Layer.mergeAll(
+      UserShell.layer,
+      DriveFiles.layer,
+      DriveSharing.layer,
+      GitHubConnection.layer,
+    ).pipe(
       Layer.provideMerge(UserDrives.layer),
       Layer.provideMerge(layerMemoryStore),
-      Layer.provideMerge(Layer.mergeAll(drives, people)),
+      Layer.provideMerge(Layer.mergeAll(drives, people, github)),
       Layer.provideMerge(Layer.succeed(ThreadDirectory.ThreadDirectory, threads)),
     ),
   );
@@ -162,7 +177,9 @@ const makeUserRuntime = (
  * thread objects' alarms do: drive every turn to the end and deliver every
  * pending summary.
  */
-export const makeMemoryCloud = (options: { readonly people?: TestPeople } = {}) => {
+export const makeMemoryCloud = (
+  options: { readonly people?: TestPeople; readonly github?: Layer.Layer<GitHub.GitHub> } = {},
+) => {
   const users = new Map<
     string,
     {
@@ -195,7 +212,12 @@ export const makeMemoryCloud = (options: { readonly people?: TestPeople } = {}) 
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
-    const runtime = makeUserRuntime(threadDirectory, drives.layer, people);
+    const runtime = makeUserRuntime(
+      threadDirectory,
+      drives.layer,
+      people,
+      options.github ?? layerNoGitHub,
+    );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
     return object;
@@ -272,7 +294,8 @@ export const makeMemoryCloud = (options: { readonly people?: TestPeople } = {}) 
     userObject,
     /** The thread service as `userId`'s object runs it, with that user's contexts. */
     layerFor: (userId: string) =>
-      threadService.pipe(
+      GitHubBranches.layer.pipe(
+        Layer.provideMerge(threadService),
         Layer.provideMerge(ThreadContexts.layer),
         Layer.provideMerge(userObject(userId)),
       ),

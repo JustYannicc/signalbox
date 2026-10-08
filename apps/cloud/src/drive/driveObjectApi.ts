@@ -24,12 +24,15 @@ export const makeDriveObjectApi = (
   };
   return {
     open: (writer) => run(store.use((s) => s.open(writer))),
-    refs: (threadId) => run(store.use((s) => s.refs(threadId))),
+    refs: (threadId, packsAfter) => run(store.use((s) => s.refs(threadId, packsAfter))),
     ref: (name) => run(store.use((s) => s.ref(name))),
     missing: (oids) => run(store.use((s) => s.missing(oids))),
     registerPack: (pack) => run(store.use((s) => s.registerPack(pack))),
     updateRefs: (writer, updates) => run(store.use((s) => s.updateRefs(writer, updates))),
     reconcile: (writer, request) => run(store.use((s) => s.reconcile(writer, request))),
+    setRemote: (remote) => run(store.use((s) => s.setRemote(remote))),
+    remote: () => run(store.use((s) => s.remote)),
+    mirror: (writer, request) => run(store.use((s) => s.mirror(writer, request))),
     locate: (oids) => run(store.use((s) => s.locate(oids))),
     locateAt: (pack, offset) => run(store.use((s) => s.locateAt(pack, offset))),
     commits: (oids) => run(store.use((s) => s.commits(oids))),

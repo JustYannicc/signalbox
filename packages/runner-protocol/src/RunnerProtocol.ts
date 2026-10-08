@@ -48,7 +48,8 @@ import { SessionAccess } from "./SessionProtocol.ts";
  * checks the thread's branch out as the harness's working directory, saves
  * after each batch of tool calls, and reconciles with the drive's `main`
  * before it reports the turn's end, reporting the turn's commit as a
- * checkpoint.
+ * checkpoint. A drive backed by a remote repository fetches the remote's
+ * default branch at turn start instead, and saves the turn without merging.
  *
  * Each turn also carries the thread's session token (`SessionProtocol.ts`):
  * the Runner streams the harness's own session rows to the thread as they are
@@ -61,7 +62,7 @@ import { SessionAccess } from "./SessionProtocol.ts";
  * only, and stops working when the turn ends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 4;
+export const RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";

@@ -1,3 +1,4 @@
+import type { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import type { SignalboxDriveMember, SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,8 @@ import type {
  * How the Worker, thread and user objects reach drive objects. Every drive
  * has exactly one, named by its drive id (`driveAccess.ts`) and always
  * created in the EU jurisdiction.
+ * A drive backed by a remote repository (#135) records it, and its `main`
+ * mirrors the remote.
  */
 
 export const DRIVE_OBJECT_JURISDICTION = "eu";
@@ -27,7 +30,7 @@ export const DRIVE_OBJECT_JURISDICTION = "eu";
 /** What a drive object answers. `DriveObject` implements it method for method. */
 export interface DriveObjectApi {
   readonly open: (writer: DriveWriter) => Promise<RefWrite>;
-  readonly refs: (threadId: string | null) => Promise<ThreadRefs>;
+  readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
   readonly missing: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<Oid>>;
   readonly registerPack: (
@@ -40,6 +43,12 @@ export interface DriveObjectApi {
     updates: ReadonlyArray<{ readonly name: string; readonly old: Oid | null; readonly new: Oid }>,
   ) => Promise<RefWrite>;
   readonly reconcile: (
+    writer: DriveWriter,
+    request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
+  ) => Promise<RefWrite>;
+  readonly setRemote: (remote: DriveRemote) => Promise<void>;
+  readonly remote: () => Promise<DriveRemote | null>;
+  readonly mirror: (
     writer: DriveWriter,
     request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
   ) => Promise<RefWrite>;
@@ -111,6 +120,9 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     registerPack: wrap("registerPack"),
     updateRefs: wrap("updateRefs"),
     reconcile: wrap("reconcile"),
+    setRemote: wrap("setRemote"),
+    remote: wrap("remote"),
+    mirror: wrap("mirror"),
     locate: wrap("locate"),
     locateAt: wrap("locateAt"),
     commits: wrap("commits"),

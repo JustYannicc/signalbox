@@ -18,13 +18,15 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ThreadContexts } from "../user/threadContexts.ts";
+import { remoteThreadWorktree } from "../user/contextProjects.ts";
+import { ThreadContexts, type ThreadPlace } from "../user/threadContexts.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
+  type ThreadCreation,
   type ThreadNotFoundError,
 } from "./ThreadEngine.ts";
 
@@ -179,6 +181,12 @@ const cursorAfter = (batch: Batch): number | undefined => {
   return cursor;
 };
 
+/** A new thread's place, and its own branch when its drive is backed by a remote (#135). */
+const placed = (place: ThreadPlace | null, threadId: ThreadId): ThreadCreation => ({
+  place: place === null ? null : { contextId: place.contextId, driveId: place.driveId },
+  worktree: place?.remote === true ? remoteThreadWorktree(place.driveId, threadId) : null,
+});
+
 const make = Effect.gen(function* () {
   const directory = yield* ThreadDirectory.ThreadDirectory;
   const crypto = yield* Crypto.Crypto;
@@ -199,7 +207,7 @@ const make = Effect.gen(function* () {
         command.type === "thread.create"
           ? yield* threadContexts.placeOfProject(command.projectId)
           : null;
-      return yield* directory.forThread(threadId).dispatch(actor, command, { place });
+      return yield* directory.forThread(threadId).dispatch(actor, command, placed(place, threadId));
     });
 
   const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
@@ -216,7 +224,9 @@ const make = Effect.gen(function* () {
               .pipe(Effect.map(Hex.encode)),
           )}`,
         );
-      return yield* directory.forThread(threadId).launch(actor, { ...input, threadId }, { place });
+      return yield* directory
+        .forThread(threadId)
+        .launch(actor, { ...input, threadId }, placed(place, threadId));
     });
 
   const threadSnapshot: CloudThreadService["Service"]["threadSnapshot"] = (actor, threadId) =>

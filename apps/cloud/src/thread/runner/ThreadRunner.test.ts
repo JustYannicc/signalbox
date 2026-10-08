@@ -596,6 +596,8 @@ describe("ThreadRunner", () => {
           });
           expect((yield* runner.authorizeDrive(`${token}x`))._tag).toBe("denied");
           expect((yield* runner.authorizeDrive(machine.token))._tag).toBe("denied");
+          // My Drive is its own home: there is no remote to fetch.
+          expect(work.drive!.remoteToken).toBeNull();
 
           const turn = yield* liveTurn(runner);
           const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
@@ -633,6 +635,44 @@ describe("ThreadRunner", () => {
           expect(yield* runner.authorizeDrive(token)).toMatchObject({
             _tag: "granted",
             live: false,
+          });
+        }),
+      { drives: true },
+    ),
+  );
+
+  it.effect("gives a thread in an imported repository a remote token for its turn only", () =>
+    withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine, "launch-1", {
+            place: { contextId: PERSONAL_CONTEXT_ID, driveId: "shared/personal/repo1" },
+          });
+          const machine = yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.drive?.driveId).toBe("shared/personal/repo1");
+          const remoteToken = work.drive!.remoteToken!;
+          expect(yield* runner.authorizeRemote(remoteToken)).toEqual({
+            _tag: "granted",
+            threadId,
+            driveId: "shared/personal/repo1",
+            userId: "user_1",
+          });
+          // Neither token stands in for the other.
+          expect((yield* runner.authorizeRemote(work.drive!.token))._tag).toBe("denied");
+          expect((yield* runner.authorizeDrive(remoteToken))._tag).toBe("denied");
+
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.terminal],
+          });
+          expect(yield* runner.authorizeRemote(remoteToken)).toMatchObject({
+            _tag: "denied",
+            reason: "No turn is running on this thread.",
           });
         }),
       { drives: true },
