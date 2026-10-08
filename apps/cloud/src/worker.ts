@@ -1,14 +1,17 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { WorkerEntrypoint } from "cloudflare:workers";
+import * as Schema from "effect/Schema";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
 import type { PoolObjectEnv } from "./pool/PoolObject.ts";
 import { labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
 import { routePreview } from "./thread/preview/previewRoute.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
-import { authorizeModel } from "./thread/runner/modelGrants.ts";
+import { ModelGatewayRecord } from "./modelGateway/modelGatewayRecord.ts";
+import { authorizeModel, reportModelRequest } from "./thread/runner/modelGrants.ts";
 import { connectRunner, isRunnerSocketPath } from "./thread/runner/runnerRoute.ts";
+import { forwardSessionRequest, isSessionApiPath } from "./thread/session/sessionRoutes.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 
@@ -66,6 +69,9 @@ export default {
     );
     if (pathname === "/ws") return app.webSocket(request);
     if (isRunnerSocketPath(pathname)) return connectRunner(env.THREADS, request, { localWorkerd });
+    if (isSessionApiPath(pathname)) {
+      return forwardSessionRequest(env.THREADS, request, { localWorkerd });
+    }
     if (isDriveApiPath(pathname)) {
       return env.DRIVES === undefined || env.DRIVE_PACKS === undefined
         ? new Response("This cloud stores no drives.", { status: 404 })
@@ -80,13 +86,26 @@ export default {
   },
 } satisfies ExportedHandler<CloudEnv>;
 
+const decodeModelGatewayRecord = Schema.decodeUnknownOption(ModelGatewayRecord);
+
 /**
  * Asked by the ModelGateway Worker, over its service binding, before it serves
- * a harness's model request. Service bindings never reach the internet.
+ * a harness's model request, and told what each request did afterwards.
+ * Service bindings never reach the internet.
  */
+
 export class ModelGrants extends WorkerEntrypoint<CloudEnv> {
   authorize(token: string, provider: ModelGatewayProvider) {
     return authorizeModel(this.env.THREADS, token, provider, {
+      localWorkerd: this.env.LOCAL_WORKERD === "1",
+    });
+  }
+
+  /** A served request's record, for its thread. Anything that does not decode is dropped. */
+  async report(record: unknown): Promise<void> {
+    const decoded = decodeModelGatewayRecord(record);
+    if (decoded._tag === "None") return;
+    await reportModelRequest(this.env.THREADS, decoded.value, {
       localWorkerd: this.env.LOCAL_WORKERD === "1",
     });
   }

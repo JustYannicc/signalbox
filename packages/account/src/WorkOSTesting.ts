@@ -66,9 +66,22 @@ const listMemberships = (url: URL, memberships: WorkOSMemberships): Response => 
   });
 };
 
+/** Fake `GET /user_management/users?email=`, over every user `codes` signs in. */
+const findUsers = (url: URL, codes: WorkOSCodes): Response => {
+  const email = url.searchParams.get("email");
+  const users = Object.values(codes).flatMap((entry) =>
+    "fail" in entry ? [] : "verify" in entry ? [entry.verify.user] : [entry],
+  );
+  return Response.json({
+    object: "list",
+    data: users.filter((user) => user.email.toLowerCase() === email).slice(0, 1),
+    list_metadata: { after: null },
+  });
+};
+
 /**
  * Fake WorkOS: `POST /user_management/authenticate` (recording each request
- * body) and the membership listing.
+ * body), the membership listing, and users by email.
  */
 export const workosStubLayer = (
   codes: WorkOSCodes,
@@ -82,6 +95,9 @@ export const workosStubLayer = (
         const url = new URL(`${request.url}?${UrlParams.toString(request.urlParams)}`);
         if (url.pathname === "/user_management/organization_memberships") {
           return HttpClientResponse.fromWeb(request, listMemberships(url, memberships));
+        }
+        if (url.pathname === "/user_management/users") {
+          return HttpClientResponse.fromWeb(request, findUsers(url, codes));
         }
         const body =
           request.body._tag === "Uint8Array"

@@ -3,12 +3,14 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 
 import type { ModelAuthorization } from "../thread/runner/ThreadRunner.ts";
 import { handleModelRequest, type Upstream } from "./modelGateway.ts";
+import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
 
 /**
  * The ModelGateway Worker (`wrangler.model-gateway.jsonc`): its own Worker so
  * provider keys are bound here and nowhere else, not even in the cloud Worker.
  * It asks the cloud about each token through a service binding to the cloud's
- * `ModelGrants` entrypoint. See `modelGateway.ts`.
+ * `ModelGrants` entrypoint, and reports each record to its thread the same
+ * way. See `modelGateway.ts`.
  */
 
 export interface ModelGatewayEnv {
@@ -17,6 +19,8 @@ export interface ModelGatewayEnv {
       token: string,
       provider: ModelGatewayProvider,
     ) => Promise<ModelAuthorization>;
+    /** Hands a request's record to the thread its token names, for the turn's diagnostics. */
+    readonly report: (record: ModelGatewayRecord) => Promise<void>;
   };
   readonly ANTHROPIC_API_KEY?: string;
   readonly OPENAI_API_KEY?: string;
@@ -34,7 +38,7 @@ const upstream = (apiKey: string | undefined, baseUrl: string | undefined, fallb
       } satisfies Upstream);
 
 export default {
-  fetch(request, env) {
+  fetch(request, env, ctx) {
     return handleModelRequest(request, {
       authorize: (token, provider) => env.GRANTS.authorize(token, provider),
       upstreams: {
@@ -47,7 +51,14 @@ export default {
       },
       fetch: (forwarded) => fetch(forwarded),
       now: () => Date.now(),
-      log: (record) => console.log(JSON.stringify({ event: "model_gateway.request", ...record })),
+      log: (record) => {
+        console.log(JSON.stringify({ event: "model_gateway.request", ...record }));
+        // In the background, so a slow thread never holds the response up. Only a
+        // granted request is for a turn; a denied one names whatever thread its token claims.
+        if (record.threadId !== null && record.runId !== null) {
+          ctx.waitUntil(env.GRANTS.report(record).catch(() => undefined));
+        }
+      },
     });
   },
 } satisfies ExportedHandler<ModelGatewayEnv>;

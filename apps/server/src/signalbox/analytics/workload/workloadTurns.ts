@@ -18,10 +18,16 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { classifyCommand, COMMAND_CATEGORIES, type CommandCategory } from "./commandCategory.ts";
+import { classifyCommand, type CommandCategory } from "@t3tools/shared/commandCategory";
+import {
+  byCategory,
+  elapsedMs,
+  outcomeOf,
+  seconds,
+  TERMINAL_ITEM_STATUSES,
+  type TurnOutcome,
+} from "@t3tools/shared/workloadUsage";
 import type { AttributionTurn, ThreadUsage } from "./processAttribution.ts";
-
-export type TurnOutcome = "completed" | "interrupted" | "error";
 
 export interface CompletedTurn {
   readonly threadId: ThreadId;
@@ -65,33 +71,11 @@ const ACTIVE_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "running",
   "waiting",
 ]);
-const TERMINAL_ITEM_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
-  "completed",
-  "failed",
-  "cancelled",
-  "interrupted",
-]);
 const MAX_FINISHED_RUNS = 4_096;
 
 /** Started and not yet terminal: a turn in flight. */
 export const isWorkingRun = (run: OrchestrationV2Run) =>
   ACTIVE_RUN_STATUSES.has(run.status) && run.startedAt !== null;
-
-const outcomeOf = (status: OrchestrationV2Run["status"]): TurnOutcome =>
-  status === "completed" ? "completed" : status === "failed" ? "error" : "interrupted";
-
-const byCategory = (value: (category: CommandCategory) => number) =>
-  Object.fromEntries(COMMAND_CATEGORIES.map((category) => [category, value(category)])) as Record<
-    CommandCategory,
-    number
-  >;
-
-const seconds = (ms: number) => Math.round(ms / 100) / 10;
-
-const elapsedMs = (from: DateTime.Utc | null, to: DateTime.Utc | null) =>
-  from === null || to === null
-    ? 0
-    : Math.max(0, DateTime.toEpochMillis(to) - DateTime.toEpochMillis(from));
 
 export function makeWorkloadTurns() {
   const active = new Map<RunId, ActiveTurn>();

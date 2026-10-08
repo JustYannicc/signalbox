@@ -155,6 +155,17 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
       port: number,
     ) => Effect.Effect<PreviewLinkResult, ThreadDirectory.ThreadObjectError>;
+    /**
+     * A turn's diagnostic record (JSON), by its run or trace id, or the
+     * thread's recent turns for null: what happened on its machines, the
+     * Runner's lines and its model requests. Null when the actor cannot see
+     * the thread or no turn matches.
+     */
+    readonly turnDiagnostics: (
+      actor: Actor,
+      threadId: ThreadId,
+      key: string | null,
+    ) => Effect.Effect<string | null, ThreadDirectory.ThreadObjectError>;
   }
 >()("@signalbox/cloud/thread/CloudThreadService") {}
 
@@ -182,18 +193,18 @@ const make = Effect.gen(function* () {
           unsupported(command.type),
         );
       }
-      // Only a create can make a thread, so only a create names its context. The
+      // Only a create can make a thread, so only a create names its place. The
       // thread object rejects a new thread without one, after replaying retries.
-      const contextId =
+      const place =
         command.type === "thread.create"
-          ? yield* threadContexts.contextOfProject(command.projectId)
+          ? yield* threadContexts.placeOfProject(command.projectId)
           : null;
-      return yield* directory.forThread(threadId).dispatch(actor, command, { contextId });
+      return yield* directory.forThread(threadId).dispatch(actor, command, { place });
     });
 
   const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
     Effect.gen(function* () {
-      const contextId = yield* threadContexts.contextOfProject(input.projectId);
+      const place = yield* threadContexts.placeOfProject(input.projectId);
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =
@@ -205,9 +216,7 @@ const make = Effect.gen(function* () {
               .pipe(Effect.map(Hex.encode)),
           )}`,
         );
-      return yield* directory
-        .forThread(threadId)
-        .launch(actor, { ...input, threadId }, { contextId });
+      return yield* directory.forThread(threadId).launch(actor, { ...input, threadId }, { place });
     });
 
   const threadSnapshot: CloudThreadService["Service"]["threadSnapshot"] = (actor, threadId) =>
@@ -278,6 +287,8 @@ const make = Effect.gen(function* () {
     threadSnapshot,
     threadHistoryPage,
     subscribeThread,
+    turnDiagnostics: (actor, threadId, key) =>
+      directory.forThread(threadId).diagnostics(actor, key),
   });
 });
 

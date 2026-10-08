@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import { contextAllows } from "../drive/driveAccess.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +25,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
@@ -71,22 +73,28 @@ export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommand
   }
 }
 
-/** Who is acting. Only a thread's owner can read or change it until sharing lands. */
+/**
+ * Who is acting. Only a thread's owner can read or change it until sharing
+ * lands, and only while they're still in its context: `contextIds` are the
+ * owner's contexts as their own object holds them at the time of the call.
+ */
 export interface Actor {
   readonly userId: string;
+  readonly contextIds: ReadonlyArray<SignalboxContextId>;
 }
 
 /**
- * Fixed when a thread is created: the context it acts as for its whole life.
- * Null when the command names a project that is none of the actor's contexts:
- * a retry of a command that already landed still replays, a new thread is
- * rejected.
+ * Fixed when a thread is created: the context it acts as and the drive it
+ * works in, for its whole life. Null when the command names a project that is
+ * none of the actor's, or a drive they can't change: a retry of a command that
+ * already landed still replays, a new thread is rejected.
  */
 export interface ThreadCreation {
-  readonly contextId: SignalboxContextId | null;
+  readonly place: { readonly contextId: SignalboxContextId; readonly driveId: string } | null;
 }
 
-const NO_CONTEXT = "That project does not exist in this environment.";
+const NO_CONTEXT =
+  "That project does not exist in this environment, or you can't change its files.";
 
 /**
  * A thread's sidebar row as its owner's index stores it. `revision` grows with
@@ -239,7 +247,11 @@ const make = Effect.gen(function* () {
   /** Commits decided events and publishes them. Callers hold the lock. */
   const commit = Effect.fnUntraced(function* (input: {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly command?: { readonly id: CommandId; readonly type: string };
+    readonly command?: {
+      readonly id: CommandId;
+      readonly type: string;
+      readonly traceId?: string | undefined;
+    };
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
@@ -274,8 +286,19 @@ const make = Effect.gen(function* () {
     return head;
   });
 
-  /** The thread as `actor` may see it: only its owner, as if anyone else's id were unknown. */
+  /**
+   * The thread as `actor` may see it: only its owner, while they're in its
+   * context. Anyone else sees what an unknown id shows.
+   */
   const visibleTo = (current: State, actor: Actor) =>
+    current.thread !== null &&
+    current.thread.owner.userId === actor.userId &&
+    contextAllows(actor.contextIds, current.thread.owner.contextId)
+      ? current.thread
+      : null;
+
+  /** The thread when `actor` owns it, whichever contexts they're in: for their index. */
+  const ownedBy = (current: State, actor: Actor) =>
     current.thread !== null && current.thread.owner.userId === actor.userId ? current.thread : null;
 
   const readable = (actor: Actor) =>
@@ -313,8 +336,8 @@ const make = Effect.gen(function* () {
         if (receipt?._tag === "rejected") {
           return yield* ThreadCommandRejectedError.forCommand(command, receipt.message);
         }
-        const { contextId } = creation;
-        if (current.thread === null && contextId === null) {
+        const { place } = creation;
+        if (current.thread === null && place === null) {
           return yield* ThreadCommandRejectedError.forCommand(command, NO_CONTEXT);
         }
         const decision = decideWith(current.thread?.projection ?? null, yield* context);
@@ -325,10 +348,21 @@ const make = Effect.gen(function* () {
           }
           return yield* ThreadCommandRejectedError.forCommand(command, decision.message);
         }
+        // The receipt names the turn this command started, so a client's retry finds its trace.
+        const started = decision.events.find((event) => event.type === "run.created");
         const sequence = yield* commit({
           events: decision.events,
-          command,
-          ...(contextId === null ? {} : { owner: { userId: actor.userId, contextId } }),
+          command: {
+            ...command,
+            ...(started === undefined
+              ? {}
+              : {
+                  traceId: yield* traceIdOf(started.payload.id).pipe(
+                    Effect.provideService(Crypto.Crypto, crypto),
+                  ),
+                }),
+          },
+          ...(place === null ? {} : { owner: { userId: actor.userId, ...place } }),
         });
         return { sequence, replayed: false };
       }),
@@ -434,7 +468,7 @@ const make = Effect.gen(function* () {
 
   const summary: ThreadEngine["Service"]["summary"] = (actor) =>
     Effect.gen(function* () {
-      const thread = visibleTo(yield* Ref.get(state), actor);
+      const thread = ownedBy(yield* Ref.get(state), actor);
       if (thread === null) return null;
       const outbox = yield* Effect.orDie(store.outbox);
       return summaryOf(thread, outbox.revision);

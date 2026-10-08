@@ -24,6 +24,11 @@ RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/clau
 
 COPY main.mjs /opt/signalbox/runner.mjs
 
+# The commit the Runner was built from, for each turn's diagnostics. Declared
+# after the slow layers so a new commit leaves their cache alone.
+ARG SIGNALBOX_RUNNER_REVISION
+ENV SIGNALBOX_RUNNER_REVISION=${SIGNALBOX_RUNNER_REVISION}
+
 # Claude Code refuses to skip permission prompts as root. `node` is uid 1000,
 # the same as boat's `user`, so files on the machine's disk keep one owner.
 USER node

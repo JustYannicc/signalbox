@@ -5,31 +5,51 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
+import * as UserDirectory from "../user/UserDirectory.ts";
+import { deliverAccess } from "./driveAccessOutbox.ts";
 import * as DriveDirectory from "./DriveDirectory.ts";
 import { makeDriveObjectApi } from "./driveObjectApi.ts";
 import * as DrivePacks from "./DrivePacks.ts";
+import type * as DriveMembers from "./DriveMembers.ts";
 import * as DriveStore from "./DriveStore.ts";
 import type { Bytes } from "./git/gitObjects.ts";
 
-/** Test wiring for drives: drive objects on in-memory SQLite, packs in memory, real git to make packs. */
-
-export const makeMemoryDrives = () => {
+/**
+ * Test wiring for drives: drive objects on in-memory SQLite, packs in memory,
+ * real git to make packs. With `users`, membership changes reach people's
+ * objects right away, as the drive object's alarm would deliver them.
+ */
+export const makeMemoryDrives = (
+  options: { readonly users?: () => UserDirectory.UserDirectory["Service"] } = {},
+) => {
   const objects = new Map<string, DriveDirectory.DriveObjectApi>();
   const bucket = DrivePacks.makeMemoryBucket();
   const apiFor = (driveId: string) => {
     const existing = objects.get(driveId);
     if (existing !== undefined) return existing;
     const runtime = ManagedRuntime.make(
-      DriveStore.layer.pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" }))),
+      DriveStore.layer(driveId).pipe(
+        Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+      ),
     );
     let ready: Promise<void> | undefined;
-    const api = makeDriveObjectApi(async (effect) => {
+    const run = async <A, E>(
+      effect: Effect.Effect<A, E, DriveStore.DriveStore | DriveMembers.DriveMembers>,
+    ) => {
       ready ??= runtime.runPromise(DriveStore.DriveStore.use((store) => store.initialize));
       await ready;
       return runtime.runPromise(effect);
+    };
+    const api = makeDriveObjectApi(run, async () => {
+      const users = options.users;
+      if (users === undefined) return;
+      await run(
+        deliverAccess(driveId).pipe(Effect.provideService(UserDirectory.UserDirectory, users())),
+      );
     });
     objects.set(driveId, api);
     return api;

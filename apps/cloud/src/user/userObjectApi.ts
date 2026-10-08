@@ -3,6 +3,8 @@ import type * as Effect from "effect/Effect";
 import { wire } from "../thread/threadWire.ts";
 import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as UserDriveIndex from "./UserDriveIndex.ts";
+import * as UserDrives from "./UserDrives.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 
@@ -17,7 +19,11 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
-      UserStore.UserStore | UserShell.UserShell | UserContexts.UserContexts
+      | UserStore.UserStore
+      | UserShell.UserShell
+      | UserContexts.UserContexts
+      | UserDriveIndex.UserDriveIndex
+      | UserDrives.UserDrives
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -40,5 +46,9 @@ export const makeUserObjectApi = (
     recordThreadSummary: (summary) =>
       shell((service) => service.recordThreadSummary(wire.summary.decode(summary))),
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
+    contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
+    recordDriveAccess: (entry) =>
+      run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),
+    driveAccess: (driveId) => run(UserDrives.UserDrives.use((drives) => drives.access(driveId))),
   };
 };

@@ -4,28 +4,47 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { contextOfProject } from "./contextProjects.ts";
-import * as UserContexts from "./UserContexts.ts";
+import { canWrite, parseDriveId } from "../drive/driveAccess.ts";
+import { driveOfProject } from "./contextProjects.ts";
+import * as UserDrives from "./UserDrives.ts";
 
-/** What `CloudThreadService` needs to know about contexts: which one a new thread acts as. */
+/** Where a new thread works: the drive it changes files in, and the context it acts as. */
+export interface ThreadPlace {
+  readonly contextId: SignalboxContextId;
+  readonly driveId: string;
+}
+
+/** What `CloudThreadService` needs to know about contexts and drives: where a new thread works. */
 export class ThreadContexts extends Context.Service<
   ThreadContexts,
   {
-    /** The acting user's context whose project this is, or null when it's none of theirs. */
-    readonly contextOfProject: (projectId: ProjectId) => Effect.Effect<SignalboxContextId | null>;
+    /**
+     * The drive a thread started in `projectId` works in and the context it
+     * acts as, or null when the project is none of the acting user's or they
+     * can't change files in its drive.
+     */
+    readonly placeOfProject: (projectId: ProjectId) => Effect.Effect<ThreadPlace | null>;
   }
 >()("@signalbox/cloud/user/threadContexts") {}
 
-/** In a user's object: their current contexts. */
+/** In a user's object: their current contexts and drives. */
 export const layer = Layer.effect(
   ThreadContexts,
   Effect.gen(function* () {
-    const contexts = yield* UserContexts.UserContexts;
+    const drives = yield* UserDrives.UserDrives;
     return ThreadContexts.of({
-      contextOfProject: (projectId) =>
-        contexts.contexts.pipe(
-          Effect.map((current) => contextOfProject(current, projectId)),
-          // A storage failure is a bug, not a rejected command.
+      placeOfProject: (projectId) =>
+        Effect.gen(function* () {
+          const userId = yield* drives.userId;
+          const driveId = userId === null ? null : driveOfProject(projectId, userId);
+          const parsed = driveId === null ? null : parseDriveId(driveId);
+          if (driveId === null || parsed === null) return null;
+          // `access` also says whether the user is still in the drive's context.
+          return canWrite(yield* drives.access(driveId))
+            ? { contextId: parsed.contextId, driveId }
+            : null;
+        }).pipe(
+          // A storage or drive failure is a bug or an outage, not a rejected command.
           Effect.orDie,
         ),
     });
@@ -36,6 +55,6 @@ export const layer = Layer.effect(
 export const layerWorker = Layer.succeed(
   ThreadContexts,
   ThreadContexts.of({
-    contextOfProject: () => Effect.die("Threads are created in their user's object."),
+    placeOfProject: () => Effect.die("Threads are created in their user's object."),
   }),
 );

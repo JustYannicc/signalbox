@@ -2,15 +2,22 @@ import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   type OrchestrationV2DomainEvent,
   OrchestrationV2DomainEventJson,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type RunId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { type DecisionContext, itemOrdinal, unstampedEventId } from "../threadEvents.ts";
+import {
+  type DecisionContext,
+  itemOrdinal,
+  turnItemEvent,
+  unstampedEventId,
+} from "../threadEvents.ts";
 
 /**
  * What a provider adapter's events become in a thread's log, following
@@ -77,6 +84,34 @@ export function positionTurnItem(
     .filter((ordinal) => ordinal >= low && ordinal <= high)
     .reduce((max, ordinal) => Math.max(max, ordinal), low);
   return { ...item, ordinal: last + 1 };
+}
+
+/** A `system_notice` row in `run`'s transcript, after what it already shows. */
+export function systemNoticeEvents(
+  projection: OrchestrationV2ThreadProjection,
+  run: OrchestrationV2Run,
+  notice: { readonly id: TurnItemId; readonly title: string; readonly message: string },
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> {
+  const item: OrchestrationV2TurnItem = {
+    id: notice.id,
+    threadId: projection.thread.id,
+    runId: run.id,
+    nodeId: run.rootNodeId,
+    providerThreadId: run.providerThreadId,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status: "completed",
+    title: notice.title,
+    startedAt: ctx.now,
+    completedAt: ctx.now,
+    updatedAt: ctx.now,
+    type: "system_notice",
+    message: notice.message,
+  };
+  return [turnItemEvent(ctx, positionTurnItem(projection, item))];
 }
 
 /**
