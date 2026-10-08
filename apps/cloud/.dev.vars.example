@@ -9,3 +9,8 @@ T3CODE_WORKOS_API_KEY=
 # docs/operations/cloud.md) and the ModelGateway that holds the provider keys.
 # LOCAL_RUNNER_URL=http://127.0.0.1:8790
 # MODEL_GATEWAY_URL=http://127.0.0.1:8788
+# Optional: boat VMs instead of a local Runner host (docs/operations/cloud.md).
+# The machines must reach CLOUD_URL and MODEL_GATEWAY_URL, e.g. through tunnels.
+# MACHINE_BACKEND=boat
+# BOAT_API_KEY=
+# CLOUD_URL=https://<tunnel to wrangler dev>

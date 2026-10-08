@@ -12,7 +12,8 @@ import * as Schema from "effect/Schema";
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import { localMachines, type MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
+import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
+import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { serveConnection } from "./connection.ts";
 import {
@@ -81,7 +82,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     this.identity = {
       environmentId: decodeEnvironmentId(env.ENVIRONMENT_ID),
       label: env.ENVIRONMENT_LABEL ?? Environment.DEFAULT_ENVIRONMENT_LABEL,
-      harnesses: localMachines(env) !== null,
+      harnesses: machineSettings(env) !== null,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));

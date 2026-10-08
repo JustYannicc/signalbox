@@ -183,6 +183,20 @@ export const MODEL_GATEWAY_PATHS = { anthropic: "/anthropic", openai: "/openai" 
 export type ModelGatewayProvider = keyof typeof MODEL_GATEWAY_PATHS;
 export type MachineEnsureRequest = typeof MachineEnsureRequest.Type;
 
+/**
+ * What a VM's Runner runs: the file a machine backend writes onto a thread's
+ * machine (`runner machine` reads it). A new generation in it replaces the
+ * Runner; a different `image` restarts the machine's Runner on that image.
+ */
+export const RunnerMachineConfig = Schema.Struct({
+  ...MachineEnsureRequest.fields,
+  /** The cloud's origin the Runner dials, e.g. `https://app.signalbox.run`. */
+  cloudUrl: Schema.String,
+  /** The Runner image the machine should run. */
+  image: Schema.String,
+});
+export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;
+
 const frameCodec = <
   S extends Schema.Top & { readonly DecodingServices: never; readonly EncodingServices: never },
 >(
@@ -198,3 +212,4 @@ const frameCodec = <
 export const runnerFrame = frameCodec(RunnerMessage);
 export const threadFrame = frameCodec(ThreadMessage);
 export const machineEnsureJson = frameCodec(MachineEnsureRequest);
+export const machineConfigJson = frameCodec(RunnerMachineConfig);

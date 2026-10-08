@@ -1,0 +1,140 @@
+# Signalbox-only: builds the Runner image every thread VM runs (Node, git,
+# the Runner, pinned claude and codex) and publishes it to
+# ghcr.io/justyannicc/signalbox-runner. Its own file so upstream merges never
+# touch it. See docs/operations/cloud.md.
+#
+# - nightly: every night from main, as `nightly` and `nightly-<date>-<sha>`.
+# - stable: every `vX.Y.Z` tag, as `X.Y.Z` and `stable`.
+# - Pull requests that change the Runner build the image without publishing it.
+name: Runner image
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  push:
+    tags:
+      - "v*.*.*"
+      - "!v*-nightly.*"
+      - "!v*-preview.*"
+  pull_request:
+    paths:
+      - apps/server/src/signalbox/runner/**
+      - apps/server/src/orchestration-v2/Adapters/**
+      - packages/runner-protocol/**
+      - .github/workflows/runner-image.yml
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Channel to publish"
+        required: true
+        default: nightly
+        type: choice
+        options:
+          - nightly
+          - stable
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/justyannicc/signalbox-runner
+
+jobs:
+  image:
+    name: Build Runner image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      - name: Bundle the Runner
+        working-directory: apps/server
+        run: vp run runner:bundle
+
+      - name: Tags
+        id: tags
+        env:
+          EVENT: ${{ github.event_name }}
+          CHANNEL: ${{ inputs.channel }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          short_sha="${GITHUB_SHA::12}"
+          if [ "$EVENT" = "pull_request" ]; then
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "tags=$IMAGE:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = "push" ] || [ "$CHANNEL" = "stable" ]; then
+            if [ "$EVENT" = "push" ]; then version="${REF_NAME#v}"; else version="$(jq -r .version apps/server/package.json)"; fi
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "tags=$IMAGE:$version,$IMAGE:stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "tags=$IMAGE:nightly,$IMAGE:nightly-$(date -u +%Y%m%d)-$short_sha" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: steps.tags.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/server/dist/runner
+          file: apps/server/src/signalbox/runner/image/Dockerfile
+          platforms: linux/amd64
+          load: true
+          # Unchanged apt and npm layers keep their digests, so machines only pull what changed.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=Signalbox Runner: drives claude and codex on a thread's machine
+
+      # The Runner starts and waits for its machine config; the CLIs answer.
+      - name: Smoke test
+        env:
+          TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          image="${TAGS%%,*}"
+          docker run --rm --entrypoint sh "$image" -c 'git --version && claude --version && codex --version'
+          status=0
+          timeout 10 docker run --rm --name runner-smoke "$image" machine --config /tmp/none.json || status=$?
+          docker rm --force runner-smoke >/dev/null 2>&1 || true
+          test "$status" -eq 124
+
+      - name: Publish
+        if: steps.tags.outputs.push == 'true'
+        env:
+          TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          for tag in ${TAGS//,/ }; do docker push "$tag"; done

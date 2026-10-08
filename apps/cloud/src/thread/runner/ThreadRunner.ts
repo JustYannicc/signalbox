@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import { gatewayProviderFor } from "../providerCatalog.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import * as ThreadStore from "../ThreadStore.ts";
+import { MachineBackend } from "./MachineBackend.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
 import {
   failRunEvents,
@@ -34,15 +35,15 @@ import {
  *
  * The lease moves toward what the thread needs whenever the object asks
  * (`reconcile`): a live run on Claude or Codex gets a machine at the next
- * generation, a run whose machine never connects or is lost fails with a
- * reason, and an idle machine is released after its tail.
+ * generation, a run whose machine never connects (within the backend's
+ * connect timeout) or is lost fails with a reason, and an idle machine is
+ * released after its tail. Whenever no lease stands, the plan says to stop
+ * the machine; the next run starts it again at a new generation.
  *
  * The thread also answers the ModelGateway: a model token is good while the
  * run it was minted for is live on the machine holding the lease.
  */
 
-/** How long a requested machine has to say hello. */
-export const CONNECT_TIMEOUT_MS = 60_000;
 /** How long a Runner whose socket dropped mid-turn has to come back. */
 const RECONNECT_TIMEOUT_MS = 60_000;
 /** How long an idle machine stays up for the next message (#110: 10 minutes, heavy class). */
@@ -78,6 +79,10 @@ export interface MachinePlan {
   readonly ensure: { readonly generation: number; readonly token: string } | null;
   /** End any Runner of this generation: its lease is gone. */
   readonly release: number | null;
+  /** No lease stands: the machine should be stopped. */
+  readonly stop: boolean;
+  /** A connected machine is running a turn: keep its TTL pushed out. */
+  readonly busy: boolean;
   readonly wakeAt: number | null;
 }
 
@@ -120,7 +125,9 @@ export class ThreadRunner extends Context.Service<
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
-const IDLE: MachinePlan = { ensure: null, release: null, wakeAt: null };
+const IDLE: MachinePlan = { ensure: null, release: null, stop: false, busy: false, wakeAt: null };
+const BUSY: MachinePlan = { ...IDLE, busy: true };
+const UNNEEDED: MachinePlan = { ...IDLE, stop: true };
 
 /** What the live harness run's model token is for, if a run is live. */
 const modelGrantFor = (projection: OrchestrationV2ThreadProjection): ModelGrant | undefined => {
@@ -150,6 +157,7 @@ const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const store = yield* ThreadStore.ThreadStore;
   const crypto = yield* Crypto.Crypto;
+  const { connectTimeoutMs } = yield* MachineBackend;
 
   const lease = Effect.orDie(store.machine);
   const newToken = Effect.orDie(
@@ -350,10 +358,10 @@ const make = Effect.gen(function* () {
               ? []
               : failRunEvents(projection, run, unknownFailure(reason), ctx),
           machine: released(lease),
-          result: { ensure: null, release: lease.generation, wakeAt: null },
+          result: { ...UNNEEDED, release: lease.generation },
         });
         if (lease.status === "none") {
-          if (run === undefined) return keep(IDLE);
+          if (run === undefined) return keep(UNNEEDED);
           const generation = lease.generation + 1;
           const token = yield* newToken;
           return {
@@ -365,18 +373,26 @@ const make = Effect.gen(function* () {
               status: "requested",
               requestedAt: now,
             },
-            result: { ensure: { generation, token }, release: null, wakeAt: now + ENSURE_RETRY_MS },
+            result: {
+              ensure: { generation, token },
+              release: null,
+              stop: false,
+              busy: false,
+              wakeAt: now + ENSURE_RETRY_MS,
+            },
           };
         }
         if (lease.status === "requested") {
           // Nothing needs it any more (the run was stopped before a Runner came).
           if (run === undefined) return release(null);
-          const deadline = (lease.requestedAt ?? now) + CONNECT_TIMEOUT_MS;
+          const deadline = (lease.requestedAt ?? now) + connectTimeoutMs;
           if (now >= deadline) return release("No machine came up to run this turn.");
           const token = lease.ensuredAt === null ? lease.token : null;
           return keep<MachinePlan>({
             ensure: token === null ? null : { generation: lease.generation, token },
             release: null,
+            stop: false,
+            busy: false,
             wakeAt: token === null ? deadline : Math.min(deadline, now + ENSURE_RETRY_MS),
           });
         }
@@ -387,8 +403,8 @@ const make = Effect.gen(function* () {
         }
         if (run !== undefined) {
           return lease.idleSince === null
-            ? keep(IDLE)
-            : { events: [], machine: { ...lease, idleSince: null }, result: IDLE };
+            ? keep(BUSY)
+            : { events: [], machine: { ...lease, idleSince: null }, result: BUSY };
         }
         const idleSince = lease.idleSince ?? now;
         if (now - idleSince >= IDLE_TAIL_MS) return release(null);

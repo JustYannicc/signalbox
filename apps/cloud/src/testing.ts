@@ -20,6 +20,8 @@ import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
+import * as MachineBackends from "./thread/runner/machineBackends.ts";
+import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
@@ -67,9 +69,13 @@ export const layerPersonalThreadContexts = Layer.succeed(
  * One thread object's engine on SQLite at `filename`. Building the layer again
  * on the same file is what a Durable Object waking after eviction does.
  */
-export const layerThreadObject = (filename: string) =>
+export const layerThreadObject = (
+  filename: string,
+  machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
+) =>
   ThreadRunner.layer.pipe(
     Layer.provideMerge(ThreadEngine.layer),
+    Layer.provideMerge(machines),
     Layer.provideMerge(ThreadStore.layer),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
