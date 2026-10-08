@@ -11,13 +11,15 @@ FROM node:24-bookworm-slim
 ARG CLAUDE_CODE_VERSION=2.1.292
 ARG CODEX_VERSION=0.160.1
 
+# rclone and fuse3 mount every drive the user can read at /drives (RunnerDrivesMount.ts).
 # Python, make, a C/C++ compiler and pkg-config are what node-gyp and most
 # native dependencies need to build on install. Anything a project needs
 # beyond that comes from its environment (#123).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git lsof openssh-client procps ripgrep \
+  && apt-get install -y --no-install-recommends ca-certificates fuse3 git lsof openssh-client procps rclone ripgrep \
     python3 make g++ pkg-config \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && install -d -o node -g node /drives
 
 # npm 11 skips install scripts unless allowed; Claude Code's links its native binary.
 RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code \
