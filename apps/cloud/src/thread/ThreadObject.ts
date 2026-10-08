@@ -147,6 +147,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
   }
 
+  /** The drive API asking whether a Runner may fetch its drive's remote (see `drive/remoteRoutes.ts`). */
+  authorizeRemote(token: string) {
+    return this.runtime.runPromise(
+      ThreadRunner.ThreadRunner.use((runner) => runner.authorizeRemote(token)),
+    );
+  }
+
   /** The Runner's socket. The Worker forwards only upgrades on `RUNNER_CONNECT_PATH` here. */
   override async fetch() {
     return acceptRunnerSocket(this.ctx);

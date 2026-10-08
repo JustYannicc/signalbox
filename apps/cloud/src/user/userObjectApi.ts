@@ -1,5 +1,6 @@
 import type * as Effect from "effect/Effect";
 
+import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { wire } from "../thread/threadWire.ts";
 import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -17,7 +18,10 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
-      UserStore.UserStore | UserShell.UserShell | UserContexts.UserContexts
+      | UserStore.UserStore
+      | UserShell.UserShell
+      | UserContexts.UserContexts
+      | GitHubConnection.GitHubConnection
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -25,6 +29,9 @@ export const makeUserObjectApi = (
     run(UserStore.UserStore.use(f));
   const shell = <A, E>(f: (service: UserShell.UserShell["Service"]) => Effect.Effect<A, E>) =>
     run(UserShell.UserShell.use(f));
+  const github = <A, E>(
+    f: (service: GitHubConnection.GitHubConnection["Service"]) => Effect.Effect<A, E>,
+  ) => run(GitHubConnection.GitHubConnection.use(f));
   return {
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
     profile: () => use((store) => store.profile),
@@ -40,5 +47,9 @@ export const makeUserObjectApi = (
     recordThreadSummary: (summary) =>
       shell((service) => service.recordThreadSummary(wire.summary.decode(summary))),
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
+    beginGitHubConnect: (redirectUri) => github((service) => service.begin(redirectUri)),
+    completeGitHubConnect: (input) => github((service) => service.complete(input)),
+    disconnectGitHub: () => github((service) => service.disconnect),
+    githubAccessToken: () => github((service) => service.accessToken),
   };
 };

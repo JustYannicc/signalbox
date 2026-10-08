@@ -7,15 +7,17 @@ import {
   type RunnerRefusal,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, ProjectId, RunId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { myDriveId } from "../../drive/DriveDirectory.ts";
+import { myDriveId, projectDriveId } from "../../drive/DriveDirectory.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
+import { isRemoteToken, remoteToken } from "../../drive/remoteToken.ts";
+import { projectIdForContext } from "../../user/contextProjects.ts";
 import { gatewayProviderFor } from "../providerCatalog.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import * as ThreadStore from "../ThreadStore.ts";
@@ -44,7 +46,8 @@ import {
  * the machine; the next run starts it again at a new generation.
  *
  * The thread also answers the ModelGateway: a model token is good while the
- * run it was minted for is live on the machine holding the lease.
+ * run it was minted for is live on the machine holding the lease. Remote
+ * tokens, which fetch a drive's remote repository, follow the same rule.
  */
 
 /** How long a Runner whose socket dropped mid-turn has to come back. */
@@ -78,9 +81,21 @@ export type DriveAuthorization =
       readonly _tag: "granted";
       readonly threadId: string;
       readonly driveId: string;
+      /** Who the thread acts for: whose connections reach the drive's remote. */
+      readonly userId: string;
       readonly generation: number;
       /** Whether a turn runs: `main` only moves during one. */
       readonly live: boolean;
+    }
+  | { readonly _tag: "denied"; readonly reason: string };
+
+/** What a remote token lets its holder fetch right now. */
+export type RemoteAuthorization =
+  | {
+      readonly _tag: "granted";
+      readonly threadId: string;
+      readonly driveId: string;
+      readonly userId: string;
     }
   | { readonly _tag: "denied"; readonly reason: string };
 
@@ -146,6 +161,8 @@ export class ThreadRunner extends Context.Service<
     ) => Effect.Effect<ModelAuthorization>;
     /** Whether the drive API may act for `token`'s holder, and as whom. */
     readonly authorizeDrive: (token: string) => Effect.Effect<DriveAuthorization>;
+    /** Whether `token` may fetch the thread's drive's remote right now. */
+    readonly authorizeRemote: (token: string) => Effect.Effect<RemoteAuthorization>;
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
@@ -184,9 +201,19 @@ const make = Effect.gen(function* () {
   const { connectTimeoutMs } = yield* MachineBackend;
   const drives = yield* Effect.serviceOption(ThreadDrives);
   const drivesEnabled = drives._tag === "Some" && drives.value.enabled;
-  const driveOf = Effect.map(Effect.orDie(store.owner), (owner) =>
-    owner === null ? null : myDriveId(owner.contextId, owner.userId),
-  );
+  const owner = Effect.orDie(store.owner);
+  /** A thread in its context's own project works in its owner's My Drive; any other project is its own drive. */
+  const driveOf = (projectId: ProjectId) =>
+    Effect.map(owner, (found) =>
+      found === null
+        ? null
+        : {
+            userId: found.userId,
+            ...(projectId === projectIdForContext(found.contextId)
+              ? { driveId: myDriveId(found.contextId, found.userId), ownProject: true }
+              : { driveId: projectDriveId(found.userId, projectId), ownProject: false }),
+          },
+    );
 
   const lease = Effect.orDie(store.machine);
   const newToken = Effect.orDie(
@@ -343,26 +370,35 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const turn = projection === null ? null : runnerTurnFor(projection);
       const grant = projection === null ? undefined : modelGrantFor(projection);
-      const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
+      const run = projection === null ? undefined : harnessRun(projection);
+      const target =
+        turn === null || projection === null || run === undefined || !drivesEnabled
+          ? null
+          : { projection, run, drive: yield* driveOf(projection.thread.projectId) };
       return keep<RunnerWork>({
         generation: lease.generation,
-        needsUpkeep: needsUpkeep(
-          lease,
-          projection !== null && harnessRun(projection) !== undefined,
-        ),
+        needsUpkeep: needsUpkeep(lease, run !== undefined),
         turn,
         modelToken:
           turn === null || grant === undefined || lease.token === null
             ? null
             : yield* modelToken(lease.token, grant),
         drive:
-          driveId === null || lease.token === null || projection === null
+          target === null || target.drive === null || lease.token === null
             ? null
             : {
-                driveId,
-                token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
+                driveId: target.drive.driveId,
+                token: yield* driveToken(
+                  lease.token,
+                  target.projection.thread.id,
+                  lease.generation,
+                ),
+                // Only a drive backed by a remote has one to fetch.
+                remoteToken: target.drive.ownProject
+                  ? null
+                  : yield* remoteToken(lease.token, target.projection.thread.id, target.run.id),
               },
-        activeRunId: projection === null ? null : (harnessRun(projection)?.id ?? null),
+        activeRunId: run?.id ?? null,
       });
     }),
   );
@@ -400,15 +436,41 @@ const make = Effect.gen(function* () {
       if (!(yield* isDriveToken(token, current.token, threadId, current.generation))) {
         return deny("This token is not for this thread's machine.");
       }
-      const driveId = yield* driveOf;
-      if (driveId === null) return deny("This thread has no drive.");
+      const drive = yield* driveOf(projection.thread.projectId);
+      if (drive === null) return deny("This thread has no drive.");
       return {
         _tag: "granted",
         threadId,
-        driveId,
+        driveId: drive.driveId,
+        userId: drive.userId,
         generation: current.generation,
         live: harnessRun(projection) !== undefined,
       } satisfies DriveAuthorization;
+    });
+
+  // Like drive calls, remote fetches read committed state without the lock.
+  const authorizeRemote: ThreadRunner["Service"]["authorizeRemote"] = (token) =>
+    Effect.gen(function* () {
+      const deny = (reason: string): RemoteAuthorization => ({ _tag: "denied", reason });
+      if (!drivesEnabled) return deny("This cloud stores no drives.");
+      const projection = yield* engine.projection;
+      const run = projection === null ? undefined : harnessRun(projection);
+      const leaseToken = run === undefined ? null : (yield* lease).token;
+      if (projection === null || run === undefined || leaseToken === null) {
+        return deny("No turn is running on this thread.");
+      }
+      const threadId = projection.thread.id;
+      if (!(yield* isRemoteToken(token, leaseToken, threadId, run.id))) {
+        return deny("This token is not for the running turn.");
+      }
+      const drive = yield* driveOf(projection.thread.projectId);
+      if (drive === null) return deny("This thread has no drive.");
+      return {
+        _tag: "granted",
+        threadId,
+        driveId: drive.driveId,
+        userId: drive.userId,
+      } satisfies RemoteAuthorization;
     });
 
   const reconcile: ThreadRunner["Service"]["reconcile"] = withLease(
@@ -489,6 +551,7 @@ const make = Effect.gen(function* () {
     reconcile,
     authorizeModel,
     authorizeDrive,
+    authorizeRemote,
   });
 });
 

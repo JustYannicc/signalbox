@@ -67,6 +67,18 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.reconcile(...args);
   }
 
+  setRemote(...args: Parameters<DriveObjectApi["setRemote"]>) {
+    return this.api.setRemote(...args);
+  }
+
+  remote() {
+    return this.api.remote();
+  }
+
+  mirror(...args: Parameters<DriveObjectApi["mirror"]>) {
+    return this.api.mirror(...args);
+  }
+
   locate(...args: Parameters<DriveObjectApi["locate"]>) {
     return this.api.locate(...args);
   }

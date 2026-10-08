@@ -74,13 +74,17 @@ const withObject = <A, E>(
     ),
   );
 
-const launch = (engine: ThreadEngine.ThreadEngine["Service"], commandId = "launch-1") =>
+const launch = (
+  engine: ThreadEngine.ThreadEngine["Service"],
+  commandId = "launch-1",
+  projectId = ProjectId.make("scratch"),
+) =>
   engine.launch(
     owner,
     {
       commandId: CommandId.make(commandId),
       threadId,
-      projectId: ProjectId.make("scratch"),
+      projectId,
       title: "Hello Claude",
       modelSelection: claude,
       runtimeMode: "full-access",
@@ -714,11 +718,14 @@ describe("ThreadRunner", () => {
             _tag: "granted",
             threadId,
             driveId: "my/personal/user_1",
+            userId: "user_1",
             generation: machine.generation,
             live: true,
           });
           expect((yield* runner.authorizeDrive(`${token}x`))._tag).toBe("denied");
           expect((yield* runner.authorizeDrive(machine.token))._tag).toBe("denied");
+          // My Drive is its own home: there is no remote to fetch.
+          expect(work.drive!.remoteToken).toBeNull();
 
           const turn = yield* liveTurn(runner);
           const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
@@ -752,10 +759,46 @@ describe("ThreadRunner", () => {
           expect(
             projection.turnItems.filter((item) => item.type === "system_notice"),
           ).toMatchObject([{ message: "Merged main." }]);
-          // The turn is over: main no longer moves for this token.
+          // The turn is over: main no longer moves for this token, and the remote is out of reach.
           expect(yield* runner.authorizeDrive(token)).toMatchObject({
             _tag: "granted",
             live: false,
+          });
+        }),
+      { drives: true },
+    ),
+  );
+
+  it.effect("gives a thread in an imported repository a remote token for its turn only", () =>
+    withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine, "launch-1", ProjectId.make("project-repo"));
+          const machine = yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.drive?.driveId).toBe("project/user_1/project-repo");
+          const remoteToken = work.drive!.remoteToken!;
+          expect(yield* runner.authorizeRemote(remoteToken)).toEqual({
+            _tag: "granted",
+            threadId,
+            driveId: "project/user_1/project-repo",
+            userId: "user_1",
+          });
+          // Neither token stands in for the other.
+          expect((yield* runner.authorizeRemote(work.drive!.token))._tag).toBe("denied");
+          expect((yield* runner.authorizeDrive(remoteToken))._tag).toBe("denied");
+
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.terminal],
+          });
+          expect(yield* runner.authorizeRemote(remoteToken)).toMatchObject({
+            _tag: "denied",
+            reason: "No turn is running on this thread.",
           });
         }),
       { drives: true },

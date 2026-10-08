@@ -46,7 +46,8 @@ import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
  * checks the thread's branch out as the harness's working directory, saves
  * after each batch of tool calls, and reconciles with the drive's `main`
  * before it reports the turn's end, reporting the turn's commit as a
- * checkpoint.
+ * checkpoint. A drive backed by a remote repository fetches the remote's
+ * default branch at turn start instead, and saves the turn without merging.
  *
  * The machine holds no provider keys. Its harnesses reach the models through
  * the ModelGateway named in `MachineEnsureRequest`, with the model token each
@@ -54,7 +55,7 @@ import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
  * only, and stops working when the turn ends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 3;
+export const RUNNER_PROTOCOL_VERSION = 4;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";

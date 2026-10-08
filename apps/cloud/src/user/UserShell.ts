@@ -61,7 +61,7 @@ const make = Effect.gen(function* () {
   const updates = yield* PubSub.unbounded<ShellUpdate>();
 
   const snapshot: UserShell["Service"]["snapshot"] = Effect.gen(function* () {
-    const projects = contextProjects(yield* contexts.contexts);
+    const projects = contextProjects(yield* contexts.contexts, yield* contexts.remoteProjects);
     // The index last, so the snapshot is as recent as the thread updates around it.
     return Environment.shellSnapshot({ ...(yield* store.threadIndex), projects });
   });

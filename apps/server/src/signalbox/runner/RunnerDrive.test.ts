@@ -51,7 +51,7 @@ const read = (cwd: string, file: string) => NodeFS.readFileSync(NodePath.join(cw
  * Uploads must be closed and not thin; refs move by CAS to commits it has;
  * `main` only fast-forwards to the thread's branch, from the main it merged.
  */
-const makeFakeDrive = (root: string) => {
+const makeFakeDrive = (root: string, options: { readonly upstream?: string } = {}) => {
   const store = NodePath.join(root, "store");
   NodeFS.mkdirSync(store, { recursive: true });
   git(store, "init", "-q", "--bare");
@@ -62,17 +62,29 @@ const makeFakeDrive = (root: string) => {
     string,
     { thread: string | null; wip: string | null; base: string | null }
   >();
-  const calls = { reconcile: 0, reconcileConflicts: 0 };
+  const calls = { reconcile: 0, reconcileConflicts: 0, mirror: 0 };
+  /** Set to make the cloud refuse every mirror, as when GitHub has not caught up yet. */
+  const settings = { refuseMirror: false };
+  const shallow: Array<{ seq: number; oid: string }> = [];
+  const remote =
+    options.upstream === undefined
+      ? null
+      : { provider: "github" as const, repository: "owner/repo", defaultBranch: "main" };
+  /** What GitHub would say the remote's head is. */
+  const upstreamHead = () =>
+    options.upstream === undefined ? null : git(options.upstream, "rev-parse", "HEAD");
   let beforeReconcile: Effect.Effect<void> | null = null;
 
   /** Like the cloud, lists only packs after the ones the machine says it has. */
   const state = (threadId: string, packsAfter: number): DriveState => {
-    const refs = threads.get(threadId)!;
+    const refs = threads.get(threadId) ?? { thread: null, wip: null, base: null };
     return {
       driveId: "drive-1",
       main,
       ...refs,
       packs: packs.filter((pack) => pack.seq > packsAfter),
+      remote,
+      shallow: shallow.filter((entry) => entry.seq > packsAfter).map((entry) => entry.oid),
     };
   };
   const has = (oid: string) => gitOk(store, "cat-file", "-e", `${oid}^{commit}`);
@@ -87,6 +99,23 @@ const makeFakeDrive = (root: string) => {
         if (!threads.has(threadId)) threads.set(threadId, { thread: main, wip: null, base: main });
         return state(threadId, packsAfter);
       }),
+      state: Effect.sync(() => state(threadId, packsAfter)),
+      remoteUrl: options.upstream === undefined ? "file:///nowhere" : `file://${options.upstream}`,
+      mirror: (request) =>
+        Effect.sync((): RefWriteResult => {
+          calls.mirror++;
+          if (remote === null || settings.refuseMirror) {
+            return { _tag: "refused", reason: "not now" };
+          }
+          if (request.newMain !== upstreamHead())
+            return { _tag: "refused", reason: "not the head" };
+          if (!has(request.newMain)) return { _tag: "refused", reason: "unknown commit" };
+          if (main !== request.newMain && main !== request.expectedMain) {
+            return { _tag: "conflict", state: state(threadId, packsAfter) };
+          }
+          main = request.newMain;
+          return { _tag: "ok", state: state(threadId, packsAfter) };
+        }),
       downloadPack: (name, dir) =>
         Effect.sync(() => {
           NodeFS.mkdirSync(dir, { recursive: true });
@@ -97,11 +126,19 @@ const makeFakeDrive = (root: string) => {
             }
           }
         }),
-      uploadPack: (idx, pack) =>
+      uploadPack: (idx, pack, upload = {}) =>
         Effect.sync(() => {
           const name = Buffer.from(pack.subarray(pack.length - 20)).toString("hex");
+          if (upload.remoteHead !== undefined && upload.remoteHead !== upstreamHead()) {
+            throw new Error("not the remote's head");
+          }
           NodeFS.writeFileSync(NodePath.join(packDir, `pack-${name}.pack`), pack);
           NodeFS.writeFileSync(NodePath.join(packDir, `pack-${name}.idx`), idx);
+          if (upload.remoteHead !== undefined) {
+            // Its parents stay on the remote, as the cloud records it.
+            NodeFS.appendFileSync(NodePath.join(store, "shallow"), `${upload.remoteHead}\n`);
+            shallow.push({ seq: packs.length + 1, oid: upload.remoteHead });
+          }
           // Not thin: every delta base is inside the pack.
           const listing = git(
             store,
@@ -166,6 +203,8 @@ const makeFakeDrive = (root: string) => {
     calls,
     client,
     refs: (threadId: string) => ({ main, ...threads.get(threadId)! }),
+    shallow: () => shallow.map((entry) => entry.oid),
+    settings,
     mainFile: (file: string) => git(store, "show", `${main}:${file}`),
     onceBeforeReconcile: (effect: Effect.Effect<void>) => {
       beforeReconcile = effect;
@@ -206,7 +245,7 @@ describe("RunnerDrive", () => {
           const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
           // Files already there when the drive first opens become part of it.
           write(cwd, "existing.txt", "was here\n");
-          yield* runner.prepare;
+          yield* runner.prepare("remote-token");
           expect(read(cwd, "existing.txt")).toBe("was here\n");
           write(cwd, "notes.md", "hello\n");
           yield* runner.autosave;
@@ -236,7 +275,7 @@ describe("RunnerDrive", () => {
       Effect.gen(function* () {
         const drive = makeFakeDrive(root);
         const first = yield* machine(drive, root, "vm-1", "t1");
-        yield* first.runner.prepare;
+        yield* first.runner.prepare("remote-token");
         write(first.cwd, "a.txt", "one\n");
         const turn = yield* first.runner.finishTurn({ message: "Add a\n\nbody" });
         expect(turn.outcome._tag).toBe("landed");
@@ -250,7 +289,7 @@ describe("RunnerDrive", () => {
         yield* first.runner.flush;
 
         const second = yield* machine(drive, root, "vm-2", "t1");
-        yield* second.runner.prepare;
+        yield* second.runner.prepare("remote-token");
         expect(git(second.cwd, "rev-parse", "HEAD")).toBe(drive.refs("t1").thread);
         expect(git(second.cwd, "symbolic-ref", "HEAD")).toBe("refs/heads/signalbox");
         expect(read(second.cwd, "a.txt")).toBe("one\ntwo\n");
@@ -266,8 +305,8 @@ describe("RunnerDrive", () => {
         const drive = makeFakeDrive(root);
         const a = yield* machine(drive, root, "vm-a", "ta");
         const b = yield* machine(drive, root, "vm-b", "tb");
-        yield* a.runner.prepare;
-        yield* b.runner.prepare;
+        yield* a.runner.prepare("remote-token");
+        yield* b.runner.prepare("remote-token");
         write(a.cwd, "a.txt", "from a\n");
         write(b.cwd, "b.txt", "from b\n");
         expect((yield* a.runner.finishTurn({ message: "a" })).outcome._tag).toBe("landed");
@@ -300,12 +339,12 @@ describe("RunnerDrive", () => {
       Effect.gen(function* () {
         const drive = makeFakeDrive(root);
         const a = yield* machine(drive, root, "vm-a", "ta");
-        yield* a.runner.prepare;
+        yield* a.runner.prepare("remote-token");
         write(a.cwd, "shared.txt", "base\n");
         yield* a.runner.finishTurn({ message: "base" });
         const b = yield* machine(drive, root, "vm-b", "tb");
-        yield* a.runner.prepare;
-        yield* b.runner.prepare;
+        yield* a.runner.prepare("remote-token");
+        yield* b.runner.prepare("remote-token");
         write(a.cwd, "shared.txt", "from a\n");
         write(b.cwd, "shared.txt", "from b\n");
         expect((yield* a.runner.finishTurn({ message: "a" })).outcome._tag).toBe("landed");
@@ -332,12 +371,12 @@ describe("RunnerDrive", () => {
       Effect.gen(function* () {
         const drive = makeFakeDrive(root);
         const a = yield* machine(drive, root, "vm-a", "ta");
-        yield* a.runner.prepare;
+        yield* a.runner.prepare("remote-token");
         write(a.cwd, "shared.txt", "base\n");
         yield* a.runner.finishTurn({ message: "base" });
         const b = yield* machine(drive, root, "vm-b", "tb");
-        yield* a.runner.prepare;
-        yield* b.runner.prepare;
+        yield* a.runner.prepare("remote-token");
+        yield* b.runner.prepare("remote-token");
         write(a.cwd, "shared.txt", "from a\n");
         write(b.cwd, "shared.txt", "from b\n");
         yield* a.runner.finishTurn({ message: "a" });
@@ -356,8 +395,8 @@ describe("RunnerDrive", () => {
         const drive = makeFakeDrive(root);
         const a = yield* machine(drive, root, "vm-a", "ta");
         const b = yield* machine(drive, root, "vm-b", "tb");
-        yield* a.runner.prepare;
-        yield* b.runner.prepare;
+        yield* a.runner.prepare("remote-token");
+        yield* b.runner.prepare("remote-token");
         write(a.cwd, "a.txt", "from a\n");
         write(b.cwd, "b.txt", "from b\n");
         // Thread a lands while thread b is between its merge and its reconcile.
@@ -377,4 +416,158 @@ describe("RunnerDrive", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     ),
   );
+
+  /** A GitHub stand-in: a repository with history on `main`, served over `file://`. */
+  const makeUpstream = (root: string) => {
+    const dir = NodePath.join(root, "upstream");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    git(dir, "init", "-q", "-b", "main");
+    const commit = (file: string, text: string, message: string) => {
+      write(dir, file, text);
+      git(dir, "add", "-A");
+      git(
+        dir,
+        "-c",
+        "user.name=Dev",
+        "-c",
+        "user.email=dev@example.com",
+        "commit",
+        "-q",
+        "-m",
+        message,
+      );
+      return git(dir, "rev-parse", "HEAD");
+    };
+    commit("README.md", "hello\n", "first");
+    commit("src/app.ts", "export {}\n", "second");
+    return { dir, commit };
+  };
+
+  describe("backed by a remote", () => {
+    it.effect("starts a new thread from the remote's head and keeps its history there", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+
+          const head = git(upstream.dir, "rev-parse", "HEAD");
+          expect(drive.refs("t1")).toMatchObject({ main: head, thread: head, base: head });
+          expect(read(cwd, "src/app.ts")).toBe("export {}\n");
+          expect(status(cwd)).toEqual([]);
+          // One commit deep: the parents stay on the remote, and git knows not to look.
+          expect(drive.shallow()).toEqual([head]);
+          expect(git(drive.store, "rev-list", "--count", head)).toBe("1");
+          expect(git(cwd, "log", "--format=%s")).toBe("second");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("saves a turn on the thread's branch without touching main", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+          const head = drive.refs("t1").main;
+          write(cwd, "src/app.ts", "export const app = 1;\n");
+          yield* runner.autosave;
+          yield* runner.flush;
+          const autosave = drive.refs("t1").wip;
+
+          const turn = yield* runner.finishTurn({ message: "Add app" });
+          expect(turn.outcome._tag).toBe("saved");
+          expect(drive.calls.reconcile).toBe(0);
+          const refs = drive.refs("t1");
+          expect(refs.main).toBe(head);
+          expect(refs.thread).toBe(git(cwd, "rev-parse", "HEAD"));
+          expect(git(cwd, "rev-parse", "HEAD^")).toBe(head);
+          // The auto-save is a side commit, never on the branch that gets pushed.
+          expect(gitOk(drive.store, "merge-base", "--is-ancestor", autosave!, refs.thread!)).toBe(
+            false,
+          );
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("moves main to a merged pull request for new threads only", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const old = yield* machine(drive, root, "vm-1", "t-old");
+          yield* old.runner.prepare("remote-token");
+          const before = drive.refs("t-old").main;
+
+          const merged = upstream.commit("src/app.ts", "export const merged = true;\n", "Merge #1");
+          const fresh = yield* machine(drive, root, "vm-2", "t-new");
+          yield* fresh.runner.prepare("remote-token");
+          expect(drive.refs("t-new")).toMatchObject({ main: merged, thread: merged, base: merged });
+          expect(read(fresh.cwd, "src/app.ts")).toBe("export const merged = true;\n");
+
+          // The older thread keeps its base; the next turn there sees the new main but stays put.
+          yield* old.runner.prepare("remote-token");
+          expect(drive.refs("t-old")).toMatchObject({ main: merged, thread: before, base: before });
+          expect(git(old.cwd, "rev-parse", "HEAD")).toBe(before);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("restores a thread on a new machine from the drive's packs alone", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const first = yield* machine(drive, root, "vm-1", "t1");
+          yield* first.runner.prepare("remote-token");
+          write(first.cwd, "notes.md", "turn one\n");
+          yield* first.runner.finishTurn({ message: "Notes" });
+
+          // GitHub is unreachable now: the drive's copy is enough to keep working.
+          NodeFS.rmSync(upstream.dir, { recursive: true, force: true });
+          const second = yield* machine(drive, root, "vm-2", "t1");
+          yield* second.runner.prepare("remote-token");
+          expect(git(second.cwd, "rev-parse", "HEAD")).toBe(drive.refs("t1").thread);
+          expect(read(second.cwd, "notes.md")).toBe("turn one\n");
+          expect(git(second.cwd, "log", "--format=%s")).toBe("Notes\nsecond");
+          write(second.cwd, "notes.md", "turn two\n");
+          expect((yield* second.runner.finishTurn({ message: "More" })).outcome._tag).toBe("saved");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("starts from the drive's copy when main can't follow the remote yet", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const first = yield* machine(drive, root, "vm-1", "t1");
+          yield* first.runner.prepare("remote-token");
+          const before = drive.refs("t1").main;
+
+          upstream.commit("src/app.ts", "export const later = true;\n", "Later");
+          drive.settings.refuseMirror = true;
+          const second = yield* machine(drive, root, "vm-2", "t2");
+          yield* second.runner.prepare("remote-token");
+          expect(drive.refs("t2")).toMatchObject({ main: before, thread: before });
+          expect(read(second.cwd, "src/app.ts")).toBe("export {}\n");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("fails a thread's first turn when the remote can't be fetched", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          NodeFS.rmSync(upstream.dir, { recursive: true, force: true });
+          const { runner } = yield* machine(drive, root, "vm-1", "t1");
+          const failed = yield* runner.prepare("remote-token").pipe(Effect.flip);
+          expect(failed.message).toMatch(/Fetching owner\/repo failed/);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+  });
 });

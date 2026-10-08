@@ -86,6 +86,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     sections: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
+    // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
+    projectCloneTracking: true,
   },
 });
 

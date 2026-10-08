@@ -1,3 +1,4 @@
+import type { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -18,8 +19,9 @@ import type {
  * How the Worker and thread objects reach drive objects. Every drive has
  * exactly one, named by its drive id and always created in the EU
  * jurisdiction. Until shared drives land (#140), each person has one drive
- * per context, their My Drive, and every thread they start in that context
- * works in it.
+ * per context, their My Drive, and every thread they start in that context's
+ * own project works in it. A project of theirs backed by a remote repository
+ * (#135) is a drive of its own.
  */
 
 export const DRIVE_OBJECT_JURISDICTION = "eu";
@@ -28,10 +30,14 @@ export const DRIVE_OBJECT_JURISDICTION = "eu";
 export const myDriveId = (contextId: SignalboxContextId, userId: string) =>
   `my/${contextId}/${userId}`;
 
+/** The drive of a person's project that is not a context's own, such as an imported repository. */
+export const projectDriveId = (userId: string, projectId: string) =>
+  `project/${userId}/${projectId}`;
+
 /** What a drive object answers. `DriveObject` implements it method for method. */
 export interface DriveObjectApi {
   readonly open: (writer: DriveWriter) => Promise<RefWrite>;
-  readonly refs: (threadId: string | null) => Promise<ThreadRefs>;
+  readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
   readonly missing: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<Oid>>;
   readonly registerPack: (
@@ -44,6 +50,12 @@ export interface DriveObjectApi {
     updates: ReadonlyArray<{ readonly name: string; readonly old: Oid | null; readonly new: Oid }>,
   ) => Promise<RefWrite>;
   readonly reconcile: (
+    writer: DriveWriter,
+    request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
+  ) => Promise<RefWrite>;
+  readonly setRemote: (remote: DriveRemote) => Promise<void>;
+  readonly remote: () => Promise<DriveRemote | null>;
+  readonly mirror: (
     writer: DriveWriter,
     request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
   ) => Promise<RefWrite>;
@@ -86,6 +98,9 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     registerPack: wrap("registerPack"),
     updateRefs: wrap("updateRefs"),
     reconcile: wrap("reconcile"),
+    setRemote: wrap("setRemote"),
+    remote: wrap("remote"),
+    mirror: wrap("mirror"),
     locate: wrap("locate"),
     locateAt: wrap("locateAt"),
     commits: wrap("commits"),

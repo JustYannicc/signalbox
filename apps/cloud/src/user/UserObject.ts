@@ -5,6 +5,7 @@ import { DurableObject } from "cloudflare:workers";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
@@ -13,6 +14,9 @@ import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
+import * as GitHub from "../github/GitHub.ts";
+import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as Platform from "../platform.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
@@ -43,7 +47,7 @@ import * as UserStore from "./UserStore.ts";
  * while a client is connected.
  */
 
-export interface UserObjectEnv extends MachineBackendEnv {
+export interface UserObjectEnv extends MachineBackendEnv, GitHub.GitHubEnv {
   /** Drives' objects and packs: clients browse them through this object (`drive/DriveFiles.ts`). */
   readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
   readonly DRIVE_PACKS?: DrivePacks.PackBucket;
@@ -61,7 +65,7 @@ const layerDrives = (env: UserObjectEnv) =>
   env.DRIVES === undefined || env.DRIVE_PACKS === undefined
     ? Layer.empty
     : DriveFiles.layer.pipe(
-        Layer.provide(
+        Layer.provideMerge(
           Layer.mergeAll(
             DriveDirectory.layerDurableObjects(env.DRIVES, {
               localWorkerd: env.LOCAL_WORKERD === "1",
@@ -73,13 +77,22 @@ const layerDrives = (env: UserObjectEnv) =>
 
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
   ManagedRuntime.make(
-    Layer.mergeAll(
-      UserShell.layer,
-      CloudThreadService.layer,
-      UserSections.layer,
-      layerDrives(env),
-    ).pipe(
+    GitHubBranches.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          UserShell.layer,
+          CloudThreadService.layer,
+          UserSections.layer,
+          layerDrives(env),
+          GitHubConnection.layer,
+        ),
+      ),
       Layer.provideMerge(ThreadContexts.layer),
+      Layer.provideMerge(
+        GitHub.layer(GitHub.gitHubAppConfig(env), GitHub.gitHubEndpoints(env)).pipe(
+          Layer.provide(FetchHttpClient.layer),
+        ),
+      ),
       Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
       Layer.provideMerge(
         ThreadDirectory.layerDurableObjects(env.THREADS, {
@@ -167,6 +180,22 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   rebuildThreadIndex() {
     return this.api.rebuildThreadIndex();
+  }
+
+  beginGitHubConnect(redirectUri: string) {
+    return this.api.beginGitHubConnect(redirectUri);
+  }
+
+  completeGitHubConnect(input: Parameters<UserObjectApi["completeGitHubConnect"]>[0]) {
+    return this.api.completeGitHubConnect(input);
+  }
+
+  disconnectGitHub() {
+    return this.api.disconnectGitHub();
+  }
+
+  githubAccessToken() {
+    return this.api.githubAccessToken();
   }
 
   override async fetch(request: Request): Promise<Response> {

@@ -115,16 +115,15 @@ const make = Effect.gen(function* () {
       }
       // Only a create can make a thread, so only a create names its context. The
       // thread object rejects a new thread without one, after replaying retries.
-      const contextId =
+      const creation =
         command.type === "thread.create"
-          ? yield* threadContexts.contextOfProject(command.projectId)
-          : null;
-      return yield* directory.forThread(threadId).dispatch(actor, command, { contextId });
+          ? yield* threadContexts.placementOf(command.projectId, threadId)
+          : { contextId: null, worktree: null };
+      return yield* directory.forThread(threadId).dispatch(actor, command, creation);
     });
 
   const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
     Effect.gen(function* () {
-      const contextId = yield* threadContexts.contextOfProject(input.projectId);
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =
@@ -136,9 +135,8 @@ const make = Effect.gen(function* () {
               .pipe(Effect.map(Hex.encode)),
           )}`,
         );
-      return yield* directory
-        .forThread(threadId)
-        .launch(actor, { ...input, threadId }, { contextId });
+      const creation = yield* threadContexts.placementOf(input.projectId, threadId);
+      return yield* directory.forThread(threadId).launch(actor, { ...input, threadId }, creation);
     });
 
   const threadSnapshot: CloudThreadService["Service"]["threadSnapshot"] = (actor, threadId) =>

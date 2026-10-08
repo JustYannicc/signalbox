@@ -387,7 +387,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       latestRunId = turn.runId;
       // The harness starts in the thread's branch, as the drive last saved it.
       const opened = access === null ? null : yield* driveFor(access);
-      if (opened !== null) yield* opened.prepare;
+      if (opened !== null && access !== null) yield* opened.prepare(access.remoteToken);
       yield* input.useModelToken(modelToken);
       const session = yield* sessionFor(adapter, turn, runtimePolicy);
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);

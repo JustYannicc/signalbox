@@ -1,18 +1,28 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { contextOfProject } from "./contextProjects.ts";
+import type { ThreadWorktree } from "../thread/threadDecider.ts";
+import { contextOfProject, remoteThreadWorktree } from "./contextProjects.ts";
 import * as UserContexts from "./UserContexts.ts";
 
-/** What `CloudThreadService` needs to know about contexts: which one a new thread acts as. */
+/** Where a new thread goes: the context it acts as, and its own branch when its project has one per thread. */
+export interface ThreadPlacement {
+  readonly contextId: SignalboxContextId | null;
+  readonly worktree: ThreadWorktree | null;
+}
+
+/** What `CloudThreadService` needs to know about contexts: where a new thread goes. */
 export class ThreadContexts extends Context.Service<
   ThreadContexts,
   {
-    /** The acting user's context whose project this is, or null when it's none of theirs. */
-    readonly contextOfProject: (projectId: ProjectId) => Effect.Effect<SignalboxContextId | null>;
+    /** The acting user's context whose project this is (null when it's none of theirs), and the thread's worktree. */
+    readonly placementOf: (
+      projectId: ProjectId,
+      threadId: ThreadId,
+    ) => Effect.Effect<ThreadPlacement>;
   }
 >()("@signalbox/cloud/user/threadContexts") {}
 
@@ -22,9 +32,20 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const contexts = yield* UserContexts.UserContexts;
     return ThreadContexts.of({
-      contextOfProject: (projectId) =>
-        contexts.contexts.pipe(
-          Effect.map((current) => contextOfProject(current, projectId)),
+      placementOf: (projectId, threadId) =>
+        Effect.gen(function* () {
+          const contextId = contextOfProject(yield* contexts.contexts, projectId);
+          const remote = (yield* contexts.remoteProjects).find(
+            (project) => project.projectId === projectId,
+          );
+          return {
+            contextId,
+            worktree:
+              contextId === null || remote === undefined
+                ? null
+                : remoteThreadWorktree(remote, threadId),
+          };
+        }).pipe(
           // A storage failure is a bug, not a rejected command.
           Effect.orDie,
         ),
@@ -36,6 +57,6 @@ export const layer = Layer.effect(
 export const layerWorker = Layer.succeed(
   ThreadContexts,
   ThreadContexts.of({
-    contextOfProject: () => Effect.die("Threads are created in their user's object."),
+    placementOf: () => Effect.die("Threads are created in their user's object."),
   }),
 );

@@ -10,6 +10,7 @@ import {
   type ReconcileRequest,
   type RefUpdate,
   type RefWriteResult,
+  REMOTE_HEAD_HEADER,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -35,11 +36,15 @@ export interface DriveClient {
   /** Records that this machine has every pack up to `seq`; later states list only newer ones. */
   readonly havePacksThrough: (seq: number) => void;
   readonly open: Effect.Effect<DriveState, DriveClientError>;
+  /** The drive as it is, without opening it for this thread. */
+  readonly state: Effect.Effect<DriveState, DriveClientError>;
   /** Puts `pack-<name>.pack` and `.idx` into `packDir`; idx last, so git never sees half a pack. */
   readonly downloadPack: (name: string, packDir: string) => Effect.Effect<void, DriveClientError>;
+  /** `remoteHead`: the pack holds the remote's head, whose parents stay on the remote. */
   readonly uploadPack: (
     idx: Uint8Array,
     pack: Uint8Array,
+    options?: { readonly remoteHead?: string },
   ) => Effect.Effect<typeof PackUploadResult.Type, DriveClientError>;
   readonly updateRefs: (
     updates: ReadonlyArray<RefUpdate>,
@@ -47,6 +52,11 @@ export interface DriveClient {
   readonly reconcile: (
     request: typeof ReconcileRequest.Type,
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
+  readonly mirror: (
+    request: typeof ReconcileRequest.Type,
+  ) => Effect.Effect<RefWriteResult, DriveClientError>;
+  /** Where git fetches the drive's remote through the cloud. */
+  readonly remoteUrl: string;
 }
 
 const RETRY = {
@@ -151,7 +161,7 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
       }
     });
 
-  const uploadPack: DriveClient["uploadPack"] = (idx, pack) =>
+  const uploadPack: DriveClient["uploadPack"] = (idx, pack, options = {}) =>
     Effect.gen(function* () {
       if (pack.byteLength > MAX_PACK_BYTES) {
         return yield* new DriveClientError({
@@ -165,6 +175,9 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
       const answer = yield* text(
         HttpClientRequest.post(`${origin}${DRIVE_PATHS.packs}`).pipe(
           HttpClientRequest.setHeader(PACK_INDEX_LENGTH_HEADER, String(idx.byteLength)),
+          options.remoteHead === undefined
+            ? (request) => request
+            : HttpClientRequest.setHeader(REMOTE_HEAD_HEADER, options.remoteHead),
           HttpClientRequest.bodyUint8Array(body, "application/octet-stream"),
         ),
         "uploading a pack",
@@ -179,11 +192,17 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
     open: postJson(DRIVE_PATHS.open, "{}", "opening the drive").pipe(
       Effect.flatMap(decodeWith(driveJson.state.decode, "drive state")),
     ),
+    state: postJson(DRIVE_PATHS.state, "{}", "reading the drive").pipe(
+      Effect.flatMap(decodeWith(driveJson.state.decode, "drive state")),
+    ),
     downloadPack,
     uploadPack,
     updateRefs: (updates) =>
       writeRefs(DRIVE_PATHS.refs, driveJson.refUpdate.encode({ updates }), "moving refs"),
     reconcile: (request) =>
       writeRefs(DRIVE_PATHS.reconcile, driveJson.reconcile.encode(request), "reconciling main"),
+    mirror: (request) =>
+      writeRefs(DRIVE_PATHS.mirror, driveJson.mirror.encode(request), "mirroring the remote"),
+    remoteUrl: `${origin}${DRIVE_PATHS.remote}`,
   } satisfies DriveClient;
 });

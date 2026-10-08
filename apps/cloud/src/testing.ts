@@ -8,6 +8,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
@@ -27,6 +28,11 @@ import * as ThreadStore from "./thread/ThreadStore.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
+import type * as DriveDirectory from "./drive/DriveDirectory.ts";
+import type * as DrivePacks from "./drive/DrivePacks.ts";
+import * as GitHub from "./github/GitHub.ts";
+import * as GitHubBranches from "./github/GitHubBranches.ts";
+import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as UserSections from "./user/UserSections.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
@@ -60,8 +66,11 @@ export const layerMemoryStore = UserSections.layer.pipe(
 export const layerPersonalThreadContexts = Layer.succeed(
   ThreadContexts.ThreadContexts,
   ThreadContexts.ThreadContexts.of({
-    contextOfProject: (projectId) =>
-      Effect.succeed(contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId)),
+    placementOf: (projectId) =>
+      Effect.succeed({
+        contextId: contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId),
+        worktree: null,
+      }),
   }),
 );
 
@@ -84,10 +93,19 @@ export const layerThreadObject = (
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
-const makeUserRuntime = (threads: ThreadDirectory.ThreadDirectory["Service"]) =>
+/** GitHub with no App and no network, for tests that never reach it. */
+const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.layer));
+
+const makeUserRuntime = (
+  threads: ThreadDirectory.ThreadDirectory["Service"],
+  github: Layer.Layer<GitHub.GitHub>,
+  drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks> | null,
+) =>
   ManagedRuntime.make(
-    UserShell.layer.pipe(
+    Layer.mergeAll(UserShell.layer, GitHubConnection.layer).pipe(
       Layer.provideMerge(layerMemoryStore),
+      Layer.provideMerge(github),
+      Layer.provideMerge(drives ?? Layer.empty),
       Layer.provideMerge(Layer.succeed(ThreadDirectory.ThreadDirectory, threads)),
     ),
   );
@@ -99,7 +117,13 @@ const makeUserRuntime = (threads: ThreadDirectory.ThreadDirectory["Service"]) =>
  * thread objects' alarms do: drive every turn to the end and deliver every
  * pending summary.
  */
-export const makeMemoryCloud = () => {
+export const makeMemoryCloud = (
+  options: {
+    readonly github?: Layer.Layer<GitHub.GitHub>;
+    /** Drives the user objects store into, as `makeMemoryDrives` makes them. */
+    readonly drives?: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>;
+  } = {},
+) => {
   const users = new Map<
     string,
     {
@@ -130,7 +154,11 @@ export const makeMemoryCloud = () => {
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
-    const runtime = makeUserRuntime(threadDirectory);
+    const runtime = makeUserRuntime(
+      threadDirectory,
+      options.github ?? layerNoGitHub,
+      options.drives ?? null,
+    );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
     return object;
@@ -186,7 +214,8 @@ export const makeMemoryCloud = () => {
     userObject,
     /** The thread service as `userId`'s object runs it, with that user's contexts. */
     layerFor: (userId: string) =>
-      threadService.pipe(
+      GitHubBranches.layer.pipe(
+        Layer.provideMerge(threadService),
         Layer.provideMerge(ThreadContexts.layer),
         Layer.provideMerge(userObject(userId)),
       ),

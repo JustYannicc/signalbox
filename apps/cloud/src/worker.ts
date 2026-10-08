@@ -58,7 +58,7 @@ export default {
       return env.DRIVES === undefined || env.DRIVE_PACKS === undefined
         ? new Response("This cloud stores no drives.", { status: 404 })
         : handleDriveRequest(
-            { THREADS: env.THREADS, DRIVES: env.DRIVES, DRIVE_PACKS: env.DRIVE_PACKS },
+            { ...env, DRIVES: env.DRIVES, DRIVE_PACKS: env.DRIVE_PACKS },
             request,
             { localWorkerd },
           );
