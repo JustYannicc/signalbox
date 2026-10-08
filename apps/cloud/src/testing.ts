@@ -30,6 +30,7 @@ import { previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
+import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
@@ -105,7 +106,7 @@ export const layerThreadObject = (
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
     Layer.provideMerge(DiagnosticsStore.layer),
-    Layer.provideMerge(ThreadStore.layer),
+    Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 

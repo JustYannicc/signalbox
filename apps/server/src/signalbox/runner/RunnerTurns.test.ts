@@ -6,6 +6,7 @@ import type {
 import {
   MessageId,
   NodeId,
+  OrchestrationV2TurnItem,
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -31,6 +32,7 @@ import type {
   ProviderAdapterV2Shape,
 } from "../../orchestration-v2/ProviderAdapter.ts";
 import type { DriveOutcome, RunnerDrive } from "./RunnerDrive.ts";
+import type { RunnerSessions } from "./RunnerSessions.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -122,8 +124,15 @@ const makeFakeAdapter = Effect.gen(function* () {
     events: Stream.fromQueue(events),
     ensureThread: () => Effect.as(Deferred.await(loaded), providerThread),
     resumeThread: () => Effect.die(new Error("no rollout for Bearer sk-live-resume-secret")),
-    startTurn: (input: { readonly runId: string }) =>
-      Effect.sync(() => void calls.push(`start ${input.runId}`)),
+    startTurn: (input: { readonly runId: string; readonly restartContinuationOfRunId?: string }) =>
+      Effect.sync(
+        () =>
+          void calls.push(
+            input.restartContinuationOfRunId === undefined
+              ? `start ${input.runId}`
+              : `start ${input.runId} continuing ${input.restartContinuationOfRunId}`,
+          ),
+      ),
     interruptTurn: (input: { readonly providerTurnId: string }) =>
       Effect.sync(() => void calls.push(`interrupt ${input.providerTurnId}`)),
   } as unknown as ProviderAdapterV2SessionRuntime;
@@ -152,11 +161,11 @@ describe("RunnerTurns", () => {
             emit: (item) => Effect.sync(() => void reported.push(item)),
           });
           yield* Deferred.succeed(fake.loaded, undefined);
-          yield* turns.start(turnFor(1), "token-1");
+          yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
           yield* Effect.yieldNow;
           // Stopped before the harness reported its turn id, then the next run starts.
           yield* turns.interrupt(RunId.make("run-1"));
-          yield* turns.start(turnFor(2), "token-2");
+          yield* turns.start({ turn: turnFor(2), modelToken: "token-2" });
           yield* Effect.yieldNow;
           yield* Queue.offer(fake.events, providerTurnStarted(1));
           yield* Queue.offer(fake.events, providerTurnStarted(2));
@@ -180,7 +189,7 @@ describe("RunnerTurns", () => {
           usage: Effect.succeed(unmeasured),
           emit: (item) => Effect.sync(() => void reported.push(item)),
         });
-        yield* turns.start(turnFor(1), "token-1");
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
         yield* Effect.yieldNow;
         // A reconnect's welcome says nothing is live any more.
         yield* turns.keepOnly(null);
@@ -206,9 +215,9 @@ describe("RunnerTurns", () => {
           emit: () => Effect.void,
         });
         yield* Deferred.succeed(fake.loaded, undefined);
-        yield* turns.start(turnFor(1), "token-1");
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
         for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
-        yield* turns.start(turnFor(2), "token-2");
+        yield* turns.start({ turn: turnFor(2), modelToken: "token-2" });
         for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
 
         expect(fake.calls).toEqual([
@@ -288,10 +297,14 @@ describe("RunnerTurns", () => {
             runOrdinal: 1,
             providerTurnOrdinal: 1,
           } as unknown as RunnerTurn;
-          yield* turns.start(turn, "token-1", {
-            driveId: "my/personal/user_1",
-            token: "sbd1.x.y",
-            remoteToken: "sbr1.x.y",
+          yield* turns.start({
+            turn,
+            modelToken: "token-1",
+            drive: {
+              driveId: "my/personal/user_1",
+              token: "sbd1.x.y",
+              remoteToken: "sbr1.x.y",
+            },
           });
           yield* settle;
           expect(driveCalls).toEqual(["prepare sbr1.x.y"]);
@@ -441,10 +454,14 @@ describe("RunnerTurns", () => {
           runOrdinal: 1,
           providerTurnOrdinal: 1,
         } as unknown as RunnerTurn;
-        yield* turns.start(turn, "token-1", {
-          driveId: "my/personal/user_1",
-          token: "sbd1.x.y",
-          remoteToken: "sbr1.x.y",
+        yield* turns.start({
+          turn,
+          modelToken: "token-1",
+          drive: {
+            driveId: "my/personal/user_1",
+            token: "sbd1.x.y",
+            remoteToken: "sbr1.x.y",
+          },
         });
         yield* settle;
         expect(driveCalls).toEqual(["prepare sbr1.x.y"]);
@@ -543,7 +560,7 @@ describe("RunnerTurns", () => {
             emit: (item) => Effect.sync(() => void reported.push(item)),
           });
           yield* Deferred.succeed(fake.loaded, undefined);
-          yield* turns.start(turnFor(1), "token-1");
+          yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
           yield* settle;
           yield* TestClock.adjust("30 seconds");
           yield* settle;
@@ -582,7 +599,7 @@ describe("RunnerTurns", () => {
           emit: (item) => Effect.sync(() => void reported.push(item)),
         });
         yield* Deferred.succeed(fake.loaded, undefined);
-        yield* turns.start(turnFor(1), "token-1");
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
         yield* settle;
         yield* Queue.offer(fake.events, turnEnded(1));
         yield* settle;
@@ -611,7 +628,7 @@ describe("RunnerTurns", () => {
           usage: Effect.succeed(unmeasured),
           emit: (item) => Effect.sync(() => void reported.push(item)),
         });
-        yield* turns.start(turnFor(1), "token-1");
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
         yield* settle;
 
         expect(reported.map(label)).toEqual(["log run-1 error", "turn.failed run-1"]);
@@ -642,7 +659,7 @@ describe("RunnerTurns", () => {
           ...providerThread,
           nativeThreadRef: "native-thread",
         } as unknown as OrchestrationV2ProviderThread;
-        yield* turns.start(turnFor(1, resumable), "token-1");
+        yield* turns.start({ turn: turnFor(1, resumable), modelToken: "token-1" });
         yield* settle;
 
         expect(reported.map(label)).toEqual(["log run-1 warning", "turn.started run-1"]);
@@ -654,4 +671,145 @@ describe("RunnerTurns", () => {
       }),
     ),
   );
+
+  describe("sessions", () => {
+    /** Sessions that record what the turn asked of them, in `log`. */
+    const makeFakeSessions = (log: Array<string>) =>
+      Effect.map(Queue.unbounded<string>(), (failures) => ({
+        failures,
+        sessions: {
+          use: (access) => Effect.sync(() => void log.push(`use ${access.token}`)),
+          prepare: (kind) => Effect.sync(() => void log.push(`prepare ${kind}`)),
+          settle: (_kind, event) => Effect.sync(() => void log.push(`settle ${event.type}`)),
+          failures,
+          claude: undefined as never,
+        } satisfies RunnerSessions,
+      }));
+
+    it.effect("restores the session before the harness loads it, and continues a lost run", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const { sessions } = yield* makeFakeSessions(fake.calls);
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: () => Effect.void,
+            sessions,
+          });
+          const continuation = {
+            ...turnFor(2),
+            restartContinuationOfRunId: RunId.make("run-1"),
+          } as RunnerTurn;
+          yield* turns.start({
+            turn: continuation,
+            modelToken: "token-2",
+            drive: null,
+            sessions: { token: "sbs1.t.2" },
+          });
+          for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+          // The harness has not loaded its session yet; it is on disk already.
+          expect(fake.calls).toEqual(["use sbs1.t.2", "prepare codex"]);
+          yield* Deferred.succeed(fake.loaded, undefined);
+          for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+          expect(fake.calls.at(-1)).toBe("start run-2 continuing run-1");
+        }),
+      ),
+    );
+
+    it.effect("reports something complete only once the rows behind it are saved", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const log: Array<string> = [];
+          const { sessions } = yield* makeFakeSessions(log);
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void log.push(`emit ${item.kind}`)),
+            sessions,
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* turns.start({
+            turn: turnFor(1),
+            modelToken: "token-1",
+            drive: null,
+            sessions: { token: "sbs1.t.1" },
+          });
+          for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+          const now = DateTime.makeUnsafe(0);
+          const reply: OrchestrationV2TurnItem = {
+            id: TurnItemId.make("item-1"),
+            threadId,
+            runId: RunId.make("run-1"),
+            nodeId: null,
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make("native-1"),
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "assistant_message",
+            messageId: MessageId.make("message-1"),
+            text: "Done.",
+            streaming: false,
+          };
+          yield* Queue.offer(fake.events, { type: "turn_item.updated", driver, turnItem: reply });
+          for (let round = 0; round < 20; round++) yield* Effect.yieldNow;
+          expect(log.slice(-2)).toEqual(["settle turn_item.updated", "emit provider"]);
+        }),
+      ),
+    );
+
+    it.effect("stops a turn whose rows stop being saved, and says why", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const { sessions, failures } = yield* makeFakeSessions([]);
+          const reported: Array<RunnerItem> = [];
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            sessions,
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* turns.start({
+            turn: turnFor(1),
+            modelToken: "token-1",
+            drive: null,
+            sessions: { token: "sbs1.t.1" },
+          });
+          for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+          yield* Queue.offer(fake.events, providerTurnStarted(1));
+          for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+
+          yield* Queue.offer(
+            failures,
+            "This turn's session could not be saved, so it was stopped.",
+          );
+          for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+          expect(reported).toContainEqual({
+            kind: "session.notice",
+            runId: RunId.make("run-1"),
+            message: "This turn's session could not be saved, so it was stopped.",
+          });
+          expect(fake.calls).toContain("interrupt native-1");
+        }),
+      ),
+    );
+  });
 });
