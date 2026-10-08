@@ -16,7 +16,7 @@ import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
-import { DriveDirectory, type DriveHandle, projectDriveId } from "../drive/DriveDirectory.ts";
+import { DriveDirectory, type DriveHandle } from "../drive/DriveDirectory.ts";
 import { DrivePacks } from "../drive/DrivePacks.ts";
 import {
   commitsSince,
@@ -27,8 +27,9 @@ import {
 import type { Oid } from "../drive/git/gitObjects.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
-import { remoteProjectAt, remoteThreadWorktree } from "../user/contextProjects.ts";
-import * as UserContexts from "../user/UserContexts.ts";
+import { canWrite } from "../drive/driveAccess.ts";
+import { driveOfRoot, remoteThreadWorktree, threadWorktreeAt } from "../user/contextProjects.ts";
+import * as UserDrives from "../user/UserDrives.ts";
 import { GitHub } from "./GitHub.ts";
 import type { GitHubPullRequest } from "./GitHubApi.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
@@ -102,7 +103,7 @@ export class GitHubBranches extends Context.Service<
 const make = Effect.gen(function* () {
   const github = yield* GitHub;
   const connection = yield* GitHubConnection;
-  const contexts = yield* UserContexts.UserContexts;
+  const userDrives = yield* UserDrives.UserDrives;
   const threads = yield* CloudThreadService.CloudThreadService;
   const directory = yield* Effect.serviceOption(DriveDirectory);
   const packs = yield* Effect.serviceOption(DrivePacks);
@@ -113,31 +114,38 @@ const make = Effect.gen(function* () {
   // Working trees whose branch just moved, so every watcher recomputes at once.
   const moved = yield* PubSub.unbounded<string>();
 
-  const remoteProjects = Effect.orDie(contexts.remoteProjects);
-
-  /** What `cwd` names: an imported project, and the thread whose working tree it is. */
-  const resolve = (actor: Actor, cwd: string, operation: string) =>
-    Effect.gen(function* () {
-      const found = remoteProjectAt(yield* remoteProjects, cwd);
-      if (found === null)
-        return yield* failure(cwd, operation, "This folder is not a git repository.");
-      if (drives === null) return yield* failure(cwd, operation, "This cloud stores no drives.");
-      const driveId = projectDriveId(actor.userId, found.project.projectId);
-      const drive = drives.directory.forDrive(driveId);
-      // A thread's branch follows from its id, and the drive is the user's own: only their
-      // threads ever saved work there.
-      const thread =
-        found.threadId === null
-          ? null
-          : {
-              id: found.threadId,
-              branch: remoteThreadWorktree(found.project, found.threadId).branch,
-            };
-      return { ...found, drives, driveId, drive, thread };
-    });
-
   const driveUnavailable = (cwd: string, operation: string) => () =>
     failure(cwd, operation, "The drive is unavailable right now.");
+
+  const notARepository = (cwd: string, operation: string) =>
+    failure(cwd, operation, "This folder is not a git repository.");
+
+  /**
+   * What `cwd` names: a drive backed by a remote the user can open, and the
+   * thread whose working tree it is. A thread's branch follows from its id.
+   */
+  const resolve = (actor: Actor, cwd: string, operation: string) =>
+    Effect.gen(function* () {
+      const worktree = threadWorktreeAt(cwd);
+      const driveId = worktree?.driveId ?? driveOfRoot(cwd, actor.userId);
+      if (driveId === null) return yield* notARepository(cwd, operation);
+      if (drives === null) return yield* failure(cwd, operation, "This cloud stores no drives.");
+      const role = yield* userDrives
+        .access(driveId)
+        .pipe(Effect.mapError(driveUnavailable(cwd, operation)));
+      if (role === null) return yield* failure(cwd, operation, "You can't open this drive.");
+      const drive = drives.directory.forDrive(driveId);
+      const remote = yield* drive.remote().pipe(Effect.mapError(driveUnavailable(cwd, operation)));
+      if (remote === null) return yield* notARepository(cwd, operation);
+      const thread =
+        worktree === null
+          ? null
+          : {
+              id: worktree.threadId,
+              branch: remoteThreadWorktree(driveId, worktree.threadId).branch,
+            };
+      return { drives, driveId, drive, remote, writes: canWrite(role), thread };
+    });
 
   /** The user's GitHub token, or null when not connected or GitHub is unreachable. */
   const token = connection.accessToken.pipe(
@@ -172,7 +180,7 @@ const make = Effect.gen(function* () {
       } as const;
       if (target.thread === null) {
         return {
-          local: { ...local, isDefaultRef: true, refName: target.project.remote.defaultBranch },
+          local: { ...local, isDefaultRef: true, refName: target.remote.defaultBranch },
           remote: includeRemote
             ? { hasUpstream: true, aheadCount: 0, behindCount: 0, pr: null }
             : null,
@@ -183,7 +191,7 @@ const make = Effect.gen(function* () {
       const branchLocal = { ...local, isDefaultRef: false, refName: branch };
       const userToken = includeRemote ? yield* token : null;
       if (userToken === null) return { local: branchLocal, remote: null };
-      const repository = target.project.remote.repository;
+      const repository = target.remote.repository;
       const remote = yield* Effect.all(
         [
           github.api.branchHead(userToken, repository, branch),
@@ -261,7 +269,7 @@ const make = Effect.gen(function* () {
   /** Pushes the thread's branch from the drive. Answers whether anything moved and if the branch is new. */
   const push = (target: Target, branch: string, threadId: string, userToken: string, cwd: string) =>
     Effect.gen(function* () {
-      const repository = target.project.remote.repository;
+      const repository = target.remote.repository;
       const state = yield* branchState(target.drive, threadId, cwd);
       if (state.head === null) {
         return yield* failure(cwd, "push", "This thread has not saved any work yet.");
@@ -318,7 +326,7 @@ const make = Effect.gen(function* () {
     cwd: string,
   ) =>
     Effect.gen(function* () {
-      const { repository, defaultBranch } = target.project.remote;
+      const { repository, defaultBranch } = target.remote;
       const existing = yield* github.api
         .pullForBranch(userToken, repository, thread.branch)
         .pipe(Effect.mapError((error) => failure(cwd, "pr", error.message)));
@@ -352,6 +360,9 @@ const make = Effect.gen(function* () {
       const target = yield* resolve(actor, input.cwd, "push");
       if (target.thread === null) {
         return yield* failure(input.cwd, "push", "Open a thread to push its branch.");
+      }
+      if (!target.writes) {
+        return yield* failure(input.cwd, "push", "You can view this drive but not change it.");
       }
       const { thread } = target;
       const userToken = yield* token;

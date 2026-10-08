@@ -6,6 +6,7 @@ import {
   RUNNER_HEARTBEAT_PONG,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { DurableObject } from "cloudflare:workers";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -14,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
+import { canWrite, myDriveId } from "../drive/driveAccess.ts";
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
@@ -117,6 +119,20 @@ const noteMachine = (
   );
 
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
+/** Drives, when bound, and the owner's access to one, asked of their own object. */
+const layerThreadDrives = (env: ThreadObjectEnv) =>
+  Layer.effect(
+    ThreadRunner.ThreadDrives,
+    Effect.map(UserDirectory.UserDirectory, (users) => ({
+      enabled: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
+      writes: (userId: string, driveId: string) =>
+        // One's own Personal My Drive needs no lookup: Personal never goes away.
+        driveId === myDriveId(PERSONAL_CONTEXT_ID, userId)
+          ? Effect.succeed(true)
+          : Effect.map(users.forUser(userId).driveAccess(driveId), canWrite),
+    })),
+  );
+
 const makeRuntime = (
   storage: DurableObjectStorage,
   env: ThreadObjectEnv,
@@ -130,11 +146,7 @@ const makeRuntime = (
           lastActiveAt: Effect.sync(() => previews.lastActiveAt),
         }),
       ),
-      Layer.provideMerge(
-        Layer.succeed(ThreadRunner.ThreadDrives, {
-          enabled: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
-        }),
-      ),
+      Layer.provideMerge(layerThreadDrives(env)),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
@@ -175,9 +187,19 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         this.runtime.runPromise(
           ThreadRunner.ThreadRunner.use((runner) => runner.leaseToken(generation, token)),
         ),
+      // Within the user's contexts now: leaving an organization closes its previews too.
+      // Personal threads need no lookup, since Personal never goes away.
       canSee: (userId) =>
         this.runtime.runPromise(
-          ThreadEngine.ThreadEngine.use((engine) => engine.canSee({ userId })),
+          Effect.gen(function* () {
+            const engine = yield* ThreadEngine.ThreadEngine;
+            if (yield* engine.canSee({ userId, contextIds: [PERSONAL_CONTEXT_ID] })) return true;
+            const contextIds = yield* (yield* UserDirectory.UserDirectory)
+              .forUser(userId)
+              .contextIds()
+              .pipe(Effect.orElseSucceed(() => []));
+            return yield* engine.canSee({ userId, contextIds });
+          }),
         ),
       holdChanged: () => this.armAlarm(),
     });

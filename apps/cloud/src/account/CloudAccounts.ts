@@ -119,6 +119,14 @@ export class CloudAccounts extends Context.Service<
     readonly signOut: (
       credentials: Credentials,
     ) => Effect.Effect<void, CloudSessions.CloudCredentialError | UserDirectory.UserObjectError>;
+    /**
+     * Makes the user's work contexts their WorkOS memberships now: what a
+     * membership webhook triggers. Leaving an organization takes its threads
+     * and drives out of reach at once (`UserDrives`).
+     */
+    readonly refreshContexts: (
+      userId: string,
+    ) => Effect.Effect<void, WorkOSClient.WorkOSOrganizationsError | UserDirectory.UserObjectError>;
   }
 >()("@signalbox/cloud/account/CloudAccounts") {}
 
@@ -153,14 +161,29 @@ const make = Effect.gen(function* () {
    * effort: a failure keeps the contexts from the previous sign-in, and
    * without the API key there are no work contexts at all.
    */
-  const syncContexts = (userObject: UserDirectory.UserHandle, userId: string) => {
+  /**
+   * Makes the user's work contexts their WorkOS memberships now. Without the
+   * API key there are no work contexts to refresh.
+   */
+  const refreshContexts: CloudAccounts["Service"]["refreshContexts"] = Effect.fn(
+    "CloudAccounts.refreshContexts",
+  )(function* (userId) {
     const { apiKey } = workos;
-    if (apiKey === undefined) return Effect.void;
-    return WorkOSClient.listOrganizations({ ...workos, apiKey }, userId).pipe(
+    if (apiKey === undefined) return;
+    const organizations = yield* WorkOSClient.listOrganizations({ ...workos, apiKey }, userId).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
       // Sign-in waits for this, so a slow WorkOS must not hold it up.
       Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
-      Effect.flatMap((organizations) => userObject.syncOrganizations(organizations)),
+      Effect.catchTags({
+        TimeoutError: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
+      }),
+    );
+    yield* users.forUser(userId).syncOrganizations(organizations);
+  });
+
+  /** At sign-in: best effort, so a failure keeps the contexts from the previous one. */
+  const syncContexts = (userId: string) =>
+    refreshContexts(userId).pipe(
       Effect.catch((error) =>
         Effect.logWarning("cloud contexts sync failed", {
           errorTag: error._tag,
@@ -168,7 +191,6 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
-  };
 
   const redirect = (location: string): SignInResult => ({ _tag: "Redirect", location });
   const errorRedirect = (attempt: CloudTokens.PendingAttempt, error: AccountSignInError) =>
@@ -232,7 +254,7 @@ const make = Effect.gen(function* () {
     // Contexts are refreshed alongside the profile, so the first shell after
     // signing in already shows every organization.
     const recordSignIn = Effect.all(
-      [userObject.recordSignIn(toProfile(user)), syncContexts(userObject, user.id)],
+      [userObject.recordSignIn(toProfile(user)), syncContexts(user.id)],
       { concurrency: 2, discard: true },
     );
     if (attempt.target.mode === "browser") {
@@ -398,6 +420,7 @@ const make = Effect.gen(function* () {
     verifyEmail,
     redeemHandoff,
     signOut,
+    refreshContexts,
   });
 });
 

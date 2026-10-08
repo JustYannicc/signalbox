@@ -73,6 +73,9 @@ export const MAX_PACK_BYTES = 64 * 1024 * 1024;
 export const Oid = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
 export type Oid = typeof Oid.Type;
 
+/** Who drive commits made by Signalbox are by: a reserved address that never delivers mail. */
+export const DRIVE_COMMIT_AUTHOR = { name: "Signalbox", email: "agent@signalbox.invalid" } as const;
+
 /** The id of the empty tree: what an empty drive or an unborn branch diffs from. */
 export const EMPTY_TREE: Oid = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 

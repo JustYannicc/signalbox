@@ -1,10 +1,12 @@
 import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import { CommandId, MessageId, ProjectId } from "@t3tools/contracts";
+import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
+import { UserObjectError } from "../../user/UserDirectory.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import { CONNECT_TIMEOUT_MS } from "./MachineBackend.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
@@ -517,6 +519,63 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("stops a machine's drive calls once its owner can't change the thread's drive", () => {
+    const design = "shared/org_acme/design";
+    let access: "writes" | "removed" | "unreachable" = "writes";
+    const acme = SignalboxContextId.make("org_acme");
+    const member = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID, acme] };
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* engine.launch(
+            member,
+            {
+              commandId: CommandId.make("launch-design"),
+              threadId,
+              projectId: ProjectId.make(`drive:${design}`),
+              title: "In a shared drive",
+              modelSelection: claude,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+              initialMessage: {
+                messageId: MessageId.make("message-1"),
+                text: "Hi",
+                attachments: [],
+              },
+            },
+            { place: { contextId: acme, driveId: design } },
+          );
+          yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.drive?.driveId).toBe(design);
+          const token = work.drive!.token;
+          expect(yield* runner.authorizeDrive(token)).toMatchObject({
+            _tag: "granted",
+            driveId: design,
+            userId: "user_1",
+          });
+          access = "unreachable";
+          expect(yield* runner.authorizeDrive(token)).toEqual({ _tag: "unavailable" });
+          access = "removed";
+          expect(yield* runner.authorizeDrive(token)).toEqual({
+            _tag: "denied",
+            reason: "You no longer have access to change this drive.",
+          });
+        }),
+      {
+        drives: true,
+        writes: (userId, driveId) => {
+          expect([userId, driveId]).toEqual(["user_1", design]);
+          return access === "unreachable"
+            ? Effect.fail(new UserObjectError({ operation: "driveAccess", cause: "down" }))
+            : Effect.succeed(access === "writes");
+        },
+      },
+    );
+  });
+
   it.effect("gives each machine a drive token that acts only for its own generation and turn", () =>
     withObject(
       freshDatabase(),
@@ -530,8 +589,8 @@ describe("ThreadRunner", () => {
           expect(yield* runner.authorizeDrive(token)).toEqual({
             _tag: "granted",
             threadId,
-            driveId: "my/personal/user_1",
             userId: "user_1",
+            driveId: "my/personal/user_1",
             generation: machine.generation,
             live: true,
           });
@@ -587,15 +646,17 @@ describe("ThreadRunner", () => {
       freshDatabase(),
       (engine, runner) =>
         Effect.gen(function* () {
-          yield* launch(engine, "launch-1", ProjectId.make("project-repo"));
+          yield* launch(engine, "launch-1", {
+            place: { contextId: PERSONAL_CONTEXT_ID, driveId: "shared/personal/repo1" },
+          });
           const machine = yield* connect(runner);
           const work = yield* runner.work;
-          expect(work.drive?.driveId).toBe("project/user_1/project-repo");
+          expect(work.drive?.driveId).toBe("shared/personal/repo1");
           const remoteToken = work.drive!.remoteToken!;
           expect(yield* runner.authorizeRemote(remoteToken)).toEqual({
             _tag: "granted",
             threadId,
-            driveId: "project/user_1/project-repo",
+            driveId: "shared/personal/repo1",
             userId: "user_1",
           });
           // Neither token stands in for the other.

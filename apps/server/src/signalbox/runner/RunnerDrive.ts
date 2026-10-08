@@ -1,4 +1,8 @@
-import type { DriveFileChange, DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
+import {
+  DRIVE_COMMIT_AUTHOR,
+  type DriveFileChange,
+  type DriveRemote,
+} from "@signalbox/runner-protocol/DriveProtocol";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -76,8 +80,8 @@ const BRANCH = "refs/heads/signalbox";
 /** The remote's head as last fetched. */
 const REMOTE_REF = "refs/drive/remote";
 const CONFIG = [
-  ["user.name", "Signalbox"],
-  ["user.email", "agent@signalbox.invalid"],
+  ["user.name", DRIVE_COMMIT_AUTHOR.name],
+  ["user.email", DRIVE_COMMIT_AUTHOR.email],
   ["gc.auto", "0"],
   ["core.quotepath", "false"],
 ] as const;

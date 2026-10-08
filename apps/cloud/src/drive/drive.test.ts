@@ -13,6 +13,7 @@ import { verifyPack } from "./git/gitPack.ts";
 const DRIVE = "my/personal/user_1";
 const writer = (threadId: string, generation = 1, live = true) => ({
   threadId,
+  userId: "user_1",
   generation,
   live,
   packsAfter: 0,

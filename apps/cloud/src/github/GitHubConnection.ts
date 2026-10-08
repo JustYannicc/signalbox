@@ -59,7 +59,7 @@ export class GitHubConnection extends Context.Service<
   }
 >()("@signalbox/cloud/github/GitHubConnection") {}
 
-/** Part of `UserStore`'s `0005` migration. */
+/** Part of `UserStore`'s `0006` migration. */
 export const createTables = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE TABLE github_connection (
@@ -75,6 +75,12 @@ export const createTables = Effect.gen(function* () {
   yield* sql`CREATE TABLE github_connect_grants (
     grant_id TEXT PRIMARY KEY,
     expires_at INTEGER NOT NULL
+  )`;
+  // The repositories this user imported as drives (`GitHubImport.ts`), one each.
+  yield* sql`CREATE TABLE github_drives (
+    drive_id TEXT PRIMARY KEY,
+    repository TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
   )`;
 });
 

@@ -103,6 +103,7 @@ export const proxyRemote = (
     const verdict = yield* Effect.promise(() =>
       threadObjectStub(threads, threadId.value, options).authorizeRemote(token),
     );
+    if (verdict._tag === "unavailable") return text("Try again in a moment.", 503);
     if (verdict._tag === "denied") return text(verdict.reason, 403);
 
     const [remote, githubToken] = yield* remoteAndToken(verdict.driveId, verdict.userId);

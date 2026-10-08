@@ -263,6 +263,10 @@
       "types": "./src/state/signalboxContexts.ts",
       "default": "./src/state/signalboxContexts.ts"
     },
+    "./state/signalboxDrives": {
+      "types": "./src/state/signalboxDrives.ts",
+      "default": "./src/state/signalboxDrives.ts"
+    },
     "./state/signalboxPreviews": {
       "types": "./src/state/signalboxPreviews.ts",
       "default": "./src/state/signalboxPreviews.ts"

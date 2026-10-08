@@ -1,8 +1,10 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
+import * as AccountConfig from "@signalbox/account/AccountConfig";
 import { EnvironmentId } from "@t3tools/contracts";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import { DurableObject } from "cloudflare:workers";
 import * as Clock from "effect/Clock";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -30,8 +32,11 @@ import {
   USER_OBJECT_JURISDICTION,
   type UserObjectApi,
 } from "./UserDirectory.ts";
+import * as DrivePeople from "./DrivePeople.ts";
+import * as DriveSharing from "./DriveSharing.ts";
 import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as UserDrives from "./UserDrives.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
 import * as UserSections from "./UserSections.ts";
 import * as UserShell from "./UserShell.ts";
@@ -49,7 +54,10 @@ import * as UserStore from "./UserStore.ts";
  */
 
 export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv {
-  /** Drives' objects and packs: clients browse them through this object (`drive/DriveFiles.ts`). */
+  /**
+   * Drives' objects and packs: clients browse and share them through this
+   * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
+   */
   readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
   readonly DRIVE_PACKS?: DrivePacks.PackBucket;
   readonly ENVIRONMENT_ID: string;
@@ -61,30 +69,52 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.Git
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
 
-// The whole storage, not just `storage.sql`: migrations run in transactions.
-const layerDrives = (env: UserObjectEnv) =>
-  env.DRIVES === undefined || env.DRIVE_PACKS === undefined
-    ? Layer.empty
-    : DriveFiles.layer.pipe(
-        Layer.provideMerge(
-          Layer.mergeAll(
-            DriveDirectory.layerDurableObjects(env.DRIVES, {
-              localWorkerd: env.LOCAL_WORKERD === "1",
-            }),
-            DrivePacks.layerBucket(env.DRIVE_PACKS),
-          ),
-        ),
-      );
+/** Plain string vars and secrets, for the config provider. Bindings are objects. */
+const stringVars = (env: UserObjectEnv): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
 
-const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
-  ManagedRuntime.make(
+/**
+ * Drives, when this cloud stores them: their objects and packs (`store`), and
+ * browsing and sharing them (`services`). Both use the same `store` layer, so
+ * it's built once.
+ */
+const layerDrives = (env: UserObjectEnv) => {
+  if (env.DRIVES === undefined || env.DRIVE_PACKS === undefined) {
+    return { store: Layer.empty, services: Layer.empty };
+  }
+  const store = Layer.mergeAll(
+    DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+    DrivePacks.layerBucket(env.DRIVE_PACKS),
+  );
+  // The Worker's own account settings, read the same way.
+  const people = Layer.unwrap(
+    AccountConfig.read.pipe(
+      // Unreadable settings leave sharing without anyone to find, not the object down.
+      Effect.orElseSucceed(() => undefined),
+      Effect.map((accounts) => DrivePeople.layerWorkOS(accounts?.workos)),
+    ),
+  ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))));
+  return {
+    store,
+    services: Layer.mergeAll(DriveFiles.layer, DriveSharing.layer).pipe(
+      Layer.provide(Layer.mergeAll(store, people)),
+    ),
+  };
+};
+
+// The whole storage, not just `storage.sql`: migrations run in transactions.
+const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
+  const drives = layerDrives(env);
+  return ManagedRuntime.make(
     GitHubBranches.layer.pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           UserShell.layer,
           CloudThreadService.layer,
           UserSections.layer,
-          layerDrives(env),
+          drives.services,
           GitHubConnection.layer,
         ),
       ),
@@ -94,7 +124,9 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
           Layer.provide(FetchHttpClient.layer),
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
+      Layer.provideMerge(UserDrives.layer),
+      Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives)),
+      Layer.provideMerge(drives.store),
       Layer.provideMerge(
         ThreadDirectory.layerDurableObjects(env.THREADS, {
           localWorkerd: env.LOCAL_WORKERD === "1",
@@ -103,6 +135,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
       Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
     ),
   );
+};
 
 export class UserObject extends DurableObject<UserObjectEnv> implements UserObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
@@ -201,6 +234,18 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.githubAccessToken();
   }
 
+  contextIds() {
+    return this.api.contextIds();
+  }
+
+  recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {
+    return this.api.recordDriveAccess(entry);
+  }
+
+  driveAccess(driveId: string) {
+    return this.api.driveAccess(driveId);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
@@ -220,7 +265,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
         webSocket: server,
         scopes: session.scopes,
         identity: this.identity,
-        actor: { userId: profile.id },
+        userId: profile.id,
       }).pipe(
         // An open socket never outlives its session.
         Effect.raceFirst(

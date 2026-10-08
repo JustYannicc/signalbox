@@ -25,10 +25,9 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-import { projectDriveId } from "../drive/DriveDirectory.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { threadRef, wipRef } from "../drive/DriveStore.ts";
-import { makeMemoryDrives, makeRepo } from "../drive/driveTesting.ts";
+import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
 import type { Bytes } from "../drive/git/gitObjects.ts";
 import { remoteHead } from "../drive/remoteRoutes.ts";
@@ -42,7 +41,7 @@ import { makeFakeGitHub } from "./githubTesting.ts";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
-const projectId = ProjectId.make("project-repo");
+const projectId = ProjectId.make("project-from-the-client");
 const threadId = ThreadId.make("thread-0000abcd");
 const REDIRECT = "http://localhost:8787/api/github/callback";
 
@@ -102,9 +101,9 @@ describe("GitHub-backed drives", () => {
       repository: "owner/repo",
       defaultBranch: "main",
     });
-    const drives = makeMemoryDrives();
+    const cloud = makeMemoryCloud({ github: github.layer });
+    const { drives } = cloud;
     return Effect.gen(function* () {
-      const cloud = makeMemoryCloud({ github: github.layer, drives: drives.layer });
       const user = cloud.userDirectory.forUser(userId);
       yield* user.recordSignIn({ id: userId, email: "a@b.c" });
 
@@ -124,7 +123,7 @@ describe("GitHub-backed drives", () => {
       const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
         Effect.provide(
           Layer.mergeAll(
-            CloudRpc.layerHandlers({ identity, actor: { userId } }),
+            CloudRpc.layerHandlers({ identity, userId }),
             CloudRpc.layerScopeAuthorization([
               AuthOrchestrationReadScope,
               AuthOrchestrationOperateScope,
@@ -148,7 +147,8 @@ describe("GitHub-backed drives", () => {
         "https://github.test/apps/signalbox-test/installations/new",
       );
 
-      // Importing registers the repository at once; nothing is cloned.
+      // Importing makes the repository a drive at once; nothing is cloned. The cloud names
+      // the project, so clients follow the id it answers with.
       const imported = yield* rpc[WS_METHODS.projectCloneStart]({
         projectId,
         title: "repo",
@@ -156,11 +156,13 @@ describe("GitHub-backed drives", () => {
         remoteUrl: "https://github.com/owner/repo.git",
         destinationPath: "~/repo",
       });
-      expect(imported).toMatchObject({ cwd: "/github/owner/repo" });
+      const driveId = imported.cwd.slice("/drives/".length);
+      expect(driveId).toMatch(/^shared\/personal\/[0-9a-f]{32}$/);
+      expect(imported.projectId).toBe(`drive:${driveId}`);
       const shell = yield* user.shellSnapshot();
-      expect(shell.projects.find((project) => project.id === projectId)).toMatchObject({
-        title: "repo",
-        workspaceRoot: "/github/owner/repo",
+      expect(shell.projects.find((project) => project.id === imported.projectId)).toMatchObject({
+        title: "owner/repo",
+        workspaceRoot: imported.cwd,
       });
       const again = yield* rpc[WS_METHODS.projectCloneStart]({
         projectId: ProjectId.make("project-again"),
@@ -175,7 +177,7 @@ describe("GitHub-backed drives", () => {
       const launched = yield* rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
         commandId: CommandId.make("launch-1"),
         threadId,
-        projectId,
+        projectId: imported.projectId,
         title: "Make the app say hi",
         modelSelection: scriptedModelSelection,
         runtimeMode: "full-access",
@@ -184,14 +186,13 @@ describe("GitHub-backed drives", () => {
       });
       expect(launched.projection.thread).toMatchObject({
         branch: "signalbox/0000abcd",
-        worktreePath: `/github/owner/repo/threads/${threadId}`,
+        worktreePath: `${imported.cwd}/threads/${threadId}`,
       });
       const cwd = launched.projection.thread.worktreePath!;
 
       // What the thread's Runner does in its turn: mirror the remote's head, commit, auto-save.
-      const driveId = projectDriveId(userId, projectId);
       const handle = (yield* DriveDirectory).forDrive(driveId);
-      const writer = { threadId, generation: 1, live: true, packsAfter: 0 };
+      const writer = { threadId, userId, generation: 1, live: true, packsAfter: 0 };
       yield* uploadPack({
         driveId,
         threadId,

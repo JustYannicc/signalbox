@@ -26,9 +26,11 @@ import { applyEvents } from "./threadProjection.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 
-const owner = { userId: "user_1" };
-const stranger = { userId: "user_2" };
-const personal = { contextId: PERSONAL_CONTEXT_ID };
+const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
+const stranger = { userId: "user_2", contextIds: [PERSONAL_CONTEXT_ID] };
+const personal = {
+  place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+};
 const threadId = ThreadId.make("thread-1");
 
 const directories: Array<string> = [];

@@ -38,6 +38,11 @@ export interface ThreadOwner {
   readonly userId: string;
   /** The context the thread acts as, fixed at creation (see `CloudThreadService`). */
   readonly contextId: SignalboxContextId;
+  /**
+   * The drive the thread works in, fixed at creation. Null for threads created
+   * before shared drives, which work in their owner's My Drive.
+   */
+  readonly driveId: string | null;
 }
 
 export type CommandReceipt =
@@ -172,6 +177,10 @@ const migrations = Migrator.fromRecord({
     )`;
   }),
   "0004_diagnostics": migrateDiagnostics,
+  "0005_drive": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE owner ADD COLUMN drive_id TEXT`;
+  }),
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */
@@ -186,7 +195,11 @@ const EventRow = Schema.Struct({
   format: Schema.Number,
   event: Schema.String,
 });
-const OwnerRow = Schema.Struct({ user_id: Schema.String, context_id: SignalboxContextId });
+const OwnerRow = Schema.Struct({
+  user_id: Schema.String,
+  context_id: SignalboxContextId,
+  drive_id: Schema.NullOr(Schema.String),
+});
 const ReceiptRow = Schema.Struct({
   status: Schema.Literals(["accepted", "rejected"]),
   result_sequence: Schema.NullOr(Schema.Number),
@@ -241,12 +254,15 @@ const toStoredEvent = (row: typeof EventRow.Type): StoredEvent => {
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  const owner: ThreadStore["Service"]["owner"] = sql`SELECT user_id, context_id FROM owner`.pipe(
-    Effect.map((rows) => {
-      const [row] = decodeOwnerRows(rows);
-      return row ? { userId: row.user_id, contextId: row.context_id } : null;
-    }),
-  );
+  const owner: ThreadStore["Service"]["owner"] =
+    sql`SELECT user_id, context_id, drive_id FROM owner`.pipe(
+      Effect.map((rows) => {
+        const [row] = decodeOwnerRows(rows);
+        return row
+          ? { userId: row.user_id, contextId: row.context_id, driveId: row.drive_id }
+          : null;
+      }),
+    );
 
   const events: ThreadStore["Service"]["events"] = (afterSequence) =>
     sql`SELECT sequence, format, event FROM events WHERE sequence > ${afterSequence}
@@ -298,8 +314,8 @@ const make = Effect.gen(function* () {
             ${input.command.traceId ?? null})`;
     }
     if (input.owner) {
-      yield* sql`INSERT INTO owner (id, user_id, context_id)
-          VALUES (1, ${input.owner.userId}, ${input.owner.contextId})`;
+      yield* sql`INSERT INTO owner (id, user_id, context_id, drive_id)
+          VALUES (1, ${input.owner.userId}, ${input.owner.contextId}, ${input.owner.driveId})`;
     }
     if (input.summaryChanged) {
       yield* sql`UPDATE outbox SET revision = ${sequence} WHERE id = 1`;

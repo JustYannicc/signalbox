@@ -6,13 +6,17 @@ import {
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
+import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { DriveDirectory, projectDriveId } from "../drive/DriveDirectory.ts";
-import type { Actor } from "../thread/ThreadEngine.ts";
-import { githubWorkspaceRoot } from "../user/contextProjects.ts";
-import * as UserContexts from "../user/UserContexts.ts";
+import { sharedDriveId } from "../drive/driveAccess.ts";
+import { DriveDirectory } from "../drive/DriveDirectory.ts";
+import { driveRoot, projectIdForDrive } from "../user/contextProjects.ts";
+import * as UserDriveIndex from "../user/UserDriveIndex.ts";
+import * as UserStore from "../user/UserStore.ts";
 import { GitHub } from "./GitHub.ts";
 import { type GitHubRepository, parseRepository } from "./GitHubApi.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
@@ -25,8 +29,9 @@ import { GitHubConnection } from "./GitHubConnection.ts";
  * here: the remote stays the drive's home, and each thread's first turn
  * fetches what it needs onto its machine.
  *
- * Imported repositories land in Personal; choosing a work context comes with
- * shared drives (#140).
+ * An imported repository is a drive like any shared drive (`drive/`), with
+ * the user as its manager, so it can be shared, and with its remote recorded
+ * on it. It lands in Personal for now; picking a context is still to come.
  */
 
 const repositoryError = (operation: string, detail: string) =>
@@ -39,10 +44,13 @@ const toInfo = (repository: GitHubRepository): SourceControlRepositoryInfo => ({
   sshUrl: repository.ssh_url,
 });
 
-export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* (actor: Actor) {
+export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
   const github = yield* GitHub;
   const connection = yield* GitHubConnection;
-  const contexts = yield* UserContexts.UserContexts;
+  const store = yield* UserStore.UserStore;
+  const index = yield* UserDriveIndex.UserDriveIndex;
+  const sql = yield* SqlClient.SqlClient;
+  const crypto = yield* Crypto.Crypto;
   const drives = yield* Effect.serviceOption(DriveDirectory);
 
   const discover = Effect.gen(function* () {
@@ -104,6 +112,14 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* (actor: 
 
   const lookup = (repository: string) => Effect.map(find("lookupRepository", repository), toInfo);
 
+  /** The user as a drive member. */
+  const me = Effect.gen(function* () {
+    const profile = yield* Effect.orDie(store.profile);
+    if (profile === null) return yield* repositoryError("clone", "Sign in again to import.");
+    const name = [profile.firstName, profile.lastName].filter(Boolean).join(" ");
+    return { userId: profile.id, email: profile.email, name: name || null };
+  });
+
   const importRepository = (
     input: ProjectCloneStartInput,
   ): Effect.Effect<ProjectCloneStartResult, SourceControlRepositoryError> =>
@@ -112,44 +128,44 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* (actor: 
         return yield* repositoryError("clone", "This cloud stores no drives.");
       }
       const repository = yield* find("clone", input.remoteUrl ?? input.repository ?? "");
-      const workspaceRoot = githubWorkspaceRoot(repository.full_name);
-      // Checked before the drive learns a remote, so an existing project's drive is never touched.
-      const taken =
-        (yield* Effect.orDie(contexts.contexts)).some((context) =>
-          context.projectIds.includes(input.projectId),
-        ) ||
-        (yield* Effect.orDie(contexts.remoteProjects)).some(
-          (project) => project.workspaceRoot === workspaceRoot,
-        );
-      if (taken) {
+      const imported = yield* Effect.orDie(
+        sql<{ readonly drive_id: string }>`SELECT drive_id FROM github_drives
+          WHERE repository = ${repository.full_name}`,
+      );
+      if (imported.length > 0) {
         return yield* repositoryError("clone", `${repository.full_name} is already a project.`);
       }
-      const remote = {
-        provider: "github",
-        repository: repository.full_name,
-        defaultBranch: repository.default_branch,
-      } as const;
-      // The drive learns its remote first, so no thread ever works in it as a drive of its own.
-      yield* drives.value
-        .forDrive(projectDriveId(actor.userId, input.projectId))
-        .setRemote(remote)
-        .pipe(Effect.mapError(() => repositoryError("clone", "The drive is unavailable.")));
-      const added = yield* contexts
-        .addRemoteProject({
-          projectId: input.projectId,
-          contextId: PERSONAL_CONTEXT_ID,
-          title: input.title,
-          workspaceRoot,
-          remote,
-          createdAt: input.createdAt,
+      const owner = yield* me;
+      const key = (yield* Effect.orDie(crypto.randomUUIDv4)).replaceAll("-", "");
+      const driveId = sharedDriveId(PERSONAL_CONTEXT_ID, key);
+      const drive = drives.value.forDrive(driveId);
+      const unavailable = () => repositoryError("clone", "Drives are unavailable right now.");
+      // The drive learns its remote before anyone is in it, so no thread ever works in it
+      // as a drive of its own.
+      yield* drive
+        .setRemote({
+          provider: "github",
+          repository: repository.full_name,
+          defaultBranch: repository.default_branch,
         })
-        .pipe(Effect.orDie);
-      if (!added) {
-        return yield* repositoryError("clone", `${repository.full_name} is already a project.`);
+        .pipe(Effect.mapError(unavailable));
+      yield* drive
+        .setup({ name: repository.full_name, members: [{ ...owner, role: "manager" }] })
+        .pipe(Effect.mapError(unavailable));
+      // Listed at once, from the drive's own pending delivery, which then changes nothing.
+      const entry = (yield* drive.pendingAccess().pipe(Effect.mapError(unavailable))).find(
+        (pending) => pending.userId === owner.userId,
+      );
+      if (entry !== undefined) {
+        yield* Effect.orDie(index.record({ driveId, name: repository.full_name, ...entry }));
       }
+      yield* Effect.orDie(
+        sql`INSERT INTO github_drives (drive_id, repository, created_at)
+          VALUES (${driveId}, ${repository.full_name}, ${yield* Clock.currentTimeMillis})`,
+      );
       return {
-        projectId: input.projectId,
-        cwd: workspaceRoot,
+        projectId: projectIdForDrive(driveId),
+        cwd: driveRoot(driveId),
         remoteUrl: repository.clone_url,
         repository: toInfo(repository),
       };

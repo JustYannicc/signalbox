@@ -2742,7 +2742,11 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     setOpen(false);
-    const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
+    // signalbox: the server may name the project itself (Signalbox Cloud makes it a drive).
+    const projectRef = scopeProjectRef(
+      addProjectCloneFlow.environmentId,
+      startResult.value.projectId,
+    );
     // The create event usually lands before this call returns; give the shell
     // stream a moment so the draft opens with its project resolved instead of
     // flashing the project picker.

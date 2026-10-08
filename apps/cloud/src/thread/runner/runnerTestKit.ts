@@ -36,8 +36,10 @@ import * as ThreadRunner from "./ThreadRunner.ts";
 
 /** A Claude thread's object with its Runner, and what a Runner reports, for tests. */
 
-export const owner = { userId: "user_1" };
-export const personal = { contextId: PERSONAL_CONTEXT_ID };
+export const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
+export const personal = {
+  place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+};
 export const threadId = ThreadId.make("thread-claude");
 export const claude = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -99,14 +101,14 @@ export const withObject = <A, E>(
 export const launch = (
   engine: ThreadEngine.ThreadEngine["Service"],
   commandId = "launch-1",
-  projectId = ProjectId.make("scratch"),
+  creation: ThreadEngine.ThreadCreation = personal,
 ) =>
   engine.launch(
     owner,
     {
       commandId: CommandId.make(commandId),
       threadId,
-      projectId,
+      projectId: ProjectId.make("scratch"),
       title: "Hello Claude",
       modelSelection: claude,
       runtimeMode: "full-access",
@@ -114,7 +116,7 @@ export const launch = (
       workspaceStrategy: { type: "root" },
       initialMessage: { messageId: MessageId.make("message-1"), text: "Hi", attachments: [] },
     },
-    personal,
+    creation,
   );
 
 export const hello = (generation: number, token: string) => ({

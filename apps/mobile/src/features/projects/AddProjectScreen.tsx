@@ -1352,8 +1352,10 @@ export function AddProjectDestinationScreen(props: {
         // must not open before the create event has arrived (it would fall
         // back to the project picker and lose the clone controls). Stay in
         // the submitting state until then; the clone keeps running either way.
+        // signalbox: the server may name the project itself (Signalbox Cloud makes it a drive).
+        const createdProjectId = startResult.value.projectId;
         const project = await waitForProject(
-          { environmentId: environment.environmentId, projectId },
+          { environmentId: environment.environmentId, projectId: createdProjectId },
           15_000,
         );
         if (project === null) {
@@ -1363,7 +1365,7 @@ export function AddProjectDestinationScreen(props: {
         } else {
           openNewTaskDraft(navigation, {
             environmentId: environment.environmentId,
-            projectId,
+            projectId: createdProjectId,
             title,
             cloning: "1",
           });

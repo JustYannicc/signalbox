@@ -14,10 +14,12 @@ import { uploadPack } from "./DriveUploads.ts";
 import { packForPush, receivePackRequest, receivePackResult } from "./gitPush.ts";
 import type { Bytes } from "./git/gitObjects.ts";
 
-const DRIVE = "project/user_1/project-1";
+const DRIVE = "shared/personal/repo1";
+const MANAGER = { userId: "user_1", email: "a@b.c", name: null, role: "manager" } as const;
 const REMOTE = { provider: "github", repository: "owner/repo", defaultBranch: "main" } as const;
 const writer = (threadId: string, live = true) => ({
   threadId,
+  userId: "user_1",
   generation: 1,
   live,
   packsAfter: 0,
@@ -107,6 +109,7 @@ describe("a drive backed by a remote", () => {
       const remote = setup();
       const handle = (yield* DriveDirectory).forDrive(DRIVE);
       yield* handle.setRemote(REMOTE);
+      yield* handle.setup({ name: "owner/repo", members: [MANAGER] });
       const packed = remote.pack([remote.head]);
       const upload = (remoteHead?: string) =>
         uploadPack({
@@ -156,6 +159,7 @@ describe("a drive backed by a remote", () => {
       const remote = setup();
       const handle = (yield* DriveDirectory).forDrive(DRIVE);
       yield* handle.setRemote(REMOTE);
+      yield* handle.setup({ name: "owner/repo", members: [MANAGER] });
       yield* uploadPack({
         driveId: DRIVE,
         threadId: "t1",

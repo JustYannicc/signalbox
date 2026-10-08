@@ -16,6 +16,12 @@ import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
+import { canWrite, myDriveId } from "./drive/driveAccess.ts";
+import type * as DriveDirectory from "./drive/DriveDirectory.ts";
+import * as DriveFiles from "./drive/DriveFiles.ts";
+import type { DrivePerson } from "./drive/DriveMembers.ts";
+import type * as DrivePacks from "./drive/DrivePacks.ts";
+import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
@@ -33,15 +39,16 @@ import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
+import * as DrivePeople from "./user/DrivePeople.ts";
+import * as DriveSharing from "./user/DriveSharing.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
-import type * as DriveDirectory from "./drive/DriveDirectory.ts";
-import type * as DrivePacks from "./drive/DrivePacks.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as UserSections from "./user/UserSections.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
+import * as UserDrives from "./user/UserDrives.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
 import * as UserShell from "./user/UserShell.ts";
 import * as UserStore from "./user/UserStore.ts";
@@ -62,24 +69,46 @@ export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_E
 
 /** A user object's storage services on a fresh in-memory database, migrated. */
 export const layerMemoryStore = UserSections.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
+  Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives)),
   Layer.provideMerge(Layer.effectDiscard(UserStore.migrate)),
   Layer.provideMerge(
     Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
   ),
 );
 
-/** Resolves contexts for a user who has only Personal, with no storage behind it. */
-export const layerPersonalThreadContexts = Layer.succeed(
-  ThreadContexts.ThreadContexts,
-  ThreadContexts.ThreadContexts.of({
-    placementOf: (projectId) =>
-      Effect.succeed({
-        contextId: contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId),
-        worktree: null,
-      }),
-  }),
-);
+/** Places threads for `userId`, who has only Personal, with no storage behind it. */
+export const layerPersonalThreadContexts = (userId: string) =>
+  Layer.succeed(
+    ThreadContexts.ThreadContexts,
+    ThreadContexts.ThreadContexts.of({
+      placeOfProject: (projectId) => {
+        const contextId = contextOfProject([UserContexts.PERSONAL_CONTEXT], projectId);
+        return Effect.succeed(
+          contextId === null
+            ? null
+            : { contextId, driveId: myDriveId(contextId, userId), remote: false },
+        );
+      },
+    }),
+  );
+
+/** Everyone in a test, findable by email for sharing, with their organizations. */
+export type TestPeople = ReadonlyArray<
+  DrivePerson & { readonly organizations: ReadonlyArray<string> }
+>;
+
+export const layerTestPeople = (people: TestPeople) =>
+  Layer.succeed(
+    DrivePeople.DrivePeople,
+    DrivePeople.DrivePeople.of({
+      findByEmail: (email) =>
+        Effect.succeed(
+          people.find((person) => person.email === email.trim().toLowerCase()) ?? null,
+        ),
+      organizationsOf: (userId) =>
+        Effect.succeed(people.find((person) => person.userId === userId)?.organizations ?? []),
+    }),
+  );
 
 /**
  * One thread object's engine on SQLite at `filename`. Building the layer again
@@ -90,6 +119,11 @@ export const layerThreadObject = (
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
   options: {
     readonly drives?: boolean;
+    /** Whether a thread's owner may change files in its drive; yes unless given. */
+    readonly writes?: (
+      userId: string,
+      driveId: string,
+    ) => Effect.Effect<boolean, UserDirectory.UserObjectError>;
     readonly analytics?: Layer.Layer<
       CloudAnalytics.CloudAnalytics,
       never,
@@ -99,7 +133,10 @@ export const layerThreadObject = (
 ) =>
   ThreadRunner.layer.pipe(
     Layer.provideMerge(
-      Layer.succeed(ThreadRunner.ThreadDrives, { enabled: options.drives === true }),
+      Layer.succeed(ThreadRunner.ThreadDrives, {
+        enabled: options.drives === true,
+        writes: options.writes ?? (() => Effect.succeed(true)),
+      }),
     ),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
@@ -115,14 +152,20 @@ const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.laye
 
 const makeUserRuntime = (
   threads: ThreadDirectory.ThreadDirectory["Service"],
+  drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
+  people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
-  drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks> | null,
 ) =>
   ManagedRuntime.make(
-    Layer.mergeAll(UserShell.layer, GitHubConnection.layer).pipe(
+    Layer.mergeAll(
+      UserShell.layer,
+      DriveFiles.layer,
+      DriveSharing.layer,
+      GitHubConnection.layer,
+    ).pipe(
+      Layer.provideMerge(UserDrives.layer),
       Layer.provideMerge(layerMemoryStore),
-      Layer.provideMerge(github),
-      Layer.provideMerge(drives ?? Layer.empty),
+      Layer.provideMerge(Layer.mergeAll(drives, people, github)),
       Layer.provideMerge(Layer.succeed(ThreadDirectory.ThreadDirectory, threads)),
     ),
   );
@@ -135,11 +178,7 @@ const makeUserRuntime = (
  * pending summary.
  */
 export const makeMemoryCloud = (
-  options: {
-    readonly github?: Layer.Layer<GitHub.GitHub>;
-    /** Drives the user objects store into, as `makeMemoryDrives` makes them. */
-    readonly drives?: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>;
-  } = {},
+  options: { readonly people?: TestPeople; readonly github?: Layer.Layer<GitHub.GitHub> } = {},
 ) => {
   const users = new Map<
     string,
@@ -168,13 +207,16 @@ export const makeMemoryCloud = (
   const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
     forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),
   };
+  const drives = makeMemoryDrives({ users: () => userDirectory });
+  const people = layerTestPeople(options.people ?? []);
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
     const runtime = makeUserRuntime(
       threadDirectory,
+      drives.layer,
+      people,
       options.github ?? layerNoGitHub,
-      options.drives ?? null,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -184,9 +226,11 @@ export const makeMemoryCloud = (
     const existing = threads.get(threadId);
     if (existing) return existing;
     const runtime = ManagedRuntime.make(
-      layerThreadObject(":memory:").pipe(
-        Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, userDirectory)),
-      ),
+      layerThreadObject(":memory:", MachineBackends.layerNone, {
+        drives: true,
+        writes: (userId, driveId) =>
+          Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
+      }).pipe(Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, userDirectory))),
     );
     const run = <A, E>(
       effect: Effect.Effect<
@@ -238,6 +282,13 @@ export const makeMemoryCloud = (
   return {
     userDirectory,
     threadDirectory,
+    /** The drives' objects and packs, shared by every user and thread here. */
+    drives,
+    /** Who owns a thread, and the context and drive it was created in. */
+    threadOwner: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(ThreadStore.ThreadStore.use((store) => Effect.orDie(store.owner))),
+      ),
     settle,
     /** The services inside `userId`'s object, for handlers that run there (the socket's RPC). */
     userObject,
@@ -248,8 +299,9 @@ export const makeMemoryCloud = (
         Layer.provideMerge(ThreadContexts.layer),
         Layer.provideMerge(userObject(userId)),
       ),
-    /** The thread service for tests where the user has only Personal. */
-    layer: threadService.pipe(Layer.provideMerge(layerPersonalThreadContexts)),
+    /** The thread service for tests where `userId` has only Personal. */
+    layerPersonal: (userId: string) =>
+      threadService.pipe(Layer.provideMerge(layerPersonalThreadContexts(userId))),
   };
 };
 
