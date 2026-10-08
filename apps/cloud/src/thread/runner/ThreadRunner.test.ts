@@ -9,6 +9,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { UserObjectError } from "../../user/UserDirectory.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
 import { CONNECT_TIMEOUT_MS } from "./MachineBackend.ts";
+import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
 import {
   claude,
   claudeDriver,
@@ -330,12 +331,70 @@ describe("ThreadRunner", () => {
     ),
   );
 
-  it.effect(
-    "fails the live run when its machine says end, and ignores the run's late session state",
-    () =>
-      withObject(freshDatabase(), (engine, runner) =>
-        Effect.gen(function* () {
-          yield* launch(engine);
+  it.effect("continues a run whose machine is lost on a new machine, from the same session", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started, report.partial],
+        });
+        // The machine is killed: its socket drops and never comes back.
+        yield* runner.disconnected({
+          generation: machine.generation,
+          connection: 1,
+          detail: "1006",
+        });
+        yield* TestClock.adjust(60_000);
+        // The continuation needs a machine: the object looks again at once.
+        expect(yield* runner.reconcile).toMatchObject({
+          release: machine.generation,
+          stop: true,
+          wakeAt: 60_000,
+        });
+
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runs.map((run) => run.status)).toEqual(["interrupted", "starting"]);
+        const [cut, continuation] = projection.runs;
+        expect(continuation?.restartContinuationOfRunId).toBe(cut?.id);
+        // The reply that was streaming is shown aborted, with why.
+        const items = projection.turnItems.filter((item) => item.runId === cut?.id);
+        expect(items.find((item) => item.type === "assistant_message")).toMatchObject({
+          status: "interrupted",
+          streaming: false,
+          text: "Hel",
+        });
+        expect(items.some((item) => item.type === "system_notice")).toBe(true);
+
+        // A new machine takes the continuation and resumes the harness's own session.
+        const next = yield* connect(runner);
+        expect(next.generation).toBe(machine.generation + 1);
+        const work = yield* runner.work;
+        expect(work.turn).toMatchObject({
+          runId: continuation?.id,
+          restartContinuationOfRunId: cut?.id,
+          providerTurnOrdinal: 2,
+          message: { text: CONTINUE_PROMPT, createdBy: "agent" },
+          providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
+        });
+        expect(work.sessions?.token).toMatch(/^sbs1\./);
+        // The lost machine can never write to the thread again.
+        expect(yield* runner.hello(hello(machine.generation, machine.token))).toMatchObject({
+          reason: "stale_generation",
+        });
+      }),
+    ),
+  );
+
+  it.effect("fails a run whose machines keep going away, or that never started", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        for (let lost = 0; lost <= MAX_CONTINUATIONS; lost++) {
           const machine = yield* connect(runner);
           const turn = yield* liveTurn(runner);
           const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
@@ -345,15 +404,40 @@ describe("ThreadRunner", () => {
             items: [report.started],
           });
           yield* runner.ended(machine.generation, "test");
+        }
+        const lostRuns = yield* snapshot(engine);
+        expect(lostRuns.projection.runs.map((run) => run.status)).toEqual([
+          ...Array.from({ length: MAX_CONTINUATIONS }, () => "interrupted"),
+          "failed",
+        ]);
+        expect(lostRuns.projection.providerThreads[0]?.status).toBe("idle");
+        expect(lostRuns.projection.turnItems.find((item) => item.type === "error")).toMatchObject({
+          failure: { message: "Lost the machine running this turn." },
+        });
 
-          const ended = yield* snapshot(engine);
-          expect(ended.projection.runs.map((run) => run.status)).toEqual(["failed"]);
-          expect(ended.projection.providerThreads[0]?.status).toBe("idle");
-          expect(yield* runner.hello(hello(machine.generation, machine.token))).toMatchObject({
-            reason: "stale_generation",
-          });
-        }),
-      ),
+        // A machine lost before the harness took the next message: nothing to resume.
+        yield* engine.dispatch(
+          owner,
+          {
+            type: "message.dispatch",
+            commandId: CommandId.make("send-2"),
+            createdBy: "user",
+            creationSource: "web",
+            threadId,
+            messageId: MessageId.make("message-2"),
+            text: "Again",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+          },
+          personal,
+        );
+        const machine = yield* connect(runner);
+        yield* runner.ended(machine.generation, "test");
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runs.at(-1)?.status).toBe("failed");
+      }),
+    ),
   );
 
   it.effect("records a stopped run's last rows but not its provider thread coming back", () =>

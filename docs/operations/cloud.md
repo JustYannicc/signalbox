@@ -208,6 +208,35 @@ cloud's objects rather than trusted to the Runner:
 created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
 and the same for `-preview`); without them the deploy fails.
 
+### Exact resume
+
+A machine can die at any moment, so the harness's own session leaves it as
+it is written (#132): Claude Code's transcript and subagent sidecars through
+the Agent SDK's `SessionStore` (eager flush), Codex's rollout files by tailing
+them. The Runner streams the rows verbatim to the thread's object, which keeps
+them in its own SQLite (`apps/cloud/src/thread/session/`, tables that create
+themselves rather than a `ThreadStore` migration). Rows land only directly
+after the stored ones, so the store is always a gapless prefix of what the
+harness wrote, and only the machine holding the lease can write.
+
+- A message or tool result the thread shows as complete has its rows stored
+  first. Claude writes a message's row 30 to 120 ms after streaming it, so the
+  Runner holds each message until its row is durable.
+- If saving stalls for 30 s, or the SDK reports `mirror_error`, the Runner
+  stops the turn with a notice. The rows stay queued and land once the store
+  answers again.
+- When the machine running a turn is lost (its socket stays gone for 60 s, or
+  it says `end`), the run ends interrupted, with anything still streaming
+  shown aborted, and a continuation run (`restartContinuationOfRunId`) starts
+  on the next machine. That machine restores the session at its latest
+  durable row and the worktree at its latest auto-save, then resumes natively.
+  A tool that was running is reported to the model as unfinished by the
+  harness itself and never rerun. After three lost machines in a row, or when
+  the harness never started the run, the run fails instead.
+
+To watch it locally, kill the Runner host while a turn runs and start another
+one with an empty `--home`: about a minute later the turn goes on there.
+
 ### Why a turn failed
 
 Every turn has a trace id: 32 hex characters derived from its run id. The
