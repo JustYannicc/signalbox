@@ -33,7 +33,7 @@ export interface PoolEndpoint {
 export const CLI_PROXY_API_PORT = 8317;
 
 /** Accounts a pool signs in through its CLIProxyAPI, by the login route that adds them. */
-export const LOGIN_ROUTES = {
+const LOGIN_ROUTES = {
   claude: "anthropic-auth-url",
   codex: "codex-auth-url",
 } as const;
@@ -103,7 +103,11 @@ const management = (endpoint: PoolEndpoint, method: string, path: string, body?:
         ...(body === undefined ? {} : { body: encodeJson(body) }),
       }),
     );
-    const text = yield* Effect.promise(() => response.text());
+    const text = yield* Effect.tryPromise({
+      try: () => response.text(),
+      catch: (cause) =>
+        new PoolBackendError({ detail: `${hostOf(endpoint)} broke off its answer.`, cause }),
+    });
     if (response.status === 401 || response.status === 403) {
       return yield* new PoolBackendError({
         detail: `${hostOf(endpoint)} refused the management key.`,
@@ -162,8 +166,15 @@ const LoginStatus = Schema.Struct({
   error: Schema.optional(Schema.String),
 });
 
+export type LoginStatus =
+  | { readonly status: "wait" | "ok" }
+  | { readonly status: "error"; readonly error: string | null };
+
 /** `wait` while the user signs in, `ok` once the account is saved, `error` otherwise. */
-export const loginStatus = (endpoint: PoolEndpoint, state: string) =>
+export const loginStatus = (
+  endpoint: PoolEndpoint,
+  state: string,
+): Effect.Effect<LoginStatus, PoolBackendError> =>
   management(endpoint, "GET", `get-auth-status?state=${encodeURIComponent(state)}`).pipe(
     Effect.flatMap((response) =>
       decodeOr(LoginStatus, "The pool's CLIProxyAPI lost track of the sign-in.")(response.json),

@@ -2,6 +2,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
+import * as Platform from "../platform.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolDirectory from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";
@@ -106,7 +107,9 @@ export const makeMemoryPoolObject = (
           Layer.succeed(PoolEngine.ExternalFetch, PoolEngine.ExternalFetch.of({ fetch: external })),
         ),
       ),
-      Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+      Layer.provideMerge(
+        Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
+      ),
     ),
   );
   let erased = false;

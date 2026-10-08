@@ -141,6 +141,9 @@ describe("PoolObject", () => {
       );
       yield* work.pool.delete(alice);
       expect(work.erased()).toBe(true);
+
+      // A pool that is already gone counts as deleted, so a retry clears the user's list.
+      yield* makePool().pool.delete(alice);
     }),
   );
 });

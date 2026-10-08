@@ -1,6 +1,9 @@
+import type { UsageLimitSourceUpdateAccountInput } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Migrator from "effect/sql/Migrator";
@@ -52,11 +55,16 @@ export interface PoolAccounts {
   readonly error: string | null;
 }
 
-export type ExternalBackingInput = {
-  readonly url: string;
-  readonly managementKey: string;
-  readonly clientKey: string;
-};
+export type PoolBackingInput =
+  | { readonly mode: "managed" }
+  | {
+      readonly mode: "external";
+      readonly url: string;
+      readonly managementKey: string;
+      readonly clientKey: string;
+    };
+
+export type AccountAction = UsageLimitSourceUpdateAccountInput["action"];
 
 /** A refusal the caller can show as is. */
 export class PoolRejectedError extends Schema.TaggedError<PoolRejectedError>()(
@@ -95,11 +103,12 @@ export class PoolEngine extends Context.Service<
     readonly rename: (actor: PoolActor, name: string) => Effect.Effect<PoolInfo, Failure>;
     readonly setBacking: (
       actor: PoolActor,
-      backing:
-        | { readonly mode: "managed" }
-        | ({ readonly mode: "external" } & ExternalBackingInput),
+      backing: PoolBackingInput,
     ) => Effect.Effect<PoolInfo, Failure>;
-    /** Checks `actor` may delete the pool and stops its container; the object then wipes itself. */
+    /**
+     * Checks `actor` may delete the pool and stops its container; the object
+     * then wipes itself. A pool already gone counts as deleted.
+     */
     readonly prepareDelete: (actor: PoolActor) => Effect.Effect<void, Failure>;
     readonly accounts: (actor: PoolActor) => Effect.Effect<PoolAccounts, Failure>;
     readonly startLogin: (
@@ -109,17 +118,13 @@ export class PoolEngine extends Context.Service<
     readonly loginStatus: (
       actor: PoolActor,
       state: string,
-    ) => Effect.Effect<
-      | { readonly status: "wait" | "ok" }
-      | { readonly status: "error"; readonly error: string | null },
-      Failure
-    >;
+    ) => Effect.Effect<CliProxyApi.LoginStatus, Failure>;
     readonly completeLogin: (actor: PoolActor, redirectUrl: string) => Effect.Effect<void, Failure>;
     readonly cancelLogin: (actor: PoolActor, state: string) => Effect.Effect<void, Failure>;
     readonly updateAccount: (
       actor: PoolActor,
       name: string,
-      action: "pause" | "resume" | "remove",
+      action: AccountAction,
     ) => Effect.Effect<void, Failure>;
     /** A request from the pool's container to its store. */
     readonly storeRequest: (request: Request) => Effect.Effect<Response, SqlError>;
@@ -208,10 +213,8 @@ interface AccountRow {
   readonly contributed_by: string | null;
 }
 
-const randomKey = () => {
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-};
+/** How old the account list may get before a read asks the CLIProxyAPI again. */
+const ACCOUNTS_FRESH_MS = 30_000;
 
 /** The account names a sign-in started with. */
 const KnownAccounts = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -232,6 +235,8 @@ const make = Effect.gen(function* () {
   const store = yield* PoolStore.PoolStore;
   const container = yield* PoolContainer.PoolContainer;
   const external = yield* ExternalFetch;
+  const crypto = yield* Crypto.Crypto;
+  const randomKey = crypto.randomBytes(32).pipe(Effect.map(Hex.encode), Effect.orDie);
 
   const poolRow = sql<PoolRow>`SELECT name, personal, backing, management_key, client_key,
     store_access_key, store_secret_key, external_url, external_management_key,
@@ -266,7 +271,14 @@ const make = Effect.gen(function* () {
     role,
   });
 
-  const endpointOf = (row: PoolRow): CliProxyApi.PoolEndpoint =>
+  /**
+   * Where the pool's CLIProxyAPI answers. `passive` reads reach a managed
+   * pool's container only while it is up anyway, and never keep it up.
+   */
+  const endpointOf = (
+    row: PoolRow,
+    options?: { readonly passive: true },
+  ): CliProxyApi.PoolEndpoint =>
     row.backing === "external" &&
     row.external_url !== null &&
     row.external_management_key !== null &&
@@ -279,10 +291,12 @@ const make = Effect.gen(function* () {
         }
       : {
           fetch: (request) =>
-            container.fetch(request, {
-              accessKey: row.store_access_key,
-              secretKey: row.store_secret_key,
-            }),
+            options?.passive
+              ? container.peek(request)
+              : container.fetch(request, {
+                  accessKey: row.store_access_key,
+                  secretKey: row.store_secret_key,
+                }),
           baseUrl: PoolContainer.CONTAINER_ORIGIN,
           managementKey: row.management_key,
           clientKey: row.client_key,
@@ -311,27 +325,41 @@ const make = Effect.gen(function* () {
 
   /**
    * Reads the CLIProxyAPI's accounts into the cache, keeping who contributed
-   * each. `contributors` names the contributor of accounts new to the cache.
+   * each, and writes only what changed. `contributors` names the contributor
+   * of accounts new to the cache.
    */
   const refreshAccounts = (
     row: PoolRow,
     contributors: (name: string) => string | null = () => null,
+    options?: { readonly passive: true },
   ) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      const live = yield* CliProxyApi.listAccounts(endpointOf(row)).pipe(
+      const live = yield* CliProxyApi.listAccounts(endpointOf(row, options)).pipe(
         Effect.catchTags({
           PoolBackendError: (error) =>
             sql`UPDATE accounts_state SET checked_at = ${now}, error = ${error.detail}
               WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
         }),
       );
+      const cached = yield* cachedAccounts;
+      const known = new Map(cached.accounts.map((account) => [account.name, account]));
+      const changed = live.filter((account) => {
+        const before = known.get(account.name);
+        return (
+          before === undefined ||
+          before.type !== account.type ||
+          before.email !== account.email ||
+          before.disabled !== account.disabled ||
+          before.signedOut !== account.signedOut
+        );
+      });
+      const names = new Set(live.map((account) => account.name));
+      const removed = cached.accounts.filter((account) => !names.has(account.name));
+      if (changed.length === 0 && removed.length === 0 && cached.error === null) return live;
       yield* sql.withTransaction(
         Effect.gen(function* () {
-          const known = new Set(
-            (yield* sql<{ readonly name: string }>`SELECT name FROM accounts`).map((r) => r.name),
-          );
-          for (const account of live) {
+          for (const account of changed) {
             const contributor = known.has(account.name) ? null : contributors(account.name);
             yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
                 contributed_by, added_at)
@@ -340,19 +368,14 @@ const make = Effect.gen(function* () {
               ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
                 disabled = excluded.disabled, signed_out = excluded.signed_out`;
           }
-          const names = new Set(live.map((account) => account.name));
-          for (const name of known) {
-            if (!names.has(name)) yield* sql`DELETE FROM accounts WHERE name = ${name}`;
+          for (const account of removed) {
+            yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
           }
           yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
         }),
       );
       return live;
     });
-
-  /** External pools are always read live; a managed one only while its container is up. */
-  const isLive = (row: PoolRow) =>
-    row.backing === "external" ? Effect.succeed(true) : container.running;
 
   const create: PoolEngine["Service"]["create"] = (actor, input) =>
     Effect.gen(function* () {
@@ -362,14 +385,16 @@ const make = Effect.gen(function* () {
         return infoOf(row, role);
       }
       const now = yield* Clock.currentTimeMillis;
-      const managementKey = randomKey();
-      const clientKey = randomKey();
+      const managementKey = yield* randomKey;
+      const clientKey = yield* randomKey;
+      const storeAccessKey = yield* randomKey;
+      const storeSecretKey = yield* randomKey;
       yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* sql`INSERT INTO pool (id, name, personal, created_at, backing, management_key,
               client_key, store_access_key, store_secret_key)
             VALUES (1, ${input.name}, ${input.personal ? 1 : 0}, ${now}, 'managed',
-              ${managementKey}, ${clientKey}, ${randomKey()}, ${randomKey()})`;
+              ${managementKey}, ${clientKey}, ${storeAccessKey}, ${storeSecretKey})`;
           yield* sql`INSERT INTO grants (user_id, role, granted_at)
             VALUES (${actor.userId}, 'admin', ${now})`;
           yield* store.put(
@@ -430,6 +455,7 @@ const make = Effect.gen(function* () {
 
   const prepareDelete: PoolEngine["Service"]["prepareDelete"] = (actor) =>
     Effect.gen(function* () {
+      if ((yield* poolRow) === null) return;
       const { row } = yield* access(actor, "admin");
       if (row.personal === 1) return yield* reject("Your personal pool can't be deleted.");
       yield* container.stop;
@@ -438,8 +464,13 @@ const make = Effect.gen(function* () {
   const accounts: PoolEngine["Service"]["accounts"] = (actor) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "member");
-      if (yield* isLive(row)) yield* refreshAccounts(row).pipe(Effect.ignore);
-      return yield* cachedAccounts;
+      const cached = yield* cachedAccounts;
+      if ((yield* Clock.currentTimeMillis) - cached.checkedAt < ACCOUNTS_FRESH_MS) return cached;
+      // Reading never wakes a sleeping container or keeps one awake: an asleep
+      // pool's accounts are what it last had.
+      if (row.backing !== "external" && !(yield* container.running)) return cached;
+      const read = yield* refreshAccounts(row, undefined, { passive: true }).pipe(Effect.result);
+      return read._tag === "Success" ? yield* cachedAccounts : cached;
     });
 
   const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider) =>

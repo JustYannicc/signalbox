@@ -4,6 +4,7 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
+import * as Platform from "../platform.ts";
 import {
   POOL_OBJECT_JURISDICTION,
   type PoolObjectApi,
@@ -64,7 +65,9 @@ const makeRuntime = (ctx: DurableObjectState) =>
           : PoolContainer.layerUnavailable,
       ),
       Layer.provideMerge(Layer.mergeAll(PoolStore.layer, PoolEngine.layerExternalFetch)),
-      Layer.provideMerge(SqliteClient.layer({ storage: ctx.storage })),
+      Layer.provideMerge(
+        Layer.mergeAll(SqliteClient.layer({ storage: ctx.storage }), Platform.layerCrypto),
+      ),
     ),
   );
 
@@ -81,7 +84,11 @@ export class PoolObject extends DurableObject<PoolObjectEnv> implements PoolObje
     this.runtime = makeRuntime(ctx);
     this.api = makePoolObjectApi(
       (effect) => this.runtime.runPromise(effect),
-      () => ctx.storage.deleteAll(),
+      // Erased, the object is an empty pool again, so a repeated delete still answers.
+      async () => {
+        await ctx.storage.deleteAll();
+        await this.runtime.runPromise(PoolEngine.PoolEngine.use((engine) => engine.initialize));
+      },
     );
     void ctx.blockConcurrencyWhile(async () => {
       await this.runtime.runPromise(PoolEngine.PoolEngine.use((engine) => engine.initialize));

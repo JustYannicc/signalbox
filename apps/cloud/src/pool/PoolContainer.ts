@@ -48,6 +48,11 @@ export class PoolContainer extends Context.Service<
   {
     /** Sends a request to the CLIProxyAPI, starting the container first if it sleeps. */
     readonly fetch: (request: Request, store: StoreCredentials) => Promise<Response>;
+    /**
+     * Sends a request only if the container is already up, without keeping
+     * it up: for reads that must never wake it or delay its sleep.
+     */
+    readonly peek: (request: Request) => Promise<Response>;
     readonly running: Effect.Effect<boolean>;
     readonly stop: Effect.Effect<void>;
     /**
@@ -59,7 +64,7 @@ export class PoolContainer extends Context.Service<
 >()("@signalbox/cloud/pool/PoolContainer") {}
 
 /** The container's environment: CLIProxyAPI's object-store backend, pointed at the pool's store. */
-export const containerEnv = (store: StoreCredentials): Record<string, string> => ({
+const containerEnv = (store: StoreCredentials): Record<string, string> => ({
   OBJECTSTORE_ENDPOINT: `http://${STORE_HOST}`,
   OBJECTSTORE_BUCKET: POOL_STORE_BUCKET,
   OBJECTSTORE_ACCESS_KEY: store.accessKey,
@@ -106,7 +111,28 @@ const makeActivity = (onIdleFrom: (at: number) => void) => {
           end();
         }
       };
-      const body = response.body.pipeThrough(new TransformStream({ flush: once }));
+      // Ends on the last chunk, an error, or a reader that gives up.
+      const reader = response.body.getReader();
+      const body = new ReadableStream<Uint8Array>({
+        pull: async (controller) => {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              once();
+              controller.close();
+            } else {
+              controller.enqueue(value);
+            }
+          } catch (error) {
+            once();
+            controller.error(error);
+          }
+        },
+        cancel: (reason) => {
+          once();
+          return reader.cancel(reason);
+        },
+      });
       return new Response(body, response);
     },
     /** When the container may sleep, given nothing new arrives; null while a request is open. */
@@ -127,6 +153,7 @@ export const layerCloudflare = (input: {
 }) => {
   const { container, storeGateway, wakeAt, log } = input;
   let starting: Promise<void> | undefined;
+  let stopping: Promise<void> | undefined;
   const activity = makeActivity((at) => wakeAt(at + IDLE_TIMEOUT_MS));
 
   const waitUntilReady = async (startedAt: number) => {
@@ -155,13 +182,26 @@ export const layerCloudflare = (input: {
     log("pool.container.started", { readyMs: Math.round(performance.now() - startedAt) });
   };
 
-  const ensure = (store: StoreCredentials) => {
+  const ensure = async (store: StoreCredentials) => {
+    // A container on its way down is not one to send requests to.
+    if (stopping) await stopping;
     if (starting) return starting;
-    if (container.running) return Promise.resolve();
+    if (container.running) return;
     starting = start(store).finally(() => {
       starting = undefined;
     });
     return starting;
+  };
+
+  /** Destroying rejects with the container's exit, which is the point. */
+  const destroy = () => {
+    stopping ??= container
+      .destroy()
+      .catch(() => {})
+      .finally(() => {
+        stopping = undefined;
+      });
+    return stopping;
   };
 
   // A container that outlived its object's restart has lost its timeout.
@@ -175,9 +215,15 @@ export const layerCloudflare = (input: {
           await ensure(store);
           return container.getTcpPort(CLI_PROXY_API_PORT).fetch(request);
         }),
-      running: Effect.sync(() => container.running),
+      peek: async (request) => {
+        if (starting || stopping || !container.running) {
+          throw new Error("The pool's container is asleep.");
+        }
+        return container.getTcpPort(CLI_PROXY_API_PORT).fetch(request);
+      },
+      running: Effect.sync(() => container.running && !stopping),
       stop: Effect.promise(async () => {
-        if (container.running) await container.destroy().catch(() => {});
+        if (container.running) await destroy();
       }),
       sleepIfIdle: (now) =>
         Effect.promise(async () => {
@@ -186,9 +232,8 @@ export const layerCloudflare = (input: {
           const at = activity.sleepAt();
           if (at === null) return now + IDLE_TIMEOUT_MS;
           if (at > now) return at;
-          // CLIProxyAPI has written every change to the store already. Destroying
-          // rejects with the container's exit, which is the point.
-          await container.destroy().catch(() => {});
+          // CLIProxyAPI has written every change to the store already.
+          await destroy();
           log("pool.container.slept", {});
           return null;
         }),
@@ -205,6 +250,7 @@ export const layerUnavailable = Layer.succeed(
   PoolContainer,
   PoolContainer.of({
     fetch: () => Promise.reject(new Error("Pool containers are not available here.")),
+    peek: () => Promise.reject(new Error("Pool containers are not available here.")),
     running: Effect.succeed(false),
     stop: Effect.void,
     sleepIfIdle: () => Effect.succeed(null),
@@ -230,6 +276,10 @@ export const makeFake = (
         }
         return serve(request, store);
       },
+      peek: (request) =>
+        running
+          ? serve(request, { accessKey: "", secretKey: "" })
+          : Promise.reject(new Error("The pool's container is asleep.")),
       running: Effect.sync(() => running),
       stop: Effect.sync(() => {
         running = false;

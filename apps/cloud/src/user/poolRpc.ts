@@ -6,7 +6,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -68,9 +67,7 @@ export const POOL_REQUIRED_SCOPES = {
 const notYet = (what: string) =>
   Effect.fail(new AccountHubRpcError({ detail: `Signalbox Cloud pools can't ${what} yet.` }));
 
-const now = Effect.map(Clock.currentTimeMillis, (millis) =>
-  DateTime.formatIso(DateTime.makeUnsafe(millis)),
-);
+const now = Effect.map(DateTime.now, DateTime.formatIso);
 
 /** The server config with the user's pools in it. */
 const configOf = (
@@ -78,14 +75,17 @@ const configOf = (
   state: UserPools.PoolsState,
   checkedAt: string,
 ) => {
-  const withSources = state.pools.map((pool, index) => ({ pool, source: state.sources[index]! }));
   return Environment.serverConfig(identity, checkedAt, {
-    providers: poolProviders(withSources, checkedAt),
-    instances: poolProviderInstances(state.pools),
+    providers: poolProviders(state, checkedAt),
+    instances: poolProviderInstances(state.map((entry) => entry.pool)),
   });
 };
 
-const NO_POOLS: UserPools.PoolsState = { pools: [], sources: [] };
+const NO_POOLS: UserPools.PoolsState = [];
+
+/** What settings say about the pools: their instances, named after the pools. */
+const settingsKey = (state: UserPools.PoolsState) =>
+  state.map(({ pool }) => `${pool.id}\u0000${pool.name}`).join("\u0001");
 
 /**
  * The pools, falling back to none when they can't be read, so the rest of
@@ -113,11 +113,20 @@ export const makePoolHandlers = (input: {
     const signIns = yield* PoolSignIns.PoolSignIns;
     const { actor, identity } = input;
 
-    /** `subscribeServerConfig`: a snapshot, then every pool change as updates. */
+    /**
+     * `subscribeServerConfig`: a snapshot, then each pool change as updates.
+     * Settings only change with the pool list, so they go out only then.
+     */
     const configStream = (request: { readonly usageLimitSources?: boolean | undefined }) =>
       poolStates(pools, actor).pipe(
-        Stream.zipWithIndex,
-        Stream.mapEffect(([state, index]) =>
+        Stream.mapAccum(
+          (): string | null => null,
+          (previous, state) => {
+            const key = settingsKey(state);
+            return [key, [{ state, first: previous === null, settingsChanged: key !== previous }]];
+          },
+        ),
+        Stream.mapEffect(({ state, first, settingsChanged }) =>
           Effect.map(now, (checkedAt): ReadonlyArray<ServerConfigStreamEvent> => {
             const config = configOf(identity, state, checkedAt);
             const sources: ReadonlyArray<ServerConfigStreamEvent> = request.usageLimitSources
@@ -125,21 +134,24 @@ export const makePoolHandlers = (input: {
                   {
                     version: 1,
                     type: "usageLimitSourcesUpdated",
-                    payload: { sources: state.sources },
+                    payload: { sources: state.map((entry) => entry.source) },
                   },
                 ]
               : [];
-            return index === 0
-              ? [{ version: 1, type: "snapshot", config }, ...sources]
-              : [
-                  { version: 1, type: "settingsUpdated", payload: { settings: config.settings } },
-                  {
-                    version: 1,
-                    type: "providerStatuses",
-                    payload: { providers: config.providers },
-                  },
-                  ...sources,
-                ];
+            if (first) return [{ version: 1, type: "snapshot", config }, ...sources];
+            return [
+              ...(settingsChanged
+                ? [
+                    {
+                      version: 1,
+                      type: "settingsUpdated",
+                      payload: { settings: config.settings },
+                    } as const,
+                  ]
+                : []),
+              { version: 1, type: "providerStatuses", payload: { providers: config.providers } },
+              ...sources,
+            ];
           }),
         ),
         Stream.flattenIterable,
@@ -154,15 +166,13 @@ export const makePoolHandlers = (input: {
 
     const handlers = {
       [WS_METHODS.accountPoolSubscribe]: () =>
-        pools.changes(actor).pipe(Stream.map((state) => state.pools.map(accountPool))),
+        pools
+          .changes(actor)
+          .pipe(Stream.map((state) => state.map((entry) => accountPool(entry.pool)))),
       [WS_METHODS.accountPoolSubscribeViews]: () =>
         pools
           .changes(actor)
-          .pipe(
-            Stream.map((state) =>
-              state.pools.map((pool, index) => overview(pool, state.sources[index]!)),
-            ),
-          ),
+          .pipe(Stream.map((state) => state.map((entry) => overview(entry.pool, entry.source)))),
       [WS_METHODS.accountPoolCreate]: (request: Parameters<typeof pools.create>[1]) =>
         pools.create(actor, request),
       [WS_METHODS.accountPoolRename]: (request: Parameters<typeof pools.rename>[1]) =>
@@ -180,13 +190,12 @@ export const makePoolHandlers = (input: {
       ) => pools.updateAccount(actor, request),
       // Usage → Limits asks when it opens; the pools read their accounts again.
       [WS_METHODS.serverRefreshProviders]: () =>
-        pools.refresh.pipe(
-          Effect.andThen(configNow),
-          Effect.map((config) => ({ providers: config.providers })),
-        ),
-      [WS_METHODS.providerAuthSubscribe]: (request: {
-        readonly instanceId: Parameters<typeof signIns.subscribe>[0];
-      }) => signIns.subscribe(request.instanceId),
+        Effect.gen(function* () {
+          const state = yield* pools.refresh(actor).pipe(Effect.orElseSucceed(() => NO_POOLS));
+          return { providers: configOf(identity, state, yield* now).providers };
+        }),
+      [WS_METHODS.providerAuthSubscribe]: (request: Parameters<typeof signIns.subscribe>[1]) =>
+        signIns.subscribe(actor, request),
       [WS_METHODS.providerAuthStart]: (request: Parameters<typeof signIns.start>[1]) =>
         signIns.start(actor, request),
       [WS_METHODS.providerAuthComplete]: (request: Parameters<typeof signIns.complete>[1]) =>

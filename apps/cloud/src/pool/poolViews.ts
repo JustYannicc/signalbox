@@ -36,10 +36,10 @@ export interface UserPool {
   readonly backing: AccountHubConnection;
 }
 
-/** A pool with what its object last said about its accounts. */
-export interface PoolWithAccounts {
+/** A pool with its accounts, as one usage limit source. */
+export interface PoolEntry {
   readonly pool: UserPool;
-  readonly accounts: PoolAccounts | { readonly error: string };
+  readonly source: UsageLimitSourceSnapshot;
 }
 
 export const accountPool = (pool: UserPool): AccountPool => ({
@@ -68,7 +68,10 @@ const usageNotRead = (checkedAt: string): UsageLimitSourceAccount["usageLimits"]
 });
 
 /** The pool's accounts as one usage limit source, grouped under the pool in Limits. */
-export const usageSource = (entry: PoolWithAccounts, now: number): UsageLimitSourceSnapshot => {
+export const usageSource = (
+  entry: { readonly pool: UserPool; readonly accounts: PoolAccounts | { readonly error: string } },
+  now: number,
+): UsageLimitSourceSnapshot => {
   const base = {
     id: poolSourceId(entry.pool.id),
     kind: "cliproxy",
@@ -134,7 +137,7 @@ export const overview = (
 
 /** Each pool's provider instances, for `ServerConfig.providers`. */
 export const poolProviders = (
-  pools: ReadonlyArray<{ readonly pool: UserPool; readonly source: UsageLimitSourceSnapshot }>,
+  pools: ReadonlyArray<PoolEntry>,
   checkedAt: string,
 ): ReadonlyArray<ServerProvider> =>
   pools.flatMap(({ pool, source }) =>

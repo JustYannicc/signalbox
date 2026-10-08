@@ -3,10 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import type { PoolLoginProvider, LoginStart } from "./cliProxyApi.ts";
+import type { LoginStart, LoginStatus, PoolLoginProvider } from "./cliProxyApi.ts";
 import {
-  type ExternalBackingInput,
+  type AccountAction,
   type PoolAccounts,
+  type PoolBackingInput,
   type PoolActor,
   type PoolInfo,
   PoolRejectedError,
@@ -37,14 +38,6 @@ export type PoolReply<A> =
   | { readonly _tag: "ok"; readonly value: A }
   | { readonly _tag: "rejected"; readonly reason: string };
 
-export type PoolBackingInput =
-  | { readonly mode: "managed" }
-  | ({ readonly mode: "external" } & ExternalBackingInput);
-
-export type LoginStatus =
-  | { readonly status: "wait" | "ok" }
-  | { readonly status: "error"; readonly error: string | null };
-
 /** What a pool object answers. `PoolObject` implements it method for method. */
 export interface PoolObjectApi {
   readonly create: (
@@ -70,7 +63,7 @@ export interface PoolObjectApi {
   readonly updateAccount: (
     actor: PoolActor,
     name: string,
-    action: "pause" | "resume" | "remove",
+    action: AccountAction,
   ) => Promise<PoolReply<null>>;
 }
 
@@ -104,6 +97,14 @@ const METHODS = Object.keys({
   cancelLogin: true,
   updateAccount: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
+
+/** What to tell the user when a pool call fails: the pool's own refusal, or a logged outage. */
+export const poolErrorMessage = (error: PoolRejectedError | PoolObjectError) =>
+  error._tag === "PoolRejectedError"
+    ? Effect.succeed(error.reason)
+    : Effect.logError("pool object call failed", { cause: error }).pipe(
+        Effect.as("The pool is unavailable right now. Try again."),
+      );
 
 /** Wraps any `PoolObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: PoolObjectApi): PoolHandle {

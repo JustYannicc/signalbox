@@ -3,6 +3,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as Platform from "../platform.ts";
 import * as PoolStore from "./poolStore.ts";
 
 const ACCESS_KEY = "access-1";
@@ -10,7 +11,9 @@ const ORIGIN = "http://store.pool.internal";
 
 const layer = PoolStore.layer.pipe(
   Layer.provideMerge(Layer.effectDiscard(PoolStore.createTables)),
-  Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+  Layer.provideMerge(
+    Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
+  ),
 );
 
 /** A request as minio-go signs it: SigV4 with the access key in the credential scope. */

@@ -1,7 +1,9 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
@@ -14,7 +16,7 @@ import type { SqlError } from "effect/sql/SqlError";
  * every change, token refreshes included, so a container that sleeps or
  * restarts keeps its accounts.
  *
- * Only the pool's own container reaches it (see `poolContainer.ts`), so no
+ * Only the pool's own container reaches it (see `PoolContainer.ts`), so no
  * pool can read another pool's credentials. The access key is checked too,
  * but it is not the boundary.
  *
@@ -55,14 +57,6 @@ export const createTables = Effect.gen(function* () {
   )`;
 });
 
-const etagOf = (body: string) =>
-  Effect.promise(async () => {
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
-    return [...new Uint8Array(digest).slice(0, 16)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("");
-  });
-
 interface ObjectRow {
   readonly key: string;
   readonly body: string;
@@ -81,6 +75,12 @@ export const layer = Layer.effect(
   PoolStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const crypto = yield* Crypto.Crypto;
+    const etagOf = (body: string) =>
+      crypto.digest("SHA-256", new TextEncoder().encode(body)).pipe(
+        Effect.map((digest) => Hex.encode(digest.slice(0, 16))),
+        Effect.orDie,
+      );
     return PoolStore.of({
       get: (key) =>
         sql<ObjectRow>`SELECT key, body, etag, updated_at FROM store_objects WHERE key = ${key}`.pipe(
@@ -173,17 +173,13 @@ const isChunkedUpload = (request: Request) =>
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
+/** The upload's text, or null when it can't be read or isn't UTF-8. */
 const readBody = (request: Request) =>
-  Effect.promise(async () => {
+  Effect.tryPromise(async () => {
     const raw = new Uint8Array(await request.arrayBuffer());
     const bytes = isChunkedUpload(request) ? decodeAwsChunked(raw) : raw;
-    if (bytes === null) return null;
-    try {
-      return utf8.decode(bytes);
-    } catch {
-      return null;
-    }
-  });
+    return bytes === null ? null : utf8.decode(bytes);
+  }).pipe(Effect.orElseSucceed(() => null));
 
 const listResult = (prefix: string, objects: ReadonlyArray<StoredObject>, urlEncoded: boolean) => {
   const encodeKey = (key: string) => escapeXml(urlEncoded ? encodeURIComponent(key) : key);
