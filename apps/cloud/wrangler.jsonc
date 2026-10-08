@@ -16,7 +16,10 @@
     "directory": "../web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/oauth/*", "/.well-known/*", "/ws"],
+    // Every request reaches the Worker first: preview origins (`PREVIEW_DOMAIN`)
+    // share these paths and must never get the app's files. The Worker hands
+    // everything else to the assets binding.
+    "run_worker_first": true,
   },
   "durable_objects": {
     "bindings": [
@@ -41,6 +44,26 @@
   },
   "observability": { "enabled": true },
   "env": {
+    // `vp run dev`: the production Worker without its route, so `wrangler dev`
+    // keeps each request's host (preview origins are `*.localhost`) instead of
+    // rewriting it to the route's. Same name, so the ModelGateway's dev
+    // binding still finds it.
+    "dev": {
+      "name": "signalbox-cloud",
+      "routes": [],
+      "durable_objects": {
+        "bindings": [
+          { "name": "USERS", "class_name": "UserObject" },
+          { "name": "THREADS", "class_name": "ThreadObject" },
+          { "name": "DRIVES", "class_name": "DriveObject" },
+        ],
+      },
+      // Local only: `wrangler dev` simulates the bucket under .wrangler/.
+      "r2_buckets": [
+        { "binding": "DRIVE_PACKS", "bucket_name": "signalbox-drives", "jurisdiction": "eu" },
+      ],
+      "vars": {},
+    },
     // A pull request preview: its own Worker and Durable Objects, so it never
     // shares state with production. The workflow passes the name, domain and
     // identity per pull request.

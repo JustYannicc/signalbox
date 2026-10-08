@@ -6,6 +6,7 @@ import {
 } from "@signalbox/account/WorkOSTesting";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ConfigProvider from "effect/ConfigProvider";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -22,10 +23,15 @@ import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
+import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
+import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
+import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
+import { previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
@@ -111,6 +117,11 @@ export const layerThreadObject = (
       userId: string,
       driveId: string,
     ) => Effect.Effect<boolean, UserDirectory.UserObjectError>;
+    readonly analytics?: Layer.Layer<
+      CloudAnalytics.CloudAnalytics,
+      never,
+      DiagnosticsStore.DiagnosticsStore | Crypto.Crypto
+    >;
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
@@ -121,7 +132,10 @@ export const layerThreadObject = (
       }),
     ),
     Layer.provideMerge(ThreadEngine.layer),
+    Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
+    Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
+    Layer.provideMerge(DiagnosticsStore.layer),
     Layer.provideMerge(ThreadStore.layer),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
@@ -199,10 +213,22 @@ export const makeMemoryCloud = (options: { readonly people?: TestPeople } = {}) 
       effect: Effect.Effect<
         A,
         E,
-        ThreadEngine.ThreadEngine | ThreadStore.ThreadStore | UserDirectory.UserDirectory
+        | ThreadEngine.ThreadEngine
+        | ThreadStore.ThreadStore
+        | UserDirectory.UserDirectory
+        | TurnReports.TurnReports
       >,
     ) => runtime.runPromise(effect);
-    const object = { api: makeThreadObjectApi(run, async () => {}), run };
+    // No machine runs in memory, so nothing serves previews.
+    const api: ThreadDirectory.ThreadObjectApi = {
+      ...makeThreadObjectApi(run, async () => {}),
+      previews: async () =>
+        new ReadableStream({
+          start: (c) => c.enqueue(new TextEncoder().encode(`${previewsLine([])}\n`)),
+        }),
+      previewLink: async () => ({ _tag: "unavailable", message: "No machine runs in tests." }),
+    };
+    const object = { api, run };
     threads.set(threadId, object);
     return object;
   };

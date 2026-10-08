@@ -13,6 +13,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 
 /**
@@ -107,7 +108,12 @@ export class ThreadStore extends Context.Service<
     readonly commit: (input: {
       readonly head: number;
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-      readonly command?: { readonly id: CommandId; readonly type: string };
+      /** `traceId`: the turn the command started, if it started one. */
+      readonly command?: {
+        readonly id: CommandId;
+        readonly type: string;
+        readonly traceId?: string | undefined;
+      };
       readonly owner?: ThreadOwner;
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
@@ -170,6 +176,7 @@ const migrations = Migrator.fromRecord({
       record TEXT NOT NULL
     )`;
   }),
+  "0004_diagnostics": migrateDiagnostics,
   "0005_drive": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE owner ADD COLUMN drive_id TEXT`;
@@ -301,8 +308,10 @@ const make = Effect.gen(function* () {
           VALUES (${sequence}, ${input.command?.id ?? null}, ${EVENT_FORMAT}, ${encodeEvent(event)})`;
     }
     if (input.command) {
-      yield* sql`INSERT INTO receipts (command_id, command_type, status, result_sequence, decided_at)
-          VALUES (${input.command.id}, ${input.command.type}, 'accepted', ${sequence}, ${now})`;
+      yield* sql`INSERT INTO receipts
+          (command_id, command_type, status, result_sequence, decided_at, trace_id)
+          VALUES (${input.command.id}, ${input.command.type}, 'accepted', ${sequence}, ${now},
+            ${input.command.traceId ?? null})`;
     }
     if (input.owner) {
       yield* sql`INSERT INTO owner (id, user_id, context_id, drive_id)

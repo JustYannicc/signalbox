@@ -1,6 +1,6 @@
 /**
  * WebSocket handlers for Signalbox's own RPCs: product analytics, account
- * pools, automations, sections, and contexts and drives (Signalbox Cloud only). They stay in `WsRpcGroup`, so clients and the auth
+ * pools, automations, sections, and contexts, drives and previews (Signalbox Cloud only). They stay in `WsRpcGroup`, so clients and the auth
  * and instrumentation middleware see one group, but ws.ts implements only
  * upstream's share. One handler layer for every RPC is too deep for tsc.
  *
@@ -22,6 +22,7 @@ import * as WorkflowEngine from "../workflows/WorkflowEngine.ts";
 import { makeSignalboxAnalyticsWsHandlers } from "./analytics/rpc.ts";
 import { signalboxContextsWsHandlers } from "./contexts/rpc.ts";
 import { signalboxDrivesWsHandlers } from "./drives/rpc.ts";
+import { signalboxPreviewsWsHandlers } from "./previews/rpc.ts";
 
 /**
  * Signalbox's RPCs. The middleware only shapes handler types like ws.ts's
@@ -52,6 +53,7 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
         ...sections,
         ...signalboxContextsWsHandlers,
         ...signalboxDrivesWsHandlers,
+        ...signalboxPreviewsWsHandlers,
         [WS_METHODS.accountPoolSubscribe]: () => pools.changes,
         [WS_METHODS.accountPoolSubscribeViews]: () => PoolAccess.poolViews,
         [WS_METHODS.accountPoolCreate]: (input) =>

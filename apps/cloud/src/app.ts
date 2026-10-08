@@ -28,6 +28,7 @@ import * as CloudConfig from "./CloudConfig.ts";
 import * as AccountRoutes from "./http/accountRoutes.ts";
 import * as WorkOSWebhook from "./http/workosWebhook.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
+import * as DiagnosticsRoutes from "./http/diagnosticsRoutes.ts";
 import * as EnvironmentApi from "./http/environmentApi.ts";
 import * as Platform from "./platform.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
@@ -85,9 +86,12 @@ type Services = Layer.Success<ReturnType<typeof layerServices>>;
 
 // Raw account routes resolve services per request, from the context the web
 // handler is built with; the API groups take them when the router is built.
-const routes = Layer.mergeAll(EnvironmentApi.layer, AccountRoutes.layer, WorkOSWebhook.layer).pipe(
-  Layer.provide(layerCors),
-);
+const routes = Layer.mergeAll(
+  EnvironmentApi.layer,
+  AccountRoutes.layer,
+  DiagnosticsRoutes.layer,
+  WorkOSWebhook.layer,
+).pipe(Layer.provide(layerCors));
 
 const json = (body: unknown, status: number) =>
   Response.json(body, { status, headers: NO_STORE_HEADERS });

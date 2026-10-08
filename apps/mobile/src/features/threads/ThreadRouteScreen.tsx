@@ -1032,6 +1032,8 @@ function ThreadRouteContent(
         subtitle={headerSubtitle}
         headerColor={headerColor}
         usesNativeHeaderGlass={usesNativeHeaderGlass}
+        environmentId={selectedThread.environmentId} // signalbox: previews
+        threadId={selectedThread.id} // signalbox: previews
         gitControls={threadGitControlProps}
         hasThreadCwd={selectedThreadCwd !== null}
         hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}

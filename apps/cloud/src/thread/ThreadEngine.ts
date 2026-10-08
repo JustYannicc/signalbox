@@ -25,6 +25,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
@@ -165,6 +166,8 @@ export class ThreadEngine extends Context.Service<
     readonly hasTurnWork: Effect.Effect<boolean>;
     /** The current summary, for an owner's index rebuild. Null for anyone else. */
     readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null>;
+    /** Whether `actor` may see the thread, read without the lock. */
+    readonly canSee: (actor: Actor) => Effect.Effect<boolean>;
     /** Whether the owner's index has not acknowledged the latest summary yet. */
     readonly hasPendingSummary: Effect.Effect<boolean>;
     /** The unacknowledged summary and whose index it goes to, if any. */
@@ -244,7 +247,11 @@ const make = Effect.gen(function* () {
   /** Commits decided events and publishes them. Callers hold the lock. */
   const commit = Effect.fnUntraced(function* (input: {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly command?: { readonly id: CommandId; readonly type: string };
+    readonly command?: {
+      readonly id: CommandId;
+      readonly type: string;
+      readonly traceId?: string | undefined;
+    };
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
@@ -341,9 +348,20 @@ const make = Effect.gen(function* () {
           }
           return yield* ThreadCommandRejectedError.forCommand(command, decision.message);
         }
+        // The receipt names the turn this command started, so a client's retry finds its trace.
+        const started = decision.events.find((event) => event.type === "run.created");
         const sequence = yield* commit({
           events: decision.events,
-          command,
+          command: {
+            ...command,
+            ...(started === undefined
+              ? {}
+              : {
+                  traceId: yield* traceIdOf(started.payload.id).pipe(
+                    Effect.provideService(Crypto.Crypto, crypto),
+                  ),
+                }),
+          },
           ...(place === null ? {} : { owner: { userId: actor.userId, ...place } }),
         });
         return { sequence, replayed: false };
@@ -482,7 +500,11 @@ const make = Effect.gen(function* () {
   const acknowledgeSummary: ThreadEngine["Service"]["acknowledgeSummary"] = (revision) =>
     Effect.orDie(store.acknowledgeSummary(revision));
 
+  const canSee: ThreadEngine["Service"]["canSee"] = (actor) =>
+    Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
+
   return ThreadEngine.of({
+    canSee,
     dispatch,
     launch,
     snapshot,

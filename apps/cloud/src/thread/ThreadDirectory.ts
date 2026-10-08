@@ -1,3 +1,4 @@
+import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type {
   OrchestrationV2Command,
@@ -12,6 +13,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
+import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type { DriveAuthorization, ModelAuthorization } from "./runner/ThreadRunner.ts";
 import {
   type Actor,
@@ -59,6 +62,15 @@ export interface ThreadObjectApi {
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /**
+   * A turn's diagnostic record as JSON, by run or trace id, or the list of
+   * recent turns for null. Null when the actor cannot see the thread or no
+   * turn matches.
+   */
+  readonly diagnostics: (actor: Actor, key: string | null) => Promise<string | null>;
+  /** Newline-delimited `{ ports }` snapshots, or null when the actor cannot see the thread. */
+  readonly previews: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly previewLink: (actor: Actor, port: number) => Promise<PreviewLinkResult>;
 }
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
@@ -86,6 +98,19 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  /** See `ThreadObjectApi.diagnostics`; the record is passed through as JSON text. */
+  readonly diagnostics: (
+    actor: Actor,
+    key: string | null,
+  ) => Effect.Effect<string | null, ThreadObjectError>;
+  /** What the thread's machine serves, now and after every change. Ends when the object goes away. */
+  readonly previews: (
+    actor: Actor,
+  ) => Stream.Stream<ReadonlyArray<PreviewPort>, ThreadNotFoundError | ThreadObjectError>;
+  readonly previewLink: (
+    actor: Actor,
+    port: number,
+  ) => Effect.Effect<PreviewLinkResult, ThreadObjectError>;
 }
 
 export class ThreadDirectory extends Context.Service<
@@ -117,6 +142,35 @@ const fromReply = <A>(
 const decodeIn = <A>(operation: string, decode: () => A) =>
   Effect.try({ try: decode, catch: (cause) => new ThreadObjectError({ operation, cause }) });
 
+/**
+ * A thread object's newline-delimited JSON stream, one decoded value per line.
+ * Null from `open` means the actor cannot see the thread.
+ */
+const lines = <A>(
+  operation: string,
+  open: () => Promise<ReadableStream<Uint8Array> | null>,
+  decode: (line: unknown) => A,
+): Stream.Stream<A, ThreadNotFoundError | ThreadObjectError> =>
+  Stream.unwrap(
+    call(operation, open).pipe(
+      Effect.filterOrFail(
+        (body): body is ReadableStream<Uint8Array> => body !== null,
+        () => new ThreadNotFoundError(),
+      ),
+      Effect.map((body) =>
+        Stream.fromReadableStream({
+          evaluate: () => body,
+          onError: (cause) => new ThreadObjectError({ operation, cause }),
+        }).pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.filter((line) => line.length > 0),
+          Stream.mapEffect((line) => decodeIn(operation, () => decode(JSON.parse(line)))),
+        ),
+      ),
+    ),
+  );
+
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
@@ -137,27 +191,19 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
       ),
     subscribe: (actor, input) =>
-      Stream.unwrap(
-        call("subscribe", () => api.subscribe(actor, wire.subscribeInput.encode(input))).pipe(
-          Effect.filterOrFail(
-            (body): body is ReadableStream<Uint8Array> => body !== null,
-            () => new ThreadNotFoundError(),
-          ),
-          Effect.map((body) =>
-            Stream.fromReadableStream({
-              evaluate: () => body,
-              onError: (cause) => new ThreadObjectError({ operation: "subscribe", cause }),
-            }).pipe(
-              Stream.decodeText,
-              Stream.splitLines,
-              Stream.filter((line) => line.length > 0),
-              Stream.mapEffect((line) =>
-                decodeIn("subscribe", () => wire.batch.decode(JSON.parse(line))),
-              ),
-            ),
-          ),
-        ),
+      lines(
+        "subscribe",
+        () => api.subscribe(actor, wire.subscribeInput.encode(input)),
+        (line) => wire.batch.decode(line),
       ),
+    diagnostics: (actor, key) => call("diagnostics", () => api.diagnostics(actor, key)),
+    previews: (actor) =>
+      lines(
+        "previews",
+        () => api.previews(actor),
+        (line) => wire.previews.decode(line).ports,
+      ),
+    previewLink: (actor, port) => call("previewLink", () => api.previewLink(actor, port)),
     summary: (actor) =>
       call("summary", () => api.summary(actor)).pipe(
         Effect.flatMap((value) =>
@@ -176,12 +222,13 @@ export interface ThreadObjectNamespace {
     readonly idFromName: (name: string) => DurableObjectId;
   };
   readonly get: (id: DurableObjectId) => ThreadObjectApi & {
-    /** The object's own HTTP entry: the Runner's socket. */
+    /** The object's own HTTP entry: the Runner's sockets and preview requests. */
     readonly fetch: (request: Request) => Promise<Response>;
     readonly authorizeModel: (
       token: string,
       provider: ModelGatewayProvider,
     ) => Promise<ModelAuthorization>;
+    readonly recordModelRequest: (record: ModelGatewayRecord) => Promise<void>;
     readonly authorizeDrive: (token: string) => Promise<DriveAuthorization>;
   };
 }

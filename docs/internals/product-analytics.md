@@ -70,6 +70,15 @@ idle harnesses of other threads in that root would otherwise inflate every turn'
 sampled on demand while a run is in flight. Subscribing to the resource monitor's live stream would
 count as a viewer and keep it at its 1 s rate for as long as the server runs.
 
+Signalbox Cloud sends the `cloud.*` counterparts from each thread's Durable Object
+([CloudAnalytics](../../apps/cloud/src/thread/diagnostics/CloudAnalytics.ts)). They go through an
+outbox in the thread's own storage rather than the server's in-memory buffer, because an object can
+be evicted between a turn ending and the send. A turn is reported a short grace after it ends. The
+ModelGateway reports a request's tokens only once its stream closes, and that can land after the
+harness has already ended the turn. Usage counters reset on every machine wake, so a turn's CPU is
+summed per generation from the Runner's samples, never taken as a difference across a replaced
+machine.
+
 ## Collection boundary
 
 Keep analytics payloads to product metadata and normalized measurements. Do not

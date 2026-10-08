@@ -10,6 +10,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import { SignalboxPreviewPort } from "@t3tools/contracts/signalboxPreviews";
 import * as Schema from "effect/Schema";
 
 /**
@@ -59,6 +60,7 @@ export const wire = {
   snapshot: jsonCodec(ThreadSnapshotWire),
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
   batch: jsonCodec(Schema.Array(OrchestrationV2ThreadStreamItem)),
+  previews: jsonCodec(Schema.Struct({ ports: Schema.Array(SignalboxPreviewPort) })),
 };
 
 /** A thread object's answer to a call. Failures travel as values: RPC exceptions lose their type. */
@@ -71,6 +73,10 @@ export type ThreadObjectReply<A> =
       readonly commandType: string;
       readonly reason: string;
     };
+
+/** The thread's previews travel as newline-delimited JSON too, one snapshot per line. */
+export const previewsLine = (ports: ReadonlyArray<SignalboxPreviewPort>) =>
+  JSON.stringify(wire.previews.encode({ ports }));
 
 /** Stream batches travel as newline-delimited JSON, one commit per line. */
 export const encodeBatchLine = (() => {

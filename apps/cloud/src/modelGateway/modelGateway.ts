@@ -5,6 +5,8 @@ import {
 
 import { threadOfModelToken } from "../thread/runner/modelToken.ts";
 import type { ModelAuthorization } from "../thread/runner/ThreadRunner.ts";
+import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
+import { makeUsageScanner } from "./usageScanner.ts";
 
 /**
  * The ModelGateway: the only place provider keys live. Harnesses on a machine
@@ -22,27 +24,6 @@ export interface Upstream {
   /** e.g. `https://api.anthropic.com`; request paths start at `/v1`. */
   readonly baseUrl: string;
   readonly apiKey: string;
-}
-
-/** One served request, logged when its response ends. The gateway adds `authMs` before forwarding. */
-export interface ModelGatewayRecord {
-  readonly provider: ModelGatewayProvider;
-  readonly method: string;
-  readonly path: string;
-  readonly status: number;
-  readonly threadId: string | null;
-  readonly runId: string | null;
-  /** Why the thread turned the token down. */
-  readonly denied?: string;
-  /** Checking the token with its thread. */
-  readonly authMs: number;
-  /** From forwarding to the upstream's response headers. */
-  readonly upstreamHeadersMs: number | null;
-  /** From forwarding to the first body chunk: the upstream's time to first token. */
-  readonly firstChunkMs: number | null;
-  readonly totalMs: number;
-  /** How a forwarded response's body ended: read to the end, dropped by the caller, or broken. */
-  readonly outcome?: "complete" | "cancelled" | "failed";
 }
 
 export interface ModelGatewayDeps {
@@ -143,10 +124,13 @@ export async function handleModelRequest(
       path,
       threadId,
       runId: null,
+      traceId: null,
       authMs: 0,
       upstreamHeadersMs: null,
       firstChunkMs: null,
       totalMs: deps.now() - startedAt,
+      model: null,
+      usage: null,
       ...fields,
     });
 
@@ -162,7 +146,7 @@ export async function handleModelRequest(
     record({ status: 401, authMs, denied: authorization.reason });
     return errorResponse(provider, 401, authorization.reason);
   }
-  const runId = authorization.runId;
+  const { runId, traceId } = authorization;
 
   const forwarded: RequestInit & { readonly duplex: "half" } = {
     method: request.method,
@@ -179,7 +163,7 @@ export async function handleModelRequest(
       new Request(`${upstream.baseUrl.replace(/\/+$/, "")}${path}${url.search}`, forwarded),
     );
   } catch {
-    record({ status: 502, runId, authMs, outcome: "failed" });
+    record({ status: 502, runId, traceId, authMs, outcome: "failed" });
     return errorResponse(provider, 502, `Could not reach ${provider}. Try again.`);
   }
   const upstreamHeadersMs = deps.now() - forwardedAt;
@@ -187,19 +171,35 @@ export async function handleModelRequest(
   for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name);
   const init = { status: response.status, statusText: response.statusText, headers };
   if (response.body === null) {
-    record({ status: response.status, runId, authMs, upstreamHeadersMs });
+    record({ status: response.status, runId, traceId, authMs, upstreamHeadersMs });
     return new Response(null, init);
   }
 
   // Pulled chunk by chunk as the caller reads, so nothing is buffered, and logged
   // however the body ends: a harness drops the stream when its turn is interrupted.
   const reader = response.body.getReader();
+  // `/v1/models` reports no usage.
+  const scanner = makeUsageScanner(
+    provider,
+    path.startsWith("/v1/models") ? null : response.headers.get("content-type"),
+  );
   let firstChunkMs: number | null = null;
   let logged = false;
   const finish = (outcome: NonNullable<ModelGatewayRecord["outcome"]>) => {
     if (logged) return;
     logged = true;
-    record({ status: response.status, runId, authMs, upstreamHeadersMs, firstChunkMs, outcome });
+    const { model, usage } = scanner.finish();
+    record({
+      status: response.status,
+      runId,
+      traceId,
+      authMs,
+      upstreamHeadersMs,
+      firstChunkMs,
+      outcome,
+      model,
+      usage,
+    });
   };
   const body = new ReadableStream<Uint8Array>(
     {
@@ -213,6 +213,8 @@ export async function handleModelRequest(
           }
           firstChunkMs ??= deps.now() - forwardedAt;
           controller.enqueue(value);
+          // After the chunk is on its way, so reading usage never delays it.
+          scanner.push(value);
         } catch (error) {
           finish("failed");
           controller.error(error);

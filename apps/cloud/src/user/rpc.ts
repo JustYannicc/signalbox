@@ -29,6 +29,12 @@ import {
   SIGNALBOX_DRIVES_WS_METHODS,
   SignalboxDrivesUnavailableError,
 } from "@t3tools/contracts/signalboxDrives";
+import {
+  SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
+  SIGNALBOX_PREVIEWS_WS_METHODS,
+  SignalboxPreviewError,
+  SignalboxPreviewsUnavailableError,
+} from "@t3tools/contracts/signalboxPreviews";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -87,6 +93,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
+  ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...SECTION_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
@@ -124,6 +131,7 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
+  ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -400,6 +408,31 @@ export const layerHandlers = (input: {
           sharingCall((service) => service.unshare(request)),
         [SIGNALBOX_DRIVES_WS_METHODS.shareFolder]: (request) =>
           sharingCall((service) => service.shareFolder(request)),
+        [SIGNALBOX_PREVIEWS_WS_METHODS.subscribe]: ({ threadId }) =>
+          identity.previews !== true
+            ? Stream.fail(new SignalboxPreviewsUnavailableError())
+            : Stream.unwrap(
+                Effect.map(actorNow, (actor) => threads.previews(actor, threadId)),
+              ).pipe(
+                Stream.map((ports) => ({ threadId, ports })),
+                Stream.tapError(logUnavailable),
+                Stream.mapError(
+                  (error) => new SignalboxPreviewError({ message: failureMessage(error) }),
+                ),
+              ),
+        [SIGNALBOX_PREVIEWS_WS_METHODS.open]: ({ threadId, port }) =>
+          identity.previews !== true
+            ? Effect.fail(new SignalboxPreviewsUnavailableError())
+            : threadCall(
+                Effect.flatMap(actorNow, (actor) => threads.openPreview(actor, threadId, port)),
+                (message) => new SignalboxPreviewError({ message }),
+              ).pipe(
+                Effect.flatMap((link) =>
+                  link._tag === "ok"
+                    ? Effect.succeed({ url: link.url })
+                    : Effect.fail(new SignalboxPreviewError({ message: link.message })),
+                ),
+              ),
         [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),

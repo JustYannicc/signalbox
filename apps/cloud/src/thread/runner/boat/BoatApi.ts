@@ -26,6 +26,8 @@ const BoatSandbox = Schema.Struct({
   error: Schema.optional(Schema.NullOr(Schema.String)),
   /** Outcome of the create-time `setupScript`. */
   setupStatus: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Why the setup script failed, for the turn's diagnostics. */
+  setupError: Schema.optional(Schema.NullOr(Schema.String)),
   archiveAfter: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type BoatSandbox = typeof BoatSandbox.Type;
