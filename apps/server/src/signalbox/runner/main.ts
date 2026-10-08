@@ -5,6 +5,9 @@
  *
  *   node apps/server/src/signalbox/runner/main.ts --cloud http://localhost:8787 --port 8790
  *
+ * `--drives /drives` also mounts every drive the thread's user can read
+ * there, which needs FUSE: run it in the Runner image under Docker.
+ *
  * Point the cloud at it with `LOCAL_RUNNER_URL=http://localhost:8790` in
  * `apps/cloud/.dev.vars`. Turns run this machine's `claude` and `codex`, which
  * reach their models through the cloud's ModelGateway rather than any login on
@@ -43,6 +46,8 @@ const { values, positionals } = NodeUtil.parseArgs({
     port: { type: "string", default: "8790" },
     home: { type: "string" },
     config: { type: "string", default: "/home/user/signalbox/machine.json" },
+    // Host mode only: mount /drives here for every thread (one at a time); the Runner image in Docker.
+    drives: { type: "string" },
   },
 });
 
@@ -78,6 +83,8 @@ const program = Effect.gen(function* () {
       machineId: `vm:${NodeOS.hostname()}`,
       imageVersion,
       build: yield* runnerBuild,
+      // The Runner image makes this folder; elsewhere nothing is mounted.
+      drivesMountPoint: "/drives",
     });
   }
   const port = Number(values.port);
@@ -90,6 +97,7 @@ const program = Effect.gen(function* () {
     machineId: `local:${NodeOS.hostname()}`,
     imageVersion,
     build: yield* runnerBuild,
+    ...(values.drives === undefined ? {} : { drivesMountPoint: values.drives }),
   });
 });
 
