@@ -19,6 +19,7 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import type * as PlatformError from "effect/PlatformError";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -41,6 +42,7 @@ import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOu
 import type { HarnessStderr } from "./harnessStderr.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
+import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
 import { FILE_CHANGING_ITEMS, finishDriveTurn } from "./RunnerTurnDrive.ts";
@@ -64,6 +66,9 @@ import { isUnmeasured } from "./RunnerUsage.ts";
  * files, and landed before the turn's end is reported (`RunnerTurnDrive.ts`).
  * Once the checkout is in place, its dependency trees are brought in step
  * with their lockfiles (`RunnerDependencies.ts`), one turn at a time.
+ * Harnesses read their instructions when a session starts, so when the
+ * instructions the drive's shortcuts bring change, the provider's session is
+ * restarted and the thread resumed natively, which swaps them in.
  *
  * The harness's own session leaves the machine as it is written
  * (`RunnerSessions.ts`): it is restored before the harness loads it, an event
@@ -100,6 +105,13 @@ export interface RunnerTurns {
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
 }
 
+/** An adapter session, and the shortcut instructions it was started with. */
+interface OpenSession {
+  readonly runtime: ProviderAdapterV2SessionRuntime;
+  readonly instructions: string;
+  readonly scope: Scope.Closeable;
+}
+
 /** A run this machine was handed, until the harness ends its turn. */
 interface Turn {
   readonly turn: RunnerTurn;
@@ -112,9 +124,16 @@ interface Turn {
 
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
 
-/** The failure text a thread may store: bounded and with credentials redacted. */
-const failureMessage = (cause: Cause.Cause<unknown>) =>
-  makeProviderFailure({ cause: Cause.squash(cause) }).message;
+const isInstructionsError = Schema.is(RunnerInstructionsError);
+
+/**
+ * The failure text a thread may store: bounded and with credentials redacted.
+ * Instructions too big to load say so in their own words (`RunnerInstructions.ts`).
+ */
+const failureMessage = (cause: Cause.Cause<unknown>) => {
+  const error = Cause.squash(cause);
+  return isInstructionsError(error) ? error.message : makeProviderFailure({ cause: error }).message;
+};
 
 const USAGE_INTERVAL = "30 seconds";
 /** While no turn runs, every this many intervals (5 min): each report wakes the thread's object. */
@@ -153,7 +172,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
-  const sessions = new Map<ProviderInstanceId, ProviderAdapterV2SessionRuntime>();
+  const sessions = new Map<ProviderInstanceId, OpenSession>();
   const turns = new Map<RunId, Turn>();
   /** Runs this machine already took, so a repeated `turn.start` starts nothing. */
   const taken = new Set<RunId>();
@@ -424,7 +443,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         ),
       ),
       // A session whose events ended is dead; the next turn opens a new one.
-      Effect.ensuring(Effect.sync(() => sessions.delete(instanceId))),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (sessions.get(instanceId)?.runtime === runtime) sessions.delete(instanceId);
+        }),
+      ),
     );
   };
 
@@ -432,10 +455,22 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     adapter: ProviderAdapterV2Shape,
     turn: RunnerTurn,
     runtimePolicy: ProviderAdapterV2RuntimePolicy,
+    instructions: string,
   ) =>
     Effect.gen(function* () {
       const open = sessions.get(adapter.instanceId);
-      if (open !== undefined) return open;
+      if (open !== undefined && open.instructions === instructions) return open.runtime;
+      // A stopped run may still be winding down on it; the next turn swaps the instructions then.
+      if (open !== undefined && [...turns.values()].some((t) => t.session === open.runtime)) {
+        return open.runtime;
+      }
+      if (open !== undefined) {
+        // Nothing runs on it anymore: the thread resumes on the new one.
+        sessions.delete(adapter.instanceId);
+        yield* Effect.logInfo("the drive's instructions changed; restarting the harness session");
+        yield* Scope.close(open.scope, Exit.void);
+      }
+      const sessionScope = yield* Scope.fork(scope);
       const runtime = yield* adapter
         .openSession({
           threadId: input.threadId,
@@ -445,9 +480,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           modelSelection: turn.modelSelection,
           runtimePolicy,
         })
-        .pipe(Scope.provide(scope));
-      sessions.set(adapter.instanceId, runtime);
-      yield* forward(adapter, runtime).pipe(Effect.forkIn(scope));
+        .pipe(Scope.provide(sessionScope));
+      sessions.set(adapter.instanceId, { runtime, instructions, scope: sessionScope });
+      yield* forward(adapter, runtime).pipe(Effect.forkIn(sessionScope));
       return runtime;
     }).pipe(
       // The session outlives the turn that opened it, so its fibers don't carry that turn's trace.
@@ -535,14 +570,16 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           : yield* Effect.forkChild(input.pinDrives(access));
       // The harness starts in the thread's branch, as the drive last saved it, with its dependencies.
       const opened = access === null ? null : yield* driveFor(access);
-      yield* preparing.withPermits(1)(
+      const prepared = yield* preparing.withPermits(1)(
         Effect.gen(function* () {
-          if (opened !== null && access !== null) yield* opened.prepare(access.remoteToken);
+          const drive =
+            opened !== null && access !== null ? yield* opened.prepare(access.remoteToken) : null;
           if (input.dependencies !== undefined) {
             yield* input.dependencies.prepare((message) =>
               input.emit({ kind: "drive.notice", runId: turn.runId, message }),
             );
           }
+          return drive;
         }),
       );
       yield* input.useModelToken(modelToken);
@@ -551,7 +588,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         yield* input.sessions.use(sessionAccess);
         yield* input.sessions.prepare(adapter.driver);
       }
-      const session = yield* sessionFor(adapter, turn, runtimePolicy);
+      const session = yield* sessionFor(adapter, turn, runtimePolicy, prepared?.instructions ?? "");
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
       if (pinning !== null) yield* Fiber.join(pinning);
       const started = yield* ordered.withPermits(1)(
@@ -572,6 +609,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
             providerSession: session.providerSession,
             providerThread,
           });
+          for (const message of prepared?.notices ?? []) {
+            yield* input.emit({ kind: "drive.notice", runId: turn.runId, message });
+          }
           return true;
         }),
       );

@@ -45,6 +45,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_DRIVES_WS_METHODS.share]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_DRIVES_WS_METHODS.unshare]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_DRIVES_WS_METHODS.shareFolder]: AuthOrchestrationOperateScope, // signalbox: drives
+  [SIGNALBOX_DRIVES_WS_METHODS.addShortcut]: AuthOrchestrationOperateScope, // signalbox: drives
+  [SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_PREVIEWS_WS_METHODS.open]: AuthOrchestrationOperateScope, // signalbox: previews
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;

@@ -15,7 +15,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { myDriveId, parseDriveId } from "../../drive/driveAccess.ts";
+import { myDriveId } from "../../drive/driveAccess.ts";
 import { isRemoteToken, remoteToken } from "../../drive/remoteToken.ts";
 import type { UserObjectError } from "../../user/UserDirectory.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
@@ -528,11 +528,8 @@ const make = Effect.gen(function* () {
             : {
                 driveId,
                 token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
-                // A My Drive is always its own home; any other drive may have a remote to fetch.
-                remoteToken:
-                  parseDriveId(driveId)?.kind === "my"
-                    ? null
-                    : yield* remoteToken(lease.token, projection.thread.id, run.id),
+                // Any drive may have a remote to fetch, or a shortcut to one (#142).
+                remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
               },
         sessions:
           turn === null || lease.token === null || projection === null

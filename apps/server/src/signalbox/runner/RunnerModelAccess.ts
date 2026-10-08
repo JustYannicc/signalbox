@@ -5,6 +5,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { INSTRUCTIONS_MAX_BYTES, ROOT_MARKER } from "./RunnerInstructions.ts";
+
 /**
  * How a machine's harnesses reach their models with no provider key on the
  * machine: through the ModelGateway, presenting the current turn's model
@@ -19,6 +21,12 @@ import * as Schema from "effect/Schema";
  * login or key the host has (`~/.codex/auth.json`, the keychain,
  * `ANTHROPIC_API_KEY`) never reaches them. The token is readable by the
  * agent's shell by design: outside its turn, thread and provider it is useless.
+ *
+ * Both harnesses are also set up to read every instruction file a drive with
+ * shortcuts brings (#142, `RunnerInstructions.ts`): Claude Code loads
+ * `AGENTS.md` beside `CLAUDE.md` rather than only without one, and Codex takes
+ * the folder above the checkout as its project root and reads up to
+ * `INSTRUCTIONS_MAX_BYTES` of instructions instead of 32 KiB.
  */
 
 export interface MachineLayout {
@@ -92,6 +100,8 @@ const tomlString = (value: string) => `"${value.replaceAll("\\", "\\\\").replace
 const codexConfig = (layout: MachineLayout, gatewayUrl: string, contextMcpUrl: string | null) =>
   [
     'model_provider = "signalbox"',
+    `project_root_markers = [${tomlString(ROOT_MARKER)}]`,
+    `project_doc_max_bytes = ${INSTRUCTIONS_MAX_BYTES}`,
     "",
     "[model_providers.signalbox]",
     'name = "Signalbox"',
@@ -124,7 +134,14 @@ export const codexSettings = (base: CodexSettings, layout: MachineLayout): Codex
 
 /** The user settings Claude Code reads from its config dir. */
 const ClaudeUserSettingsJson = Schema.fromJsonString(
-  Schema.Struct({ apiKeyHelper: Schema.String }),
+  Schema.Struct({
+    apiKeyHelper: Schema.String,
+    /** Options of Claude Code's built-in plugins, by plugin. */
+    pluginConfigs: Schema.Record(
+      Schema.String,
+      Schema.Struct({ options: Schema.Record(Schema.String, Schema.String) }),
+    ),
+  }),
 );
 const encodeClaudeUserSettings = Schema.encodeEffect(ClaudeUserSettingsJson);
 
@@ -145,6 +162,10 @@ export const prepareMachine = Effect.fn("prepareMachine")(function* (
   }
   const settings = yield* encodeClaudeUserSettings({
     apiKeyHelper: `cat ${shellQuote(layout.tokenFile)}`,
+    // A CLAUDE.md in one folder must not keep another folder's AGENTS.md out.
+    pluginConfigs: {
+      "agents-md@builtin": { options: { instructionFiles: "claude-md-and-agents-md" } },
+    },
   });
   yield* fs.writeFileString(path.join(layout.claudeHome, "settings.json"), settings);
   yield* fs.writeFileString(

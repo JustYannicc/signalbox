@@ -9,6 +9,12 @@
  * the shell, listed under its context; threads started in it work in it. A
  * thread's own visibility doesn't depend on its drive. See #125.
  *
+ * A drive's tree can also hold shortcuts: folders that show another drive,
+ * such as a shared drive or a GitHub repository imported as one, with that
+ * drive's own access and history. A thread working in the drive sees each
+ * shortcut as a read-only folder, and its agents follow the instructions
+ * (`AGENTS.md`) of every drive mounted that way.
+ *
  * Roles follow Google Drive: Manager, Content manager, Contributor, Commenter
  * and Viewer on shared drives; Owner, Editor, Commenter and Viewer on a My
  * Drive and the folders shared from it.
@@ -34,6 +40,9 @@ export const SIGNALBOX_DRIVES_WS_METHODS = {
   share: "signalbox.drives.share",
   unshare: "signalbox.drives.unshare",
   shareFolder: "signalbox.drives.shareFolder",
+  shortcuts: "signalbox.drives.shortcuts",
+  addShortcut: "signalbox.drives.addShortcut",
+  removeShortcut: "signalbox.drives.removeShortcut",
 } as const;
 
 /** Seeing drives and who's in them is reading; the rest changes who can see what. */
@@ -44,6 +53,9 @@ export const SIGNALBOX_DRIVES_REQUIRED_SCOPES = {
   [SIGNALBOX_DRIVES_WS_METHODS.share]: AuthOrchestrationOperateScope,
   [SIGNALBOX_DRIVES_WS_METHODS.unshare]: AuthOrchestrationOperateScope,
   [SIGNALBOX_DRIVES_WS_METHODS.shareFolder]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_DRIVES_WS_METHODS.shortcuts]: AuthOrchestrationReadScope,
+  [SIGNALBOX_DRIVES_WS_METHODS.addShortcut]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]: AuthOrchestrationOperateScope,
 } as const;
 
 export const SignalboxDriveId = TrimmedNonEmptyString.pipe(Schema.brand("SignalboxDriveId"));
@@ -73,6 +85,18 @@ export type SignalboxDriveRole = typeof SignalboxDriveRole.Type;
 /** Whether `role` decides who else is in the drive. */
 export const canManageDrive = (role: SignalboxDriveRole | null) =>
   role === "manager" || role === "owner";
+
+const WRITERS: ReadonlySet<SignalboxDriveRole> = new Set([
+  "manager",
+  "content_manager",
+  "contributor",
+  "owner",
+  "editor",
+]);
+
+/** Whether `role` changes the drive's files: starts threads that work in it, adds shortcuts. */
+export const canWriteDrive = (role: SignalboxDriveRole | null) =>
+  role !== null && WRITERS.has(role);
 
 const NO_ROLES: ReadonlyArray<SignalboxDriveRole> = [];
 /** A folder has exactly one owner, the person whose My Drive it came from. */
@@ -152,6 +176,32 @@ export const SignalboxDriveShareFolderInput = Schema.Struct({
 });
 export type SignalboxDriveShareFolderInput = typeof SignalboxDriveShareFolderInput.Type;
 
+/** A folder of a drive that shows another drive. */
+export const SignalboxDriveShortcut = Schema.Struct({
+  /** Where it shows, relative to the drive's root. */
+  path: TrimmedNonEmptyString,
+  target: SignalboxDriveId,
+  /** The target's name, when the user can still open it; null when they can't. */
+  name: Schema.NullOr(Schema.String),
+});
+export type SignalboxDriveShortcut = typeof SignalboxDriveShortcut.Type;
+
+export const SignalboxDriveAddShortcutInput = Schema.Struct({
+  /** A drive the user can change. */
+  driveId: SignalboxDriveId,
+  /** A new folder, relative to the drive's root. */
+  path: TrimmedNonEmptyString,
+  /** A drive the user can open. */
+  target: SignalboxDriveId,
+});
+export type SignalboxDriveAddShortcutInput = typeof SignalboxDriveAddShortcutInput.Type;
+
+export const SignalboxDriveRemoveShortcutInput = Schema.Struct({
+  driveId: SignalboxDriveId,
+  path: TrimmedNonEmptyString,
+});
+export type SignalboxDriveRemoveShortcutInput = typeof SignalboxDriveRemoveShortcutInput.Type;
+
 export class SignalboxDrivesUnavailableError extends Schema.TaggedError<SignalboxDrivesUnavailableError>()(
   "SignalboxDrivesUnavailableError",
   {},
@@ -218,6 +268,29 @@ const ShareFolderRpc = Rpc.make(SIGNALBOX_DRIVES_WS_METHODS.shareFolder, {
   error: DriveErrors,
 });
 
+const ShortcutsRpc = Rpc.make(SIGNALBOX_DRIVES_WS_METHODS.shortcuts, {
+  payload: Schema.Struct({ driveId: SignalboxDriveId }),
+  success: Schema.Struct({ shortcuts: Schema.Array(SignalboxDriveShortcut) }),
+  error: DriveErrors,
+});
+
+/**
+ * Adds a shortcut to another drive at a new folder. Threads in the drive see
+ * it from their next turn on.
+ */
+const AddShortcutRpc = Rpc.make(SIGNALBOX_DRIVES_WS_METHODS.addShortcut, {
+  payload: SignalboxDriveAddShortcutInput,
+  success: SignalboxDriveShortcut,
+  error: DriveErrors,
+});
+
+/** Removes a shortcut. The drive it showed is untouched. */
+const RemoveShortcutRpc = Rpc.make(SIGNALBOX_DRIVES_WS_METHODS.removeShortcut, {
+  payload: SignalboxDriveRemoveShortcutInput,
+  success: Schema.Void,
+  error: DriveErrors,
+});
+
 /** Spread into `WsRpcGroup`, which applies its scope authorization to them. */
 export const SIGNALBOX_DRIVES_RPCS = [
   SubscribeRpc,
@@ -226,4 +299,7 @@ export const SIGNALBOX_DRIVES_RPCS = [
   ShareRpc,
   UnshareRpc,
   ShareFolderRpc,
+  ShortcutsRpc,
+  AddShortcutRpc,
+  RemoveShortcutRpc,
 ] as const;

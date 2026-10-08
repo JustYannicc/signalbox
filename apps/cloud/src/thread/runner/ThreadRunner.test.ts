@@ -596,8 +596,11 @@ describe("ThreadRunner", () => {
           });
           expect((yield* runner.authorizeDrive(`${token}x`))._tag).toBe("denied");
           expect((yield* runner.authorizeDrive(machine.token))._tag).toBe("denied");
-          // My Drive is its own home: there is no remote to fetch.
-          expect(work.drive!.remoteToken).toBeNull();
+          // My Drive is its own home, but a shortcut in it may show a drive with a remote (#142).
+          expect(yield* runner.authorizeRemote(work.drive!.remoteToken!)).toMatchObject({
+            _tag: "granted",
+            driveId: "my/personal/user_1",
+          });
 
           const turn = yield* liveTurn(runner);
           const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);

@@ -1,8 +1,5 @@
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import {
-  type SignalboxDriveKind,
-  type SignalboxDriveRole,
-} from "@t3tools/contracts/signalboxDrives";
+import { canWriteDrive, type SignalboxDriveKind } from "@t3tools/contracts/signalboxDrives";
 
 /**
  * Drive ids and who may do what in a drive. An id names the drive's kind and
@@ -55,13 +52,5 @@ export const contextAllows = (
   contextId: SignalboxContextId,
 ) => contextId === PERSONAL_CONTEXT_ID || contextIds.includes(contextId);
 
-const WRITERS: ReadonlySet<SignalboxDriveRole> = new Set([
-  "manager",
-  "content_manager",
-  "contributor",
-  "owner",
-  "editor",
-]);
-
 /** Whether `role` changes files: starts threads that work in the drive. */
-export const canWrite = (role: SignalboxDriveRole | null) => role !== null && WRITERS.has(role);
+export const canWrite = canWriteDrive;
