@@ -1,14 +1,17 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts"; // signalbox: previews
 import { useMemo } from "react";
-import { ScreenHeader } from "../../components/ScreenHeader";
 import { ScreenHeaderButton } from "../../components/ScreenHeaderButton";
 import type { ScreenHeaderAction } from "../../components/ScreenHeader.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
+import { ThreadPreviewsScreenHeader } from "./ThreadPreviewsScreenHeader"; // signalbox: previews
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
+    readonly environmentId?: EnvironmentId; // signalbox: previews
+    readonly threadId?: ThreadId; // signalbox: previews
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -76,7 +79,9 @@ export function ThreadHeader(
 
   return (
     <>
-      <ScreenHeader
+      <ThreadPreviewsScreenHeader // signalbox: previews
+        environmentId={props.environmentId} // signalbox: previews
+        threadId={props.threadId} // signalbox: previews
         title={props.title}
         subtitle={props.subtitle}
         sidebar={native.sidebar}

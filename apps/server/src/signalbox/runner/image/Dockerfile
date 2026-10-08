@@ -12,7 +12,7 @@ ARG CLAUDE_CODE_VERSION=2.1.292
 ARG CODEX_VERSION=0.160.1
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git openssh-client procps ripgrep \
+  && apt-get install -y --no-install-recommends ca-certificates git lsof openssh-client procps ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
 # npm 11 skips install scripts unless allowed; Claude Code's links its native binary.

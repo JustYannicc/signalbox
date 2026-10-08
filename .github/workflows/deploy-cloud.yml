@@ -102,11 +102,13 @@ jobs:
           --var "CLOUD_URL:https://app.signalbox.run"
           --var "MACHINE_BACKEND:$MACHINE_BACKEND"
           --var "MODEL_GATEWAY_URL:$MODEL_GATEWAY_URL"
+          --var "PREVIEW_DOMAIN:$PREVIEW_DOMAIN"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
           MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
           MODEL_GATEWAY_URL: ${{ vars.MODEL_GATEWAY_URL }}
+          PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
 
       - &cleanup
         name: Remove secrets file

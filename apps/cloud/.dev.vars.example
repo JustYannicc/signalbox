@@ -14,3 +14,6 @@ T3CODE_WORKOS_API_KEY=
 # MACHINE_BACKEND=boat
 # BOAT_API_KEY=
 # CLOUD_URL=https://<tunnel to wrangler dev>
+# Optional: previews of dev servers on threads' machines, at
+# http://<label>.localhost:8787 (docs/operations/cloud.md).
+# PREVIEW_DOMAIN=localhost:8787

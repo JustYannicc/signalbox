@@ -66,6 +66,8 @@ export interface CloudEnvironmentIdentity {
   readonly label: string;
   /** Whether a machine backend can run Claude and Codex here. */
   readonly harnesses?: boolean;
+  /** Whether the PreviewGateway serves threads' dev servers (`thread/preview/`). */
+  readonly previews?: boolean;
 }
 
 export const authDescriptor: ServerAuthDescriptor = {
@@ -91,6 +93,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     serverResolvedCommandContext: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
+    signalboxPreviews: identity.previews === true,
   },
 });
 

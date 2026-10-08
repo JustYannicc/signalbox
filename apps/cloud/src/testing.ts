@@ -22,6 +22,7 @@ import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
+import { previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
@@ -164,7 +165,16 @@ export const makeMemoryCloud = () => {
         ThreadEngine.ThreadEngine | ThreadStore.ThreadStore | UserDirectory.UserDirectory
       >,
     ) => runtime.runPromise(effect);
-    const object = { api: makeThreadObjectApi(run, async () => {}), run };
+    // No machine runs in memory, so nothing serves previews.
+    const api: ThreadDirectory.ThreadObjectApi = {
+      ...makeThreadObjectApi(run, async () => {}),
+      previews: async () =>
+        new ReadableStream({
+          start: (c) => c.enqueue(new TextEncoder().encode(`${previewsLine([])}\n`)),
+        }),
+      previewLink: async () => ({ _tag: "unavailable", message: "No machine runs in tests." }),
+    };
+    const object = { api, run };
     threads.set(threadId, object);
     return object;
   };
