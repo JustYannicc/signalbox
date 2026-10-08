@@ -13,7 +13,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
-/** Signalbox Cloud drives and the commands that manage their membership. */
+/** Signalbox Cloud drives and the commands that manage their membership and shortcuts. */
 export function createSignalboxDrivesAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -41,6 +41,18 @@ export function createSignalboxDrivesAtoms<R, E>(
     shareFolder: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:signalbox-drives:share-folder",
       tag: SIGNALBOX_DRIVES_WS_METHODS.shareFolder,
+    }),
+    shortcuts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:signalbox-drives:shortcuts",
+      tag: SIGNALBOX_DRIVES_WS_METHODS.shortcuts,
+    }),
+    addShortcut: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:signalbox-drives:add-shortcut",
+      tag: SIGNALBOX_DRIVES_WS_METHODS.addShortcut,
+    }),
+    removeShortcut: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:signalbox-drives:remove-shortcut",
+      tag: SIGNALBOX_DRIVES_WS_METHODS.removeShortcut,
     }),
   };
 }

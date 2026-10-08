@@ -19,8 +19,9 @@ import type { MachineCaches } from "./RunnerCaches.ts";
  * installed and never builds against stale ones.
  *
  * A dependency root is a directory, at most two levels into the checkout and
- * outside dot directories and symlinks, with a lockfile this machine installs
- * (pnpm or npm). Its key hashes the lockfile, the package manager's other
+ * outside dot directories, symlinks and other repositories (a drive's
+ * shortcuts are mounted read-only as repositories of their own, #142), with a
+ * lockfile this machine installs (pnpm or npm). Its key hashes the lockfile, the package manager's other
  * install inputs and the machine's toolchain, and its `node_modules` records
  * the key and how its last install went:
  *
@@ -210,6 +211,8 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
         const entries = yield* fs
           .readDirectory(directory)
           .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+        // Another repository inside the checkout isn't the checkout's to install.
+        if (relative !== "" && entries.includes(".git")) return;
         const found = LOCKFILES.find(([lockfile]) => entries.includes(lockfile));
         if (found !== undefined) {
           roots.push({ directory, relative, lockfile: found[0], manager: found[1] });

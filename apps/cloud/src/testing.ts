@@ -43,6 +43,7 @@ import * as ThreadStore from "./thread/ThreadStore.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
 import * as DrivePeople from "./user/DrivePeople.ts";
 import * as DriveSharing from "./user/DriveSharing.ts";
+import * as DriveShortcuts from "./user/DriveShortcuts.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
@@ -164,8 +165,9 @@ const makeUserRuntime = (
   ManagedRuntime.make(
     Layer.mergeAll(
       UserShell.layer,
-      DriveFiles.layer,
       DriveSharing.layer,
+      DriveShortcuts.layer,
+      DriveFiles.layer,
       GitHubConnection.layer,
       PoolSignIns.layer,
     ).pipe(

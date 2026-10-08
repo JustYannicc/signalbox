@@ -20,4 +20,7 @@ export const signalboxDrivesWsHandlers = {
   [SIGNALBOX_DRIVES_WS_METHODS.share]: unavailable,
   [SIGNALBOX_DRIVES_WS_METHODS.unshare]: unavailable,
   [SIGNALBOX_DRIVES_WS_METHODS.shareFolder]: unavailable,
+  [SIGNALBOX_DRIVES_WS_METHODS.shortcuts]: unavailable,
+  [SIGNALBOX_DRIVES_WS_METHODS.addShortcut]: unavailable,
+  [SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]: unavailable,
 };

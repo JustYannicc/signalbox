@@ -152,6 +152,14 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.shortcuts();
   }
 
+  addShortcut(...args: Parameters<DriveObjectApi["addShortcut"]>) {
+    return this.api.addShortcut(...args);
+  }
+
+  removeShortcut(...args: Parameters<DriveObjectApi["removeShortcut"]>) {
+    return this.api.removeShortcut(...args);
+  }
+
   unreconciled(...args: Parameters<DriveObjectApi["unreconciled"]>) {
     return this.api.unreconciled(...args);
   }

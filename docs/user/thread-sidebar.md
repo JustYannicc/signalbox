@@ -45,6 +45,15 @@ its name to create a drive for the organization. To share a folder from My Drive
 Removing someone cuts their access everywhere at once. Threads stay private, even in a shared drive;
 only their file changes land in the drive.
 
+To show another drive inside one, such as a team's shared drive or a GitHub repository you imported,
+right-click a folder in **Files** and choose **Add shortcut here…**, or use the shortcut button above
+the file list to add one at the top. Threads in the drive see the shortcut as a read-only folder with
+that drive's own history, and follow its `AGENTS.md` as well as the drive's own. To change files
+there, start a thread in that drive. Only people who can open the drive a shortcut points to see it.
+Right-click a shortcut and choose **Remove shortcut** to take it away; threads stop seeing it, and
+its instructions, from their next message. Agents can load up to 64 KiB of instructions: if a drive
+and its shortcuts bring more, the message fails and says which files to shorten.
+
 Agents read every drive you can, in every context, but change only the drive their thread works in.
 To reuse work, tell the agent where it happened, like "in Billing we added a dark mode toggle, do the
 same here". It finds the thread and its changes and redoes them in its own drive. If it can't find

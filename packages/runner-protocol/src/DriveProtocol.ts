@@ -37,6 +37,19 @@ import { jsonCodec } from "./jsonCodec.ts";
  *   (one commit deep), uploads it with `REMOTE_HEAD_HEADER`, and `mirror`s
  *   `main` to it. The cloud checks both against the remote. Such a drive
  *   never `reconcile`s; merging a pull request on the remote lands the work.
+ *
+ * A drive's shortcuts (#142) show other drives at paths of its tree, read-only
+ * and with their own history. The machine mounts each one as a repository of
+ * its own there:
+ *
+ * - `shortcuts` lists them with each target's `main` and packs, as the
+ *   thread's user may read them right now. A target they can't open is listed
+ *   as unreadable, so the machine takes it down.
+ * - `shortcuts/<target>/packs/<name>.pack|.idx` downloads a target's pack.
+ * - `remote/shortcuts/<target>/…` fetches a remote-backed target's remote,
+ *   like `remote`, with the turn's remote token.
+ *
+ * `<target>` is the target's drive id, URI-encoded.
  */
 
 export const DRIVE_API_PREFIX = "/api/drive";
@@ -49,7 +62,16 @@ export const DRIVE_PATHS = {
   mirror: `${DRIVE_API_PREFIX}/mirror`,
   /** A git smart-HTTP remote: `<remote>/info/refs` and `<remote>/git-upload-pack`. */
   remote: `${DRIVE_API_PREFIX}/remote`,
+  shortcuts: `${DRIVE_API_PREFIX}/shortcuts`,
 } as const;
+
+/** Where a shortcut target's packs download from. */
+export const shortcutPacksPath = (target: string) =>
+  `${DRIVE_PATHS.shortcuts}/${encodeURIComponent(target)}/packs`;
+
+/** Where git fetches a remote-backed shortcut target's remote through the cloud. */
+export const shortcutRemotePath = (target: string) =>
+  `${DRIVE_PATHS.remote}/shortcuts/${encodeURIComponent(target)}`;
 
 /**
  * Header on a pack upload holding the remote's head commit. The commit's
@@ -85,6 +107,12 @@ export const EMPTY_TREE: Oid = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /** A pack's name: the hex checksum git gives it (`pack-<name>.pack`). */
 const PackName = Oid;
 
+export const DrivePack = Schema.Struct({
+  seq: NonNegativeInt,
+  name: PackName,
+  size: NonNegativeInt,
+});
+
 /** The remote repository a drive is backed by. */
 export const DriveRemote = Schema.Struct({
   provider: Schema.Literal("github"),
@@ -105,7 +133,7 @@ export const DriveState = Schema.Struct({
   /** Where the thread's branch started: `main` when the thread first opened the drive. */
   base: Schema.NullOr(Oid),
   /** The drive's packs after the caller's `PACKS_AFTER_HEADER`, oldest first. */
-  packs: Schema.Array(Schema.Struct({ seq: NonNegativeInt, name: PackName, size: NonNegativeInt })),
+  packs: Schema.Array(DrivePack),
   /** The remote repository this drive is backed by; null for a drive that is its own home. */
   remote: Schema.NullOr(DriveRemote),
   /**
@@ -150,13 +178,36 @@ export const RefWriteResult = Schema.Union([
 ]);
 export type RefWriteResult = typeof RefWriteResult.Type;
 
+/** A shortcut of the thread's drive, and its target as the thread's user may read it. */
+export const DriveShortcut = Schema.Struct({
+  /** Where it shows, relative to the drive's root. */
+  path: Schema.String,
+  target: Schema.String,
+  /** False when the user can't open the target: the rest is empty, and nothing is mounted. */
+  readable: Schema.Boolean,
+  main: Schema.NullOr(Oid),
+  /** The target's packs after the caller's `have` for it, oldest first. */
+  packs: Schema.Array(DrivePack),
+  shallow: Schema.Array(Oid),
+  remote: Schema.NullOr(DriveRemote),
+});
+export type DriveShortcut = typeof DriveShortcut.Type;
+
+export const ShortcutsRequest = Schema.Struct({
+  /** Per target, the highest pack sequence the machine already has. */
+  have: Schema.Record(Schema.String, NonNegativeInt),
+});
+
+export const ShortcutsAnswer = Schema.Struct({ shortcuts: Schema.Array(DriveShortcut) });
+
 /** What a thread's machine gets with each turn: its drive and the token for it. */
 export const DriveAccess = Schema.Struct({
   driveId: Schema.String,
   token: Schema.String,
   /**
-   * This turn's bearer for the drive's `remote`, good only while the turn
-   * runs. Null for a drive that is its own home.
+   * This turn's bearer for remotes, good only while the turn runs: the
+   * drive's own (`remote`) and its shortcut targets'. Null when the cloud
+   * issues none.
    */
   remoteToken: Schema.NullOr(Schema.String),
 });
@@ -179,4 +230,6 @@ export const driveJson = {
   /** `newMain` is the remote's head, already uploaded. */
   mirror: jsonCodec(ReconcileRequest),
   refWrite: jsonCodec(RefWriteResult),
+  shortcutsRequest: jsonCodec(ShortcutsRequest),
+  shortcuts: jsonCodec(ShortcutsAnswer),
 };
