@@ -114,6 +114,8 @@ export const layerOn = (settings: AnalyticsSettings) =>
             properties: {
               ...decodeProperties(event.properties),
               $process_person_profile: false,
+              // The sender is a Worker, so its address says nothing about the user.
+              $geoip_disable: true,
               $lib: "signalbox-cloud",
             },
           })),

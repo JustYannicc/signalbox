@@ -245,6 +245,7 @@ describe("TurnDiagnostics", () => {
             previewSeconds: 0,
             recoveryCount: 0,
             $process_person_profile: false,
+            $geoip_disable: true,
           });
           const tailSeconds = (FINALIZE_GRACE_MS + ThreadRunner.IDLE_TAIL_MS) / 1000;
           expect(session?.event).toBe("cloud.machine.session");
