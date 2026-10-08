@@ -24,10 +24,12 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type { ChildProcessSpawner } from "effect/process";
 
 import { makeRunnerAdapters } from "./RunnerAdapters.ts";
+import { makeMachineCaches } from "./RunnerCaches.ts";
 import { layerSessionQueryRunner } from "./RunnerClaudeSessions.ts";
 import { makeContextClient } from "./RunnerContextClient.ts";
 import { startContextServer, withContextServer } from "./RunnerContextServer.ts";
 import { makeRunnerDrive } from "./RunnerDrive.ts";
+import { makeRunnerDependencies } from "./RunnerDependencies.ts";
 import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { machineLayout, writeModelToken } from "./RunnerModelAccess.ts";
 import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
@@ -87,6 +89,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
   const runners = new Map<ThreadId, HostedRunner>();
   const lock = yield* Semaphore.make(1);
   const previewPorts = yield* makeDiscoveredPorts;
+  const caches = yield* makeMachineCaches(config.home);
 
   const stop = (threadId: ThreadId, runner: HostedRunner) =>
     Effect.suspend(() => {
@@ -118,14 +121,16 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           const context = yield* startContextServer({
             mountPoint: config.drivesMountPoint ?? null,
           });
-          const { adapters, layout, stderr } = yield* makeRunnerAdapters({
+          const { adapters, layout, stderr, environment } = yield* makeRunnerAdapters({
             root,
             gatewayUrl: request.modelGatewayUrl,
             claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
               withContextServer(runner, context.mcpUrl),
             ),
             contextMcpUrl: context.mcpUrl,
+            caches: caches.environment,
           });
+          const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
           const usage = yield* makeRunnerUsage(config.home);
           const session = yield* makeRunnerSession({
             threadId: request.threadId,
@@ -147,6 +152,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                   ),
                 usage: usage.sample,
                 emit,
+                dependencies,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
                     makeRunnerDrive({ cwd, client }),
