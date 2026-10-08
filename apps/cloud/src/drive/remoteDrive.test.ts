@@ -32,7 +32,15 @@ const tempDir = (prefix: string) => {
   cleanups.push(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
   return dir;
 };
-const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Someone",
+  GIT_AUTHOR_EMAIL: "someone@example.com",
+  GIT_COMMITTER_NAME: "Someone",
+  GIT_COMMITTER_EMAIL: "someone@example.com",
+};
 const run = (cwd: string, args: ReadonlyArray<string>, input?: Uint8Array) =>
   NodeChildProcess.execFileSync("git", args, { cwd, env: GIT_ENV, input });
 const gitOk = (cwd: string, args: ReadonlyArray<string>) => {
