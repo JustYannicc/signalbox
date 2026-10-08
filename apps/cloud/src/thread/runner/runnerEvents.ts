@@ -63,7 +63,7 @@ const payloadThreadId = (event: Json, payload: Json) =>
  * Turn items are placed in their run's band in the order they first appear,
  * as upstream's position store does, whatever ordinal the adapter chose.
  */
-function positionTurnItem(
+export function positionTurnItem(
   projection: OrchestrationV2ThreadProjection,
   item: OrchestrationV2TurnItem,
 ) {

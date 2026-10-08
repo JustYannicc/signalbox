@@ -17,6 +17,9 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { jsonCodec as frameCodec } from "./jsonCodec.ts";
+import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
+
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
  * its harness on a machine. The Runner dials one outbound WebSocket per
@@ -39,13 +42,19 @@ import * as Schema from "effect/Schema";
  * hibernating object. A Runner that hears nothing for a while treats the
  * socket as dead and reconnects, since a dropped network sends no close.
  *
+ * Each turn also names the thread's drive (`DriveProtocol.ts`): the Runner
+ * checks the thread's branch out as the harness's working directory, saves
+ * after each batch of tool calls, and reconciles with the drive's `main`
+ * before it reports the turn's end, reporting the turn's commit as a
+ * checkpoint.
+ *
  * The machine holds no provider keys. Its harnesses reach the models through
  * the ModelGateway named in `MachineEnsureRequest`, with the model token each
  * `turn.start` carries. That token works for that thread, provider and turn
  * only, and stops working when the turn ends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 2;
+export const RUNNER_PROTOCOL_VERSION = 3;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -89,6 +98,24 @@ export const RunnerItem = Schema.Union([
   /** The turn never reached the harness. */
   Schema.Struct({
     kind: Schema.Literal("turn.failed"),
+    runId: RunId,
+    message: Schema.String,
+  }),
+  /**
+   * The turn's files, saved: `start` is the thread's branch when the turn
+   * began (null: nothing yet), `commit` the branch after the turn, before
+   * `main` was merged in. Sent before the turn's `turn.terminal`.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("drive.checkpoint"),
+    runId: RunId,
+    start: Schema.NullOr(Oid),
+    commit: Oid,
+    files: Schema.Array(DriveFileChange),
+  }),
+  /** Something about the drive the thread's transcript should say, such as a merge conflict. */
+  Schema.Struct({
+    kind: Schema.Literal("drive.notice"),
     runId: RunId,
     message: Schema.String,
   }),
@@ -159,6 +186,8 @@ export const ThreadMessage = Schema.Union([
     turn: RunnerTurn,
     /** The harness's credential at the ModelGateway, for this turn only. */
     modelToken: Schema.String,
+    /** The drive the turn works in. Null when this cloud stores no drives. */
+    drive: Schema.NullOr(DriveAccess),
   }),
   Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
@@ -196,18 +225,6 @@ export const RunnerMachineConfig = Schema.Struct({
   image: Schema.String,
 });
 export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;
-
-const frameCodec = <
-  S extends Schema.Top & { readonly DecodingServices: never; readonly EncodingServices: never },
->(
-  schema: S,
-) => {
-  const codec = Schema.fromJsonString(Schema.toCodecJson(schema));
-  return {
-    encode: Schema.encodeSync(codec) as (value: S["Type"]) => string,
-    decode: Schema.decodeUnknownSync(codec) as (frame: unknown) => S["Type"],
-  };
-};
 
 export const runnerFrame = frameCodec(RunnerMessage);
 export const threadFrame = frameCodec(ThreadMessage);

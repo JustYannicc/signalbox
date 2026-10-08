@@ -1,5 +1,6 @@
 import type { RunnerItem, RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
+  MessageId,
   NodeId,
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
@@ -10,8 +11,10 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -22,6 +25,7 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2Shape,
 } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { DriveOutcome, RunnerDrive } from "./RunnerDrive.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -158,6 +162,300 @@ describe("RunnerTurns", () => {
           "token token-2",
           "start run-2",
         ]);
+      }),
+    ),
+  );
+
+  it.effect(
+    "saves after file changes, and reports a turn's end only once its files land, conflicts resolved by the agent",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const prompts: Array<string> = [];
+          const session = (yield* fake.adapter.openSession(
+            {} as never,
+          )) as ProviderAdapterV2SessionRuntime;
+          const startTurn = session.startTurn;
+          Object.assign(session, {
+            startTurn: (input: Parameters<typeof startTurn>[0]) =>
+              Effect.andThen(
+                Effect.sync(() => void prompts.push(input.message.text)),
+                startTurn(input),
+              ),
+          });
+          const driveCalls: Array<string> = [];
+          let outcome: DriveOutcome = { _tag: "conflict", files: ["notes.md"] };
+          const drive: RunnerDrive = {
+            prepare: Effect.sync(() => void driveCalls.push("prepare")),
+            autosave: Effect.sync(() => void driveCalls.push("autosave")),
+            flush: Effect.void,
+            finishTurn: () =>
+              Effect.sync(() => {
+                driveCalls.push("finish");
+                return {
+                  checkpoint: { start: null, commit: "c".repeat(40), files: [] },
+                  outcome,
+                };
+              }),
+            continueAfterResolution: Effect.sync(() => {
+              driveCalls.push("continue");
+              outcome = { _tag: "landed", main: "c".repeat(40) };
+              return outcome;
+            }),
+            abandonMerge: Effect.sync(() => {
+              driveCalls.push("abandon");
+              return { _tag: "not_landed", reason: "abandoned" } as const;
+            }),
+          };
+          const reported: Array<RunnerItem> = [];
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            openDrive: () => Effect.succeed(drive),
+          });
+          const settle = Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, {
+            discard: true,
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          const turn = {
+            ...turnFor(1),
+            message: {
+              messageId: MessageId.make("message-1"),
+              text: "Write notes",
+              attachments: [],
+            },
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+          } as unknown as RunnerTurn;
+          yield* turns.start(turn, "token-1", { driveId: "my/personal/user_1", token: "sbd1.x.y" });
+          yield* settle;
+          expect(driveCalls).toEqual(["prepare"]);
+
+          const now = DateTime.makeUnsafe(0);
+          yield* Queue.offer(fake.events, {
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: TurnItemId.make("item-1"),
+              threadId,
+              runId: RunId.make("run-1"),
+              nodeId: null,
+              providerThreadId: providerThread.id,
+              providerTurnId: ProviderTurnId.make("native-1"),
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "file_change",
+              fileName: "notes.md",
+            },
+          } as ProviderAdapterV2Event);
+          const terminal = (n: number) =>
+            ({
+              type: "turn.terminal",
+              driver,
+              providerThreadId: providerThread.id,
+              providerTurnId: ProviderTurnId.make(`native-${n}`),
+              runOrdinal: 1,
+              status: "completed",
+              failure: null,
+              threadDisposition: "reusable",
+            }) as ProviderAdapterV2Event;
+          yield* Queue.offer(fake.events, terminal(1));
+          yield* settle;
+          // The turn's end is held while the agent resolves the conflict.
+          expect(driveCalls).toEqual(["prepare", "autosave", "finish"]);
+          expect(prompts).toHaveLength(2);
+          expect(prompts[1]).toContain("notes.md");
+          const kinds = () =>
+            reported.map((item) => (item.kind === "provider" ? `${item.event.type}` : item.kind));
+          expect(kinds()).toEqual([
+            "turn.started",
+            "turn_item.updated",
+            "drive.checkpoint",
+            "drive.notice",
+          ]);
+
+          // The adapter names the merge step's provider turn, then ends it.
+          yield* Queue.offer(fake.events, {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: {
+              id: ProviderTurnId.make("native-2"),
+              providerThreadId: providerThread.id,
+              nodeId: NodeId.make("node-1"),
+              runAttemptId: RunAttemptId.make("attempt-1:merge:1"),
+              nativeTurnRef: null,
+              ordinal: 1001,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          } as ProviderAdapterV2Event);
+          yield* Queue.offer(fake.events, terminal(2));
+          yield* settle;
+          expect(driveCalls).toEqual(["prepare", "autosave", "finish", "continue"]);
+          // One end, after the files landed.
+          expect(kinds()).toEqual([
+            "turn.started",
+            "turn_item.updated",
+            "drive.checkpoint",
+            "drive.notice",
+            "provider_turn.updated",
+            "turn.terminal",
+          ]);
+        }),
+      ),
+  );
+  it.effect("reports one end for a run stopped while the agent resolves a merge", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const prompts: Array<string> = [];
+        const session = (yield* fake.adapter.openSession(
+          {} as never,
+        )) as ProviderAdapterV2SessionRuntime;
+        const startTurn = session.startTurn;
+        Object.assign(session, {
+          startTurn: (input: Parameters<typeof startTurn>[0]) =>
+            Effect.andThen(
+              Effect.sync(() => void prompts.push(input.message.text)),
+              startTurn(input),
+            ),
+        });
+        const driveCalls: Array<string> = [];
+        let outcome: DriveOutcome = { _tag: "conflict", files: ["notes.md"] };
+        const drive: RunnerDrive = {
+          prepare: Effect.sync(() => void driveCalls.push("prepare")),
+          autosave: Effect.sync(() => void driveCalls.push("autosave")),
+          flush: Effect.void,
+          finishTurn: () =>
+            Effect.sync(() => {
+              driveCalls.push("finish");
+              return {
+                checkpoint: { start: null, commit: "c".repeat(40), files: [] },
+                outcome,
+              };
+            }),
+          continueAfterResolution: Effect.sync(() => {
+            driveCalls.push("continue");
+            outcome = { _tag: "landed", main: "c".repeat(40) };
+            return outcome;
+          }),
+          abandonMerge: Effect.sync(() => {
+            driveCalls.push("abandon");
+            return { _tag: "not_landed", reason: "abandoned" } as const;
+          }),
+        };
+        const reported: Array<RunnerItem> = [];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+          openDrive: () => Effect.succeed(drive),
+        });
+        const settle = Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, {
+          discard: true,
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        const turn = {
+          ...turnFor(1),
+          message: {
+            messageId: MessageId.make("message-1"),
+            text: "Write notes",
+            attachments: [],
+          },
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+        } as unknown as RunnerTurn;
+        yield* turns.start(turn, "token-1", { driveId: "my/personal/user_1", token: "sbd1.x.y" });
+        yield* settle;
+        expect(driveCalls).toEqual(["prepare"]);
+
+        const now = DateTime.makeUnsafe(0);
+        yield* Queue.offer(fake.events, {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: TurnItemId.make("item-1"),
+            threadId,
+            runId: RunId.make("run-1"),
+            nodeId: null,
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make("native-1"),
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "file_change",
+            fileName: "notes.md",
+          },
+        } as ProviderAdapterV2Event);
+        const terminal = (n: number) =>
+          ({
+            type: "turn.terminal",
+            driver,
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make(`native-${n}`),
+            runOrdinal: 1,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          }) as ProviderAdapterV2Event;
+        yield* Queue.offer(fake.events, terminal(1));
+        yield* settle;
+        // The turn's end is held while the agent resolves the conflict.
+        expect(driveCalls).toEqual(["prepare", "autosave", "finish"]);
+        expect(prompts).toHaveLength(2);
+        expect(prompts[1]).toContain("notes.md");
+        const kinds = () =>
+          reported.map((item) => (item.kind === "provider" ? `${item.event.type}` : item.kind));
+        expect(kinds()).toEqual([
+          "turn.started",
+          "turn_item.updated",
+          "drive.checkpoint",
+          "drive.notice",
+        ]);
+
+        // Stopped mid-merge: the merge is dropped and the run ends once.
+        yield* turns.interrupt(RunId.make("run-1"));
+        yield* settle;
+        yield* Queue.offer(fake.events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: {
+            id: ProviderTurnId.make("native-2"),
+            providerThreadId: providerThread.id,
+            nodeId: NodeId.make("node-1"),
+            runAttemptId: RunAttemptId.make("attempt-1:merge:1"),
+            nativeTurnRef: null,
+            ordinal: 1001,
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+          },
+        } as ProviderAdapterV2Event);
+        yield* Queue.offer(fake.events, {
+          ...terminal(2),
+          status: "interrupted",
+        } as ProviderAdapterV2Event);
+        yield* settle;
+        expect(driveCalls).toEqual(["prepare", "autosave", "finish", "abandon"]);
+        expect(kinds().filter((kind) => kind === "turn.terminal")).toHaveLength(1);
       }),
     ),
   );

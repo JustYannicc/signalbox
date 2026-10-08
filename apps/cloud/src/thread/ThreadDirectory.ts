@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import type { ModelAuthorization } from "./runner/ThreadRunner.ts";
+import type { DriveAuthorization, ModelAuthorization } from "./runner/ThreadRunner.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
@@ -182,6 +182,7 @@ export interface ThreadObjectNamespace {
       token: string,
       provider: ModelGatewayProvider,
     ) => Promise<ModelAuthorization>;
+    readonly authorizeDrive: (token: string) => Promise<DriveAuthorization>;
   };
 }
 
