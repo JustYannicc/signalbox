@@ -43,6 +43,10 @@ import {
  * released after its tail. Whenever no lease stands, the plan says to stop
  * the machine; the next run starts it again at a new generation.
  *
+ * An open preview (`PreviewHold`) keeps a connected machine up as a live run
+ * does, and the idle tail counts from the later of the last run and the last
+ * preview traffic. Previews never start a machine.
+ *
  * The thread also answers the ModelGateway: a model token is good while the
  * run it was minted for is live on the machine holding the lease.
  */
@@ -71,6 +75,21 @@ export type BatchResult =
   | { readonly _tag: "stale" }
   /** A gap: the Runner must reconnect and resend after `ackedSequence`. */
   | { readonly _tag: "out_of_order"; readonly ackedSequence: number };
+
+/**
+ * The thread's previews as the lease sees them (see `preview/PreviewGateway.ts`).
+ * Open preview sockets survive hibernation; the last traffic time is in memory,
+ * so after an eviction the tail counts from the last run, a little early at
+ * worst.
+ */
+export const PreviewHold = Context.Reference<{
+  /** Whether a preview is open on the leased machine right now. */
+  readonly held: Effect.Effect<boolean>;
+  /** When preview traffic last passed, if any did. */
+  readonly lastActiveAt: Effect.Effect<number | null>;
+}>("@signalbox/cloud/thread/runner/ThreadRunner/PreviewHold", {
+  defaultValue: () => ({ held: Effect.succeed(false), lastActiveAt: Effect.succeed(null) }),
+});
 
 /** What a drive token lets its holder do right now (see `drive/driveRoutes.ts`). */
 export type DriveAuthorization =
@@ -144,6 +163,12 @@ export class ThreadRunner extends Context.Service<
       token: string,
       provider: ModelGatewayProvider,
     ) => Effect.Effect<ModelAuthorization>;
+    /**
+     * The lease token, when `generation` holds the lease and `token` is its
+     * token (a preview tunnel's hello), or when only `generation` is given.
+     * Null otherwise. Reads committed state without the thread's lock.
+     */
+    readonly leaseToken: (generation: number, token?: string) => Effect.Effect<string | null>;
     /** Whether the drive API may act for `token`'s holder, and as whom. */
     readonly authorizeDrive: (token: string) => Effect.Effect<DriveAuthorization>;
   }
@@ -162,8 +187,12 @@ const modelGrantFor = (projection: OrchestrationV2ThreadProjection): ModelGrant 
     : { threadId: projection.thread.id, runId: run.id, provider };
 };
 
-/** Mirrors `reconcile`: true exactly when it would act or needs to schedule a check. */
-const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean) => {
+/**
+ * Mirrors `reconcile`: true exactly when it would act or needs to schedule a
+ * check. `live`: a harness run is live; `previewHeld`: a preview is open.
+ */
+const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld: boolean) => {
+  const held = live || previewHeld;
   switch (lease.status) {
     case "none":
       return live;
@@ -172,13 +201,14 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean) => {
     case "connected":
       return (
         lease.disconnectedAt !== null ||
-        (live ? lease.idleSince !== null : lease.idleSince === null)
+        (held ? lease.idleSince !== null : lease.idleSince === null)
       );
   }
 };
 
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
+  const previews = yield* PreviewHold;
   const store = yield* ThreadStore.ThreadStore;
   const crypto = yield* Crypto.Crypto;
   const { connectTimeoutMs } = yield* MachineBackend;
@@ -343,13 +373,11 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const turn = projection === null ? null : runnerTurnFor(projection);
       const grant = projection === null ? undefined : modelGrantFor(projection);
+      const live = projection !== null && harnessRun(projection) !== undefined;
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
-        needsUpkeep: needsUpkeep(
-          lease,
-          projection !== null && harnessRun(projection) !== undefined,
-        ),
+        needsUpkeep: needsUpkeep(lease, live, yield* previews.held),
         turn,
         modelToken:
           turn === null || grant === undefined || lease.token === null
@@ -464,22 +492,34 @@ const make = Effect.gen(function* () {
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
           return release(run === undefined ? null : "Lost the machine running this turn.");
         }
-        if (run !== undefined) {
+        if (run !== undefined || (yield* previews.held)) {
           return lease.idleSince === null
             ? keep(BUSY)
             : { events: [], machine: { ...lease, idleSince: null }, result: BUSY };
         }
         const idleSince = lease.idleSince ?? now;
-        if (now - idleSince >= IDLE_TAIL_MS) return release(null);
+        const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
+        if (now - tailFrom >= IDLE_TAIL_MS) return release(null);
         return {
           events: [],
           ...(lease.idleSince === null ? { machine: { ...lease, idleSince } } : {}),
-          result: { ...IDLE, wakeAt: idleSince + IDLE_TAIL_MS },
+          result: { ...IDLE, wakeAt: tailFrom + IDLE_TAIL_MS },
         };
       }),
   );
 
+  const leaseToken: ThreadRunner["Service"]["leaseToken"] = (generation, token) =>
+    Effect.gen(function* () {
+      // A thread that does not exist yet has no tables to read a lease from.
+      if ((yield* engine.projection) === null) return null;
+      const current = yield* lease;
+      if (current.status === "none" || current.generation !== generation) return null;
+      if (current.token === null || (token !== undefined && token !== current.token)) return null;
+      return current.token;
+    });
+
   return ThreadRunner.of({
+    leaseToken,
     hello,
     batch,
     ended,

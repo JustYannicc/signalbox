@@ -158,6 +158,8 @@ export class ThreadEngine extends Context.Service<
     readonly hasTurnWork: Effect.Effect<boolean>;
     /** The current summary, for an owner's index rebuild. Null for anyone else. */
     readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null>;
+    /** Whether `actor` may see the thread, read without the lock. */
+    readonly canSee: (actor: Actor) => Effect.Effect<boolean>;
     /** Whether the owner's index has not acknowledged the latest summary yet. */
     readonly hasPendingSummary: Effect.Effect<boolean>;
     /** The unacknowledged summary and whose index it goes to, if any. */
@@ -464,7 +466,11 @@ const make = Effect.gen(function* () {
   const acknowledgeSummary: ThreadEngine["Service"]["acknowledgeSummary"] = (revision) =>
     Effect.orDie(store.acknowledgeSummary(revision));
 
+  const canSee: ThreadEngine["Service"]["canSee"] = (actor) =>
+    Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
+
   return ThreadEngine.of({
+    canSee,
     dispatch,
     launch,
     snapshot,
