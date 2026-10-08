@@ -2,7 +2,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ScopedProjectRef } from "@t3tools/contracts";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import type { HomeProjectScope } from "../home/homeThreadList";
+import { findHomeProjectScope, type HomeProjectScope } from "../home/homeThreadList";
 
 const SECTION_PROJECT_PREFIX = "section-project:";
 
@@ -46,15 +46,7 @@ export function resolveSelectedProjectScope(input: {
     };
   }
 
-  return (
-    projectScopes.find(
-      (scope) =>
-        scope.key === selectedProjectKey ||
-        scope.projectRefs.some(
-          (ref) => scopedProjectKey(ref.environmentId, ref.projectId) === selectedProjectKey,
-        ),
-    ) ?? null
-  );
+  return findHomeProjectScope(projectScopes, selectedProjectKey);
 }
 
 export function projectFilterOptions(input: {
