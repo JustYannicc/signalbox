@@ -22,11 +22,17 @@
     "bindings": [
       { "name": "USERS", "class_name": "UserObject" },
       { "name": "THREADS", "class_name": "ThreadObject" },
+      { "name": "DRIVES", "class_name": "DriveObject" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["UserObject"] },
     { "tag": "v2", "new_sqlite_classes": ["ThreadObject"] },
+    { "tag": "v3", "new_sqlite_classes": ["DriveObject"] },
+  ],
+  // Drives' git packs (`src/drive/`). Their refs live in the DRIVES objects.
+  "r2_buckets": [
+    { "binding": "DRIVE_PACKS", "bucket_name": "signalbox-drives", "jurisdiction": "eu" },
   ],
   "vars": {
     // Production identity. Never reuse it for another deployment.
@@ -44,8 +50,17 @@
         "bindings": [
           { "name": "USERS", "class_name": "UserObject" },
           { "name": "THREADS", "class_name": "ThreadObject" },
+          { "name": "DRIVES", "class_name": "DriveObject" },
         ],
       },
+      // Previews never touch production's packs.
+      "r2_buckets": [
+        {
+          "binding": "DRIVE_PACKS",
+          "bucket_name": "signalbox-drives-preview",
+          "jurisdiction": "eu",
+        },
+      ],
       "vars": {},
     },
   },

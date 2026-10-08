@@ -3,11 +3,13 @@ import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
+import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
 import { authorizeModel } from "./thread/runner/modelGrants.ts";
 import { connectRunner, isRunnerConnectPath } from "./thread/runner/runnerRoute.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 
+export { DriveObject } from "./drive/DriveObject.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
 
@@ -52,6 +54,15 @@ export default {
     );
     if (pathname === "/ws") return app.webSocket(request);
     if (isRunnerConnectPath(pathname)) return connectRunner(env.THREADS, request, { localWorkerd });
+    if (isDriveApiPath(pathname)) {
+      return env.DRIVES === undefined || env.DRIVE_PACKS === undefined
+        ? new Response("This cloud stores no drives.", { status: 404 })
+        : handleDriveRequest(
+            { THREADS: env.THREADS, DRIVES: env.DRIVES, DRIVE_PACKS: env.DRIVE_PACKS },
+            request,
+            { localWorkerd },
+          );
+    }
     if (isDevProxiedPath(pathname)) return app.http(request);
     return env.ASSETS.fetch(request);
   },
