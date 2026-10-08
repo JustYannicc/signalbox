@@ -89,6 +89,15 @@ The command line asks the same question the first time you start `signalbox` in 
 terminal. To import from a script, run `signalbox import-t3` before the first start. The
 import only fills a fresh Signalbox home and refuses once Signalbox has data of its own.
 
+### The `signalbox` command
+
+The desktop app includes the `signalbox` command-line tool. To run it from any
+terminal, open **Settings → General → About** and choose **Install** next to
+**signalbox command**. On macOS and Linux it adds a `signalbox` link to a folder on your
+`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
+terminal afterwards. **Remove** takes it off again. If you already have `signalbox`
+from npm, it stays as it is.
+
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Connections** to run agents and projects
@@ -129,15 +138,16 @@ Accounts live in pools, not in each provider: add them on **Usage → Limits** (
 themselves still run on the environment's machine, so install the ones you use there, even when you
 connect from a phone or another computer.
 
-| Provider    | Install                                                                                |
-| ----------- | -------------------------------------------------------------------------------------- |
-| Codex       | Signalbox installs it.                                                                 |
-| Claude      | Install [Claude Code](https://claude.com/product/claude-code).                         |
-| Cursor      | Nothing to install: it runs inside Signalbox.                                          |
-| Grok Build  | Install [Grok Build CLI](https://x.ai/cli).                                            |
-| OpenCode    | Install [OpenCode](https://opencode.ai), then turn it on for a pool.                   |
-| Antigravity | Install its runtime from Signalbox's provider settings.                                |
-| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup. |
+| Provider    | Install                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------- |
+| Codex       | Signalbox installs it.                                                                      |
+| Claude      | Install [Claude Code](https://claude.com/product/claude-code).                              |
+| Cursor      | Nothing to install: it runs inside Signalbox.                                               |
+| Grok Build  | Install [Grok Build CLI](https://x.ai/cli).                                                 |
+| OpenCode    | Install [OpenCode](https://opencode.ai), then turn it on for a pool.                        |
+| Antigravity | Install its runtime from Signalbox's provider settings.                                     |
+| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.      |
+| Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server and run `muse login`. |
 
 Provider CLIs must be on the server's `PATH`. If Signalbox cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
@@ -163,7 +173,8 @@ Signalbox does not display their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
-[Antigravity](./providers-antigravity.md), and [Pi](./providers-pi.md).
+[Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md), and
+[Muse Code](./providers-muse.md).
 
 ## Next steps
 

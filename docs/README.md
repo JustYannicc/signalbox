@@ -3,10 +3,8 @@
 ## Using Signalbox
 
 - [Install Signalbox](./user/install.md)
-- [Sign in](./user/sign-in.md)
 - [Messages and context](./user/composer.md)
 - [Working with threads](./user/thread-sidebar.md)
-- [Automations](./user/automations.md)
 - [Permission modes](./user/permission-modes.md)
 - [Terminal history](./user/terminal.md)
 - [Source control](./user/source-control.md)
@@ -23,7 +21,7 @@
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating Signalbox](./user/updating.md)
-- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md)
+- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [Muse Code](./user/providers-muse.md)
 
 ---
 
@@ -47,7 +45,6 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
-- [Accounts](./internals/accounts.md)
 - [Signalbox Connect](./internals/t3-connect.md)
 - [Assistant citations](./internals/assistant-citations.md)
 - [Mobile navigation](./internals/mobile-navigation.md)
@@ -59,8 +56,6 @@ source alone does not explain. Most code changes do not need an internal documen
 ### Runbooks
 
 - [Development and local builds](./operations/development.md)
-- [Upstream sync and the rebrand codemod](./operations/upstream-sync.md)
-- [Accounts setup](./operations/accounts-setup.md)
 - [Signalbox Connect setup](./operations/connect-setup.md)
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)

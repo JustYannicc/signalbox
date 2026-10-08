@@ -62,6 +62,16 @@ export function ThreadPreviewsScreenHeader({
   environmentId,
   threadId,
   ...props
+}: ScreenHeaderProps & Partial<ThreadPreviewsTarget>) {
+  // Without a thread (e.g. a header rendered on its own) there's nothing to preview.
+  if (environmentId === undefined || threadId === undefined) return <ScreenHeader {...props} />;
+  return <PreviewsHeader {...props} environmentId={environmentId} threadId={threadId} />;
+}
+
+function PreviewsHeader({
+  environmentId,
+  threadId,
+  ...props
 }: ScreenHeaderProps & ThreadPreviewsTarget) {
   const ports = useThreadPreviewPorts(environmentId, threadId);
   const canOpen = useAtomValue(signalboxPreviews.open.permissionAtom(environmentId));
