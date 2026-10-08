@@ -3074,11 +3074,6 @@ export default function ChatView(props: ChatViewProps) {
     hasMultipleRegisteredEnvironments && activeThread
       ? `${environmentById.get(activeThread.environmentId)?.label ?? serverConfig?.environment.label ?? activeThread.environmentId} server`
       : "server";
-  const handleDismissVersionMismatch = useCallback(() => {
-    if (!versionMismatchDismissKey) return;
-    dismissVersionMismatch(versionMismatchDismissKey);
-    setDismissedVersionMismatchKey(versionMismatchDismissKey);
-  }, [setDismissedVersionMismatchKey, versionMismatchDismissKey]);
   const serverUpdateEnvironmentId = activeThread?.environmentId ?? null;
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
   const versionMismatchInstallation = serverConfig?.environment.capabilities.serverInstallation;
@@ -4611,6 +4606,30 @@ export default function ChatView(props: ChatViewProps) {
       scheduleComposerFocus();
     },
     [composerRef, scheduleComposerFocus],
+  );
+  // An MCP App's approved `ui/message`: queued like a typed message, so it
+  // never steers or interrupts a running turn.
+  const sendAppMessage = useCallback(
+    async (text: string) => {
+      if (!isServerThread || activeThreadId === null) {
+        throw new Error("Messages from apps need a started thread.");
+      }
+      const result = await startThreadTurn({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+          runtimeMode,
+          interactionMode,
+          dispatchMode: "queue",
+        },
+      });
+      if (result._tag === "Failure") {
+        const error = squashAtomCommandFailure(result);
+        throw error instanceof Error ? error : new Error("Could not send the app's message.");
+      }
+    },
+    [activeThreadId, environmentId, interactionMode, isServerThread, runtimeMode, startThreadTurn],
   );
   const editQueuedRunCommand = useAtomCommand(threadEnvironment.editQueuedRun, {
     reportFailure: false,
@@ -6829,6 +6848,8 @@ export default function ChatView(props: ChatViewProps) {
       frame = window.requestAnimationFrame(() => {
         frame = window.requestAnimationFrame(() => {
           frame = null;
+          // A full-screen app owns the page; refocusing the composer would close it.
+          if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (shouldRefocusComposerOnWindowFocus(document.activeElement)) focusComposer();
         });
       });
@@ -7657,9 +7678,9 @@ export default function ChatView(props: ChatViewProps) {
           : "Compacting is unavailable right now"
     : null;
   // Tokens a stale Claude session would re-read on its next turn. While set,
-  // Enter compacts first and the composer's send button says so; "Send with
-  // full history" in its menu skips that once. Held queues and multi-model
-  // sends never compact first, so the offer hides for them.
+  // the composer shows a Compact chip and Enter compacts first; turning the
+  // chip off sends the next message with full history. Held queues and
+  // multi-model sends never compact first, so the offer hides for them.
   const resumeCompactionTokens =
     activeContextWindow &&
     !resumeCompactionPermanentlyDismissed &&
@@ -7675,17 +7696,25 @@ export default function ChatView(props: ChatViewProps) {
     })
       ? activeContextWindow.usedTokens
       : null;
-  // Set only for the synchronous span of a "Send with full history" submit;
-  // onSend reads it before its first await.
-  const keepFullHistoryOnceRef = useRef(false);
-  const sendWithFullHistory = useCallback((send: () => void) => {
-    keepFullHistoryOnceRef.current = true;
-    try {
-      send();
-    } finally {
-      keepFullHistoryOnceRef.current = false;
-    }
+  // Threads whose Compact chip is turned off. A send that starts its turn
+  // clears its thread's entry; a failed send keeps it for the retry.
+  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const keepFullHistory = fullHistoryThreadKeys.has(routeThreadKey);
+  const setKeepFullHistory = useCallback((threadKey: string, keep: boolean) => {
+    setFullHistoryThreadKeys((current) => {
+      if (current.has(threadKey) === keep) return current;
+      const next = new Set(current);
+      if (keep) next.add(threadKey);
+      else next.delete(threadKey);
+      return next;
+    });
   }, []);
+  const toggleKeepFullHistory = useCallback(
+    () => setKeepFullHistory(routeThreadKey, !keepFullHistory),
+    [keepFullHistory, routeThreadKey, setKeepFullHistory],
+  );
   const handleRestoreThreadBranch = useCallback(() => {
     if (!canWriteSourceControl) return;
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
@@ -8643,7 +8672,6 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
-    const keepFullHistory = keepFullHistoryOnceRef.current;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -9890,6 +9918,7 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        setKeepFullHistory(routeThreadKey, false);
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.
@@ -11067,15 +11096,6 @@ export default function ChatView(props: ChatViewProps) {
       : {}),
     onComposerFocusRequest: scheduleComposerFocus,
     ...(isServerThread && isGitRepo ? { onOpenChanges: openChangesFromThreadPanel } : {}),
-    versionMismatch:
-      showVersionMismatchBanner && versionMismatch
-        ? {
-            clientVersion: versionMismatch.clientVersion,
-            serverVersion: versionMismatch.serverVersion,
-            serverLabel: versionMismatchServerLabel,
-          }
-        : null,
-    onDismissVersionMismatch: handleDismissVersionMismatch,
     onRunProjectScript: runProjectScript,
     onAddProjectScript: saveProjectScript,
     onUpdateProjectScript: updateProjectScript,
@@ -11089,8 +11109,6 @@ export default function ChatView(props: ChatViewProps) {
     threadPanelPresentation,
     threadPanelPopoverHandle,
     threadPanelShortcutLabel: shortcutLabelForCommand(keybindings, "threadPanel.toggle"),
-    threadPanelHasAttention:
-      activeEnvironmentUnavailableState !== null || showVersionMismatchBanner,
     rightPanelAvailable: activeProject !== null,
     rightPanelOpen,
     rightPanelShortcutLabel: shortcutLabelForCommand(keybindings, "rightPanel.toggle"),
@@ -11295,6 +11313,13 @@ export default function ChatView(props: ChatViewProps) {
                   !paintOnlyDisplayedTimeline && (isWorking || !latestRunSettled)
                 }
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
+                awaitingUser={
+                  !paintOnlyDisplayedTimeline &&
+                  (activePendingApproval !== null ||
+                    activePendingUserInput !== null ||
+                    // A secret request has no runtime request; the shell carries it.
+                    activeThreadShell?.hasPendingUserInput === true)
+                }
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
                 worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
                 onCancelWorktreeSetup={onCancelWorktreeSetup}
@@ -11337,7 +11362,7 @@ export default function ChatView(props: ChatViewProps) {
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }
                 {...(!paintOnlyDisplayedTimeline
-                  ? { onUseArtifactTemplate: useArtifactTemplate }
+                  ? { onUseArtifactTemplate: useArtifactTemplate, onSendAppMessage: sendAppMessage }
                   : {})}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
@@ -11557,7 +11582,8 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
-                              onSendWithFullHistory={sendWithFullHistory}
+                              keepFullHistory={keepFullHistory}
+                              onToggleKeepFullHistory={toggleKeepFullHistory}
                               // With attachments or contexts aboard the pick just inserts the
                               // text, so it sends as a prompt like the typed path would.
                               onUsageLimitsCommand={

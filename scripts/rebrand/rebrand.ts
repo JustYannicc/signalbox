@@ -115,12 +115,14 @@ const TEST_CASE_NAME_RULES = [...NAME_RULES, ...COMMAND_RULES, HOME_RULE, SHORT_
 
 /**
  * External contracts: string-valued properties that name T3 Code to a service
- * we don't control. Codex derives its client identity from `clientInfo`, and
+ * we don't control. Codex and Muse derive their client identity from `clientInfo`, and
  * OpenAI's ChatGPT consent flow registers the agent by `agent_name_hint`.
  */
 export const EXTERNAL_CONTRACT_PROPERTIES: Readonly<Record<string, ReadonlyArray<string>>> = {
   "apps/server/src/provider/CodexProvider.ts": ["name", "title"],
   "apps/server/src/provider/CodexChatGptAuth.ts": ["agent_name_hint"],
+  // Muse's SDK handshake; the replay fixtures record it verbatim.
+  "apps/server/src/provider/museSdk.ts": ["title"],
   // The t3.json format is shared with upstream; its schema keeps its name.
   "packages/contracts/src/t3ProjectFile.ts": ["title"],
 };
