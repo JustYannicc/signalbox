@@ -1,3 +1,4 @@
+import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import {
   type ModelGatewayProvider,
   RUNNER_PROTOCOL_VERSION,
@@ -13,6 +14,8 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { myDriveId } from "../../drive/DriveDirectory.ts";
+import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor } from "../providerCatalog.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import * as ThreadStore from "../ThreadStore.ts";
@@ -69,6 +72,23 @@ export type BatchResult =
   /** A gap: the Runner must reconnect and resend after `ackedSequence`. */
   | { readonly _tag: "out_of_order"; readonly ackedSequence: number };
 
+/** What a drive token lets its holder do right now (see `drive/driveRoutes.ts`). */
+export type DriveAuthorization =
+  | {
+      readonly _tag: "granted";
+      readonly threadId: string;
+      readonly driveId: string;
+      readonly generation: number;
+      /** Whether a turn runs: `main` only moves during one. */
+      readonly live: boolean;
+    }
+  | { readonly _tag: "denied"; readonly reason: string };
+
+/** Whether this cloud stores drives. Without it, turns run in a plain directory. */
+export class ThreadDrives extends Context.Service<ThreadDrives, { readonly enabled: boolean }>()(
+  "@signalbox/cloud/thread/runner/ThreadRunner/ThreadDrives",
+) {}
+
 export type ModelAuthorization =
   | { readonly _tag: "granted"; readonly runId: RunId }
   | { readonly _tag: "denied"; readonly reason: string };
@@ -95,6 +115,8 @@ export interface RunnerWork {
   readonly turn: RunnerTurn | null;
   /** `turn`'s credential at the ModelGateway. */
   readonly modelToken: string | null;
+  /** The drive `turn` works in, and the machine's token for it. */
+  readonly drive: DriveAccess | null;
   readonly activeRunId: RunId | null;
 }
 
@@ -122,6 +144,8 @@ export class ThreadRunner extends Context.Service<
       token: string,
       provider: ModelGatewayProvider,
     ) => Effect.Effect<ModelAuthorization>;
+    /** Whether the drive API may act for `token`'s holder, and as whom. */
+    readonly authorizeDrive: (token: string) => Effect.Effect<DriveAuthorization>;
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
@@ -158,6 +182,11 @@ const make = Effect.gen(function* () {
   const store = yield* ThreadStore.ThreadStore;
   const crypto = yield* Crypto.Crypto;
   const { connectTimeoutMs } = yield* MachineBackend;
+  const drives = yield* Effect.serviceOption(ThreadDrives);
+  const drivesEnabled = drives._tag === "Some" && drives.value.enabled;
+  const driveOf = Effect.map(Effect.orDie(store.owner), (owner) =>
+    owner === null ? null : myDriveId(owner.contextId, owner.userId),
+  );
 
   const lease = Effect.orDie(store.machine);
   const newToken = Effect.orDie(
@@ -314,6 +343,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const turn = projection === null ? null : runnerTurnFor(projection);
       const grant = projection === null ? undefined : modelGrantFor(projection);
+      const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
         needsUpkeep: needsUpkeep(
@@ -325,6 +355,13 @@ const make = Effect.gen(function* () {
           turn === null || grant === undefined || lease.token === null
             ? null
             : yield* modelToken(lease.token, grant),
+        drive:
+          driveId === null || lease.token === null || projection === null
+            ? null
+            : {
+                driveId,
+                token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
+              },
         activeRunId: projection === null ? null : (harnessRun(projection)?.id ?? null),
       });
     }),
@@ -346,6 +383,32 @@ const make = Effect.gen(function* () {
       return (yield* isModelToken(token, leaseToken, grant))
         ? ({ _tag: "granted", runId: grant.runId } satisfies ModelAuthorization)
         : deny("This token is not for the running turn.");
+    });
+
+  // Like model requests, drive calls read committed state without the lock.
+  const authorizeDrive: ThreadRunner["Service"]["authorizeDrive"] = (token) =>
+    Effect.gen(function* () {
+      const deny = (reason: string): DriveAuthorization => ({ _tag: "denied", reason });
+      if (!drivesEnabled) return deny("This cloud stores no drives.");
+      const projection = yield* engine.projection;
+      if (projection === null) return deny("This thread does not exist.");
+      const current = yield* lease;
+      if (current.status === "none" || current.token === null) {
+        return deny("This thread has no machine.");
+      }
+      const threadId = projection.thread.id;
+      if (!(yield* isDriveToken(token, current.token, threadId, current.generation))) {
+        return deny("This token is not for this thread's machine.");
+      }
+      const driveId = yield* driveOf;
+      if (driveId === null) return deny("This thread has no drive.");
+      return {
+        _tag: "granted",
+        threadId,
+        driveId,
+        generation: current.generation,
+        live: harnessRun(projection) !== undefined,
+      } satisfies DriveAuthorization;
     });
 
   const reconcile: ThreadRunner["Service"]["reconcile"] = withLease(
@@ -425,6 +488,7 @@ const make = Effect.gen(function* () {
     work,
     reconcile,
     authorizeModel,
+    authorizeDrive,
   });
 });
 

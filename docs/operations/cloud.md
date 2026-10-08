@@ -145,6 +145,37 @@ Workers Paid plan; on any other plan every deploy fails at
 Dockerfile together with `ACCOUNT_HUB_VERSION` in
 `apps/server/src/accountHub/AccountHubRelease.ts`.
 
+### Drives
+
+Each person has one drive per context (their My Drive), and every thread they
+start in that context works in it (`apps/cloud/src/drive/`). A drive is a git
+repository with no git server: packs in the `DRIVE_PACKS` R2 bucket
+(`signalbox-drives`, previews `signalbox-drives-preview`, both in the EU
+jurisdiction), refs in the drive's `DriveObject`. The Runner checks the
+thread's branch out as the harness's working directory, uploads one pack and
+moves `wip/<thread>` after each batch of tool calls, and at the end of a turn
+merges `main` into `threads/<thread>` and fast-forwards `main`. A merge
+conflict goes back to the agent as one more step of the same turn. Clients
+browse `main` and each turn's diff through the Worker, with no machine
+running.
+
+Two invariants hold the store together, both enforced in the Worker and the
+drive object rather than trusted to the Runner:
+
+- **Objects before refs.** An upload is checked object by object, stored in
+  R2, and only then indexed; a pack is refused unless everything its commits
+  and trees reference is in it or already indexed. A ref can only name an
+  indexed commit, so a machine killed mid-upload leaves at most an orphaned
+  file in R2.
+- **Whose refs.** The drive token (`drive/driveToken.ts`) names one thread and
+  machine generation. That thread moves only `threads/<thread>` and
+  `wip/<thread>`, and `main` only as a fast-forward to its own branch while its
+  turn runs. An older generation writes nothing once a newer one has.
+
+`wrangler dev` keeps the bucket locally. Deployments need both buckets
+created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
+and the same for `-preview`); without them the deploy fails.
+
 ## Deploying
 
 `.github/workflows/deploy-cloud.yml` builds the web app and runs `wrangler

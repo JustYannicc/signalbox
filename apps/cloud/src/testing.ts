@@ -76,8 +76,12 @@ export const layerPersonalThreadContexts = Layer.succeed(
 export const layerThreadObject = (
   filename: string,
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
+  options: { readonly drives?: boolean } = {},
 ) =>
   ThreadRunner.layer.pipe(
+    Layer.provideMerge(
+      Layer.succeed(ThreadRunner.ThreadDrives, { enabled: options.drives === true }),
+    ),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(machines),
     Layer.provideMerge(ThreadStore.layer),
