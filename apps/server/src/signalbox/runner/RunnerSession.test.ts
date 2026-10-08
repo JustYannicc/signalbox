@@ -97,7 +97,7 @@ const makeFakeTurns = Effect.gen(function* () {
   const startedTurns = yield* Ref.make<ReadonlyArray<RunId>>([]);
   const make = (emit: (item: RunnerItem) => Effect.Effect<void>) =>
     Effect.as(Deferred.succeed(emitRef, emit), {
-      start: (next) => Ref.update(startedTurns, (all) => [...all, next.runId]),
+      start: (next) => Ref.update(startedTurns, (all) => [...all, next.turn.runId]),
       interrupt: () => Effect.void,
       keepOnly: () => Effect.void,
     } satisfies RunnerTurns);
@@ -142,6 +142,7 @@ describe("RunnerSession", () => {
           turn,
           modelToken: "model-token",
           drive: null,
+          sessions: { token: "sbs1.x.y" },
         });
         yield* settle(
           Effect.map(Ref.get(turns.startedTurns), (all) => all.length === 1),

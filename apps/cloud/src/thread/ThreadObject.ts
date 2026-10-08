@@ -37,6 +37,8 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import * as SessionRows from "./session/SessionRows.ts";
+import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -139,7 +141,7 @@ const makeRuntime = (
       Layer.provideMerge(layerMachineBackend(env)),
       Layer.provideMerge(DiagnosticsStore.layer),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
-      Layer.provideMerge(ThreadStore.layer),
+      Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
       Layer.provideMerge(
         UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
       ),
@@ -256,12 +258,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   /**
    * HTTP into the object, all routed by the Worker: requests to the thread's
-   * preview origins, the Runner's preview tunnel, and the Runner's socket.
+   * preview origins, the Runner's preview tunnel, its session API
+   * (`session/sessionRoutes.ts`), and the Runner's socket.
    */
   override async fetch(request: Request) {
     const preview = this.gateway.serve(request);
     if (preview !== null) return preview;
-    if (new URL(request.url).pathname === PREVIEW_TUNNEL_PATH) return this.gateway.acceptTunnel();
+    const { pathname } = new URL(request.url);
+    if (pathname === PREVIEW_TUNNEL_PATH) return this.gateway.acceptTunnel();
+    if (isSessionApiPath(pathname)) {
+      return handleSessionRequest(request, (effect) => this.runtime.runPromise(effect));
+    }
     return acceptRunnerSocket(this.ctx);
   }
 

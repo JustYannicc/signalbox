@@ -24,12 +24,14 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type { ChildProcessSpawner } from "effect/process";
 
 import { makeRunnerAdapters } from "./RunnerAdapters.ts";
+import { layerSessionQueryRunner } from "./RunnerClaudeSessions.ts";
 import { makeRunnerDrive } from "./RunnerDrive.ts";
 import { makeDriveClient } from "./RunnerDriveClient.ts";
-import { writeModelToken } from "./RunnerModelAccess.ts";
+import { machineLayout, writeModelToken } from "./RunnerModelAccess.ts";
 import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
 import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.ts";
 import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
+import { makeRunnerSessions } from "./RunnerSessions.ts";
 import { runnerConnectUrl, threadSocketUrl, webSocketTransport } from "./runnerSocket.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
@@ -99,9 +101,16 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
         yield* fs.makeDirectory(cwd, { recursive: true });
         const scope = yield* Scope.fork(hostScope);
         const session = yield* Effect.gen(function* () {
+          const root = path.join(config.home, "machines", request.threadId);
+          // The harnesses' sessions leave the machine as they are written (#132).
+          const sessions = yield* makeRunnerSessions({
+            cloudUrl,
+            codexHome: machineLayout(path, root).codexHome,
+          }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
           const { adapters, layout, stderr } = yield* makeRunnerAdapters({
-            root: path.join(config.home, "machines", request.threadId),
+            root,
             gatewayUrl: request.modelGatewayUrl,
+            claudeQueryRunner: layerSessionQueryRunner(sessions.claude),
           });
           const usage = yield* makeRunnerUsage(config.home);
           const session = yield* makeRunnerSession({
@@ -128,6 +137,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
                     makeRunnerDrive({ cwd, client }),
                   ).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices)),
+                sessions,
               }),
           });
           yield* runPreviewTunnel({

@@ -34,8 +34,11 @@ import {
  * services those constructors ask for are provided, not the server's layer
  * graph, so the Runner carries no settings store, MCP server or session
  * database, and an upstream change to an adapter reaches the Runner through a
- * normal merge.
+ * normal merge. The Claude query runner can be swapped, which is how its
+ * session reaches the thread (`RunnerClaudeSessions.ts`).
  */
+
+type ClaudeQueryRunnerLayer = typeof layerClaudeQueryRunner;
 
 /**
  * What the adapter constructors need. The server config only supplies paths
@@ -45,10 +48,11 @@ import {
 const layerAdapterServices = (
   home: string,
   environment: NodeJS.ProcessEnv,
+  claudeQueryRunner: ClaudeQueryRunnerLayer,
   stderr: HarnessStderr,
 ) =>
   Layer.mergeAll(
-    layerClaudeQueryRunner,
+    claudeQueryRunner,
     layerCodexClientFactory,
     IdAllocator.layer,
     ServerConfig.layerTest(home, home),
@@ -73,6 +77,8 @@ const layerAdapterServices = (
 export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (machine: {
   readonly root: string;
   readonly gatewayUrl: string;
+  /** Claude's query runner; upstream's own by default. */
+  readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
   const stderr = makeHarnessStderr();
@@ -81,6 +87,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
     layerAdapterServices(
       machine.root,
       harnessEnvironment(yield* HostProcessEnvironment, layout, machine.gatewayUrl),
+      machine.claudeQueryRunner ?? layerClaudeQueryRunner,
       stderr,
     ),
   );

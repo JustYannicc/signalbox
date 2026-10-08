@@ -91,12 +91,18 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       send(socket, { type: "interrupt", runId: sentRunId });
       sentRunId = null;
     }
-    if (work.turn !== null && work.modelToken !== null && sentRunId !== work.turn.runId) {
+    if (
+      work.turn !== null &&
+      work.modelToken !== null &&
+      work.sessions !== null &&
+      sentRunId !== work.turn.runId
+    ) {
       send(socket, {
         type: "turn.start",
         turn: work.turn,
         modelToken: work.modelToken,
         drive: work.drive,
+        sessions: work.sessions,
       });
       sentRunId = work.turn.runId;
     }
