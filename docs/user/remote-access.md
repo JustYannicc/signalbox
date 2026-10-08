@@ -56,10 +56,6 @@ in the receiving app. Connection settings are under **Settings → Connections**
 on web and desktop and **Settings → Environments** on mobile. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
-On a phone with no environment yet, the app opens on sign-in. Tap **Pair with a
-code instead** to reach **Add environment**. A server without account sign-in
-sends you there after you enter its address.
-
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original token to reconnect. Links
 created in Settings can only be copied from the client that created them while
@@ -217,7 +213,8 @@ sudo signalbox browser setup
 
 The server shows the exact line for how you started it, such as
 `sudo npx signalbox-cli browser setup`, and keeps your `PATH` when Node is installed only
-for your user. It allows Chrome's sandbox with an AppArmor profile and installs
+for your user. Where `signalbox` is not on your `PATH`, such as with only the
+desktop app installed, it names the full path of the app's own `signalbox` instead. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries with apt. It is safe to run again. Without `sudo`, it
 only reports what it would change.
 
@@ -320,7 +317,7 @@ when SSH closes, see [background-service troubleshooting](./background-service.m
 | HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                                                  |
 
 After fixing a permanent rejection, restart the host's server. On Linux, use
-`systemctl --user restart signalbox.service` for the background service. For a
+`systemctl --user restart t3code.service` for the background service. For a
 foreground server, stop it and run `signalbox serve` again with your usual options.
 Include the diagnostic message and trace ID when reporting a persistent failure.
 
