@@ -14,6 +14,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
+import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
+import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
@@ -57,6 +59,9 @@ export interface ThreadObjectEnv extends MachineBackend.MachineBackendEnv, Previ
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
+  /** Drives' objects and packs (`drive/`). Turns work in a drive only when both are bound. */
+  readonly DRIVES?: DriveObjectNamespace;
+  readonly DRIVE_PACKS?: PackBucket;
 }
 
 /** Time between streamed chunks of a scripted reply. */
@@ -76,6 +81,11 @@ const makeRuntime = (
         Layer.succeed(ThreadRunner.PreviewHold, {
           held: Effect.sync(() => previews.held),
           lastActiveAt: Effect.sync(() => previews.lastActiveAt),
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(ThreadRunner.ThreadDrives, {
+          enabled: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
         }),
       ),
       Layer.provideMerge(ThreadEngine.layer),
@@ -159,6 +169,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   authorizeModel(token: string, provider: ModelGatewayProvider) {
     return this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.authorizeModel(token, provider)),
+    );
+  }
+
+  /** The drive API asking whether a Runner's drive token is good, and for what (see `drive/driveRoutes.ts`). */
+  authorizeDrive(token: string) {
+    return this.runtime.runPromise(
+      ThreadRunner.ThreadRunner.use((runner) => runner.authorizeDrive(token)),
     );
   }
 

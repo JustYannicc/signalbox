@@ -9,6 +9,9 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
+import * as DriveDirectory from "../drive/DriveDirectory.ts";
+import * as DriveFiles from "../drive/DriveFiles.ts";
+import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
@@ -42,6 +45,9 @@ import * as UserStore from "./UserStore.ts";
  */
 
 export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv {
+  /** Drives' objects and packs: clients browse them through this object (`drive/DriveFiles.ts`). */
+  readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
+  readonly DRIVE_PACKS?: DrivePacks.PackBucket;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
@@ -52,9 +58,28 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv {
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
+const layerDrives = (env: UserObjectEnv) =>
+  env.DRIVES === undefined || env.DRIVE_PACKS === undefined
+    ? Layer.empty
+    : DriveFiles.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            DriveDirectory.layerDurableObjects(env.DRIVES, {
+              localWorkerd: env.LOCAL_WORKERD === "1",
+            }),
+            DrivePacks.layerBucket(env.DRIVE_PACKS),
+          ),
+        ),
+      );
+
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
   ManagedRuntime.make(
-    Layer.mergeAll(UserShell.layer, CloudThreadService.layer, UserSections.layer).pipe(
+    Layer.mergeAll(
+      UserShell.layer,
+      CloudThreadService.layer,
+      UserSections.layer,
+      layerDrives(env),
+    ).pipe(
       Layer.provideMerge(ThreadContexts.layer),
       Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
       Layer.provideMerge(

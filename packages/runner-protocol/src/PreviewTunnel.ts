@@ -2,7 +2,7 @@ import { NonNegativeInt, PositiveInt, ThreadId } from "@t3tools/contracts";
 import { SignalboxPreviewPort } from "@t3tools/contracts/signalboxPreviews";
 import * as Schema from "effect/Schema";
 
-import { frameCodec } from "./RunnerProtocol.ts";
+import { jsonCodec as frameCodec } from "./jsonCodec.ts";
 
 /**
  * The PreviewGateway's tunnel: a second outbound WebSocket from a thread's

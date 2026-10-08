@@ -1,13 +1,19 @@
 import {
   type AuthEnvironmentScope,
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentAuthorizationError,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationGetFullThreadDiffError,
+  OrchestrationGetTurnDiffError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
+  ProjectListEntriesError,
+  ProjectReadFileError,
+  ProjectSearchEntriesError,
   RpcScopeAuthorization,
   SectionsRpcError,
   WS_METHODS,
@@ -31,6 +37,7 @@ import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import * as Environment from "../environment.ts";
+import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -69,6 +76,13 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
   WS_METHODS.projectsEnsureScratch,
+  // Drives, browsed without a machine (`driveBrowsing.ts`).
+  WS_METHODS.projectsListEntries,
+  WS_METHODS.projectsReadFile,
+  WS_METHODS.projectsSearchEntries,
+  WS_METHODS.reviewGetDiffPreview,
+  ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
+  ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...SECTION_METHODS,
@@ -100,6 +114,12 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
@@ -184,6 +204,7 @@ export const layerHandlers = (input: {
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* UserSections.UserSections;
       const { actor, identity } = input;
+      const drives = yield* DriveBrowsing.makeDriveBrowsing(actor);
       const config = Effect.map(Clock.currentTimeMillis, (now) =>
         Environment.serverConfig(identity, DateTime.formatIso(DateTime.makeUnsafe(now))),
       );
@@ -274,6 +295,52 @@ export const layerHandlers = (input: {
         // Scratch is the Personal context's project, always in the shell.
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),
+        [WS_METHODS.projectsListEntries]: (request) =>
+          drives.listEntries(request).pipe(
+            Effect.mapError(
+              (detail) =>
+                new ProjectListEntriesError({
+                  cwd: request.cwd,
+                  failure: "directory_list_failed",
+                  detail,
+                }),
+            ),
+          ),
+        [WS_METHODS.projectsReadFile]: (request) =>
+          drives.readFile(request).pipe(
+            Effect.mapError(
+              ({ failure }) =>
+                new ProjectReadFileError({
+                  cwd: request.cwd,
+                  relativePath: request.relativePath,
+                  failure,
+                }),
+            ),
+          ),
+        [WS_METHODS.projectsSearchEntries]: (request) =>
+          drives.searchEntries(request).pipe(
+            Effect.mapError(
+              (detail) =>
+                new ProjectSearchEntriesError({
+                  cwd: request.cwd,
+                  queryLength: request.query.length,
+                  limit: request.limit,
+                  failure: "search_index_search_failed",
+                  detail,
+                }),
+            ),
+          ),
+        [WS_METHODS.reviewGetDiffPreview]: (request) => drives.reviewPreview(request),
+        [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (request) =>
+          drives
+            .turnDiff(request)
+            .pipe(Effect.mapError((message) => new OrchestrationGetTurnDiffError({ message }))),
+        [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: (request) =>
+          drives
+            .turnDiff({ ...request, fromTurnCount: 0 })
+            .pipe(
+              Effect.mapError((message) => new OrchestrationGetFullThreadDiffError({ message })),
+            ),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
         [SIGNALBOX_PREVIEWS_WS_METHODS.subscribe]: ({ threadId }) =>
           identity.previews !== true

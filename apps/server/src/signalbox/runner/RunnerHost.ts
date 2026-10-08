@@ -19,8 +19,12 @@ import * as Semaphore from "effect/Semaphore";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import type { ChildProcessSpawner } from "effect/process";
 
 import { makeRunnerAdapters } from "./RunnerAdapters.ts";
+import { makeRunnerDrive } from "./RunnerDrive.ts";
+import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { writeModelToken } from "./RunnerModelAccess.ts";
 import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
 import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.ts";
@@ -63,6 +67,10 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const hostScope = yield* Effect.scope;
+  // What a thread's drive checkout uses: the filesystem, git and HTTP to the cloud.
+  const driveServices = yield* Effect.context<
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+  >();
   const runners = new Map<ThreadId, HostedRunner>();
   const lock = yield* Semaphore.make(1);
   const previewPorts = yield* makeDiscoveredPorts;
@@ -108,6 +116,10 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                     Effect.provideService(FileSystem.FileSystem, fs),
                   ),
                 emit,
+                openDrive: (access) =>
+                  Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
+                    makeRunnerDrive({ cwd, client }),
+                  ).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices)),
               }),
           });
           yield* runPreviewTunnel({

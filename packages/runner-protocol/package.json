@@ -10,6 +10,10 @@
     "./PreviewTunnel": {
       "types": "./src/PreviewTunnel.ts",
       "import": "./src/PreviewTunnel.ts"
+    },
+    "./DriveProtocol": {
+      "types": "./src/DriveProtocol.ts",
+      "import": "./src/DriveProtocol.ts"
     }
   },
   "scripts": {

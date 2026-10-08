@@ -24,6 +24,7 @@ import {
   turnItemEvent,
 } from "../threadEvents.ts";
 import { applyEvents } from "../threadProjection.ts";
+import { checkpointEvents, noticeEvents } from "./driveItems.ts";
 import {
   ERROR_ITEM_BAND_POSITION,
   type Json,
@@ -228,9 +229,16 @@ function itemEvents(
   }
   // A report about a run that already ended (stopped, or failed for want of a machine).
   if (run === undefined || run.id !== item.runId) return [];
-  return item.kind === "turn.started"
-    ? startedEvents(projection, run, item, ctx)
-    : failRunEvents(projection, run, unknownFailure(item.message), ctx);
+  switch (item.kind) {
+    case "turn.started":
+      return startedEvents(projection, run, item, ctx);
+    case "turn.failed":
+      return failRunEvents(projection, run, unknownFailure(item.message), ctx);
+    case "drive.checkpoint":
+      return checkpointEvents(projection, run, item, ctx);
+    case "drive.notice":
+      return noticeEvents(projection, run, item, ctx);
+  }
 }
 
 /**
