@@ -1,4 +1,5 @@
 import type {
+  RunnerBuild,
   RunnerItem,
   RunnerMessage,
   RunnerTurn,
@@ -18,6 +19,7 @@ import type { RunnerTurns } from "./RunnerTurns.ts";
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
 const turn = { runId } as RunnerTurn;
+const build: RunnerBuild = { imageDigest: null, revision: "abc123", cliVersions: {} };
 
 const item = (label: string): RunnerItem => ({
   kind: "provider",
@@ -127,6 +129,7 @@ describe("RunnerSession", () => {
           token: "token",
           machineId: "machine",
           imageVersion: "test",
+          build,
           transport: thread.transport,
           makeTurns: turns.make,
         });
@@ -164,7 +167,8 @@ describe("RunnerSession", () => {
         const labels = (yield* Ref.get(thread.committed)).map((reported) =>
           reported.kind === "provider" ? reported.event.label : reported.kind,
         );
-        expect(labels).toEqual(["a", "b", "c"]);
+        // The reconnect leaves its own line after what was resent.
+        expect(labels).toEqual(["a", "b", "c", "log"]);
         // The reconnect said hello with what the Runner last saw acknowledged.
         expect(yield* Ref.get(thread.hellos)).toEqual([0, 1]);
       }),
@@ -181,6 +185,7 @@ describe("RunnerSession", () => {
           token: "token",
           machineId: "machine",
           imageVersion: "test",
+          build,
           transport: {
             connect: Effect.gen(function* () {
               const inbox = yield* Queue.unbounded<ThreadMessage, RunnerConnectionError>();
@@ -201,6 +206,46 @@ describe("RunnerSession", () => {
           makeTurns: turns.make,
         });
         expect(yield* session.ended).toContain("stale_generation");
+      }),
+    ),
+  );
+
+  it.effect("records how many tries a connection took, once it is welcomed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        let attempts = 0;
+        yield* makeRunnerSession({
+          threadId,
+          generation: 1,
+          token: "token",
+          machineId: "machine",
+          imageVersion: "test",
+          build,
+          transport: {
+            connect: Effect.suspend(() =>
+              ++attempts <= 2
+                ? Effect.fail(new RunnerConnectionError({ message: "network unreachable" }))
+                : thread.transport.connect,
+            ),
+          },
+          makeTurns: turns.make,
+        });
+        yield* settle(
+          Effect.map(Ref.get(thread.committed), (all) => all.length === 1),
+          "log committed",
+        );
+
+        expect(yield* Ref.get(thread.committed)).toEqual([
+          {
+            kind: "log",
+            runId: null,
+            level: "info",
+            message:
+              "connected after 2 failed or dropped connections; last: RunnerConnectionError: network unreachable",
+          },
+        ]);
       }),
     ),
   );

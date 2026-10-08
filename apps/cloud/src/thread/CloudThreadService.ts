@@ -86,6 +86,17 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       input: OrchestrationV2SubscribeThreadInput,
     ) => Stream.Stream<Batch, CloudThreadError>;
+    /**
+     * A turn's diagnostic record (JSON), by its run or trace id, or the
+     * thread's recent turns for null: what happened on its machines, the
+     * Runner's lines and its model requests. Null when the actor cannot see
+     * the thread or no turn matches.
+     */
+    readonly turnDiagnostics: (
+      actor: Actor,
+      threadId: ThreadId,
+      key: string | null,
+    ) => Effect.Effect<string | null, ThreadDirectory.ThreadObjectError>;
   }
 >()("@signalbox/cloud/thread/CloudThreadService") {}
 
@@ -223,6 +234,8 @@ const make = Effect.gen(function* () {
     threadSnapshot,
     threadHistoryPage,
     subscribeThread,
+    turnDiagnostics: (actor, threadId, key) =>
+      directory.forThread(threadId).diagnostics(actor, key),
   });
 });
 

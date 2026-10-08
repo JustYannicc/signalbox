@@ -6,6 +6,7 @@ import {
 } from "@signalbox/account/WorkOSTesting";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ConfigProvider from "effect/ConfigProvider";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -16,6 +17,10 @@ import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import * as Platform from "./platform.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
+import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
+import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
+import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
@@ -72,10 +77,18 @@ export const layerPersonalThreadContexts = Layer.succeed(
 export const layerThreadObject = (
   filename: string,
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
+  analytics: Layer.Layer<
+    CloudAnalytics.CloudAnalytics,
+    never,
+    DiagnosticsStore.DiagnosticsStore | Crypto.Crypto
+  > = CloudAnalytics.layerOff,
 ) =>
   ThreadRunner.layer.pipe(
     Layer.provideMerge(ThreadEngine.layer),
+    Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
+    Layer.provideMerge(analytics),
     Layer.provideMerge(machines),
+    Layer.provideMerge(DiagnosticsStore.layer),
     Layer.provideMerge(ThreadStore.layer),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
@@ -143,7 +156,10 @@ export const makeMemoryCloud = () => {
       effect: Effect.Effect<
         A,
         E,
-        ThreadEngine.ThreadEngine | ThreadStore.ThreadStore | UserDirectory.UserDirectory
+        | ThreadEngine.ThreadEngine
+        | ThreadStore.ThreadStore
+        | UserDirectory.UserDirectory
+        | TurnReports.TurnReports
       >,
     ) => runtime.runPromise(effect);
     const object = { api: makeThreadObjectApi(run, async () => {}), run };

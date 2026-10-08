@@ -125,6 +125,36 @@ A machine follows `RUNNER_IMAGE` at its next wake. Bump the Runner protocol
 only together with a published image, since a machine on an older image is
 refused.
 
+### Why a turn failed
+
+Every turn has a trace id: 32 hex characters derived from its run id. The
+same id is on the command receipt that started the turn, the `turn.start` the
+Runner gets (and its own logs), the ModelGateway's `model_gateway.request` log
+lines, and the turn's diagnostic record. The thread object writes that record
+as it goes. It holds the machine generations the turn ran on, with backend,
+machine id, image, digest, Runner revision and `claude`/`codex` versions, how
+each one woke and stopped, and every backend answer. It also holds the
+Runner's own error lines (redacted), each model request with its status and
+tokens, CPU and memory, and the harness's session refs.
+
+- Ask the thread's object, signed in as its owner:
+  `GET /api/cloud/threads/<thread id>/diagnostics` lists recent turns with
+  their trace ids and failures, and `.../diagnostics/<trace, run or command id>` returns
+  one record.
+- In Workers Logs, search for the trace id. When a turn ends, its object logs
+  the whole record as `cloud turn diagnostic`.
+
+### Usage analytics
+
+With `SIGNALBOX_POSTHOG_KEY` set (and `SIGNALBOX_POSTHOG_HOST` for a non-US
+project), thread objects send `cloud.turn.completed` per turn and
+`cloud.machine.session` per machine wake to Signalbox's PostHog. These are the
+#116 events the cost replay reads. Ids are hashed and nothing carries content,
+paths or command text. `T3CODE_TELEMETRY_ENABLED=false` turns them off. The
+deploy passes both variables from the `cloud-production` environment only, so
+previews send nothing. CPU, memory, disk and egress are measured in the
+Runner's container on the VM, so a local Runner host on a Mac reports none.
+
 ## Deploying
 
 `.github/workflows/deploy-cloud.yml` builds the web app and runs `wrangler

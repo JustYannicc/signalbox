@@ -31,7 +31,8 @@ import * as Schema from "effect/Schema";
  * 3. The thread sends `turn.start` and `interrupt`; the Runner streams
  *    sequenced `batch`es of what happened and the thread `ack`s each once its
  *    events are committed. A batch at or below the acknowledged sequence is a
- *    resend and changes nothing.
+ *    resend and changes nothing. Batches also carry the machine's usage and
+ *    log lines for the turn's diagnostic record.
  * 4. Either side sends `end` before closing for good.
  *
  * Every frame is one JSON text message, except the heartbeat: the Runner sends
@@ -57,6 +58,8 @@ export const RUNNER_CONNECT_PATH = "/api/runner/connect";
 export const RunnerTurn = Schema.Struct({
   threadId: ThreadId,
   runId: RunId,
+  /** The turn's trace id (32 hex), on everything the Runner logs about it. */
+  traceId: Schema.String,
   runOrdinal: PositiveInt,
   providerTurnOrdinal: PositiveInt,
   attemptId: RunAttemptId,
@@ -76,6 +79,38 @@ export const RunnerTurn = Schema.Struct({
   interactionMode: ProviderInteractionMode,
 });
 export type RunnerTurn = typeof RunnerTurn.Type;
+
+/**
+ * What the machine used since this Runner session began, measured from the
+ * cgroup of the Runner's container (`cpu.stat`, `memory.current`,
+ * `memory.peak`), the disk holding the machine's home, and the machine's
+ * network interfaces. Null where the machine cannot measure it, such as a
+ * developer's own Mac. Counters only grow within a session.
+ */
+export const MachineUsage = Schema.Struct({
+  cpuSeconds: Schema.NullOr(Schema.Number),
+  memoryBytes: Schema.NullOr(Schema.Number),
+  memoryPeakBytes: Schema.NullOr(Schema.Number),
+  /** The mean of the session's memory samples. */
+  memoryAverageBytes: Schema.NullOr(Schema.Number),
+  diskUsedBytes: Schema.NullOr(Schema.Number),
+  egressBytes: Schema.NullOr(Schema.Number),
+});
+export type MachineUsage = typeof MachineUsage.Type;
+
+export const RunnerLogLevel = Schema.Literals(["info", "warning", "error"]);
+export type RunnerLogLevel = typeof RunnerLogLevel.Type;
+
+/** What the Runner is built from, so a turn's diagnostics name the exact software it ran on. */
+export const RunnerBuild = Schema.Struct({
+  /** The image's content digest (`…@sha256:…`), when the machine knows it. */
+  imageDigest: Schema.NullOr(Schema.String),
+  /** The git revision the Runner was built from. */
+  revision: Schema.NullOr(Schema.String),
+  /** Each harness CLI's own `--version` output, by command (`claude`, `codex`). */
+  cliVersions: Schema.Record(Schema.String, Schema.String),
+});
+export type RunnerBuild = typeof RunnerBuild.Type;
 
 /** Something that happened on the machine, in the order it happened. */
 export const RunnerItem = Schema.Union([
@@ -102,6 +137,25 @@ export const RunnerItem = Schema.Union([
     runId: RunId,
     event: Schema.Record(Schema.String, Schema.Unknown),
   }),
+  /**
+   * The machine's usage so far, sent when a turn starts and ends and every
+   * half minute. `runId` is the turn running at that moment, if any.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("usage"),
+    runId: Schema.NullOr(RunId),
+    usage: MachineUsage,
+  }),
+  /**
+   * A line for the turn's diagnostic record: what went wrong on the machine,
+   * bounded and with credentials redacted. `runId` is the turn it is about, if any.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("log"),
+    runId: Schema.NullOr(RunId),
+    level: RunnerLogLevel,
+    message: Schema.String,
+  }),
 ]);
 export type RunnerItem = typeof RunnerItem.Type;
 
@@ -114,6 +168,8 @@ export const RunnerHello = Schema.Struct({
   generation: PositiveInt,
   token: Schema.String,
   lastAckedSequence: NonNegativeInt,
+  /** Absent from Runners built before diagnostics. */
+  build: Schema.optional(RunnerBuild),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 

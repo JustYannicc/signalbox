@@ -187,6 +187,14 @@
       "types": "./src/signalboxEnvironment.ts",
       "import": "./src/signalboxEnvironment.ts"
     },
+    "./commandCategory": {
+      "types": "./src/commandCategory.ts",
+      "import": "./src/commandCategory.ts"
+    },
+    "./workloadUsage": {
+      "types": "./src/workloadUsage.ts",
+      "import": "./src/workloadUsage.ts"
+    },
     "./relayJwt": {
       "types": "./src/relayJwt.ts",
       "import": "./src/relayJwt.ts"

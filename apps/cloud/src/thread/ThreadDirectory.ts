@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { ModelAuthorization } from "./runner/ThreadRunner.ts";
 import {
   type Actor,
@@ -59,6 +60,12 @@ export interface ThreadObjectApi {
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /**
+   * A turn's diagnostic record as JSON, by run or trace id, or the list of
+   * recent turns for null. Null when the actor cannot see the thread or no
+   * turn matches.
+   */
+  readonly diagnostics: (actor: Actor, key: string | null) => Promise<string | null>;
 }
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
@@ -86,6 +93,11 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  /** See `ThreadObjectApi.diagnostics`; the record is passed through as JSON text. */
+  readonly diagnostics: (
+    actor: Actor,
+    key: string | null,
+  ) => Effect.Effect<string | null, ThreadObjectError>;
 }
 
 export class ThreadDirectory extends Context.Service<
@@ -158,6 +170,7 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
           ),
         ),
       ),
+    diagnostics: (actor, key) => call("diagnostics", () => api.diagnostics(actor, key)),
     summary: (actor) =>
       call("summary", () => api.summary(actor)).pipe(
         Effect.flatMap((value) =>
@@ -182,6 +195,7 @@ export interface ThreadObjectNamespace {
       token: string,
       provider: ModelGatewayProvider,
     ) => Promise<ModelAuthorization>;
+    readonly recordModelRequest: (record: ModelGatewayRecord) => Promise<void>;
   };
 }
 
