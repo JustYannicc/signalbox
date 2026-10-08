@@ -32,6 +32,8 @@ import {
 import { uploadPack } from "./DriveUploads.ts";
 import { threadOfDriveToken } from "./driveToken.ts";
 import { forwardRemote, isRemoteHead, proxyRemote } from "./remoteRoutes.ts";
+import { decodeBody, json, packResponse, text } from "./routeResponses.ts";
+import { shortcutRoute } from "./shortcutRoutes.ts";
 
 /**
  * The drive API a thread's Runner calls (`DriveProtocol.ts`). Each request
@@ -59,18 +61,6 @@ type Services =
 export const isDriveApiPath = (pathname: string) => pathname.startsWith(`${DRIVE_API_PREFIX}/`);
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
-
-const decodeBody = <A>(decode: (text: string) => A, body: string): A | null => {
-  try {
-    return decode(body);
-  } catch {
-    return null;
-  }
-};
-
-const json = (body: string, status = 200) =>
-  new Response(body, { status, headers: { "content-type": "application/json" } });
-const text = (body: string, status: number) => new Response(body, { status });
 
 const toState = (driveId: string, refs: ThreadRefs): DriveState => ({
   driveId,
@@ -161,23 +151,12 @@ async function route(
     Effect.succeed(directory.forDrive(auth.driveId)),
   );
 
+  // Shortcut targets, read-only (#142): the thread's user's access to each, asked now.
+  if (pathname === DRIVE_PATHS.shortcuts || pathname.startsWith(`${DRIVE_PATHS.shortcuts}/`)) {
+    return await run(shortcutRoute({ userId: auth.userId, driveId: auth.driveId }, request));
+  }
   if (request.method === "GET" && pathname.startsWith(`${DRIVE_PATHS.packs}/`)) {
-    const match = /^([0-9a-f]{40})\.(pack|idx)$/.exec(pathname.slice(DRIVE_PATHS.packs.length + 1));
-    if (match === null) return text("Unknown pack.", 404);
-    const file = await run(
-      DrivePacks.DrivePacks.use((packs) =>
-        packs.get(auth.driveId, match[1]!, match[2] as DrivePacks.PackFile),
-      ),
-    );
-    return file === null
-      ? text("Unknown pack.", 404)
-      : new Response(file.body, {
-          headers: {
-            "content-type": "application/octet-stream",
-            "content-length": String(file.size),
-            "cache-control": "private, max-age=31536000, immutable",
-          },
-        });
+    return await run(packResponse(auth.driveId, pathname.slice(DRIVE_PATHS.packs.length + 1)));
   }
   if (request.method !== "POST") return text("Method not allowed.", 405);
 

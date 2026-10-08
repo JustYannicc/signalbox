@@ -11,6 +11,8 @@ import { UserDirectory } from "../user/UserDirectory.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import type { Oid } from "./git/gitObjects.ts";
 import { threadOfRemoteToken } from "./remoteToken.ts";
+import { decodeBody, text } from "./routeResponses.ts";
+import { readsShortcut } from "./shortcutRoutes.ts";
 
 /**
  * A remote-backed drive's remote, as the drive API reaches it (#135). The
@@ -23,6 +25,8 @@ import { threadOfRemoteToken } from "./remoteToken.ts";
  * - `proxyRemote` serves `DRIVE_PATHS.remote` as git's smart HTTP, fetch only:
  *   `info/refs?service=git-upload-pack` and `git-upload-pack`, passed through
  *   to GitHub with the user's credential added. Pushing never goes this way.
+ *   Under `shortcuts/<target>/` it serves a shortcut target's remote instead
+ *   (#142), while the user can open that target.
  */
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
@@ -50,8 +54,6 @@ export const remoteHead = (driveId: string, userId: string) =>
 /** Whether `oid` is the remote's head right now. */
 export const isRemoteHead = (driveId: string, userId: string, oid: Oid) =>
   Effect.map(remoteHead(driveId, userId), (head) => head === oid);
-
-const text = (body: string, status: number) => new Response(body, { status });
 
 /** The upstream request `proxyRemote` resolved to; the caller sends it and streams the answer back. */
 export interface RemoteFetch {
@@ -87,7 +89,10 @@ export const proxyRemote = (
 ) =>
   Effect.gen(function* () {
     const url = new URL(request.url);
-    const path = url.pathname.slice(DRIVE_PATHS.remote.length + 1);
+    const full = url.pathname.slice(DRIVE_PATHS.remote.length + 1);
+    // `shortcuts/<target>/<git path>`: a shortcut target's remote rather than the drive's own.
+    const shortcut = /^shortcuts\/([^/]+)\/(.*)$/.exec(full);
+    const path = shortcut === null ? full : shortcut[2]!;
     const fetching =
       (request.method === "GET" &&
         path === "info/refs" &&
@@ -106,7 +111,17 @@ export const proxyRemote = (
     if (verdict._tag === "unavailable") return text("Try again in a moment.", 503);
     if (verdict._tag === "denied") return text(verdict.reason, 403);
 
-    const [remote, githubToken] = yield* remoteAndToken(verdict.driveId, verdict.userId);
+    let driveId = verdict.driveId;
+    if (shortcut !== null) {
+      const target = decodeBody(decodeURIComponent, shortcut[1]!);
+      if (target === null) return text("Unknown path.", 404);
+      driveId = target;
+      const reader = { userId: verdict.userId, driveId: verdict.driveId };
+      if (!(yield* readsShortcut(reader, driveId))) {
+        return text("This drive has no shortcut to that drive you can open.", 403);
+      }
+    }
+    const [remote, githubToken] = yield* remoteAndToken(driveId, verdict.userId);
     if (remote === null) return text("This drive has no remote.", 404);
     if (githubToken === null) {
       return text("Connect GitHub in Signalbox to fetch this repository.", 403);

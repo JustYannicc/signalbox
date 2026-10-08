@@ -13,6 +13,7 @@ import type {
   PackRegistration,
   RefWrite,
   Shortcut,
+  ShortcutChange,
   StoredCommit,
   ThreadRefs,
 } from "./DriveStore.ts";
@@ -65,6 +66,8 @@ export interface DriveObjectApi {
     },
   ) => Promise<RefWrite>;
   readonly shortcuts: () => Promise<ReadonlyArray<Shortcut>>;
+  readonly addShortcut: (userId: string, shortcut: Shortcut) => Promise<ShortcutChange>;
+  readonly removeShortcut: (userId: string, path: string) => Promise<ShortcutChange>;
   /** Names the drive and seats its first members; idempotent. */
   readonly setup: (input: {
     readonly name: string;
@@ -129,6 +132,8 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     log: wrap("log"),
     replaceMain: wrap("replaceMain"),
     shortcuts: wrap("shortcuts"),
+    addShortcut: wrap("addShortcut"),
+    removeShortcut: wrap("removeShortcut"),
     setup: wrap("setup"),
     driveName: wrap("driveName"),
     role: wrap("role"),

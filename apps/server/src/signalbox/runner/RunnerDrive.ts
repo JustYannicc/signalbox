@@ -14,6 +14,8 @@ import * as Semaphore from "effect/Semaphore";
 import type { DriveClient, DriveClientError } from "./RunnerDriveClient.ts";
 import { type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
 import { EMPTY_TREE, makeRunnerGit, RunnerGitError } from "./RunnerGit.ts";
+import { makeRunnerInstructions, type RunnerInstructionsError } from "./RunnerInstructions.ts";
+import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
 
 /**
  * The thread's working directory as a checkout of its drive (#131). The
@@ -37,6 +39,10 @@ import { EMPTY_TREE, makeRunnerGit, RunnerGitError } from "./RunnerGit.ts";
  * starts from the remote's latest. `finishTurn` saves the branch and stops
  * there: the user pushes it or opens a pull request, and merging that on the
  * remote is what lands the work. Auto-saves never leave the drive.
+ *
+ * `prepare` also mounts the drive's shortcuts (`RunnerShortcuts.ts`) and
+ * writes the instructions they bring (`RunnerInstructions.ts`), answering
+ * that bundle's version so the harness session can follow it.
  */
 
 export interface DriveCheckpoint {
@@ -55,13 +61,24 @@ export type DriveOutcome =
 
 export type RunnerDriveError = RunnerGitError | DriveClientError | PlatformError.PlatformError;
 
+/** What a turn start left in the working directory. */
+export interface PreparedDrive {
+  /** The instructions the shortcuts bring; changes when they do (see `RunnerInstructions.ts`). */
+  readonly instructions: string;
+  /** What the thread should hear about its shortcuts. */
+  readonly notices: ReadonlyArray<string>;
+}
+
 export interface RunnerDrive {
   /**
    * At each turn start: opens the drive and checks the thread's branch out,
    * first bringing a remote-backed drive's `main` up to the remote with the
-   * turn's `remoteToken`.
+   * turn's `remoteToken`, then mounts its shortcuts. Fails when their
+   * instructions are too big to load.
    */
-  readonly prepare: (remoteToken: string | null) => Effect.Effect<void, RunnerDriveError>;
+  readonly prepare: (
+    remoteToken: string | null,
+  ) => Effect.Effect<PreparedDrive, RunnerDriveError | RunnerInstructionsError>;
   /** Starts an auto-save, or queues one behind the running one. Never fails. */
   readonly autosave: Effect.Effect<void>;
   /** Waits for running and queued auto-saves. */
@@ -102,13 +119,15 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   const git = yield* makeRunnerGit(input.cwd);
   const gitDir = path.join(input.cwd, ".git");
   const drive = yield* makeDriveMirror({ gitDir, git, client: input.client });
+  const shortcuts = yield* makeRunnerShortcuts({ cwd: input.cwd, git, client: input.client });
+  const instructions = yield* makeRunnerInstructions({ cwd: input.cwd });
   const lock = yield* Semaphore.make(1);
   /** HEAD when the turn started: the base of its checkpoint. */
   let turnStart: string | null = null;
   /** Files the last merge left conflicted. */
   let conflicted: ReadonlyArray<string> = [];
-  /** The remote the drive is backed by, as of the last `prepare`. */
-  let remote: DriveRemote | null = null;
+  /** The remote the drive is backed by, once read; a drive's remote never changes. */
+  let remote: DriveRemote | null | undefined = undefined;
 
   /** The worktree as a tree, built in a scratch index so the agent's index and HEAD stay put. */
   const snapshotTree = (head: string | null) =>
@@ -275,39 +294,11 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       yield* git.run(state.thread === null ? ["read-tree", "--empty"] : ["reset", "-q"]);
     });
 
-  /**
-   * The remote's default branch head, fetched one commit deep through the
-   * cloud. The token travels in git's environment for this one command, never
-   * in a file.
-   */
-  const fetchRemote = (remoteToken: string) =>
-    Effect.gen(function* () {
-      const fetched = yield* git.exec(
-        ["fetch", "--depth=1", "--no-tags", "-q", input.client.remoteUrl, `+HEAD:${REMOTE_REF}`],
-        {
-          env: {
-            GIT_CONFIG_COUNT: "1",
-            GIT_CONFIG_KEY_0: "http.extraHeader",
-            GIT_CONFIG_VALUE_0: `Authorization: Bearer ${remoteToken}`,
-          },
-        },
-      );
-      if (fetched.code !== 0) {
-        return {
-          _tag: "failed",
-          reason: fetched.stderr.trim() || `git fetch exited ${fetched.code}`,
-        } as const;
-      }
-      const head = yield* git.resolve(REMOTE_REF);
-      return head === null
-        ? ({ _tag: "failed", reason: "The remote has no default branch yet." } as const)
-        : ({ _tag: "fetched", head } as const);
-    });
-
   /** Brings a remote-backed drive's `main` to the remote's head. Fails only when the drive has nothing at all. */
   const syncRemote = (remoteToken: string) =>
     Effect.gen(function* () {
-      const fetched = yield* fetchRemote(remoteToken);
+      // Through the cloud, which adds the credential; the machine only holds the turn's token.
+      const fetched = yield* git.fetchHead(input.client.remoteUrl, REMOTE_REF, remoteToken);
       if (fetched._tag === "failed") {
         if (drive.known().main === null) {
           return yield* new RunnerGitError({
@@ -342,15 +333,24 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
         for (const [key, value] of CONFIG) yield* git.run(["config", key, value]);
         const localThread = existed ? yield* git.resolve("refs/drive/thread") : null;
-        // Only a drive backed by a remote gets a remote token; any other opens straight away.
-        remote = remoteToken === null ? null : yield* drive.refresh;
-        if (remote !== null && remoteToken !== null) yield* syncRemote(remoteToken);
+        // A drive backed by a remote brings `main` up to it before opening pins the branch's base.
+        // Unknown until read once; a drive with none never gets one.
+        if (remote !== null && remoteToken !== null) remote = yield* drive.refresh;
+        if (remote !== null && remote !== undefined && remoteToken !== null)
+          yield* syncRemote(remoteToken);
         const state = yield* drive.open;
         if (!existed || localThread !== state.thread) {
           conflicted = [];
+          // The branch may still have files where a shortcut is mounted read-only.
+          yield* shortcuts.release;
           yield* checkout(state);
         }
         turnStart = yield* git.resolve("HEAD");
+        const mounts = yield* shortcuts.mount(remoteToken);
+        return {
+          instructions: yield* instructions.compose(mounts.mounted),
+          notices: mounts.notices,
+        } satisfies PreparedDrive;
       }),
     );
 
@@ -376,7 +376,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         if (head === null) {
           return { checkpoint, outcome: { _tag: "not_landed", reason: "Nothing to save yet." } };
         }
-        if (remote !== null) {
+        if (remote !== null && remote !== undefined) {
           const refused = yield* drive.saveBranch(head);
           return {
             checkpoint,

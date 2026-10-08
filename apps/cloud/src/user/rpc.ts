@@ -41,6 +41,7 @@ import {
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
@@ -52,6 +53,7 @@ import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
+import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as UserSections from "./UserSections.ts";
@@ -243,6 +245,7 @@ export const layerHandlers = (input: {
       const sections = yield* UserSections.UserSections;
       const userDrives = yield* UserDrives.UserDrives;
       const sharing = yield* Effect.serviceOption(DriveSharing);
+      const shortcuts = yield* Effect.serviceOption(DriveShortcuts);
       const { userId, identity } = input;
       const actorNow: Effect.Effect<Actor> = Effect.map(
         Effect.orDie(userDrives.contextIds),
@@ -277,12 +280,15 @@ export const layerHandlers = (input: {
             Stream.runHead,
           );
         }).pipe(Effect.andThen(Effect.fail(new ThreadNotFoundError())));
-      const sharingCall = <A, E>(
-        call: (service: DriveSharing["Service"]) => Effect.Effect<A, E>,
-      ) =>
-        sharing._tag === "None"
-          ? Effect.fail(new SignalboxDrivesUnavailableError())
-          : call(sharing.value);
+      /** Calls a drive service, which only a cloud that stores drives has. */
+      const withDrives =
+        <S>(service: Option.Option<S>) =>
+        <A, E>(call: (value: S) => Effect.Effect<A, E>) =>
+          service._tag === "None"
+            ? Effect.fail(new SignalboxDrivesUnavailableError())
+            : call(service.value);
+      const sharingCall = withDrives(sharing);
+      const shortcutsCall = withDrives(shortcuts);
       const config = Effect.map(Clock.currentTimeMillis, (now) =>
         Environment.serverConfig(identity, DateTime.formatIso(DateTime.makeUnsafe(now))),
       );
@@ -471,6 +477,14 @@ export const layerHandlers = (input: {
           sharingCall((service) => service.unshare(request)),
         [SIGNALBOX_DRIVES_WS_METHODS.shareFolder]: (request) =>
           sharingCall((service) => service.shareFolder(request)),
+        [SIGNALBOX_DRIVES_WS_METHODS.shortcuts]: (request) =>
+          shortcutsCall((service) =>
+            Effect.map(service.list(request.driveId), (found) => ({ shortcuts: found })),
+          ),
+        [SIGNALBOX_DRIVES_WS_METHODS.addShortcut]: (request) =>
+          shortcutsCall((service) => service.add(request)),
+        [SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]: (request) =>
+          shortcutsCall((service) => service.remove(request)),
         [SIGNALBOX_PREVIEWS_WS_METHODS.subscribe]: ({ threadId }) =>
           identity.previews !== true
             ? Stream.fail(new SignalboxPreviewsUnavailableError())

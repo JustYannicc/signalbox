@@ -11,6 +11,7 @@ import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
 import { canWrite } from "./driveAccess.ts";
 import * as DriveMembers from "./DriveMembers.ts";
+import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
 
 /**
@@ -26,8 +27,11 @@ import type { ObjectType, Oid } from "./git/gitObjects.ts";
  * older generation of the thread nothing at all. Every write also needs the
  * thread's owner to still write in the drive (`DriveMembers`).
  *
- * Shortcuts are paths of the drive that another drive now holds: a folder
- * split out to be shared stays at its path as a shortcut to its own drive.
+ * Shortcuts are paths of the drive that show another drive, with its own
+ * access and history (#142): a folder split out to be shared stays at its
+ * path as a shortcut to its own drive, and anyone who changes the drive can
+ * add one to a drive they can open. The drive's own commits never hold files
+ * under a shortcut; its threads' machines mount the target there instead.
  *
  * A drive backed by a remote repository records it here. Its `main` mirrors
  * the remote's default branch instead (`mirror`), and is never reconciled:
@@ -188,8 +192,28 @@ export class DriveStore extends Context.Service<
       },
     ) => Effect.Effect<RefWrite, SqlError>;
     readonly shortcuts: Effect.Effect<ReadonlyArray<Shortcut>, SqlError>;
+    /**
+     * Adds a shortcut for a person who can change the drive's files. Refused
+     * when its path is taken by another shortcut, or is inside one or holds one.
+     */
+    readonly addShortcut: (
+      userId: string,
+      shortcut: Shortcut,
+    ) => Effect.Effect<ShortcutChange, SqlError>;
+    /** Removes the shortcut at `path`, for a person who can change the drive's files. */
+    readonly removeShortcut: (
+      userId: string,
+      path: string,
+    ) => Effect.Effect<ShortcutChange, SqlError>;
   }
 >()("@signalbox/cloud/drive/DriveStore") {}
+
+/** Whether one of two paths is the other or inside it. */
+const overlaps = (a: string, b: string) => isWithin(a, b) || isWithin(b, a);
+
+export type ShortcutChange =
+  | { readonly _tag: "ok" }
+  | { readonly _tag: "refused"; readonly reason: string };
 
 const migrations = Migrator.fromRecord({
   "0001_drive": Effect.gen(function* () {
@@ -677,6 +701,35 @@ const make = Effect.gen(function* () {
   const shortcuts: DriveStore["Service"]["shortcuts"] = sql`SELECT path, target FROM shortcuts
     ORDER BY path`.pipe(Effect.map(decodeShortcutRows));
 
+  const refuseShortcut = (reason: string) => Effect.succeed({ _tag: "refused", reason } as const);
+  const NOT_A_WRITER = "You can't change this drive.";
+
+  const addShortcut: DriveStore["Service"]["addShortcut"] = (userId, shortcut) =>
+    Effect.gen(function* () {
+      if (!canWrite(yield* members.role(userId))) return yield* refuseShortcut(NOT_A_WRITER);
+      const clash = (yield* shortcuts).find((existing) => overlaps(existing.path, shortcut.path));
+      if (clash !== undefined) {
+        return yield* refuseShortcut(
+          clash.path === shortcut.path
+            ? `${shortcut.path} is already a shortcut.`
+            : `${shortcut.path} would overlap the shortcut at ${clash.path}.`,
+        );
+      }
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`INSERT INTO shortcuts (path, target, created_at)
+        VALUES (${shortcut.path}, ${shortcut.target}, ${now})`;
+      return { _tag: "ok" } as const;
+    }).pipe(sql.withTransaction);
+
+  const removeShortcut: DriveStore["Service"]["removeShortcut"] = (userId, path) =>
+    Effect.gen(function* () {
+      if (!canWrite(yield* members.role(userId))) return yield* refuseShortcut(NOT_A_WRITER);
+      const removed = yield* sql`DELETE FROM shortcuts WHERE path = ${path} RETURNING path`;
+      return removed.length === 0
+        ? yield* refuseShortcut(`${path} isn't a shortcut.`)
+        : ({ _tag: "ok" } as const);
+    }).pipe(sql.withTransaction);
+
   return DriveStore.of({
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     open,
@@ -695,6 +748,8 @@ const make = Effect.gen(function* () {
     log,
     replaceMain,
     shortcuts,
+    addShortcut,
+    removeShortcut,
   });
 });
 

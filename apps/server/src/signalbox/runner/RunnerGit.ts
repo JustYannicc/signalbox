@@ -112,6 +112,31 @@ export const makeRunnerGit = Effect.fn("makeRunnerGit")(function* (cwd: string) 
       ? exec(["update-ref", "-d", ref]).pipe(Effect.asVoid)
       : run(["update-ref", ref, oid]).pipe(Effect.asVoid);
 
+  /**
+   * Fetches `url`'s default branch head one commit deep into `ref`. `token` is
+   * the bearer for this one command, in git's environment, never in a file.
+   */
+  const fetchHead = (url: string, ref: string, token: string) =>
+    Effect.gen(function* () {
+      const fetched = yield* exec(["fetch", "--depth=1", "--no-tags", "-q", url, `+HEAD:${ref}`], {
+        env: {
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "http.extraHeader",
+          GIT_CONFIG_VALUE_0: `Authorization: Bearer ${token}`,
+        },
+      });
+      if (fetched.code !== 0) {
+        return {
+          _tag: "failed",
+          reason: fetched.stderr.trim() || `git fetch exited ${fetched.code}`,
+        } as const;
+      }
+      const head = yield* resolve(ref);
+      return head === null
+        ? ({ _tag: "failed", reason: "The remote has no default branch yet." } as const)
+        : ({ _tag: "fetched", head } as const);
+    });
+
   const lines = (text: string) => text.split("\n").filter((line) => line.length > 0);
 
   /** What `head` changed since `base` (a commit or tree), renames detected; binary files count 0/0. */
@@ -142,7 +167,7 @@ export const makeRunnerGit = Effect.fn("makeRunnerGit")(function* (cwd: string) 
       return files;
     });
 
-  return { exec, run, resolve, isAncestor, setRef, lines, changedFiles };
+  return { exec, run, resolve, isAncestor, setRef, fetchHead, lines, changedFiles };
 });
 
 const KINDS: Record<string, DriveFileChange["kind"]> = {
