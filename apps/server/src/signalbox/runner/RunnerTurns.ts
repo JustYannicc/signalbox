@@ -40,6 +40,7 @@ import {
 import { makeProviderFailure } from "../../orchestration-v2/ProviderFailure.ts";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { HarnessStderr } from "./harnessStderr.ts";
+import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
@@ -63,6 +64,8 @@ import { isUnmeasured } from "./RunnerUsage.ts";
  * A turn with a drive works in a checkout of it (`RunnerDrive.ts`): checked
  * out before the harness starts, saved after each tool item that may change
  * files, and landed before the turn's end is reported (`RunnerTurnDrive.ts`).
+ * Once the checkout is in place, its dependency trees are brought in step
+ * with their lockfiles (`RunnerDependencies.ts`), one turn at a time.
  * Harnesses read their instructions when a session starts, so when the
  * instructions the drive's shortcuts bring change, the provider's session is
  * restarted and the thread resumed natively, which swaps them in.
@@ -158,6 +161,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** What the harness CLIs wrote to stderr, quoted in failure lines (`harnessStderr.ts`). */
   readonly stderr?: Pick<HarnessStderr, "mark" | "since">;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
+  /** Installs or reuses the dependencies in `cwd` before each turn. */
+  readonly dependencies?: RunnerDependencies;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
@@ -204,6 +209,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** Agent turns run to resolve a merge, by attempt, and their provider turns once named. */
   const mergeAttempts = new Set<RunAttemptId>();
   const mergeProviderTurns = new Set<ProviderTurnId>();
+  /** One turn readies the working directory at a time, even after a stop left one installing. */
+  const preparing = yield* Semaphore.make(1);
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null
@@ -561,10 +568,20 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         access === null || input.pinDrives === undefined
           ? null
           : yield* Effect.forkChild(input.pinDrives(access));
-      // The harness starts in the thread's branch, as the drive last saved it.
+      // The harness starts in the thread's branch, as the drive last saved it, with its dependencies.
       const opened = access === null ? null : yield* driveFor(access);
-      const prepared =
-        opened !== null && access !== null ? yield* opened.prepare(access.remoteToken) : null;
+      const prepared = yield* preparing.withPermits(1)(
+        Effect.gen(function* () {
+          const drive =
+            opened !== null && access !== null ? yield* opened.prepare(access.remoteToken) : null;
+          if (input.dependencies !== undefined) {
+            yield* input.dependencies.prepare((message) =>
+              input.emit({ kind: "drive.notice", runId: turn.runId, message }),
+            );
+          }
+          return drive;
+        }),
+      );
       yield* input.useModelToken(modelToken);
       // The harness loads its session as last saved: on a new machine, from the store.
       if (input.sessions !== undefined && sessionAccess !== null) {

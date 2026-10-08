@@ -359,6 +359,25 @@ deploy passes both variables from the `cloud-production` environment only, so
 previews send nothing. CPU, memory, disk and egress are measured in the
 Runner's container on the VM, so a local Runner host on a Mac reports none.
 
+### Dependency and build caches
+
+A machine's caches live on its disk next to the checkouts, never in a drive.
+Package-manager stores and download caches (pnpm's store, npm's cache,
+Corepack, `XDG_CACHE_HOME`) are under `caches/<toolchain>` in the machine's
+home (`apps/server/src/signalbox/runner/RunnerCaches.ts`), one directory per
+OS, libc, architecture and Node major, and the harnesses see them through the
+environment. Before each turn, after the checkout is synced, the Runner finds
+every pnpm or npm lockfile up to two folders deep and keys it on the lockfile,
+the package manager's other install inputs and the toolchain
+(`RunnerDependencies.ts`). An unchanged key reuses `node_modules` and the
+build caches tools keep in it. A changed key, or an install that never
+finished, discards every `node_modules` under that folder and installs fresh
+from the warm store, so nothing built against the old dependencies survives.
+An install that failed is not retried until its key changes. A drive never
+saves `node_modules`, whatever the repository's own ignore files say. The
+image enables Corepack, so a project's `packageManager` picks the pnpm or
+yarn the agent's shell runs.
+
 ## Deploying
 
 `.github/workflows/deploy-cloud.yml` builds the web app and runs `wrangler
