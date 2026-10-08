@@ -25,6 +25,8 @@ import type { ChildProcessSpawner } from "effect/process";
 
 import { makeRunnerAdapters } from "./RunnerAdapters.ts";
 import { layerSessionQueryRunner } from "./RunnerClaudeSessions.ts";
+import { makeContextClient } from "./RunnerContextClient.ts";
+import { startContextServer, withContextServer } from "./RunnerContextServer.ts";
 import { makeRunnerDrive } from "./RunnerDrive.ts";
 import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { machineLayout, writeModelToken } from "./RunnerModelAccess.ts";
@@ -60,6 +62,11 @@ export interface RunnerHostConfig {
   readonly imageVersion: string;
   /** Sent in every `hello`. */
   readonly build: RunnerBuild;
+  /**
+   * Where each Runner mounts `/drives` (#141): only on a thread's own VM,
+   * where one Runner runs at a time. Absent: the context tool alone reads it.
+   */
+  readonly drivesMountPoint?: string;
 }
 
 interface HostedRunner {
@@ -110,10 +117,17 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             cloudUrl,
             codexHome: machineLayout(path, root).codexHome,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
+          // Every drive the user can read, for the harnesses (#141).
+          const context = yield* startContextServer({
+            mountPoint: config.drivesMountPoint ?? null,
+          });
           const { adapters, layout, stderr } = yield* makeRunnerAdapters({
             root,
             gatewayUrl: request.modelGatewayUrl,
-            claudeQueryRunner: layerSessionQueryRunner(sessions.claude),
+            claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
+              withContextServer(runner, context.mcpUrl),
+            ),
+            contextMcpUrl: context.mcpUrl,
           });
           const usage = yield* makeRunnerUsage(config.home);
           const session = yield* makeRunnerSession({
@@ -141,6 +155,11 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                     makeRunnerDrive({ cwd, client }),
                   ).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices)),
                 sessions,
+                pinDrives: (access) =>
+                  makeContextClient({ cloudUrl, access }).pipe(
+                    Effect.provide(FetchHttpClient.layer),
+                    Effect.flatMap(context.pin),
+                  ),
               }),
           });
           yield* runPreviewTunnel({

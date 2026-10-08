@@ -41,6 +41,7 @@ export const makeDriveObjectApi = (
     shortcuts: () => run(store.use((s) => s.shortcuts)),
     addShortcut: (userId, shortcut) => run(store.use((s) => s.addShortcut(userId, shortcut))),
     removeShortcut: (userId, path) => run(store.use((s) => s.removeShortcut(userId, path))),
+    unreconciled: (input) => run(store.use((s) => s.unreconciled(input))),
     setup: (input) => changingAccess(run(members.use((m) => m.setup(input)))),
     driveName: () => run(members.use((m) => m.name)),
     role: (userId) => run(members.use((m) => m.role(userId))),

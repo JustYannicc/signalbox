@@ -108,6 +108,17 @@ export interface StoredCommit {
   readonly message: string;
 }
 
+/** A thread's latest work in the drive that `main` doesn't hold yet. */
+export interface UnreconciledWork {
+  readonly threadId: string;
+  /** Its latest ref, whichever it moved last: the auto-save or the branch. */
+  readonly commit: Oid;
+  /** Where the work leaves `main`: their newest shared commit, else the base the thread opened at. */
+  readonly base: Oid | null;
+  /** When it was saved, in milliseconds since the epoch. */
+  readonly at: number;
+}
+
 /** Where an object's bytes are: a span of one pack. */
 export interface ObjectLocation {
   readonly oid: Oid;
@@ -205,6 +216,11 @@ export class DriveStore extends Context.Service<
       userId: string,
       path: string,
     ) => Effect.Effect<ShortcutChange, SqlError>;
+    /** The `limit` most recently saved pieces of work `main` doesn't hold, newest first; or just `threadId`'s. */
+    readonly unreconciled: (input: {
+      readonly limit: number;
+      readonly threadId?: string;
+    }) => Effect.Effect<ReadonlyArray<UnreconciledWork>, SqlError>;
   }
 >()("@signalbox/cloud/drive/DriveStore") {}
 
@@ -335,6 +351,16 @@ const decodeShortcutRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.String })),
 );
 const OidRows = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ oid: Schema.String })));
+const decodeWorkRows = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({
+      thread_id: Schema.String,
+      base: Schema.NullOr(Schema.String),
+      head: Schema.String,
+      at: Schema.Number,
+    }),
+  ),
+);
 
 const toCommit = (row: typeof CommitRow.Type): StoredCommit => ({
   oid: row.oid,
@@ -730,6 +756,56 @@ const make = Effect.gen(function* () {
         : ({ _tag: "ok" } as const);
     }).pipe(sql.withTransaction);
 
+  /** Every commit `main` reaches, as a recursive CTE to join against. */
+  const REACH = sql`reach(oid) AS (
+      SELECT oid FROM refs WHERE name = ${MAIN_REF}
+      UNION
+      SELECT p.parent FROM commit_parents p JOIN reach r ON p.oid = r.oid
+    )`;
+
+  const unreconciled: DriveStore["Service"]["unreconciled"] = ({ limit, threadId }) =>
+    Effect.gen(function* () {
+      const moved = sql`(b.oid IS NOT NULL OR w.oid IS NOT NULL)`;
+      // Each thread's latest ref, whichever it moved last, unless `main` already holds it.
+      const rows = decodeWorkRows(
+        yield* sql`WITH RECURSIVE ${REACH},
+          heads AS (
+            SELECT t.thread_id, t.base,
+              CASE WHEN w.oid IS NOT NULL AND (b.oid IS NULL OR w.updated_at >= b.updated_at)
+                THEN w.oid ELSE b.oid END AS head,
+              max(coalesce(b.updated_at, 0), coalesce(w.updated_at, 0)) AS at
+            FROM threads t
+            LEFT JOIN refs b ON b.name = 'threads/' || t.thread_id
+            LEFT JOIN refs w ON w.name = 'wip/' || t.thread_id
+            WHERE ${sql.and(threadId === undefined ? [moved] : [moved, sql`t.thread_id = ${threadId}`])}
+          )
+          SELECT thread_id, base, head, at FROM heads
+          WHERE head NOT IN (SELECT oid FROM reach)
+          ORDER BY at DESC LIMIT ${limit}`,
+      );
+      // Where the work leaves `main`: its newest ancestor `main` holds, so files
+      // other threads landed (and this one merged in) aren't counted as its own.
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.map(
+          sql`WITH RECURSIVE ${REACH},
+            up(oid) AS (
+              SELECT ${row.head}
+              UNION
+              SELECT p.parent FROM commit_parents p JOIN up u ON p.oid = u.oid
+              WHERE u.oid NOT IN (SELECT oid FROM reach)
+            )
+            SELECT c.oid FROM up JOIN commits c ON c.oid = up.oid
+            WHERE up.oid IN (SELECT oid FROM reach) ORDER BY c.time DESC LIMIT 1`,
+          (found): UnreconciledWork => ({
+            threadId: row.thread_id,
+            commit: row.head,
+            base: OidRows(found)[0]?.oid ?? row.base,
+            at: row.at,
+          }),
+        ),
+      );
+    });
+
   return DriveStore.of({
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     open,
@@ -750,6 +826,7 @@ const make = Effect.gen(function* () {
     shortcuts,
     addShortcut,
     removeShortcut,
+    unreconciled,
   });
 });
 

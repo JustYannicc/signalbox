@@ -1,5 +1,6 @@
 import {
   DRIVE_COMMIT_AUTHOR,
+  DRIVE_MERGE_MESSAGE,
   type DriveFileChange,
   type DriveRemote,
 } from "@signalbox/runner-protocol/DriveProtocol";
@@ -212,7 +213,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           "--no-edit",
           "--allow-unrelated-histories",
           "-m",
-          "Merge main",
+          DRIVE_MERGE_MESSAGE,
           "refs/drive/main",
         ]);
         if (merge.code !== 0) {

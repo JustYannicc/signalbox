@@ -22,6 +22,7 @@ import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import type * as PlatformError from "effect/PlatformError";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
@@ -161,6 +162,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
   readonly sessions?: RunnerSessions;
+  /** Pins this turn's view of every drive the user can read (#141). Never fails. */
+  readonly pinDrives?: (access: DriveAccess) => Effect.Effect<void>;
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
@@ -552,6 +555,12 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       };
       latestRunId = turn.runId;
       latestTraceId = turn.traceId;
+      // `/drives` and the context tool read one version of everything for the whole
+      // turn; the view is taken while the checkout and session load.
+      const pinning =
+        access === null || input.pinDrives === undefined
+          ? null
+          : yield* Effect.forkChild(input.pinDrives(access));
       // The harness starts in the thread's branch, as the drive last saved it.
       const opened = access === null ? null : yield* driveFor(access);
       const prepared =
@@ -564,6 +573,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       }
       const session = yield* sessionFor(adapter, turn, runtimePolicy, prepared?.instructions ?? "");
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
+      if (pinning !== null) yield* Fiber.join(pinning);
       const started = yield* ordered.withPermits(1)(
         Effect.gen(function* () {
           // Stopped while the session loaded: the thread already ended the run.

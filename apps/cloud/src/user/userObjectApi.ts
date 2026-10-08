@@ -1,4 +1,4 @@
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { wire } from "../thread/threadWire.ts";
@@ -59,5 +59,12 @@ export const makeUserObjectApi = (
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),
     driveAccess: (driveId) => run(UserDrives.UserDrives.use((drives) => drives.access(driveId))),
+    readableDrives: () =>
+      run(
+        Effect.all({
+          contexts: UserContexts.UserContexts.use((contexts) => contexts.contexts),
+          drives: UserDrives.UserDrives.use((drives) => drives.drives),
+        }),
+      ),
   };
 };

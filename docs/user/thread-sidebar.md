@@ -54,6 +54,11 @@ Right-click a shortcut and choose **Remove shortcut** to take it away; threads s
 its instructions, from their next message. Agents can load up to 64 KiB of instructions: if a drive
 and its shortcuts bring more, the message fails and says which files to shorten.
 
+Agents read every drive you can, in every context, but change only the drive their thread works in.
+To reuse work, tell the agent where it happened, like "in Billing we added a dark mode toggle, do the
+same here". It finds the thread and its changes and redoes them in its own drive. If it can't find
+enough to go on, it says so instead of guessing.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model

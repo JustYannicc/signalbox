@@ -16,8 +16,14 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
+import {
+  contextResponse,
+  isContextApiPath,
+  serveContextRequest,
+} from "../context/contextRoutes.ts";
+import * as ContextTool from "../context/ContextTool.ts";
 import * as GitHub from "../github/GitHub.ts";
-import { type ThreadObjectNamespace, threadObjectStub } from "../thread/ThreadDirectory.ts";
+import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as DriveDirectory from "./DriveDirectory.ts";
@@ -46,7 +52,7 @@ import { shortcutRoute } from "./shortcutRoutes.ts";
  */
 
 export interface DriveRouteEnv extends GitHub.GitHubEnv {
-  readonly THREADS: ThreadObjectNamespace;
+  readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
   readonly USERS: UserDirectory.UserObjectNamespace;
   readonly DRIVES: DriveDirectory.DriveObjectNamespace;
   readonly DRIVE_PACKS: DrivePacks.PackBucket;
@@ -56,7 +62,8 @@ type Services =
   | DriveDirectory.DriveDirectory
   | DrivePacks.DrivePacks
   | UserDirectory.UserDirectory
-  | GitHub.GitHub;
+  | GitHub.GitHub
+  | ContextTool.ContextTool;
 
 export const isDriveApiPath = (pathname: string) => pathname.startsWith(`${DRIVE_API_PREFIX}/`);
 
@@ -88,7 +95,7 @@ async function authorize(
   const name = threadOfDriveToken(token);
   const threadId = name === null ? null : decodeThreadId(name);
   if (threadId === null || threadId._tag === "None") return text("Not a drive token.", 401);
-  const verdict = await threadObjectStub(env.THREADS, threadId.value, {
+  const verdict = await ThreadDirectory.threadObjectStub(env.THREADS, threadId.value, {
     localWorkerd,
   }).authorizeDrive(token);
   switch (verdict._tag) {
@@ -110,12 +117,19 @@ export async function handleDriveRequest(
   options: { readonly localWorkerd: boolean },
 ): Promise<Response> {
   runtime ??= ManagedRuntime.make(
-    Layer.mergeAll(
-      DriveDirectory.layerDurableObjects(env.DRIVES, options),
-      DrivePacks.layerBucket(env.DRIVE_PACKS),
-      UserDirectory.layerDurableObjects(env.USERS, options),
-      // Only users' own tokens act on GitHub here; the App's client stays in their objects.
-      GitHub.layer(null, GitHub.gitHubEndpoints(env)).pipe(Layer.provide(FetchHttpClient.layer)),
+    ContextTool.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          DriveDirectory.layerDurableObjects(env.DRIVES, options),
+          DrivePacks.layerBucket(env.DRIVE_PACKS),
+          UserDirectory.layerDurableObjects(env.USERS, options),
+          ThreadDirectory.layerDurableObjects(env.THREADS, options),
+          // Only users' own tokens act on GitHub here; the App's client stays in their objects.
+          GitHub.layer(null, GitHub.gitHubEndpoints(env)).pipe(
+            Layer.provide(FetchHttpClient.layer),
+          ),
+        ),
+      ),
     ),
   );
   try {
@@ -137,6 +151,15 @@ async function route(
 ): Promise<Response> {
   const auth = await authorize(env, request, options.localWorkerd);
   if (auth instanceof Response) return auth;
+  // Reading beyond the thread's own drive (#141): what its owner can read, never write.
+  if (isContextApiPath(new URL(request.url).pathname)) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    const reader = { userId: auth.userId, threadId: auth.threadId, driveId: auth.driveId };
+    const path = new URL(request.url).pathname;
+    return contextResponse(
+      await runtime!.runPromise(serveContextRequest(reader, path, await request.text())),
+    );
+  }
   const packsAfter = Number(request.headers.get(PACKS_AFTER_HEADER) ?? 0);
   const writer: DriveWriter = {
     threadId: auth.threadId,
