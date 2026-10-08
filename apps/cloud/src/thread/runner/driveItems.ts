@@ -7,12 +7,11 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
-  type OrchestrationV2TurnItem,
   TurnItemId,
 } from "@t3tools/contracts";
 
-import { type DecisionContext, turnItemEvent, unstampedEventId } from "../threadEvents.ts";
-import { positionTurnItem } from "./runnerEvents.ts";
+import { type DecisionContext, unstampedEventId } from "../threadEvents.ts";
+import { systemNoticeEvents } from "./runnerEvents.ts";
 
 /**
  * What a Runner's drive reports become in a thread's log. A turn's saved
@@ -116,23 +115,14 @@ export function noticeEvents(
     (candidate) =>
       candidate.runId === run.id && candidate.id.startsWith(`turn-item:${run.id}:drive:`),
   ).length;
-  const notice: OrchestrationV2TurnItem = {
-    id: TurnItemId.make(`turn-item:${run.id}:drive:${count + 1}`),
-    threadId: projection.thread.id,
-    runId: run.id,
-    nodeId: run.rootNodeId,
-    providerThreadId: run.providerThreadId,
-    providerTurnId: null,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal: 0,
-    status: "completed",
-    title: "Drive",
-    startedAt: ctx.now,
-    completedAt: ctx.now,
-    updatedAt: ctx.now,
-    type: "system_notice",
-    message: item.message,
-  };
-  return [turnItemEvent(ctx, positionTurnItem(projection, notice))];
+  return systemNoticeEvents(
+    projection,
+    run,
+    {
+      id: TurnItemId.make(`turn-item:${run.id}:drive:${count + 1}`),
+      title: "Drive",
+      message: item.message,
+    },
+    ctx,
+  );
 }

@@ -183,7 +183,9 @@ export function startRunEvents(
 export type RunEnding = "completed" | "interrupted" | "failed";
 
 /**
- * Ends `run` and starts the next queued run unless the queue is held.
+ * Ends `run`. `queue` says what the queued runs do: `advance` (the default)
+ * starts the next one, `hold` holds them all until `queue.resume`, and `keep`
+ * leaves them as they are, for a run that continues this one ahead of them.
  * `leading` events (the provider's last transcript rows) go first, so the
  * transcript settles before the run reads as done.
  */
@@ -193,7 +195,7 @@ export function finishRunEvents(
   status: RunEnding,
   ctx: DecisionContext,
   options: {
-    readonly holdQueue?: boolean;
+    readonly queue?: "advance" | "hold" | "keep";
     readonly leading?: ReadonlyArray<OrchestrationV2DomainEvent>;
   } = {},
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
@@ -201,10 +203,11 @@ export function finishRunEvents(
   const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const queued = queuedRuns(projection);
-  const holdQueue = options.holdQueue === true;
-  const [next, ...rest] = holdQueue
-    ? []
-    : queued.filter((candidate) => candidate.queueHeld !== true);
+  const holdQueue = options.queue === "hold";
+  const [next, ...rest] =
+    (options.queue ?? "advance") === "advance"
+      ? queued.filter((candidate) => candidate.queueHeld !== true)
+      : [];
   return [
     ...(options.leading ?? []),
     ...(attempt === undefined

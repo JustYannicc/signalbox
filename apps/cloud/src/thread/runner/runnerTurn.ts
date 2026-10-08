@@ -30,6 +30,7 @@ import {
   type Json,
   recordedEvents,
   stringField,
+  systemNoticeEvents,
 } from "./runnerEvents.ts";
 
 /**
@@ -89,6 +90,9 @@ export function runnerTurnFor(projection: Projection): RunnerTurn | null {
     modelSelection: run.modelSelection,
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
+    ...(run.restartContinuationOfRunId === undefined
+      ? {}
+      : { restartContinuationOfRunId: run.restartContinuationOfRunId }),
   };
 }
 
@@ -238,6 +242,18 @@ function itemEvents(
       return checkpointEvents(projection, run, item, ctx);
     case "drive.notice":
       return noticeEvents(projection, run, item, ctx);
+    // Why the Runner stopped the turn.
+    case "session.notice":
+      return systemNoticeEvents(
+        projection,
+        run,
+        {
+          id: TurnItemId.make(`turn-item:${run.id}:session`),
+          title: "Session",
+          message: item.message,
+        },
+        ctx,
+      );
   }
 }
 

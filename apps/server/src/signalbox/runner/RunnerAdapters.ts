@@ -33,17 +33,24 @@ import {
  * services those constructors ask for are provided, not the server's layer
  * graph, so the Runner carries no settings store, MCP server or session
  * database, and an upstream change to an adapter reaches the Runner through a
- * normal merge.
+ * normal merge. The Claude query runner can be swapped, which is how its
+ * session reaches the thread (`RunnerClaudeSessions.ts`).
  */
+
+type ClaudeQueryRunnerLayer = typeof layerClaudeQueryRunner;
 
 /**
  * What the adapter constructors need. The server config only supplies paths
  * under `home`; the adapters read nothing else from it. `environment` is all
  * of the host's environment the harnesses see.
  */
-const layerAdapterServices = (home: string, environment: NodeJS.ProcessEnv) =>
+const layerAdapterServices = (
+  home: string,
+  environment: NodeJS.ProcessEnv,
+  claudeQueryRunner: ClaudeQueryRunnerLayer,
+) =>
   Layer.mergeAll(
-    layerClaudeQueryRunner,
+    claudeQueryRunner,
     layerCodexClientFactory,
     IdAllocator.layer,
     ServerConfig.layerTest(home, home),
@@ -66,6 +73,8 @@ const layerAdapterServices = (home: string, environment: NodeJS.ProcessEnv) =>
 export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (machine: {
   readonly root: string;
   readonly gatewayUrl: string;
+  /** Claude's query runner; upstream's own by default. */
+  readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
   yield* prepareMachine(layout, machine.gatewayUrl);
@@ -73,6 +82,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
     layerAdapterServices(
       machine.root,
       harnessEnvironment(yield* HostProcessEnvironment, layout, machine.gatewayUrl),
+      machine.claudeQueryRunner ?? layerClaudeQueryRunner,
     ),
   );
   const common = { displayName: undefined, environment: [], enabled: true } as const;

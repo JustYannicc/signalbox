@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 
 import { jsonCodec as frameCodec } from "./jsonCodec.ts";
 import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
+import { SessionAccess } from "./SessionProtocol.ts";
 
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
@@ -48,13 +49,18 @@ import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
  * before it reports the turn's end, reporting the turn's commit as a
  * checkpoint.
  *
+ * Each turn also carries the thread's session token (`SessionProtocol.ts`):
+ * the Runner streams the harness's own session rows to the thread as they are
+ * written, restores them on a new machine before it resumes the harness, and
+ * reports a message complete only once its rows are durable.
+ *
  * The machine holds no provider keys. Its harnesses reach the models through
  * the ModelGateway named in `MachineEnsureRequest`, with the model token each
  * `turn.start` carries. That token works for that thread, provider and turn
  * only, and stops working when the turn ends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 3;
+export const RUNNER_PROTOCOL_VERSION = 4;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -83,6 +89,12 @@ export const RunnerTurn = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /**
+   * Set when this run continues one its machine was lost under: the harness
+   * resumes its restored session and carries on, rather than taking `message`
+   * as a new request where the adapter can (Codex continues natively).
+   */
+  restartContinuationOfRunId: Schema.optional(RunId),
 });
 export type RunnerTurn = typeof RunnerTurn.Type;
 
@@ -116,6 +128,15 @@ export const RunnerItem = Schema.Union([
   /** Something about the drive the thread's transcript should say, such as a merge conflict. */
   Schema.Struct({
     kind: Schema.Literal("drive.notice"),
+    runId: RunId,
+    message: Schema.String,
+  }),
+  /**
+   * The harness's session could not be saved, so the Runner stopped the turn
+   * rather than go on with rows that would be lost with the machine.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("session.notice"),
     runId: RunId,
     message: Schema.String,
   }),
@@ -188,6 +209,8 @@ export const ThreadMessage = Schema.Union([
     modelToken: Schema.String,
     /** The drive the turn works in. Null when this cloud stores no drives. */
     drive: Schema.NullOr(DriveAccess),
+    /** Where the harness's session rows go. */
+    sessions: SessionAccess,
   }),
   Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),

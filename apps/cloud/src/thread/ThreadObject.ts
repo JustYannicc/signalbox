@@ -29,6 +29,8 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import * as SessionRows from "./session/SessionRows.ts";
+import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -74,7 +76,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: ThreadObjectEnv) =>
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(layerMachineBackend(env).pipe(Layer.provide(FetchHttpClient.layer))),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
-      Layer.provideMerge(ThreadStore.layer),
+      Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
       Layer.provideMerge(
         UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
       ),
@@ -147,8 +149,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     );
   }
 
-  /** The Runner's socket. The Worker forwards only upgrades on `RUNNER_CONNECT_PATH` here. */
-  override async fetch() {
+  /**
+   * The Runner's socket, and its session API (`session/sessionRoutes.ts`). The
+   * Worker forwards only upgrades on `RUNNER_CONNECT_PATH` and session API calls here.
+   */
+  override async fetch(request: Request) {
+    if (isSessionApiPath(new URL(request.url).pathname)) {
+      return handleSessionRequest(request, (effect) => this.runtime.runPromise(effect));
+    }
     return acceptRunnerSocket(this.ctx);
   }
 

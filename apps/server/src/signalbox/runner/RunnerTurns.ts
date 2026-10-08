@@ -1,5 +1,6 @@
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { RunnerItem, RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import {
   MessageId,
   type OrchestrationV2ProviderThread,
@@ -16,6 +17,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import type * as PlatformError from "effect/PlatformError";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -30,6 +32,7 @@ import {
 import { makeProviderFailure } from "../../orchestration-v2/ProviderFailure.ts";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
+import type { RunnerSessions } from "./RunnerSessions.ts";
 import { FILE_CHANGING_ITEMS, finishDriveTurn } from "./RunnerTurnDrive.ts";
 
 /**
@@ -48,6 +51,13 @@ import { FILE_CHANGING_ITEMS, finishDriveTurn } from "./RunnerTurnDrive.ts";
  * A turn with a drive works in a checkout of it (`RunnerDrive.ts`): checked
  * out before the harness starts, saved after each tool item that may change
  * files, and landed before the turn's end is reported (`RunnerTurnDrive.ts`).
+ *
+ * The harness's own session leaves the machine as it is written
+ * (`RunnerSessions.ts`): it is restored before the harness loads it, an event
+ * reporting something complete waits until the rows behind it are durable,
+ * and a turn whose rows stop being saved is stopped. A turn that continues one
+ * lost with its machine (`restartContinuationOfRunId`) resumes the restored
+ * session natively.
  */
 
 export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("RunnerTurnError", {
@@ -55,12 +65,16 @@ export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("Runn
 }) {}
 
 export interface RunnerTurns {
-  /** Starts a turn. A run already started is ignored, so the thread can repeat itself. */
-  readonly start: (
-    turn: RunnerTurn,
-    modelToken: string,
-    drive?: DriveAccess | null,
-  ) => Effect.Effect<void>;
+  /**
+   * Starts a turn, as `turn.start` hands it over. A run already started is
+   * ignored, so the thread can repeat itself.
+   */
+  readonly start: (start: {
+    readonly turn: RunnerTurn;
+    readonly modelToken: string;
+    readonly drive?: DriveAccess | null;
+    readonly sessions?: SessionAccess | null;
+  }) => Effect.Effect<void>;
   /** Stops `runId`, wherever it is: loading, or running on the harness. */
   readonly interrupt: (runId: RunId) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
@@ -93,6 +107,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
+  /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
+  readonly sessions?: RunnerSessions;
 }) {
   const scope = yield* Effect.scope;
   const sessions = new Map<ProviderInstanceId, ProviderAdapterV2SessionRuntime>();
@@ -275,7 +291,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       return true;
     });
 
-  const forward = (instanceId: ProviderInstanceId, runtime: ProviderAdapterV2SessionRuntime) => {
+  const forward = (adapter: ProviderAdapterV2Shape, runtime: ProviderAdapterV2SessionRuntime) => {
+    const instanceId = adapter.instanceId;
     const filterAssistant = makeAssistantStreamingFilter(
       DEFAULT_SERVER_SETTINGS.responseStreamingMode,
     );
@@ -284,6 +301,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       Effect.gen(function* () {
         const delivered = filterAssistant(event, yield* Clock.currentTimeMillis);
         if (delivered === null || runId === null) return;
+        // Complete only once the rows behind it would survive this machine.
+        if (input.sessions !== undefined) yield* input.sessions.settle(adapter.driver, delivered);
         const stored =
           delivered.type === "turn_item.updated"
             ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
@@ -329,7 +348,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         })
         .pipe(Scope.provide(scope));
       sessions.set(adapter.instanceId, runtime);
-      yield* forward(adapter.instanceId, runtime).pipe(Effect.forkIn(scope));
+      yield* forward(adapter, runtime).pipe(Effect.forkIn(scope));
       return runtime;
     });
 
@@ -371,7 +390,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     }));
   };
 
-  const run = (turn: RunnerTurn, modelToken: string, access: DriveAccess | null, state: Turn) =>
+  const run = (
+    turn: RunnerTurn,
+    modelToken: string,
+    access: DriveAccess | null,
+    sessionAccess: SessionAccess | null,
+    state: Turn,
+  ) =>
     Effect.gen(function* () {
       const adapter = input.adapters.get(turn.modelSelection.instanceId);
       if (adapter === undefined) {
@@ -389,6 +414,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       const opened = access === null ? null : yield* driveFor(access);
       if (opened !== null) yield* opened.prepare;
       yield* input.useModelToken(modelToken);
+      // The harness loads its session as last saved: on a new machine, from the store.
+      if (input.sessions !== undefined && sessionAccess !== null) {
+        yield* input.sessions.use(sessionAccess);
+        yield* input.sessions.prepare(adapter.driver);
+      }
       const session = yield* sessionFor(adapter, turn, runtimePolicy);
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
       // Stopped while the session loaded: the thread already ended the run.
@@ -417,6 +447,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         message: turn.message,
         modelSelection: turn.modelSelection,
         runtimePolicy,
+        ...(turn.restartContinuationOfRunId === undefined
+          ? {}
+          : { restartContinuationOfRunId: turn.restartContinuationOfRunId }),
       });
     }).pipe(
       Effect.catchCause((cause) =>
@@ -432,7 +465,12 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       ),
     );
 
-  const start: RunnerTurns["start"] = (turn, modelToken, access = null) =>
+  const start: RunnerTurns["start"] = ({
+    turn,
+    modelToken,
+    drive: access = null,
+    sessions: sessionAccess = null,
+  }) =>
     Effect.suspend(() => {
       if (taken.has(turn.runId)) return Effect.void;
       taken.add(turn.runId);
@@ -445,7 +483,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         providerTurnId: null,
       };
       turns.set(turn.runId, state);
-      return Effect.asVoid(run(turn, modelToken, access, state).pipe(Effect.forkIn(scope)));
+      return Effect.asVoid(
+        run(turn, modelToken, access, sessionAccess, state).pipe(Effect.forkIn(scope)),
+      );
     });
 
   const interrupt: RunnerTurns["interrupt"] = (runId) =>
@@ -469,6 +509,25 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         discard: true,
       },
     );
+
+  // Rows that stop being saved stop the turn that writes them, and say why.
+  if (input.sessions !== undefined) {
+    yield* Queue.take(input.sessions.failures).pipe(
+      Effect.flatMap((message) =>
+        Effect.gen(function* () {
+          const runId = latestRunId;
+          const live = runId === null ? undefined : turns.get(runId);
+          if (runId === null || live === undefined || live.status === "stopped") {
+            return yield* Effect.logWarning("session rows are not being saved", message);
+          }
+          yield* input.emit({ kind: "session.notice", runId, message });
+          yield* interrupt(runId);
+        }),
+      ),
+      Effect.forever,
+      Effect.forkIn(scope),
+    );
+  }
 
   return { start, interrupt, keepOnly } satisfies RunnerTurns;
 });

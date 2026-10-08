@@ -6,6 +6,7 @@ import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
 import { authorizeModel } from "./thread/runner/modelGrants.ts";
 import { connectRunner, isRunnerConnectPath } from "./thread/runner/runnerRoute.ts";
+import { forwardSessionRequest, isSessionApiPath } from "./thread/session/sessionRoutes.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 
@@ -54,6 +55,9 @@ export default {
     );
     if (pathname === "/ws") return app.webSocket(request);
     if (isRunnerConnectPath(pathname)) return connectRunner(env.THREADS, request, { localWorkerd });
+    if (isSessionApiPath(pathname)) {
+      return forwardSessionRequest(env.THREADS, request, { localWorkerd });
+    }
     if (isDriveApiPath(pathname)) {
       return env.DRIVES === undefined || env.DRIVE_PACKS === undefined
         ? new Response("This cloud stores no drives.", { status: 404 })
