@@ -3,18 +3,23 @@ import {
   DRIVE_PATHS,
   type DriveState,
   driveJson,
+  Oid,
   PACK_INDEX_LENGTH_HEADER,
   PACKS_AFTER_HEADER,
   type RefWriteResult,
+  REMOTE_HEAD_HEADER,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
+import * as GitHub from "../github/GitHub.ts";
 import { type ThreadObjectNamespace, threadObjectStub } from "../thread/ThreadDirectory.ts";
 import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
+import * as UserDirectory from "../user/UserDirectory.ts";
 import * as DriveDirectory from "./DriveDirectory.ts";
 import * as DrivePacks from "./DrivePacks.ts";
 import {
@@ -26,19 +31,30 @@ import {
 } from "./DriveStore.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import { threadOfDriveToken } from "./driveToken.ts";
+import { forwardRemote, isRemoteHead, proxyRemote } from "./remoteRoutes.ts";
 
 /**
  * The drive API a thread's Runner calls (`DriveProtocol.ts`). Each request
  * carries the thread's drive token; the thread's object says whether it is
  * good and for which drive and machine generation, and the drive's object
- * decides what that writer may do. Nothing here trusts the Runner further.
+ * decides what that writer may do. Nothing here trusts the Runner further: a
+ * remote-backed drive's `main` only ever moves to what the remote itself says
+ * its head is (`remoteRoutes.ts`), and its remote is reached with the
+ * thread's own remote token, never the drive token.
  */
 
-export interface DriveRouteEnv {
+export interface DriveRouteEnv extends GitHub.GitHubEnv {
   readonly THREADS: ThreadObjectNamespace;
+  readonly USERS: UserDirectory.UserObjectNamespace;
   readonly DRIVES: DriveDirectory.DriveObjectNamespace;
   readonly DRIVE_PACKS: DrivePacks.PackBucket;
 }
+
+type Services =
+  | DriveDirectory.DriveDirectory
+  | DrivePacks.DrivePacks
+  | UserDirectory.UserDirectory
+  | GitHub.GitHub;
 
 export const isDriveApiPath = (pathname: string) => pathname.startsWith(`${DRIVE_API_PREFIX}/`);
 
@@ -63,7 +79,11 @@ const toState = (driveId: string, refs: ThreadRefs): DriveState => ({
   wip: refs.wip,
   base: refs.base,
   packs: refs.packs,
+  remote: refs.remote,
+  shallow: refs.shallow,
 });
+
+const decodeOid = Schema.decodeUnknownOption(Oid);
 
 const toResult = (driveId: string, write: RefWrite): RefWriteResult =>
   write._tag === "refused" ? write : { _tag: write._tag, state: toState(driveId, write.refs) };
@@ -81,12 +101,17 @@ async function authorize(
   const verdict = await threadObjectStub(env.THREADS, threadId.value, {
     localWorkerd,
   }).authorizeDrive(token);
-  return verdict._tag === "granted" ? verdict : text(verdict.reason, 403);
+  switch (verdict._tag) {
+    case "granted":
+      return verdict;
+    case "denied":
+      return text(verdict.reason, 403);
+    case "unavailable":
+      return text("The drive is unavailable right now.", 503);
+  }
 }
 
-let runtime:
-  | ManagedRuntime.ManagedRuntime<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks, never>
-  | undefined;
+let runtime: ManagedRuntime.ManagedRuntime<Services, never> | undefined;
 
 /** One drive API request. Anything unexpected is logged and answered 500, which the Runner retries. */
 export async function handleDriveRequest(
@@ -98,9 +123,16 @@ export async function handleDriveRequest(
     Layer.mergeAll(
       DriveDirectory.layerDurableObjects(env.DRIVES, options),
       DrivePacks.layerBucket(env.DRIVE_PACKS),
+      UserDirectory.layerDurableObjects(env.USERS, options),
+      // Only users' own tokens act on GitHub here; the App's client stays in their objects.
+      GitHub.layer(null, GitHub.gitHubEndpoints(env)).pipe(Layer.provide(FetchHttpClient.layer)),
     ),
   );
   try {
+    if (new URL(request.url).pathname.startsWith(`${DRIVE_PATHS.remote}/`)) {
+      const resolved = await runtime.runPromise(proxyRemote(env.THREADS, request, options));
+      return resolved instanceof Response ? resolved : await forwardRemote(request, resolved);
+    }
     return await route(env, request, options);
   } catch (cause) {
     await runtime.runPromise(Effect.logError("drive request failed", { cause: String(cause) }));
@@ -118,14 +150,13 @@ async function route(
   const packsAfter = Number(request.headers.get(PACKS_AFTER_HEADER) ?? 0);
   const writer: DriveWriter = {
     threadId: auth.threadId,
+    userId: auth.userId,
     generation: auth.generation,
     live: auth.live,
     packsAfter: Number.isSafeInteger(packsAfter) && packsAfter > 0 ? packsAfter : 0,
   };
   const { pathname } = new URL(request.url);
-  const run = <A, E>(
-    effect: Effect.Effect<A, E, DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
-  ) => runtime!.runPromise(effect);
+  const run = <A, E>(effect: Effect.Effect<A, E, Services>) => runtime!.runPromise(effect);
   const drive = DriveDirectory.DriveDirectory.use((directory) =>
     Effect.succeed(directory.forDrive(auth.driveId)),
   );
@@ -158,11 +189,26 @@ async function route(
         ? text(opened.reason, 403)
         : json(driveJson.state.encode(toState(auth.driveId, opened.refs)));
     }
+    case DRIVE_PATHS.state: {
+      const refs = await run(
+        Effect.flatMap(drive, (handle) => handle.refs(auth.threadId, writer.packsAfter)),
+      );
+      return json(driveJson.state.encode(toState(auth.driveId, refs)));
+    }
     case DRIVE_PATHS.packs: {
       const idxLength = Number(request.headers.get(PACK_INDEX_LENGTH_HEADER));
       const body = new Uint8Array(await request.arrayBuffer());
       if (!Number.isInteger(idxLength) || idxLength <= 0 || idxLength >= body.length) {
         return text(`Missing or bad ${PACK_INDEX_LENGTH_HEADER}.`, 400);
+      }
+      const headerValue = request.headers.get(REMOTE_HEAD_HEADER);
+      const remoteHead = headerValue === null ? null : decodeOid(headerValue);
+      if (remoteHead?._tag === "None") return text(`Bad ${REMOTE_HEAD_HEADER}.`, 400);
+      if (
+        remoteHead !== null &&
+        !(await run(isRemoteHead(auth.driveId, auth.userId, remoteHead.value)))
+      ) {
+        return text("That is not the remote's head.", 422);
       }
       const result = await run(
         uploadPack({
@@ -170,6 +216,7 @@ async function route(
           threadId: auth.threadId,
           idx: body.subarray(0, idxLength),
           pack: body.subarray(idxLength),
+          ...(remoteHead === null ? {} : { remoteHead: remoteHead.value }),
         }),
       );
       return result._tag === "ok"
@@ -199,6 +246,18 @@ async function route(
       const body = decodeBody(driveJson.reconcile.decode, await request.text());
       if (body === null) return text("Unreadable request.", 400);
       const written = await run(Effect.flatMap(drive, (handle) => handle.reconcile(writer, body)));
+      return json(driveJson.refWrite.encode(toResult(auth.driveId, written)));
+    }
+    case DRIVE_PATHS.mirror: {
+      const body = decodeBody(driveJson.mirror.decode, await request.text());
+      if (body === null) return text("Unreadable request.", 400);
+      // Checked here, before the drive object moves anything: main only follows the remote.
+      if (!(await run(isRemoteHead(auth.driveId, auth.userId, body.newMain)))) {
+        return json(
+          driveJson.refWrite.encode({ _tag: "refused", reason: "That is not the remote's head." }),
+        );
+      }
+      const written = await run(Effect.flatMap(drive, (handle) => handle.mirror(writer, body)));
       return json(driveJson.refWrite.encode(toResult(auth.driveId, written)));
     }
     default:

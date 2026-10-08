@@ -3,7 +3,9 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
+  GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
@@ -15,7 +17,9 @@ import {
   ProjectReadFileError,
   ProjectSearchEntriesError,
   RpcScopeAuthorization,
+  type ProjectCloneListEvent,
   SectionsRpcError,
+  type ThreadId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -23,6 +27,17 @@ import {
   SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   SIGNALBOX_CONTEXTS_WS_METHODS,
 } from "@t3tools/contracts/signalboxContexts";
+import {
+  SIGNALBOX_DRIVES_REQUIRED_SCOPES,
+  SIGNALBOX_DRIVES_WS_METHODS,
+  SignalboxDrivesUnavailableError,
+} from "@t3tools/contracts/signalboxDrives";
+import {
+  SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
+  SIGNALBOX_PREVIEWS_WS_METHODS,
+  SignalboxPreviewError,
+  SignalboxPreviewsUnavailableError,
+} from "@t3tools/contracts/signalboxPreviews";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -31,10 +46,14 @@ import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import * as Environment from "../environment.ts";
+import * as GitHubBranches from "../github/GitHubBranches.ts";
+import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import type { Actor } from "../thread/ThreadEngine.ts";
+import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
+import { DriveSharing } from "./DriveSharing.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as UserDrives from "./UserDrives.ts";
 import * as UserSections from "./UserSections.ts";
 import * as UserShell from "./UserShell.ts";
 
@@ -77,7 +96,20 @@ const SERVED = [
   WS_METHODS.reviewGetDiffPreview,
   ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
   ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
+  // GitHub repositories as drives (`github/`): import, branch status, push and pull requests.
+  WS_METHODS.serverDiscoverSourceControl,
+  WS_METHODS.sourceControlLookupRepository,
+  WS_METHODS.projectCloneStart,
+  WS_METHODS.projectCloneCancel,
+  WS_METHODS.projectCloneRetry,
+  WS_METHODS.subscribeProjectClones,
+  WS_METHODS.subscribeVcsStatus,
+  WS_METHODS.vcsRefreshStatus,
+  WS_METHODS.vcsPull,
+  WS_METHODS.gitRunStackedAction,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
+  ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
+  ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...SECTION_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
@@ -113,7 +145,19 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
+  [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
+  [WS_METHODS.projectCloneRetry]: AuthSourceControlWriteScope,
+  [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeVcsStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.vcsPull]: AuthSourceControlWriteScope,
+  [WS_METHODS.gitRunStackedAction]: AuthSourceControlWriteScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
+  ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
+  ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -178,16 +222,18 @@ const storageFailed = (cause: unknown) =>
   );
 
 /**
- * Handlers for one connection, acting for `actor`. Every thread RPC is one
+ * Handlers for one connection, acting for `userId`. Every thread RPC is one
  * `CloudThreadService` call with its errors mapped to the contract's; the
- * sidebar comes from the user's own `UserShell`, and contexts from their
- * `UserContexts` and sections from their `UserSections`, so every connection
- * sees every other connection's changes.
+ * sidebar comes from the user's own `UserShell`, contexts from their
+ * `UserContexts`, drives from their `UserDrives` and sections from their
+ * `UserSections`, so every connection sees every other connection's changes.
+ * Each call acts within the user's contexts as they are at that moment, and
+ * an open thread stream ends as soon as the user can't see the thread anymore.
  * Storage failures are bugs, not answers a client can act on.
  */
 export const layerHandlers = (input: {
   readonly identity: Environment.CloudEnvironmentIdentity;
-  readonly actor: Actor;
+  readonly userId: string;
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -195,8 +241,48 @@ export const layerHandlers = (input: {
       const threads = yield* CloudThreadService.CloudThreadService;
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* UserSections.UserSections;
-      const { actor, identity } = input;
-      const drives = yield* DriveBrowsing.makeDriveBrowsing(actor);
+      const userDrives = yield* UserDrives.UserDrives;
+      const sharing = yield* Effect.serviceOption(DriveSharing);
+      const { userId, identity } = input;
+      const actorNow: Effect.Effect<Actor> = Effect.map(
+        Effect.orDie(userDrives.contextIds),
+        (contextIds) => ({ userId, contextIds }),
+      );
+      const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
+      const githubImport = yield* makeGitHubImport();
+      const branches = yield* GitHubBranches.GitHubBranches;
+      /**
+       * Fails with not-found once the user leaves a context and so can't see
+       * the thread anymore. Only a context going away is worth asking the
+       * thread about; drive changes leave a thread's visibility alone.
+       */
+      const lostSight = (threadId: ThreadId) =>
+        Effect.gen(function* () {
+          let known = new Set((yield* actorNow).contextIds);
+          return yield* userDrives.changed.pipe(
+            Stream.mapEffect(() =>
+              Effect.gen(function* () {
+                const actor = yield* actorNow;
+                const left = [...known].some((id) => !actor.contextIds.includes(id));
+                known = new Set(actor.contextIds);
+                if (!left) return false;
+                return yield* threads.threadSnapshot(actor, threadId).pipe(
+                  Effect.as(false),
+                  Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(true) }),
+                  Effect.orElseSucceed(() => false),
+                );
+              }),
+            ),
+            Stream.filter((lost) => lost),
+            Stream.runHead,
+          );
+        }).pipe(Effect.andThen(Effect.fail(new ThreadNotFoundError())));
+      const sharingCall = <A, E>(
+        call: (service: DriveSharing["Service"]) => Effect.Effect<A, E>,
+      ) =>
+        sharing._tag === "None"
+          ? Effect.fail(new SignalboxDrivesUnavailableError())
+          : call(sharing.value);
       const config = Effect.map(Clock.currentTimeMillis, (now) =>
         Environment.serverConfig(identity, DateTime.formatIso(DateTime.makeUnsafe(now))),
       );
@@ -245,7 +331,7 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           threadCall(
-            threads.dispatchCommand(actor, command),
+            Effect.flatMap(actorNow, (actor) => threads.dispatchCommand(actor, command)),
             (message) =>
               new OrchestrationV2DispatchCommandError({
                 commandId: command.commandId,
@@ -255,7 +341,7 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (request) =>
           threadCall(
-            threads.launchThread(actor, request),
+            Effect.flatMap(actorNow, (actor) => threads.launchThread(actor, request)),
             (message) =>
               new OrchestrationV2ThreadLaunchError({
                 commandId: request.commandId,
@@ -264,7 +350,10 @@ export const layerHandlers = (input: {
               }),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (request) =>
-          threads.subscribeThread(actor, request).pipe(
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) => threads.subscribeThread(actor, request)),
+          ).pipe(
+            Stream.interruptWhen(lostSight(request.threadId)),
             Stream.flattenIterable,
             Stream.tapError(logUnavailable),
             Stream.mapError(
@@ -278,7 +367,7 @@ export const layerHandlers = (input: {
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (request) =>
           threadCall(
             Effect.map(
-              threads.threadSnapshot(actor, request.threadId),
+              Effect.flatMap(actorNow, (actor) => threads.threadSnapshot(actor, request.threadId)),
               (snapshot) => snapshot.projection,
             ),
             (message) =>
@@ -333,7 +422,80 @@ export const layerHandlers = (input: {
             .pipe(
               Effect.mapError((message) => new OrchestrationGetFullThreadDiffError({ message })),
             ),
+        [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
+        [WS_METHODS.sourceControlLookupRepository]: (request) =>
+          githubImport.lookup(request.repository),
+        [WS_METHODS.projectCloneStart]: (request) => githubImport.importRepository(request),
+        // Imports register at once and clone nothing, so there is never a clone to track.
+        [WS_METHODS.projectCloneCancel]: () => Effect.succeed({ applied: false }),
+        [WS_METHODS.projectCloneRetry]: () => Effect.succeed({ applied: false }),
+        [WS_METHODS.subscribeProjectClones]: () => thenHold<ProjectCloneListEvent>([[]]),
+        [WS_METHODS.subscribeVcsStatus]: (request) =>
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) =>
+              branches.watch(actor, request.cwd, request.includeRemote !== false),
+            ),
+          ),
+        [WS_METHODS.vcsRefreshStatus]: (request) =>
+          actorNow.pipe(
+            Effect.flatMap((actor) => branches.status(actor, request.cwd, true)),
+            Effect.map((status) => ({
+              ...status.local,
+              ...(status.remote ?? { hasUpstream: false, aheadCount: 0, behindCount: 0, pr: null }),
+            })),
+          ),
+        [WS_METHODS.gitRunStackedAction]: (request) =>
+          Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
+        // A thread's branch only takes commits from its own turns.
+        [WS_METHODS.vcsPull]: (request) =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "pull",
+              command: "git pull",
+              cwd: request.cwd,
+              detail:
+                "The branch on GitHub has commits this thread doesn't. Signalbox can't bring them into a thread yet.",
+            }),
+          ),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
+        [SIGNALBOX_DRIVES_WS_METHODS.subscribe]: () => Stream.orDie(userDrives.changes),
+        [SIGNALBOX_DRIVES_WS_METHODS.create]: (request) =>
+          sharingCall((service) => service.create(request)),
+        [SIGNALBOX_DRIVES_WS_METHODS.members]: (request) =>
+          sharingCall((service) =>
+            Effect.map(service.members(request.driveId), (members) => ({ members })),
+          ),
+        [SIGNALBOX_DRIVES_WS_METHODS.share]: (request) =>
+          sharingCall((service) => service.share(request)),
+        [SIGNALBOX_DRIVES_WS_METHODS.unshare]: (request) =>
+          sharingCall((service) => service.unshare(request)),
+        [SIGNALBOX_DRIVES_WS_METHODS.shareFolder]: (request) =>
+          sharingCall((service) => service.shareFolder(request)),
+        [SIGNALBOX_PREVIEWS_WS_METHODS.subscribe]: ({ threadId }) =>
+          identity.previews !== true
+            ? Stream.fail(new SignalboxPreviewsUnavailableError())
+            : Stream.unwrap(
+                Effect.map(actorNow, (actor) => threads.previews(actor, threadId)),
+              ).pipe(
+                Stream.map((ports) => ({ threadId, ports })),
+                Stream.tapError(logUnavailable),
+                Stream.mapError(
+                  (error) => new SignalboxPreviewError({ message: failureMessage(error) }),
+                ),
+              ),
+        [SIGNALBOX_PREVIEWS_WS_METHODS.open]: ({ threadId, port }) =>
+          identity.previews !== true
+            ? Effect.fail(new SignalboxPreviewsUnavailableError())
+            : threadCall(
+                Effect.flatMap(actorNow, (actor) => threads.openPreview(actor, threadId, port)),
+                (message) => new SignalboxPreviewError({ message }),
+              ).pipe(
+                Effect.flatMap((link) =>
+                  link._tag === "ok"
+                    ? Effect.succeed({ url: link.url })
+                    : Effect.fail(new SignalboxPreviewError({ message: link.message })),
+                ),
+              ),
         [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),

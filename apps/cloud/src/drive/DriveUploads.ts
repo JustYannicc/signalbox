@@ -7,7 +7,7 @@ import { DrivePacks } from "./DrivePacks.ts";
 import type { StoredCommit } from "./DriveStore.ts";
 import { parseCommit } from "./git/gitObjects.ts";
 import { PackError, verifyPack } from "./git/gitPack.ts";
-import type { Bytes } from "./git/gitObjects.ts";
+import type { Bytes, Oid } from "./git/gitObjects.ts";
 
 /**
  * A machine's pack upload, accepted or refused. The pack is checked object by
@@ -15,6 +15,11 @@ import type { Bytes } from "./git/gitObjects.ts";
  * object, so a ref can never name an object the drive cannot read: an upload
  * cut off anywhere before the index commits leaves at most an unreferenced
  * file in R2.
+ *
+ * The one exception to "everything referenced is in the drive" is a remote's
+ * head (`remoteHead`), which the caller has checked against the remote: its
+ * parents stay on the remote, so a remote-backed drive holds its main line
+ * one commit deep.
  */
 
 export type UploadResult =
@@ -32,6 +37,8 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* (input:
   readonly threadId: string;
   readonly idx: Bytes;
   readonly pack: Bytes;
+  /** A commit in the pack that is the remote's current head. Its parents may be absent. */
+  readonly remoteHead?: Oid;
 }) {
   if (input.pack.length > MAX_PACK_BYTES) {
     return refused(`Packs over ${MAX_PACK_BYTES} bytes are not stored yet.`);
@@ -46,8 +53,16 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* (input:
   if (verified._tag === "Failure") return refused(verified.failure.reason);
   const pack = verified.success;
   const drive = (yield* DriveDirectory).forDrive(input.driveId);
-  const external = [...pack.external];
-  const absent = yield* drive.missing(external);
+  const head = input.remoteHead === undefined ? undefined : pack.structure.get(input.remoteHead);
+  if (input.remoteHead !== undefined && head?.type !== "commit") {
+    return refused(`The pack does not hold commit ${input.remoteHead}.`);
+  }
+  // One lookup: the head's parents the drive lacks stay on the remote; anything else is refused.
+  const parents = new Set(head === undefined ? [] : parseCommit(head.content).parents);
+  const lacking = yield* drive.missing([...pack.external, ...parents]);
+  const onRemote = new Set(lacking.filter((oid) => parents.has(oid)));
+  const external = [...pack.external].filter((oid) => !onRemote.has(oid));
+  const absent = lacking.filter((oid) => !onRemote.has(oid));
   if (absent.length > 0) {
     return refused(`The pack references ${absent.length} objects the drive does not have.`);
   }
@@ -78,6 +93,7 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* (input:
     objects: pack.objects,
     commits,
     external,
+    ...(onRemote.size > 0 && input.remoteHead !== undefined ? { shallow: [input.remoteHead] } : {}),
   });
   if (registered._tag === "missing") {
     return refused(

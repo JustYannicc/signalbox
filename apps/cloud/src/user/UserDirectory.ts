@@ -5,12 +5,16 @@ import {
 } from "@t3tools/contracts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { AccountProfile } from "@t3tools/contracts/account";
+import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type { SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
 import { jsonCodec } from "../thread/threadWire.ts";
+import type { DriveAccessEntry } from "./UserDriveIndex.ts";
 import type { GrantKind, HandoffRedemption, SessionRecord } from "./UserStore.ts";
 
 /**
@@ -84,6 +88,22 @@ export interface UserObjectApi {
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
   /** Drops the thread index and rebuilds it from the user's thread objects. */
   readonly rebuildThreadIndex: () => Promise<number>;
+  /** Starts connecting GitHub (`github/GitHubConnection.ts`); GitHub comes back to `redirectUri`. */
+  readonly beginGitHubConnect: (redirectUri: string) => Promise<ConnectStart>;
+  readonly completeGitHubConnect: (input: {
+    readonly grantId: string;
+    readonly code: string;
+    readonly redirectUri: string;
+  }) => Promise<ConnectResult>;
+  readonly disconnectGitHub: () => Promise<void>;
+  /** A token acting as the user on GitHub now, or null when not connected. Never leaves the cloud. */
+  readonly githubAccessToken: () => Promise<string | null>;
+  /** The user's current contexts, which every thread call acts within. */
+  readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
+  /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
+  readonly recordDriveAccess: (entry: DriveAccessEntry) => Promise<void>;
+  /** The user's role in a drive right now, or null when they can't open it (`UserDrives`). */
+  readonly driveAccess: (driveId: string) => Promise<SignalboxDriveRole | null>;
 }
 
 type Method = keyof UserObjectApi;
@@ -125,6 +145,13 @@ const METHODS = Object.keys({
   shellSnapshot: true,
   recordThreadSummary: true,
   rebuildThreadIndex: true,
+  beginGitHubConnect: true,
+  completeGitHubConnect: true,
+  disconnectGitHub: true,
+  githubAccessToken: true,
+  contextIds: true,
+  recordDriveAccess: true,
+  driveAccess: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** Results that cross RPC encoded, decoded on arrival. */

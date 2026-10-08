@@ -175,6 +175,6 @@ export const interruptRunEvents = (
   holdQueue: boolean,
 ) =>
   finishRunEvents(projection, run, "interrupted", ctx, {
-    holdQueue,
+    queue: holdQueue ? "hold" : "advance",
     leading: isScripted(run) ? settleAssistant(projection, run, "interrupted", ctx) : [],
   });

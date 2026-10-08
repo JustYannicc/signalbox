@@ -14,12 +14,13 @@ import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/sta
 
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { layerPersonalThreadContexts, makeMemoryCloud } from "../testing.ts";
 import * as CloudThreadService from "./CloudThreadService.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 
-const actor = { userId: "user_1" };
+const actor = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
 const threadId = ThreadId.make("thread-1");
 
 describe("CloudThreadService", () => {
@@ -47,7 +48,7 @@ describe("CloudThreadService", () => {
           // Fresh: the cloud's own layer already built one over the reliable directory.
           Layer.fresh(CloudThreadService.layer).pipe(
             Layer.provide(Layer.succeed(ThreadDirectory.ThreadDirectory, flaky)),
-            Layer.provide(layerPersonalThreadContexts),
+            Layer.provide(layerPersonalThreadContexts("user_1")),
             Layer.provide(Platform.layerCrypto),
           ),
         ),
@@ -104,7 +105,7 @@ describe("CloudThreadService", () => {
     Effect.gen(function* () {
       const cloud = makeMemoryCloud();
       const service = yield* CloudThreadService.CloudThreadService.pipe(
-        Effect.provide(cloud.layer),
+        Effect.provide(cloud.layerPersonal("user_1")),
       );
       const launch = () =>
         service.launchThread(actor, {
@@ -124,7 +125,7 @@ describe("CloudThreadService", () => {
       expect(retried.projection.runs).toHaveLength(1);
       // Another user's identical command id is a different thread.
       const other = yield* service.launchThread(
-        { userId: "user_2" },
+        { userId: "user_2", contextIds: [PERSONAL_CONTEXT_ID] },
         {
           commandId: CommandId.make("launch-no-id"),
           projectId: Environment.SCRATCH_PROJECT_ID,

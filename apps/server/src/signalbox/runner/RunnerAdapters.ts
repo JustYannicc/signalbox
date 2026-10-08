@@ -17,6 +17,7 @@ import {
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import type { ProviderAdapterV2Shape } from "../../orchestration-v2/ProviderAdapter.ts";
+import { type HarnessStderr, makeHarnessStderr } from "./harnessStderr.ts";
 import {
   claudeSettings,
   codexSettings,
@@ -33,17 +34,25 @@ import {
  * services those constructors ask for are provided, not the server's layer
  * graph, so the Runner carries no settings store, MCP server or session
  * database, and an upstream change to an adapter reaches the Runner through a
- * normal merge.
+ * normal merge. The Claude query runner can be swapped, which is how its
+ * session reaches the thread (`RunnerClaudeSessions.ts`).
  */
+
+type ClaudeQueryRunnerLayer = typeof layerClaudeQueryRunner;
 
 /**
  * What the adapter constructors need. The server config only supplies paths
  * under `home`; the adapters read nothing else from it. `environment` is all
  * of the host's environment the harnesses see.
  */
-const layerAdapterServices = (home: string, environment: NodeJS.ProcessEnv) =>
+const layerAdapterServices = (
+  home: string,
+  environment: NodeJS.ProcessEnv,
+  claudeQueryRunner: ClaudeQueryRunnerLayer,
+  stderr: HarnessStderr,
+) =>
   Layer.mergeAll(
-    layerClaudeQueryRunner,
+    claudeQueryRunner,
     layerCodexClientFactory,
     IdAllocator.layer,
     ServerConfig.layerTest(home, home),
@@ -55,6 +64,8 @@ const layerAdapterServices = (home: string, environment: NodeJS.ProcessEnv) =>
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    // The harnesses' stderr is kept for the turn's diagnostic record.
+    Layer.provideMerge(stderr.layerSpawner),
     Layer.provideMerge(NodeServices.layer),
   );
 
@@ -67,10 +78,13 @@ const layerAdapterServices = (home: string, environment: NodeJS.ProcessEnv) =>
 export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (machine: {
   readonly root: string;
   readonly gatewayUrl: string;
+  /** Claude's query runner; upstream's own by default. */
+  readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
   /** The machine's cache variables (`RunnerCaches.ts`), for the harnesses and what they run. */
   readonly caches?: Readonly<Record<string, string>>;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
+  const stderr = makeHarnessStderr();
   yield* prepareMachine(layout, machine.gatewayUrl);
   const environment = harnessEnvironment(
     yield* HostProcessEnvironment,
@@ -78,7 +92,14 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
     machine.gatewayUrl,
     machine.caches,
   );
-  const services = yield* Layer.build(layerAdapterServices(machine.root, environment));
+  const services = yield* Layer.build(
+    layerAdapterServices(
+      machine.root,
+      environment,
+      machine.claudeQueryRunner ?? layerClaudeQueryRunner,
+      stderr,
+    ),
+  );
   const common = { displayName: undefined, environment: [], enabled: true } as const;
   const claude = yield* ClaudeAdapterV2Driver.create({
     ...common,
@@ -92,6 +113,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   }).pipe(Effect.provide(services));
   return {
     layout,
+    stderr,
     environment,
     adapters: new Map<ProviderInstanceId, ProviderAdapterV2Shape>([
       [claude.instanceId, claude],

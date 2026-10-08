@@ -1,302 +1,33 @@
-// @effect-diagnostics nodeBuiltinImport:off - the eviction test needs a database file that outlives one engine.
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-
-import {
-  RUNNER_PROTOCOL_VERSION,
-  type RunnerItem,
-} from "@signalbox/runner-protocol/RunnerProtocol";
-import {
-  CommandId,
-  MessageId,
-  type OrchestrationV2ProviderCapabilities,
-  OrchestrationV2ProviderThread,
-  OrchestrationV2TurnItem,
-  ProjectId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  ProviderSessionId,
-  ProviderTurnId,
-  type RunId,
-  ThreadId,
-  TurnItemId,
-} from "@t3tools/contracts";
-import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
-import { afterEach, describe, expect, it } from "@effect/vitest";
-import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
+import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import { CommandId, MessageId, ProjectId } from "@t3tools/contracts";
+import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import { layerThreadObject } from "../../testing.ts";
+import { UserObjectError } from "../../user/UserDirectory.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
-import * as ThreadEngine from "../ThreadEngine.ts";
 import { CONNECT_TIMEOUT_MS } from "./MachineBackend.ts";
-import * as ThreadRunner from "./ThreadRunner.ts";
-
-const owner = { userId: "user_1" };
-const personal = { contextId: PERSONAL_CONTEXT_ID };
-const threadId = ThreadId.make("thread-claude");
-const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-fable-5-1" };
-const claudeDriver = ProviderDriverKind.make("claudeAgent");
-
-const directories: Array<string> = [];
-afterEach(() => {
-  for (const directory of directories.splice(0)) NodeFS.rmSync(directory, { recursive: true });
-});
-
-const freshDatabase = () => {
-  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "thread-runner-"));
-  directories.push(directory);
-  return NodePath.join(directory, "thread.sqlite");
-};
-
-/** The object on `filename`; each call is the object waking up again. */
-const withObject = <A, E>(
-  filename: string,
-  use: (
-    engine: ThreadEngine.ThreadEngine["Service"],
-    runner: ThreadRunner.ThreadRunner["Service"],
-  ) => Effect.Effect<A, E>,
-  options: { readonly drives?: boolean } = {},
-) =>
-  Effect.scoped(
-    Layer.build(layerThreadObject(filename, undefined, options)).pipe(
-      Effect.flatMap((context) =>
-        use(
-          Context.get(context, ThreadEngine.ThreadEngine),
-          Context.get(context, ThreadRunner.ThreadRunner),
-        ),
-      ),
-    ),
-  );
-
-const launch = (engine: ThreadEngine.ThreadEngine["Service"], commandId = "launch-1") =>
-  engine.launch(
-    owner,
-    {
-      commandId: CommandId.make(commandId),
-      threadId,
-      projectId: ProjectId.make("scratch"),
-      title: "Hello Claude",
-      modelSelection: claude,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      workspaceStrategy: { type: "root" },
-      initialMessage: { messageId: MessageId.make("message-1"), text: "Hi", attachments: [] },
-    },
-    personal,
-  );
-
-const hello = (generation: number, token: string) => ({
-  type: "hello" as const,
-  protocolVersion: RUNNER_PROTOCOL_VERSION,
-  imageVersion: "test",
-  machineId: "machine-1",
+import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
+import {
+  claude,
+  claudeDriver,
+  connect,
+  encodeProviderThread,
+  freshDatabase,
+  hello,
+  launch,
+  liveTurn,
+  owner,
+  personal,
+  type Previews,
+  snapshot,
   threadId,
-  generation,
-  token,
-  lastAckedSequence: 0,
-});
-
-const off = <T extends Record<string, unknown>>(fields: T) =>
-  Object.fromEntries(Object.keys(fields).map((key) => [key, false])) as {
-    readonly [K in keyof T]: false;
-  };
-
-const capabilities: OrchestrationV2ProviderCapabilities = {
-  sessions: off({
-    supportsMultipleProviderThreadsPerSession: 0,
-    supportsModelSwitchInSession: 0,
-    supportsProviderSwitchingViaHandoff: 0,
-    supportsRuntimeModeSwitchInSession: 0,
-    pendingRequestsSurviveRestart: 0,
-  }),
-  threads: off({
-    canCreateEmptyThread: 0,
-    canReadThreadSnapshot: 0,
-    canRollbackThread: 0,
-    canForkThread: 0,
-    canForkFromTurn: 0,
-    canForkFromSubagentThread: 0,
-    exposesNativeThreadId: 0,
-  }),
-  turns: {
-    ...off({
-      exposesNativeTurnId: 0,
-      emitsTurnStarted: 0,
-      emitsTurnCompleted: 0,
-      supportsInterrupt: 0,
-      supportsActiveSteering: 0,
-      supportsSteeringByInterruptRestart: 0,
-      supportsQueuedMessages: 0,
-    }),
-    terminalStatusQuality: "strong",
-  },
-  streaming: off({
-    streamsAssistantText: 0,
-    streamsReasoning: 0,
-    streamsToolOutput: 0,
-    streamsPlanText: 0,
-    emitsMessageCompleted: 0,
-  }),
-  tools: off({
-    exposesToolItemIds: 0,
-    emitsToolStarted: 0,
-    emitsToolCompleted: 0,
-    emitsToolOutput: 0,
-    supportsMcpTools: 0,
-    supportsDynamicToolCallbacks: 0,
-  }),
-  approvals: off({
-    supportsCommandApproval: 0,
-    supportsFileReadApproval: 0,
-    supportsFileChangeApproval: 0,
-    supportsApplyPatchApproval: 0,
-    approvalsHaveNativeRequestIds: 0,
-    approvalCallbacksAreLiveOnly: 0,
-    approvalsCanOriginateFromSubagents: 0,
-  }),
-  planning: off({
-    emitsPlanUpdated: 0,
-    emitsTodoList: 0,
-    emitsProposedPlan: 0,
-    supportsStructuredQuestions: 0,
-    planDeltasHaveItemIds: 0,
-  }),
-  subagents: off({
-    supportsSubagents: 0,
-    exposesSubagentThreadIds: 0,
-    emitsSubagentLifecycle: 0,
-    canWaitForSubagents: 0,
-    canCloseSubagents: 0,
-    canForkSubagentThread: 0,
-  }),
-  context: {
-    ...off({
-      acceptsSystemContext: 0,
-      acceptsDeveloperContext: 0,
-      acceptsSyntheticUserContext: 0,
-      canGenerateSummaries: 0,
-      canConsumeHandoffSummaries: 0,
-      supportsDeltaHandoff: 0,
-      supportsFullThreadHandoff: 0,
-    }),
-    maxRecommendedHandoffChars: null,
-  },
-  checkpointing: off({
-    appCanCheckpointFilesystem: 0,
-    supportsNestedCheckpointScopes: 0,
-    providerCanRollbackConversation: 0,
-    providerRollbackReturnsSnapshot: 0,
-    providerCanReadConversationSnapshot: 0,
-  }),
-  identity: {
-    nativeThreadIds: "strong",
-    nativeTurnIds: "strong",
-    nativeItemIds: "strong",
-    nativeRequestIds: "none",
-  },
-  runtimePolicy: { enforcement: "native" },
-};
-
-const now = DateTime.makeUnsafe(0);
-const encodeTurnItem = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
-const encodeProviderThread = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2ProviderThread));
-
-/** What a Runner reports for one Claude turn: started, a streamed reply, done. */
-const turnReport = (
-  runId: RunId,
-  runOrdinal: number,
-  providerThread: OrchestrationV2ProviderThread,
-) => {
-  const reply = (text: string, done: boolean) =>
-    encodeTurnItem({
-      id: TurnItemId.make(`claude-item:${runId}`),
-      threadId,
-      runId,
-      nodeId: null,
-      providerThreadId: providerThread.id,
-      providerTurnId: ProviderTurnId.make(`claude-turn:${runId}`),
-      nativeItemRef: null,
-      parentItemId: null,
-      // Whatever the adapter picks; the thread places it in the run's band.
-      ordinal: 7,
-      status: done ? "completed" : "running",
-      title: null,
-      startedAt: now,
-      completedAt: done ? now : null,
-      updatedAt: now,
-      type: "assistant_message",
-      messageId: MessageId.make(`claude-message:${runId}`),
-      text,
-      streaming: !done,
-    });
-  const provider = (event: Record<string, unknown>): RunnerItem => ({
-    kind: "provider",
-    runId,
-    event: { driver: claudeDriver, ...event },
-  });
-  return {
-    started: {
-      kind: "turn.started",
-      runId,
-      providerSession: {
-        id: ProviderSessionId.make("session-1"),
-        driver: claudeDriver,
-        providerInstanceId: claude.instanceId,
-        status: "running",
-        cwd: "/tmp/thread",
-        model: claude.model,
-        capabilities,
-        createdAt: now,
-        updatedAt: now,
-        lastError: null,
-      },
-      providerThread: {
-        ...providerThread,
-        nativeThreadRef: { driver: claudeDriver, nativeId: "claude-session-1", strength: "strong" },
-      },
-    } satisfies RunnerItem,
-    partial: provider({ type: "turn_item.updated", turnItem: reply("Hel", false) }),
-    full: provider({ type: "turn_item.updated", turnItem: reply("Hello!", true) }),
-    terminal: provider({
-      type: "turn.terminal",
-      providerThreadId: providerThread.id,
-      providerTurnId: `claude-turn:${runId}`,
-      runOrdinal,
-      status: "completed",
-      failure: null,
-      threadDisposition: "reusable",
-    }),
-  };
-};
-
-/** Asks for a machine and connects its Runner. Returns the generation. */
-const connect = (runner: ThreadRunner.ThreadRunner["Service"]) =>
-  Effect.gen(function* () {
-    const plan = yield* runner.reconcile;
-    if (plan.ensure === null) throw new Error("expected a machine request");
-    yield* runner.ensured(plan.ensure.generation);
-    const welcome = yield* runner.hello(hello(plan.ensure.generation, plan.ensure.token));
-    expect(welcome._tag).toBe("welcome");
-    return plan.ensure;
-  });
-
-const liveTurn = (runner: ThreadRunner.ThreadRunner["Service"]) =>
-  Effect.map(runner.work, (work) => {
-    if (work.turn === null) throw new Error("expected a turn for the Runner");
-    return work.turn;
-  });
-
-const snapshot = (engine: ThreadEngine.ThreadEngine["Service"]) =>
-  Effect.map(engine.snapshot(owner), ({ snapshotSequence, projection }) => ({
-    head: snapshotSequence,
-    projection,
-  }));
+  turnReport,
+  withObject,
+} from "./runnerTestKit.ts";
+import * as ThreadRunner from "./ThreadRunner.ts";
 
 describe("ThreadRunner", () => {
   it.effect("answers for a thread that does not exist without touching storage", () =>
@@ -413,7 +144,7 @@ describe("ThreadRunner", () => {
           items: [report.started, report.full, report.terminal],
         });
         // The machine went away; the next message gets a new one.
-        yield* runner.ended(first.generation);
+        yield* runner.ended(first.generation, "test");
         yield* engine.dispatch(
           owner,
           {
@@ -471,9 +202,12 @@ describe("ThreadRunner", () => {
           const token = work.modelToken ?? "";
           expect(token).toMatch(/^sbm1\./);
 
+          // The grant names the same trace the Runner was handed with the turn.
+          expect(turn.traceId).toMatch(/^[0-9a-f]{32}$/);
           expect(yield* runner.authorizeModel(token, "anthropic")).toEqual({
             _tag: "granted",
             runId: turn.runId,
+            traceId: turn.traceId,
           });
           // Claude's turn, so not Codex's API; and nothing but the exact token.
           expect((yield* runner.authorizeModel(token, "openai"))._tag).toBe("denied");
@@ -517,7 +251,7 @@ describe("ThreadRunner", () => {
           expect((yield* runner.authorizeModel(nextToken, "anthropic"))._tag).toBe("granted");
 
           // Releasing the machine ends every token it held.
-          yield* runner.ended(machine.generation);
+          yield* runner.ended(machine.generation, "test");
           expect((yield* runner.authorizeModel(nextToken, "anthropic"))._tag).toBe("denied");
         }),
       );
@@ -584,23 +318,83 @@ describe("ThreadRunner", () => {
         yield* runner.disconnected({
           generation: machine.generation,
           connection: again.connection - 1,
+          detail: "code 1006",
         });
         expect((yield* runner.work).needsUpkeep).toBe(false);
         yield* runner.disconnected({
           generation: machine.generation,
           connection: again.connection,
+          detail: "code 1006",
         });
         expect((yield* runner.work).needsUpkeep).toBe(true);
       }),
     ),
   );
 
-  it.effect(
-    "fails the live run when its machine says end, and ignores the run's late session state",
-    () =>
-      withObject(freshDatabase(), (engine, runner) =>
-        Effect.gen(function* () {
-          yield* launch(engine);
+  it.effect("continues a run whose machine is lost on a new machine, from the same session", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started, report.partial],
+        });
+        // The machine is killed: its socket drops and never comes back.
+        yield* runner.disconnected({
+          generation: machine.generation,
+          connection: 1,
+          detail: "1006",
+        });
+        yield* TestClock.adjust(60_000);
+        // The continuation needs a machine: the object looks again at once.
+        expect(yield* runner.reconcile).toMatchObject({
+          release: machine.generation,
+          stop: true,
+          wakeAt: 60_000,
+        });
+
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runs.map((run) => run.status)).toEqual(["interrupted", "starting"]);
+        const [cut, continuation] = projection.runs;
+        expect(continuation?.restartContinuationOfRunId).toBe(cut?.id);
+        // The reply that was streaming is shown aborted, with why.
+        const items = projection.turnItems.filter((item) => item.runId === cut?.id);
+        expect(items.find((item) => item.type === "assistant_message")).toMatchObject({
+          status: "interrupted",
+          streaming: false,
+          text: "Hel",
+        });
+        expect(items.some((item) => item.type === "system_notice")).toBe(true);
+
+        // A new machine takes the continuation and resumes the harness's own session.
+        const next = yield* connect(runner);
+        expect(next.generation).toBe(machine.generation + 1);
+        const work = yield* runner.work;
+        expect(work.turn).toMatchObject({
+          runId: continuation?.id,
+          restartContinuationOfRunId: cut?.id,
+          providerTurnOrdinal: 2,
+          message: { text: CONTINUE_PROMPT, createdBy: "agent" },
+          providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
+        });
+        expect(work.sessions?.token).toMatch(/^sbs1\./);
+        // The lost machine can never write to the thread again.
+        expect(yield* runner.hello(hello(machine.generation, machine.token))).toMatchObject({
+          reason: "stale_generation",
+        });
+      }),
+    ),
+  );
+
+  it.effect("fails a run whose machines keep going away, or that never started", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        for (let lost = 0; lost <= MAX_CONTINUATIONS; lost++) {
           const machine = yield* connect(runner);
           const turn = yield* liveTurn(runner);
           const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
@@ -609,16 +403,41 @@ describe("ThreadRunner", () => {
             sequence: 1,
             items: [report.started],
           });
-          yield* runner.ended(machine.generation);
+          yield* runner.ended(machine.generation, "test");
+        }
+        const lostRuns = yield* snapshot(engine);
+        expect(lostRuns.projection.runs.map((run) => run.status)).toEqual([
+          ...Array.from({ length: MAX_CONTINUATIONS }, () => "interrupted"),
+          "failed",
+        ]);
+        expect(lostRuns.projection.providerThreads[0]?.status).toBe("idle");
+        expect(lostRuns.projection.turnItems.find((item) => item.type === "error")).toMatchObject({
+          failure: { message: "Lost the machine running this turn." },
+        });
 
-          const ended = yield* snapshot(engine);
-          expect(ended.projection.runs.map((run) => run.status)).toEqual(["failed"]);
-          expect(ended.projection.providerThreads[0]?.status).toBe("idle");
-          expect(yield* runner.hello(hello(machine.generation, machine.token))).toMatchObject({
-            reason: "stale_generation",
-          });
-        }),
-      ),
+        // A machine lost before the harness took the next message: nothing to resume.
+        yield* engine.dispatch(
+          owner,
+          {
+            type: "message.dispatch",
+            commandId: CommandId.make("send-2"),
+            createdBy: "user",
+            creationSource: "web",
+            threadId,
+            messageId: MessageId.make("message-2"),
+            text: "Again",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+          },
+          personal,
+        );
+        const machine = yield* connect(runner);
+        yield* runner.ended(machine.generation, "test");
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runs.at(-1)?.status).toBe("failed");
+      }),
+    ),
   );
 
   it.effect("records a stopped run's last rows but not its provider thread coming back", () =>
@@ -700,6 +519,63 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("stops a machine's drive calls once its owner can't change the thread's drive", () => {
+    const design = "shared/org_acme/design";
+    let access: "writes" | "removed" | "unreachable" = "writes";
+    const acme = SignalboxContextId.make("org_acme");
+    const member = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID, acme] };
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* engine.launch(
+            member,
+            {
+              commandId: CommandId.make("launch-design"),
+              threadId,
+              projectId: ProjectId.make(`drive:${design}`),
+              title: "In a shared drive",
+              modelSelection: claude,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              workspaceStrategy: { type: "root" },
+              initialMessage: {
+                messageId: MessageId.make("message-1"),
+                text: "Hi",
+                attachments: [],
+              },
+            },
+            { place: { contextId: acme, driveId: design } },
+          );
+          yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.drive?.driveId).toBe(design);
+          const token = work.drive!.token;
+          expect(yield* runner.authorizeDrive(token)).toMatchObject({
+            _tag: "granted",
+            driveId: design,
+            userId: "user_1",
+          });
+          access = "unreachable";
+          expect(yield* runner.authorizeDrive(token)).toEqual({ _tag: "unavailable" });
+          access = "removed";
+          expect(yield* runner.authorizeDrive(token)).toEqual({
+            _tag: "denied",
+            reason: "You no longer have access to change this drive.",
+          });
+        }),
+      {
+        drives: true,
+        writes: (userId, driveId) => {
+          expect([userId, driveId]).toEqual(["user_1", design]);
+          return access === "unreachable"
+            ? Effect.fail(new UserObjectError({ operation: "driveAccess", cause: "down" }))
+            : Effect.succeed(access === "writes");
+        },
+      },
+    );
+  });
+
   it.effect("gives each machine a drive token that acts only for its own generation and turn", () =>
     withObject(
       freshDatabase(),
@@ -713,12 +589,15 @@ describe("ThreadRunner", () => {
           expect(yield* runner.authorizeDrive(token)).toEqual({
             _tag: "granted",
             threadId,
+            userId: "user_1",
             driveId: "my/personal/user_1",
             generation: machine.generation,
             live: true,
           });
           expect((yield* runner.authorizeDrive(`${token}x`))._tag).toBe("denied");
           expect((yield* runner.authorizeDrive(machine.token))._tag).toBe("denied");
+          // My Drive is its own home: there is no remote to fetch.
+          expect(work.drive!.remoteToken).toBeNull();
 
           const turn = yield* liveTurn(runner);
           const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
@@ -762,6 +641,44 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("gives a thread in an imported repository a remote token for its turn only", () =>
+    withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine, "launch-1", {
+            place: { contextId: PERSONAL_CONTEXT_ID, driveId: "shared/personal/repo1" },
+          });
+          const machine = yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.drive?.driveId).toBe("shared/personal/repo1");
+          const remoteToken = work.drive!.remoteToken!;
+          expect(yield* runner.authorizeRemote(remoteToken)).toEqual({
+            _tag: "granted",
+            threadId,
+            driveId: "shared/personal/repo1",
+            userId: "user_1",
+          });
+          // Neither token stands in for the other.
+          expect((yield* runner.authorizeRemote(work.drive!.token))._tag).toBe("denied");
+          expect((yield* runner.authorizeDrive(remoteToken))._tag).toBe("denied");
+
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.terminal],
+          });
+          expect(yield* runner.authorizeRemote(remoteToken)).toMatchObject({
+            _tag: "denied",
+            reason: "No turn is running on this thread.",
+          });
+        }),
+      { drives: true },
+    ),
+  );
+
   it.effect("hands out no drive when the cloud stores none", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
@@ -769,6 +686,72 @@ describe("ThreadRunner", () => {
         yield* connect(runner);
         expect((yield* runner.work).drive).toBeNull();
         expect((yield* runner.authorizeDrive("sbd1.x.y"))._tag).toBe("denied");
+      }),
+    ),
+  );
+
+  it.effect("keeps a machine up while a preview is open, then tails from its last traffic", () => {
+    const previews: Previews = { held: false, lastActiveAt: null };
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const machine = yield* connect(runner);
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.full, report.terminal],
+          });
+          expect((yield* runner.reconcile).wakeAt).toBe(ThreadRunner.IDLE_TAIL_MS);
+          // A browser opens the preview's HMR socket: the tail is off, the TTL kept pushed out.
+          previews.held = true;
+          expect((yield* runner.work).needsUpkeep).toBe(true);
+          expect(yield* runner.reconcile).toMatchObject({
+            busy: true,
+            release: null,
+            wakeAt: null,
+          });
+          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS * 3);
+          expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null });
+          expect((yield* runner.work).needsUpkeep).toBe(false);
+          // The last preview closes: the tail starts over from then.
+          previews.held = false;
+          const closedAt = yield* Clock.currentTimeMillis;
+          previews.lastActiveAt = closedAt;
+          expect((yield* runner.work).needsUpkeep).toBe(true);
+          expect((yield* runner.reconcile).wakeAt).toBe(closedAt + ThreadRunner.IDLE_TAIL_MS);
+          // A late request pushes it out without holding the machine.
+          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS - 1);
+          previews.lastActiveAt = yield* Clock.currentTimeMillis;
+          const pushed = yield* runner.reconcile;
+          expect(pushed).toMatchObject({ release: null, busy: false });
+          expect(pushed.wakeAt).toBe(previews.lastActiveAt + ThreadRunner.IDLE_TAIL_MS);
+          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS);
+          expect(yield* runner.reconcile).toMatchObject({
+            release: machine.generation,
+            stop: true,
+          });
+          // A preview never starts a machine.
+          previews.held = true;
+          expect(yield* runner.reconcile).toMatchObject({ ensure: null, stop: true });
+        }),
+      { previews },
+    );
+  });
+
+  it.effect("hands a preview tunnel the lease token only for the leased generation", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        expect(yield* runner.leaseToken(1)).toBeNull();
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+        expect(yield* runner.leaseToken(machine.generation, machine.token)).toBe(machine.token);
+        expect(yield* runner.leaseToken(machine.generation, "wrong")).toBeNull();
+        expect(yield* runner.leaseToken(machine.generation + 1)).toBeNull();
       }),
     ),
   );

@@ -38,6 +38,14 @@
     "./signalboxContexts": {
       "types": "./src/signalboxContexts.ts",
       "import": "./src/signalboxContexts.ts"
+    },
+    "./signalboxDrives": {
+      "types": "./src/signalboxDrives.ts",
+      "import": "./src/signalboxDrives.ts"
+    },
+    "./signalboxPreviews": {
+      "types": "./src/signalboxPreviews.ts",
+      "import": "./src/signalboxPreviews.ts"
     }
   },
   "scripts": {

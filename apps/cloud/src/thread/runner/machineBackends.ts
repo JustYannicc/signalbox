@@ -74,6 +74,8 @@ const nothing = (desired: MachineRecord["desired"]) => (): Effect.Effect<Machine
 
 const NONE: MachineBackendShape = {
   kind: "none",
+  shape: null,
+  image: null,
   connectTimeoutMs: CONNECT_TIMEOUT_MS,
   ensure: noBackend("This cloud has no machine backend."),
   stop: nothing("stopped"),
@@ -106,6 +108,7 @@ const makeLocalBackend = (
           desired: "running",
           actual: "running",
           machineId: "local",
+          wake: "warm",
         }),
         Effect.scoped,
         Effect.mapError(

@@ -8,20 +8,25 @@ import {
   type OrchestrationV2ThreadStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
+import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ThreadContexts } from "../user/threadContexts.ts";
+import { remoteThreadWorktree } from "../user/contextProjects.ts";
+import { ThreadContexts, type ThreadPlace } from "../user/threadContexts.ts";
+import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
+  type ThreadCreation,
   type ThreadNotFoundError,
 } from "./ThreadEngine.ts";
 
@@ -45,6 +50,55 @@ type Batch = ReadonlyArray<OrchestrationV2ThreadStreamItem>;
  */
 const resumeDelay = (failed: number) => Math.min(250 * 2 ** (failed - 1), 5_000);
 const MAX_FAILED_RESUMES = 20;
+const isThreadObjectError = Schema.is(ThreadDirectory.ThreadObjectError);
+
+/**
+ * A thread object's live stream that survives the object: when it is evicted
+ * or redeployed mid-stream, `open` runs again after a backoff. A live stream
+ * only ends because its object went away. `delivered` sees every item, so
+ * `open` can resume after the last one.
+ */
+const resuming = <A, E>(input: {
+  readonly operation: string;
+  readonly threadId: ThreadId;
+  readonly open: Stream.Stream<A, E | ThreadDirectory.ThreadObjectError>;
+  readonly delivered: (item: A) => Effect.Effect<void>;
+}) =>
+  Effect.gen(function* () {
+    // Failed attempts in a row; any delivered item resets it.
+    const failures = yield* Ref.make(0);
+    const attempt = (): Stream.Stream<A, E | ThreadDirectory.ThreadObjectError> =>
+      input.open.pipe(
+        Stream.tap((item) => Ref.set(failures, 0).pipe(Effect.andThen(input.delivered(item)))),
+        Stream.concat(
+          Stream.fail(
+            new ThreadDirectory.ThreadObjectError({
+              operation: input.operation,
+              cause: "The thread object closed the stream.",
+            }),
+          ),
+        ),
+        Stream.catchIf(
+          (error): error is ThreadDirectory.ThreadObjectError => isThreadObjectError(error),
+          (error) =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const failed = yield* Ref.updateAndGet(failures, (count) => count + 1);
+                // An object that keeps failing without delivering anything is broken, not busy.
+                if (failed > MAX_FAILED_RESUMES) return Stream.fail(error);
+                yield* Effect.logWarning(`thread ${input.operation} interrupted; resuming`, {
+                  threadId: input.threadId,
+                  attempt: failed,
+                  cause: error,
+                });
+                yield* Effect.sleep(resumeDelay(failed));
+                return Stream.suspend(attempt);
+              }),
+            ),
+        ),
+      );
+    return attempt();
+  });
 
 export class CloudThreadService extends Context.Service<
   CloudThreadService,
@@ -86,6 +140,34 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       input: OrchestrationV2SubscribeThreadInput,
     ) => Stream.Stream<Batch, CloudThreadError>;
+    /**
+     * The web servers the thread's machine runs, now and after every change.
+     * Survives its thread object the same way, starting over from a snapshot.
+     */
+    readonly previews: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Stream.Stream<
+      ReadonlyArray<PreviewPort>,
+      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
+    >;
+    /** A link that opens `actor`'s preview of `port` (see `preview/PreviewGateway.ts`). */
+    readonly openPreview: (
+      actor: Actor,
+      threadId: ThreadId,
+      port: number,
+    ) => Effect.Effect<PreviewLinkResult, ThreadDirectory.ThreadObjectError>;
+    /**
+     * A turn's diagnostic record (JSON), by its run or trace id, or the
+     * thread's recent turns for null: what happened on its machines, the
+     * Runner's lines and its model requests. Null when the actor cannot see
+     * the thread or no turn matches.
+     */
+    readonly turnDiagnostics: (
+      actor: Actor,
+      threadId: ThreadId,
+      key: string | null,
+    ) => Effect.Effect<string | null, ThreadDirectory.ThreadObjectError>;
   }
 >()("@signalbox/cloud/thread/CloudThreadService") {}
 
@@ -98,6 +180,12 @@ const cursorAfter = (batch: Batch): number | undefined => {
   }
   return cursor;
 };
+
+/** A new thread's place, and its own branch when its drive is backed by a remote (#135). */
+const placed = (place: ThreadPlace | null, threadId: ThreadId): ThreadCreation => ({
+  place: place === null ? null : { contextId: place.contextId, driveId: place.driveId },
+  worktree: place?.remote === true ? remoteThreadWorktree(place.driveId, threadId) : null,
+});
 
 const make = Effect.gen(function* () {
   const directory = yield* ThreadDirectory.ThreadDirectory;
@@ -113,18 +201,18 @@ const make = Effect.gen(function* () {
           unsupported(command.type),
         );
       }
-      // Only a create can make a thread, so only a create names its context. The
+      // Only a create can make a thread, so only a create names its place. The
       // thread object rejects a new thread without one, after replaying retries.
-      const contextId =
+      const place =
         command.type === "thread.create"
-          ? yield* threadContexts.contextOfProject(command.projectId)
+          ? yield* threadContexts.placeOfProject(command.projectId)
           : null;
-      return yield* directory.forThread(threadId).dispatch(actor, command, { contextId });
+      return yield* directory.forThread(threadId).dispatch(actor, command, placed(place, threadId));
     });
 
   const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
     Effect.gen(function* () {
-      const contextId = yield* threadContexts.contextOfProject(input.projectId);
+      const place = yield* threadContexts.placeOfProject(input.projectId);
       // Receipts live in the thread's object, so a launch without an id needs
       // the same id on every retry: derive it from who launched and the command id.
       const threadId =
@@ -138,7 +226,7 @@ const make = Effect.gen(function* () {
         );
       return yield* directory
         .forThread(threadId)
-        .launch(actor, { ...input, threadId }, { contextId });
+        .launch(actor, { ...input, threadId }, placed(place, threadId));
     });
 
   const threadSnapshot: CloudThreadService["Service"]["threadSnapshot"] = (actor, threadId) =>
@@ -169,60 +257,48 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const handle = directory.forThread(input.threadId);
         const cursor = yield* Ref.make(input.afterSequence);
-        // Failed attempts in a row; any delivered batch resets it.
-        const failures = yield* Ref.make(0);
-        const attempt = (): Stream.Stream<Batch, CloudThreadError> =>
-          Stream.unwrap(
+        return yield* resuming({
+          operation: "subscribe",
+          threadId: input.threadId,
+          open: Stream.unwrap(
             Effect.map(Ref.get(cursor), (afterSequence) =>
               handle.subscribe(actor, {
                 ...input,
                 ...(afterSequence === undefined ? {} : { afterSequence }),
               }),
             ),
-          ).pipe(
-            Stream.tap((batch) => {
-              const next = cursorAfter(batch);
-              return Ref.set(failures, 0).pipe(
-                Effect.andThen(next === undefined ? Effect.void : Ref.set(cursor, next)),
-              );
-            }),
-            // A live subscription only ends because its object went away.
-            Stream.concat(
-              Stream.fail(
-                new ThreadDirectory.ThreadObjectError({
-                  operation: "subscribe",
-                  cause: "The thread object closed the stream.",
-                }),
-              ),
-            ),
-            Stream.catchTags({
-              ThreadObjectError: (error) =>
-                Stream.unwrap(
-                  Effect.gen(function* () {
-                    const failed = yield* Ref.updateAndGet(failures, (count) => count + 1);
-                    // An object that keeps failing without delivering anything is broken, not busy.
-                    if (failed > MAX_FAILED_RESUMES) return Stream.fail(error);
-                    yield* Effect.logWarning("thread subscription interrupted; resuming", {
-                      threadId: input.threadId,
-                      attempt: failed,
-                      cause: error,
-                    });
-                    yield* Effect.sleep(resumeDelay(failed));
-                    return Stream.suspend(attempt);
-                  }),
-                ),
-            }),
-          );
-        return attempt();
+          ),
+          delivered: (batch) => {
+            const next = cursorAfter(batch);
+            return next === undefined ? Effect.void : Ref.set(cursor, next);
+          },
+        });
       }),
     );
 
+  const previews: CloudThreadService["Service"]["previews"] = (actor, threadId) =>
+    Stream.unwrap(
+      resuming({
+        operation: "previews",
+        threadId,
+        open: directory.forThread(threadId).previews(actor),
+        delivered: () => Effect.void,
+      }),
+    );
+
+  const openPreview: CloudThreadService["Service"]["openPreview"] = (actor, threadId, port) =>
+    directory.forThread(threadId).previewLink(actor, port);
+
   return CloudThreadService.of({
+    previews,
+    openPreview,
     dispatchCommand,
     launchThread,
     threadSnapshot,
     threadHistoryPage,
     subscribeThread,
+    turnDiagnostics: (actor, threadId, key) =>
+      directory.forThread(threadId).diagnostics(actor, key),
   });
 });
 

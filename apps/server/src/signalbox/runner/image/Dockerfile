@@ -15,7 +15,7 @@ ARG CODEX_VERSION=0.160.1
 # native dependencies need to build on install. Anything a project needs
 # beyond that comes from its environment (#123).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git openssh-client procps ripgrep \
+  && apt-get install -y --no-install-recommends ca-certificates git lsof openssh-client procps ripgrep \
     python3 make g++ pkg-config \
   && rm -rf /var/lib/apt/lists/*
 
@@ -31,6 +31,11 @@ RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/clau
 RUN corepack enable pnpm yarn
 
 COPY main.mjs /opt/signalbox/runner.mjs
+
+# The commit the Runner was built from, for each turn's diagnostics. Declared
+# after the slow layers so a new commit leaves their cache alone.
+ARG SIGNALBOX_RUNNER_REVISION
+ENV SIGNALBOX_RUNNER_REVISION=${SIGNALBOX_RUNNER_REVISION}
 
 # Claude Code refuses to skip permission prompts as root. `node` is uid 1000,
 # the same as boat's `user`, so files on the machine's disk keep one owner.

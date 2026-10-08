@@ -26,6 +26,9 @@ const MAX_READ_BYTES = 8 * 1024 * 1024;
 /** Most entries a search walks; a drive bigger than this searches its first part. */
 const MAX_SEARCH_ENTRIES = 25_000;
 
+/** Which version to read: the first of these refs that exists. Defaults to `main`. */
+export type ReadAt = ReadonlyArray<string>;
+
 export type DriveFile =
   | {
       readonly _tag: "file";
@@ -43,8 +46,13 @@ export class DriveFiles extends Context.Service<
     readonly listEntries: (
       driveId: string,
       directoryPath: string,
+      at?: ReadAt,
     ) => Effect.Effect<ReadonlyArray<ProjectEntry>, Failure>;
-    readonly readFile: (driveId: string, path: string) => Effect.Effect<DriveFile, Failure>;
+    readonly readFile: (
+      driveId: string,
+      path: string,
+      at?: ReadAt,
+    ) => Effect.Effect<DriveFile, Failure>;
     readonly searchEntries: (
       driveId: string,
       input: {
@@ -52,6 +60,7 @@ export class DriveFiles extends Context.Service<
         readonly limit: number;
         readonly kind?: ProjectEntry["kind"];
       },
+      at?: ReadAt,
     ) => Effect.Effect<
       { readonly entries: ReadonlyArray<ProjectEntry>; readonly truncated: boolean },
       Failure
@@ -84,7 +93,14 @@ const make = Effect.gen(function* () {
       Effect.provideService(DriveDirectory, directory),
       Effect.provideService(DrivePacks, packs),
     );
-  const mainOf = (reader: DriveReader) => reader.drive.ref(MAIN_REF);
+  const resolveAt = (reader: DriveReader, at: ReadAt = [MAIN_REF]) =>
+    Effect.gen(function* () {
+      for (const name of at) {
+        const oid = yield* reader.drive.ref(name);
+        if (oid !== null) return oid;
+      }
+      return null;
+    });
 
   /** Every path on each drive's latest searched commit: searches run per keystroke. */
   const walked = new Map<
@@ -105,10 +121,10 @@ const make = Effect.gen(function* () {
       return entry;
     });
 
-  const listEntries: DriveFiles["Service"]["listEntries"] = (driveId, directoryPath) =>
+  const listEntries: DriveFiles["Service"]["listEntries"] = (driveId, directoryPath, at) =>
     Effect.gen(function* () {
       const reader = yield* readerOf(driveId);
-      const main = yield* mainOf(reader);
+      const main = yield* resolveAt(reader, at);
       const segments = pathSegments(directoryPath);
       if (main === null || segments === null) return [];
       const entry = yield* reader.entryAt(yield* reader.treeOf(main), segments);
@@ -122,12 +138,12 @@ const make = Effect.gen(function* () {
         }));
     });
 
-  const readFile: DriveFiles["Service"]["readFile"] = (driveId, path) =>
+  const readFile: DriveFiles["Service"]["readFile"] = (driveId, path, at) =>
     Effect.gen(function* () {
       const segments = pathSegments(path);
       if (segments === null || segments.length === 0) return { _tag: "outside" } as const;
       const reader = yield* readerOf(driveId);
-      const main = yield* mainOf(reader);
+      const main = yield* resolveAt(reader, at);
       if (main === null) return { _tag: "missing" } as const;
       const entry = yield* reader.entryAt(yield* reader.treeOf(main), segments);
       if (entry === null) return { _tag: "missing" } as const;
@@ -151,10 +167,10 @@ const make = Effect.gen(function* () {
       } as const;
     });
 
-  const searchEntries: DriveFiles["Service"]["searchEntries"] = (driveId, input) =>
+  const searchEntries: DriveFiles["Service"]["searchEntries"] = (driveId, input, at) =>
     Effect.gen(function* () {
       const reader = yield* readerOf(driveId);
-      const main = yield* mainOf(reader);
+      const main = yield* resolveAt(reader, at);
       if (main === null) return { entries: [], truncated: false };
       const all = yield* allEntries(driveId, reader, main);
       const query = input.query.trim().toLowerCase();

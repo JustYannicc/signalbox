@@ -37,6 +37,7 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { ThreadPreviewsControl } from "./ThreadPreviewsControl"; // signalbox: previews
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -355,6 +356,13 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {/* signalbox: previews */}
+      {isServerThread ? (
+        <ThreadPreviewsControl
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
+      ) : null}
     </div>
   );
 });

@@ -254,10 +254,14 @@ const layerOrchestration = HttpApiBuilder.group(
       ThreadNotFoundError: () => threadNotFound,
       ThreadObjectError: (error: ThreadObjectError) =>
         internal("orchestration_snapshot_failed", error),
+      UserObjectError: (error: UserDirectory.UserObjectError) =>
+        internal("orchestration_snapshot_failed", error),
     };
-    const actorOf = Effect.map(requireScope(AuthOrchestrationReadScope), (principal) => ({
-      userId: userIdOf(principal),
-    }));
+    // Threads are read within the user's contexts as their own object holds them now.
+    const actorOf = Effect.gen(function* () {
+      const userId = userIdOf(yield* requireScope(AuthOrchestrationReadScope));
+      return { userId, contextIds: yield* users.forUser(userId).contextIds() };
+    });
     const snapshotOf = (threadId: ThreadId) =>
       actorOf.pipe(
         Effect.flatMap((actor) => threads.threadSnapshot(actor, threadId)),

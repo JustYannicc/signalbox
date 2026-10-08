@@ -1,4 +1,5 @@
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import {
   type ModelGatewayProvider,
   RUNNER_PROTOCOL_VERSION,
@@ -7,20 +8,29 @@ import {
   type RunnerRefusal,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, RunId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { myDriveId } from "../../drive/DriveDirectory.ts";
+import { myDriveId, parseDriveId } from "../../drive/driveAccess.ts";
+import { isRemoteToken, remoteToken } from "../../drive/remoteToken.ts";
+import type { UserObjectError } from "../../user/UserDirectory.ts";
+import { traceIdOf } from "../diagnostics/traceId.ts";
+import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor } from "../providerCatalog.ts";
+import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
+import { applyEvents } from "../threadProjection.ts";
 import * as ThreadStore from "../ThreadStore.ts";
+import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
+import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend } from "./MachineBackend.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
+import { recoverRunEvents } from "./runRecovery.ts";
 import {
   failRunEvents,
   harnessRun,
@@ -39,9 +49,14 @@ import {
  * The lease moves toward what the thread needs whenever the object asks
  * (`reconcile`): a live run on Claude or Codex gets a machine at the next
  * generation, a run whose machine never connects (within the backend's
- * connect timeout) or is lost fails with a reason, and an idle machine is
- * released after its tail. Whenever no lease stands, the plan says to stop
+ * connect timeout) fails with a reason, a run whose machine is lost goes on
+ * as a continuation on the next one (`runRecovery.ts`), and an idle machine
+ * is released after its tail. Whenever no lease stands, the plan says to stop
  * the machine; the next run starts it again at a new generation.
+ *
+ * An open preview (`PreviewHold`) keeps a connected machine up as a live run
+ * does, and the idle tail counts from the later of the last run and the last
+ * preview traffic. Previews never start a machine.
  *
  * The thread also answers the ModelGateway: a model token is good while the
  * run it was minted for is live on the machine holding the lease.
@@ -72,25 +87,70 @@ export type BatchResult =
   /** A gap: the Runner must reconnect and resend after `ackedSequence`. */
   | { readonly _tag: "out_of_order"; readonly ackedSequence: number };
 
+/**
+ * The thread's previews as the lease sees them (see `preview/PreviewGateway.ts`).
+ * Open preview sockets survive hibernation; the last traffic time is in memory,
+ * so after an eviction the tail counts from the last run, a little early at
+ * worst.
+ */
+export const PreviewHold = Context.Reference<{
+  /** Whether a preview is open on the leased machine right now. */
+  readonly held: Effect.Effect<boolean>;
+  /** When preview traffic last passed, if any did. */
+  readonly lastActiveAt: Effect.Effect<number | null>;
+}>("@signalbox/cloud/thread/runner/ThreadRunner/PreviewHold", {
+  defaultValue: () => ({ held: Effect.succeed(false), lastActiveAt: Effect.succeed(null) }),
+});
+
 /** What a drive token lets its holder do right now (see `drive/driveRoutes.ts`). */
 export type DriveAuthorization =
   | {
       readonly _tag: "granted";
       readonly threadId: string;
+      /** The thread's owner, whose role the drive checks again on every write. */
+      readonly userId: string;
       readonly driveId: string;
       readonly generation: number;
       /** Whether a turn runs: `main` only moves during one. */
       readonly live: boolean;
     }
+  | { readonly _tag: "denied"; readonly reason: string }
+  /** The owner's access couldn't be checked just now; the Runner retries. */
+  | { readonly _tag: "unavailable" };
+
+/**
+ * Whether this cloud stores drives, and whether a thread's owner may still
+ * change files in its drive: asked of their own object on every drive call,
+ * so leaving an organization or a drive stops their threads' writes at once.
+ * Without drives, turns run in a plain directory.
+ */
+export class ThreadDrives extends Context.Service<
+  ThreadDrives,
+  {
+    readonly enabled: boolean;
+    readonly writes: (userId: string, driveId: string) => Effect.Effect<boolean, UserObjectError>;
+  }
+>()("@signalbox/cloud/thread/runner/ThreadRunner/ThreadDrives") {}
+
+/** What a remote token lets its holder fetch right now. */
+export type RemoteAuthorization =
+  | {
+      readonly _tag: "granted";
+      readonly threadId: string;
+      readonly driveId: string;
+      /** Whose GitHub connection reaches the remote. */
+      readonly userId: string;
+    }
+  | { readonly _tag: "denied"; readonly reason: string }
+  | { readonly _tag: "unavailable" };
+
+/** Whether a session token may write the thread's session rows right now, and for which machine. */
+export type SessionAuthorization =
+  | { readonly _tag: "granted"; readonly generation: number }
   | { readonly _tag: "denied"; readonly reason: string };
 
-/** Whether this cloud stores drives. Without it, turns run in a plain directory. */
-export class ThreadDrives extends Context.Service<ThreadDrives, { readonly enabled: boolean }>()(
-  "@signalbox/cloud/thread/runner/ThreadRunner/ThreadDrives",
-) {}
-
 export type ModelAuthorization =
-  | { readonly _tag: "granted"; readonly runId: RunId }
+  | { readonly _tag: "granted"; readonly runId: RunId; readonly traceId: string }
   | { readonly _tag: "denied"; readonly reason: string };
 
 /** What the object must do for the lease, and when to look again. */
@@ -104,6 +164,10 @@ export interface MachinePlan {
   /** A connected machine is running a turn: keep its TTL pushed out. */
   readonly busy: boolean;
   readonly wakeAt: number | null;
+  /** The live harness run, for what the object logs about the machine. */
+  readonly runId: RunId | null;
+  /** `release`'s Runner vanished rather than being let go: its machine may have stopped itself. */
+  readonly lost: boolean;
 }
 
 /** What the connected Runner should be doing right now. */
@@ -117,6 +181,8 @@ export interface RunnerWork {
   readonly modelToken: string | null;
   /** The drive `turn` works in, and the machine's token for it. */
   readonly drive: DriveAccess | null;
+  /** The machine's token for the thread's session rows. */
+  readonly sessions: SessionAccess | null;
   readonly activeRunId: RunId | null;
 }
 
@@ -130,10 +196,12 @@ export class ThreadRunner extends Context.Service<
       readonly items: ReadonlyArray<RunnerItem>;
     }) => Effect.Effect<BatchResult>;
     /** The Runner said `end`: its machine is going away, and with it any turn it ran. */
-    readonly ended: (generation: number) => Effect.Effect<void>;
+    readonly ended: (generation: number, reason: string) => Effect.Effect<void>;
     readonly disconnected: (input: {
       readonly generation: number;
       readonly connection: number;
+      /** The socket's close code and reason, for diagnostics. */
+      readonly detail: string;
     }) => Effect.Effect<void>;
     /** The backend confirmed a request. */
     readonly ensured: (generation: number) => Effect.Effect<void>;
@@ -144,12 +212,30 @@ export class ThreadRunner extends Context.Service<
       token: string,
       provider: ModelGatewayProvider,
     ) => Effect.Effect<ModelAuthorization>;
+    /**
+     * The lease token, when `generation` holds the lease and `token` is its
+     * token (a preview tunnel's hello), or when only `generation` is given.
+     * Null otherwise. Reads committed state without the thread's lock.
+     */
+    readonly leaseToken: (generation: number, token?: string) => Effect.Effect<string | null>;
     /** Whether the drive API may act for `token`'s holder, and as whom. */
     readonly authorizeDrive: (token: string) => Effect.Effect<DriveAuthorization>;
+    /** Whether the session API may act for `token`'s holder: the machine holding the lease. */
+    readonly authorizeSession: (token: string) => Effect.Effect<SessionAuthorization>;
+    /** Whether `token` may fetch the thread's drive's remote right now (#135). */
+    readonly authorizeRemote: (token: string) => Effect.Effect<RemoteAuthorization>;
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
-const IDLE: MachinePlan = { ensure: null, release: null, stop: false, busy: false, wakeAt: null };
+const IDLE: MachinePlan = {
+  ensure: null,
+  release: null,
+  stop: false,
+  busy: false,
+  wakeAt: null,
+  runId: null,
+  lost: false,
+};
 const BUSY: MachinePlan = { ...IDLE, busy: true };
 const UNNEEDED: MachinePlan = { ...IDLE, stop: true };
 
@@ -162,8 +248,12 @@ const modelGrantFor = (projection: OrchestrationV2ThreadProjection): ModelGrant 
     : { threadId: projection.thread.id, runId: run.id, provider };
 };
 
-/** Mirrors `reconcile`: true exactly when it would act or needs to schedule a check. */
-const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean) => {
+/**
+ * Mirrors `reconcile`: true exactly when it would act or needs to schedule a
+ * check. `live`: a harness run is live; `previewHeld`: a preview is open.
+ */
+const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld: boolean) => {
+  const held = live || previewHeld;
   switch (lease.status) {
     case "none":
       return live;
@@ -172,23 +262,42 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean) => {
     case "connected":
       return (
         lease.disconnectedAt !== null ||
-        (live ? lease.idleSince !== null : lease.idleSince === null)
+        (held ? lease.idleSince !== null : lease.idleSince === null)
       );
   }
 };
 
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
+  const previews = yield* PreviewHold;
   const store = yield* ThreadStore.ThreadStore;
   const crypto = yield* Crypto.Crypto;
   const { connectTimeoutMs } = yield* MachineBackend;
+  const diagnostics = yield* TurnDiagnostics;
+  const withCrypto = <A>(effect: Effect.Effect<A, never, Crypto.Crypto>) =>
+    Effect.provideService(effect, Crypto.Crypto, crypto);
   const drives = yield* Effect.serviceOption(ThreadDrives);
   const drivesEnabled = drives._tag === "Some" && drives.value.enabled;
+  const driveIdOf = (owner: ThreadStore.ThreadOwner) =>
+    owner.driveId ?? myDriveId(owner.contextId, owner.userId);
   const driveOf = Effect.map(Effect.orDie(store.owner), (owner) =>
-    owner === null ? null : myDriveId(owner.contextId, owner.userId),
+    owner === null ? null : driveIdOf(owner),
   );
 
   const lease = Effect.orDie(store.machine);
+
+  /** The current lease's session token, signed once: the Runner presents it with every append. */
+  let sessionTokenCache: { readonly key: string; readonly token: string } | null = null;
+  const sessionTokenOf = (leaseToken: string, threadId: ThreadId, generation: number) =>
+    Effect.suspend(() => {
+      const key = `${leaseToken}\n${generation}`;
+      if (sessionTokenCache?.key === key) return Effect.succeed(sessionTokenCache.token);
+      return Effect.tap(sessionToken(leaseToken, threadId, generation), (token) =>
+        Effect.sync(() => {
+          sessionTokenCache = { key, token };
+        }),
+      );
+    });
   const newToken = Effect.orDie(
     Effect.map(Effect.all([crypto.randomUUIDv4, crypto.randomUUIDv4]), (parts) =>
       parts.join("").replaceAll("-", ""),
@@ -221,11 +330,26 @@ const make = Effect.gen(function* () {
 
   const hello: ThreadRunner["Service"]["hello"] = (hello) =>
     withLease(({ projection, lease, now }) => {
-      const refuse = (reason: RunnerRefusal, message: string) =>
-        Effect.succeed(keep<HelloResult>({ _tag: "refused", reason, message }));
       if (projection === null || projection.thread.id !== hello.threadId) {
-        return refuse("unknown_thread", "This thread does not exist.");
+        return Effect.succeed(
+          keep<HelloResult>({
+            _tag: "refused",
+            reason: "unknown_thread",
+            message: "This thread does not exist.",
+          }),
+        );
       }
+      const run = harnessRun(projection) ?? null;
+      // Anyone can say hello, so a refusal goes to the Worker's logs, not the thread's record.
+      const refuse = (reason: RunnerRefusal, message: string) =>
+        Effect.as(
+          Effect.logWarning("refused a Runner", {
+            reason,
+            generation: hello.generation,
+            machineId: hello.machineId,
+          }),
+          keep<HelloResult>({ _tag: "refused", reason, message }),
+        );
       if (hello.protocolVersion !== RUNNER_PROTOCOL_VERSION) {
         return refuse(
           "protocol_version",
@@ -240,7 +364,7 @@ const make = Effect.gen(function* () {
       }
       if (hello.token !== lease.token) return refuse("bad_token", "Wrong machine token.");
       const connection = (lease.connection ?? 0) + 1;
-      return Effect.succeed({
+      return Effect.as(diagnostics.runnerConnected({ hello, connection, run, now }), {
         events: [],
         machine: {
           ...lease,
@@ -254,13 +378,13 @@ const make = Effect.gen(function* () {
           generation: lease.generation,
           connection,
           ackedSequence: lease.ackedSequence,
-          activeRunId: harnessRun(projection)?.id ?? null,
+          activeRunId: run?.id ?? null,
         },
-      });
+      } satisfies ThreadEngine.EngineDecision<HelloResult>);
     });
 
   const batch: ThreadRunner["Service"]["batch"] = (input) =>
-    withLease(({ projection, lease }, ctx) => {
+    withLease(({ projection, lease, now }, ctx) => {
       if (
         projection === null ||
         lease.status !== "connected" ||
@@ -278,9 +402,17 @@ const make = Effect.gen(function* () {
       }
       const { events, undecodable } = runnerBatchEvents(projection, input.items, ctx);
       return Effect.as(
-        undecodable.length === 0
-          ? Effect.void
-          : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
+        Effect.andThen(
+          diagnostics.batch({
+            ...input,
+            liveRunId: harnessRun(projection)?.id ?? null,
+            runs: projection.runs,
+            now,
+          }),
+          undecodable.length === 0
+            ? Effect.void
+            : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
+        ),
         {
           events,
           machine: { ...lease, ackedSequence: input.sequence },
@@ -306,33 +438,66 @@ const make = Effect.gen(function* () {
     generation: lease.generation,
   });
 
-  const ended: ThreadRunner["Service"]["ended"] = (generation) =>
-    withLease(({ projection, lease }, ctx) => {
-      if (lease.generation !== generation || lease.status === "none") {
-        return Effect.succeed(keep(undefined));
-      }
-      const run = projection === null ? undefined : harnessRun(projection);
-      return Effect.succeed({
-        events:
-          projection === null || run === undefined
-            ? []
-            : failRunEvents(
-                projection,
-                run,
-                unknownFailure("The machine running this turn went away."),
-                ctx,
-              ),
-        machine: released(lease),
-        result: undefined,
-      });
+  /** Ends the lease's machine session in the diagnostics. */
+  const sessionEnded = (
+    lease: ThreadStore.MachineLease,
+    input: {
+      readonly reason: StopReason;
+      readonly detail: string | null;
+      readonly runId: RunId | null;
+      readonly now: number;
+      /** When the idle tail began, if not when the lease went idle (an open preview pushed it out). */
+      readonly idleSince?: number;
+    },
+  ) =>
+    diagnostics.released({
+      ...input,
+      generation: lease.generation,
+      idleSince: input.idleSince ?? lease.idleSince,
     });
 
-  const disconnected: ThreadRunner["Service"]["disconnected"] = ({ generation, connection }) =>
-    updateLease(generation, (lease, now) =>
-      lease.status === "connected" && (lease.connection ?? 0) === connection
-        ? { ...lease, disconnectedAt: now }
-        : null,
-    );
+  const ended: ThreadRunner["Service"]["ended"] = (generation, reason) =>
+    withLease(({ projection, lease, now }, ctx) => {
+      if (projection === null || lease.generation !== generation || lease.status === "none") {
+        return Effect.succeed(keep(undefined));
+      }
+      const run = harnessRun(projection);
+      const detail = `The Runner ended: ${reason}`;
+      return Effect.as(
+        sessionEnded(lease, { reason: "error", detail, runId: run?.id ?? null, now }),
+        {
+          // A machine that goes away mid-turn is a lost machine: the run goes on.
+          events: run === undefined ? [] : recoverRunEvents(projection, run, ctx),
+          machine: released(lease),
+          result: undefined,
+        },
+      );
+    });
+
+  const disconnected: ThreadRunner["Service"]["disconnected"] = ({
+    generation,
+    connection,
+    detail,
+  }) =>
+    withLease(({ projection, lease, now }) => {
+      if (
+        projection === null ||
+        lease.generation !== generation ||
+        lease.status !== "connected" ||
+        (lease.connection ?? 0) !== connection
+      ) {
+        return Effect.succeed(keep(undefined));
+      }
+      return Effect.as(
+        diagnostics.runnerClosed({
+          generation,
+          runId: harnessRun(projection)?.id ?? null,
+          detail,
+          now,
+        }),
+        { events: [], machine: { ...lease, disconnectedAt: now }, result: undefined },
+      );
+    });
 
   const ensured: ThreadRunner["Service"]["ensured"] = (generation) =>
     updateLease(generation, (lease, now) =>
@@ -341,28 +506,39 @@ const make = Effect.gen(function* () {
 
   const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }) =>
     Effect.gen(function* () {
-      const turn = projection === null ? null : runnerTurnFor(projection);
+      const untraced = projection === null ? null : runnerTurnFor(projection);
+      const turn =
+        untraced === null
+          ? null
+          : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
       const grant = projection === null ? undefined : modelGrantFor(projection);
+      const run = projection === null ? undefined : harnessRun(projection);
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
         generation: lease.generation,
-        needsUpkeep: needsUpkeep(
-          lease,
-          projection !== null && harnessRun(projection) !== undefined,
-        ),
+        needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
         turn,
         modelToken:
           turn === null || grant === undefined || lease.token === null
             ? null
             : yield* modelToken(lease.token, grant),
         drive:
-          driveId === null || lease.token === null || projection === null
+          driveId === null || lease.token === null || projection === null || run === undefined
             ? null
             : {
                 driveId,
                 token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
+                // A My Drive is always its own home; any other drive may have a remote to fetch.
+                remoteToken:
+                  parseDriveId(driveId)?.kind === "my"
+                    ? null
+                    : yield* remoteToken(lease.token, projection.thread.id, run.id),
               },
-        activeRunId: projection === null ? null : (harnessRun(projection)?.id ?? null),
+        sessions:
+          turn === null || lease.token === null || projection === null
+            ? null
+            : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
+        activeRunId: run?.id ?? null,
       });
     }),
   );
@@ -381,7 +557,11 @@ const make = Effect.gen(function* () {
       }
       if (grant.provider !== provider) return deny(`The running turn does not use ${provider}.`);
       return (yield* isModelToken(token, leaseToken, grant))
-        ? ({ _tag: "granted", runId: grant.runId } satisfies ModelAuthorization)
+        ? ({
+            _tag: "granted",
+            runId: grant.runId,
+            traceId: yield* withCrypto(traceIdOf(grant.runId)),
+          } satisfies ModelAuthorization)
         : deny("This token is not for the running turn.");
     });
 
@@ -400,33 +580,132 @@ const make = Effect.gen(function* () {
       if (!(yield* isDriveToken(token, current.token, threadId, current.generation))) {
         return deny("This token is not for this thread's machine.");
       }
-      const driveId = yield* driveOf;
-      if (driveId === null) return deny("This thread has no drive.");
+      const owner = yield* Effect.orDie(store.owner);
+      if (owner === null) return deny("This thread has no drive.");
+      const driveId = driveIdOf(owner);
+      if (drives._tag === "Some") {
+        const writes = yield* drives.value.writes(owner.userId, driveId).pipe(Effect.result);
+        if (writes._tag === "Failure") {
+          yield* Effect.logWarning("drive access check failed", { cause: writes.failure });
+          return { _tag: "unavailable" } satisfies DriveAuthorization;
+        }
+        if (!writes.success) return deny("You no longer have access to change this drive.");
+      }
       return {
         _tag: "granted",
         threadId,
+        userId: owner.userId,
         driveId,
         generation: current.generation,
         live: harnessRun(projection) !== undefined,
       } satisfies DriveAuthorization;
     });
 
+  // Like drive calls, remote fetches read committed state without the lock.
+  const authorizeRemote: ThreadRunner["Service"]["authorizeRemote"] = (token) =>
+    Effect.gen(function* () {
+      const deny = (reason: string): RemoteAuthorization => ({ _tag: "denied", reason });
+      if (!drivesEnabled) return deny("This cloud stores no drives.");
+      const projection = yield* engine.projection;
+      const run = projection === null ? undefined : harnessRun(projection);
+      const leaseToken = run === undefined ? null : (yield* lease).token;
+      if (projection === null || run === undefined || leaseToken === null) {
+        return deny("No turn is running on this thread.");
+      }
+      const threadId = projection.thread.id;
+      if (!(yield* isRemoteToken(token, leaseToken, threadId, run.id))) {
+        return deny("This token is not for the running turn.");
+      }
+      const owner = yield* Effect.orDie(store.owner);
+      if (owner === null) return deny("This thread has no drive.");
+      const driveId = driveIdOf(owner);
+      // Fetching acts with the owner's GitHub connection, so it needs their access to the drive.
+      if (drives._tag === "Some") {
+        const writes = yield* drives.value.writes(owner.userId, driveId).pipe(Effect.result);
+        if (writes._tag === "Failure") {
+          yield* Effect.logWarning("drive access check failed", { cause: writes.failure });
+          return { _tag: "unavailable" } satisfies RemoteAuthorization;
+        }
+        if (!writes.success) return deny("You no longer have access to change this drive.");
+      }
+      return {
+        _tag: "granted",
+        threadId,
+        driveId,
+        userId: owner.userId,
+      } satisfies RemoteAuthorization;
+    });
+
+  // Like drive calls, session writes read committed state without the lock;
+  // the session API checks the generation again as it writes.
+  const authorizeSession: ThreadRunner["Service"]["authorizeSession"] = (token) =>
+    Effect.gen(function* () {
+      const deny = (reason: string): SessionAuthorization => ({ _tag: "denied", reason });
+      const projection = yield* engine.projection;
+      if (projection === null) return deny("This thread does not exist.");
+      const current = yield* lease;
+      if (current.status === "none" || current.token === null) {
+        return deny("This thread has no machine.");
+      }
+      if (
+        !(yield* isLeaseToken(
+          token,
+          sessionTokenOf(current.token, projection.thread.id, current.generation),
+        ))
+      ) {
+        return deny("This token is not for this thread's machine.");
+      }
+      return { _tag: "granted", generation: current.generation } satisfies SessionAuthorization;
+    });
+
   const reconcile: ThreadRunner["Service"]["reconcile"] = withLease(
     ({ projection, lease, now }, ctx) =>
       Effect.gen(function* () {
         const run = projection === null ? undefined : harnessRun(projection);
-        const release = (reason: string | null): ThreadEngine.EngineDecision<MachinePlan> => ({
-          events:
-            projection === null || run === undefined || reason === null
+        const runId = run?.id ?? null;
+        /**
+         * Lets the machine go. `failure` fails the live run with it; `recover`
+         * continues it on the next machine (`runRecovery.ts`), and then the
+         * object looks again at once, to ask for that machine.
+         */
+        const release = (input: {
+          readonly reason: StopReason;
+          readonly detail: string;
+          readonly failure?: string;
+          readonly recover?: boolean;
+          readonly lost?: boolean;
+          readonly idleSince?: number;
+        }) => {
+          const events =
+            projection === null || run === undefined
               ? []
-              : failRunEvents(projection, run, unknownFailure(reason), ctx),
-          machine: released(lease),
-          result: { ...UNNEEDED, release: lease.generation },
-        });
+              : input.recover === true
+                ? recoverRunEvents(projection, run, ctx)
+                : input.failure === undefined
+                  ? []
+                  : failRunEvents(projection, run, unknownFailure(input.failure), ctx);
+          const after = projection === null ? null : applyEvents(projection, events);
+          const continues = after !== null && harnessRun(after) !== undefined;
+          return Effect.as(
+            projection === null ? Effect.void : sessionEnded(lease, { ...input, runId, now }),
+            {
+              events,
+              machine: released(lease),
+              result: {
+                ...UNNEEDED,
+                release: lease.generation,
+                runId,
+                lost: input.lost === true,
+                wakeAt: continues ? now : null,
+              },
+            } satisfies ThreadEngine.EngineDecision<MachinePlan>,
+          );
+        };
         if (lease.status === "none") {
-          if (run === undefined) return keep(UNNEEDED);
+          if (run === undefined || projection === null) return keep(UNNEEDED);
           const generation = lease.generation + 1;
           const token = yield* newToken;
+          yield* diagnostics.machineRequested({ generation, run, now });
           return {
             events: [],
             machine: {
@@ -437,49 +716,81 @@ const make = Effect.gen(function* () {
               requestedAt: now,
             },
             result: {
+              ...IDLE,
               ensure: { generation, token },
-              release: null,
-              stop: false,
-              busy: false,
               wakeAt: now + ENSURE_RETRY_MS,
+              runId,
             },
           };
         }
         if (lease.status === "requested") {
           // Nothing needs it any more (the run was stopped before a Runner came).
-          if (run === undefined) return release(null);
+          if (run === undefined) {
+            return yield* release({ reason: "idle", detail: "No turn needs it any more." });
+          }
           const deadline = (lease.requestedAt ?? now) + connectTimeoutMs;
-          if (now >= deadline) return release("No machine came up to run this turn.");
+          if (now >= deadline) {
+            const failure = "No machine came up to run this turn.";
+            return yield* release({
+              reason: "error",
+              detail: `No Runner connected within ${Math.round(connectTimeoutMs / 1000)} s.`,
+              failure,
+            });
+          }
           const token = lease.ensuredAt === null ? lease.token : null;
           return keep<MachinePlan>({
+            ...IDLE,
             ensure: token === null ? null : { generation: lease.generation, token },
-            release: null,
-            stop: false,
-            busy: false,
             wakeAt: token === null ? deadline : Math.min(deadline, now + ENSURE_RETRY_MS),
+            runId,
           });
         }
         if (lease.disconnectedAt !== null) {
           const deadline = lease.disconnectedAt + RECONNECT_TIMEOUT_MS;
-          if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
-          return release(run === undefined ? null : "Lost the machine running this turn.");
+          if (now < deadline) return keep({ ...IDLE, wakeAt: deadline, runId });
+          return yield* release({
+            reason: "error",
+            detail: `The Runner did not reconnect within ${RECONNECT_TIMEOUT_MS / 1000} s.`,
+            lost: true,
+            recover: run !== undefined,
+          });
         }
-        if (run !== undefined) {
+        if (run !== undefined || (yield* previews.held)) {
+          const busy = { ...BUSY, runId };
           return lease.idleSince === null
-            ? keep(BUSY)
-            : { events: [], machine: { ...lease, idleSince: null }, result: BUSY };
+            ? keep(busy)
+            : { events: [], machine: { ...lease, idleSince: null }, result: busy };
         }
         const idleSince = lease.idleSince ?? now;
-        if (now - idleSince >= IDLE_TAIL_MS) return release(null);
+        // An open preview pushes the tail out to its last traffic.
+        const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
+        if (now - tailFrom >= IDLE_TAIL_MS) {
+          return yield* release({
+            reason: "idle",
+            detail: `Idle for ${Math.round((now - tailFrom) / 60_000)} min.`,
+            idleSince: tailFrom,
+          });
+        }
         return {
           events: [],
           ...(lease.idleSince === null ? { machine: { ...lease, idleSince } } : {}),
-          result: { ...IDLE, wakeAt: idleSince + IDLE_TAIL_MS },
+          result: { ...IDLE, wakeAt: tailFrom + IDLE_TAIL_MS },
         };
       }),
   );
 
+  const leaseToken: ThreadRunner["Service"]["leaseToken"] = (generation, token) =>
+    Effect.gen(function* () {
+      // A thread that does not exist yet has no tables to read a lease from.
+      if ((yield* engine.projection) === null) return null;
+      const current = yield* lease;
+      if (current.status === "none" || current.generation !== generation) return null;
+      if (current.token === null || (token !== undefined && token !== current.token)) return null;
+      return current.token;
+    });
+
   return ThreadRunner.of({
+    leaseToken,
     hello,
     batch,
     ended,
@@ -489,6 +800,8 @@ const make = Effect.gen(function* () {
     reconcile,
     authorizeModel,
     authorizeDrive,
+    authorizeSession,
+    authorizeRemote,
   });
 });
 

@@ -30,6 +30,7 @@ import {
   type Json,
   recordedEvents,
   stringField,
+  systemNoticeEvents,
 } from "./runnerEvents.ts";
 
 /**
@@ -47,8 +48,11 @@ export const harnessRun = (projection: Projection): Run | undefined => {
   return run !== undefined && isHarnessInstance(run.providerInstanceId) ? run : undefined;
 };
 
-/** The turn to hand the Runner: the live harness run, until the Runner reports it started. */
-export function runnerTurnFor(projection: Projection): RunnerTurn | null {
+/**
+ * The turn to hand the Runner: the live harness run, until the Runner reports
+ * it started. The caller adds its trace id.
+ */
+export function runnerTurnFor(projection: Projection): Omit<RunnerTurn, "traceId"> | null {
   const run = harnessRun(projection);
   if (run === undefined || (run.status !== "starting" && run.status !== "preparing")) return null;
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
@@ -89,6 +93,9 @@ export function runnerTurnFor(projection: Projection): RunnerTurn | null {
     modelSelection: run.modelSelection,
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
+    ...(run.restartContinuationOfRunId === undefined
+      ? {}
+      : { restartContinuationOfRunId: run.restartContinuationOfRunId }),
   };
 }
 
@@ -222,6 +229,8 @@ function itemEvents(
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
   const run = harnessRun(projection);
+  // Usage and log lines are for the turn's diagnostics, not its events.
+  if (item.kind === "usage" || item.kind === "log") return [];
   if (item.kind === "provider") {
     return stringField(item.event, "type") === "turn.terminal"
       ? terminalEvents(projection, item.event, ctx)
@@ -238,6 +247,18 @@ function itemEvents(
       return checkpointEvents(projection, run, item, ctx);
     case "drive.notice":
       return noticeEvents(projection, run, item, ctx);
+    // Why the Runner stopped the turn.
+    case "session.notice":
+      return systemNoticeEvents(
+        projection,
+        run,
+        {
+          id: TurnItemId.make(`turn-item:${run.id}:session`),
+          title: "Session",
+          message: item.message,
+        },
+        ctx,
+      );
   }
 }
 

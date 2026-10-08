@@ -36,6 +36,7 @@ import {
 } from "@t3tools/client-runtime/state/signalboxContexts"; // signalbox: contexts
 import { useSectionSidebarActions } from "./SectionSidebarActions";
 import type { SectionSidebarEnvironment, SectionSidebarProject } from "./sectionProjectTree";
+import { DriveProjectShareMenuItem } from "../../drives/DriveProjectShareMenuItem"; // signalbox: drives
 
 const INHERIT_POOL = "inherit";
 
@@ -260,6 +261,10 @@ export function ProjectPlacementMenu(props: {
         >
           Move down
         </MenuItem>
+        <DriveProjectShareMenuItem
+          environmentId={props.environment.environmentId}
+          projectId={props.project.id}
+        />
       </MenuPopup>
     </Menu>
   );

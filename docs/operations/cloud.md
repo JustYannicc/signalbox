@@ -15,7 +15,10 @@ vp run dev                       # wrangler dev on http://localhost:8787
 ```
 
 `wrangler dev` runs fully local: its Durable Object state lives in
-`apps/cloud/.wrangler/` and nothing reaches Cloudflare. Local workerd has no
+`apps/cloud/.wrangler/` and nothing reaches Cloudflare. It runs the `dev`
+environment in `wrangler.jsonc`, the production Worker without its route, so
+each request keeps its own host; with a route, `wrangler dev` rewrites every
+host to the route's, which would hide preview origins. Local workerd has no
 jurisdictions, so `vp run dev` sets `LOCAL_WORKERD=1` to use the plain
 namespace; the Worker refuses to serve with that flag on any host other than
 localhost. Use the WorkOS staging client, whose redirect URIs include
@@ -65,6 +68,46 @@ time to first token). If the upstream uses a private CA, start the gateway with
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.
+
+### Previews of dev servers
+
+The PreviewGateway (`apps/cloud/src/thread/preview/`) opens the web servers a
+thread's machine runs. The Runner keeps a second socket to its thread, the
+preview tunnel (`@signalbox/runner-protocol/PreviewTunnel`), reports the web
+servers it finds listening (upstream's port discovery, `lsof` in the image),
+and carries HTTP and WebSockets to them. The machine accepts no inbound
+connections.
+
+Each thread and port gets its own origin, `<label>.<PREVIEW_DOMAIN>`, because
+dev servers expect to own one (absolute paths, HMR sockets, cookies). Clients
+ask for a link (`signalbox.previews.open`); the link carries a ticket that the
+origin trades for an HttpOnly cookie. Tickets and cookies are signed with the
+machine's lease token, so a new generation voids all of them, and every request
+is checked against the thread's members. An open preview WebSocket (Vite's
+HMR) holds the machine's lease; the idle tail starts when the last one closes
+or the last request ends.
+
+Locally, add `PREVIEW_DOMAIN=localhost:8787` to `.dev.vars`: preview origins
+are `http://<label>.localhost:8787`, which browsers resolve to loopback. With
+the local Runner host, every thread sees the dev servers on your own machine.
+
+To turn previews on for a deployment, it needs a domain whose subdomains reach
+the Worker:
+
+1. Pick the domain. Use a registrable domain of its own (the way GitHub serves
+   user content from `githubusercontent.com`), so preview pages aren't
+   same-site with `app.signalbox.run`. Subdomains of `signalbox.run` also work,
+   but are same-site with the app.
+2. In its Cloudflare zone, add a proxied wildcard DNS record (`*`) and a
+   Worker route `*.<domain>/*` for `signalbox-cloud` (in `wrangler.jsonc`'s
+   `routes`, so deploys keep it). Universal SSL covers one level of
+   subdomains.
+3. Set the `PREVIEW_DOMAIN` variable in the `cloud-production` GitHub
+   environment. The deploy passes it; unset, previews are off and clients hide
+   the control.
+
+Pull request previews don't serve dev-server previews: each would need a
+wildcard domain of its own.
 
 ### Machines on boat
 
@@ -127,9 +170,11 @@ refused.
 
 ### Drives
 
-Each person has one drive per context (their My Drive), and every thread they
-start in that context works in it (`apps/cloud/src/drive/`). A drive is a git
-repository with no git server: packs in the `DRIVE_PACKS` R2 bucket
+Each person has a My Drive in every context, work organizations have shared
+drives, and a folder shared from a My Drive is split out into a drive of its
+own (`apps/cloud/src/drive/`). Every drive is a project in its owner's and
+members' sidebars, and a thread works in the drive it was started in. A drive
+is a git repository with no git server: packs in the `DRIVE_PACKS` R2 bucket
 (`signalbox-drives`, previews `signalbox-drives-preview`, both in the EU
 jurisdiction), refs in the drive's `DriveObject`. The Runner checks the
 thread's branch out as the harness's working directory, uploads one pack and
@@ -139,8 +184,8 @@ conflict goes back to the agent as one more step of the same turn. Clients
 browse `main` and each turn's diff through the Worker, with no machine
 running.
 
-Two invariants hold the store together, both enforced in the Worker and the
-drive object rather than trusted to the Runner:
+Three invariants hold the store together, all enforced by the Worker and the
+cloud's objects rather than trusted to the Runner:
 
 - **Objects before refs.** An upload is checked object by object, stored in
   R2, and only then indexed; a pack is refused unless everything its commits
@@ -151,10 +196,126 @@ drive object rather than trusted to the Runner:
   machine generation. That thread moves only `threads/<thread>` and
   `wip/<thread>`, and `main` only as a fast-forward to its own branch while its
   turn runs. An older generation writes nothing once a newer one has.
+- **Who reaches a drive.** Two authorities, asked on every request and cached
+  nowhere: the drive object's members (`drive/DriveMembers.ts`) and, for a
+  work organization's drive, the person's own contexts in their user object
+  (`user/UserDrives.ts`). Removing someone from either cuts browsing, their
+  threads' machines and new threads at once. The drive object delivers
+  membership changes to each person's sidebar from its alarm, but access never
+  waits on that delivery.
 
 `wrangler dev` keeps the bucket locally. Deployments need both buckets
 created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
 and the same for `-preview`); without them the deploy fails.
+
+### Drives backed by GitHub
+
+A user can import a GitHub repository (Settings › Source Control, then Add
+project › GitHub repository). It becomes a shared drive in Personal, with the
+user as its manager and the repository recorded on the drive, so it can be
+shared like any drive. Its drive keeps GitHub as its home
+(`apps/cloud/src/github/`, `drive/remoteRoutes.ts`):
+
+- **`main` mirrors the default branch**, one commit deep. At each turn start
+  the Runner fetches GitHub's `HEAD` through the cloud, uploads that commit
+  with its whole tree, and `mirror`s `main` to it. The Worker checks both
+  against what GitHub says the head is right now, so `main` only ever follows
+  GitHub. A new thread's branch starts there.
+- **Threads never reconcile.** A turn's commit stays on `threads/<id>`. The
+  user pushes it, or opens a pull request, from the thread's git panel. The
+  user's object builds the push from the drive's packs and sends it over git's
+  smart HTTP, with no machine running. Only the thread's branch is pushed
+  (`signalbox/<id>`), so auto-saves never reach GitHub.
+- **No GitHub credential reaches a machine.** Users connect GitHub with
+  Signalbox's GitHub App, and its user tokens live only in their own object.
+  A machine fetches through `/api/drive/remote`, which takes fetches only,
+  with a remote token that is good only while its turn runs. The cloud adds
+  the user's token on the way to GitHub. The Runner passes the remote token
+  to that one `git fetch` in its environment, and never writes it to disk.
+
+The Worker needs a GitHub App:
+
+| Name                       | Kind   | What                                   |
+| -------------------------- | ------ | -------------------------------------- |
+| `GITHUB_APP_CLIENT_ID`     | var    | The App's client id                    |
+| `GITHUB_APP_CLIENT_SECRET` | secret | One of the App's client secrets        |
+| `GITHUB_APP_SLUG`          | var    | Its URL name, `github.com/apps/<slug>` |
+
+Register it under the GitHub account or organization that offers it:
+
+- **Callback URL:** `https://app.signalbox.run/api/github/callback`. Add
+  `http://localhost:8787/api/github/callback` to a separate App for local
+  development.
+- **Expire user authorization tokens:** on.
+- **Request user authorization (OAuth) during installation:** off.
+- **Webhook:** off.
+- **Repository permissions:** Contents read and write, Pull requests read and
+  write, Metadata read-only.
+- **Where can this App be installed:** any account.
+
+The deploy workflow passes the two variables and the secret from the GitHub
+environment, so setting them turns GitHub-backed drives on. Previews have
+their own origin, which the App's callback list does not include, so connect
+GitHub on production or locally.
+
+### Exact resume
+
+A machine can die at any moment, so the harness's own session leaves it as
+it is written (#132): Claude Code's transcript and subagent sidecars through
+the Agent SDK's `SessionStore` (eager flush), Codex's rollout files by tailing
+them. The Runner streams the rows verbatim to the thread's object, which keeps
+them in its own SQLite (`apps/cloud/src/thread/session/`, tables that create
+themselves rather than a `ThreadStore` migration). Rows land only directly
+after the stored ones, so the store is always a gapless prefix of what the
+harness wrote, and only the machine holding the lease can write.
+
+- A message or tool result the thread shows as complete has its rows stored
+  first. Claude writes a message's row 30 to 120 ms after streaming it, so the
+  Runner holds each message until its row is durable.
+- If saving stalls for 30 s, or the SDK reports `mirror_error`, the Runner
+  stops the turn with a notice. The rows stay queued and land once the store
+  answers again.
+- When the machine running a turn is lost (its socket stays gone for 60 s, or
+  it says `end`), the run ends interrupted, with anything still streaming
+  shown aborted, and a continuation run (`restartContinuationOfRunId`) starts
+  on the next machine. That machine restores the session at its latest
+  durable row and the worktree at its latest auto-save, then resumes natively.
+  A tool that was running is reported to the model as unfinished by the
+  harness itself and never rerun. After three lost machines in a row, or when
+  the harness never started the run, the run fails instead.
+
+To watch it locally, kill the Runner host while a turn runs and start another
+one with an empty `--home`: about a minute later the turn goes on there.
+
+### Why a turn failed
+
+Every turn has a trace id: 32 hex characters derived from its run id. The
+same id is on the command receipt that started the turn, the `turn.start` the
+Runner gets (and its own logs), the ModelGateway's `model_gateway.request` log
+lines, and the turn's diagnostic record. The thread object writes that record
+as it goes. It holds the machine generations the turn ran on, with backend,
+machine id, image, digest, Runner revision and `claude`/`codex` versions, how
+each one woke and stopped, and every backend answer. It also holds the
+Runner's own error lines (redacted), each model request with its status and
+tokens, CPU and memory, and the harness's session refs.
+
+- Ask the thread's object, signed in as its owner:
+  `GET /api/cloud/threads/<thread id>/diagnostics` lists recent turns with
+  their trace ids and failures, and `.../diagnostics/<trace, run or command id>` returns
+  one record.
+- In Workers Logs, search for the trace id. When a turn ends, its object logs
+  the whole record as `cloud turn diagnostic`.
+
+### Usage analytics
+
+With `SIGNALBOX_POSTHOG_KEY` set (and `SIGNALBOX_POSTHOG_HOST` for a non-US
+project), thread objects send `cloud.turn.completed` per turn and
+`cloud.machine.session` per machine wake to Signalbox's PostHog. These are the
+#116 events the cost replay reads. Ids are hashed and nothing carries content,
+paths or command text. `T3CODE_TELEMETRY_ENABLED=false` turns them off. The
+deploy passes both variables from the `cloud-production` environment only, so
+previews send nothing. CPU, memory, disk and egress are measured in the
+Runner's container on the VM, so a local Runner host on a Mac reports none.
 
 ### Dependency and build caches
 
@@ -192,18 +353,27 @@ Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
 which each preview derives its own session secret.
 
-| Name                       | Kind     | What                                                                    |
-| -------------------------- | -------- | ----------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`     | secret   | Account › Workers Scripts: Edit and Account › Account Settings: Read    |
-| `CLOUDFLARE_ACCOUNT_ID`    | variable | The Cloudflare account                                                  |
-| `CLOUD_SESSION_SECRET`     | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out. |
-| `T3CODE_WORKOS_CLIENT_ID`  | variable | WorkOS client id                                                        |
-| `T3CODE_WORKOS_API_KEY`    | secret   | WorkOS API key: email verification (GitHub sign-ins) and work contexts  |
-| `VITE_T3CODE_FEEDBACK_DSN` | variable | Sentry DSN for the sidebar feedback button, baked into the web build    |
+| Name                           | Kind     | What                                                                            |
+| ------------------------------ | -------- | ------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts: Edit and Account › Account Settings: Read            |
+| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                          |
+| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.         |
+| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                |
+| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing |
+| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                          |
+| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build            |
 
 WorkOS must list each origin's `/api/account/callback` as a redirect URI:
 `https://app.signalbox.run/...` for production and
 `https://*.signalbox.run/...` for previews.
+
+Leaving an organization takes away its drives and threads once the cloud
+hears of it. Without a webhook that's the person's next sign-in. To make it
+immediate, add a WorkOS webhook endpoint for
+`https://app.signalbox.run/api/workos/webhook` with the
+`organization_membership.created`, `.updated` and `.deleted` events, and store
+its signing secret as `T3CODE_WORKOS_WEBHOOK_SECRET`. Previews don't receive
+it.
 
 `ENVIRONMENT_ID` in `wrangler.jsonc` is the cloud's identity. Clients key saved
 connections on it, so never change it for a live deployment.

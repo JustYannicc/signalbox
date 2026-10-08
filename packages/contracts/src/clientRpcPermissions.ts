@@ -6,6 +6,8 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { WS_METHODS } from "./rpc.ts";
+import { SIGNALBOX_DRIVES_WS_METHODS } from "./signalboxDrives.ts"; // signalbox: drives
+import { SIGNALBOX_PREVIEWS_WS_METHODS } from "./signalboxPreviews.ts"; // signalbox: previews
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -39,6 +41,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_DRIVES_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: drives
+  [SIGNALBOX_DRIVES_WS_METHODS.share]: AuthOrchestrationOperateScope, // signalbox: drives
+  [SIGNALBOX_DRIVES_WS_METHODS.unshare]: AuthOrchestrationOperateScope, // signalbox: drives
+  [SIGNALBOX_DRIVES_WS_METHODS.shareFolder]: AuthOrchestrationOperateScope, // signalbox: drives
+  [SIGNALBOX_PREVIEWS_WS_METHODS.open]: AuthOrchestrationOperateScope, // signalbox: previews
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

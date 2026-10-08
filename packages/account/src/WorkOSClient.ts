@@ -171,6 +171,10 @@ export const authenticate = Effect.fn("WorkOS.authenticate")(function* (
       () => new WorkOSAuthenticateError({ status: response.status, error: "invalid_response" }),
     ),
   );
+  return toUser(user);
+});
+
+const toUser = (user: typeof WorkOSUserBody.Type): WorkOSUser => {
   const firstName = nonEmpty(user.first_name);
   const lastName = nonEmpty(user.last_name);
   const avatarUrl = nonEmpty(user.profile_picture_url);
@@ -180,7 +184,48 @@ export const authenticate = Effect.fn("WorkOS.authenticate")(function* (
     ...(firstName ? { firstName } : {}),
     ...(lastName ? { lastName } : {}),
     ...(avatarUrl ? { avatarUrl } : {}),
-  } satisfies WorkOSUser;
+  };
+};
+
+export class WorkOSUserLookupError extends Schema.TaggedError<WorkOSUserLookupError>()(
+  "WorkOSUserLookupError",
+  { status: Schema.optional(Schema.Number) },
+) {
+  override get message(): string {
+    return `Looking up a WorkOS user failed (${this.status ?? "no response"}).`;
+  }
+}
+
+const UsersPage = Schema.Struct({ data: Schema.Array(WorkOSUserBody) });
+
+/**
+ * `GET /user_management/users?email=`: the account signed up with `email`, or
+ * null when there is none. Needs the API key.
+ */
+export const findUserByEmail = Effect.fn("WorkOS.findUserByEmail")(function* (
+  config: WorkOSConfig & { readonly apiKey: Redacted.Redacted<string> },
+  email: string,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const url = new URL("/user_management/users", config.apiBaseUrl);
+  url.searchParams.set("email", email.trim().toLowerCase());
+  url.searchParams.set("limit", "1");
+  const response = yield* httpClient
+    .execute(
+      HttpClientRequest.get(url).pipe(
+        HttpClientRequest.acceptJson,
+        HttpClientRequest.bearerToken(Redacted.value(config.apiKey)),
+      ),
+    )
+    .pipe(Effect.mapError(() => new WorkOSUserLookupError({})));
+  if (response.status < 200 || response.status >= 300) {
+    return yield* new WorkOSUserLookupError({ status: response.status });
+  }
+  const body = yield* HttpClientResponse.schemaBodyJson(UsersPage)(response).pipe(
+    Effect.mapError(() => new WorkOSUserLookupError({ status: response.status })),
+  );
+  const [user] = body.data;
+  return user === undefined ? null : toUser(user);
 });
 
 export interface WorkOSOrganization {

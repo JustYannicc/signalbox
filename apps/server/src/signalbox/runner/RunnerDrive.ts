@@ -1,4 +1,8 @@
-import type { DriveFileChange } from "@signalbox/runner-protocol/DriveProtocol";
+import {
+  DRIVE_COMMIT_AUTHOR,
+  type DriveFileChange,
+  type DriveRemote,
+} from "@signalbox/runner-protocol/DriveProtocol";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -9,7 +13,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import type { DriveClient, DriveClientError } from "./RunnerDriveClient.ts";
 import { type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
-import { EMPTY_TREE, makeRunnerGit, type RunnerGitError } from "./RunnerGit.ts";
+import { EMPTY_TREE, makeRunnerGit, RunnerGitError } from "./RunnerGit.ts";
 
 /**
  * The thread's working directory as a checkout of its drive (#131). The
@@ -25,6 +29,14 @@ import { EMPTY_TREE, makeRunnerGit, type RunnerGitError } from "./RunnerGit.ts";
  * - `finishTurn` commits the turn, merges `main` in, saves the branch and
  *   fast-forwards `main` to it. A merge conflict stays in the worktree for the
  *   agent; `continueAfterResolution` or `abandonMerge` carries on from there.
+ *
+ * A drive backed by a remote repository (#135) keeps the remote as its home.
+ * `prepare` first fetches the remote's default branch through the cloud, one
+ * commit deep, with the turn's remote token (the machine holds no credential
+ * for the remote) and mirrors the drive's `main` to it, so a new thread
+ * starts from the remote's latest. `finishTurn` saves the branch and stops
+ * there: the user pushes it or opens a pull request, and merging that on the
+ * remote is what lands the work. Auto-saves never leave the drive.
  */
 
 export interface DriveCheckpoint {
@@ -36,14 +48,20 @@ export interface DriveCheckpoint {
 
 export type DriveOutcome =
   | { readonly _tag: "landed"; readonly main: string }
+  /** A remote-backed drive's branch, saved for the user to push. */
+  | { readonly _tag: "saved"; readonly head: string }
   | { readonly _tag: "conflict"; readonly files: ReadonlyArray<string> }
   | { readonly _tag: "not_landed"; readonly reason: string };
 
 export type RunnerDriveError = RunnerGitError | DriveClientError | PlatformError.PlatformError;
 
 export interface RunnerDrive {
-  /** At each turn start: opens the drive and checks the thread's branch out. */
-  readonly prepare: Effect.Effect<void, RunnerDriveError>;
+  /**
+   * At each turn start: opens the drive and checks the thread's branch out,
+   * first bringing a remote-backed drive's `main` up to the remote with the
+   * turn's `remoteToken`.
+   */
+  readonly prepare: (remoteToken: string | null) => Effect.Effect<void, RunnerDriveError>;
   /** Starts an auto-save, or queues one behind the running one. Never fails. */
   readonly autosave: Effect.Effect<void>;
   /** Waits for running and queued auto-saves. */
@@ -59,9 +77,11 @@ export interface RunnerDrive {
 }
 
 const BRANCH = "refs/heads/signalbox";
+/** The remote's head as last fetched. */
+const REMOTE_REF = "refs/drive/remote";
 const CONFIG = [
-  ["user.name", "Signalbox"],
-  ["user.email", "agent@signalbox.invalid"],
+  ["user.name", DRIVE_COMMIT_AUTHOR.name],
+  ["user.email", DRIVE_COMMIT_AUTHOR.email],
   ["gc.auto", "0"],
   ["core.quotepath", "false"],
 ] as const;
@@ -92,6 +112,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   let turnStart: string | null = null;
   /** Files the last merge left conflicted. */
   let conflicted: ReadonlyArray<string> = [];
+  /** The remote the drive is backed by, as of the last `prepare`. */
+  let remote: DriveRemote | null = null;
 
   /** The worktree as a tree, built in a scratch index so the agent's index and HEAD stay put. */
   const snapshotTree = (head: string | null) =>
@@ -268,22 +290,85 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       yield* git.run(state.thread === null ? ["read-tree", "--empty"] : ["reset", "-q"]);
     });
 
-  const prepare = exclusive(
+  /**
+   * The remote's default branch head, fetched one commit deep through the
+   * cloud. The token travels in git's environment for this one command, never
+   * in a file.
+   */
+  const fetchRemote = (remoteToken: string) =>
     Effect.gen(function* () {
-      const existed = yield* fs.exists(gitDir);
-      yield* fs.makeDirectory(input.cwd, { recursive: true });
-      if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
-      for (const [key, value] of CONFIG) yield* git.run(["config", key, value]);
-      yield* excludeCaches;
-      const localThread = existed ? yield* git.resolve("refs/drive/thread") : null;
-      const state = yield* drive.open;
-      if (!existed || localThread !== state.thread) {
-        conflicted = [];
-        yield* checkout(state);
+      const fetched = yield* git.exec(
+        ["fetch", "--depth=1", "--no-tags", "-q", input.client.remoteUrl, `+HEAD:${REMOTE_REF}`],
+        {
+          env: {
+            GIT_CONFIG_COUNT: "1",
+            GIT_CONFIG_KEY_0: "http.extraHeader",
+            GIT_CONFIG_VALUE_0: `Authorization: Bearer ${remoteToken}`,
+          },
+        },
+      );
+      if (fetched.code !== 0) {
+        return {
+          _tag: "failed",
+          reason: fetched.stderr.trim() || `git fetch exited ${fetched.code}`,
+        } as const;
       }
-      turnStart = yield* git.resolve("HEAD");
-    }),
-  );
+      const head = yield* git.resolve(REMOTE_REF);
+      return head === null
+        ? ({ _tag: "failed", reason: "The remote has no default branch yet." } as const)
+        : ({ _tag: "fetched", head } as const);
+    });
+
+  /** Brings a remote-backed drive's `main` to the remote's head. Fails only when the drive has nothing at all. */
+  const syncRemote = (remoteToken: string) =>
+    Effect.gen(function* () {
+      const fetched = yield* fetchRemote(remoteToken);
+      if (fetched._tag === "failed") {
+        if (drive.known().main === null) {
+          return yield* new RunnerGitError({
+            message: `Fetching ${remote?.repository ?? "the repository"} failed: ${fetched.reason}`,
+          });
+        }
+        yield* Effect.logWarning("fetching the remote failed; working from the drive's copy", {
+          reason: fetched.reason,
+        });
+        return;
+      }
+      const mirrored = yield* drive.mirrorMain(fetched.head).pipe(Effect.result);
+      if (mirrored._tag === "Success" && mirrored.success === null) return;
+      const reason =
+        mirrored._tag === "Success" ? mirrored.success : Cause.pretty(Cause.fail(mirrored.failure));
+      // GitHub may still be catching up on a merge; the drive's copy is the next best start.
+      if (drive.known().main === null) {
+        return yield* new RunnerGitError({
+          message: `Saving ${remote?.repository ?? "the repository"}'s latest version failed: ${reason}`,
+        });
+      }
+      yield* Effect.logWarning("mirroring the remote failed; working from the drive's copy", {
+        reason,
+      });
+    });
+
+  const prepare = (remoteToken: string | null) =>
+    exclusive(
+      Effect.gen(function* () {
+        const existed = yield* fs.exists(gitDir);
+        yield* fs.makeDirectory(input.cwd, { recursive: true });
+        if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
+        for (const [key, value] of CONFIG) yield* git.run(["config", key, value]);
+        yield* excludeCaches;
+        const localThread = existed ? yield* git.resolve("refs/drive/thread") : null;
+        // Only a drive backed by a remote gets a remote token; any other opens straight away.
+        remote = remoteToken === null ? null : yield* drive.refresh;
+        if (remote !== null && remoteToken !== null) yield* syncRemote(remoteToken);
+        const state = yield* drive.open;
+        if (!existed || localThread !== state.thread) {
+          conflicted = [];
+          yield* checkout(state);
+        }
+        turnStart = yield* git.resolve("HEAD");
+      }),
+    );
 
   const finishTurn: RunnerDrive["finishTurn"] = ({ message }) =>
     exclusive(
@@ -306,6 +391,16 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
               };
         if (head === null) {
           return { checkpoint, outcome: { _tag: "not_landed", reason: "Nothing to save yet." } };
+        }
+        if (remote !== null) {
+          const refused = yield* drive.saveBranch(head);
+          return {
+            checkpoint,
+            outcome:
+              refused === null
+                ? ({ _tag: "saved", head } as const)
+                : ({ _tag: "not_landed", reason: refused } as const),
+          };
         }
         const outcome: DriveOutcome =
           unresolved.length > 0 ? { _tag: "conflict", files: unresolved } : yield* land;

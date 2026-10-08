@@ -114,6 +114,8 @@ jobs:
           # Unchanged apt and npm layers keep their digests, so machines only pull what changed.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            SIGNALBOX_RUNNER_REVISION=${{ github.sha }}
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 
 import { jsonCodec as frameCodec } from "./jsonCodec.ts";
 import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
+import { SessionAccess } from "./SessionProtocol.ts";
 
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
@@ -34,7 +35,8 @@ import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
  * 3. The thread sends `turn.start` and `interrupt`; the Runner streams
  *    sequenced `batch`es of what happened and the thread `ack`s each once its
  *    events are committed. A batch at or below the acknowledged sequence is a
- *    resend and changes nothing.
+ *    resend and changes nothing. Batches also carry the machine's usage and
+ *    log lines for the turn's diagnostic record.
  * 4. Either side sends `end` before closing for good.
  *
  * Every frame is one JSON text message, except the heartbeat: the Runner sends
@@ -46,7 +48,13 @@ import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
  * checks the thread's branch out as the harness's working directory, saves
  * after each batch of tool calls, and reconciles with the drive's `main`
  * before it reports the turn's end, reporting the turn's commit as a
- * checkpoint.
+ * checkpoint. A drive backed by a remote repository fetches the remote's
+ * default branch at turn start instead, and saves the turn without merging.
+ *
+ * Each turn also carries the thread's session token (`SessionProtocol.ts`):
+ * the Runner streams the harness's own session rows to the thread as they are
+ * written, restores them on a new machine before it resumes the harness, and
+ * reports a message complete only once its rows are durable.
  *
  * The machine holds no provider keys. Its harnesses reach the models through
  * the ModelGateway named in `MachineEnsureRequest`, with the model token each
@@ -54,7 +62,7 @@ import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
  * only, and stops working when the turn ends.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 3;
+export const RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -66,6 +74,8 @@ export const RUNNER_CONNECT_PATH = "/api/runner/connect";
 export const RunnerTurn = Schema.Struct({
   threadId: ThreadId,
   runId: RunId,
+  /** The turn's trace id (32 hex), on everything the Runner logs about it. */
+  traceId: Schema.String,
   runOrdinal: PositiveInt,
   providerTurnOrdinal: PositiveInt,
   attemptId: RunAttemptId,
@@ -83,8 +93,46 @@ export const RunnerTurn = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /**
+   * Set when this run continues one its machine was lost under: the harness
+   * resumes its restored session and carries on, rather than taking `message`
+   * as a new request where the adapter can (Codex continues natively).
+   */
+  restartContinuationOfRunId: Schema.optional(RunId),
 });
 export type RunnerTurn = typeof RunnerTurn.Type;
+
+/**
+ * What the machine used since this Runner session began, measured from the
+ * cgroup of the Runner's container (`cpu.stat`, `memory.current`,
+ * `memory.peak`), the disk holding the machine's home, and the machine's
+ * network interfaces. Null where the machine cannot measure it, such as a
+ * developer's own Mac. Counters only grow within a session.
+ */
+export const MachineUsage = Schema.Struct({
+  cpuSeconds: Schema.NullOr(Schema.Number),
+  memoryBytes: Schema.NullOr(Schema.Number),
+  memoryPeakBytes: Schema.NullOr(Schema.Number),
+  /** The mean of the session's memory samples. */
+  memoryAverageBytes: Schema.NullOr(Schema.Number),
+  diskUsedBytes: Schema.NullOr(Schema.Number),
+  egressBytes: Schema.NullOr(Schema.Number),
+});
+export type MachineUsage = typeof MachineUsage.Type;
+
+export const RunnerLogLevel = Schema.Literals(["info", "warning", "error"]);
+export type RunnerLogLevel = typeof RunnerLogLevel.Type;
+
+/** What the Runner is built from, so a turn's diagnostics name the exact software it ran on. */
+export const RunnerBuild = Schema.Struct({
+  /** The image's content digest (`…@sha256:…`), when the machine knows it. */
+  imageDigest: Schema.NullOr(Schema.String),
+  /** The git revision the Runner was built from. */
+  revision: Schema.NullOr(Schema.String),
+  /** Each harness CLI's own `--version` output, by command (`claude`, `codex`). */
+  cliVersions: Schema.Record(Schema.String, Schema.String),
+});
+export type RunnerBuild = typeof RunnerBuild.Type;
 
 /** Something that happened on the machine, in the order it happened. */
 export const RunnerItem = Schema.Union([
@@ -120,6 +168,15 @@ export const RunnerItem = Schema.Union([
     message: Schema.String,
   }),
   /**
+   * The harness's session could not be saved, so the Runner stopped the turn
+   * rather than go on with rows that would be lost with the machine.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("session.notice"),
+    runId: RunId,
+    message: Schema.String,
+  }),
+  /**
    * One event from the provider adapter (upstream's `ProviderAdapterV2Event`),
    * in its JSON encoding. Left opaque here so an adapter event this protocol
    * has never heard of still arrives; the thread decides what it means.
@@ -128,6 +185,25 @@ export const RunnerItem = Schema.Union([
     kind: Schema.Literal("provider"),
     runId: RunId,
     event: Schema.Record(Schema.String, Schema.Unknown),
+  }),
+  /**
+   * The machine's usage so far, sent when a turn starts and ends and every
+   * half minute. `runId` is the turn running at that moment, if any.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("usage"),
+    runId: Schema.NullOr(RunId),
+    usage: MachineUsage,
+  }),
+  /**
+   * A line for the turn's diagnostic record: what went wrong on the machine,
+   * bounded and with credentials redacted. `runId` is the turn it is about, if any.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("log"),
+    runId: Schema.NullOr(RunId),
+    level: RunnerLogLevel,
+    message: Schema.String,
   }),
 ]);
 export type RunnerItem = typeof RunnerItem.Type;
@@ -141,6 +217,8 @@ export const RunnerHello = Schema.Struct({
   generation: PositiveInt,
   token: Schema.String,
   lastAckedSequence: NonNegativeInt,
+  /** Absent from Runners built before diagnostics. */
+  build: Schema.optional(RunnerBuild),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
@@ -188,6 +266,8 @@ export const ThreadMessage = Schema.Union([
     modelToken: Schema.String,
     /** The drive the turn works in. Null when this cloud stores no drives. */
     drive: Schema.NullOr(DriveAccess),
+    /** Where the harness's session rows go. */
+    sessions: SessionAccess,
   }),
   Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),

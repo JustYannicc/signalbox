@@ -22,7 +22,7 @@ const decoder = new TextDecoder();
 
 export const hex = (bytes: Uint8Array) => Hex.encode(bytes);
 
-const concatBytes = (parts: ReadonlyArray<Bytes>) => {
+export const concatBytes = (parts: ReadonlyArray<Uint8Array>): Bytes => {
   const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
   let at = 0;
   for (const part of parts) {
@@ -38,6 +38,12 @@ export const sha1 = async (bytes: Bytes) =>
 /** The id git gives `content` stored as `type`. */
 export const objectId = (type: ObjectType, content: Bytes) =>
   sha1(concatBytes([encoder.encode(`${type} ${content.length}\0`), content]));
+
+/** Deflates into one zlib stream, as git compresses objects. */
+export async function deflate(bytes: Bytes): Promise<Bytes> {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
 
 /** Inflates one zlib stream (git's object compression). */
 export async function inflate(bytes: Bytes): Promise<Bytes> {
