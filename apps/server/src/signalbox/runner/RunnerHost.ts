@@ -46,7 +46,8 @@ import { makeRunnerUsage } from "./RunnerUsage.ts";
  * same generation is a no-op, and a higher generation replaces the thread's
  * older Runner. Each thread gets a machine directory of its own
  * (`machines/<thread>`: home, harness config, model token) so no thread's
- * harnesses see this machine's own logins or another thread's token.
+ * harnesses see this machine's own logins or another thread's token, and a
+ * working directory (`workspaces/<thread>/drive`).
  *
  * Each Runner also runs the PreviewGateway's tunnel for its thread, which
  * starts and stops with that generation.
@@ -107,7 +108,9 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           return "superseded";
         }
         if (existing !== undefined) yield* stop(request.threadId, existing);
-        const cwd = path.join(config.home, "threads", request.threadId);
+        // The checkout sits one folder down: the folder above holds the instructions
+        // its shortcuts bring, outside the drive (`RunnerInstructions.ts`).
+        const cwd = path.join(config.home, "workspaces", request.threadId, "drive");
         yield* fs.makeDirectory(cwd, { recursive: true });
         const scope = yield* Scope.fork(hostScope);
         const session = yield* Effect.gen(function* () {

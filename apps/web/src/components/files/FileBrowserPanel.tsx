@@ -28,7 +28,7 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
-import { useDriveFolderShareMenu } from "../drives/useDriveFolderShareMenu"; // signalbox: drives
+import { useDriveFolderMenu } from "../drives/useDriveFolderMenu"; // signalbox: drives
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -109,7 +109,6 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
-  const driveFolderShareMenu = useDriveFolderShareMenu(environmentId, cwd);
   const {
     entries: directoryEntries,
     load,
@@ -118,6 +117,7 @@ export default function FileBrowserPanel({
     error,
     isPending,
   } = useDirectoryEntries(environmentId, cwd);
+  const driveFolderMenu = useDriveFolderMenu(environmentId, cwd, refresh); // signalbox: drives
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
   const pathSearch = useProjectPathSearch({ environmentId, cwd, query: query.slice(0, 256) }, 200);
@@ -182,7 +182,7 @@ export default function FileBrowserPanel({
       : { x: anchorRect.left, y: anchorRect.bottom };
     const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
     const fileMenuItems = fileContextMenu.buildItems(fileTarget);
-    const driveMenuItems = driveFolderShareMenu.buildItems(relativePath, item.path.endsWith("/"));
+    const driveMenuItems = driveFolderMenu.buildItems(relativePath, item.path.endsWith("/"));
     try {
       const clicked = await api.contextMenu.show(
         [
@@ -194,8 +194,8 @@ export default function FileBrowserPanel({
         position,
       );
       if (clicked === null) return;
-      if (clicked === "share-folder") {
-        driveFolderShareMenu.activate(clicked, relativePath);
+      if (driveFolderMenu.handles(clicked)) {
+        driveFolderMenu.activate(clicked, relativePath);
         return;
       }
       // "Open with" submenu selections report the child id ("editor:<id>"),
@@ -535,6 +535,7 @@ export default function FileBrowserPanel({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {driveFolderMenu.toolbarButton /* signalbox: drives */}
       </div>
       {error || pathSearch.error ? (
         <button
@@ -561,7 +562,7 @@ export default function FileBrowserPanel({
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
       />
-      {driveFolderShareMenu.dialog}
+      {driveFolderMenu.dialog}
     </div>
   );
 }

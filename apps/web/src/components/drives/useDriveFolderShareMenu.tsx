@@ -3,22 +3,17 @@ import type { ContextMenuItem, EnvironmentId } from "@t3tools/contracts";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
 import { useState } from "react";
 
-import { environmentProjects } from "../../state/projects";
-import { environmentDrivesAtom, signalboxDrives } from "../../state/signalboxDrives";
+import { signalboxDrives } from "../../state/signalboxDrives";
 import { ShareDriveDialog, type FolderShareTarget } from "./ShareDriveDialog";
+import { useDriveAtCwd } from "./useDriveAtCwd";
 
 export type DriveFolderShareMenuAction = "share-folder";
 
 export function useDriveFolderShareMenu(environmentId: EnvironmentId, cwd: string) {
-  const drives = useAtomValue(environmentDrivesAtom).get(environmentId);
-  const projects = useAtomValue(environmentProjects.environmentProjectsAtom(environmentId));
+  const drive = useDriveAtCwd(environmentId, cwd);
   const canShareFolder = useAtomValue(signalboxDrives.shareFolder.permissionAtom(environmentId));
   const [target, setTarget] = useState<FolderShareTarget | null>(null);
-  const myDrive = drives?.drives.find((drive) => {
-    if (drive.kind !== "my") return false;
-    const project = projects.find((candidate) => candidate.id === drive.projectId);
-    return project?.workspaceRoot === cwd;
-  });
+  const myDrive = drive?.kind === "my" ? drive : undefined;
 
   const shareable =
     canShareFolder && myDrive !== undefined && canManageDrive(myDrive.role) ? myDrive : null;

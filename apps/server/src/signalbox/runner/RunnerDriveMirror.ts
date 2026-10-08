@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import type { DriveClient } from "./RunnerDriveClient.ts";
+import type { DriveClient, DriveClientError } from "./RunnerDriveClient.ts";
 import type { RunnerGit } from "./RunnerGit.ts";
 
 /**
@@ -18,6 +18,41 @@ import type { RunnerGit } from "./RunnerGit.ts";
 
 const REF_ATTEMPTS = 3;
 
+/**
+ * Puts a drive's `packs` into the repository at `gitDir` with `download`,
+ * lists `shallow` commits in `.git/shallow`, and indexes every pack. Answers
+ * the highest pack sequence stored, or null when there were none.
+ */
+export const storePacks = Effect.fn("storePacks")(function* (input: {
+  readonly gitDir: string;
+  readonly git: RunnerGit;
+  readonly packs: DriveState["packs"];
+  readonly shallow: DriveState["shallow"];
+  readonly download: (name: string, packDir: string) => Effect.Effect<void, DriveClientError>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packDir = path.join(input.gitDir, "objects", "pack");
+  yield* Effect.forEach(input.packs, (pack) => input.download(pack.name, packDir), {
+    concurrency: 8,
+    discard: true,
+  });
+  if (input.shallow.length > 0) {
+    // Commits whose parents stay on the remote, so git never looks for them.
+    const file = path.join(input.gitDir, "shallow");
+    const current = (yield* fs.exists(file)) ? yield* fs.readFileString(file) : "";
+    const listed = new Set(current.split("\n").filter((line) => line.length > 0));
+    const missing = input.shallow.filter((oid) => !listed.has(oid));
+    if (missing.length > 0) {
+      yield* fs.writeFileString(file, [...listed, ...missing, ""].join("\n"));
+    }
+  }
+  if (input.packs.length === 0) return null;
+  // One index over every pack, so lookups stay fast as auto-saves pile packs up.
+  yield* input.git.run(["multi-pack-index", "write"]);
+  return Math.max(...input.packs.map((pack) => pack.seq));
+});
+
 export type DriveRefs = Readonly<Record<"main" | ThreadRefName, string | null>>;
 
 export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
@@ -31,32 +66,20 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
   const packDir = path.join(gitDir, "objects", "pack");
   let known: DriveRefs = { main: null, thread: null, wip: null };
 
-  /** Lists commits whose parents stay on the remote, so git never looks for them. */
-  const markShallow = (oids: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      const file = path.join(gitDir, "shallow");
-      const current = (yield* fs.exists(file)) ? yield* fs.readFileString(file) : "";
-      const listed = new Set(current.split("\n").filter((line) => line.length > 0));
-      const missing = oids.filter((oid) => !listed.has(oid));
-      if (missing.length === 0) return;
-      yield* fs.writeFileString(file, [...listed, ...missing, ""].join("\n"));
-    });
-
-  /** One index over every pack, so lookups stay fast as auto-saves pile packs up. */
-  const indexPacks = git.run(["multi-pack-index", "write"]).pipe(Effect.asVoid);
-
   /** Fetches the drive's packs we lack, then mirrors its refs. */
   const adopt = (state: DriveState) =>
     Effect.gen(function* () {
-      yield* Effect.forEach(state.packs, (pack) => client.downloadPack(pack.name, packDir), {
-        concurrency: 8,
-        discard: true,
-      });
-      if (state.shallow.length > 0) yield* markShallow(state.shallow);
-      if (state.packs.length > 0) {
-        client.havePacksThrough(Math.max(...state.packs.map((pack) => pack.seq)));
-        yield* indexPacks;
-      }
+      const seq = yield* storePacks({
+        gitDir,
+        git,
+        packs: state.packs,
+        shallow: state.shallow,
+        download: client.downloadPack,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
+      if (seq !== null) client.havePacksThrough(seq);
       for (const ref of ["main", "thread", "wip"] as const) {
         yield* git.setRef(`refs/drive/${ref}`, state[ref]);
       }
@@ -89,7 +112,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         // Kept, so the next `open` does not download it back. The index goes last.
         yield* fs.rename(file("pack"), path.join(packDir, `pack-${result.name}.pack`));
         yield* fs.rename(file("idx"), path.join(packDir, `pack-${result.name}.idx`));
-        yield* indexPacks;
+        yield* git.run(["multi-pack-index", "write"]);
       }).pipe(Effect.ensuring(fs.remove(tmp, { recursive: true }).pipe(Effect.ignore)));
     });
 

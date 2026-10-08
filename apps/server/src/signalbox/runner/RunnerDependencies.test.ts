@@ -229,33 +229,38 @@ describe("RunnerDependencies", () => {
     ),
   );
 
-  it.effect("looks two levels deep, outside dot directories and dependency trees", () =>
-    run(
-      Effect.gen(function* () {
-        const machine = makeMachine();
-        write(machine.cwd, "notes.md", "# Notes\n");
-        write(machine.cwd, "code/site/package-lock.json", "{}");
-        write(machine.cwd, "code/site/deep/er/pnpm-lock.yaml", "too deep\n");
-        write(machine.cwd, ".repos/vendored/pnpm-lock.yaml", "not ours\n");
-        write(machine.cwd, "node_modules/pkg/pnpm-lock.yaml", "not ours\n");
-        write(machine.cwd, "app/npm-shrinkwrap.json", "{}");
-        // A link back up never sends the search in circles, or outside the checkout.
-        NodeFS.symlinkSync(machine.cwd, NodePath.join(machine.cwd, "code", "loop"));
-        NodeFS.symlinkSync(
-          NodePath.join(machine.home, "bin"),
-          NodePath.join(machine.cwd, "outside"),
-        );
-        write(machine.home, "bin/package-lock.json", "{}");
+  it.effect(
+    "looks two levels deep, outside dot directories, dependency trees and other repositories",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const machine = makeMachine();
+          write(machine.cwd, "notes.md", "# Notes\n");
+          write(machine.cwd, "code/site/package-lock.json", "{}");
+          write(machine.cwd, "code/site/deep/er/pnpm-lock.yaml", "too deep\n");
+          write(machine.cwd, ".repos/vendored/pnpm-lock.yaml", "not ours\n");
+          write(machine.cwd, "node_modules/pkg/pnpm-lock.yaml", "not ours\n");
+          write(machine.cwd, "app/npm-shrinkwrap.json", "{}");
+          // A shortcut, mounted read-only as a repository of its own (#142).
+          write(machine.cwd, "shared/.git/HEAD", "ref: refs/heads/main\n");
+          write(machine.cwd, "shared/package-lock.json", "{}");
+          // A link back up never sends the search in circles, or outside the checkout.
+          NodeFS.symlinkSync(machine.cwd, NodePath.join(machine.cwd, "code", "loop"));
+          NodeFS.symlinkSync(
+            NodePath.join(machine.home, "bin"),
+            NodePath.join(machine.cwd, "outside"),
+          );
+          write(machine.home, "bin/package-lock.json", "{}");
 
-        const prepared = yield* prepare(machine);
-        expect(
-          prepared.results.map((result) => [result.root.relative, result.root.manager]),
-        ).toEqual([
-          ["app", "npm"],
-          ["code/site", "npm"],
-        ]);
-      }),
-    ),
+          const prepared = yield* prepare(machine);
+          expect(
+            prepared.results.map((result) => [result.root.relative, result.root.manager]),
+          ).toEqual([
+            ["app", "npm"],
+            ["code/site", "npm"],
+          ]);
+        }),
+      ),
   );
 
   it.effect("does nothing in a folder with no lockfile", () =>

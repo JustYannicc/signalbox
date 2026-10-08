@@ -13,6 +13,7 @@ import type {
   PackRegistration,
   RefWrite,
   Shortcut,
+  ShortcutChange,
   StoredCommit,
   UnreconciledWork,
   ThreadRefs,
@@ -66,6 +67,8 @@ export interface DriveObjectApi {
     },
   ) => Promise<RefWrite>;
   readonly shortcuts: () => Promise<ReadonlyArray<Shortcut>>;
+  readonly addShortcut: (userId: string, shortcut: Shortcut) => Promise<ShortcutChange>;
+  readonly removeShortcut: (userId: string, path: string) => Promise<ShortcutChange>;
   readonly unreconciled: (input: {
     readonly limit: number;
     readonly threadId?: string;
@@ -134,6 +137,8 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     log: wrap("log"),
     replaceMain: wrap("replaceMain"),
     shortcuts: wrap("shortcuts"),
+    addShortcut: wrap("addShortcut"),
+    removeShortcut: wrap("removeShortcut"),
     unreconciled: wrap("unreconciled"),
     setup: wrap("setup"),
     driveName: wrap("driveName"),

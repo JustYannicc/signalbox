@@ -11,6 +11,9 @@ import {
   type RefUpdate,
   type RefWriteResult,
   REMOTE_HEAD_HEADER,
+  type DriveShortcut,
+  shortcutPacksPath,
+  shortcutRemotePath,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -57,6 +60,18 @@ export interface DriveClient {
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
   /** Where git fetches the drive's remote through the cloud. */
   readonly remoteUrl: string;
+  /** The drive's shortcuts (#142), each target's packs listed after `have[target]`. */
+  readonly shortcuts: (
+    have: Readonly<Record<string, number>>,
+  ) => Effect.Effect<ReadonlyArray<DriveShortcut>, DriveClientError>;
+  /** Like `downloadPack`, from a shortcut target. */
+  readonly downloadShortcutPack: (
+    target: string,
+    name: string,
+    packDir: string,
+  ) => Effect.Effect<void, DriveClientError>;
+  /** Where git fetches a remote-backed shortcut target's remote through the cloud. */
+  readonly shortcutRemoteUrl: (target: string) => string;
 }
 
 const RETRY = {
@@ -140,7 +155,8 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
   const fileError = (label: string) => (error: { readonly message: string }) =>
     new DriveClientError({ message: `${label}: ${error.message}`, retryable: false });
 
-  const downloadPack: DriveClient["downloadPack"] = (name, packDir) =>
+  /** Downloads `pack-<name>` from under `packsPath` into `packDir`, unless it is there. */
+  const fetchPack = (packsPath: string, name: string, packDir: string) =>
     Effect.gen(function* () {
       const target = (ext: string) => path.join(packDir, `pack-${name}.${ext}`);
       const present = yield* Effect.all([fs.exists(target("pack")), fs.exists(target("idx"))]).pipe(
@@ -152,7 +168,7 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
         .pipe(Effect.mapError(fileError("pack dir")));
       for (const ext of ["pack", "idx"]) {
         const bytes = yield* send(
-          HttpClientRequest.get(`${origin}${DRIVE_PATHS.packs}/${name}.${ext}`),
+          HttpClientRequest.get(`${origin}${packsPath}/${name}.${ext}`),
           `downloading pack ${name}.${ext}`,
         );
         const staged = `${target(ext)}.download`;
@@ -160,6 +176,9 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
         yield* fs.rename(staged, target(ext)).pipe(Effect.mapError(fileError("writing a pack")));
       }
     });
+
+  const downloadPack: DriveClient["downloadPack"] = (name, packDir) =>
+    fetchPack(DRIVE_PATHS.packs, name, packDir);
 
   const uploadPack: DriveClient["uploadPack"] = (idx, pack, options = {}) =>
     Effect.gen(function* () {
@@ -204,5 +223,17 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
     mirror: (request) =>
       writeRefs(DRIVE_PATHS.mirror, driveJson.mirror.encode(request), "mirroring the remote"),
     remoteUrl: `${origin}${DRIVE_PATHS.remote}`,
+    shortcuts: (have) =>
+      postJson(
+        DRIVE_PATHS.shortcuts,
+        driveJson.shortcutsRequest.encode({ have }),
+        "listing the drive's shortcuts",
+      ).pipe(
+        Effect.flatMap(decodeWith(driveJson.shortcuts.decode, "shortcut list")),
+        Effect.map((answer) => answer.shortcuts),
+      ),
+    downloadShortcutPack: (target, name, packDir) =>
+      fetchPack(shortcutPacksPath(target), name, packDir),
+    shortcutRemoteUrl: (target) => `${origin}${shortcutRemotePath(target)}`,
   } satisfies DriveClient;
 });

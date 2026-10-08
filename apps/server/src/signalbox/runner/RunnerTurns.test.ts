@@ -31,7 +31,8 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2Shape,
 } from "../../orchestration-v2/ProviderAdapter.ts";
-import type { DriveOutcome, RunnerDrive } from "./RunnerDrive.ts";
+import type { DriveOutcome, PreparedDrive, RunnerDrive } from "./RunnerDrive.ts";
+import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
@@ -252,7 +253,10 @@ describe("RunnerTurns", () => {
           let outcome: DriveOutcome = { _tag: "conflict", files: ["notes.md"] };
           const drive: RunnerDrive = {
             prepare: (remoteToken) =>
-              Effect.sync(() => void driveCalls.push(`prepare ${remoteToken}`)),
+              Effect.sync(() => {
+                driveCalls.push(`prepare ${remoteToken}`);
+                return { instructions: "", notices: [] };
+              }),
             autosave: Effect.sync(() => void driveCalls.push("autosave")),
             flush: Effect.void,
             finishTurn: () =>
@@ -409,7 +413,10 @@ describe("RunnerTurns", () => {
         let outcome: DriveOutcome = { _tag: "conflict", files: ["notes.md"] };
         const drive: RunnerDrive = {
           prepare: (remoteToken) =>
-            Effect.sync(() => void driveCalls.push(`prepare ${remoteToken}`)),
+            Effect.sync(() => {
+              driveCalls.push(`prepare ${remoteToken}`);
+              return { instructions: "", notices: [] };
+            }),
           autosave: Effect.sync(() => void driveCalls.push("autosave")),
           flush: Effect.void,
           finishTurn: () =>
@@ -671,6 +678,176 @@ describe("RunnerTurns", () => {
       }),
     ),
   );
+
+  describe("shortcut instructions", () => {
+    /** A drive whose turn starts answer `prepared`, one per turn, in order. */
+    const preparingDrive = (
+      prepared: Array<Effect.Effect<PreparedDrive, RunnerInstructionsError>>,
+    ) =>
+      ({
+        prepare: () => prepared.shift()!,
+        autosave: Effect.void,
+        flush: Effect.void,
+        finishTurn: () =>
+          Effect.succeed({
+            checkpoint: null,
+            outcome: { _tag: "landed", main: "c".repeat(40) } as const,
+          }),
+        continueAfterResolution: Effect.die(new Error("not in this test")),
+        abandonMerge: Effect.die(new Error("not in this test")),
+      }) as RunnerDrive;
+    const access = { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" };
+    const withMessage = (turn: RunnerTurn): RunnerTurn =>
+      ({
+        ...turn,
+        message: {
+          messageId: MessageId.make(`message-${turn.runId}`),
+          text: "Hi",
+          attachments: [],
+        },
+      }) as unknown as RunnerTurn;
+
+    it.effect(
+      "restarts the harness session when they change, so its native resume loads them",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const calls: Array<string> = [];
+            let opened = 0;
+            const adapter = {
+              instanceId,
+              driver,
+              openSession: () =>
+                Effect.gen(function* () {
+                  const n = ++opened;
+                  const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+                  calls.push(`open ${n}`);
+                  yield* Effect.addFinalizer(() =>
+                    Effect.sync(() => void calls.push(`close ${n}`)),
+                  );
+                  return {
+                    providerSessionId: ProviderSessionId.make(`session-${n}`),
+                    providerSession: {},
+                    events: Stream.fromQueue(events),
+                    ensureThread: () =>
+                      Effect.sync(() => {
+                        calls.push(`ensure ${n}`);
+                        return providerThread;
+                      }),
+                    resumeThread: () =>
+                      Effect.sync(() => {
+                        calls.push(`resume ${n}`);
+                        return providerThread;
+                      }),
+                    // Each turn runs to its end, as the harness reports it.
+                    startTurn: (input: { readonly runId: string }) =>
+                      Effect.gen(function* () {
+                        calls.push(`start ${input.runId}`);
+                        const ordinal = Number(input.runId.replace("run-", ""));
+                        yield* Queue.offer(events, {
+                          type: "provider_turn.updated",
+                          driver,
+                          providerTurn: {
+                            id: ProviderTurnId.make(`native-${ordinal}`),
+                            providerThreadId: providerThread.id,
+                            nodeId: NodeId.make(`node-${ordinal}`),
+                            runAttemptId: RunAttemptId.make(`attempt-${ordinal}`),
+                            nativeTurnRef: null,
+                            ordinal,
+                            status: "running",
+                            startedAt: null,
+                            completedAt: null,
+                          },
+                        } as unknown as ProviderAdapterV2Event);
+                        yield* Queue.offer(events, turnEnded(ordinal));
+                      }),
+                  } as unknown as ProviderAdapterV2SessionRuntime;
+                }),
+            } as unknown as ProviderAdapterV2Shape;
+            const prepared = (instructions: string) =>
+              Effect.succeed({ instructions, notices: [] } satisfies PreparedDrive);
+            const turns = yield* makeRunnerTurns({
+              threadId,
+              adapters: new Map([[instanceId, adapter]]),
+              cwd: "/tmp",
+              useModelToken: () => Effect.void,
+              usage: Effect.succeed(unmeasured),
+              emit: () => Effect.void,
+              openDrive: () =>
+                Effect.succeed(
+                  preparingDrive([prepared("code/ rules"), prepared("code/ rules"), prepared("")]),
+                ),
+            });
+            const resumable = {
+              ...providerThread,
+              nativeThreadRef: "native-thread",
+            } as unknown as OrchestrationV2ProviderThread;
+            yield* turns.start({
+              turn: withMessage(turnFor(1)),
+              modelToken: "token-1",
+              drive: access,
+            });
+            yield* settle;
+            // Same instructions: the same session takes the turn.
+            yield* turns.start({
+              turn: withMessage(turnFor(2, resumable)),
+              modelToken: "t",
+              drive: access,
+            });
+            yield* settle;
+            // The shortcut is gone: a new session resumes the thread without its instructions.
+            yield* turns.start({
+              turn: withMessage(turnFor(3, resumable)),
+              modelToken: "t",
+              drive: access,
+            });
+            yield* settle;
+
+            expect(calls).toEqual([
+              "open 1",
+              "ensure 1",
+              "start run-1",
+              "resume 1",
+              "start run-2",
+              "close 1",
+              "open 2",
+              "resume 2",
+              "start run-3",
+            ]);
+          }),
+        ),
+    );
+
+    it.effect("fails the turn with the reason when they are over the cap", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const reported: Array<RunnerItem> = [];
+          const message =
+            "This drive's instructions come to 80.0 KiB, over the 64.0 KiB agents can load: code/AGENTS.md 80.0 KiB. Shorten them or remove a shortcut, then send the message again.";
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            openDrive: () =>
+              Effect.succeed(
+                preparingDrive([Effect.fail(new RunnerInstructionsError({ message }))]),
+              ),
+          });
+          yield* turns.start({ turn: turnFor(1), modelToken: "token-1", drive: access });
+          yield* settle;
+
+          expect(reported.map(label)).toEqual(["log run-1 error", "turn.failed run-1"]);
+          const failed = reported[1];
+          expect(failed?.kind === "turn.failed" && failed.message).toBe(message);
+          expect(fake.calls).toEqual([]);
+        }),
+      ),
+    );
+  });
 
   describe("sessions", () => {
     /** Sessions that record what the turn asked of them, in `log`. */

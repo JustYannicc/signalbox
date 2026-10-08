@@ -34,6 +34,7 @@ import {
 } from "./UserDirectory.ts";
 import * as DrivePeople from "./DrivePeople.ts";
 import * as DriveSharing from "./DriveSharing.ts";
+import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -98,7 +99,7 @@ const layerDrives = (env: UserObjectEnv) => {
   ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))));
   return {
     store,
-    services: Layer.mergeAll(DriveFiles.layer, DriveSharing.layer).pipe(
+    services: Layer.mergeAll(DriveSharing.layer, DriveShortcuts.layer, DriveFiles.layer).pipe(
       Layer.provide(Layer.mergeAll(store, people)),
     ),
   };

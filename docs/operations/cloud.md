@@ -248,6 +248,18 @@ cloud's objects rather than trusted to the Runner:
   membership changes to each person's sidebar from its alarm, but access never
   waits on that delivery.
 
+A drive can hold shortcuts: paths that show another drive (#142). A folder
+split out to be shared leaves one behind, and people who can change a drive
+add their own. The Runner mounts each target the thread's user can open as a
+read-only repository of its own at that path, and keeps the path out of the
+drive's own repository, so nothing under a shortcut ever lands on the drive's
+`main`. Drives backed by GitHub hold no shortcuts. The targets' `AGENTS.md`
+files are bundled into a generated `AGENTS.md` in the folder above the
+checkout (`workspaces/<thread>/`), outside the drive: Codex takes that folder
+as its project root and Claude Code reads parent folders, so both load it
+beside the drive's own. When the bundle changes, the Runner restarts the
+harness session so its native resume swaps the instructions in.
+
 `wrangler dev` keeps the bucket locally. Deployments need both buckets
 created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
 and the same for `-preview`); without them the deploy fails.
