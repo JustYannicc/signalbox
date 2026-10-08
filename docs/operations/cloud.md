@@ -138,7 +138,10 @@ own SQLite through a host only that container can reach. A pool connected to
 an admin's own CLIProxyAPI never starts a container.
 
 `wrangler dev` and `wrangler deploy` build the image with Docker, so local
-development needs Docker running. Bump the CLIProxyAPI version in the
+development needs Docker running. Containers need the Cloudflare account on the
+Workers Paid plan; on any other plan every deploy fails at
+`/containers/me`. Each preview gets its own container application,
+`signalbox-cloud-pr-<number>-pools`, deleted with the preview. Bump the CLIProxyAPI version in the
 Dockerfile together with `ACCOUNT_HUB_VERSION` in
 `apps/server/src/accountHub/AccountHubRelease.ts`.
 
