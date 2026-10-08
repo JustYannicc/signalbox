@@ -14,13 +14,18 @@ time and peak memory of the agent's processes, and once a week the disk size of 
 used. Commands are sorted into those kinds on your machine; their text is never sent. Threads and
 projects are identified only by a one-way hash.
 
+In Signalbox Cloud, Signalbox's project receives the same kind of resource usage for each turn,
+plus the machine it ran on: how long the machine was awake and idle, how it started, its CPU time,
+memory, disk use and network bytes sent, and the model tokens each turn used. You are identified by a
+one-way hash of your account.
+
 Events do not include prompts, responses, feedback text, file contents, command text, file or
 folder paths, authentication tokens, conversation IDs, raw provider events, or child-agent output.
 Child-agent token use is excluded from the totals.
 
 To stop collection, turn off **Settings → General → Privacy → Share usage analytics**. This stops
 events to both projects, including any not yet sent. The setting belongs to each environment, so it
-applies to the environments selected in Settings.
+applies to the environments selected in Settings. Signalbox Cloud doesn't have this switch yet.
 
 On a server you run yourself, you can also set `T3CODE_TELEMETRY_ENABLED=false` in its environment
 before starting it. The desktop app reads the variable from your shell profile (for example

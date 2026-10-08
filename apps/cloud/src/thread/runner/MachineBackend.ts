@@ -62,10 +62,24 @@ export interface MachineStatus {
   readonly machineId: string | null;
   /** Why the machine is not where the thread wants it, for logs. */
   readonly detail?: string;
+  /**
+   * How this answer brought the machine up: created (`cold`), resumed from its
+   * disk (`disk_resume`) or from memory (`memory_restore`), or found running
+   * (`warm`). The first one a generation sees is how it woke.
+   */
+  readonly wake?: WakeKind;
 }
 
+export const WAKE_KINDS = ["cold", "disk_resume", "memory_restore", "warm"] as const;
+export type WakeKind = (typeof WAKE_KINDS)[number];
+
+export const BACKEND_KINDS = ["none", "local", "boat"] as const;
+
 export interface MachineBackendShape {
-  readonly kind: "none" | "local" | "boat";
+  readonly kind: (typeof BACKEND_KINDS)[number];
+  /** The machine size and the Runner image it runs, for diagnostics; null when not ours to say. */
+  readonly shape: string | null;
+  readonly image: string | null;
   /** How long a requested machine may take until its Runner says hello. */
   readonly connectTimeoutMs: number;
   /**

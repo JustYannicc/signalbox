@@ -2,9 +2,11 @@
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import {
   machineEnsureJson,
   type MachineEnsureRequest,
+  type RunnerBuild,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -26,10 +28,13 @@ import { layerSessionQueryRunner } from "./RunnerClaudeSessions.ts";
 import { makeRunnerDrive } from "./RunnerDrive.ts";
 import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { machineLayout, writeModelToken } from "./RunnerModelAccess.ts";
+import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
+import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.ts";
 import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
 import { makeRunnerSessions } from "./RunnerSessions.ts";
-import { runnerConnectUrl, webSocketTransport } from "./runnerSocket.ts";
+import { runnerConnectUrl, threadSocketUrl, webSocketTransport } from "./runnerSocket.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
+import { makeRunnerUsage } from "./RunnerUsage.ts";
 
 /**
  * Runs threads' Runners on this machine. `ensure` starts a thread's Runner at
@@ -38,6 +43,9 @@ import { makeRunnerTurns } from "./RunnerTurns.ts";
  * older Runner. Each thread gets a machine directory of its own
  * (`machines/<thread>`: home, harness config, model token) so no thread's
  * harnesses see this machine's own logins or another thread's token.
+ *
+ * Each Runner also runs the PreviewGateway's tunnel for its thread, which
+ * starts and stops with that generation.
  *
  * Two fronts use it: `runRunnerHost`, a development machine backend serving
  * every thread that asks over HTTP, and `runRunnerMachine`, the Runner on a
@@ -49,6 +57,8 @@ export interface RunnerHostConfig {
   readonly home: string;
   readonly machineId: string;
   readonly imageVersion: string;
+  /** Sent in every `hello`. */
+  readonly build: RunnerBuild;
 }
 
 interface HostedRunner {
@@ -69,6 +79,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
   >();
   const runners = new Map<ThreadId, HostedRunner>();
   const lock = yield* Semaphore.make(1);
+  const previewPorts = yield* makeDiscoveredPorts;
 
   const stop = (threadId: ThreadId, runner: HostedRunner) =>
     Effect.suspend(() => {
@@ -96,27 +107,31 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             cloudUrl,
             codexHome: machineLayout(path, root).codexHome,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
-          const { adapters, layout } = yield* makeRunnerAdapters({
+          const { adapters, layout, stderr } = yield* makeRunnerAdapters({
             root,
             gatewayUrl: request.modelGatewayUrl,
             claudeQueryRunner: layerSessionQueryRunner(sessions.claude),
           });
-          return yield* makeRunnerSession({
+          const usage = yield* makeRunnerUsage(config.home);
+          const session = yield* makeRunnerSession({
             threadId: request.threadId,
             generation: request.generation,
             token: request.token,
             machineId: config.machineId,
             imageVersion: config.imageVersion,
+            build: config.build,
             transport: webSocketTransport(runnerConnectUrl(cloudUrl, request.threadId)),
             makeTurns: (emit) =>
               makeRunnerTurns({
                 threadId: request.threadId,
                 adapters,
+                stderr,
                 cwd,
                 useModelToken: (token) =>
                   writeModelToken(layout, token).pipe(
                     Effect.provideService(FileSystem.FileSystem, fs),
                   ),
+                usage: usage.sample,
                 emit,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
@@ -125,6 +140,16 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 sessions,
               }),
           });
+          yield* runPreviewTunnel({
+            threadId: request.threadId,
+            generation: request.generation,
+            token: request.token,
+            transport: previewTunnelTransport(
+              threadSocketUrl(cloudUrl, PREVIEW_TUNNEL_PATH, request.threadId),
+            ),
+            ports: previewPorts,
+          });
+          return session;
         }).pipe(
           Scope.provide(scope),
           // A machine that failed to come up leaves nothing running behind.

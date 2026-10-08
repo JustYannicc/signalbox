@@ -17,6 +17,7 @@ import {
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import type { ProviderAdapterV2Shape } from "../../orchestration-v2/ProviderAdapter.ts";
+import { type HarnessStderr, makeHarnessStderr } from "./harnessStderr.ts";
 import {
   claudeSettings,
   codexSettings,
@@ -48,6 +49,7 @@ const layerAdapterServices = (
   home: string,
   environment: NodeJS.ProcessEnv,
   claudeQueryRunner: ClaudeQueryRunnerLayer,
+  stderr: HarnessStderr,
 ) =>
   Layer.mergeAll(
     claudeQueryRunner,
@@ -62,6 +64,8 @@ const layerAdapterServices = (
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    // The harnesses' stderr is kept for the turn's diagnostic record.
+    Layer.provideMerge(stderr.layerSpawner),
     Layer.provideMerge(NodeServices.layer),
   );
 
@@ -77,12 +81,14 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
+  const stderr = makeHarnessStderr();
   yield* prepareMachine(layout, machine.gatewayUrl);
   const services = yield* Layer.build(
     layerAdapterServices(
       machine.root,
       harnessEnvironment(yield* HostProcessEnvironment, layout, machine.gatewayUrl),
       machine.claudeQueryRunner ?? layerClaudeQueryRunner,
+      stderr,
     ),
   );
   const common = { displayName: undefined, environment: [], enabled: true } as const;
@@ -98,6 +104,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   }).pipe(Effect.provide(services));
   return {
     layout,
+    stderr,
     adapters: new Map<ProviderInstanceId, ProviderAdapterV2Shape>([
       [claude.instanceId, claude],
       [codex.instanceId, codex],

@@ -177,7 +177,7 @@ describe("session API", () => {
         yield* send(engine, 1);
         const lost = yield* connect(runner);
         yield* call(lost.token, SESSION_PATHS.append, append("codex/rollout.jsonl", 0, ["a"]));
-        yield* runner.ended(lost.generation);
+        yield* runner.ended(lost.generation, "test");
         yield* send(engine, 2);
         const current = yield* connect(runner);
         expect(current.generation).toBe(lost.generation + 1);

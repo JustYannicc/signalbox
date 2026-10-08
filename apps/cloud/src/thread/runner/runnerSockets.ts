@@ -183,7 +183,9 @@ export async function onRunnerMessage(
     }
     case "end":
       if (attachment !== null) {
-        await host.run(runner.use((service) => service.ended(attachment.generation)));
+        await host.run(
+          runner.use((service) => service.ended(attachment.generation, message.reason)),
+        );
         await host.afterChange();
       }
       close(socket, 1000, "end");
@@ -210,6 +212,7 @@ export async function onRunnerClose(
     .getWebSockets(RUNNER_TAG)
     .some((other) => other !== socket && attachmentOf(other)?.generation === attachment.generation);
   if (replaced) return;
-  await host.run(runner.use((service) => service.disconnected(attachment)));
+  const detail = `code ${code}${reason === "" ? "" : `, ${reason}`}`;
+  await host.run(runner.use((service) => service.disconnected({ ...attachment, detail })));
   await host.afterChange();
 }
