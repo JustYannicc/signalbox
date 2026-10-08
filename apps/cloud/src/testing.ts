@@ -15,6 +15,8 @@ import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import * as Platform from "./platform.ts";
+import * as PoolDirectory from "./pool/PoolDirectory.ts";
+import { makeMemoryPools } from "./pool/testing.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
@@ -30,6 +32,8 @@ import * as UserContexts from "./user/UserContexts.ts";
 import * as UserSections from "./user/UserSections.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
+import * as PoolSignIns from "./user/PoolSignIns.ts";
+import * as UserPools from "./user/UserPools.ts";
 import * as UserShell from "./user/UserShell.ts";
 import * as UserStore from "./user/UserStore.ts";
 
@@ -80,11 +84,20 @@ export const layerThreadObject = (
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
-const makeUserRuntime = (threads: ThreadDirectory.ThreadDirectory["Service"]) =>
+const makeUserRuntime = (
+  threads: ThreadDirectory.ThreadDirectory["Service"],
+  pools: PoolDirectory.PoolDirectory["Service"],
+) =>
   ManagedRuntime.make(
-    UserShell.layer.pipe(
+    Layer.mergeAll(UserShell.layer, PoolSignIns.layer).pipe(
+      Layer.provideMerge(UserPools.layer),
       Layer.provideMerge(layerMemoryStore),
-      Layer.provideMerge(Layer.succeed(ThreadDirectory.ThreadDirectory, threads)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
+          Layer.succeed(PoolDirectory.PoolDirectory, pools),
+        ),
+      ),
     ),
   );
 
@@ -123,10 +136,11 @@ export const makeMemoryCloud = () => {
   const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
     forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),
   };
+  const pools = makeMemoryPools();
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
-    const runtime = makeUserRuntime(threadDirectory);
+    const runtime = makeUserRuntime(threadDirectory, pools.directory);
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
     return object;
@@ -177,6 +191,8 @@ export const makeMemoryCloud = () => {
   return {
     userDirectory,
     threadDirectory,
+    /** Pool objects by name, each with its fake CLIProxyAPI. */
+    pools,
     settle,
     /** The services inside `userId`'s object, for handlers that run there (the socket's RPC). */
     userObject,

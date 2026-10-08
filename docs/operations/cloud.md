@@ -125,6 +125,23 @@ A machine follows `RUNNER_IMAGE` at its next wake. Bump the Runner protocol
 only together with a published image, since a machine on an older image is
 refused.
 
+### Account pools
+
+Each account pool is a `PoolObject` (`apps/cloud/src/pool/`), and a managed
+pool runs its own CLIProxyAPI in a Cloudflare Container bound to that object:
+the image in `apps/cloud/containers/cliproxyapi/` (CLIProxyAPI's static
+release build on distroless, about 24 MB), `lite` instances, started by the
+first request and stopped two minutes after the object goes idle. The
+container's disk is thrown away every time; CLIProxyAPI keeps its config and
+accounts in its object-store backend, which is served from the pool object's
+own SQLite through a host only that container can reach. A pool connected to
+an admin's own CLIProxyAPI never starts a container.
+
+`wrangler dev` and `wrangler deploy` build the image with Docker, so local
+development needs Docker running. Bump the CLIProxyAPI version in the
+Dockerfile together with `ACCOUNT_HUB_VERSION` in
+`apps/server/src/accountHub/AccountHubRelease.ts`.
+
 ## Deploying
 
 `.github/workflows/deploy-cloud.yml` builds the web app and runs `wrangler

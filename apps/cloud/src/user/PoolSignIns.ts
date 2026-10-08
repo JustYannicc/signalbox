@@ -1,0 +1,261 @@
+import {
+  type ProviderAuthCancelInput,
+  type ProviderAuthCompleteInput,
+  type ProviderAuthStartInput,
+  type ProviderAuthState,
+  type ProviderInstanceId,
+  ProviderSetupError,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+
+import type { PoolActor } from "../pool/PoolEngine.ts";
+import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import * as UserPools from "./UserPools.ts";
+
+/**
+ * Signing an account into one of the user's pools, behind the same
+ * `provider.auth.*` calls a self-hosted hub serves (see
+ * `apps/server/src/accountHub/hubSignIn.ts`). The pool's CLIProxyAPI runs the
+ * provider's login: the user opens its address and, since the redirect lands
+ * on their own machine, pastes the final address back. The account is saved
+ * in the pool, never on a client.
+ *
+ * Flows live in the user's object while it runs; one that outlives the object
+ * is simply started again.
+ */
+
+/** CLIProxyAPI forgets a login after 30 minutes. */
+const LOGIN_TTL_MS = 30 * 60_000;
+const POLL_INTERVAL = "1 second";
+
+interface Login {
+  readonly flowId: string;
+  readonly objectName: string;
+  readonly state: string;
+  readonly fiber: Fiber.Fiber<void>;
+}
+
+export class PoolSignIns extends Context.Service<
+  PoolSignIns,
+  {
+    readonly subscribe: (instanceId: ProviderInstanceId) => Stream.Stream<ProviderAuthState>;
+    readonly start: (
+      actor: PoolActor,
+      input: ProviderAuthStartInput,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly complete: (
+      actor: PoolActor,
+      input: ProviderAuthCompleteInput,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+    readonly cancel: (
+      actor: PoolActor,
+      input: ProviderAuthCancelInput,
+    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  }
+>()("@signalbox/cloud/user/PoolSignIns") {}
+
+const idle = (instanceId: ProviderInstanceId): ProviderAuthState => ({
+  instanceId,
+  phase: "idle",
+  flowId: null,
+  authorizationUrl: null,
+  expiresAt: null,
+  message: null,
+  interaction: null,
+});
+
+const make = Effect.gen(function* () {
+  const pools = yield* UserPools.UserPools;
+  const directory = yield* PoolDirectory.PoolDirectory;
+  const crypto = yield* Crypto.Crypto;
+  const states = new Map<string, SubscriptionRef.SubscriptionRef<ProviderAuthState>>();
+  const logins = new Map<string, Login>();
+
+  const stateOf = (instanceId: ProviderInstanceId) =>
+    Effect.gen(function* () {
+      const existing = states.get(instanceId);
+      if (existing) return existing;
+      const ref = yield* SubscriptionRef.make(idle(instanceId));
+      states.set(instanceId, ref);
+      return ref;
+    });
+
+  const update = (instanceId: ProviderInstanceId, patch: Partial<ProviderAuthState>) =>
+    Effect.flatMap(stateOf(instanceId), (ref) =>
+      SubscriptionRef.updateAndGet(ref, (current) => ({ ...current, ...patch })),
+    );
+
+  const setupError = (instanceId: ProviderInstanceId, operation: string) => (detail: string) =>
+    new ProviderSetupError({ instanceId, operation, detail });
+
+  /** The pool object's own words for a refusal; anything else is logged. */
+  const reason = (error: PoolDirectory.PoolObjectError | { readonly reason: string }) =>
+    "reason" in error
+      ? Effect.succeed(error.reason)
+      : Effect.logError("pool sign-in call failed", { cause: error }).pipe(
+          Effect.as("The pool is unavailable right now. Try again."),
+        );
+
+  /** Polls the pool until the login is saved, fails, or expires. */
+  const awaitLogin = (
+    actor: PoolActor,
+    instanceId: ProviderInstanceId,
+    pool: PoolDirectory.PoolHandle,
+    state: string,
+  ) =>
+    Effect.gen(function* () {
+      while (true) {
+        yield* Effect.sleep(POLL_INTERVAL);
+        const status = yield* pool.loginStatus(actor, state);
+        if (status.status === "error") {
+          yield* update(instanceId, {
+            phase: "failed",
+            message: status.error
+              ? `Sign-in failed: ${status.error}.`
+              : "Sign-in failed. Start again.",
+            interaction: null,
+          });
+          return;
+        }
+        if (status.status === "wait") continue;
+        yield* update(instanceId, { phase: "succeeded", message: "Signed in.", interaction: null });
+        yield* pools.refresh;
+        return;
+      }
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: LOGIN_TTL_MS,
+        orElse: () =>
+          update(instanceId, {
+            phase: "failed",
+            message: "Sign-in timed out. Start again.",
+            interaction: null,
+          }),
+      }),
+      Effect.catchTags({
+        PoolRejectedError: (error) =>
+          update(instanceId, { phase: "failed", message: error.reason, interaction: null }),
+        PoolObjectError: (error) =>
+          Effect.flatMap(reason(error), (message) =>
+            update(instanceId, { phase: "failed", message, interaction: null }),
+          ),
+      }),
+      Effect.asVoid,
+      Effect.ensuring(Effect.sync(() => logins.delete(instanceId))),
+    );
+
+  const stopLogin = (actor: PoolActor, instanceId: string) =>
+    Effect.gen(function* () {
+      const login = logins.get(instanceId);
+      if (!login) return;
+      logins.delete(instanceId);
+      yield* Fiber.interrupt(login.fiber);
+      yield* directory
+        .forPool(login.objectName)
+        .cancelLogin(actor, login.state)
+        .pipe(Effect.ignore);
+    });
+
+  const start: PoolSignIns["Service"]["start"] = (actor, input) =>
+    Effect.gen(function* () {
+      const { instanceId } = input;
+      const fail = setupError(instanceId, "start");
+      const target = yield* pools
+        .poolOfInstance(actor, instanceId)
+        .pipe(Effect.mapError((error) => fail(error.detail)));
+      if (target === null) return yield* fail("That provider isn't one of your pools.");
+      yield* stopLogin(actor, instanceId);
+      const flowId = yield* Effect.orDie(crypto.randomUUIDv4);
+      yield* update(instanceId, {
+        phase: "starting",
+        flowId,
+        authorizationUrl: null,
+        expiresAt: null,
+        message: null,
+        interaction: null,
+      });
+      const pool = directory.forPool(target.pool.objectName);
+      const started = yield* pool.startLogin(actor, target.kind).pipe(Effect.result);
+      if (started._tag === "Failure") {
+        const message = yield* reason(started.failure);
+        return yield* update(instanceId, { phase: "failed", message });
+      }
+      const login = started.success;
+      const now = yield* Clock.currentTimeMillis;
+      const state = yield* update(instanceId, {
+        phase: "waiting",
+        authorizationUrl: login.url,
+        expiresAt: DateTime.formatIso(DateTime.makeUnsafe(now + LOGIN_TTL_MS)),
+        interaction: login.user_code
+          ? { type: "deviceCode", id: flowId, url: login.url, userCode: login.user_code }
+          : {
+              type: "browser",
+              id: flowId,
+              url: login.url,
+              requiresConsent: false,
+              acceptsCallback: true,
+            },
+      });
+      // Outlives this call and the socket that made it; the object holds it.
+      const fiber = yield* Effect.forkDetach(awaitLogin(actor, instanceId, pool, login.state));
+      logins.set(instanceId, {
+        flowId,
+        objectName: target.pool.objectName,
+        state: login.state,
+        fiber,
+      });
+      return state;
+    });
+
+  const currentLogin = (instanceId: ProviderInstanceId, flowId: string, operation: string) => {
+    const login = logins.get(instanceId);
+    return login && login.flowId === flowId
+      ? Effect.succeed(login)
+      : Effect.fail(setupError(instanceId, operation)("This sign-in has ended. Start again."));
+  };
+
+  const complete: PoolSignIns["Service"]["complete"] = (actor, input) =>
+    Effect.gen(function* () {
+      const login = yield* currentLogin(input.instanceId, input.flowId, "complete");
+      yield* update(input.instanceId, { phase: "verifying", message: null });
+      const done = yield* directory
+        .forPool(login.objectName)
+        .completeLogin(actor, input.callbackUrl)
+        .pipe(Effect.result);
+      if (done._tag === "Failure") {
+        const message = yield* reason(done.failure);
+        yield* update(input.instanceId, { phase: "waiting", message });
+        return yield* setupError(input.instanceId, "complete")(message);
+      }
+      return yield* Effect.flatMap(stateOf(input.instanceId), SubscriptionRef.get);
+    });
+
+  const cancel: PoolSignIns["Service"]["cancel"] = (actor, input) =>
+    Effect.gen(function* () {
+      yield* currentLogin(input.instanceId, input.flowId, "cancel");
+      yield* stopLogin(actor, input.instanceId);
+      return yield* update(input.instanceId, {
+        phase: "cancelled",
+        message: null,
+        interaction: null,
+      });
+    });
+
+  return PoolSignIns.of({
+    subscribe: (instanceId) =>
+      Stream.unwrap(Effect.map(stateOf(instanceId), (ref) => SubscriptionRef.changes(ref))),
+    start,
+    complete,
+    cancel,
+  });
+});
+
+export const layer = Layer.effect(PoolSignIns, make);

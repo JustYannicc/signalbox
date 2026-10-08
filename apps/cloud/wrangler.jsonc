@@ -22,11 +22,28 @@
     "bindings": [
       { "name": "USERS", "class_name": "UserObject" },
       { "name": "THREADS", "class_name": "ThreadObject" },
+      { "name": "POOLS", "class_name": "PoolObject" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["UserObject"] },
     { "tag": "v2", "new_sqlite_classes": ["ThreadObject"] },
+    { "tag": "v3", "new_sqlite_classes": ["PoolObject"] },
+  ],
+  // Containers bound to Durable Objects. One entry per class: each object of
+  // `class_name` gets its own container from `image`, started and stopped
+  // through `ctx.container` in that object (see src/pool/PoolContainer.ts).
+  // `max_instances` caps how many run at once across all objects of the class.
+  // Not inherited by `env`, so the preview repeats it.
+  "containers": [
+    {
+      // A managed pool's CLIProxyAPI. Small on purpose: every pool has one.
+      "class_name": "PoolObject",
+      "image": "./containers/cliproxyapi/Dockerfile",
+      "instance_type": "lite",
+      "max_instances": 10,
+      "constraints": { "jurisdiction": "eu" },
+    },
   ],
   "vars": {
     // Production identity. Never reuse it for another deployment.
@@ -44,8 +61,18 @@
         "bindings": [
           { "name": "USERS", "class_name": "UserObject" },
           { "name": "THREADS", "class_name": "ThreadObject" },
+          { "name": "POOLS", "class_name": "PoolObject" },
         ],
       },
+      "containers": [
+        {
+          "class_name": "PoolObject",
+          "image": "./containers/cliproxyapi/Dockerfile",
+          "instance_type": "lite",
+          "max_instances": 2,
+          "constraints": { "jurisdiction": "eu" },
+        },
+      ],
       "vars": {},
     },
   },

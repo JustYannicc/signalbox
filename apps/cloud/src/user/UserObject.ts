@@ -11,11 +11,13 @@ import * as Schema from "effect/Schema";
 
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
+import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { serveConnection } from "./connection.ts";
+import * as PoolSignIns from "./PoolSignIns.ts";
 import {
   CONNECTION_HEADER,
   decodeConnectionInfo,
@@ -25,6 +27,7 @@ import {
 import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
+import * as UserPools from "./UserPools.ts";
 import * as UserSections from "./UserSections.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
@@ -46,6 +49,7 @@ export interface UserObjectEnv extends MachineBackendEnv {
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
+  readonly POOLS: PoolDirectory.PoolObjectNamespace;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -53,13 +57,21 @@ const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) =>
   ManagedRuntime.make(
-    Layer.mergeAll(UserShell.layer, CloudThreadService.layer, UserSections.layer).pipe(
-      Layer.provideMerge(ThreadContexts.layer),
+    Layer.mergeAll(
+      UserShell.layer,
+      CloudThreadService.layer,
+      UserSections.layer,
+      PoolSignIns.layer,
+    ).pipe(
+      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
       Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layer)),
       Layer.provideMerge(
-        ThreadDirectory.layerDurableObjects(env.THREADS, {
-          localWorkerd: env.LOCAL_WORKERD === "1",
-        }),
+        Layer.mergeAll(
+          ThreadDirectory.layerDurableObjects(env.THREADS, {
+            localWorkerd: env.LOCAL_WORKERD === "1",
+          }),
+          PoolDirectory.layerDurableObjects(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+        ),
       ),
       Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
     ),

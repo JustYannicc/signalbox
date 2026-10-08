@@ -3,11 +3,13 @@ import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
+import type { PoolObjectEnv } from "./pool/PoolObject.ts";
 import { authorizeModel } from "./thread/runner/modelGrants.ts";
 import { connectRunner, isRunnerConnectPath } from "./thread/runner/runnerRoute.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 
+export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
 
@@ -18,7 +20,7 @@ export { UserObject } from "./user/UserObject.ts";
  * list the Vite dev proxy forwards) reach this Worker.
  */
 
-export interface CloudEnv extends UserObjectEnv, ThreadObjectEnv {
+export interface CloudEnv extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv {
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
 }
 
