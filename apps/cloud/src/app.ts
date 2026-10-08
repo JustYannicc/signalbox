@@ -26,6 +26,7 @@ import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import * as AccountRoutes from "./http/accountRoutes.ts";
+import * as WorkOSWebhook from "./http/workosWebhook.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
 import * as DiagnosticsRoutes from "./http/diagnosticsRoutes.ts";
 import * as EnvironmentApi from "./http/environmentApi.ts";
@@ -89,6 +90,7 @@ const routes = Layer.mergeAll(
   EnvironmentApi.layer,
   AccountRoutes.layer,
   DiagnosticsRoutes.layer,
+  WorkOSWebhook.layer,
 ).pipe(Layer.provide(layerCors));
 
 const json = (body: unknown, status: number) =>

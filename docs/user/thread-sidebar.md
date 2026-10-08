@@ -37,6 +37,14 @@ A thread acts as the context it starts in, for good: a work thread uses that org
 identity and connections, a personal one uses yours. New threads start in Personal. To start one
 in a work context, pick the organization in **New thread in…**.
 
+### Drives and sharing
+
+Each context has a private **My Drive**. In a work organization, choose **New shared drive** beside
+its name to create a drive for the organization. To share a folder from My Drive, right-click it in
+**Files** and choose **Share folder…**. People you share it with can see that folder and its history.
+Removing someone cuts their access everywhere at once. Threads stay private, even in a shared drive;
+only their file changes land in the drive.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model

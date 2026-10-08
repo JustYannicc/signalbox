@@ -43,7 +43,7 @@ const connect = (
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
         Layer.mergeAll(
-          CloudRpc.layerHandlers({ identity, actor: { userId } }),
+          CloudRpc.layerHandlers({ identity, userId }),
           CloudRpc.layerScopeAuthorization(scopes),
         ).pipe(Layer.provide(cloud.layerFor(userId))),
       ),
@@ -174,10 +174,14 @@ describe("cloud RPC", () => {
       const { cloud, rpc } = yield* connect();
       yield* launch(rpc);
       yield* cloud.settle;
+      const caughtUp = yield* Deferred.make<void>();
       const live = yield* rpc[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
         threadId,
         requestCompletionMarker: true,
       }).pipe(
+        Stream.tap((item) =>
+          item.kind === "synchronized" ? Deferred.succeed(caughtUp, undefined) : Effect.void,
+        ),
         Stream.takeUntil(
           (item) =>
             item.kind === "event" &&
@@ -188,7 +192,7 @@ describe("cloud RPC", () => {
         Stream.runCollect,
         Effect.forkChild,
       );
-      yield* Effect.yieldNow;
+      yield* Deferred.await(caughtUp);
       yield* send(rpc, "send-2", "More");
       yield* cloud.settle;
       const items = yield* Fiber.join(live);
@@ -275,20 +279,19 @@ describe("cloud RPC", () => {
       const contextOf = (id: ThreadId) =>
         cloud.threadDirectory
           .forThread(id)
-          .summary({ userId })
+          .summary({ userId, contextIds: [] })
           .pipe(Effect.map((summary) => summary?.contextId));
       expect(yield* contextOf(work)).toBe("org_acme");
       expect(yield* contextOf(threadId)).toBe("personal");
 
-      // Leaving the organization closes its project to new threads, but a
-      // thread keeps the context it was created as.
+      // Leaving the organization closes its project to new threads and hides
+      // its threads, which keep the context they were created as.
       yield* user.syncOrganizations([]);
       const rejected = yield* launchIn(ThreadId.make("thread-late"), acmeProject).pipe(Effect.flip);
       expect(rejected._tag).toBe("OrchestrationV2ThreadLaunchError");
       expect(yield* contextOf(work)).toBe("org_acme");
-      // A retry of the launch that already landed still replays.
-      const retried = yield* launchIn(work, acmeProject);
-      expect(retried.resumed).toBe(true);
+      const retried = yield* launchIn(work, acmeProject).pipe(Effect.flip);
+      expect(retried.message).toBe("Thread not found.");
     }).pipe(Effect.scoped),
   );
 

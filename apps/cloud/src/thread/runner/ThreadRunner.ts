@@ -15,9 +15,10 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { myDriveId } from "../../drive/driveAccess.ts";
+import type { UserObjectError } from "../../user/UserDirectory.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
 import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
-import { myDriveId } from "../../drive/DriveDirectory.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor } from "../providerCatalog.ts";
 import { sessionToken } from "../session/sessionToken.ts";
@@ -105,17 +106,30 @@ export type DriveAuthorization =
   | {
       readonly _tag: "granted";
       readonly threadId: string;
+      /** The thread's owner, whose role the drive checks again on every write. */
+      readonly userId: string;
       readonly driveId: string;
       readonly generation: number;
       /** Whether a turn runs: `main` only moves during one. */
       readonly live: boolean;
     }
-  | { readonly _tag: "denied"; readonly reason: string };
+  | { readonly _tag: "denied"; readonly reason: string }
+  /** The owner's access couldn't be checked just now; the Runner retries. */
+  | { readonly _tag: "unavailable" };
 
-/** Whether this cloud stores drives. Without it, turns run in a plain directory. */
-export class ThreadDrives extends Context.Service<ThreadDrives, { readonly enabled: boolean }>()(
-  "@signalbox/cloud/thread/runner/ThreadRunner/ThreadDrives",
-) {}
+/**
+ * Whether this cloud stores drives, and whether a thread's owner may still
+ * change files in its drive: asked of their own object on every drive call,
+ * so leaving an organization or a drive stops their threads' writes at once.
+ * Without drives, turns run in a plain directory.
+ */
+export class ThreadDrives extends Context.Service<
+  ThreadDrives,
+  {
+    readonly enabled: boolean;
+    readonly writes: (userId: string, driveId: string) => Effect.Effect<boolean, UserObjectError>;
+  }
+>()("@signalbox/cloud/thread/runner/ThreadRunner/ThreadDrives") {}
 
 /** Whether a session token may write the thread's session rows right now, and for which machine. */
 export type SessionAuthorization =
@@ -249,8 +263,10 @@ const make = Effect.gen(function* () {
     Effect.provideService(effect, Crypto.Crypto, crypto);
   const drives = yield* Effect.serviceOption(ThreadDrives);
   const drivesEnabled = drives._tag === "Some" && drives.value.enabled;
+  const driveIdOf = (owner: ThreadStore.ThreadOwner) =>
+    owner.driveId ?? myDriveId(owner.contextId, owner.userId);
   const driveOf = Effect.map(Effect.orDie(store.owner), (owner) =>
-    owner === null ? null : myDriveId(owner.contextId, owner.userId),
+    owner === null ? null : driveIdOf(owner),
   );
 
   const lease = Effect.orDie(store.machine);
@@ -544,11 +560,21 @@ const make = Effect.gen(function* () {
       if (!(yield* isDriveToken(token, current.token, threadId, current.generation))) {
         return deny("This token is not for this thread's machine.");
       }
-      const driveId = yield* driveOf;
-      if (driveId === null) return deny("This thread has no drive.");
+      const owner = yield* Effect.orDie(store.owner);
+      if (owner === null) return deny("This thread has no drive.");
+      const driveId = driveIdOf(owner);
+      if (drives._tag === "Some") {
+        const writes = yield* drives.value.writes(owner.userId, driveId).pipe(Effect.result);
+        if (writes._tag === "Failure") {
+          yield* Effect.logWarning("drive access check failed", { cause: writes.failure });
+          return { _tag: "unavailable" } satisfies DriveAuthorization;
+        }
+        if (!writes.success) return deny("You no longer have access to change this drive.");
+      }
       return {
         _tag: "granted",
         threadId,
+        userId: owner.userId,
         driveId,
         generation: current.generation,
         live: harnessRun(projection) !== undefined,

@@ -36,8 +36,10 @@ import * as ThreadRunner from "./ThreadRunner.ts";
 
 /** A Claude thread's object with its Runner, and what a Runner reports, for tests. */
 
-export const owner = { userId: "user_1" };
-export const personal = { contextId: PERSONAL_CONTEXT_ID };
+export const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
+export const personal = {
+  place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+};
 export const threadId = ThreadId.make("thread-claude");
 export const claude = {
   instanceId: ProviderInstanceId.make("claudeAgent"),

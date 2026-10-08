@@ -6,6 +6,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as UserDirectory from "../user/UserDirectory.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./credentials.ts";
 
 /**
@@ -53,8 +54,11 @@ const diagnostics = Effect.gen(function* () {
   }
   const threadId = decodeThreadId(params.threadId);
   if (threadId._tag === "None") return yield* failure("not_found", 404);
+  const contextIds = yield* (yield* UserDirectory.UserDirectory)
+    .forUser(session.userId)
+    .contextIds();
   const record = yield* (yield* CloudThreadService.CloudThreadService).turnDiagnostics(
-    { userId: session.userId },
+    { userId: session.userId, contextIds },
     threadId.value,
     params.key ?? null,
   );

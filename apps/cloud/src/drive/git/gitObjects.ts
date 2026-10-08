@@ -22,7 +22,7 @@ const decoder = new TextDecoder();
 
 export const hex = (bytes: Uint8Array) => Hex.encode(bytes);
 
-const concatBytes = (parts: ReadonlyArray<Bytes>) => {
+export const concatBytes = (parts: ReadonlyArray<Uint8Array>): Bytes => {
   const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
   let at = 0;
   for (const part of parts) {

@@ -8,6 +8,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { SIGNALBOX_CONTEXTS_WS_METHODS } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
+import { SIGNALBOX_DRIVES_WS_METHODS } from "@t3tools/contracts/signalboxDrives"; // signalbox: drives
 import { SIGNALBOX_PREVIEWS_WS_METHODS } from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
 import type { AutomationSubscriptionRpcTag } from "@t3tools/contracts"; // signalbox: automations
 import * as Cause from "effect/Cause";
@@ -77,6 +78,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.terminalObserve
   | AutomationSubscriptionRpcTag // signalbox: automations
   | typeof SIGNALBOX_CONTEXTS_WS_METHODS.subscribe // signalbox: contexts
+  | typeof SIGNALBOX_DRIVES_WS_METHODS.subscribe // signalbox: drives
   | typeof SIGNALBOX_PREVIEWS_WS_METHODS.subscribe; // signalbox: previews
 
 export type EnvironmentStreamCommandRpcTag =

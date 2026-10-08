@@ -9,7 +9,6 @@ import * as Socket from "effect/socket/Socket";
 import * as SocketServer from "effect/socket/SocketServer";
 
 import type * as Environment from "../environment.ts";
-import type { Actor } from "../thread/ThreadEngine.ts";
 import * as CloudRpc from "./rpc.ts";
 
 /**
@@ -26,7 +25,7 @@ export const serveConnection = (input: {
   readonly webSocket: WebSocket;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly identity: Environment.CloudEnvironmentIdentity;
-  readonly actor: Actor;
+  readonly userId: string;
 }) =>
   Effect.gen(function* () {
     const socket = yield* Socket.fromWebSocket(Effect.succeed(input.webSocket));
@@ -47,7 +46,7 @@ export const serveConnection = (input: {
       Effect.provideService(RpcServer.Protocol, protocol),
       Effect.provide(
         Layer.mergeAll(
-          CloudRpc.layerHandlers({ identity: input.identity, actor: input.actor }),
+          CloudRpc.layerHandlers({ identity: input.identity, userId: input.userId }),
           CloudRpc.layerScopeAuthorization(input.scopes),
         ),
       ),

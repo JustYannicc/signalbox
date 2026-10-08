@@ -84,11 +84,14 @@ jobs:
           jq -n \
             --arg SESSION_SECRET "$SESSION_SECRET" \
             --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
+            --arg T3CODE_WORKOS_WEBHOOK_SECRET "$T3CODE_WORKOS_WEBHOOK_SECRET" \
             --arg BOAT_API_KEY "$BOAT_API_KEY" \
             '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
         env:
           SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
           T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
+          # Optional: membership changes from WorkOS at once (docs/operations/cloud.md).
+          T3CODE_WORKOS_WEBHOOK_SECRET: ${{ secrets.T3CODE_WORKOS_WEBHOOK_SECRET }}
           # Optional: Claude and Codex on boat VMs (docs/operations/cloud.md).
           BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
 

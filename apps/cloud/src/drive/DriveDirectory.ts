@@ -1,32 +1,28 @@
-import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type { SignalboxDriveMember, SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { Oid } from "./git/gitObjects.ts";
+import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
   ObjectLocation,
   PackRegistration,
   RefWrite,
+  Shortcut,
   StoredCommit,
   ThreadRefs,
 } from "./DriveStore.ts";
 
 /**
- * How the Worker and thread objects reach drive objects. Every drive has
- * exactly one, named by its drive id and always created in the EU
- * jurisdiction. Until shared drives land (#140), each person has one drive
- * per context, their My Drive, and every thread they start in that context
- * works in it.
+ * How the Worker, thread and user objects reach drive objects. Every drive
+ * has exactly one, named by its drive id (`driveAccess.ts`) and always
+ * created in the EU jurisdiction.
  */
 
 export const DRIVE_OBJECT_JURISDICTION = "eu";
-
-/** A person's My Drive in a context. */
-export const myDriveId = (contextId: SignalboxContextId, userId: string) =>
-  `my/${contextId}/${userId}`;
 
 /** What a drive object answers. `DriveObject` implements it method for method. */
 export interface DriveObjectApi {
@@ -51,6 +47,35 @@ export interface DriveObjectApi {
   readonly locateAt: (pack: string, offset: number) => Promise<ObjectLocation | null>;
   readonly commits: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<StoredCommit>>;
   readonly log: (from: Oid, limit: number) => Promise<ReadonlyArray<StoredCommit>>;
+  readonly replaceMain: (
+    userId: string,
+    request: {
+      readonly expectedMain: Oid | null;
+      readonly newMain: Oid;
+      readonly shortcut?: Shortcut;
+    },
+  ) => Promise<RefWrite>;
+  readonly shortcuts: () => Promise<ReadonlyArray<Shortcut>>;
+  /** Names the drive and seats its first members; idempotent. */
+  readonly setup: (input: {
+    readonly name: string;
+    readonly members: ReadonlyArray<DrivePerson & { readonly role: SignalboxDriveRole }>;
+  }) => Promise<void>;
+  /** Not `name`: a Durable Object stub has its own `name` property. */
+  readonly driveName: () => Promise<string | null>;
+  readonly role: (userId: string) => Promise<SignalboxDriveRole | null>;
+  readonly members: () => Promise<ReadonlyArray<SignalboxDriveMember>>;
+  readonly share: (
+    by: DrivePerson,
+    person: DrivePerson,
+    role: SignalboxDriveRole,
+  ) => Promise<MembershipChange>;
+  readonly unshare: (
+    by: DrivePerson,
+    userId: string,
+  ) => Promise<{ readonly _tag: "ok" } | { readonly _tag: "refused"; readonly reason: string }>;
+  /** Membership changes not yet in their people's indexes. */
+  readonly pendingAccess: () => Promise<ReadonlyArray<AccessDelivery>>;
 }
 
 export class DriveObjectError extends Schema.TaggedError<DriveObjectError>()("DriveObjectError", {
@@ -90,6 +115,15 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     locateAt: wrap("locateAt"),
     commits: wrap("commits"),
     log: wrap("log"),
+    replaceMain: wrap("replaceMain"),
+    shortcuts: wrap("shortcuts"),
+    setup: wrap("setup"),
+    driveName: wrap("driveName"),
+    role: wrap("role"),
+    members: wrap("members"),
+    share: wrap("share"),
+    unshare: wrap("unshare"),
+    pendingAccess: wrap("pendingAccess"),
   } as DriveHandle;
 }
 
