@@ -18,6 +18,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { makeAssistantStreamingFilter } from "../../orchestration-v2/assistantStreaming.ts";
@@ -29,6 +30,7 @@ import {
 } from "../../orchestration-v2/ProviderAdapter.ts";
 import { makeProviderFailure } from "../../orchestration-v2/ProviderFailure.ts";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
+import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
 import { FILE_CHANGING_ITEMS, finishDriveTurn } from "./RunnerTurnDrive.ts";
 
@@ -48,6 +50,8 @@ import { FILE_CHANGING_ITEMS, finishDriveTurn } from "./RunnerTurnDrive.ts";
  * A turn with a drive works in a checkout of it (`RunnerDrive.ts`): checked
  * out before the harness starts, saved after each tool item that may change
  * files, and landed before the turn's end is reported (`RunnerTurnDrive.ts`).
+ * Once the checkout is in place, its dependency trees are brought in step
+ * with their lockfiles (`RunnerDependencies.ts`), one turn at a time.
  */
 
 export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("RunnerTurnError", {
@@ -91,6 +95,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** Makes `token` the one the harnesses present to the ModelGateway. */
   readonly useModelToken: (token: string) => Effect.Effect<void, PlatformError.PlatformError>;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
+  /** Installs or reuses the dependencies in `cwd` before each turn. */
+  readonly dependencies?: RunnerDependencies;
   /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
 }) {
@@ -108,6 +114,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** Agent turns run to resolve a merge, by attempt, and their provider turns once named. */
   const mergeAttempts = new Set<RunAttemptId>();
   const mergeProviderTurns = new Set<ProviderTurnId>();
+  /** One turn readies the working directory at a time, even after a stop left one installing. */
+  const preparing = yield* Semaphore.make(1);
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null
@@ -385,9 +393,18 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         cwd: input.cwd,
       };
       latestRunId = turn.runId;
-      // The harness starts in the thread's branch, as the drive last saved it.
+      // The harness starts in the thread's branch, as the drive last saved it, with its dependencies.
       const opened = access === null ? null : yield* driveFor(access);
-      if (opened !== null) yield* opened.prepare;
+      yield* preparing.withPermits(1)(
+        Effect.gen(function* () {
+          if (opened !== null) yield* opened.prepare;
+          if (input.dependencies !== undefined) {
+            yield* input.dependencies.prepare((message) =>
+              input.emit({ kind: "drive.notice", runId: turn.runId, message }),
+            );
+          }
+        }),
+      );
       yield* input.useModelToken(modelToken);
       const session = yield* sessionFor(adapter, turn, runtimePolicy);
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);

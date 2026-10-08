@@ -11,8 +11,12 @@ FROM node:24-bookworm-slim
 ARG CLAUDE_CODE_VERSION=2.1.292
 ARG CODEX_VERSION=0.160.1
 
+# Python, make, a C/C++ compiler and pkg-config are what node-gyp and most
+# native dependencies need to build on install. Anything a project needs
+# beyond that comes from its environment (#123).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git openssh-client procps ripgrep \
+    python3 make g++ pkg-config \
   && rm -rf /var/lib/apt/lists/*
 
 # npm 11 skips install scripts unless allowed; Claude Code's links its native binary.
@@ -21,6 +25,10 @@ RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/clau
     "@openai/codex@${CODEX_VERSION}" \
   && npm cache clean --force \
   && claude --version && codex --version
+
+# `pnpm` and `yarn` at the version each project's `packageManager` names,
+# fetched once into the machine's caches (`COREPACK_HOME`, RunnerCaches.ts).
+RUN corepack enable pnpm yarn
 
 COPY main.mjs /opt/signalbox/runner.mjs
 

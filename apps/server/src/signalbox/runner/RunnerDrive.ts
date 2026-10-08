@@ -65,6 +65,11 @@ const CONFIG = [
   ["gc.auto", "0"],
   ["core.quotepath", "false"],
 ] as const;
+/**
+ * Never saved to a drive, whatever its own ignore files say: dependency trees
+ * are the machine's cache (`RunnerDependencies.ts`), rebuilt from lockfiles.
+ */
+const EXCLUDE = "node_modules/";
 const RECONCILE_ATTEMPTS = 5;
 const CONFLICT_MARKER = /^(<<<<<<<|>>>>>>>) /m;
 
@@ -236,6 +241,16 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     return yield* land;
   });
 
+  /** Adds `EXCLUDE` to the repository's own excludes, keeping whatever else is there. */
+  const excludeCaches = Effect.gen(function* () {
+    const file = path.join(gitDir, "info", "exclude");
+    const current = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
+    if (current.split("\n").includes(EXCLUDE)) return;
+    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+    const separator = current === "" || current.endsWith("\n") ? "" : "\n";
+    yield* fs.writeFileString(file, `${current}${separator}${EXCLUDE}\n`);
+  });
+
   const exclusive = <A, E>(effect: Effect.Effect<A, E>) =>
     flush.pipe(Effect.andThen(lock.withPermits(1)(effect)));
 
@@ -259,6 +274,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       yield* fs.makeDirectory(input.cwd, { recursive: true });
       if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
       for (const [key, value] of CONFIG) yield* git.run(["config", key, value]);
+      yield* excludeCaches;
       const localThread = existed ? yield* git.resolve("refs/drive/thread") : null;
       const state = yield* drive.open;
       if (!existed || localThread !== state.thread) {

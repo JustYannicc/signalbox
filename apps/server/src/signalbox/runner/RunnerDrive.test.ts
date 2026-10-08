@@ -260,6 +260,30 @@ describe("RunnerDrive", () => {
     ),
   );
 
+  it.effect("never saves dependency trees, and checking out leaves them in place", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const first = yield* machine(drive, root, "vm-1", "t1");
+        yield* first.runner.prepare;
+        // No .gitignore: the drive still keeps the machine's caches out.
+        write(first.cwd, "app/package.json", "{}\n");
+        write(first.cwd, "app/node_modules/pkg/index.js", "module.exports = 1;\n");
+        const turn = yield* first.runner.finishTurn({ message: "Add app" });
+        expect(turn.checkpoint?.files.map((file) => file.path)).toEqual(["app/package.json"]);
+        expect(git(drive.store, "ls-tree", "-r", "--name-only", drive.refs("t1").thread!)).toBe(
+          "app/package.json",
+        );
+
+        // Syncing the checkout to the drive's branch keeps the tree on disk.
+        git(first.cwd, "update-ref", "-d", "refs/drive/thread");
+        yield* first.runner.prepare;
+        expect(git(first.cwd, "rev-parse", "refs/drive/thread")).toBe(drive.refs("t1").thread);
+        expect(read(first.cwd, "app/node_modules/pkg/index.js")).toBe("module.exports = 1;\n");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.effect("lands two threads' turns on main, in packs that are closed on their own", () =>
     scopedTest((root) =>
       Effect.gen(function* () {

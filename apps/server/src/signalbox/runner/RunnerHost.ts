@@ -22,6 +22,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type { ChildProcessSpawner } from "effect/process";
 
 import { makeRunnerAdapters } from "./RunnerAdapters.ts";
+import { makeMachineCaches } from "./RunnerCaches.ts";
+import { makeRunnerDependencies } from "./RunnerDependencies.ts";
 import { makeRunnerDrive } from "./RunnerDrive.ts";
 import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { writeModelToken } from "./RunnerModelAccess.ts";
@@ -67,6 +69,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
   >();
   const runners = new Map<ThreadId, HostedRunner>();
   const lock = yield* Semaphore.make(1);
+  const caches = yield* makeMachineCaches(config.home);
 
   const stop = (threadId: ThreadId, runner: HostedRunner) =>
     Effect.suspend(() => {
@@ -88,10 +91,12 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
         yield* fs.makeDirectory(cwd, { recursive: true });
         const scope = yield* Scope.fork(hostScope);
         const session = yield* Effect.gen(function* () {
-          const { adapters, layout } = yield* makeRunnerAdapters({
+          const { adapters, layout, environment } = yield* makeRunnerAdapters({
             root: path.join(config.home, "machines", request.threadId),
             gatewayUrl: request.modelGatewayUrl,
+            caches: caches.environment,
           });
+          const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
           return yield* makeRunnerSession({
             threadId: request.threadId,
             generation: request.generation,
@@ -109,6 +114,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                     Effect.provideService(FileSystem.FileSystem, fs),
                   ),
                 emit,
+                dependencies,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
                     makeRunnerDrive({ cwd, client }),

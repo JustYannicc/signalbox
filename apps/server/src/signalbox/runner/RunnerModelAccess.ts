@@ -59,6 +59,8 @@ export function harnessEnvironment(
   host: NodeJS.ProcessEnv,
   layout: MachineLayout,
   gatewayUrl: string,
+  /** The machine's dependency and build caches (`RunnerCaches.ts`). */
+  caches: Readonly<Record<string, string>> = {},
 ): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of INHERITED) {
@@ -67,6 +69,7 @@ export function harnessEnvironment(
   }
   return {
     ...environment,
+    ...caches,
     HOME: layout.home,
     ANTHROPIC_BASE_URL: gatewayEndpoint(gatewayUrl, "anthropic"),
     // Telemetry and update checks would go to Anthropic directly, with no key.
