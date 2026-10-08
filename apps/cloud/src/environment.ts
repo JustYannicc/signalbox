@@ -94,6 +94,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
     signalboxPreviews: identity.previews === true,
+    // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
+    projectCloneTracking: true,
   },
 });
 

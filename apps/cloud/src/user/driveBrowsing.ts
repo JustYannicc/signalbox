@@ -17,7 +17,8 @@ import { isWithin, pathSegments } from "../drive/DriveReader.ts";
 import type { Shortcut } from "../drive/DriveStore.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
-import { driveOfProject, driveOfRoot } from "./contextProjects.ts";
+import { MAIN_REF, threadRef, wipRef } from "../drive/DriveStore.ts";
+import { driveOfProject, driveOfRoot, threadWorktreeAt } from "./contextProjects.ts";
 import * as UserDrives from "./UserDrives.ts";
 
 /**
@@ -65,14 +66,25 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
   const unavailable = (cause: unknown) =>
     Effect.logError("drive read failed", { cause }).pipe(Effect.andThen(Effect.fail(UNAVAILABLE)));
 
-  /** The drive a workspace root names, if the user can open it, with its shortcuts. */
+  /**
+   * The drive a workspace root names, if the user can open it, with its
+   * shortcuts. A thread's working tree in a remote-backed drive (#135) reads
+   * that thread's latest save rather than `main`.
+   */
   const openRoot = (cwd: string) =>
     Effect.gen(function* () {
-      const driveId = driveOfRoot(cwd, userId);
+      const worktree = threadWorktreeAt(cwd);
+      const driveId = worktree?.driveId ?? driveOfRoot(cwd, userId);
       if (files._tag === "None" || directory._tag === "None" || driveId === null) return null;
       if ((yield* drives.access(driveId)) === null) return null;
       const shortcuts = yield* directory.value.forDrive(driveId).shortcuts();
-      return { driveId, shortcuts, files: files.value };
+      const refs =
+        worktree === null
+          ? undefined
+          : [wipRef(worktree.threadId), threadRef(worktree.threadId), MAIN_REF];
+      /** Which version to read in `at`: the thread's, in its own drive. */
+      const versionIn = (at: string) => (at === driveId ? refs : undefined);
+      return { driveId, shortcuts, files: files.value, versionIn };
     }).pipe(Effect.catchTags({ SqlError: unavailable, DriveObjectError: unavailable }));
 
   const listEntries = (request: ProjectListEntriesInput) =>
@@ -82,7 +94,7 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
       const directoryPath = (pathSegments(request.directoryPath ?? "") ?? []).join("/");
       const at = resolve(drive.driveId, drive.shortcuts, directoryPath);
       const listed = yield* drive.files
-        .listEntries(at.driveId, at.path)
+        .listEntries(at.driveId, at.path, drive.versionIn(at.driveId))
         .pipe(Effect.catch(unavailable));
       const entries = withPrefix(at.prefix, listed);
       if (at.prefix !== "") return { entries, truncated: false };
@@ -104,7 +116,7 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
       const at = resolve(drive.driveId, drive.shortcuts, request.relativePath);
       if (at.path === "") return yield* fail("path_not_file");
       const file = yield* drive.files
-        .readFile(at.driveId, at.path)
+        .readFile(at.driveId, at.path, drive.versionIn(at.driveId))
         .pipe(
           Effect.catch((cause) =>
             Effect.flatMap(Effect.ignore(unavailable(cause)), () => fail("operation_failed")),
@@ -140,7 +152,7 @@ export const makeDriveBrowsing = Effect.fn("makeDriveBrowsing")(function* (
         ...(request.kind === undefined ? {} : { kind: request.kind }),
       };
       const own = yield* drive.files
-        .searchEntries(drive.driveId, query)
+        .searchEntries(drive.driveId, query, drive.versionIn(drive.driveId))
         .pipe(Effect.catch(unavailable));
       // The drive's own matches come first; shortcuts fill what's left of the limit.
       const shortcuts =

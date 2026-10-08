@@ -70,6 +70,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { CloudGitHubSettings, useIsSignalboxCloud } from "../../github/CloudGitHubSettings"; // signalbox: GitHub in Signalbox Cloud
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
@@ -536,6 +537,7 @@ export function SourceControlSettingsPanel() {
         }),
   );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
+  const isSignalboxCloud = useIsSignalboxCloud(environmentId); // signalbox: GitHub in Signalbox Cloud
   const hasVersionControlSystems = result.versionControlSystems.length > 0;
   const hasDiscoveryItems = hasVersionControlSystems || result.sourceControlProviders.length > 0;
   const isInitialScanPending = discovery.isPending && discovery.data === null;
@@ -615,6 +617,12 @@ export function SourceControlSettingsPanel() {
                         onSaved={handleScan}
                       />
                     </SettingsSearchTarget>
+                  ) : item.kind === "github" && isSignalboxCloud ? (
+                    <CloudGitHubSettings // signalbox: GitHub in Signalbox Cloud
+                      environmentId={environmentId}
+                      auth={item.auth}
+                      onChanged={handleScan}
+                    />
                   ) : item.kind === "github" ? (
                     <SettingsSearchTarget id={searchableSetting("github-accounts").id}>
                       <div className="grid gap-6">

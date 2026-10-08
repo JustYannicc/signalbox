@@ -3,7 +3,9 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
+  GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetTurnDiffError,
@@ -15,6 +17,7 @@ import {
   ProjectReadFileError,
   ProjectSearchEntriesError,
   RpcScopeAuthorization,
+  type ProjectCloneListEvent,
   SectionsRpcError,
   type ThreadId,
   WS_METHODS,
@@ -43,6 +46,8 @@ import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import * as Environment from "../environment.ts";
+import * as GitHubBranches from "../github/GitHubBranches.ts";
+import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
@@ -93,6 +98,17 @@ const SERVED = [
   WS_METHODS.reviewGetDiffPreview,
   ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
   ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
+  // GitHub repositories as drives (`github/`): import, branch status, push and pull requests.
+  WS_METHODS.serverDiscoverSourceControl,
+  WS_METHODS.sourceControlLookupRepository,
+  WS_METHODS.projectCloneStart,
+  WS_METHODS.projectCloneCancel,
+  WS_METHODS.projectCloneRetry,
+  WS_METHODS.subscribeProjectClones,
+  WS_METHODS.subscribeVcsStatus,
+  WS_METHODS.vcsRefreshStatus,
+  WS_METHODS.vcsPull,
+  WS_METHODS.gitRunStackedAction,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
@@ -132,6 +148,16 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
+  [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
+  [WS_METHODS.projectCloneRetry]: AuthSourceControlWriteScope,
+  [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeVcsStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.vcsPull]: AuthSourceControlWriteScope,
+  [WS_METHODS.gitRunStackedAction]: AuthSourceControlWriteScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
@@ -227,6 +253,8 @@ export const layerHandlers = (input: {
         (contextIds) => ({ userId, contextIds }),
       );
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
+      const githubImport = yield* makeGitHubImport();
+      const branches = yield* GitHubBranches.GitHubBranches;
       /**
        * Fails with not-found once the user leaves a context and so can't see
        * the thread anymore. Only a context going away is worth asking the
@@ -392,6 +420,41 @@ export const layerHandlers = (input: {
             .pipe(
               Effect.mapError((message) => new OrchestrationGetFullThreadDiffError({ message })),
             ),
+        [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
+        [WS_METHODS.sourceControlLookupRepository]: (request) =>
+          githubImport.lookup(request.repository),
+        [WS_METHODS.projectCloneStart]: (request) => githubImport.importRepository(request),
+        // Imports register at once and clone nothing, so there is never a clone to track.
+        [WS_METHODS.projectCloneCancel]: () => Effect.succeed({ applied: false }),
+        [WS_METHODS.projectCloneRetry]: () => Effect.succeed({ applied: false }),
+        [WS_METHODS.subscribeProjectClones]: () => thenHold<ProjectCloneListEvent>([[]]),
+        [WS_METHODS.subscribeVcsStatus]: (request) =>
+          Stream.unwrap(
+            Effect.map(actorNow, (actor) =>
+              branches.watch(actor, request.cwd, request.includeRemote !== false),
+            ),
+          ),
+        [WS_METHODS.vcsRefreshStatus]: (request) =>
+          actorNow.pipe(
+            Effect.flatMap((actor) => branches.status(actor, request.cwd, true)),
+            Effect.map((status) => ({
+              ...status.local,
+              ...(status.remote ?? { hasUpstream: false, aheadCount: 0, behindCount: 0, pr: null }),
+            })),
+          ),
+        [WS_METHODS.gitRunStackedAction]: (request) =>
+          Stream.unwrap(Effect.map(actorNow, (actor) => branches.runAction(actor, request))),
+        // A thread's branch only takes commits from its own turns.
+        [WS_METHODS.vcsPull]: (request) =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "pull",
+              command: "git pull",
+              cwd: request.cwd,
+              detail:
+                "The branch on GitHub has commits this thread doesn't. Signalbox can't bring them into a thread yet.",
+            }),
+          ),
         [SIGNALBOX_CONTEXTS_WS_METHODS.subscribe]: () => Stream.orDie(contexts.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.subscribe]: () => Stream.orDie(userDrives.changes),
         [SIGNALBOX_DRIVES_WS_METHODS.create]: (request) =>

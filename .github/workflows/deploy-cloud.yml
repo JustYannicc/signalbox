@@ -86,6 +86,7 @@ jobs:
             --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
             --arg T3CODE_WORKOS_WEBHOOK_SECRET "$T3CODE_WORKOS_WEBHOOK_SECRET" \
             --arg BOAT_API_KEY "$BOAT_API_KEY" \
+            --arg GITHUB_APP_CLIENT_SECRET "$GITHUB_APP_CLIENT_SECRET" \
             '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
         env:
           SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
@@ -94,6 +95,8 @@ jobs:
           T3CODE_WORKOS_WEBHOOK_SECRET: ${{ secrets.T3CODE_WORKOS_WEBHOOK_SECRET }}
           # Optional: Claude and Codex on boat VMs (docs/operations/cloud.md).
           BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+          # Optional: GitHub-backed drives (docs/operations/cloud.md).
+          GITHUB_APP_CLIENT_SECRET: ${{ secrets.GITHUB_APP_CLIENT_SECRET }}
 
       # Secrets ship with the version, so no deploy runs without them.
       - name: Deploy
@@ -108,6 +111,8 @@ jobs:
           --var "SIGNALBOX_POSTHOG_KEY:$SIGNALBOX_POSTHOG_KEY"
           --var "SIGNALBOX_POSTHOG_HOST:$SIGNALBOX_POSTHOG_HOST"
           --var "PREVIEW_DOMAIN:$PREVIEW_DOMAIN"
+          --var "GITHUB_APP_CLIENT_ID:$GITHUB_APP_CLIENT_ID"
+          --var "GITHUB_APP_SLUG:$GITHUB_APP_SLUG"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
@@ -118,6 +123,8 @@ jobs:
           SIGNALBOX_POSTHOG_KEY: ${{ vars.SIGNALBOX_POSTHOG_KEY }}
           SIGNALBOX_POSTHOG_HOST: ${{ vars.SIGNALBOX_POSTHOG_HOST }}
           PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
+          GITHUB_APP_CLIENT_ID: ${{ vars.GITHUB_APP_CLIENT_ID }}
+          GITHUB_APP_SLUG: ${{ vars.GITHUB_APP_SLUG }}
 
       - &cleanup
         name: Remove secrets file
@@ -159,11 +166,13 @@ jobs:
             --arg SESSION_SECRET "$session_secret" \
             --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
             --arg BOAT_API_KEY "$BOAT_API_KEY" \
+            --arg GITHUB_APP_CLIENT_SECRET "$GITHUB_APP_CLIENT_SECRET" \
             '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
         env:
           PREVIEW_SESSION_SECRET: ${{ secrets.CLOUD_PREVIEW_SESSION_SECRET }}
           T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
           BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+          GITHUB_APP_CLIENT_SECRET: ${{ secrets.GITHUB_APP_CLIENT_SECRET }}
 
       # Containers have no command-line name, so the preview deploys from a
       # copy of the config with its own container application name.
@@ -184,11 +193,15 @@ jobs:
           --var "CLOUD_URL:https://preview-$PR_NUMBER.signalbox.run"
           --var "MACHINE_BACKEND:$MACHINE_BACKEND"
           --var "MODEL_GATEWAY_URL:$MODEL_GATEWAY_URL"
+          --var "GITHUB_APP_CLIENT_ID:$GITHUB_APP_CLIENT_ID"
+          --var "GITHUB_APP_SLUG:$GITHUB_APP_SLUG"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
           MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
           MODEL_GATEWAY_URL: ${{ vars.MODEL_GATEWAY_URL }}
+          GITHUB_APP_CLIENT_ID: ${{ vars.GITHUB_APP_CLIENT_ID }}
+          GITHUB_APP_SLUG: ${{ vars.GITHUB_APP_SLUG }}
 
       - *cleanup
 

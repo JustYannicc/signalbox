@@ -24,6 +24,20 @@ If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
 over that choice; a host turned off stays off either way.
 
+### GitHub in Signalbox Cloud
+
+In Signalbox Cloud there is nothing to install. Open **Settings → Source Control** and choose
+**Connect GitHub**. Signalbox then works as you on the repositories you install its GitHub app
+on; **Choose repositories** adds more.
+
+To work on a repository, choose **Add project → GitHub repository**. Signalbox doesn't copy
+anything up front: each new thread starts from the latest commit on the default branch. Every
+thread has its own branch, `signalbox/…`. Push it or open a pull request from the thread's git
+panel. Once the pull request is merged on GitHub, new threads start from the merged commit.
+
+Signalbox saves a thread's files as it goes. Those saves stay in Signalbox; only the commit each
+turn ends with is pushed. Imported repositories appear under Personal for now.
+
 ### Forgejo and Gitea
 
 Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or

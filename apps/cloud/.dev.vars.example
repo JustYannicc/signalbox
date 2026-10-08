@@ -20,3 +20,8 @@ T3CODE_WORKOS_API_KEY=
 # Optional: previews of dev servers on threads' machines, at
 # http://<label>.localhost:8787 (docs/operations/cloud.md).
 # PREVIEW_DOMAIN=localhost:8787
+# Optional: GitHub-backed drives through a GitHub App whose callback URL is
+# http://localhost:8787/api/github/callback (docs/operations/cloud.md).
+# GITHUB_APP_CLIENT_ID=
+# GITHUB_APP_CLIENT_SECRET=
+# GITHUB_APP_SLUG=

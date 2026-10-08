@@ -251,7 +251,8 @@ describe("RunnerTurns", () => {
           const driveCalls: Array<string> = [];
           let outcome: DriveOutcome = { _tag: "conflict", files: ["notes.md"] };
           const drive: RunnerDrive = {
-            prepare: Effect.sync(() => void driveCalls.push("prepare")),
+            prepare: (remoteToken) =>
+              Effect.sync(() => void driveCalls.push(`prepare ${remoteToken}`)),
             autosave: Effect.sync(() => void driveCalls.push("autosave")),
             flush: Effect.void,
             finishTurn: () =>
@@ -299,10 +300,14 @@ describe("RunnerTurns", () => {
           yield* turns.start({
             turn,
             modelToken: "token-1",
-            drive: { driveId: "my/personal/user_1", token: "sbd1.x.y" },
+            drive: {
+              driveId: "my/personal/user_1",
+              token: "sbd1.x.y",
+              remoteToken: "sbr1.x.y",
+            },
           });
           yield* settle;
-          expect(driveCalls).toEqual(["prepare"]);
+          expect(driveCalls).toEqual(["prepare sbr1.x.y"]);
 
           const now = DateTime.makeUnsafe(0);
           yield* Queue.offer(fake.events, {
@@ -341,7 +346,7 @@ describe("RunnerTurns", () => {
           yield* Queue.offer(fake.events, terminal(1));
           yield* settle;
           // The turn's end is held while the agent resolves the conflict.
-          expect(driveCalls).toEqual(["prepare", "autosave", "finish"]);
+          expect(driveCalls).toEqual(["prepare sbr1.x.y", "autosave", "finish"]);
           expect(prompts).toHaveLength(2);
           expect(prompts[1]).toContain("notes.md");
           const kinds = () =>
@@ -371,7 +376,7 @@ describe("RunnerTurns", () => {
           } as ProviderAdapterV2Event);
           yield* Queue.offer(fake.events, terminal(2));
           yield* settle;
-          expect(driveCalls).toEqual(["prepare", "autosave", "finish", "continue"]);
+          expect(driveCalls).toEqual(["prepare sbr1.x.y", "autosave", "finish", "continue"]);
           // One end, after the files landed.
           expect(kinds()).toEqual([
             "turn.started",
@@ -403,7 +408,8 @@ describe("RunnerTurns", () => {
         const driveCalls: Array<string> = [];
         let outcome: DriveOutcome = { _tag: "conflict", files: ["notes.md"] };
         const drive: RunnerDrive = {
-          prepare: Effect.sync(() => void driveCalls.push("prepare")),
+          prepare: (remoteToken) =>
+            Effect.sync(() => void driveCalls.push(`prepare ${remoteToken}`)),
           autosave: Effect.sync(() => void driveCalls.push("autosave")),
           flush: Effect.void,
           finishTurn: () =>
@@ -451,10 +457,14 @@ describe("RunnerTurns", () => {
         yield* turns.start({
           turn,
           modelToken: "token-1",
-          drive: { driveId: "my/personal/user_1", token: "sbd1.x.y" },
+          drive: {
+            driveId: "my/personal/user_1",
+            token: "sbd1.x.y",
+            remoteToken: "sbr1.x.y",
+          },
         });
         yield* settle;
-        expect(driveCalls).toEqual(["prepare"]);
+        expect(driveCalls).toEqual(["prepare sbr1.x.y"]);
 
         const now = DateTime.makeUnsafe(0);
         yield* Queue.offer(fake.events, {
@@ -493,7 +503,7 @@ describe("RunnerTurns", () => {
         yield* Queue.offer(fake.events, terminal(1));
         yield* settle;
         // The turn's end is held while the agent resolves the conflict.
-        expect(driveCalls).toEqual(["prepare", "autosave", "finish"]);
+        expect(driveCalls).toEqual(["prepare sbr1.x.y", "autosave", "finish"]);
         expect(prompts).toHaveLength(2);
         expect(prompts[1]).toContain("notes.md");
         const kinds = () =>
@@ -528,7 +538,7 @@ describe("RunnerTurns", () => {
           status: "interrupted",
         } as ProviderAdapterV2Event);
         yield* settle;
-        expect(driveCalls).toEqual(["prepare", "autosave", "finish", "abandon"]);
+        expect(driveCalls).toEqual(["prepare sbr1.x.y", "autosave", "finish", "abandon"]);
         expect(kinds().filter((kind) => kind === "turn.terminal")).toHaveLength(1);
       }),
     ),
