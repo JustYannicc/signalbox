@@ -151,6 +151,50 @@ for example through `cloudflared tunnel --url http://127.0.0.1:8787
 --http-host-header 127.0.0.1:8787` (the host header keeps `LOCAL_WORKERD`
 happy), with `CLOUD_URL` and `MODEL_GATEWAY_URL` set to the tunnels.
 
+### Light and heavy machines
+
+A thread runs on one of two machine classes (#113,
+`apps/cloud/src/thread/runner/machineClass.ts`). A thread in a drive backed by
+a remote repo is heavy; every other thread (a chat, or a task in My Drive) is
+light.
+
+- **Light:** a Cloudflare Container bound to the thread's own object
+  (`containers` in `wrangler.jsonc`, `basic`: ¼ vCPU, 1 GiB, 4 GB disk),
+  started in about a second with a fresh disk and stopped after a 30-second
+  idle tail. Its files come from the drive and its session from the thread,
+  so the fresh disk loses nothing. The container stops by itself ten minutes
+  after its object goes idle, so a thread object that is gone cannot leak one.
+  It runs the Runner image built with the Worker: the deploy bundles the
+  Runner (`vp run runner:bundle` in `apps/server`) and wrangler builds
+  `apps/server/src/signalbox/runner/image/Dockerfile` from it, so the light
+  machine and the Worker always speak the same protocol. A deploy rolls the
+  containers, which the thread treats as a lost machine.
+- **Heavy:** boat (`MACHINE_BACKEND=boat`, below).
+
+A class without a backend of its own runs on the other one, so a deployment
+without boat runs every thread light, and one whose thread objects have no
+container (`wrangler dev`, for one) runs every thread on boat or the local
+Runner host. The light class needs `CLOUD_URL` and `MODEL_GATEWAY_URL` like
+boat does.
+
+A light thread moves to the heavy class for good when its Runner sees a
+command it should not run there: a build, test, install or dev server
+(`apps/server/src/signalbox/runner/RunnerMachineClass.ts`), or one killed for
+memory (exit 137). The Runner saves the turn's files and session rows, reports
+`machine.outgrown`, and the thread continues the run on a heavy machine the
+same way it continues one whose machine was lost (below): the command shows as
+interrupted and the agent runs it again there. A light container that exits
+mid-turn moves its run up too.
+
+Each preview gets its own container application,
+`signalbox-cloud-pr-<number>-threads`, deleted with the preview. Containers
+need the Cloudflare account on the Workers Paid plan.
+
+To try light machines locally, give the `dev` environment the same
+`containers` entry (wrangler builds the image with Docker), bundle the Runner
+first, and point `CLOUD_URL` and `MODEL_GATEWAY_URL` at addresses the
+container can reach that still arrive at `wrangler dev` as `localhost`.
+
 ### The Runner image
 
 `.github/workflows/runner-image.yml` builds the image every VM runs: Node, git,

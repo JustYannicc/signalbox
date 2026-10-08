@@ -22,11 +22,11 @@ import {
   turnReport,
   withObject,
 } from "../runner/runnerTestKit.ts";
-import * as ThreadRunner from "../runner/ThreadRunner.ts";
 import type * as ThreadEngine from "../ThreadEngine.ts";
 import * as CloudAnalytics from "./CloudAnalytics.ts";
 import { TurnDiagnostics } from "./TurnDiagnostics.ts";
 import { FINALIZE_GRACE_MS, TurnReports } from "./TurnReports.ts";
+import { IDLE_TAIL_MS } from "../runner/MachineBackend.ts";
 
 const usage = (runId: RunId | null, cpuSeconds: number, memoryBytes: number): RunnerItem => ({
   kind: "usage",
@@ -102,7 +102,7 @@ describe("TurnDiagnostics", () => {
           machines: [{ generation: 1, backend: "none", readyAt: null, stopReason: "error" }],
         });
         expect(record.log.map((line) => line.message)).toEqual([
-          "Asked the none backend for machine generation 1.",
+          "Asked the none backend for light machine generation 1.",
           "Released machine generation 1 (error): No Runner connected within 60 s.",
         ]);
       }),
@@ -211,7 +211,7 @@ describe("TurnDiagnostics", () => {
           ]);
 
           // The idle tail ends the machine's session.
-          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS);
+          yield* TestClock.adjust(IDLE_TAIL_MS);
           expect((yield* runner.reconcile).release).toBe(machine.generation);
           yield* reports.finalize(yield* projectionOf(engine), yield* nowMs);
           expect(yield* analytics.deliver).toBe(true);
@@ -247,7 +247,7 @@ describe("TurnDiagnostics", () => {
             $process_person_profile: false,
             $geoip_disable: true,
           });
-          const tailSeconds = (FINALIZE_GRACE_MS + ThreadRunner.IDLE_TAIL_MS) / 1000;
+          const tailSeconds = (FINALIZE_GRACE_MS + IDLE_TAIL_MS) / 1000;
           expect(session?.event).toBe("cloud.machine.session");
           expect(session?.properties).toMatchObject({
             backend: "none",

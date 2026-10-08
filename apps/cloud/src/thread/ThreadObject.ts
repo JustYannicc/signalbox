@@ -118,7 +118,6 @@ const noteMachine = (
     ),
   );
 
-// The whole storage, not just `storage.sql`: commits and migrations run in transactions.
 /** Drives, when bound, and the owner's access to one, asked of their own object. */
 const layerThreadDrives = (env: ThreadObjectEnv) =>
   Layer.effect(
@@ -133,10 +132,13 @@ const layerThreadDrives = (env: ThreadObjectEnv) =>
     })),
   );
 
+// The whole storage, not just `storage.sql`: commits and migrations run in transactions.
+// `machine`: the object's own container, the light class's machine where the deployment has one.
 const makeRuntime = (
   storage: DurableObjectStorage,
   env: ThreadObjectEnv,
   previews: PreviewGateway,
+  machine: MachineBackend.MachineHost,
 ) =>
   ManagedRuntime.make(
     ThreadRunner.layer.pipe(
@@ -150,7 +152,7 @@ const makeRuntime = (
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
-      Layer.provideMerge(layerMachineBackend(env)),
+      Layer.provideMerge(layerMachineBackend(env, machine)),
       Layer.provideMerge(DiagnosticsStore.layer),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
       Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
@@ -203,7 +205,13 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         ),
       holdChanged: () => this.armAlarm(),
     });
-    this.runtime = makeRuntime(ctx.storage, env, this.gateway);
+    this.runtime = makeRuntime(ctx.storage, env, this.gateway, {
+      container: ctx.container,
+      onExit: (detail, generation) =>
+        void this.machineExited(detail, generation).catch((cause: unknown) =>
+          this.runtime.runPromise(Effect.logError("machine exit failed", String(cause))),
+        ),
+    });
     this.runnerHost = {
       ctx,
       run: (effect) => this.runtime.runPromise(effect),
@@ -245,6 +253,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
     return this.api.diagnostics(...args);
+  }
+
+  /** The thread's container stopped on its own: its lease is over (see `ThreadRunner.machineExited`). */
+  private async machineExited(detail: string, generation: number) {
+    await this.runtime.runPromise(
+      ThreadRunner.ThreadRunner.use((runner) => runner.machineExited(generation, detail)),
+    );
+    await this.armAlarm();
   }
 
   /** The ModelGateway reporting a request it served for this thread (see `modelGrants.ts`). */
@@ -353,7 +369,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           runner.needsUpkeep ||
           (yield* engine.hasTurnWork) ||
           (yield* engine.hasPendingSummary) ||
-          (yield* (yield* MachineBackend.MachineBackend).pending)
+          (yield* Effect.forEach(
+            MachineBackend.distinctBackends(yield* MachineBackend.MachineBackend),
+            (backend) => backend.pending,
+          )).some(Boolean)
         ) {
           return true;
         }
@@ -395,10 +414,25 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       // still coming up is retried at the plan's own pace.
       const ok = await this.runtime.runPromise(
         Effect.gen(function* () {
-          const backend = yield* MachineBackend.MachineBackend;
+          const backends = yield* MachineBackend.MachineBackend;
+          const backend = backends[plan.machineClass];
           operation = ensure === null ? "stop" : "ensure";
           const report = (input: MachineReport) =>
             noteMachine({ ...input, generation: ensure?.generation, runId: plan.runId });
+          /** Stops the thread's machine on every backend but `keep`. Cheap where there is none. */
+          const stopAll = (keep: MachineBackend.MachineBackendShape | null) =>
+            Effect.gen(function* () {
+              let stopped = true;
+              for (const other of MachineBackend.distinctBackends(backends)) {
+                if (other === keep) continue;
+                const status = yield* other.stop(threadId);
+                // Only a machine there was to stop is news.
+                if (status.actual !== "none") yield* report({ operation: "stop", status });
+                stopped &&= MachineBackend.isStopped(status);
+                if (!stopped) yield* Effect.logInfo("machine not stopped yet", status);
+              }
+              return stopped;
+            });
           if (ensure === null) {
             // A Runner that vanished while the thread still wanted its machine:
             // a machine the backend stopped on its own reached its TTL.
@@ -415,19 +449,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
               }
             }
             operation = "stop";
-            const status = yield* backend.stop(threadId);
-            yield* report({ operation: "stop", status });
-            if (
-              status.actual === "none" ||
-              status.actual === "stopped" ||
-              status.actual === "stopping"
-            ) {
-              return true;
-            }
-            yield* Effect.logInfo("machine not stopped yet", status);
-            return false;
+            return yield* stopAll(null);
           }
-          const status = yield* backend.ensure({ threadId, ...ensure });
+          // A thread that changed class lets its machine on the other backend go first.
+          operation = "stop";
+          if (!(yield* stopAll(backend))) return false;
+          operation = "ensure";
+          const status = yield* backend.ensure({
+            threadId,
+            ...ensure,
+            machineClass: plan.machineClass,
+          });
           yield* report({ operation: "ensure", status });
           if (status.actual !== "running") {
             yield* Effect.logInfo("machine not up yet", status);
@@ -458,7 +490,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       }
     }
     if (plan.busy) {
-      const due = await this.refreshMachine(now, threadId);
+      const due = await this.refreshMachine(now, threadId, plan.machineClass);
       if (due !== null) wakeAt = wakeAt === null ? due : Math.min(wakeAt, due);
     }
     await pushRunnerWork(this.runnerHost);
@@ -470,14 +502,22 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
    * next. In memory: a woken object refreshes at once, which is harmless.
    */
   private lastRefreshAt = 0;
-  private async refreshMachine(now: number, threadId: ThreadId): Promise<number | null> {
+  private async refreshMachine(
+    now: number,
+    threadId: ThreadId,
+    machineClass: ThreadRunner.MachinePlan["machineClass"],
+  ): Promise<number | null> {
     const every = await this.runtime.runPromise(
-      MachineBackend.MachineBackend.use((backend) => Effect.succeed(backend.refreshEveryMs)),
+      MachineBackend.MachineBackend.use((backends) =>
+        Effect.succeed(backends[machineClass].refreshEveryMs),
+      ),
     );
     if (every === null) return null;
     if (now - this.lastRefreshAt >= every) {
       const ok = await this.runtime.runPromise(
-        MachineBackend.MachineBackend.use((backend) => backend.refresh(threadId)).pipe(
+        MachineBackend.MachineBackend.use((backends) =>
+          backends[machineClass].refresh(threadId),
+        ).pipe(
           Effect.as(true),
           Effect.catchTags({
             MachineBackendError: (error) =>

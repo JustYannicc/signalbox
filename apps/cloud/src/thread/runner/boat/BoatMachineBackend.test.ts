@@ -137,7 +137,12 @@ const makeBackend = (boat: ReturnType<typeof makeFakeBoat>, store: ReturnType<ty
     return makeBoatMachineBackend({ settings, api: boat.api, records: store.records, crypto });
   }).pipe(Effect.provide(Platform.layerCrypto));
 
-const request = (generation: number) => ({ threadId, generation, token: `token-${generation}` });
+const request = (generation: number) => ({
+  threadId,
+  generation,
+  token: `token-${generation}`,
+  machineClass: "heavy" as const,
+});
 
 describe("BoatMachineBackend", () => {
   it.effect("starts one VM on demand and hands its Runner the generation", () =>
@@ -156,6 +161,7 @@ describe("BoatMachineBackend", () => {
         generation: 1,
         token: "token-1",
         modelGatewayUrl: settings.modelGatewayUrl,
+        machineClass: "heavy",
         cloudUrl: settings.cloudUrl,
         image: settings.image,
       });

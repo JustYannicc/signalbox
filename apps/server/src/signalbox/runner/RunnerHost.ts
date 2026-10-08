@@ -138,6 +138,8 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                     makeRunnerDrive({ cwd, client }),
                   ).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices)),
                 sessions,
+                // Each generation's class, as the thread asked for it.
+                machineClass: request.machineClass ?? "heavy",
               }),
           });
           yield* runPreviewTunnel({
@@ -187,6 +189,8 @@ export interface RunnerHttpHostConfig extends RunnerHostConfig {
   /** The cloud's origin, e.g. `http://localhost:8787`. */
   readonly cloudUrl: string;
   readonly port: number;
+  /** The address to listen on: loopback, unless the host runs in a container its backend dials. */
+  readonly listen?: string;
 }
 
 /**
@@ -225,10 +229,15 @@ export const runRunnerHost = Effect.fn("runRunnerHost")(function* (config: Runne
 
   yield* HttpRouter.serve(routes, { disableListenLog: true, disableLogger: true }).pipe(
     Layer.provide(
-      NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: config.port }),
+      NodeHttpServer.layer(NodeHttp.createServer, {
+        host: config.listen ?? "127.0.0.1",
+        port: config.port,
+      }),
     ),
     Layer.build,
   );
-  yield* Effect.logInfo(`Runner host on http://127.0.0.1:${config.port}, cloud ${config.cloudUrl}`);
+  yield* Effect.logInfo(
+    `Runner host on http://${config.listen ?? "127.0.0.1"}:${config.port}, cloud ${config.cloudUrl}`,
+  );
   return yield* Effect.never;
 });

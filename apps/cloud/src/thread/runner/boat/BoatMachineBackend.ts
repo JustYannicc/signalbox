@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 
 import type { MachineSettings } from "../machineBackends.ts";
 import {
+  IDLE_TAIL_MS,
   type MachineBackendShape,
   MachineBackendError,
   type MachineRecord,
@@ -234,6 +235,7 @@ export const makeBoatMachineBackend = ({
           generation: request.generation,
           token: request.token,
           modelGatewayUrl: settings.modelGatewayUrl,
+          machineClass: request.machineClass,
           cloudUrl: settings.cloudUrl,
           image: settings.image,
         }),
@@ -312,6 +314,7 @@ export const makeBoatMachineBackend = ({
     shape: settings.machineType,
     image: settings.image,
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
+    idleTailMs: IDLE_TAIL_MS,
     ensure,
     stop: () => letGo("stopped"),
     destroy: () => letGo("destroyed"),

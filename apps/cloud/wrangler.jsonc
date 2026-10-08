@@ -33,6 +33,26 @@
     { "tag": "v2", "new_sqlite_classes": ["ThreadObject"] },
     { "tag": "v3", "new_sqlite_classes": ["DriveObject"] },
   ],
+  // Containers bound to Durable Objects. One entry per class: each object of
+  // `class_name` gets its own container from `image`, started and stopped
+  // through `ctx.container` in that object. `max_instances` caps how many run
+  // at once across all objects of the class. Not inherited by `env`, so the
+  // preview repeats it, and `dev` leaves it out (threads run on the local
+  // Runner host there).
+  "containers": [
+    {
+      // A thread's light machine (src/thread/runner/cloudflare/): the Runner
+      // image built from the same commit as this Worker, so the two always
+      // speak the same protocol. `vp run runner:bundle` in apps/server writes
+      // the build context first.
+      "class_name": "ThreadObject",
+      "image": "../server/src/signalbox/runner/image/Dockerfile",
+      "image_build_context": "../server/dist/runner",
+      "instance_type": "basic",
+      "max_instances": 50,
+      "constraints": { "jurisdiction": "eu" },
+    },
+  ],
   // Drives' git packs (`src/drive/`). Their refs live in the DRIVES objects.
   "r2_buckets": [
     { "binding": "DRIVE_PACKS", "bucket_name": "signalbox-drives", "jurisdiction": "eu" },
@@ -82,6 +102,19 @@
           "binding": "DRIVE_PACKS",
           "bucket_name": "signalbox-drives-preview",
           "jurisdiction": "eu",
+        },
+      ],
+      "containers": [
+        {
+          // The deploy workflow puts the pull request's number in place of
+          // PR_NUMBER, so each preview has its own container application.
+          "name": "signalbox-cloud-pr-PR_NUMBER-threads",
+          "class_name": "ThreadObject",
+          "image": "../server/src/signalbox/runner/image/Dockerfile",
+          "image_build_context": "../server/dist/runner",
+          "instance_type": "basic",
+          "max_instances": 2,
+          "constraints": { "jurisdiction": "eu" },
         },
       ],
       "vars": {},
