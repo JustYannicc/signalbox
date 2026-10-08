@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
@@ -239,7 +240,11 @@ const make = Effect.gen(function* () {
   /** Commits decided events and publishes them. Callers hold the lock. */
   const commit = Effect.fnUntraced(function* (input: {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly command?: { readonly id: CommandId; readonly type: string };
+    readonly command?: {
+      readonly id: CommandId;
+      readonly type: string;
+      readonly traceId?: string | undefined;
+    };
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
@@ -325,9 +330,20 @@ const make = Effect.gen(function* () {
           }
           return yield* ThreadCommandRejectedError.forCommand(command, decision.message);
         }
+        // The receipt names the turn this command started, so a client's retry finds its trace.
+        const started = decision.events.find((event) => event.type === "run.created");
         const sequence = yield* commit({
           events: decision.events,
-          command,
+          command: {
+            ...command,
+            ...(started === undefined
+              ? {}
+              : {
+                  traceId: yield* traceIdOf(started.payload.id).pipe(
+                    Effect.provideService(Crypto.Crypto, crypto),
+                  ),
+                }),
+          },
           ...(contextId === null ? {} : { owner: { userId: actor.userId, contextId } }),
         });
         return { sequence, replayed: false };

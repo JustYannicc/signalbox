@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type { DriveAuthorization, ModelAuthorization } from "./runner/ThreadRunner.ts";
 import {
@@ -61,6 +62,12 @@ export interface ThreadObjectApi {
   readonly subscribe: (actor: Actor, input: unknown) => Promise<ReadableStream<Uint8Array> | null>;
   /** The thread's current summary, when `actor` owns it. */
   readonly summary: (actor: Actor) => Promise<unknown>;
+  /**
+   * A turn's diagnostic record as JSON, by run or trace id, or the list of
+   * recent turns for null. Null when the actor cannot see the thread or no
+   * turn matches.
+   */
+  readonly diagnostics: (actor: Actor, key: string | null) => Promise<string | null>;
   /** Newline-delimited `{ ports }` snapshots, or null when the actor cannot see the thread. */
   readonly previews: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
   readonly previewLink: (actor: Actor, port: number) => Promise<PreviewLinkResult>;
@@ -91,6 +98,11 @@ export interface ThreadHandle {
     ThreadNotFoundError | ThreadObjectError
   >;
   readonly summary: (actor: Actor) => Effect.Effect<ThreadSummary | null, ThreadObjectError>;
+  /** See `ThreadObjectApi.diagnostics`; the record is passed through as JSON text. */
+  readonly diagnostics: (
+    actor: Actor,
+    key: string | null,
+  ) => Effect.Effect<string | null, ThreadObjectError>;
   /** What the thread's machine serves, now and after every change. Ends when the object goes away. */
   readonly previews: (
     actor: Actor,
@@ -184,6 +196,7 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         () => api.subscribe(actor, wire.subscribeInput.encode(input)),
         (line) => wire.batch.decode(line),
       ),
+    diagnostics: (actor, key) => call("diagnostics", () => api.diagnostics(actor, key)),
     previews: (actor) =>
       lines(
         "previews",
@@ -215,6 +228,7 @@ export interface ThreadObjectNamespace {
       token: string,
       provider: ModelGatewayProvider,
     ) => Promise<ModelAuthorization>;
+    readonly recordModelRequest: (record: ModelGatewayRecord) => Promise<void>;
     readonly authorizeDrive: (token: string) => Promise<DriveAuthorization>;
   };
 }

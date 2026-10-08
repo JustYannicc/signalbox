@@ -14,11 +14,11 @@
  */
 import type { OrchestrationV2DomainEvent, OrchestrationV2Run } from "@t3tools/contracts";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+import { hashWorkloadId, secondsSincePreviousTurn } from "@t3tools/shared/workloadUsage";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -59,14 +59,7 @@ const WorkloadState = Schema.Struct({
 const decodeState = Schema.decodeEffect(fromLenientJson(WorkloadState));
 const encodeState = Schema.encodeEffect(fromJsonStringPretty(WorkloadState));
 
-/** One-way, so events can be grouped by thread or project without naming either. */
-const hashId = (id: string) =>
-  Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) =>
-      crypto.digest("SHA-256", new TextEncoder().encode(`signalbox-workload:${id}`)),
-    ),
-    Effect.map((digest) => Hex.encode(digest).slice(0, 16)),
-  );
+const hashId = hashWorkloadId;
 
 const turnProperties = Effect.fn("WorkloadAnalytics.turnProperties")(function* (
   turn: CompletedTurn,
@@ -193,7 +186,7 @@ export const makeWorkloadAnalytics = Effect.gen(function* () {
       const gap =
         previousEnd === undefined
           ? undefined
-          : Math.max(0, Math.round((DateTime.toEpochMillis(run.startedAt) - previousEnd) / 1000));
+          : secondsSincePreviousTurn(previousEnd, DateTime.toEpochMillis(run.startedAt));
       const properties = yield* turnProperties(completed, gap).pipe(Effect.provide(context));
       yield* analytics.record(TURN_EVENT, properties);
     }).pipe(Effect.catchCause(logSkipped("turn record skipped")));

@@ -6,6 +6,7 @@ import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import {
   machineEnsureJson,
   type MachineEnsureRequest,
+  type RunnerBuild,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -31,6 +32,7 @@ import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.
 import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
 import { runnerConnectUrl, threadSocketUrl, webSocketTransport } from "./runnerSocket.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
+import { makeRunnerUsage } from "./RunnerUsage.ts";
 
 /**
  * Runs threads' Runners on this machine. `ensure` starts a thread's Runner at
@@ -53,6 +55,8 @@ export interface RunnerHostConfig {
   readonly home: string;
   readonly machineId: string;
   readonly imageVersion: string;
+  /** Sent in every `hello`. */
+  readonly build: RunnerBuild;
 }
 
 interface HostedRunner {
@@ -95,26 +99,30 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
         yield* fs.makeDirectory(cwd, { recursive: true });
         const scope = yield* Scope.fork(hostScope);
         const session = yield* Effect.gen(function* () {
-          const { adapters, layout } = yield* makeRunnerAdapters({
+          const { adapters, layout, stderr } = yield* makeRunnerAdapters({
             root: path.join(config.home, "machines", request.threadId),
             gatewayUrl: request.modelGatewayUrl,
           });
+          const usage = yield* makeRunnerUsage(config.home);
           const session = yield* makeRunnerSession({
             threadId: request.threadId,
             generation: request.generation,
             token: request.token,
             machineId: config.machineId,
             imageVersion: config.imageVersion,
+            build: config.build,
             transport: webSocketTransport(runnerConnectUrl(cloudUrl, request.threadId)),
             makeTurns: (emit) =>
               makeRunnerTurns({
                 threadId: request.threadId,
                 adapters,
+                stderr,
                 cwd,
                 useModelToken: (token) =>
                   writeModelToken(layout, token).pipe(
                     Effect.provideService(FileSystem.FileSystem, fs),
                   ),
+                usage: usage.sample,
                 emit,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>

@@ -50,10 +50,12 @@ config=${CONFIG_PATH}
 until [ -s "$config" ]; do sleep 1; done
 image=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["image"])' "$config")
 docker pull --quiet "$image" || true
+digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || true)
 docker rm --force signalbox-runner >/dev/null 2>&1 || true
 exec docker run --name signalbox-runner --network host --init \\
   --volume ${MACHINE_HOME}:${MACHINE_HOME} \\
   --env SIGNALBOX_RUNNER_IMAGE="$image" \\
+  --env SIGNALBOX_RUNNER_IMAGE_DIGEST="$digest" \\
   "$image" machine --config "$config"
 SCRIPT
 sudo chmod 0755 /usr/local/bin/signalbox-runner
@@ -118,11 +120,17 @@ export const makeBoatMachineBackend = ({
       message: `boat ${cause.operation} failed: ${cause.message}`,
       cause,
     });
-  const statusOf = (record: MachineRecord, actual: Actual, detail?: string): MachineStatus => ({
+  const statusOf = (
+    record: MachineRecord,
+    actual: Actual,
+    detail?: string,
+    wake?: MachineStatus["wake"],
+  ): MachineStatus => ({
     desired: record.desired,
     actual,
     machineId: record.machineId,
     ...(detail === undefined ? {} : { detail }),
+    ...(wake === undefined ? {} : { wake }),
   });
 
   /** Saves `record` when it changed. */
@@ -185,10 +193,12 @@ export const makeBoatMachineBackend = ({
             () => Effect.succeed(null),
           ),
         );
-        if (created === null) return statusOf(record, "starting", "boat is still creating it.");
+        if (created === null) {
+          return statusOf(record, "starting", "boat is still creating it.", "cold");
+        }
         record = yield* update(record, { ...record, machineId: created.id, createKey: null });
         if (actualOf(created.state) !== "running")
-          return statusOf(record, "starting", created.state);
+          return statusOf(record, "starting", created.state, "cold");
       }
       const machineId = record.machineId;
       if (machineId === null) return statusOf(record, "starting");
@@ -200,7 +210,7 @@ export const makeBoatMachineBackend = ({
         case "stopping":
           // A resume also cancels a stop still in progress.
           yield* api.resume(sandbox.id);
-          return statusOf(current, "starting", `Resuming from ${sandbox.state}.`);
+          return statusOf(current, "starting", `Resuming from ${sandbox.state}.`, "disk_resume");
         case "starting":
         case "none":
           return statusOf(current, "starting", sandbox.state);
@@ -210,7 +220,11 @@ export const makeBoatMachineBackend = ({
           break;
       }
       if (sandbox.setupStatus === "failed") {
-        return yield* replace(current, sandbox.id, "The machine's setup script failed.");
+        return yield* replace(
+          current,
+          sandbox.id,
+          `The machine's setup script failed${sandbox.setupError ? `: ${sandbox.setupError}` : "."}`,
+        );
       }
       yield* api.writeFile(
         sandbox.id,
@@ -224,7 +238,7 @@ export const makeBoatMachineBackend = ({
           image: settings.image,
         }),
       );
-      return statusOf(current, "running");
+      return statusOf(current, "running", undefined, "warm");
     }).pipe(Effect.mapError(failed));
 
   /** Moves the machine toward `desired` (`stopped` or `destroyed`). */
@@ -295,6 +309,8 @@ export const makeBoatMachineBackend = ({
 
   return {
     kind: "boat",
+    shape: settings.machineType,
+    image: settings.image,
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
     ensure,
     stop: () => letGo("stopped"),

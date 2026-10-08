@@ -14,12 +14,17 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
+import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
+import * as CloudAnalytics from "./diagnostics/CloudAnalytics.ts";
+import * as DiagnosticsStore from "./diagnostics/DiagnosticsStore.ts";
+import * as TurnDiagnostics from "./diagnostics/TurnDiagnostics.ts";
+import * as TurnReports from "./diagnostics/TurnReports.ts";
 import { layerFromEnv as layerMachineBackend } from "./runner/machineBackends.ts";
 import * as MachineBackend from "./runner/MachineBackend.ts";
 import {
@@ -55,7 +60,8 @@ import * as ThreadStore from "./ThreadStore.ts";
  * preview origins.
  */
 
-export interface ThreadObjectEnv extends MachineBackend.MachineBackendEnv, PreviewEnv {
+export interface ThreadObjectEnv
+  extends MachineBackend.MachineBackendEnv, CloudAnalytics.CloudAnalyticsEnv, PreviewEnv {
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
@@ -68,6 +74,45 @@ export interface ThreadObjectEnv extends MachineBackend.MachineBackendEnv, Previ
 const STEP_INTERVAL_MS = 120;
 /** Wait after the `failures`th failure in a row: 5 s, doubling, at most 5 min. */
 const retryDelay = (failures: number) => Math.min(5_000 * 2 ** (failures - 1), 300_000);
+
+type MachineReport = Omit<
+  Parameters<TurnDiagnostics.TurnDiagnostics["Service"]["machineReported"]>[0],
+  "generation" | "runId" | "now"
+>;
+
+/**
+ * Records into the turn's diagnostics under the thread's lock, so it never
+ * races a Runner batch's writes. A thread not created yet has nothing to record into.
+ */
+const recordUnderLock = (
+  record: (diagnostics: TurnDiagnostics.TurnDiagnostics["Service"]) => Effect.Effect<void>,
+) =>
+  Effect.gen(function* () {
+    const diagnostics = yield* TurnDiagnostics.TurnDiagnostics;
+    yield* (yield* ThreadEngine.ThreadEngine).apply((projection) =>
+      Effect.as(projection === null ? Effect.void : record(diagnostics), {
+        events: [],
+        result: undefined,
+      }),
+    );
+  });
+
+/** Logs a backend answer, against the lease's generation unless the caller names one. */
+const noteMachine = (
+  input: MachineReport & {
+    readonly generation?: number | undefined;
+    readonly runId: ThreadRunner.MachinePlan["runId"];
+  },
+) =>
+  Effect.flatMap(ThreadStore.ThreadStore, (store) =>
+    recordUnderLock((diagnostics) =>
+      Effect.gen(function* () {
+        const generation = input.generation ?? (yield* Effect.orDie(store.machine)).generation;
+        const now = yield* Clock.currentTimeMillis;
+        yield* diagnostics.machineReported({ ...input, generation, now });
+      }),
+    ),
+  );
 
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
 const makeRuntime = (
@@ -89,13 +134,22 @@ const makeRuntime = (
         }),
       ),
       Layer.provideMerge(ThreadEngine.layer),
-      Layer.provideMerge(layerMachineBackend(env).pipe(Layer.provide(FetchHttpClient.layer))),
+      Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
+      Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
+      Layer.provideMerge(layerMachineBackend(env)),
+      Layer.provideMerge(DiagnosticsStore.layer),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
       Layer.provideMerge(ThreadStore.layer),
       Layer.provideMerge(
         UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
       ),
-      Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          SqliteClient.layer({ storage }),
+          Platform.layerCrypto,
+          FetchHttpClient.layer,
+        ),
+      ),
     ),
   );
 
@@ -165,6 +219,19 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.summary(...args);
   }
 
+  diagnostics(...args: Parameters<ThreadObjectApi["diagnostics"]>) {
+    return this.api.diagnostics(...args);
+  }
+
+  /** The ModelGateway reporting a request it served for this thread (see `modelGrants.ts`). */
+  async recordModelRequest(record: ModelGatewayRecord) {
+    await this.runtime.runPromise(
+      recordUnderLock((diagnostics) =>
+        Effect.flatMap(Clock.currentTimeMillis, (now) => diagnostics.modelRequest(record, now)),
+      ),
+    );
+  }
+
   /** The ModelGateway asking whether a harness's token is good right now (see `modelGrants.ts`). */
   authorizeModel(token: string, provider: ModelGatewayProvider) {
     return this.runtime.runPromise(
@@ -223,6 +290,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private deliveryFailures = 0;
   private nextDeliveryAt = 0;
   private machineFailures = 0;
+  private analyticsFailures = 0;
+  private nextAnalyticsAt = 0;
 
   private now() {
     return this.runtime.runPromise(Clock.currentTimeMillis);
@@ -244,11 +313,22 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       Effect.gen(function* () {
         const engine = yield* ThreadEngine.ThreadEngine;
         const runner = work ?? (yield* (yield* ThreadRunner.ThreadRunner).work);
-        return (
+        if (
           runner.needsUpkeep ||
           (yield* engine.hasTurnWork) ||
           (yield* engine.hasPendingSummary) ||
           (yield* (yield* MachineBackend.MachineBackend).pending)
+        ) {
+          return true;
+        }
+        // Diagnostics re-arm their own alarm while the object lives (a turn's
+        // grace, the analytics backoff), so only a fresh object looks for
+        // leftovers. A thread not created yet has no tables to read.
+        const projection = work === undefined ? yield* engine.projection : null;
+        return (
+          projection !== null &&
+          ((yield* (yield* TurnReports.TurnReports).hasPending(projection)) ||
+            (yield* (yield* CloudAnalytics.CloudAnalytics).hasPending))
         );
       }),
     );
@@ -273,13 +353,34 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     const ensure = plan.ensure;
     const threadId = this.threadId();
     if (ensure !== null || plan.stop) {
+      // The backend call under way, for what a failure is logged as.
+      let operation: MachineReport["operation"] = "ensure";
       // `ok`: the backend did what it could; `false` backs off. A machine that is
       // still coming up is retried at the plan's own pace.
       const ok = await this.runtime.runPromise(
         Effect.gen(function* () {
           const backend = yield* MachineBackend.MachineBackend;
+          operation = ensure === null ? "stop" : "ensure";
+          const report = (input: MachineReport) =>
+            noteMachine({ ...input, generation: ensure?.generation, runId: plan.runId });
           if (ensure === null) {
+            // A Runner that vanished while the thread still wanted its machine:
+            // a machine the backend stopped on its own reached its TTL.
+            if (plan.lost && plan.release !== null) {
+              operation = "inspect";
+              const status = yield* backend.inspect(threadId);
+              yield* report({ operation: "inspect", status });
+              const release = plan.release;
+              if (
+                status.desired === "running" &&
+                (status.actual === "stopped" || status.actual === "stopping")
+              ) {
+                yield* recordUnderLock((diagnostics) => diagnostics.refineStop(release, "ttl"));
+              }
+            }
+            operation = "stop";
             const status = yield* backend.stop(threadId);
+            yield* report({ operation: "stop", status });
             if (
               status.actual === "none" ||
               status.actual === "stopped" ||
@@ -291,6 +392,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
             return false;
           }
           const status = yield* backend.ensure({ threadId, ...ensure });
+          yield* report({ operation: "ensure", status });
           if (status.actual !== "running") {
             yield* Effect.logInfo("machine not up yet", status);
             return status.actual !== "failed";
@@ -301,6 +403,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           Effect.catchTags({
             MachineBackendError: (error) =>
               Effect.logError("machine request failed", error.message, error.cause).pipe(
+                Effect.andThen(
+                  noteMachine({
+                    operation,
+                    error: error.message,
+                    generation: ensure?.generation,
+                    runId: plan.runId,
+                  }),
+                ),
                 Effect.as(false),
               ),
           }),
@@ -335,7 +445,12 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           Effect.as(true),
           Effect.catchTags({
             MachineBackendError: (error) =>
-              Effect.logError("machine TTL refresh failed", error.message).pipe(Effect.as(false)),
+              Effect.logError("machine TTL refresh failed", error.message).pipe(
+                Effect.andThen(
+                  noteMachine({ operation: "refresh", error: error.message, runId: null }),
+                ),
+                Effect.as(false),
+              ),
           }),
         ),
       );
@@ -343,6 +458,40 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.lastRefreshAt = ok ? now : now - every + retryDelay(1);
     }
     return this.lastRefreshAt + every;
+  }
+
+  /**
+   * Closes ended turns and machine sessions into their diagnostic records and
+   * analytics events, then sends queued analytics, backing off while PostHog
+   * fails. Returns when to look again.
+   */
+  private async tendDiagnostics(now: number): Promise<number | null> {
+    const finalizeAt = await this.runtime
+      .runPromise(
+        Effect.gen(function* () {
+          const projection = yield* (yield* ThreadEngine.ThreadEngine).projection;
+          if (projection === null) return null;
+          return yield* (yield* TurnReports.TurnReports).finalize(projection, now);
+        }),
+      )
+      .catch(async (cause: unknown) => {
+        await this.runtime.runPromise(Effect.logError("turn diagnostics failed", String(cause)));
+        return now + retryDelay(1);
+      });
+    if (now < this.nextAnalyticsAt) return finalizeAt;
+    const sent = await this.runtime.runPromise(
+      Effect.gen(function* () {
+        if ((yield* (yield* ThreadEngine.ThreadEngine).projection) === null) return [true, false];
+        const analytics = yield* CloudAnalytics.CloudAnalytics;
+        return [yield* analytics.deliver, yield* analytics.hasPending] as const;
+      }),
+    );
+    this.analyticsFailures = sent[0] ? 0 : this.analyticsFailures + 1;
+    this.nextAnalyticsAt = sent[0] ? 0 : now + retryDelay(this.analyticsFailures);
+    const analyticsAt = sent[1] ? (sent[0] ? now + STEP_INTERVAL_MS : this.nextAnalyticsAt) : null;
+    return analyticsAt === null || finalizeAt === null
+      ? (analyticsAt ?? finalizeAt)
+      : Math.min(analyticsAt, finalizeAt);
   }
 
   /** The thread's id: its object is named by it. */
@@ -387,10 +536,12 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       await this.runtime.runPromise(Effect.logError("machine upkeep failed", String(cause)));
       return now + retryDelay(1);
     });
+    const diagnosticsWakeAt = await this.tendDiagnostics(now);
     const due = [
       step.more ? now + (step.ok ? STEP_INTERVAL_MS : retryDelay(this.stepFailures)) : null,
       this.nextDeliveryAt > 0 ? this.nextDeliveryAt : null,
       machineWakeAt,
+      diagnosticsWakeAt,
     ].filter((at) => at !== null);
     if (due.length > 0) await this.setAlarmNoLaterThan(Math.min(...due));
   }
