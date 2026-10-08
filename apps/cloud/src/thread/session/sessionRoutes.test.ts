@@ -12,8 +12,10 @@ import * as ThreadRunner from "../runner/ThreadRunner.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { serveSessionRequest } from "./sessionRoutes.ts";
 
-const owner = { userId: "user_1" };
-const personal = { contextId: PERSONAL_CONTEXT_ID };
+const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
+const personal = {
+  place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+};
 const threadId = ThreadId.make("thread-sessions");
 const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-fable-5-1" };
 
