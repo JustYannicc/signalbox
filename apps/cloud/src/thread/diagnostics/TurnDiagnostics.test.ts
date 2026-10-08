@@ -240,7 +240,7 @@ describe("TurnDiagnostics", () => {
                 cacheWrite: 500,
               },
             },
-            gitStoreBytes: 0,
+            gitStoreOperations: { checkpoints: 0 },
             sessionStoreRows: 0,
             previewSeconds: 0,
             recoveryCount: 0,
@@ -279,7 +279,7 @@ describe("TurnDiagnostics", () => {
             expect(wire).not.toContain(leak);
           }
         }),
-      layerPostHog(sent),
+      { analytics: layerPostHog(sent) },
     );
   });
 });

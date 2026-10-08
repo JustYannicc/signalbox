@@ -6,6 +6,10 @@
     "./RunnerProtocol": {
       "types": "./src/RunnerProtocol.ts",
       "import": "./src/RunnerProtocol.ts"
+    },
+    "./DriveProtocol": {
+      "types": "./src/DriveProtocol.ts",
+      "import": "./src/DriveProtocol.ts"
     }
   },
   "scripts": {

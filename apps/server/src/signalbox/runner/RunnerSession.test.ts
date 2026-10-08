@@ -137,7 +137,12 @@ describe("RunnerSession", () => {
           Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
           "first hello",
         );
-        yield* thread.toCurrent({ type: "turn.start", turn, modelToken: "model-token" });
+        yield* thread.toCurrent({
+          type: "turn.start",
+          turn,
+          modelToken: "model-token",
+          drive: null,
+        });
         yield* settle(
           Effect.map(Ref.get(turns.startedTurns), (all) => all.length === 1),
           "turn started",

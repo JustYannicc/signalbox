@@ -1,20 +1,23 @@
+import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type {
   MachineUsage,
   RunnerItem,
   RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
+  MessageId,
   type OrchestrationV2ProviderThread,
   type ProviderInstanceId,
   ProviderSessionId,
   type ProviderTurnId,
-  type RunAttemptId,
+  RunAttemptId,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import type * as PlatformError from "effect/PlatformError";
 import * as Effect from "effect/Effect";
 import * as References from "effect/References";
@@ -33,7 +36,9 @@ import {
 import { makeProviderFailure } from "../../orchestration-v2/ProviderFailure.ts";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { HarnessStderr } from "./harnessStderr.ts";
+import type { RunnerDrive } from "./RunnerDrive.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
+import { FILE_CHANGING_ITEMS, finishDriveTurn } from "./RunnerTurnDrive.ts";
 import { isUnmeasured } from "./RunnerUsage.ts";
 
 /**
@@ -49,10 +54,15 @@ import { isUnmeasured } from "./RunnerUsage.ts";
  * Each turn hands the harnesses its model token before anything else, so every
  * model request the turn makes carries that turn's credential.
  *
+ * A turn with a drive works in a checkout of it (`RunnerDrive.ts`): checked
+ * out before the harness starts, saved after each tool item that may change
+ * files, and landed before the turn's end is reported (`RunnerTurnDrive.ts`).
+ *
  * The machine's usage goes out just before each `turn.started`, right after
- * each `turn.terminal`, and every half minute, and problems the Runner hits go
- * out as log lines, so a turn's diagnostic record holds both. The Runner's own
- * logs for a turn carry its trace id.
+ * each turn's end is reported, and every half minute while a turn runs (every
+ * 5 minutes while idle), and problems the Runner hits go out as log lines, so
+ * a turn's diagnostic record holds both. The Runner's own logs for a turn
+ * carry its trace id.
  */
 
 export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("RunnerTurnError", {
@@ -61,7 +71,11 @@ export class RunnerTurnError extends Schema.TaggedError<RunnerTurnError>()("Runn
 
 export interface RunnerTurns {
   /** Starts a turn. A run already started is ignored, so the thread can repeat itself. */
-  readonly start: (turn: RunnerTurn, modelToken: string) => Effect.Effect<void>;
+  readonly start: (
+    turn: RunnerTurn,
+    modelToken: string,
+    drive?: DriveAccess | null,
+  ) => Effect.Effect<void>;
   /** Stops `runId`, wherever it is: loading, or running on the harness. */
   readonly interrupt: (runId: RunId) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
@@ -70,8 +84,7 @@ export interface RunnerTurns {
 
 /** A run this machine was handed, until the harness ends its turn. */
 interface Turn {
-  readonly runId: RunId;
-  readonly traceId: string;
+  readonly turn: RunnerTurn;
   readonly attemptId: RunAttemptId;
   status: "loading" | "running" | "stopped";
   session: ProviderAdapterV2SessionRuntime | null;
@@ -111,6 +124,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** What the harness CLIs wrote to stderr, quoted in failure lines (`harnessStderr.ts`). */
   readonly stderr?: Pick<HarnessStderr, "mark" | "since">;
   readonly emit: (item: RunnerItem) => Effect.Effect<void>;
+  /** The thread's drive, checked out in `cwd`. Absent: turns run in a plain directory. */
+  readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
@@ -133,7 +148,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     const head = text.length > CAUSE_CHARS ? `${text.slice(0, CAUSE_CHARS)}…` : text;
     return `${what}: ${head}\nThe CLI's stderr:\n${tail}`;
   };
-  /** The run on the harness, from its `turn.started` until its `turn.terminal`. */
+  /** The run on the harness, from its `turn.started` until its end is reported. */
   let runningRunId: RunId | null = null;
   // A run's usage and the items it brackets go out under one lock, so a
   // half-minute report never lands before a run's start or after its end.
@@ -144,6 +159,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     Effect.flatMap(input.usage, (usage) =>
       isUnmeasured(usage) ? Effect.void : input.emit({ kind: "usage", runId, usage }),
     );
+  /** The drive, opened by the first turn that names it; one per machine generation. */
+  let drive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
+  /** Runs whose end is held until their files land, and the agent turn awaited for a conflict. */
+  const finishing = new Map<RunId, { waiting: Deferred.Deferred<boolean> | null }>();
+  /** Agent turns run to resolve a merge, by attempt, and their provider turns once named. */
+  const mergeAttempts = new Set<RunAttemptId>();
+  const mergeProviderTurns = new Set<ProviderTurnId>();
 
   const interruptNow = (turn: Turn) =>
     turn.session === null || turn.providerThread === null || turn.providerTurnId === null
@@ -159,7 +181,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                 Effect.andThen(
                   input.emit(
                     runnerLog(
-                      turn.runId,
+                      turn.turn.runId,
                       "warning",
                       `interrupting the provider turn failed: ${causeText(cause)}`,
                     ),
@@ -167,7 +189,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                 ),
               ),
             ),
-            withTrace(turn.traceId),
+            withTrace(turn.turn.traceId),
           );
 
   /** Learns each turn's native id, stops one asked to stop before then, and forgets ended ones. */
@@ -189,34 +211,173 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       }
     });
 
+  /** The drive a turn names, opened once per machine generation. */
+  const driveFor = (access: DriveAccess) =>
+    Effect.gen(function* () {
+      // The token is fixed for this machine's generation, so the drive id names it.
+      if (drive?.driveId === access.driveId) return drive.drive;
+      if (input.openDrive === undefined) return null;
+      const opened = yield* input.openDrive(access).pipe(Scope.provide(scope));
+      drive = { driveId: access.driveId, drive: opened };
+      return opened;
+    });
+
+  /** Runs the agent once more in `runId`'s turn and answers whether that completed. */
+  const continueTurn = (runId: RunId, state: Turn, prompt: string, attempt: number) =>
+    Effect.gen(function* () {
+      const held = finishing.get(runId);
+      if (held === undefined || state.session === null || state.providerThread === null) {
+        return false;
+      }
+      const ended = yield* Deferred.make<boolean>();
+      const turn = state.turn;
+      // Its own attempt: adapters name the provider turn, and Claude its prompt, after the attempt.
+      const attemptId = RunAttemptId.make(`${turn.attemptId}:merge:${attempt}`);
+      const continuation: Turn = { ...state, attemptId, status: "running", providerTurnId: null };
+      held.waiting = ended;
+      mergeAttempts.add(attemptId);
+      turns.set(runId, continuation);
+      yield* state.session
+        .startTurn({
+          appThread: turn.appThread,
+          threadId: input.threadId,
+          runId,
+          runOrdinal: turn.runOrdinal,
+          // Clear of the ordinals the thread gives its next runs.
+          providerTurnOrdinal: turn.providerTurnOrdinal * 1000 + attempt,
+          attemptId,
+          rootNodeId: turn.rootNodeId,
+          providerThread: state.providerThread,
+          message: {
+            ...turn.message,
+            messageId: MessageId.make(`${turn.message.messageId}:merge:${attempt}`),
+            text: prompt,
+            attachments: [],
+          },
+          modelSelection: turn.modelSelection,
+          runtimePolicy: {
+            runtimeMode: turn.runtimeMode,
+            interactionMode: turn.interactionMode,
+            cwd: input.cwd,
+          },
+        })
+        .pipe(
+          // Never started: nothing will end it.
+          Effect.onError(() =>
+            Effect.sync(() => {
+              held.waiting = null;
+              if (turns.get(runId) === continuation) turns.delete(runId);
+            }),
+          ),
+        );
+      return yield* Deferred.await(ended);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("the agent could not resolve the merge", Cause.pretty(cause)).pipe(
+          Effect.as(false),
+        ),
+      ),
+    );
+
+  /**
+   * Drive bookkeeping for one adapter event. A tool item that may have changed
+   * files starts a save. A completed turn's end is held (true: not delivered
+   * now) until its files land; the end of an agent turn run to resolve a
+   * conflict only wakes that wait.
+   */
+  const holdForDrive = (
+    event: ProviderAdapterV2Event,
+    deliver: (event: ProviderAdapterV2Event, runId: RunId) => Effect.Effect<void>,
+  ) =>
+    Effect.gen(function* () {
+      const runId = latestRunId;
+      const current = drive?.drive ?? null;
+      if (current === null || runId === null) return false;
+      if (event.type === "turn_item.updated") {
+        if (event.turnItem.status === "completed" && FILE_CHANGING_ITEMS.has(event.turnItem.type)) {
+          yield* current.autosave;
+        }
+        return false;
+      }
+      if (
+        event.type === "provider_turn.updated" &&
+        event.providerTurn.runAttemptId !== null &&
+        mergeAttempts.has(event.providerTurn.runAttemptId)
+      ) {
+        mergeProviderTurns.add(event.providerTurn.id);
+        return false;
+      }
+      if (event.type !== "turn.terminal") return false;
+      // A merge step's end is never the run's, even after a stop already released its wait.
+      if (mergeProviderTurns.delete(event.providerTurnId)) {
+        const held = finishing.get(runId);
+        const waiting = held?.waiting ?? null;
+        if (held !== undefined) held.waiting = null;
+        const continuation = turns.get(runId);
+        if (continuation !== undefined && mergeAttempts.has(continuation.attemptId)) {
+          turns.delete(runId);
+        }
+        if (waiting !== null) yield* Deferred.succeed(waiting, event.status === "completed");
+        return true;
+      }
+      const held = finishing.get(runId);
+      const state = turns.get(runId);
+      if (held !== undefined || state === undefined || event.status !== "completed") {
+        // Interrupted or failed: what the agent did is kept as an auto-save.
+        yield* current.autosave;
+        return false;
+      }
+      finishing.set(runId, { waiting: null });
+      yield* track(event);
+      let attempts = 0;
+      yield* finishDriveTurn({
+        runId,
+        message: state.turn.message.text,
+        drive: current,
+        emit: input.emit,
+        resolve: (prompt) => continueTurn(runId, state, prompt, ++attempts),
+      }).pipe(
+        Effect.andThen(deliver(event, runId)),
+        Effect.ensuring(Effect.sync(() => finishing.delete(runId))),
+        Effect.forkIn(scope),
+      );
+      return true;
+    });
+
   const forward = (instanceId: ProviderInstanceId, runtime: ProviderAdapterV2SessionRuntime) => {
     const filterAssistant = makeAssistantStreamingFilter(
       DEFAULT_SERVER_SETTINGS.responseStreamingMode,
     );
+    /** Sends `event` as `runId`'s; a held end goes out under its own run, whatever runs since. */
+    const deliver = (event: ProviderAdapterV2Event, runId: RunId | null = latestRunId) =>
+      Effect.gen(function* () {
+        const delivered = filterAssistant(event, yield* Clock.currentTimeMillis);
+        if (delivered === null || runId === null) return;
+        const stored =
+          delivered.type === "turn_item.updated"
+            ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
+            : delivered;
+        const item: RunnerItem = {
+          kind: "provider",
+          runId,
+          event: encodeAdapterEvent(stored) as Record<string, unknown>,
+        };
+        if (delivered.type !== "turn.terminal") return yield* input.emit(item);
+        // The run's end as reported: its last usage sample follows it.
+        yield* ordered.withPermits(1)(
+          Effect.gen(function* () {
+            yield* input.emit(item);
+            if (runningRunId === runId) runningRunId = null;
+            yield* reportUsage(runId);
+          }),
+        );
+      });
     return runtime.events.pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
+          if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
           yield* track(event);
-          const delivered = filterAssistant(event, yield* Clock.currentTimeMillis);
-          if (delivered === null || latestRunId === null) return;
-          const runId = latestRunId;
-          const stored =
-            delivered.type === "turn_item.updated"
-              ? { ...delivered, turnItem: stripUnservedToolOutputImageBytes(delivered.turnItem) }
-              : delivered;
-          const item: RunnerItem = {
-            kind: "provider",
-            runId,
-            event: encodeAdapterEvent(stored) as Record<string, unknown>,
-          };
-          if (delivered.type !== "turn.terminal") return yield* input.emit(item);
-          yield* ordered.withPermits(1)(
-            Effect.gen(function* () {
-              yield* input.emit(item);
-              if (runningRunId === runId) runningRunId = null;
-              yield* reportUsage(runId);
-            }),
-          );
+          yield* deliver(event);
         }),
       ),
       Effect.catchCause((cause) =>
@@ -313,7 +474,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     }));
   };
 
-  const run = (turn: RunnerTurn, modelToken: string, state: Turn) => {
+  const run = (turn: RunnerTurn, modelToken: string, access: DriveAccess | null, state: Turn) => {
     // The session may spawn its CLI below; what it writes from here on is this turn's.
     const stderrMark = input.stderr?.mark() ?? 0;
     latestStderr = stderrMark;
@@ -331,6 +492,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       };
       latestRunId = turn.runId;
       latestTraceId = turn.traceId;
+      // The harness starts in the thread's branch, as the drive last saved it.
+      const opened = access === null ? null : yield* driveFor(access);
+      if (opened !== null) yield* opened.prepare;
       yield* input.useModelToken(modelToken);
       const session = yield* sessionFor(adapter, turn, runtimePolicy);
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
@@ -395,13 +559,12 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     );
   };
 
-  const start: RunnerTurns["start"] = (turn, modelToken) =>
+  const start: RunnerTurns["start"] = (turn, modelToken, access = null) =>
     Effect.suspend(() => {
       if (taken.has(turn.runId)) return Effect.void;
       taken.add(turn.runId);
       const state: Turn = {
-        runId: turn.runId,
-        traceId: turn.traceId,
+        turn,
         attemptId: turn.attemptId,
         status: "loading",
         session: null,
@@ -409,11 +572,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         providerTurnId: null,
       };
       turns.set(turn.runId, state);
-      return Effect.asVoid(run(turn, modelToken, state).pipe(Effect.forkIn(scope)));
+      return Effect.asVoid(run(turn, modelToken, access, state).pipe(Effect.forkIn(scope)));
     });
 
   const interrupt: RunnerTurns["interrupt"] = (runId) =>
     Effect.suspend(() => {
+      // A merge the agent was resolving ends with the run; its files stay saved.
+      const held = finishing.get(runId);
+      if (held?.waiting != null) Deferred.doneUnsafe(held.waiting, Effect.succeed(false));
       const turn = turns.get(runId);
       if (turn === undefined || turn.status === "stopped") return Effect.void;
       const wasRunning = turn.status === "running";

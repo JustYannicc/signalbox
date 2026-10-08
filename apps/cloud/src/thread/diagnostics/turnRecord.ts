@@ -137,8 +137,10 @@ function workOf(items: ReadonlyArray<OrchestrationV2TurnItem>) {
 
 /**
  * `cloud.turn.completed`: `workload.turn.completed`'s fields plus the cloud's
- * own. Stores that do not exist yet (drives #131, session rows #132, previews
- * #136) did no work for the turn, so they report zero.
+ * own. The drive's checkpoints come from the thread; the Runner does not
+ * report its WIP saves, fetches or pack bytes yet, so those stay absent rather
+ * than zero. Stores that do not exist yet (session rows #132, previews #136)
+ * did no work for the turn, so they report zero.
  */
 export function turnCompletedProperties(input: {
   readonly projection: Projection;
@@ -172,8 +174,10 @@ export function turnCompletedProperties(input: {
     processPeakRssBytes: diagnostics?.memoryPeakBytes ?? undefined,
     processSamples: diagnostics?.usageSamples ?? 0,
     backend: input.backend ?? undefined,
-    gitStoreOperations: { wipCommits: 0, checkpoints: 0, fetches: 0 },
-    gitStoreBytes: 0,
+    gitStoreOperations: {
+      checkpoints: projection.checkpoints.filter((checkpoint) => checkpoint.runId === run.id)
+        .length,
+    },
     sessionStoreRows: 0,
     sessionStoreBytes: 0,
     modelRequests: diagnostics?.modelRequests ?? 0,

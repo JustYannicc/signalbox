@@ -77,16 +77,22 @@ export const layerPersonalThreadContexts = Layer.succeed(
 export const layerThreadObject = (
   filename: string,
   machines: Layer.Layer<MachineBackend.MachineBackend> = MachineBackends.layerNone,
-  analytics: Layer.Layer<
-    CloudAnalytics.CloudAnalytics,
-    never,
-    DiagnosticsStore.DiagnosticsStore | Crypto.Crypto
-  > = CloudAnalytics.layerOff,
+  options: {
+    readonly drives?: boolean;
+    readonly analytics?: Layer.Layer<
+      CloudAnalytics.CloudAnalytics,
+      never,
+      DiagnosticsStore.DiagnosticsStore | Crypto.Crypto
+    >;
+  } = {},
 ) =>
   ThreadRunner.layer.pipe(
+    Layer.provideMerge(
+      Layer.succeed(ThreadRunner.ThreadDrives, { enabled: options.drives === true }),
+    ),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
-    Layer.provideMerge(analytics),
+    Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
     Layer.provideMerge(DiagnosticsStore.layer),
     Layer.provideMerge(ThreadStore.layer),

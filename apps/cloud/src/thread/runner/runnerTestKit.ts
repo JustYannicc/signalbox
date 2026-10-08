@@ -67,10 +67,10 @@ export const withObject = <A, E>(
     runner: ThreadRunner.ThreadRunner["Service"],
     context: Context.Context<Layer.Success<ReturnType<typeof layerThreadObject>>>,
   ) => Effect.Effect<A, E>,
-  analytics?: Parameters<typeof layerThreadObject>[2],
+  options: Parameters<typeof layerThreadObject>[2] = {},
 ) =>
   Effect.scoped(
-    Layer.build(layerThreadObject(filename, undefined, analytics)).pipe(
+    Layer.build(layerThreadObject(filename, undefined, options)).pipe(
       Effect.flatMap((context) =>
         use(
           Context.get(context, ThreadEngine.ThreadEngine),

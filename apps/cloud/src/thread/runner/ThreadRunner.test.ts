@@ -430,4 +430,77 @@ describe("ThreadRunner", () => {
       }),
     ),
   );
+
+  it.effect("gives each machine a drive token that acts only for its own generation and turn", () =>
+    withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const machine = yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.drive?.driveId).toBe("my/personal/user_1");
+          const token = work.drive!.token;
+          expect(yield* runner.authorizeDrive(token)).toEqual({
+            _tag: "granted",
+            threadId,
+            driveId: "my/personal/user_1",
+            generation: machine.generation,
+            live: true,
+          });
+          expect((yield* runner.authorizeDrive(`${token}x`))._tag).toBe("denied");
+          expect((yield* runner.authorizeDrive(machine.token))._tag).toBe("denied");
+
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          const commit = "a".repeat(40);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [
+              report.started,
+              {
+                kind: "drive.checkpoint",
+                runId: turn.runId,
+                start: null,
+                commit,
+                files: [{ path: "notes.md", kind: "added", additions: 3, deletions: 0 }],
+              },
+              { kind: "drive.notice", runId: turn.runId, message: "Merged main." },
+              report.terminal,
+            ],
+          });
+          const { projection } = yield* snapshot(engine);
+          expect(projection.checkpoints).toMatchObject([
+            {
+              runId: turn.runId,
+              appRunOrdinal: turn.runOrdinal,
+              ref: `..${commit}`,
+              status: "ready",
+              files: [{ path: "notes.md", additions: 3 }],
+            },
+          ]);
+          expect(
+            projection.turnItems.filter((item) => item.type === "system_notice"),
+          ).toMatchObject([{ message: "Merged main." }]);
+          // The turn is over: main no longer moves for this token.
+          expect(yield* runner.authorizeDrive(token)).toMatchObject({
+            _tag: "granted",
+            live: false,
+          });
+        }),
+      { drives: true },
+    ),
+  );
+
+  it.effect("hands out no drive when the cloud stores none", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        yield* connect(runner);
+        expect((yield* runner.work).drive).toBeNull();
+        expect((yield* runner.authorizeDrive("sbd1.x.y"))._tag).toBe("denied");
+      }),
+    ),
+  );
 });

@@ -92,7 +92,12 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentRunId = null;
     }
     if (work.turn !== null && work.modelToken !== null && sentRunId !== work.turn.runId) {
-      send(socket, { type: "turn.start", turn: work.turn, modelToken: work.modelToken });
+      send(socket, {
+        type: "turn.start",
+        turn: work.turn,
+        modelToken: work.modelToken,
+        drive: work.drive,
+      });
       sentRunId = work.turn.runId;
     }
     if (sentRunId !== attachment.sentRunId) {
