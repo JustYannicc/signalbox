@@ -1,6 +1,7 @@
 import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import { CommandId, MessageId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -17,6 +18,7 @@ import {
   liveTurn,
   owner,
   personal,
+  type Previews,
   snapshot,
   threadId,
   turnReport,
@@ -500,6 +502,72 @@ describe("ThreadRunner", () => {
         yield* connect(runner);
         expect((yield* runner.work).drive).toBeNull();
         expect((yield* runner.authorizeDrive("sbd1.x.y"))._tag).toBe("denied");
+      }),
+    ),
+  );
+
+  it.effect("keeps a machine up while a preview is open, then tails from its last traffic", () => {
+    const previews: Previews = { held: false, lastActiveAt: null };
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const machine = yield* connect(runner);
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.full, report.terminal],
+          });
+          expect((yield* runner.reconcile).wakeAt).toBe(ThreadRunner.IDLE_TAIL_MS);
+          // A browser opens the preview's HMR socket: the tail is off, the TTL kept pushed out.
+          previews.held = true;
+          expect((yield* runner.work).needsUpkeep).toBe(true);
+          expect(yield* runner.reconcile).toMatchObject({
+            busy: true,
+            release: null,
+            wakeAt: null,
+          });
+          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS * 3);
+          expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null });
+          expect((yield* runner.work).needsUpkeep).toBe(false);
+          // The last preview closes: the tail starts over from then.
+          previews.held = false;
+          const closedAt = yield* Clock.currentTimeMillis;
+          previews.lastActiveAt = closedAt;
+          expect((yield* runner.work).needsUpkeep).toBe(true);
+          expect((yield* runner.reconcile).wakeAt).toBe(closedAt + ThreadRunner.IDLE_TAIL_MS);
+          // A late request pushes it out without holding the machine.
+          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS - 1);
+          previews.lastActiveAt = yield* Clock.currentTimeMillis;
+          const pushed = yield* runner.reconcile;
+          expect(pushed).toMatchObject({ release: null, busy: false });
+          expect(pushed.wakeAt).toBe(previews.lastActiveAt + ThreadRunner.IDLE_TAIL_MS);
+          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS);
+          expect(yield* runner.reconcile).toMatchObject({
+            release: machine.generation,
+            stop: true,
+          });
+          // A preview never starts a machine.
+          previews.held = true;
+          expect(yield* runner.reconcile).toMatchObject({ ensure: null, stop: true });
+        }),
+      { previews },
+    );
+  });
+
+  it.effect("hands a preview tunnel the lease token only for the leased generation", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        expect(yield* runner.leaseToken(1)).toBeNull();
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+        expect(yield* runner.leaseToken(machine.generation, machine.token)).toBe(machine.token);
+        expect(yield* runner.leaseToken(machine.generation, "wrong")).toBeNull();
+        expect(yield* runner.leaseToken(machine.generation + 1)).toBeNull();
       }),
     ),
   );

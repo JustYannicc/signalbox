@@ -11,7 +11,7 @@ import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
- * A thread object's answers, given a way to run engine effects. The Durable
+ * A thread object's engine answers, given a way to run engine effects. The Durable
  * Object runs them on its own engine; tests run the same code in memory.
  * `afterChange` runs after anything that may have left work for the object
  * (a turn to drive, a summary to deliver).
@@ -19,7 +19,7 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 export const makeThreadObjectApi = (
   run: <A, E>(effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports>) => Promise<A>,
   afterChange: () => Promise<void>,
-): ThreadObjectApi => {
+): Omit<ThreadObjectApi, "previews" | "previewLink"> => {
   const reply = <A>(
     effect: Effect.Effect<
       A,

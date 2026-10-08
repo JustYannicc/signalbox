@@ -32,6 +32,9 @@ vi.mock("@react-navigation/native", () => {
   };
 });
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("./ThreadPreviewsScreenHeader", async () => ({
+  ThreadPreviewsScreenHeader: (await import("../../components/ScreenHeader")).ScreenHeader,
+})); // signalbox: previews
 vi.mock("react-native", () => ({ Alert: { alert: () => {} }, Linking: {}, Platform: {} }));
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({

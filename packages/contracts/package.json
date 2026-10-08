@@ -38,6 +38,10 @@
     "./signalboxContexts": {
       "types": "./src/signalboxContexts.ts",
       "import": "./src/signalboxContexts.ts"
+    },
+    "./signalboxPreviews": {
+      "types": "./src/signalboxPreviews.ts",
+      "import": "./src/signalboxPreviews.ts"
     }
   },
   "scripts": {

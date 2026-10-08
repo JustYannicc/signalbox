@@ -76,7 +76,7 @@ interface Batch {
 /** Most items in one batch. */
 const MAX_BATCH_ITEMS = 256;
 /** Reconnect backoff: 250 ms, doubling, at most 5 s. */
-const reconnectDelay = (failures: number) => Math.min(250 * 2 ** failures, 5_000);
+export const reconnectDelay = (failures: number) => Math.min(250 * 2 ** failures, 5_000);
 /** A thread unreachable for this long has no use for this machine. */
 const GIVE_UP_AFTER_MS = 5 * 60_000;
 

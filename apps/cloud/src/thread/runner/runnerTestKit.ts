@@ -56,6 +56,12 @@ export const freshDatabase = () => {
   return NodePath.join(directory, "thread.sqlite");
 };
 
+/** What the object's previews tell the lease; tests flip it by hand. */
+export interface Previews {
+  held: boolean;
+  lastActiveAt: number | null;
+}
+
 /**
  * The object on `filename`; each call is the object waking up again. `use`
  * also gets the object's whole context, for its other services.
@@ -67,10 +73,19 @@ export const withObject = <A, E>(
     runner: ThreadRunner.ThreadRunner["Service"],
     context: Context.Context<Layer.Success<ReturnType<typeof layerThreadObject>>>,
   ) => Effect.Effect<A, E>,
-  options: Parameters<typeof layerThreadObject>[2] = {},
+  options: Parameters<typeof layerThreadObject>[2] & { readonly previews?: Previews } = {},
 ) =>
   Effect.scoped(
-    Layer.build(layerThreadObject(filename, undefined, options)).pipe(
+    Layer.build(
+      layerThreadObject(filename, undefined, options).pipe(
+        Layer.provide(
+          Layer.succeed(ThreadRunner.PreviewHold, {
+            held: Effect.sync(() => options.previews?.held ?? false),
+            lastActiveAt: Effect.sync(() => options.previews?.lastActiveAt ?? null),
+          }),
+        ),
+      ),
+    ).pipe(
       Effect.flatMap((context) =>
         use(
           Context.get(context, ThreadEngine.ThreadEngine),

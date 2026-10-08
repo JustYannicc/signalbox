@@ -16,6 +16,7 @@ import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
+import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { serveConnection } from "./connection.ts";
@@ -43,7 +44,7 @@ import * as UserStore from "./UserStore.ts";
  * while a client is connected.
  */
 
-export interface UserObjectEnv extends MachineBackendEnv {
+export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv {
   /** Drives' objects and packs: clients browse them through this object (`drive/DriveFiles.ts`). */
   readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
   readonly DRIVE_PACKS?: DrivePacks.PackBucket;
@@ -108,6 +109,8 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       environmentId: decodeEnvironmentId(env.ENVIRONMENT_ID),
       label: env.ENVIRONMENT_LABEL ?? Environment.DEFAULT_ENVIRONMENT_LABEL,
       harnesses: machineSettings(env) !== null,
+      // Only machines run dev servers.
+      previews: machineSettings(env) !== null && previewSettings(env) !== null,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));

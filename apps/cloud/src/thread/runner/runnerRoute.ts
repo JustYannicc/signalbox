@@ -1,3 +1,4 @@
+import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import { RUNNER_CONNECT_PATH } from "@signalbox/runner-protocol/RunnerProtocol";
 import { ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -5,12 +6,14 @@ import * as Schema from "effect/Schema";
 import { type ThreadObjectNamespace, threadObjectStub } from "../ThreadDirectory.ts";
 
 /**
- * `RUNNER_CONNECT_PATH?threadId=`: a Runner dialing its thread. The Worker
- * only routes the upgrade to the thread's object; the object checks the
- * Runner's generation and token in `hello`, so nothing here authenticates.
+ * `RUNNER_CONNECT_PATH?threadId=`: a Runner dialing its thread, and
+ * `PREVIEW_TUNNEL_PATH?threadId=`, its preview tunnel. The Worker only routes
+ * the upgrade to the thread's object; the object checks the Runner's
+ * generation and token in `hello`, so nothing here authenticates.
  */
 
-export const isRunnerConnectPath = (pathname: string) => pathname === RUNNER_CONNECT_PATH;
+export const isRunnerSocketPath = (pathname: string) =>
+  pathname === RUNNER_CONNECT_PATH || pathname === PREVIEW_TUNNEL_PATH;
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 

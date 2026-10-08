@@ -104,6 +104,7 @@ jobs:
           --var "MODEL_GATEWAY_URL:$MODEL_GATEWAY_URL"
           --var "SIGNALBOX_POSTHOG_KEY:$SIGNALBOX_POSTHOG_KEY"
           --var "SIGNALBOX_POSTHOG_HOST:$SIGNALBOX_POSTHOG_HOST"
+          --var "PREVIEW_DOMAIN:$PREVIEW_DOMAIN"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
@@ -113,6 +114,7 @@ jobs:
           # previews never mix test turns into the cost data.
           SIGNALBOX_POSTHOG_KEY: ${{ vars.SIGNALBOX_POSTHOG_KEY }}
           SIGNALBOX_POSTHOG_HOST: ${{ vars.SIGNALBOX_POSTHOG_HOST }}
+          PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
 
       - &cleanup
         name: Remove secrets file
