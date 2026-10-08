@@ -11,9 +11,11 @@ FROM node:24-bookworm-slim
 ARG CLAUDE_CODE_VERSION=2.1.292
 ARG CODEX_VERSION=0.160.1
 
+# rclone and fuse3 mount every drive the user can read at /drives (RunnerDrivesMount.ts).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git lsof openssh-client procps ripgrep \
-  && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends ca-certificates fuse3 git lsof openssh-client procps rclone ripgrep \
+  && rm -rf /var/lib/apt/lists/* \
+  && install -d -o node -g node /drives
 
 # npm 11 skips install scripts unless allowed; Claude Code's links its native binary.
 RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code \

@@ -52,7 +52,10 @@ image=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["image"
 docker pull --quiet "$image" || true
 digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || true)
 docker rm --force signalbox-runner >/dev/null 2>&1 || true
-exec docker run --name signalbox-runner --network host --init \\
+# FUSE, for the read-only /drives mount; without it the Runner runs, unmounted.
+fuse=()
+if [ -e /dev/fuse ]; then fuse=(--device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined); fi
+exec docker run --name signalbox-runner --network host --init "\${fuse[@]}" \\
   --volume ${MACHINE_HOME}:${MACHINE_HOME} \\
   --env SIGNALBOX_RUNNER_IMAGE="$image" \\
   --env SIGNALBOX_RUNNER_IMAGE_DIGEST="$digest" \\

@@ -12,7 +12,8 @@ export interface FileSide {
   readonly path: string;
   readonly mode: string;
   readonly oid: string;
-  readonly content: Bytes;
+  /** Null for a file too big to diff, which is never read. */
+  readonly content: Bytes | null;
 }
 
 const ZERO_OID = "0000000";
@@ -24,7 +25,7 @@ export const isBinary = (bytes: Bytes) => bytes.subarray(0, 8000).includes(0);
 const decoder = new TextDecoder();
 
 /** Sides bigger than this, or changes needing more edits, are not diffed line by line. */
-const MAX_DIFF_BYTES = 512 * 1024;
+export const MAX_DIFF_BYTES = 512 * 1024;
 const MAX_EDIT_LENGTH = 20_000;
 
 /** A hunk side as git writes it: the count is left out when it is 1. */
@@ -50,22 +51,23 @@ export function filePatch(
   const oldName = before === null ? "/dev/null" : quoteGitPatchPath(`a/${before.path}`);
   const newName = after === null ? "/dev/null" : quoteGitPatchPath(`b/${after.path}`);
   if (
-    (before !== null && isBinary(before.content)) ||
-    (after !== null && isBinary(after.content))
+    (before?.content != null && isBinary(before.content)) ||
+    (after?.content != null && isBinary(after.content))
   ) {
     lines.push(`Binary files ${oldName} and ${newName} differ`);
     return `${lines.join("\n")}\n`;
   }
   // Diffing is quadratic in the worst case; a huge rewrite shows as changed, without lines.
-  const tooLarge =
-    (before?.content.length ?? 0) > MAX_DIFF_BYTES || (after?.content.length ?? 0) > MAX_DIFF_BYTES;
+  const tooLarge = [before, after].some(
+    (side) => side !== null && (side.content === null || side.content.length > MAX_DIFF_BYTES),
+  );
   const patch = tooLarge
     ? undefined
     : structuredPatch(
         oldName,
         newName,
-        before === null ? "" : decoder.decode(before.content),
-        after === null ? "" : decoder.decode(after.content),
+        before?.content == null ? "" : decoder.decode(before.content),
+        after?.content == null ? "" : decoder.decode(after.content),
         undefined,
         undefined,
         { context: 3, ignoreWhitespace: options.ignoreWhitespace, maxEditLength: MAX_EDIT_LENGTH },

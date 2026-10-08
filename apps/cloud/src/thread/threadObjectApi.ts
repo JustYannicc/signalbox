@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { matchThread, threadTurns } from "../context/threadContext.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -87,6 +88,28 @@ export const makeThreadObjectApi = (
               : yield* reports.turn(projection, key);
           return found === null ? null : encodeRecord(found);
         }).pipe(Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) })),
+      ),
+    contextMatch: (actor, terms) =>
+      run(
+        engine.use((service) =>
+          service.snapshot(actor).pipe(
+            Effect.map(({ projection }) => matchThread(projection, terms)),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          ),
+        ),
+      ),
+    contextTurns: (actor, turn) =>
+      run(
+        engine.use((service) =>
+          service.snapshot(actor).pipe(
+            Effect.map(({ projection }) => ({
+              title: projection.thread.title,
+              projectId: projection.thread.projectId,
+              turns: threadTurns(projection, turn),
+            })),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          ),
+        ),
       ),
     summary: (actor) =>
       run(
