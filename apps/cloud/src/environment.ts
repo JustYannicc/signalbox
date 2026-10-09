@@ -97,8 +97,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     serverResolvedCommandContext: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
-    // Pools sign in Claude and ChatGPT accounts only, for now.
-    poolAccountMethods: CLOUD_POOL_KINDS,
+    // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.
+    poolFeatures: CLOUD_POOL_KINDS,
     signalboxPreviews: identity.previews === true,
     // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
     projectCloneTracking: true,
