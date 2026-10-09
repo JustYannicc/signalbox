@@ -79,6 +79,11 @@ describe("cloud pool RPC", () => {
       // The pool's instances are in the config, grouped under it, signed out for now.
       const instanceId = ProviderInstanceId.make(poolInstanceId("claude", work.id));
       const before = yield* config(rpc);
+      // Add account offers only what cloud pools take.
+      expect(before.config.environment.capabilities.poolAccountMethods).toEqual([
+        "claude",
+        "codex",
+      ]);
       expect(before.config.settings.providerInstances[instanceId]).toMatchObject({
         driver: "claudeAgent",
         displayName: "Claude · Work",

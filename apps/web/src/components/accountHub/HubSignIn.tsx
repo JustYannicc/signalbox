@@ -159,12 +159,14 @@ export function HubSignIn({
     pendingTab.current?.close();
     pendingTab.current = null;
   }, [endedFlow]);
-  useEffect(
-    () => () => {
-      pendingTab.current?.close();
-    },
-    [],
-  );
+  // Leaving takes the paste box and the desktop catch with it, so a sign-in started
+  // here ends too, instead of holding the pool's container awake for nothing.
+  const abandon = useEffectEvent(() => {
+    pendingTab.current?.close();
+    if (!startedHere.current || !active || !flowId) return;
+    void cancel({ environmentId, input: { instanceId, flowId } });
+  });
+  useEffect(() => abandon, []);
 
   const finish = (address: string) => {
     if (!flowId || !address) return;
