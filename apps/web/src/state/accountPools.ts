@@ -1,6 +1,11 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { AccountPool, AccountPoolOverview } from "@t3tools/contracts/accountHub";
+import type {
+  AccountPool,
+  AccountPoolOverview,
+  PoolAccountMethod,
+} from "@t3tools/contracts/accountHub";
 
+import { useServerConfigs } from "./entities";
 import { useEnvironment } from "./environments";
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
@@ -24,6 +29,18 @@ export function useAccountPools(environmentId: EnvironmentId | null | undefined)
       : null,
   );
   return query.data ?? NO_POOLS;
+}
+
+/** A pool's name, once its environment has listed it. */
+export function usePoolName(environmentId: EnvironmentId | null | undefined, poolId: string) {
+  return useAccountPools(environmentId).find((pool) => pool.id === poolId)?.name;
+}
+
+/** Whether accounts can join this environment's pools that way; servers that don't say take every way. */
+export function usePoolAccountMethods(environmentId: EnvironmentId) {
+  const methods =
+    useServerConfigs().get(environmentId)?.environment.capabilities.poolAccountMethods;
+  return (method: PoolAccountMethod) => !methods || methods.includes(method);
 }
 
 /** Every pool's overview in an environment, kept live; any session may read it. Empty until it connects. */

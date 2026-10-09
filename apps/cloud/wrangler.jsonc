@@ -39,7 +39,7 @@
   // `class_name` gets its own container from `image`, started and stopped
   // through `ctx.container` in that object (see src/pool/PoolContainer.ts).
   // `max_instances` caps how many run at once across all objects of the class.
-  // Not inherited by `env`, so the preview repeats it.
+  // Not inherited by `env`, so dev and the preview repeat it.
   "containers": [
     {
       // A managed pool's CLIProxyAPI. Small on purpose: every pool has one.
@@ -72,12 +72,22 @@
         "bindings": [
           { "name": "USERS", "class_name": "UserObject" },
           { "name": "THREADS", "class_name": "ThreadObject" },
+          { "name": "POOLS", "class_name": "PoolObject" },
           { "name": "DRIVES", "class_name": "DriveObject" },
         ],
       },
       // Local only: `wrangler dev` simulates the bucket under .wrangler/.
       "r2_buckets": [
         { "binding": "DRIVE_PACKS", "bucket_name": "signalbox-drives", "jurisdiction": "eu" },
+      ],
+      // Local Docker builds and runs it.
+      "containers": [
+        {
+          "class_name": "PoolObject",
+          "image": "./containers/cliproxyapi/Dockerfile",
+          "instance_type": "lite",
+          "max_instances": 2,
+        },
       ],
       "vars": {},
     },

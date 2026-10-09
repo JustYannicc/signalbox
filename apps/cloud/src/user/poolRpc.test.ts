@@ -102,11 +102,16 @@ describe("cloud pool RPC", () => {
       expect(started.phase).toBe("waiting");
       expect(started.interaction).toMatchObject({ type: "browser", acceptsCallback: true });
       const loginState = new URL(started.authorizationUrl!).searchParams.get("state");
-      yield* rpc[WS_METHODS.providerAuthComplete]({
+      const handBack = {
         instanceId,
         flowId: started.flowId!,
         callbackUrl: `http://localhost:54545/callback?code=c&state=${loginState}`,
-      });
+      };
+      expect((yield* rpc[WS_METHODS.providerAuthComplete](handBack)).phase).toBe("verifying");
+      // A second click while it checks changes nothing and fails nothing.
+      expect(["verifying", "succeeded"]).toContain(
+        (yield* rpc[WS_METHODS.providerAuthComplete](handBack)).phase,
+      );
       const finished = yield* rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
         Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
         (stream) => first(stream),

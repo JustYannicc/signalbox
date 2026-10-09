@@ -8,6 +8,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { PoolAccountMethod } from "./accountHub.ts"; // signalbox: pools
 
 /** Wire version for orchestration snapshots, streams, commands, and RPC payloads. */
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
@@ -218,6 +219,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   sections: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Signalbox Cloud opens threads' dev servers through its PreviewGateway (`signalboxPreviews.ts`). */
   signalboxPreviews: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: How accounts can join this environment's pools. Absent: every way (`accountHub.ts`). */
+  poolAccountMethods: Schema.optionalKey(Schema.Array(PoolAccountMethod)),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

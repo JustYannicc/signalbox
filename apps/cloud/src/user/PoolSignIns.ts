@@ -10,6 +10,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -37,11 +38,17 @@ import * as UserPools from "./UserPools.ts";
 const LOGIN_TTL_MS = 30 * 60_000;
 /** Every second while the user is likely still at it, then every 5 seconds. */
 const pollDelay = (elapsedMs: number) => (elapsedMs < 60_000 ? 1_000 : 5_000);
+/** Once the user hands back the redirect, the account lands within a second or two. */
+const VERIFY_POLL_MS = 250;
+/** Fast polls after the hand-back, 15 seconds' worth; then the usual pace again. */
+const VERIFY_POLLS = 60;
 
 interface Login {
   readonly flowId: string;
   readonly objectName: string;
   readonly state: string;
+  /** Done once the redirect was handed back: the poll wakes and speeds up. */
+  readonly handedBack: Deferred.Deferred<void>;
   readonly fiber: Fiber.Fiber<void>;
 }
 
@@ -111,7 +118,7 @@ const make = Effect.gen(function* () {
     actor: PoolActor,
     instanceId: ProviderInstanceId,
     pool: PoolDirectory.PoolHandle,
-    login: { readonly flowId: string; readonly state: string },
+    login: Omit<Login, "objectName" | "fiber">,
   ) => {
     const failed = (error: PoolDirectory.PoolObjectError | PoolRejectedError) =>
       Effect.flatMap(reason(error), (message) =>
@@ -119,8 +126,20 @@ const make = Effect.gen(function* () {
       );
     return Effect.gen(function* () {
       const state = login.state;
-      for (let elapsed = 0; ; elapsed += pollDelay(elapsed)) {
-        yield* Effect.sleep(pollDelay(elapsed));
+      for (let elapsed = 0, fast = 0; ;) {
+        const handedBack = yield* Deferred.isDone(login.handedBack);
+        if (handedBack && fast < VERIFY_POLLS) {
+          fast += 1;
+          yield* Effect.sleep(VERIFY_POLL_MS);
+        } else {
+          const delay = pollDelay(elapsed);
+          elapsed += delay;
+          yield* handedBack
+            ? Effect.sleep(delay)
+            : Deferred.await(login.handedBack).pipe(
+                Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.void }),
+              );
+        }
         const status = yield* pool.loginStatus(actor, state);
         if (status.status === "error") {
           yield* update(instanceId, {
@@ -211,14 +230,16 @@ const make = Effect.gen(function* () {
                 acceptsCallback: true,
               },
         });
+        const handedBack = yield* Deferred.make<void>();
         // Outlives this call and the socket that made it; the object holds it.
         const fiber = yield* Effect.forkDetach(
-          awaitLogin(actor, instanceId, pool, { flowId, state: login.state }),
+          awaitLogin(actor, instanceId, pool, { flowId, state: login.state, handedBack }),
         );
         logins.set(instanceId, {
           flowId,
           objectName: target.pool.objectName,
           state: login.state,
+          handedBack,
           fiber,
         });
         return state;
@@ -232,20 +253,52 @@ const make = Effect.gen(function* () {
       : Effect.fail(setupError(instanceId, operation)("This sign-in has ended. Start again."));
   };
 
+  /** Moves this flow from `from` to `to`, if it is still at `from`; says whether it did. */
+  const advance = (
+    ref: SubscriptionRef.SubscriptionRef<ProviderAuthState>,
+    flowId: string,
+    from: ProviderAuthState["phase"],
+    patch: Partial<ProviderAuthState>,
+  ) =>
+    SubscriptionRef.modify(ref, (state) =>
+      state.flowId === flowId && state.phase === from
+        ? ([true, { ...state, ...patch }] as const)
+        : ([false, state] as const),
+    );
+
   const complete: PoolSignIns["Service"]["complete"] = (actor, input) =>
     Effect.gen(function* () {
-      const login = yield* currentLogin(input.instanceId, input.flowId, "complete");
-      yield* update(input.instanceId, { phase: "verifying", message: null });
+      const { instanceId, flowId } = input;
+      const login = logins.get(instanceId);
+      const ref = states.get(instanceId);
+      // Handed back already (a second click, another device): that one finishes it.
+      const handedBack = ref ? yield* SubscriptionRef.get(ref) : null;
+      if (
+        handedBack?.flowId === flowId &&
+        (handedBack.phase === "verifying" || handedBack.phase === "succeeded")
+      ) {
+        return handedBack;
+      }
+      if (!login || login.flowId !== flowId || !ref) {
+        return yield* setupError(instanceId, "complete")("This sign-in has ended. Start again.");
+      }
+      if (!(yield* advance(ref, flowId, "waiting", { phase: "verifying", message: null }))) {
+        return yield* SubscriptionRef.get(ref);
+      }
       const done = yield* directory
         .forPool(login.objectName)
         .completeLogin(actor, input.callbackUrl)
         .pipe(Effect.result);
-      if (done._tag === "Failure") {
-        const message = yield* reason(done.failure);
-        yield* update(input.instanceId, { phase: "waiting", message });
-        return yield* setupError(input.instanceId, "complete")(message);
+      if (done._tag === "Success") {
+        yield* Deferred.succeed(login.handedBack, undefined);
+        return yield* SubscriptionRef.get(ref);
       }
-      return yield* Effect.flatMap(stateOf(input.instanceId), SubscriptionRef.get);
+      const message = yield* reason(done.failure);
+      // Only a hand-back still being checked goes back to waiting; one that ended stays ended.
+      if (!(yield* advance(ref, flowId, "verifying", { phase: "waiting", message }))) {
+        return yield* SubscriptionRef.get(ref);
+      }
+      return yield* setupError(instanceId, "complete")(message);
     });
 
   const cancel: PoolSignIns["Service"]["cancel"] = (actor, input) =>

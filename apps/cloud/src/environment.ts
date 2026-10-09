@@ -16,7 +16,11 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import webPackage from "../../web/package.json" with { type: "json" };
-import { cloudProviderInstances, cloudProviders } from "./thread/providerCatalog.ts";
+import {
+  CLOUD_POOL_KINDS,
+  cloudProviderInstances,
+  cloudProviders,
+} from "./thread/providerCatalog.ts";
 import { scriptedModelSelection } from "./thread/scriptedProvider.ts";
 
 /**
@@ -93,6 +97,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     serverResolvedCommandContext: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
     usageLimitSources: true,
+    // Pools sign in Claude and ChatGPT accounts only, for now.
+    poolAccountMethods: CLOUD_POOL_KINDS,
     signalboxPreviews: identity.previews === true,
     // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
     projectCloneTracking: true,

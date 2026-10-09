@@ -218,6 +218,17 @@ export const POOL_INSTANCE_KINDS = {
 } as const;
 export type PoolInstanceKind = keyof typeof POOL_INSTANCE_KINDS;
 
+/** How an account joins a pool: signing in to one of these kinds, or adding an API key. */
+export const PoolAccountMethod = Schema.Literals([
+  "codex",
+  "claude",
+  "grok",
+  "antigravity",
+  "cursor",
+  "api-key",
+]);
+export type PoolAccountMethod = typeof PoolAccountMethod.Type;
+
 /** Drivers whose native login can move into a pool. */
 export const MOVABLE_NATIVE_DRIVERS: ReadonlyArray<ProviderDriverKind> = [
   POOL_INSTANCE_KINDS.claude.driver,
