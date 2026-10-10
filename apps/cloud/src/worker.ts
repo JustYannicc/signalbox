@@ -9,7 +9,7 @@ import { labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
 import { routePreview } from "./thread/preview/previewRoute.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
 import { ModelGatewayRecord } from "./modelGateway/modelGatewayRecord.ts";
-import { authorizeModel, reportModelRequest } from "./thread/runner/modelGrants.ts";
+import { reportModelRequest, serveModel } from "./thread/runner/modelGrants.ts";
 import { connectRunner, isRunnerSocketPath } from "./thread/runner/runnerRoute.ts";
 import { forwardSessionRequest, isSessionApiPath } from "./thread/session/sessionRoutes.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
@@ -89,16 +89,19 @@ export default {
 const decodeModelGatewayRecord = Schema.decodeUnknownOption(ModelGatewayRecord);
 
 /**
- * Asked by the ModelGateway Worker, over its service binding, before it serves
- * a harness's model request, and told what each request did afterwards.
+ * Asked by the ModelGateway Worker, over its service binding, to serve a
+ * harness's model request, and told what each request did afterwards.
  * Service bindings never reach the internet.
  */
 
 export class ModelGrants extends WorkerEntrypoint<CloudEnv> {
-  authorize(token: string, provider: ModelGatewayProvider) {
-    return authorizeModel(this.env.THREADS, token, provider, {
-      localWorkerd: this.env.LOCAL_WORKERD === "1",
-    });
+  /** Checks a request's token and, granted, sends it to the turn's pool. */
+  serve(token: string, provider: ModelGatewayProvider, path: string, request: Request) {
+    const { THREADS, POOLS, LOCAL_WORKERD } = this.env;
+    return serveModel(
+      { threads: THREADS, pools: POOLS, token, provider, path, request },
+      { localWorkerd: LOCAL_WORKERD === "1" },
+    );
   }
 
   /** A served request's record, for its thread. Anything that does not decode is dropped. */

@@ -16,12 +16,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { myDriveId } from "../../drive/driveAccess.ts";
+import { type ModelPoolRoute, poolObjectName } from "../../pool/PoolDirectory.ts";
 import { isRemoteToken, remoteToken } from "../../drive/remoteToken.ts";
 import type { UserObjectError } from "../../user/UserDirectory.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
 import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
-import { gatewayProviderFor } from "../providerCatalog.ts";
+import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
 import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { applyEvents } from "../threadProjection.ts";
@@ -150,7 +151,13 @@ export type SessionAuthorization =
   | { readonly _tag: "denied"; readonly reason: string };
 
 export type ModelAuthorization =
-  | { readonly _tag: "granted"; readonly runId: RunId; readonly traceId: string }
+  | {
+      readonly _tag: "granted";
+      readonly runId: RunId;
+      readonly traceId: string;
+      /** Where the request goes: the turn's pool, for its requester. */
+      readonly pool: ModelPoolRoute;
+    }
   | { readonly _tag: "denied"; readonly reason: string };
 
 /** What the object must do for the lease, and when to look again. */
@@ -239,13 +246,27 @@ const IDLE: MachinePlan = {
 const BUSY: MachinePlan = { ...IDLE, busy: true };
 const UNNEEDED: MachinePlan = { ...IDLE, stop: true };
 
-/** What the live harness run's model token is for, if a run is live. */
-const modelGrantFor = (projection: OrchestrationV2ThreadProjection): ModelGrant | undefined => {
+/**
+ * What the live harness run's model token is for, if a run is live. The
+ * thread's owner runs its turns, on one of their own pools.
+ */
+const modelGrantFor = (
+  projection: OrchestrationV2ThreadProjection,
+  ownerId: string | null,
+): ModelGrant | undefined => {
   const run = harnessRun(projection);
-  const provider = run === undefined ? undefined : gatewayProviderFor(run.providerInstanceId);
-  return run === undefined || provider === undefined
+  if (run === undefined || ownerId === null) return undefined;
+  const provider = gatewayProviderFor(run.providerInstanceId);
+  const poolId = poolIdOfInstance(run.providerInstanceId);
+  return provider === undefined || poolId === undefined
     ? undefined
-    : { threadId: projection.thread.id, runId: run.id, provider };
+    : {
+        threadId: projection.thread.id,
+        runId: run.id,
+        provider,
+        pool: poolObjectName(ownerId, poolId),
+        requester: ownerId,
+      };
 };
 
 /**
@@ -285,6 +306,8 @@ const make = Effect.gen(function* () {
   );
 
   const lease = Effect.orDie(store.machine);
+
+  const ownerId = Effect.map(Effect.orDie(store.owner), (owner) => owner?.userId ?? null);
 
   /** The current lease's session token, signed once: the Runner presents it with every append. */
   let sessionTokenCache: { readonly key: string; readonly token: string } | null = null;
@@ -511,7 +534,7 @@ const make = Effect.gen(function* () {
         untraced === null
           ? null
           : { ...untraced, traceId: yield* withCrypto(traceIdOf(untraced.runId)) };
-      const grant = projection === null ? undefined : modelGrantFor(projection);
+      const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const run = projection === null ? undefined : harnessRun(projection);
       const driveId = turn === null || !drivesEnabled ? null : yield* driveOf;
       return keep<RunnerWork>({
@@ -546,8 +569,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const deny = (reason: string): ModelAuthorization => ({ _tag: "denied", reason });
       const projection = yield* engine.projection;
-      const grant = projection === null ? undefined : modelGrantFor(projection);
-      // A thread that does not exist yet has no tables to read a lease from.
+      // A thread that does not exist yet has no tables to read a lease or owner from.
+      const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
       const leaseToken = grant === undefined ? null : (yield* lease).token;
       if (grant === undefined || leaseToken === null) {
         return deny("No turn is running on this thread.");
@@ -558,6 +581,7 @@ const make = Effect.gen(function* () {
             _tag: "granted",
             runId: grant.runId,
             traceId: yield* withCrypto(traceIdOf(grant.runId)),
+            pool: { objectName: grant.pool, userId: grant.requester },
           } satisfies ModelAuthorization)
         : deny("This token is not for the running turn.");
     });

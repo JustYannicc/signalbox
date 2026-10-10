@@ -168,6 +168,7 @@ describe("TurnDiagnostics", () => {
               authMs: 2,
               upstreamHeadersMs: 300,
               firstChunkMs: 420,
+              addedMs: 12,
               totalMs: 1_800,
               outcome: "complete",
               model: "claude-fable-5-1-20261001",
@@ -209,6 +210,7 @@ describe("TurnDiagnostics", () => {
             "gateway",
             "runner",
           ]);
+          expect(record.log[2]?.message).toContain("gateway added 12 ms");
 
           // The idle tail ends the machine's session.
           yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS);

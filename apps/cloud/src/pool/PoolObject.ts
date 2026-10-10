@@ -7,6 +7,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Platform from "../platform.ts";
 import {
   POOL_OBJECT_JURISDICTION,
+  type PoolModelApi,
   type PoolObjectApi,
   type PoolObjectNamespace,
 } from "./PoolDirectory.ts";
@@ -71,9 +72,12 @@ const makeRuntime = (ctx: DurableObjectState) =>
     ),
   );
 
-export class PoolObject extends DurableObject<PoolObjectEnv> implements PoolObjectApi {
+export class PoolObject
+  extends DurableObject<PoolObjectEnv>
+  implements PoolObjectApi, PoolModelApi
+{
   private readonly runtime: ReturnType<typeof makeRuntime>;
-  private readonly api: PoolObjectApi;
+  private readonly api: PoolObjectApi & PoolModelApi;
 
   constructor(ctx: DurableObjectState, env: PoolObjectEnv) {
     super(ctx, env);
@@ -142,6 +146,10 @@ export class PoolObject extends DurableObject<PoolObjectEnv> implements PoolObje
 
   updateAccount(...args: Parameters<PoolObjectApi["updateAccount"]>) {
     return this.api.updateAccount(...args);
+  }
+
+  forwardModel(...args: Parameters<PoolModelApi["forwardModel"]>) {
+    return this.api.forwardModel(...args);
   }
 
   /** Puts an idle container to sleep (see `PoolContainer.sleepIfIdle`). */

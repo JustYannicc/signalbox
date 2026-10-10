@@ -30,20 +30,15 @@ web dev with `T3CODE_PORT=8787` so the Vite proxy forwards to the Worker.
 
 ### Real Claude and Codex turns
 
-Claude and Codex turns run in a Runner on a machine, never in the Worker, and
-the machine holds no provider keys: its `claude` and `codex` reach their models
-through the ModelGateway, a second Worker that holds the keys. Locally you run
-both. Put the keys in `apps/cloud/.dev.vars.model-gateway` (gitignored):
-
-```sh
-ANTHROPIC_API_KEY=...
-OPENAI_API_KEY=...
-# Optional: an Anthropic- or OpenAI-compatible endpoint instead of the provider's own API.
-# ANTHROPIC_UPSTREAM_URL=https://...
-# OPENAI_UPSTREAM_URL=https://...
-```
-
-and start the gateway next to `vp run dev`:
+Claude and Codex turns run in a Runner on a machine, never in the Worker, on
+the accounts of the thread's pool (see [Account pools](#account-pools)). The
+machine holds no key or credential: its `claude` and `codex` call the
+ModelGateway, a second Worker, as their provider's API. The gateway holds no
+keys either. It checks each request's model token with the thread, which names
+the turn's pool, and hands the request to that pool's object over the `GRANTS`
+service binding. The pool checks the requester can still use it and sends the
+request to its CLIProxyAPI with its own client key. Locally you run both, with
+Docker for the pool's container, and start the gateway next to `vp run dev`:
 
 ```sh
 cd apps/cloud && vp run dev:gateway             # ModelGateway on http://127.0.0.1:8788
@@ -51,20 +46,31 @@ node apps/server/src/signalbox/runner/main.ts   # Runner host on http://127.0.0.
 ```
 
 Then add `LOCAL_RUNNER_URL=http://127.0.0.1:8790` and
-`MODEL_GATEWAY_URL=http://127.0.0.1:8788` to `apps/cloud/.dev.vars`. The cloud
-offers Claude and Codex only when both are set. Each thread gets its own Runner
+`MODEL_GATEWAY_URL=http://127.0.0.1:8788` to `apps/cloud/.dev.vars`, and sign
+an account into a pool (Usage → Limits). Turns on a pool's Claude or ChatGPT
+need a machine backend: both set locally, or boat. Each thread gets its own Runner
 and its own machine directory under `apps/server/.t3/runner/machines/` (`--home`
 moves it), with a home, Claude and Codex config, and the current turn's model
 token, so the harnesses never see this machine's own logins or keys.
 `LOCAL_RUNNER_URL` only counts with `LOCAL_WORKERD`, so a deployment never calls
 it.
 
-A model token is good for one thread, one provider and one turn: the gateway
-asks the thread before each request, and the thread grants it only while that
-turn runs. The gateway logs every request as `model_gateway.request`, with
-`authMs` (its own time before forwarding) and `firstChunkMs` (the upstream's
-time to first token). If the upstream uses a private CA, start the gateway with
-`NODE_EXTRA_CA_CERTS` pointing at it.
+A model token is good for one thread, turn, provider, pool and requester: the
+gateway asks the thread before each request, and the thread grants it only
+while that turn runs. The pool checks the requester on every request, so
+someone removed from a pool fails their next request with a message saying
+so. The gateway logs every request as `model_gateway.request`, with `authMs`
+(the token check), `firstChunkMs` (from forwarding to the first chunk) and
+`addedMs`: what the gateway and pool add to the time to first token, which is
+everything except the CLIProxyAPI's own time to its response headers (the
+token check, the hops, the pool's access check and a cold container's start).
+The turn's diagnostics show it on each request's line.
+
+Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
+deployed after the cloud Worker. Each pull request preview gets its own,
+`signalbox-model-gateway-pr-<number>` at
+`gateway-preview-<number>.signalbox.run`, bound to the preview's Worker and
+deleted with it. Previews set their `MODEL_GATEWAY_URL` themselves.
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.
@@ -121,14 +127,16 @@ resumes the same VM with its checkout and caches. The Worker needs:
 | `MACHINE_BACKEND`   | var    | `boat`                                                               |
 | `BOAT_API_KEY`      | secret | A boat API key                                                       |
 | `CLOUD_URL`         | var    | The cloud's public origin, which machines dial. The deploy sets it.  |
-| `MODEL_GATEWAY_URL` | var    | The ModelGateway's public origin                                     |
+| `MODEL_GATEWAY_URL` | var    | The ModelGateway's public origin: `https://gateway.signalbox.run`    |
 | `RUNNER_IMAGE`      | var    | Optional. Defaults to `ghcr.io/justyannicc/signalbox-runner:nightly` |
 | `BOAT_MACHINE_TYPE` | var    | Optional. `small` (default), `default` or `large`                    |
 | `BOAT_TTL_SECONDS`  | var    | Optional. Hard TTL, default 7200 (2 hours, boat's trial maximum)     |
 
 The deploy workflow passes `BOAT_API_KEY` from the GitHub environment's
-secrets and `MACHINE_BACKEND` and `MODEL_GATEWAY_URL` from its variables, so
-setting those three turns boat on for production or previews.
+secrets and `MACHINE_BACKEND` from its variables. Production takes
+`MODEL_GATEWAY_URL` from its variables too; a preview points it at its own
+gateway. Setting `MACHINE_BACKEND=boat` turns boat on for production or
+previews.
 
 How a machine comes up, in `apps/cloud/src/thread/runner/boat/`: the thread
 object records the machine it wants before every boat call, creates the VM with

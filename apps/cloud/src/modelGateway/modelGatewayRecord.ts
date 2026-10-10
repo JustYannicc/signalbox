@@ -34,10 +34,17 @@ export const ModelGatewayRecord = Schema.Struct({
   denied: Schema.optionalKey(Schema.String),
   /** Checking the token with its thread. */
   authMs: Schema.Number,
-  /** From forwarding to the upstream's response headers. */
+  /** From forwarding to the pool's response headers. */
   upstreamHeadersMs: Schema.NullOr(Schema.Number),
-  /** From forwarding to the first body chunk: the upstream's time to first token. */
+  /** From forwarding to the first body chunk. */
   firstChunkMs: Schema.NullOr(Schema.Number),
+  /**
+   * What the gateway adds to the time to first token: everything before the
+   * pool's CLIProxyAPI answered that it did not spend itself (the token
+   * check, the hops to the pool, its access check, a cold container's start).
+   * The body then streams through unbuffered.
+   */
+  addedMs: Schema.NullOr(Schema.Number),
   totalMs: Schema.Number,
   /** How a forwarded response's body ended: read to the end, dropped by the caller, or broken. */
   outcome: Schema.optionalKey(Schema.Literals(["complete", "cancelled", "failed"])),
