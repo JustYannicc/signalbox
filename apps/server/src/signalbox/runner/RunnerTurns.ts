@@ -36,9 +36,9 @@ import {
   ProviderAdapterV2Event,
   type ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2Shape,
-} from "../../orchestration-v2/ProviderAdapter.ts";
-import { makeProviderFailure } from "../../orchestration-v2/ProviderFailure.ts";
+  type ProviderAdapterV2,
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { HarnessStderr } from "./harnessStderr.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
@@ -156,7 +156,7 @@ const withTrace =
 
 export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly threadId: ThreadId;
-  readonly adapters: ReadonlyMap<ProviderInstanceId, ProviderAdapterV2Shape>;
+  readonly adapters: ReadonlyMap<ProviderInstanceId, ProviderAdapterV2["Service"]>;
   /** The thread's working directory on this machine. */
   readonly cwd: string;
   /** Makes `token` the one the harnesses present to the ModelGateway. */
@@ -239,7 +239,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
    * continues it on a heavy one. What the harness does after that is dropped;
    * this machine is stopped once the thread asks for the next one.
    */
-  const moveUp = (runId: RunId, driver: ProviderAdapterV2Shape["driver"], reason: string) =>
+  const moveUp = (runId: RunId, driver: ProviderAdapterV2["Service"]["driver"], reason: string) =>
     Effect.gen(function* () {
       outgrown.add(runId);
       yield* Effect.logInfo("the turn outgrew this machine", { runId, reason });
@@ -430,7 +430,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       return true;
     });
 
-  const forward = (adapter: ProviderAdapterV2Shape, runtime: ProviderAdapterV2SessionRuntime) => {
+  const forward = (
+    adapter: ProviderAdapterV2["Service"],
+    runtime: ProviderAdapterV2SessionRuntime,
+  ) => {
     const instanceId = adapter.instanceId;
     const filterAssistant = makeAssistantStreamingFilter(
       DEFAULT_SERVER_SETTINGS.responseStreamingMode,
@@ -498,7 +501,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   };
 
   const sessionFor = (
-    adapter: ProviderAdapterV2Shape,
+    adapter: ProviderAdapterV2["Service"],
     turn: RunnerTurn,
     runtimePolicy: ProviderAdapterV2RuntimePolicy,
     instructions: string,

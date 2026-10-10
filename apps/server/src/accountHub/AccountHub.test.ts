@@ -3,11 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeChildProcess from "node:child_process";
 import { describe, expect, it } from "@effect/vitest";
 import { ACCOUNT_HUB_SOURCE_ID } from "@t3tools/contracts/accountHub";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -62,9 +58,9 @@ const harness = Effect.fn("test.accountHubHarness")(function* (
     Layer.provideMerge(config),
     Layer.provide(NetService.layer),
     Layer.provideMerge(FetchHttpClient.layer),
-    Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
-    Layer.provide(Layer.succeed(HostProcessArchitecture, "arm64")),
-    Layer.provide(Layer.succeed(HostProcessEnvironment, process.env)),
+    Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+    Layer.provide(Layer.succeed(HostProcess.Architecture, "arm64")),
+    Layer.provide(Layer.succeed(HostProcess.Environment, process.env)),
   );
   return { baseDir, layer };
 });

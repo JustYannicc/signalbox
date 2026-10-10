@@ -3,7 +3,7 @@ import * as NodeModule from "node:module";
 import * as NodeProcess from "node:process";
 import { parseSync } from "oxc-parser";
 import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -136,7 +136,7 @@ export const makeRunFunction = Effect.gen(function* () {
       if (input.module === null)
         return yield* fail(`${input.name} isn't a w.run function in this automation.`);
       const node = yield* resolveNodeExecutable("Automations");
-      const host = yield* HostProcessEnvironment;
+      const host = yield* HostProcess.Environment;
       const env = minimalEnvironment(host);
       const directory = path.join(automationDirectory(input.automationId), `v${input.version}`);
       yield* ensureInstalled(directory, input.module, { ...env, ...installVariables(host) });

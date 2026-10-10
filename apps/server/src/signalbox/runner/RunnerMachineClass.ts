@@ -1,4 +1,4 @@
-import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 
 /**
  * When a turn on a light machine needs a heavy one (#113, #134). The light

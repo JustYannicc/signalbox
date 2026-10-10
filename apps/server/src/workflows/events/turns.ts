@@ -1,7 +1,7 @@
 import type { OrchestrationV2Run, OrchestrationV2RuntimeRequest } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { subagentResultForRun } from "../../orchestration-v2/SubagentProjection.ts";
+import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import { cap, fixed, iso, SHORT_TEXT, type Candidate, type EventReads } from "./candidate.ts";
 
 /** Turn and request events: the ones that read the thread to say how a turn ended or what an agent asks. */

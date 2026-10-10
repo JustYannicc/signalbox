@@ -1,5 +1,5 @@
 import { AutomationError } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
 import { fromJson, toJson } from "./json.ts";
@@ -77,7 +77,7 @@ const make = Effect.gen(function* () {
     );
 
   const read = Effect.gen(function* () {
-    const environment = yield* HostProcessEnvironment;
+    const environment = yield* HostProcess.Environment;
     const envUrl = environment.SIGNALBOX_EXECUTOR_URL;
     const envKey = environment.SIGNALBOX_EXECUTOR_API_KEY;
     if (envUrl && envKey)

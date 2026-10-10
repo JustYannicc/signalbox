@@ -73,7 +73,7 @@ export const visibleProviders = (
   settings: ServerSettings,
 ): ReadonlyArray<ServerProvider> => {
   if (role === "admin") return providers;
-  // Legacy `providers.<driver>` entries can run on a pool too, so read the registry's view.
+  // Read the registry's view, which includes the default instances settings leave implicit.
   const instances = deriveProviderInstanceConfigMap(settings);
   return providers.map((provider) =>
     hubInstancePoolId(instances[provider.instanceId]?.config) === null

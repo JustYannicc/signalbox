@@ -11,7 +11,7 @@ import { HubAccountActions } from "../accountHub/HubAccountActions";
 import { PoolAdvice } from "../accountPool/PoolAdvice";
 import { SignInAgainButton } from "../accountHub/SignInAgainButton";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { providerClients } from "../settings/providerDriverMeta";
 import { Badge } from "../ui/badge";
 import { barColor } from "./UsageLimits";
 import { LimitSegment } from "./UsageLimitsSegment";
@@ -44,7 +44,7 @@ function AccountRow({
     <li className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 py-2.5 md:grid-cols-[minmax(12rem,16rem)_minmax(0,1fr)_auto]">
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm text-foreground">
-          {account.email ?? account.displayName ?? getDriverOption(account.driver)?.label}
+          {account.email ?? account.displayName ?? providerClients.get(account.driver)?.label}
         </span>
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
           {account.plan ? <span className="truncate">{account.plan}</span> : null}
@@ -126,7 +126,7 @@ export function UsageLimitsAccountList({
         <p className="text-xs text-muted-foreground">No accounts yet.</p>
       ) : null}
       {pools.map((pool) => {
-        const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
+        const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
         const providerAdvice = advice?.find((entry) => entry.driver === pool.driver);
         return (
           <section key={pool.driver} aria-label={`${label} accounts`} className="min-w-0">
