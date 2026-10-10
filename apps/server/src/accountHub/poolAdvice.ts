@@ -95,7 +95,7 @@ export type ForecastAccount = ReadonlyMap<
  * shut the last one and when a reset next hands an account back; null if the
  * accounts last the week.
  */
-export function forecastRunOut(
+function forecastRunOut(
   windows: ReadonlyArray<ForecastWindow>,
   accounts: ReadonlyArray<ForecastAccount>,
   now: number,
