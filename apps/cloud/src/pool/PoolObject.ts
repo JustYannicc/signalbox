@@ -12,6 +12,8 @@ import {
 } from "./PoolDirectory.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolEngine from "./PoolEngine.ts";
+import type { PoolLinkTarget } from "./poolLink.ts";
+import * as PoolLinks from "./PoolLinks.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
 
@@ -51,7 +53,7 @@ const ensureAlarm = async (storage: DurableObjectStorage, at: number) => {
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (ctx: DurableObjectState) =>
   ManagedRuntime.make(
-    PoolEngine.layer.pipe(
+    Layer.mergeAll(PoolEngine.layer, PoolLinks.layer).pipe(
       Layer.provideMerge(
         ctx.container
           ? PoolContainer.layerCloudflare({
@@ -71,9 +73,12 @@ const makeRuntime = (ctx: DurableObjectState) =>
     ),
   );
 
-export class PoolObject extends DurableObject<PoolObjectEnv> implements PoolObjectApi {
+export class PoolObject
+  extends DurableObject<PoolObjectEnv>
+  implements PoolObjectApi, PoolLinkTarget
+{
   private readonly runtime: ReturnType<typeof makeRuntime>;
-  private readonly api: PoolObjectApi;
+  private readonly api: PoolObjectApi & PoolLinkTarget;
 
   constructor(ctx: DurableObjectState, env: PoolObjectEnv) {
     super(ctx, env);
@@ -142,6 +147,15 @@ export class PoolObject extends DurableObject<PoolObjectEnv> implements PoolObje
 
   updateAccount(...args: Parameters<PoolObjectApi["updateAccount"]>) {
     return this.api.updateAccount(...args);
+  }
+
+  openLink(...args: Parameters<PoolObjectApi["openLink"]>) {
+    return this.api.openLink(...args);
+  }
+
+  /** A request on one of the pool's links (`poolLink.ts`), from the Worker. */
+  linkFetch(...args: Parameters<PoolLinkTarget["linkFetch"]>) {
+    return this.api.linkFetch(...args);
   }
 
   /** Puts an idle container to sleep (see `PoolContainer.sleepIfIdle`). */

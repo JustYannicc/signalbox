@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { poolInstanceId, type AccountPool } from "@t3tools/contracts/accountHub";
 import {
+  CloudUploadIcon,
   CodeIcon,
   DownloadIcon,
   EllipsisIcon,
@@ -12,7 +13,7 @@ import {
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
-import { usePoolFeatures } from "../../state/accountPools";
+import { usePoolFeatures, useSignalboxCloudEnvironmentId } from "../../state/accountPools";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -27,6 +28,7 @@ import {
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import { MoveToCloudDialog } from "./MoveToCloudDialog";
 import { failureText, PoolBackingDialog, PoolImportDialog, PoolNameDialog } from "./PoolDialogs";
 
 /**
@@ -76,7 +78,9 @@ function DeletePoolDialog({
           <AlertDialogDescription>
             {pool.backing.mode === "managed"
               ? "Its accounts are removed from Signalbox, its models leave the picker, and threads on it stop working."
-              : "Its models leave the picker and threads on it stop working. The accounts stay in your CLIProxyAPI."}
+              : pool.backing.mode === "cloud"
+                ? "Its models leave the picker here and threads here stop running on it. The pool and its accounts stay in Signalbox Cloud."
+                : "Its models leave the picker and threads on it stop working. The accounts stay in your CLIProxyAPI."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -90,9 +94,9 @@ function DeletePoolDialog({
   );
 }
 
-type Editing = "rename" | "backing" | "import" | "delete";
+type Editing = "rename" | "backing" | "import" | "move" | "delete";
 
-/** A pool's own actions: rename, where it keeps logins, import, OpenCode, delete. */
+/** A pool's own actions: rename, where it keeps logins, import, OpenCode, move to the cloud, delete. */
 export function PoolActionsMenu({
   environmentId,
   pool,
@@ -102,6 +106,10 @@ export function PoolActionsMenu({
 }) {
   const can = usePoolFeatures(environmentId);
   const openCode = useOpenCodeOnPool(environmentId);
+  const cloudEnvironmentId = useSignalboxCloudEnvironmentId();
+  // A pool already in the cloud is managed there.
+  const inCloud = pool.backing.mode === "cloud";
+  const canMove = !inCloud && cloudEnvironmentId !== null && cloudEnvironmentId !== environmentId;
   const [editing, setEditing] = useState<Editing | null>(null);
   const close = () => setEditing(null);
   return (
@@ -118,11 +126,13 @@ export function PoolActionsMenu({
             <PencilIcon aria-hidden />
             Rename
           </MenuItem>
-          <MenuItem onClick={() => setEditing("backing")}>
-            <ServerIcon aria-hidden />
-            Where it keeps logins
-          </MenuItem>
-          {can("import") ? (
+          {inCloud ? null : (
+            <MenuItem onClick={() => setEditing("backing")}>
+              <ServerIcon aria-hidden />
+              Where it keeps logins
+            </MenuItem>
+          )}
+          {can("import") && !inCloud ? (
             <MenuItem onClick={() => setEditing("import")}>
               <DownloadIcon aria-hidden />
               Import from CLIProxyAPI
@@ -132,6 +142,12 @@ export function PoolActionsMenu({
             <MenuItem onClick={() => openCode.set(pool, !openCode.isOn(pool))}>
               <CodeIcon aria-hidden />
               {openCode.isOn(pool) ? "Stop using with OpenCode" : "Use with OpenCode"}
+            </MenuItem>
+          ) : null}
+          {canMove ? (
+            <MenuItem onClick={() => setEditing("move")}>
+              <CloudUploadIcon aria-hidden />
+              Move to Signalbox Cloud
             </MenuItem>
           ) : null}
           {pool.personal ? null : (
@@ -151,6 +167,13 @@ export function PoolActionsMenu({
         <PoolBackingDialog environmentId={environmentId} pool={pool} onClose={close} />
       ) : editing === "import" ? (
         <PoolImportDialog environmentId={environmentId} pool={pool} onClose={close} />
+      ) : editing === "move" && cloudEnvironmentId !== null ? (
+        <MoveToCloudDialog
+          environmentId={environmentId}
+          cloudEnvironmentId={cloudEnvironmentId}
+          pool={pool}
+          onClose={close}
+        />
       ) : editing === "delete" ? (
         <DeletePoolDialog environmentId={environmentId} pool={pool} onClose={close} />
       ) : null}

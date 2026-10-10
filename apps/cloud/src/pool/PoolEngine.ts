@@ -1,4 +1,9 @@
 import type { UsageLimitSourceUpdateAccountInput } from "@t3tools/contracts";
+import {
+  CLOUD_POOL_ACCOUNT_TYPES,
+  type PoolLinkMoveRequest,
+  type PoolLinkMoveResult,
+} from "@t3tools/contracts/accountHub";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -12,6 +17,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as CliProxyApi from "./cliProxyApi.ts";
 import * as PoolContainer from "./PoolContainer.ts";
+import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolStore from "./poolStore.ts";
 
 /**
@@ -126,6 +132,24 @@ export class PoolEngine extends Context.Service<
       name: string,
       action: AccountAction,
     ) => Effect.Effect<void, Failure>;
+    /**
+     * Saves credential files another hub held (a pool moving here). Names the
+     * pool already holds are skipped; if any file fails, the ones this call
+     * saved are removed again, so a failed move leaves nothing behind.
+     */
+    readonly importAccounts: (
+      actor: PoolActor,
+      accounts: PoolLinkMoveRequest["accounts"],
+    ) => Effect.Effect<PoolLinkMoveResult, Failure>;
+    /**
+     * Sends a model request (`path` under `/v1`) to the pool's CLIProxyAPI
+     * with the pool's own client key, and streams its answer back.
+     */
+    readonly modelRequest: (
+      actor: PoolActor,
+      request: Request,
+      path: string,
+    ) => Effect.Effect<Response, Failure>;
     /** A request from the pool's container to its store. */
     readonly storeRequest: (request: Request) => Effect.Effect<Response, SqlError>;
   }
@@ -187,6 +211,7 @@ const migrations = Migrator.fromRecord({
     )`;
     yield* PoolStore.createTables;
   }),
+  "0002_links": PoolLinks.createTables,
 });
 
 const migrate = Migrator.make({})({ loader: migrations });
@@ -229,6 +254,21 @@ const backingOf = (row: PoolRow): PoolBacking =>
     : { mode: "managed" };
 
 const normalizeUrl = (url: string) => url.trim().replace(/\/+$/u, "");
+
+const ACCOUNT_FILE_NAME = /^[\w.@+-]+\.json$/u;
+const decodeCredential = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
+/** Headers that carry the caller's credential, or describe the hop rather than the request. */
+const isHopHeader = (name: string) =>
+  name === "authorization" ||
+  name === "x-api-key" ||
+  name === "host" ||
+  name === "cookie" ||
+  name === "content-length" ||
+  name.startsWith("cf-") ||
+  name.startsWith("x-forwarded-");
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -531,6 +571,77 @@ const make = Effect.gen(function* () {
       yield* refreshAccounts(row).pipe(Effect.ignore);
     });
 
+  const importAccounts: PoolEngine["Service"]["importAccounts"] = (actor, files) =>
+    Effect.gen(function* () {
+      const { row } = yield* access(actor, "admin");
+      const credentials: Array<{ name: string; credential: Record<string, unknown> }> = [];
+      for (const file of files) {
+        const credential = decodeCredential(file.content);
+        if (!ACCOUNT_FILE_NAME.test(file.name) || credential._tag === "None") {
+          return yield* reject(`${file.name} is not an account file.`);
+        }
+        const type = credential.value.type;
+        if (typeof type !== "string" || !CLOUD_POOL_ACCOUNT_TYPES.includes(type)) {
+          return yield* reject(`${file.name} is an account Signalbox Cloud pools can't hold yet.`);
+        }
+        credentials.push({ name: file.name, credential: credential.value });
+      }
+      const endpoint = endpointOf(row);
+      const held = new Set((yield* refreshAccounts(row)).map((account) => account.name));
+      const imported: string[] = [];
+      const skipped: string[] = [];
+      const saved = yield* Effect.gen(function* () {
+        for (const { name, credential } of credentials) {
+          if (held.has(name)) {
+            skipped.push(name);
+            continue;
+          }
+          yield* CliProxyApi.uploadAccount(endpoint, name, credential);
+          imported.push(name);
+        }
+      }).pipe(Effect.result);
+      if (saved._tag === "Failure") {
+        yield* Effect.forEach(imported, (name) =>
+          CliProxyApi.removeAccount(endpoint, name).pipe(Effect.ignore),
+        );
+        yield* refreshAccounts(row).pipe(Effect.ignore);
+        return yield* saved.failure;
+      }
+      const added = new Set(imported);
+      yield* refreshAccounts(row, (name) => (added.has(name) ? actor.userId : null)).pipe(
+        Effect.ignore,
+      );
+      yield* audit(actor, "move-in", imported.join(", ") || null);
+      return { imported, skipped };
+    });
+
+  const modelRequest: PoolEngine["Service"]["modelRequest"] = (actor, request, path) =>
+    Effect.gen(function* () {
+      const { row } = yield* access(actor, "member");
+      const endpoint = endpointOf(row);
+      const headers = new Headers();
+      for (const [name, value] of request.headers) {
+        if (!isHopHeader(name)) headers.append(name, value);
+      }
+      headers.set("authorization", `Bearer ${endpoint.clientKey}`);
+      const search = new URL(request.url).search;
+      return yield* Effect.tryPromise({
+        try: () =>
+          endpoint.fetch(
+            new Request(`${endpoint.baseUrl}/v1${path}${search}`, {
+              method: request.method,
+              headers,
+              body: request.body,
+              redirect: "manual",
+              // The body streams through rather than being buffered (Node requires saying so).
+              duplex: "half",
+            } as RequestInit & { readonly duplex: "half" }),
+          ),
+        catch: (cause) =>
+          new CliProxyApi.PoolBackendError({ detail: "The pool could not be reached.", cause }),
+      });
+    });
+
   const storeRequest: PoolEngine["Service"]["storeRequest"] = (request) =>
     Effect.gen(function* () {
       const row = yield* poolRow;
@@ -551,6 +662,8 @@ const make = Effect.gen(function* () {
     completeLogin,
     cancelLogin,
     updateAccount,
+    importAccounts,
+    modelRequest,
     storeRequest,
   });
 });

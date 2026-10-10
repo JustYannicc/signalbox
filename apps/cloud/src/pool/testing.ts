@@ -6,6 +6,7 @@ import * as Platform from "../platform.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolDirectory from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";
+import * as PoolLinks from "./PoolLinks.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
 
@@ -34,6 +35,14 @@ export const makeFakeCliProxyApi = () => {
   const serve = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (url.pathname === "/v1/models") return json({ data: [] });
+    // Model requests echo what reached the CLIProxyAPI.
+    if (url.pathname.startsWith("/v1/")) {
+      return json({
+        path: url.pathname,
+        authorization: request.headers.get("authorization"),
+        body: await request.text(),
+      });
+    }
     const route = url.pathname.replace(/^\/v0\/management\//u, "");
     if (request.headers.get("authorization") === "Bearer wrong") return json({}, 401);
     switch (`${request.method} ${route}`) {
@@ -79,6 +88,13 @@ export const makeFakeCliProxyApi = () => {
         account.disabled = body.disabled;
         return json({ status: "ok" });
       }
+      case "POST auth-files": {
+        const name = url.searchParams.get("name") ?? "";
+        const body = (await request.json()) as { readonly type: string; readonly email?: string };
+        if (body.email === "refused@example.test") return json({}, 500);
+        accounts.set(name, { type: body.type, email: body.email ?? name, disabled: false });
+        return json({ status: "ok" });
+      }
       case "DELETE auth-files":
         return json({}, accounts.delete(url.searchParams.get("name") ?? "") ? 200 : 404);
       default:
@@ -99,7 +115,7 @@ export const makeMemoryPoolObject = (
   const cliProxyApi = makeFakeCliProxyApi();
   const container = PoolContainer.makeFake((request) => cliProxyApi.serve(request));
   const runtime = ManagedRuntime.make(
-    PoolEngine.layer.pipe(
+    Layer.mergeAll(PoolEngine.layer, PoolLinks.layer).pipe(
       Layer.provideMerge(container.layer),
       Layer.provideMerge(
         Layer.mergeAll(

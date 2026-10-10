@@ -1210,6 +1210,18 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:set-account-pool-opencode",
       tag: WS_METHODS.accountPoolSetOpenCode,
     }),
+    receiveAccountPool: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:receive-account-pool",
+      tag: WS_METHODS.accountPoolReceive,
+    }),
+    moveAccountPoolToCloud: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:move-account-pool-to-cloud",
+      tag: WS_METHODS.accountPoolMoveToCloud,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.poolId]),
+      },
+    }),
     moveNativeLogins: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:move-native-logins",
       tag: WS_METHODS.accountPoolMoveNativeLogins,

@@ -72,6 +72,14 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
           pools.setOpenCode(input).pipe(Effect.mapError(hubFailure)),
         [WS_METHODS.accountPoolMoveNativeLogins]: (input) =>
           pools.moveNativeLogins(input).pipe(Effect.mapError(hubFailure)),
+        [WS_METHODS.accountPoolMoveToCloud]: (input) =>
+          pools.moveToCloud(input).pipe(Effect.mapError(hubFailure)),
+        [WS_METHODS.accountPoolReceive]: () =>
+          Effect.fail(
+            new AccountHubRpcError({
+              detail: "Only Signalbox Cloud takes pools from other servers.",
+            }),
+          ),
         [WS_METHODS.usageLimitSourceUpdateAccount]: (input) =>
           usageLimitSources.updateAccount(input),
       });

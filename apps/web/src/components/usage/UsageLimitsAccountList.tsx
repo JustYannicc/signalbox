@@ -93,6 +93,7 @@ export function UsageLimitsAccountList({
   now,
   actions,
   title = "Accounts",
+  emptyText = "No accounts yet.",
 }: {
   readonly pools: readonly LimitPool[];
   readonly now: number;
@@ -100,6 +101,8 @@ export function UsageLimitsAccountList({
   readonly actions?: ReactNode;
   /** The account pool's name when the list shows one pool. */
   readonly title?: string;
+  /** What an empty list says. */
+  readonly emptyText?: string;
 }) {
   if (pools.length === 0 && !actions) return null;
   return (
@@ -117,9 +120,7 @@ export function UsageLimitsAccountList({
         </h2>
         {actions}
       </div>
-      {pools.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No accounts yet.</p>
-      ) : null}
+      {pools.length === 0 ? <p className="text-xs text-muted-foreground">{emptyText}</p> : null}
       {pools.map((pool) => {
         const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
         return (

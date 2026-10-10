@@ -12,6 +12,10 @@ import {
   AccountPoolMoveNativeLoginsInput,
   AccountPoolMoveNativeLoginsResult,
   AccountPoolSetOpenCodeInput,
+  AccountPoolReceiveInput,
+  AccountPoolReceiveResult,
+  AccountPoolMoveToCloudInput,
+  AccountPoolMoveToCloudResult,
 } from "./accountHub.ts"; // signalbox
 import {
   OrchestrationV2SearchThreadError,
@@ -431,6 +435,8 @@ export const WS_METHODS = {
   accountPoolAddApiKey: "accountPool.addApiKey",
   accountPoolMoveNativeLogins: "accountPool.moveNativeLogins",
   accountPoolSetOpenCode: "accountPool.setOpenCode",
+  accountPoolReceive: "accountPool.receive",
+  accountPoolMoveToCloud: "accountPool.moveToCloud",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -721,6 +727,18 @@ const WsAccountPoolMoveNativeLoginsRpc = Rpc.make(WS_METHODS.accountPoolMoveNati
   success: AccountPoolMoveNativeLoginsResult,
   error: AccountPoolRpcFailure,
 });
+/** Served by Signalbox Cloud: a pool ready to take another server's pool. */
+const WsAccountPoolReceiveRpc = Rpc.make(WS_METHODS.accountPoolReceive, {
+  payload: AccountPoolReceiveInput,
+  success: AccountPoolReceiveResult,
+  error: AccountPoolRpcFailure,
+});
+/** Served by a self-hosted server: moves one of its pools into the cloud pool a link names. */
+const WsAccountPoolMoveToCloudRpc = Rpc.make(WS_METHODS.accountPoolMoveToCloud, {
+  payload: AccountPoolMoveToCloudInput,
+  success: AccountPoolMoveToCloudResult,
+  error: AccountPoolRpcFailure,
+});
 
 /** Pool and hub-account RPCs. */
 const ACCOUNT_POOL_RPCS = [
@@ -735,6 +753,8 @@ const ACCOUNT_POOL_RPCS = [
   WsAccountPoolAddApiKeyRpc,
   WsAccountPoolMoveNativeLoginsRpc,
   WsAccountPoolSetOpenCodeRpc,
+  WsAccountPoolReceiveRpc,
+  WsAccountPoolMoveToCloudRpc,
 ] as const;
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {

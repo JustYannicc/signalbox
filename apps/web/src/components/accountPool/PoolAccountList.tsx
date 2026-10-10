@@ -102,13 +102,18 @@ export function PoolAccountList({
           title={group.title}
           pools={only(pools, group.include)}
           now={now}
+          {...(group.own?.pool.backing.mode === "cloud"
+            ? { emptyText: "Its accounts are in Signalbox Cloud." }
+            : {})}
           actions={
             group.own ? (
               <span className="flex items-center gap-1.5">
-                <AddHubAccountMenu
-                  environmentId={group.own.environmentId}
-                  poolId={group.own.pool.id}
-                />
+                {group.own.pool.backing.mode === "cloud" ? null : (
+                  <AddHubAccountMenu
+                    environmentId={group.own.environmentId}
+                    poolId={group.own.pool.id}
+                  />
+                )}
                 <PoolActionsMenu environmentId={group.own.environmentId} pool={group.own.pool} />
               </span>
             ) : undefined
