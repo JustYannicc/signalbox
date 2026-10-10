@@ -186,6 +186,17 @@ Deleting a pool removes its providers from the model picker, and threads on it s
 accounts Signalbox keeps for it are removed; a pool that keeps its logins in your CLIProxyAPI leaves
 them there.
 
+### Move a pool to Signalbox Cloud
+
+While you're signed in to Signalbox Cloud, a pool on your own server can move there: choose **Move
+to Signalbox Cloud** in the pool's menu. Its accounts move to a cloud pool with the same name (your
+personal pool joins your cloud Personal pool) and leave your server, so only the cloud refreshes
+them. The pool stays in your server's model picker, and threads on it keep running, through the
+cloud. Manage its accounts in Signalbox Cloud from then on.
+
+Signalbox Cloud pools take Claude and ChatGPT accounts for now. A pool that also holds API keys or
+other accounts can't move until you remove them from it.
+
 ## Connect a CLIProxyAPI hub
 
 To see the accounts of a CLIProxyAPI hub you run yourself, open **Settings → Providers → Usage

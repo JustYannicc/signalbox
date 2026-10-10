@@ -137,6 +137,37 @@ describe("buildPoolOverviews", () => {
     ]);
   });
 
+  it("takes a pool in Signalbox Cloud as available while its provider is signed in", () => {
+    const signedIn = (
+      instanceId: string,
+      driver: string,
+      status: "authenticated" | "unauthenticated",
+    ) => ({ ...provider(instanceId, driver), auth: { status } }) as ServerProvider;
+    const [moved] = buildPoolOverviews({
+      pools: [{ ...pool("work", "Work"), backing: { mode: "cloud" } }],
+      instances: {
+        claude_hub_work: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { setupMode: "hub", poolId: "work" },
+        },
+        codex_hub_work: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { setupMode: "hub", poolId: "work" },
+        },
+      },
+      providers: [
+        signedIn("claude_hub_work", "claudeAgent", "authenticated"),
+        signedIn("codex_hub_work", "codex", "unauthenticated"),
+      ],
+      sources: [],
+      now: 0,
+    });
+    expect(moved!.providers.map((entry) => [entry.providerInstanceId, entry.available])).toEqual([
+      ["claude_hub_work", true],
+      ["codex_hub_work", false],
+    ]);
+  });
+
   it("marks a provider with no working account unavailable", () => {
     const codex = overviews[0]!.providers[1]!;
     expect(codex).toMatchObject({ available: false, usage: [] });

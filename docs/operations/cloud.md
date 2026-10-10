@@ -180,6 +180,14 @@ accounts in its object-store backend, which is served from the pool object's
 own SQLite through a host only that container can reach. A pool connected to
 an admin's own CLIProxyAPI never starts a container.
 
+A self-hosted server that moved a pool here keeps a pool link (`pool/poolLink.ts`,
+`/api/pool-link`): a token naming the pool's object plus a secret only that
+object checks. It acts as the admin who made it, so it stops working when they
+lose their grant. It takes accounts for ten minutes after it's made, and its
+`/v1/*` is the pool's model API, which that server's harnesses use instead of
+their own hub. It doesn't go through the ModelGateway yet; fold it in with #150
+and #158.
+
 `wrangler dev` and `wrangler deploy` build the image with Docker, so local
 development needs Docker running. Containers need the Cloudflare account on the
 Workers Paid plan; on any other plan every deploy fails at
