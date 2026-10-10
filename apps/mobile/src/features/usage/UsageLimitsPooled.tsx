@@ -177,9 +177,16 @@ function PoolWindowSummary({
               </Text>
               <View className="flex-row items-center gap-1">
                 {resetsIn ? (
-                  <Text className="text-xs tabular-nums text-foreground-muted">
-                    {resetsIn.replace("resets in ", "↻ ")}
-                  </Text>
+                  <>
+                    <SymbolView
+                      name="arrow.clockwise"
+                      size={12}
+                      tintColorClassName="accent-foreground-muted"
+                    />
+                    <Text className="text-xs tabular-nums text-foreground-muted">
+                      {resetsIn.replace("resets in ", "")}
+                    </Text>
+                  </>
                 ) : null}
                 {credits ? (
                   <>
