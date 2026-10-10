@@ -1,4 +1,5 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
+import { POOL_INSTANCE_KINDS } from "@t3tools/contracts/accountHub";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -64,22 +65,49 @@ const harnessByInstance = new Map(
   HARNESS_PROVIDERS.map((provider) => [provider.instanceId, provider]),
 );
 
+/** The pool instance kinds whose accounts a cloud harness can run on. */
+export const CLOUD_POOL_KINDS = ["claude", "codex"] as const;
+export type CloudPoolKind = (typeof CLOUD_POOL_KINDS)[number];
+
+const harnessByPoolKind = new Map(
+  CLOUD_POOL_KINDS.map((kind) => [
+    kind,
+    HARNESS_PROVIDERS.find((provider) => provider.driver === POOL_INSTANCE_KINDS[kind].driver)!,
+  ]),
+);
+
+/** A pool's instance (`claude_hub`, `codex_hub_<poolId>`) runs on its kind's harness. */
+const POOL_INSTANCE_PATTERN = /^(claude|codex)_hub(?:_[a-z0-9-]{1,40})?$/u;
+
+const harnessFor = (instanceId: ProviderInstanceId) => {
+  const kind = POOL_INSTANCE_PATTERN.exec(instanceId)?.[1] as CloudPoolKind | undefined;
+  return harnessByInstance.get(instanceId) ?? (kind ? harnessByPoolKind.get(kind) : undefined);
+};
+
 /** Whether runs on this instance go to a Runner rather than the thread's own object. */
 export const isHarnessInstance = (instanceId: ProviderInstanceId) =>
-  harnessByInstance.has(instanceId);
+  harnessFor(instanceId) !== undefined;
 
 /** The ModelGateway provider a harness instance calls; undefined for anything else. */
 export const gatewayProviderFor = (instanceId: ProviderInstanceId) =>
-  harnessByInstance.get(instanceId)?.gatewayProvider;
+  harnessFor(instanceId)?.gatewayProvider;
 
 /** The driver behind an instance; anything unknown is scripted, the only in-object provider. */
 export const driverFor = (instanceId: ProviderInstanceId): ProviderDriverKind =>
-  harnessByInstance.get(instanceId)?.driver ?? SCRIPTED_DRIVER;
+  harnessFor(instanceId)?.driver ?? SCRIPTED_DRIVER;
 
-const harnessServerProvider = (provider: HarnessProvider, checkedAt: string): ServerProvider => ({
-  instanceId: provider.instanceId,
+const harnessServerProvider = (
+  provider: HarnessProvider,
+  checkedAt: string,
+  instance: {
+    readonly instanceId: ProviderInstanceId;
+    readonly displayName: string;
+    readonly auth?: ServerProvider["auth"];
+  } = provider,
+): ServerProvider => ({
+  instanceId: instance.instanceId,
   driver: provider.driver,
-  displayName: provider.displayName,
+  displayName: instance.displayName,
   badgeLabel: "Preview",
   showInteractionModeToggle: false,
   supportsConversationRollback: false,
@@ -88,7 +116,7 @@ const harnessServerProvider = (provider: HarnessProvider, checkedAt: string): Se
   installed: true,
   version: null,
   status: "ready",
-  auth: { status: "authenticated" },
+  auth: instance.auth ?? { status: "authenticated" },
   checkedAt,
   availability: "available",
   models: provider.models.map((model): ServerProviderModel => ({
@@ -124,3 +152,21 @@ export const cloudProviderInstances = (harnesses: boolean) =>
         ])
       : []),
   ]);
+
+/**
+ * A pool's instance of `kind`, offered whether or not the cloud has a machine
+ * backend: accounts sign in through the pool, not a machine. Signed out until
+ * the pool holds an account of that kind.
+ */
+export const poolServerProvider = (input: {
+  readonly kind: CloudPoolKind;
+  readonly instanceId: ProviderInstanceId;
+  readonly displayName: string;
+  readonly signedIn: boolean;
+  readonly checkedAt: string;
+}): ServerProvider =>
+  harnessServerProvider(harnessByPoolKind.get(input.kind)!, input.checkedAt, {
+    instanceId: input.instanceId,
+    displayName: input.displayName,
+    auth: { status: input.signedIn ? "authenticated" : "unauthenticated" },
+  });

@@ -18,13 +18,36 @@ import { SettingsRow } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
+/** True for the address a provider's sign-in ends on: it carries the code to hand back. */
+function isCallbackAddress(text: string) {
+  try {
+    return new URL(text).searchParams.has("code");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A tab opened during the click, so the browser lets it through; the sign-in
+ * page loads into it once the hub has its address.
+ */
+function openPendingTab(account: string) {
+  const tab = window.open("", "_blank");
+  if (!tab) return null;
+  tab.opener = null;
+  tab.document.title = `${account} sign-in`;
+  tab.document.body.textContent = `Opening the ${account} sign-in page…`;
+  return tab;
+}
+
 /**
  * Signs one more account into a hub instance. Every sign-in adds an account,
  * so there is no signed-in state here, only "add another".
  *
  * When the environment runs on this machine the redirect lands on it
  * directly. From another device the provider redirects to a localhost page
- * that cannot load, and the user pastes that address back here.
+ * that cannot load, and the user pastes that address back here; pasting it
+ * finishes the sign-in.
  */
 export function HubSignIn({
   environmentId,
@@ -54,8 +77,8 @@ export function HubSignIn({
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
 
-  const active =
-    auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
+  const verifying = auth?.phase === "verifying";
+  const active = auth?.phase === "starting" || auth?.phase === "waiting" || verifying;
   const interaction =
     auth?.interaction?.type === "browser" || auth?.interaction?.type === "deviceCode"
       ? auth.interaction
@@ -69,9 +92,12 @@ export function HubSignIn({
   const receiving = useRef<string | null>(null);
   // Only a sign-in started here opens the browser; one from another device or tab does not.
   const startedHere = useRef(false);
+  const pendingTab = useRef<Window | null>(null);
+  const openedUrl = useRef<string | null>(null);
 
+  /** Whether the command went through. */
   async function run(command: () => Promise<AtomCommandResult<unknown, unknown>>) {
-    if (pendingRef.current) return;
+    if (pendingRef.current) return false;
     pendingRef.current = true;
     setPending(true);
     setError(null);
@@ -83,7 +109,13 @@ export function HubSignIn({
     }
     pendingRef.current = false;
     setPending(false);
+    return result?._tag === "Success";
   }
+
+  const closePendingTab = () => {
+    pendingTab.current?.close();
+    pendingTab.current = null;
+  };
 
   const finishOnThisComputer = useEffectEvent((url: string, flow: string) => {
     if (!desktopReceive || !startedHere.current || receiving.current === url) return;
@@ -101,6 +133,48 @@ export function HubSignIn({
         setError("Could not finish sign-in on this computer. Paste the page's address below.");
       });
   });
+  const openSignInPage = useEffectEvent((url: string) => {
+    if (!startedHere.current || openedUrl.current === url) return;
+    openedUrl.current = url;
+    const tab = pendingTab.current;
+    pendingTab.current = null;
+    if (tab && !tab.closed) {
+      tab.location.href = url;
+      return;
+    }
+    void ensureLocalApi()
+      .shell.openExternal(url)
+      .catch(() => setError("Could not open the browser. Use Open sign-in page."));
+  });
+  const signInUrl = active ? (interaction?.url ?? null) : null;
+  useEffect(() => {
+    if (signInUrl) openSignInPage(signInUrl);
+  }, [signInUrl]);
+  // A sign-in that ends, or never gets going, leaves no blank tab behind; a later one
+  // from another device opens nothing here.
+  const endedFlow = active ? null : `${auth?.phase}:${flowId}`;
+  useEffect(() => {
+    if (endedFlow === null) return;
+    startedHere.current = false;
+    pendingTab.current?.close();
+    pendingTab.current = null;
+  }, [endedFlow]);
+  // Leaving takes the paste box and the desktop catch with it, so a sign-in started
+  // here ends too, instead of holding the pool's container awake for nothing.
+  const abandon = useEffectEvent(() => {
+    pendingTab.current?.close();
+    if (!startedHere.current || !active || !flowId) return;
+    void cancel({ environmentId, input: { instanceId, flowId } });
+  });
+  useEffect(() => abandon, []);
+
+  const finish = (address: string) => {
+    if (!flowId || !address) return;
+    void run(() =>
+      complete({ environmentId, input: { instanceId, flowId, callbackUrl: address } }),
+    );
+  };
+
   const interactionUrl = active && acceptsCallback ? (interaction?.url ?? null) : null;
   useEffect(() => {
     if (!interactionUrl || !flowId) return;
@@ -120,7 +194,7 @@ export function HubSignIn({
         ? `Open the sign-in page and enter this code to ${methodId ? "sign in to" : "add"} the ${account} account.`
         : desktopReceive || !acceptsCallback
           ? `Finish signing in to ${account} in your browser.`
-          : `Sign in to ${account} in your browser. If it ends on a page that cannot load, copy that page's address and paste it below.`
+          : `Sign in to ${account} in the new tab. When it ends on a page that won't load, copy that page's address and paste it below.`
     : auth?.phase === "failed"
       ? (auth.message ?? "Sign-in failed. Try again.")
       : methodId
@@ -179,6 +253,8 @@ export function HubSignIn({
                 disabled={disabled || pending || !auth}
                 onClick={() => {
                   startedHere.current = true;
+                  openedUrl.current = null;
+                  if (!window.desktopBridge) pendingTab.current = openPendingTab(account);
                   void run(() =>
                     start({
                       environmentId,
@@ -190,7 +266,9 @@ export function HubSignIn({
                         ...(methodId ? { methodId } : {}),
                       },
                     }),
-                  );
+                  ).then((started) => {
+                    if (!started) closePendingTab();
+                  });
                 }}
               >
                 {auth?.phase === "failed"
@@ -219,18 +297,13 @@ export function HubSignIn({
         </div>
       ) : null}
       {/* Offered locally too: the redirect only reaches the hub when the browser runs beside it. */}
-      {active && acceptsCallback && flowId ? (
+      {/* Gone while the account is checked: there is nothing left to hand back. */}
+      {active && acceptsCallback && flowId && !verifying ? (
         <form
           className="flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!callbackUrl.trim()) return;
-            void run(() =>
-              complete({
-                environmentId,
-                input: { instanceId, flowId, callbackUrl: callbackUrl.trim() },
-              }),
-            );
+            finish(callbackUrl.trim());
           }}
         >
           <Input
@@ -241,6 +314,13 @@ export function HubSignIn({
             className="min-w-0 flex-1"
             value={callbackUrl}
             onChange={(event) => setPasted({ flowId, value: event.target.value })}
+            onPaste={(event) => {
+              const text = event.clipboardData.getData("text").trim();
+              if (!isCallbackAddress(text)) return;
+              event.preventDefault();
+              setPasted({ flowId, value: text });
+              finish(text);
+            }}
           />
           <Button type="submit" size="sm" disabled={pending || !callbackUrl.trim()}>
             Finish sign-in

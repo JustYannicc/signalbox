@@ -20,12 +20,14 @@ import * as GitHub from "../github/GitHub.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as Platform from "../platform.ts";
+import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { serveConnection } from "./connection.ts";
+import * as PoolSignIns from "./PoolSignIns.ts";
 import {
   CONNECTION_HEADER,
   decodeConnectionInfo,
@@ -39,6 +41,7 @@ import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
+import * as UserPools from "./UserPools.ts";
 import * as UserSections from "./UserSections.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
@@ -66,6 +69,7 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.Git
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
+  readonly POOLS: PoolDirectory.PoolObjectNamespace;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -115,11 +119,12 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           UserShell.layer,
           CloudThreadService.layer,
           UserSections.layer,
+          PoolSignIns.layer,
           drives.services,
           GitHubConnection.layer,
         ),
       ),
-      Layer.provideMerge(ThreadContexts.layer),
+      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
       Layer.provideMerge(
         GitHub.layer(GitHub.gitHubAppConfig(env), GitHub.gitHubEndpoints(env)).pipe(
           Layer.provide(FetchHttpClient.layer),
@@ -129,9 +134,12 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives)),
       Layer.provideMerge(drives.store),
       Layer.provideMerge(
-        ThreadDirectory.layerDurableObjects(env.THREADS, {
-          localWorkerd: env.LOCAL_WORKERD === "1",
-        }),
+        Layer.mergeAll(
+          ThreadDirectory.layerDurableObjects(env.THREADS, {
+            localWorkerd: env.LOCAL_WORKERD === "1",
+          }),
+          PoolDirectory.layerDurableObjects(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
+        ),
       ),
       Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
     ),

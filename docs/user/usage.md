@@ -129,6 +129,9 @@ Gemini, OpenRouter, Cursor, or another OpenAI-compatible API), and paste the key
 the pool's logins of the same provider: an Anthropic key and a Claude subscription in one pool both
 take Claude conversations. Keys never report usage limits, and their menu only offers **Remove**.
 
+In Signalbox Cloud, pools take Claude and ChatGPT sign-ins for now. API keys, imported accounts,
+Cursor and OpenCode come later, and Limits lists each account without its usage bars.
+
 In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
 cannot load; copy that page's full address and paste it into Signalbox to finish.
 

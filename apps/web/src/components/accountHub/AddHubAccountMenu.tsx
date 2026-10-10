@@ -1,12 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
-import { useNavigate } from "@tanstack/react-router";
-import { KeyRoundIcon, PlusIcon, Settings2Icon } from "lucide-react";
+import { KeyRoundIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import { usePoolFeatures } from "../../state/accountPools";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { AddHubAccountDialog } from "./AddHubAccountDialog";
 import { AddPoolApiKeyDialog } from "./AddPoolApiKeyDialog";
 import { HUB_INSTANCES, type HubAccountKind } from "./hubInstances";
@@ -19,8 +19,9 @@ export function AddHubAccountMenu({
   readonly environmentId: EnvironmentId;
   readonly poolId?: string;
 }) {
-  const navigate = useNavigate();
+  const can = usePoolFeatures(environmentId);
   const [adding, setAdding] = useState<HubAccountKind | "api-key" | null>(null);
+  const close = () => setAdding(null);
   return (
     <>
       <Menu>
@@ -29,7 +30,7 @@ export function AddHubAccountMenu({
           Add account
         </MenuTrigger>
         <MenuPopup align="end">
-          {(Object.keys(HUB_INSTANCES) as HubAccountKind[]).map((kind) => (
+          {(Object.keys(HUB_INSTANCES) as HubAccountKind[]).filter(can).map((kind) => (
             <MenuItem key={kind} onClick={() => setAdding(kind)}>
               <ProviderInstanceIcon
                 driverKind={HUB_INSTANCES[kind].driver}
@@ -40,29 +41,22 @@ export function AddHubAccountMenu({
               {HUB_INSTANCES[kind].account}
             </MenuItem>
           ))}
-          <MenuItem onClick={() => setAdding("api-key")}>
-            <KeyRoundIcon aria-hidden />
-            API key
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem onClick={() => void navigate({ to: "/settings/pools" })}>
-            <Settings2Icon aria-hidden />
-            Manage pools
-          </MenuItem>
+          {can("api-key") ? (
+            <MenuItem onClick={() => setAdding("api-key")}>
+              <KeyRoundIcon aria-hidden />
+              API key
+            </MenuItem>
+          ) : null}
         </MenuPopup>
       </Menu>
       {adding === "api-key" ? (
-        <AddPoolApiKeyDialog
-          environmentId={environmentId}
-          poolId={poolId}
-          onClose={() => setAdding(null)}
-        />
+        <AddPoolApiKeyDialog environmentId={environmentId} poolId={poolId} onClose={close} />
       ) : adding ? (
         <AddHubAccountDialog
           environmentId={environmentId}
           kind={adding}
           poolId={poolId}
-          onClose={() => setAdding(null)}
+          onClose={close}
         />
       ) : null}
     </>

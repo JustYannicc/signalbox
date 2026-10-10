@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { AccountPool, AccountPoolOverview } from "@t3tools/contracts/accountHub";
+import type { AccountPool, AccountPoolOverview, PoolFeature } from "@t3tools/contracts/accountHub";
 
+import { useServerConfigs } from "./entities";
 import { useEnvironment } from "./environments";
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
@@ -24,6 +25,17 @@ export function useAccountPools(environmentId: EnvironmentId | null | undefined)
       : null,
   );
   return query.data ?? NO_POOLS;
+}
+
+/** A pool's name, once its environment has listed it. */
+export function usePoolName(environmentId: EnvironmentId | null | undefined, poolId: string) {
+  return useAccountPools(environmentId).find((pool) => pool.id === poolId)?.name;
+}
+
+/** Whether this environment's pools can do that; servers that don't say can do everything. */
+export function usePoolFeatures(environmentId: EnvironmentId) {
+  const features = useServerConfigs().get(environmentId)?.environment.capabilities.poolFeatures;
+  return (feature: PoolFeature) => !features || features.includes(feature);
 }
 
 /** Every pool's overview in an environment, kept live; any session may read it. Empty until it connects. */

@@ -1,11 +1,16 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { PERSONAL_POOL_ID, poolIdForSourceId } from "@t3tools/contracts/accountHub";
+import {
+  type AccountPool,
+  PERSONAL_POOL_ID,
+  poolIdForSourceId,
+} from "@t3tools/contracts/accountHub";
 import type { LimitAccount, LimitPool } from "@t3tools/shared/usageLimits";
 
 import { useAccountPools } from "../../state/accountPools";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { AddHubAccountMenu } from "../accountHub/AddHubAccountMenu";
 import { UsageLimitsAccountList } from "../usage/UsageLimitsAccountList";
+import { NewPoolButton, PoolActionsMenu } from "./PoolActions";
 
 /** Keeps the accounts of each provider pool that `include` accepts, dropping providers left empty. */
 const only = (pools: readonly LimitPool[], include: (account: LimitAccount) => boolean) =>
@@ -16,8 +21,8 @@ const only = (pools: readonly LimitPool[], include: (account: LimitAccount) => b
 interface Group {
   readonly key: string;
   readonly title: string;
-  /** Where Add account puts new accounts; absent for pools on other environments. */
-  readonly add?: { readonly environmentId: EnvironmentId; readonly poolId: string };
+  /** The pool on the environment being looked at; absent for pools only other environments report. */
+  readonly own?: { readonly environmentId: EnvironmentId; readonly pool: AccountPool };
   readonly include: (account: LimitAccount) => boolean;
 }
 
@@ -29,10 +34,10 @@ const accountPoolKey = (account: LimitAccount) => {
 };
 
 /**
- * Accounts on Limits, by account pool and then provider. With one pool it is
- * a single list; with several, each pool gets its own heading. Accounts are
- * added on the environment being looked at (with several selected, the
- * primary one); pools on other environments are listed under their own names.
+ * Accounts on Limits, by account pool and then provider. Each pool of the
+ * environment being looked at (with several selected, the primary one) gets
+ * its heading with Add account and its own actions, and New pool follows
+ * them; pools on other environments are listed under their own names.
  */
 export function PoolAccountList({
   pools,
@@ -57,7 +62,7 @@ export function PoolAccountList({
     ? accountPools.map((pool) => ({
         key: poolKey(environmentId, pool.id),
         title: pool.name,
-        add: { environmentId, poolId: pool.id },
+        own: { environmentId, pool },
         include: (account) => accountPoolKey(account) === poolKey(environmentId, pool.id),
       }))
     : [];
@@ -75,18 +80,15 @@ export function PoolAccountList({
   }
   const outside = only(pools, (account) => accountPoolKey(account) === null);
 
-  if (groups.length <= 1 && outside.length === 0) {
-    const group = groups[0];
+  // Not connected yet, or nothing pooled anywhere: just the accounts.
+  if (groups.length === 0) {
     return (
       <UsageLimitsAccountList
         pools={pools}
         now={now}
         actions={
           environmentId ? (
-            <AddHubAccountMenu
-              environmentId={environmentId}
-              poolId={group?.add?.poolId ?? PERSONAL_POOL_ID}
-            />
+            <AddHubAccountMenu environmentId={environmentId} poolId={PERSONAL_POOL_ID} />
           ) : undefined
         }
       />
@@ -101,17 +103,26 @@ export function PoolAccountList({
           pools={only(pools, group.include)}
           now={now}
           actions={
-            group.add ? (
-              <AddHubAccountMenu
-                environmentId={group.add.environmentId}
-                poolId={group.add.poolId}
-              />
+            group.own ? (
+              <span className="flex items-center gap-1.5">
+                <AddHubAccountMenu
+                  environmentId={group.own.environmentId}
+                  poolId={group.own.pool.id}
+                />
+                <PoolActionsMenu environmentId={group.own.environmentId} pool={group.own.pool} />
+              </span>
             ) : undefined
           }
         />
       ))}
       {outside.length > 0 ? (
         <UsageLimitsAccountList title="Not in a pool" pools={outside} now={now} />
+      ) : null}
+      {/* Only once the environment has listed its pools, so only for those who manage them. */}
+      {environmentId && accountPools.length > 0 ? (
+        <div>
+          <NewPoolButton environmentId={environmentId} variant="ghost-muted" />
+        </div>
       ) : null}
     </div>
   );

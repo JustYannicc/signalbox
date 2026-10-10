@@ -174,10 +174,16 @@ jobs:
           BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
           GITHUB_APP_CLIENT_SECRET: ${{ secrets.GITHUB_APP_CLIENT_SECRET }}
 
+      # Containers have no command-line name, so the preview deploys from a
+      # copy of the config with its own container application name.
+      - name: Name the preview's containers
+        working-directory: apps/cloud
+        run: sed "s/PR_NUMBER/$PR_NUMBER/g" wrangler.jsonc > wrangler.preview.jsonc
+
       - name: Deploy
         working-directory: apps/cloud
         run: >-
-          ./node_modules/.bin/wrangler deploy --env preview
+          ./node_modules/.bin/wrangler deploy --config wrangler.preview.jsonc --env preview
           --name "signalbox-cloud-pr-$PR_NUMBER"
           --domain "preview-$PR_NUMBER.signalbox.run"
           --secrets-file "$RUNNER_TEMP/cloud-secrets.json"
@@ -199,7 +205,7 @@ jobs:
 
       - *cleanup
 
-  # Deletes the preview's Worker, domain and Durable Objects.
+  # Deletes the preview's Worker, domain, Durable Objects and containers.
   delete_preview:
     name: Delete preview cloud
     if: >-
@@ -222,3 +228,10 @@ jobs:
         run: |
           npx --yes wrangler@4 delete --name "signalbox-cloud-pr-$PR_NUMBER" --force \
             || echo "No preview Worker to delete."
+
+      - name: Delete preview containers
+        run: |
+          id="$(npx --yes wrangler@4 containers list --json \
+            | jq -r --arg name "signalbox-cloud-pr-$PR_NUMBER-pools" '.[] | select(.name == $name) | .id' \
+            || true)"
+          if [ -n "$id" ]; then npx --yes wrangler@4 containers delete "$id"; else echo "No preview containers to delete."; fi

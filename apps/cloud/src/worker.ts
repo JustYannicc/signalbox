@@ -4,6 +4,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
+import type { PoolObjectEnv } from "./pool/PoolObject.ts";
 import { labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
 import { routePreview } from "./thread/preview/previewRoute.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
@@ -14,6 +15,7 @@ import { forwardSessionRequest, isSessionApiPath } from "./thread/session/sessio
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 
+export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
 export { DriveObject } from "./drive/DriveObject.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
@@ -25,7 +27,7 @@ export { UserObject } from "./user/UserObject.ts";
  * list the Vite dev proxy forwards) reach this Worker.
  */
 
-export interface CloudEnv extends UserObjectEnv, ThreadObjectEnv {
+export interface CloudEnv extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv {
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
 }
 
