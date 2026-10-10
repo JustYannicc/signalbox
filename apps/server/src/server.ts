@@ -28,6 +28,7 @@ import * as AutomationPush from "./workflows/AutomationPush.ts"; // signalbox: a
 import * as AutomationSkill from "./workflows/skill/installSkill.ts"; // signalbox: automations
 import * as AccountHub from "./accountHub/AccountHub.ts"; // signalbox: account hub
 import * as AccountPools from "./accountHub/AccountPools.ts"; // signalbox
+import * as PoolUsageHistory from "./accountHub/PoolUsageHistory.ts"; // signalbox: pool usage history
 import * as Sections from "./sections/Sections.ts"; // signalbox: sections
 import * as SectionsStore from "./sections/SectionsStore.ts"; // signalbox: sections
 import * as ProductAnalytics from "./signalbox/analytics/ProductAnalytics.ts"; // signalbox: analytics
@@ -538,6 +539,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   WorkloadAnalytics.layer, // signalbox: workload analytics
+  PoolUsageHistory.layer, // signalbox: pool usage history
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,

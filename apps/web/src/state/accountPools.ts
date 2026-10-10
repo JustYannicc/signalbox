@@ -1,5 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { AccountPool, AccountPoolOverview, PoolFeature } from "@t3tools/contracts/accountHub";
+import type {
+  AccountPool,
+  AccountPoolAdvice,
+  AccountPoolOverview,
+  PoolFeature,
+} from "@t3tools/contracts/accountHub";
 
 import { useServerConfigs } from "./entities";
 import { useEnvironment } from "./environments";
@@ -8,6 +13,7 @@ import { serverEnvironment } from "./server";
 
 const NO_POOLS: ReadonlyArray<AccountPool> = [];
 const NO_VIEWS: ReadonlyArray<AccountPoolOverview> = [];
+const NO_ADVICE: ReadonlyArray<AccountPoolAdvice> = [];
 
 function useConnectedEnvironmentId(environmentId: EnvironmentId | null | undefined) {
   const environment = useEnvironment(environmentId ?? null);
@@ -33,8 +39,11 @@ export function usePoolName(environmentId: EnvironmentId | null | undefined, poo
 }
 
 /** Whether this environment's pools can do that; servers that don't say can do everything. */
-export function usePoolFeatures(environmentId: EnvironmentId) {
-  const features = useServerConfigs().get(environmentId)?.environment.capabilities.poolFeatures;
+export function usePoolFeatures(environmentId: EnvironmentId | null | undefined) {
+  const configs = useServerConfigs();
+  const features = environmentId
+    ? configs.get(environmentId)?.environment.capabilities.poolFeatures
+    : undefined;
   return (feature: PoolFeature) => !features || features.includes(feature);
 }
 
@@ -47,4 +56,19 @@ export function usePoolViews(environmentId: EnvironmentId | null | undefined) {
       : null,
   );
   return query.data ?? NO_VIEWS;
+}
+
+/**
+ * What each pool's usage history advises, kept live; for pool admins. Empty
+ * until it connects, and on environments whose pools don't keep history.
+ */
+export function usePoolAdvice(environmentId: EnvironmentId | null | undefined) {
+  const connectedId = useConnectedEnvironmentId(environmentId);
+  const advises = usePoolFeatures(connectedId)("advice");
+  const query = useEnvironmentQuery(
+    connectedId && advises
+      ? serverEnvironment.accountPoolAdviceLive({ environmentId: connectedId, input: {} })
+      : null,
+  );
+  return query.data ?? NO_ADVICE;
 }

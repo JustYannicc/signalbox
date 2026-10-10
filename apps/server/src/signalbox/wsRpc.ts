@@ -14,6 +14,7 @@ import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as AccountPools from "../accountHub/AccountPools.ts";
 import type { AccountHubError } from "../accountHub/accountHubManagement.ts";
 import * as PoolAccess from "../accountHub/poolAccess.ts";
+import * as PoolUsageHistory from "../accountHub/PoolUsageHistory.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { makeSectionsWsHandlers } from "../sections/rpc.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
@@ -46,6 +47,7 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
       const automations = yield* WorkflowEngine.WorkflowEngine;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const pools = yield* AccountPools.AccountPools;
+      const poolUsage = yield* PoolUsageHistory.PoolUsageHistory;
       const sections = yield* makeSectionsWsHandlers;
       return SignalboxWsRpcGroup.of({
         ...analytics,
@@ -56,6 +58,7 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
         ...signalboxPreviewsWsHandlers,
         [WS_METHODS.accountPoolSubscribe]: () => pools.changes,
         [WS_METHODS.accountPoolSubscribeViews]: () => PoolAccess.poolViews,
+        [WS_METHODS.accountPoolSubscribeAdvice]: () => poolUsage.advice,
         [WS_METHODS.accountPoolCreate]: (input) =>
           pools.create(input).pipe(Effect.mapError(hubFailure)),
         [WS_METHODS.accountPoolRename]: (input) =>
