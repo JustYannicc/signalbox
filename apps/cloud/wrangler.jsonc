@@ -37,9 +37,10 @@
   ],
   // Containers bound to Durable Objects. One entry per class: each object of
   // `class_name` gets its own container from `image`, started and stopped
-  // through `ctx.container` in that object (see src/pool/PoolContainer.ts).
-  // `max_instances` caps how many run at once across all objects of the class.
-  // Not inherited by `env`, so dev and the preview repeat it.
+  // through `ctx.container` in that object (see src/pool/PoolContainer.ts and
+  // src/thread/runner/cloudflare/). `max_instances` caps how many run at once
+  // across all objects of the class. Not inherited by `env`, so dev and the
+  // preview repeat it (dev without threads, which run on the local Runner host).
   "containers": [
     {
       // A managed pool's CLIProxyAPI. Small on purpose: every pool has one.
@@ -47,6 +48,18 @@
       "image": "./containers/cliproxyapi/Dockerfile",
       "instance_type": "lite",
       "max_instances": 10,
+      "constraints": { "jurisdiction": "eu" },
+    },
+    {
+      // A thread's light machine (src/thread/runner/cloudflare/): the Runner
+      // image built from the same commit as this Worker, so the two always
+      // speak the same protocol. `vp run runner:bundle` in apps/server writes
+      // the build context first.
+      "class_name": "ThreadObject",
+      "image": "../server/src/signalbox/runner/image/Dockerfile",
+      "image_build_context": "../server/dist/runner",
+      "instance_type": "basic",
+      "max_instances": 50,
       "constraints": { "jurisdiction": "eu" },
     },
   ],
@@ -120,6 +133,15 @@
           "class_name": "PoolObject",
           "image": "./containers/cliproxyapi/Dockerfile",
           "instance_type": "lite",
+          "max_instances": 2,
+          "constraints": { "jurisdiction": "eu" },
+        },
+        {
+          "name": "signalbox-cloud-pr-PR_NUMBER-threads",
+          "class_name": "ThreadObject",
+          "image": "../server/src/signalbox/runner/image/Dockerfile",
+          "image_build_context": "../server/dist/runner",
+          "instance_type": "basic",
           "max_instances": 2,
           "constraints": { "jurisdiction": "eu" },
         },
