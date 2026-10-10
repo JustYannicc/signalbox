@@ -1,12 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type ProviderInstanceId, defaultInstanceIdForDriver } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../../config.ts";
-import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   ClaudeAdapterV2Driver,
   layerQueryRunner as layerClaudeQueryRunner,
@@ -15,8 +15,8 @@ import {
   CodexAdapterV2Driver,
   layerAppServerClientFactory as layerCodexClientFactory,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import type { ProviderAdapterV2Shape } from "../../orchestration-v2/ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { type HarnessStderr, makeHarnessStderr } from "./harnessStderr.ts";
 import {
   claudeSettings,
@@ -56,7 +56,7 @@ const layerAdapterServices = (
     layerCodexClientFactory,
     IdAllocator.layer,
     ServerConfig.layerTest(home, home),
-    Layer.succeed(HostProcessEnvironment, environment),
+    Layer.succeed(HostProcess.Environment, environment),
   ).pipe(
     Layer.provideMerge(
       Layer.succeed(
@@ -89,7 +89,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   const stderr = makeHarnessStderr();
   yield* prepareMachine(layout, machine.gatewayUrl, machine.contextMcpUrl ?? null);
   const environment = harnessEnvironment(
-    yield* HostProcessEnvironment,
+    yield* HostProcess.Environment,
     layout,
     machine.gatewayUrl,
     machine.caches,
@@ -117,9 +117,9 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
     layout,
     stderr,
     environment,
-    adapters: new Map<ProviderInstanceId, ProviderAdapterV2Shape>([
+    adapters: new Map<ProviderInstanceId, ProviderAdapterV2["Service"]>([
       [claude.instanceId, claude],
       [codex.instanceId, codex],
-    ]) as ReadonlyMap<ProviderInstanceId, ProviderAdapterV2Shape>,
+    ]) as ReadonlyMap<ProviderInstanceId, ProviderAdapterV2["Service"]>,
   };
 });

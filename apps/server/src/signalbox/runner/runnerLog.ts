@@ -2,7 +2,7 @@ import type { RunnerItem, RunnerLogLevel } from "@signalbox/runner-protocol/Runn
 import type { RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 
-import { makeProviderFailure } from "../../orchestration-v2/ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 /** Longest line the Runner puts in a turn's diagnostic record. */
 const MAX_LOG_MESSAGE_LENGTH = 2_000;

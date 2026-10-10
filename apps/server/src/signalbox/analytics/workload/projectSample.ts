@@ -6,7 +6,7 @@
  *
  * @module projectSample
  */
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -80,7 +80,7 @@ export const sampleProject = Effect.fn("projectSample.sampleProject")(function* 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
 
   const lockfiles = yield* Effect.forEach(Object.entries(LOCKFILES), ([file, kind]) =>
     fs.exists(path.join(root, file)).pipe(

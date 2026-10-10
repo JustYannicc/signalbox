@@ -35,6 +35,10 @@
       "types": "./src/signalboxAnalytics.ts",
       "import": "./src/signalboxAnalytics.ts"
     },
+    "./poolSettings": {
+      "types": "./src/poolSettings.ts",
+      "import": "./src/poolSettings.ts"
+    },
     "./signalboxContexts": {
       "types": "./src/signalboxContexts.ts",
       "import": "./src/signalboxContexts.ts"

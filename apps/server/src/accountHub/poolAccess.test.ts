@@ -33,9 +33,9 @@ const settings = {
   ...DEFAULT_SERVER_SETTINGS,
   providerInstances: {
     claude_hub_team: { driver: "claudeAgent", config: { setupMode: "hub", poolId: "team" } },
+    // No pool id: the personal pool.
+    codex: { driver: "codex", config: { setupMode: "hub" } },
   },
-  // A legacy entry runs on the personal pool with no `providerInstances` entry.
-  providers: { ...DEFAULT_SERVER_SETTINGS.providers, codex: { setupMode: "hub" } },
 } as unknown as ServerSettings;
 
 const usageLimits = {

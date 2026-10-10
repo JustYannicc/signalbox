@@ -18,7 +18,7 @@ import type { ReactNode } from "react";
 import { ensureLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { providerClients } from "../settings/providerDriverMeta";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
@@ -103,7 +103,7 @@ function PoolSection({
   readonly index: number;
 }) {
   const color = barColor(pool.driver);
-  const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
+  const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   const summary = summarizeLimitPool(pool);
   const resetWindowDetails = summary.nextReset

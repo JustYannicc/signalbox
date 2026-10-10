@@ -20,7 +20,7 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import type { PoolApiKeyProvider, PoolInstanceKind } from "@t3tools/contracts/accountHub";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJwt } from "jose";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -35,7 +35,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { claudeAccountConfigPath } from "../provider/claudeResetCredits.ts";
 import { makeCodexChatGptAuth } from "../provider/CodexChatGptAuth.ts";
-import { makeCursorCredentialStore } from "../provider/CursorCredentialStore.ts";
+import { makeCursorCredentialStore } from "@t3tools/provider-cursor/server/credentialStore";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { AccountHubError } from "./accountHubManagement.ts";
@@ -158,7 +158,7 @@ const readClaude = (instance: ProviderInstanceConfig) =>
       path.join(resolvedDir, ".credentials.json"),
       decodeClaudeCredentials,
     );
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const oauth = Option.isSome(fromFile)
       ? fromFile
       : platform === "darwin"

@@ -6,7 +6,8 @@ import {
   ProviderInstanceId,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -40,11 +41,12 @@ const instance = (
 
 const testLayer = (baseDir: string) =>
   Layer.mergeAll(
+    TestProviderHost.layer(),
     ServerSecretStore.layer.pipe(
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
     ),
     FetchHttpClient.layer,
-    Layer.succeed(HostProcessPlatform, "linux"),
+    Layer.succeed(HostProcess.Platform, "linux"),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("test-environment")),
     }),

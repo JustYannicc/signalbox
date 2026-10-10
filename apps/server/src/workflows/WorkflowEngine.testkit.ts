@@ -11,7 +11,7 @@ import {
   type AutomationDefaults,
   type AutomationSaveResult,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -284,7 +284,7 @@ const makeDependencies = (options: EngineOptions) =>
   ).pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
-      Layer.succeed(HostProcessEnvironment, options.environment ?? NodeProcess.env),
+      Layer.succeed(HostProcess.Environment, options.environment ?? NodeProcess.env),
     ),
   );
 

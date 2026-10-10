@@ -49,7 +49,11 @@ const Source = Schema.String.annotate({
     "The full TypeScript file. Read automation_reference before writing one if you haven't yet.",
 });
 
-const tool = <Name extends string, P extends Schema.Struct.Fields, S extends Schema.Top>(
+const tool = <
+  Name extends string,
+  P extends Schema.Struct.Fields = {},
+  S extends Schema.Top = Schema.Top,
+>(
   name: Name,
   options: {
     title: string;
