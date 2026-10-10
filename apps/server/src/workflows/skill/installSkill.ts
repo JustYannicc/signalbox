@@ -1,4 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -53,7 +53,7 @@ const install = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
   const processes = yield* ProcessRunner.ProcessRunner;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
 
   const files = skillFiles();
   const digest = yield* crypto.digest(

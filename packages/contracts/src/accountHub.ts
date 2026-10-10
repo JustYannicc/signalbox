@@ -6,7 +6,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -161,6 +161,40 @@ export const AccountPoolOverview = Schema.Struct({
 export type AccountPoolOverview = typeof AccountPoolOverview.Type;
 
 /**
+ * What a pool's usage history says about one provider it runs, at the pace
+ * of the last week: when every account runs out, and how many more accounts
+ * of that provider would carry it through the next week. For pool admins:
+ * it rests on how many accounts the pool has.
+ */
+/** Less than a day of history says nothing about a pool's daily rhythm, so there's no forecast yet. */
+export const POOL_ADVICE_MIN_HISTORY_HOURS = 24;
+
+export const AccountPoolProviderAdvice = Schema.Struct({
+  driver: ProviderDriverKind,
+  /** Hours of history behind it; under a day there is no forecast yet. */
+  historyHours: NonNegativeInt,
+  /** The first moment in the next week when no account has quota left. */
+  runsOut: Schema.optional(
+    Schema.Struct({
+      at: IsoDateTime,
+      /** The window that runs out, as the provider labels it. */
+      window: Schema.String,
+      /** When a reset next hands an account back, if one does. */
+      backAt: Schema.optional(IsoDateTime),
+    }),
+  ),
+  /** Accounts of this provider to add so it doesn't run out; 0 when it already lasts. */
+  addAccounts: NonNegativeInt,
+});
+export type AccountPoolProviderAdvice = typeof AccountPoolProviderAdvice.Type;
+
+export const AccountPoolAdvice = Schema.Struct({
+  poolId: AccountPoolId,
+  providers: Schema.Array(AccountPoolProviderAdvice),
+});
+export type AccountPoolAdvice = typeof AccountPoolAdvice.Type;
+
+/**
  * API keys a pool takes. The hub routes every kind but Cursor, whose key is
  * handed to the pool's Cursor provider per turn instead.
  */
@@ -304,7 +338,8 @@ export type PoolInstanceKind = keyof typeof POOL_INSTANCE_KINDS;
 
 /**
  * What a pool can do: sign in an account of one of these kinds, take an API
- * key, import accounts from a CLIProxyAPI, or run OpenCode.
+ * key, import accounts from a CLIProxyAPI, run OpenCode, or advise from its
+ * usage history.
  */
 export const PoolFeature = Schema.Literals([
   "codex",
@@ -315,6 +350,7 @@ export const PoolFeature = Schema.Literals([
   "api-key",
   "import",
   "opencode",
+  "advice",
 ]);
 export type PoolFeature = typeof PoolFeature.Type;
 

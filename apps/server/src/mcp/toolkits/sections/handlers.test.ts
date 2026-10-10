@@ -52,7 +52,7 @@ it.effect("rejects section reads without orchestration capability before reading
     const result = yield* server.callTool({ name: "t3_section_list", arguments: {} });
     expect(declaredFailure(result)).toMatchObject({ code: "capability_denied" });
   }).pipe(
-    Effect.provide(testLayer),
+    Effect.provide(testLayer.pipe(Layer.provide(Layer.mock(Sections.Sections)({})))),
     Effect.provideService(McpSchema.McpServerClient, client),
     Effect.provideService(McpInvocationContext.McpInvocationContext, {
       ...scope,
@@ -78,11 +78,12 @@ it.effect("allows section reads but rejects organization changes below full acce
     expect(declaredFailure(moved)).toMatchObject({ code: "capability_denied" });
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        testLayer,
-        Layer.mock(Sections.Sections)({
-          snapshot: Effect.succeed({ revision: 0, sections: [], projectPlacements: [] }),
-        }),
+      testLayer.pipe(
+        Layer.provide(
+          Layer.mock(Sections.Sections)({
+            snapshot: Effect.succeed({ revision: 0, sections: [], projectPlacements: [] }),
+          }),
+        ),
       ),
     ),
     Effect.provideService(McpSchema.McpServerClient, client),
@@ -104,16 +105,17 @@ it.effect("keeps storage causes out of MCP failures", () =>
     });
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        testLayer,
-        Layer.mock(Sections.Sections)({
-          snapshot: Effect.fail(
-            new SectionStorageError({
-              operation: "read",
-              cause: new Error("private-database-path"),
-            }),
-          ),
-        }),
+      testLayer.pipe(
+        Layer.provide(
+          Layer.mock(Sections.Sections)({
+            snapshot: Effect.fail(
+              new SectionStorageError({
+                operation: "read",
+                cause: new Error("private-database-path"),
+              }),
+            ),
+          }),
+        ),
       ),
     ),
     Effect.provideService(McpSchema.McpServerClient, client),

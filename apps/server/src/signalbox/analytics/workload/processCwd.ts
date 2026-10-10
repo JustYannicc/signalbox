@@ -5,7 +5,7 @@
  *
  * @module processCwd
  */
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -28,7 +28,7 @@ export const lookupCwds = Effect.fn("processCwd.lookupCwds")(function* (
   pids: ReadonlyArray<number>,
 ) {
   if (pids.length === 0) return new Map<number, string>();
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (platform === "linux") {
     const fs = yield* FileSystem.FileSystem;
     const entries = yield* Effect.forEach(

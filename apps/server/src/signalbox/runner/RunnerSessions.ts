@@ -10,7 +10,7 @@ import type * as Scope from "effect/Scope";
 import type { HttpClient } from "effect/http";
 
 import { CODEX_DRIVER_KIND } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { type ClaudeSessions, makeClaudeSessions } from "./RunnerClaudeSessions.ts";
 import { makeCodexRollouts } from "./RunnerCodexRollouts.ts";
 import { makeSessionClient } from "./RunnerSessionClient.ts";
@@ -45,6 +45,8 @@ export interface RunnerSessions {
   ) => Effect.Effect<void>;
   readonly failures: Queue.Dequeue<string>;
   readonly claude: ClaudeSessions;
+  /** Waits until everything the harness wrote so far is durable, for a machine about to go. */
+  readonly flush: (driver: ProviderDriverKind) => Effect.Effect<void>;
 }
 
 /** Sending that makes no progress for this long stops the turn. */
@@ -112,5 +114,15 @@ export const makeRunnerSessions = Effect.fn("makeRunnerSessions")(function* (inp
         : Effect.void,
     failures,
     claude,
+    flush: (driver) =>
+      Effect.gen(function* () {
+        if (driver === CODEX_DRIVER_KIND) yield* codex.settle(SETTLE_WAIT_MS);
+        yield* outbox.drain(SETTLE_WAIT_MS);
+      }).pipe(
+        Effect.catchTags({
+          SessionNotSavedError: (error) =>
+            Effect.logWarning("leaving before the session is saved", error.message),
+        }),
+      ),
   } satisfies RunnerSessions;
 });

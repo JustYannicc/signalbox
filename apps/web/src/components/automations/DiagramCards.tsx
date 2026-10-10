@@ -90,7 +90,7 @@ function CardButton(props: {
       aria-label={props.label}
       onClick={() => props.onSelect(props.card.id)}
       className={cn(
-        "absolute flex cursor-pointer items-center border bg-card text-left shadow-sm/5 outline-none transition-[border-color,box-shadow,opacity] duration-150 hover:border-foreground/25 focus-visible:ring-2 focus-visible:ring-ring",
+        "absolute flex cursor-pointer items-center border bg-card text-left shadow-sm/5 outline-none transition-[border-color,box-shadow,opacity] duration-150 hover:border-foreground/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         props.className,
       )}
       style={box(props.card)}
@@ -219,7 +219,7 @@ export const DiagramContainer = memo(function DiagramContainer(props: {
         data-workflow-node
         aria-pressed={props.selected}
         onClick={() => props.onSelect(container.id)}
-        className="flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-t-2xl px-3 text-left text-xs outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-t-2xl px-3 text-left text-xs outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate font-medium text-foreground">{container.label}</span>

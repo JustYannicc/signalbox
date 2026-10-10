@@ -13,6 +13,7 @@ export const ACCOUNT_POOL_RPC_SCOPES = {
   [WS_METHODS.usageLimitSourceUpdateAccount]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolSubscribe]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolSubscribeViews]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountPoolSubscribeAdvice]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolCreate]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolRename]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolDelete]: AuthProvidersManageScope,

@@ -1,4 +1,4 @@
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -43,8 +43,8 @@ export interface MachineCaches {
 
 /** OS, libc, architecture and Node's major version (its native module ABI). */
 const machineToolchain = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
-  const arch = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
   const report = process.report?.getReport() as
     | { readonly header?: { readonly glibcVersionRuntime?: string } }
     | undefined;

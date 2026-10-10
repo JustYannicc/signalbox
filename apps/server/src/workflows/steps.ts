@@ -16,7 +16,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Stream from "effect/Stream";
 
-import { subagentResultForRun } from "../orchestration-v2/SubagentProjection.ts";
+import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import {

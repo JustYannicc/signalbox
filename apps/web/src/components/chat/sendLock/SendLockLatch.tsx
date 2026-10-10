@@ -98,7 +98,7 @@ function Latch(props: { lock: ComposerSendLock; children: ReactNode }) {
               onPointerDown={(event) => event.preventDefault()}
               onClick={toggle}
               className={cn(
-                "absolute bottom-full left-1/2 -mb-1.5 flex h-4 w-5 -translate-x-1/2 cursor-pointer items-end justify-center rounded-t-full outline-hidden ring-ring focus-visible:ring-2",
+                "absolute bottom-full left-1/2 -mb-1.5 flex h-4 w-5 -translate-x-1/2 cursor-pointer items-end justify-center rounded-t-full outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
                 latched
                   ? "text-foreground"
                   : "text-muted-foreground opacity-40 group-hover/send-lock:opacity-100 group-focus-within/send-lock:opacity-100 hover:text-foreground",

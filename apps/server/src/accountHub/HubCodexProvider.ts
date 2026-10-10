@@ -34,19 +34,22 @@ import {
   codexContinuationIdentity,
   materializeCodexShadowHome,
 } from "../provider/Drivers/CodexHomeLayout.ts";
-import { withInstanceIdentity } from "../provider/Drivers/instanceIdentity.ts";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { ProviderDriverError } from "../provider/Errors.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
 } from "../provider/CodexProvider.ts";
-import { makeManagedServerProvider } from "../provider/makeManagedServerProvider.ts";
-import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
 import { reauthAccountName, reauthMethods } from "./hubReauth.ts";
 import { runHubLogin, runHubReauth } from "./hubSignIn.ts";
-import type { ProviderDriverCreateInput, ProviderInstance } from "../provider/ProviderDriver.ts";
-import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
+import type {
+  ProviderDriverCreateInput,
+  ProviderInstance,
+} from "@t3tools/provider-core/server/driver";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeCodexTextGeneration } from "../textGeneration/CodexTextGeneration.ts";
 import * as AccountHub from "./AccountHub.ts";
@@ -84,7 +87,7 @@ export const makeHubCodexProvider = Effect.fn("makeHubCodexProvider")(function* 
   const path = yield* Path.Path;
   const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const hostId = `urn:uuid:${yield* environmentIdentity.getEnvironmentId}`;
-  const baseEnvironment = mergeProviderInstanceEnvironment(input.environment);
+  const baseEnvironment = yield* mergeProviderInstanceEnvironment(input.environment);
 
   const homeLayout = yield* resolveManagedCodexHomeLayout(
     serverConfig.stateDir,

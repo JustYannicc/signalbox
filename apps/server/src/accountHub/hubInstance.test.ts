@@ -1,12 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -45,10 +42,11 @@ const poolsLayer = (baseDir: string) =>
     Layer.provide(ServerSecretStore.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
     Layer.provide(NetService.layer),
+    Layer.provide(TestProviderHost.layer()),
     Layer.provide(externalHub),
-    Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
-    Layer.provide(Layer.succeed(HostProcessArchitecture, "arm64")),
-    Layer.provide(Layer.succeed(HostProcessEnvironment, process.env)),
+    Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+    Layer.provide(Layer.succeed(HostProcess.Architecture, "arm64")),
+    Layer.provide(Layer.succeed(HostProcess.Environment, process.env)),
     Layer.provide(
       Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
         getEnvironmentId: Effect.succeed(EnvironmentId.make("test-environment")),

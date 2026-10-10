@@ -75,11 +75,14 @@ export const withObject = <A, E>(
     runner: ThreadRunner.ThreadRunner["Service"],
     context: Context.Context<Layer.Success<ReturnType<typeof layerThreadObject>>>,
   ) => Effect.Effect<A, E>,
-  options: Parameters<typeof layerThreadObject>[2] & { readonly previews?: Previews } = {},
+  options: Parameters<typeof layerThreadObject>[2] & {
+    readonly previews?: Previews;
+    readonly machines?: Parameters<typeof layerThreadObject>[1];
+  } = {},
 ) =>
   Effect.scoped(
     Layer.build(
-      layerThreadObject(filename, undefined, options).pipe(
+      layerThreadObject(filename, options.machines, options).pipe(
         Layer.provide(
           Layer.succeed(ThreadRunner.PreviewHold, {
             held: Effect.sync(() => options.previews?.held ?? false),
@@ -98,17 +101,19 @@ export const withObject = <A, E>(
     ),
   );
 
+/** Launches the Claude thread, in its context's own project unless `projectId` names another. */
 export const launch = (
   engine: ThreadEngine.ThreadEngine["Service"],
   commandId = "launch-1",
   creation: ThreadEngine.ThreadCreation = personal,
+  projectId = ProjectId.make("scratch"),
 ) =>
   engine.launch(
     owner,
     {
       commandId: CommandId.make(commandId),
       threadId,
-      projectId: ProjectId.make("scratch"),
+      projectId,
       title: "Hello Claude",
       modelSelection: claude,
       runtimeMode: "full-access",
@@ -305,7 +310,7 @@ export const turnReport = (
   };
 };
 
-/** Asks for a machine and connects its Runner. Returns the generation. */
+/** Asks for a machine and connects its Runner. Returns the generation, token and class. */
 export const connect = (runner: ThreadRunner.ThreadRunner["Service"]) =>
   Effect.gen(function* () {
     const plan = yield* runner.reconcile;
@@ -313,7 +318,7 @@ export const connect = (runner: ThreadRunner.ThreadRunner["Service"]) =>
     yield* runner.ensured(plan.ensure.generation);
     const welcome = yield* runner.hello(hello(plan.ensure.generation, plan.ensure.token));
     expect(welcome._tag).toBe("welcome");
-    return plan.ensure;
+    return { ...plan.ensure, machineClass: plan.machineClass };
   });
 
 export const liveTurn = (runner: ThreadRunner.ThreadRunner["Service"]) =>

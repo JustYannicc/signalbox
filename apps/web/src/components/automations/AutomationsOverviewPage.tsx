@@ -89,7 +89,7 @@ function NeedsYou() {
                 <li key={entryKey(entry)}>
                   <Link
                     {...automationRoute({ environmentId, automationId: automation.id }, run.id)}
-                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   >
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="truncate text-sm font-medium text-foreground">

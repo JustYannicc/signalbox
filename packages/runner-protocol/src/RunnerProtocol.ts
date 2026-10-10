@@ -177,6 +177,17 @@ export const RunnerItem = Schema.Union([
     message: Schema.String,
   }),
   /**
+   * The light machine cannot do what the turn needs (a build, or it ran out of
+   * memory): the Runner saved the turn's files and session as of now and does
+   * nothing more for it, and the thread continues the run on a heavy machine.
+   * Only a Runner on a light machine sends it.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("machine.outgrown"),
+    runId: RunId,
+    reason: Schema.String,
+  }),
+  /**
    * One event from the provider adapter (upstream's `ProviderAdapterV2Event`),
    * in its JSON encoding. Left opaque here so an adapter event this protocol
    * has never heard of still arrives; the thread decides what it means.
@@ -275,6 +286,14 @@ export const ThreadMessage = Schema.Union([
 export type ThreadMessage = typeof ThreadMessage.Type;
 
 /**
+ * A thread's machine size (#113): `light` runs the harness and its subagents
+ * editing files, `heavy` builds, tests and runs dev servers. A light machine's
+ * Runner moves its turn up (`machine.outgrown`) when the turn needs more.
+ */
+export const MachineClass = Schema.Literals(["light", "heavy"]);
+export type MachineClass = typeof MachineClass.Type;
+
+/**
  * What a thread asks a machine backend for: a Runner for this thread at this
  * generation, holding this token, whose harnesses reach their models through
  * `modelGatewayUrl`. Asking again for the same generation is a no-op; a higher
@@ -285,6 +304,8 @@ export const MachineEnsureRequest = Schema.Struct({
   generation: PositiveInt,
   token: Schema.String,
   modelGatewayUrl: Schema.String,
+  /** The machine's class for this generation. Absent: heavy. */
+  machineClass: Schema.optional(MachineClass),
 });
 
 /** Where the gateway serves each provider's API, under its origin. */

@@ -58,7 +58,7 @@ export function RunLogs(props: { logs: ReadonlyArray<AutomationRunLog> }) {
   const shown = props.logs.slice(hidden).map((log, offset) => ({ log, line: hidden + offset }));
   return (
     <Collapsible>
-      <CollapsibleTrigger className="group flex items-center gap-1.5 self-start rounded-md text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+      <CollapsibleTrigger className="group flex items-center gap-1.5 self-start rounded-md text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         <ChevronRightIcon
           aria-hidden
           className="size-3.5 transition-transform group-data-panel-open:rotate-90"

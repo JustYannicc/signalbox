@@ -1,7 +1,7 @@
 import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
+import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
 import type * as AccountHub from "./AccountHub.ts";
 import type { AccountHubError, AccountHubOAuthProvider } from "./accountHubManagement.ts";
 import { reauthAccountName, reauthMethods, startReauth } from "./hubReauth.ts";

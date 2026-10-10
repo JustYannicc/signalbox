@@ -35,13 +35,14 @@ const KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
 };
 
 /** Accounts the pool routes turns to: paused and signed-out ones take none. */
-const takesTurns = (account: UsageLimitSourceAccount) => !account.disabled && !account.signedOut;
+export const takesTurns = (account: UsageLimitSourceAccount) =>
+  !account.disabled && !account.signedOut;
 
 /**
  * A window as it stands at `now`: one whose reset has passed since the last
  * read is open again, and has no reset ahead.
  */
-const asOf = (window: ServerProviderUsageWindow, now: number): ServerProviderUsageWindow => {
+export const asOf = (window: ServerProviderUsageWindow, now: number): ServerProviderUsageWindow => {
   const { resetsAt, ...rest } = window;
   if (resetsAt === undefined) return window;
   const at = Date.parse(resetsAt);

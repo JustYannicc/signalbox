@@ -6,6 +6,7 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 import * as NetService from "@t3tools/shared/Net";
@@ -42,6 +43,7 @@ const poolsLayer = (baseDir: string) =>
     Layer.provide(ServerSecretStore.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
     Layer.provide(NetService.layer),
+    Layer.provide(TestProviderHost.layer()),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provide(
       Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {

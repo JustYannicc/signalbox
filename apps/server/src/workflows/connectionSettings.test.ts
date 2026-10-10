@@ -1,7 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -61,7 +61,7 @@ const baseLayer = (http: Layer.Layer<HttpClient.HttpClient>, env: NodeJS.Process
     ServerConfig.layerTest(import.meta.dirname, { prefix: "signalbox-connections-test-" }),
   ).pipe(
     Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(Layer.succeed(HostProcessEnvironment, env)),
+    Layer.provideMerge(Layer.succeed(HostProcess.Environment, env)),
   );
 
 function run<A, E>(

@@ -8,9 +8,9 @@ import * as AccountHub from "./AccountHub.ts";
 import * as AccountPools from "./AccountPools.ts";
 
 /**
- * Builds a hub instance on the hub of its pool. Drivers call this from their
- * `setupMode: "hub"` branch, so upstream driver tests that never provide the
- * hub keep compiling and running.
+ * Builds a hub instance on the hub of its pool. `hubDrivers.ts` calls this for
+ * `setupMode: "hub"` instances, outside the drivers, so upstream driver tests
+ * that never provide the hub keep compiling and running.
  */
 export const withAccountHub = <A, E, R>(
   driver: ProviderDriverKind,

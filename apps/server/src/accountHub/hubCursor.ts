@@ -11,16 +11,15 @@
 import type { SdkCredentialStore, StoredSdkCredentials } from "@cursor/sdk";
 import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { Cursor } from "../provider/cursorSdk.ts";
-import { liveProbes as cursorProbes } from "../provider/CursorSdkCatalog.ts";
-import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
+import { Cursor } from "@t3tools/provider-cursor/server/sdk";
+import { liveProbes as cursorProbes } from "@t3tools/provider-cursor/server/CursorSdkCatalog";
+import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
 import type * as AccountHub from "./AccountHub.ts";
 import { AccountHubError, isAccountHubError } from "./accountHubManagement.ts";
 import {
@@ -34,18 +33,6 @@ type Hub = AccountHub.AccountHub["Service"];
 const DEFAULT_BACKEND_URL = "https://api2.cursor.sh";
 
 const decodeCursorFile = Schema.decodeUnknownEffect(Schema.fromJsonString(CursorCredentialFile));
-
-/**
- * The credential store a pool's Cursor instance reads instead of its own.
- * Cursor's driver uses it when present (a `signalbox` hook line).
- */
-export class CursorPoolCredentials extends Context.Service<
-  CursorPoolCredentials,
-  {
-    readonly store: SdkCredentialStore;
-    readonly binding: { readonly owner: "t3"; readonly key: string };
-  }
->()("t3/accountHub/hubCursor/CursorPoolCredentials") {}
 
 /** Saves one Cursor key into the pool, named by its account so adding it again replaces it. */
 export const saveCursorAccount = (

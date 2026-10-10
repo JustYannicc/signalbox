@@ -1,4 +1,4 @@
-import type { MachineEnsureRequest } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { MachineClass, MachineEnsureRequest } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,13 +16,19 @@ import * as Schema from "effect/Schema";
  * up by the next try. Every real machine also has a hard TTL at its provider,
  * so a thread object that is gone for good cannot leak one.
  *
- * Backends, chosen by the Worker's vars:
+ * A thread runs on one of two machine classes (#113, `machineClass.ts`), and
+ * each class has its backend (`MachineBackends`), chosen by the Worker's vars
+ * and bindings:
+ * - `cloudflare`: a Cloudflare Container (`basic`) bound to the thread's own
+ *   object, the light class (`cloudflare/CloudflareMachineBackend.ts`), where
+ *   the object has a container.
  * - `boat` (`MACHINE_BACKEND=boat`): a boat VM per thread, the heavy class
  *   (`boat/BoatMachineBackend.ts`).
  * - `local`: development only, a Runner host on the developer's own machine
- *   (`node apps/server/src/signalbox/runner/main.ts`) at `LOCAL_RUNNER_URL`.
- *   It only counts under `LOCAL_WORKERD`, so a deployed Worker never calls a
- *   URL someone left in its vars.
+ *   (`node apps/server/src/signalbox/runner/main.ts`) at `LOCAL_RUNNER_URL`,
+ *   for both classes. It only counts under `LOCAL_WORKERD`, so a deployed
+ *   Worker never calls a URL someone left in its vars.
+ * A class without a backend of its own runs on the other class's.
  *
  * Machines hold no provider keys, so a backend is only usable together with a
  * ModelGateway (`MODEL_GATEWAY_URL`), which every machine is told about.
@@ -73,7 +79,7 @@ export interface MachineStatus {
 export const WAKE_KINDS = ["cold", "disk_resume", "memory_restore", "warm"] as const;
 export type WakeKind = (typeof WAKE_KINDS)[number];
 
-export const BACKEND_KINDS = ["none", "local", "boat"] as const;
+export const BACKEND_KINDS = ["none", "local", "boat", "cloudflare"] as const;
 
 export interface MachineBackendShape {
   readonly kind: (typeof BACKEND_KINDS)[number];
@@ -82,13 +88,13 @@ export interface MachineBackendShape {
   readonly image: string | null;
   /** How long a requested machine may take until its Runner says hello. */
   readonly connectTimeoutMs: number;
+  /** How long an idle machine stays up for the next message. */
+  readonly idleTailMs: number;
   /**
-   * Brings the machine up with a Runner at `generation`. Done when `actual` is
-   * `running`; until then, ask again.
+   * Brings the machine up with a Runner at `generation`, as `machineClass`.
+   * Done when `actual` is `running`; until then, ask again.
    */
-  readonly ensure: (
-    request: Omit<MachineEnsureRequest, "modelGatewayUrl">,
-  ) => Effect.Effect<MachineStatus, MachineBackendError>;
+  readonly ensure: (request: MachineRequest) => Effect.Effect<MachineStatus, MachineBackendError>;
   /** Stops the machine. Cheap when it already is: no provider call. */
   readonly stop: (threadId: ThreadId) => Effect.Effect<MachineStatus, MachineBackendError>;
   readonly destroy: (threadId: ThreadId) => Effect.Effect<MachineStatus, MachineBackendError>;
@@ -105,9 +111,40 @@ export interface MachineBackendShape {
   readonly pending: Effect.Effect<boolean>;
 }
 
-export class MachineBackend extends Context.Service<MachineBackend, MachineBackendShape>()(
+/**
+ * What the thread's object gives its backends: its own container, where the
+ * deployment binds one, and who to tell when that machine stops on its own.
+ */
+export interface MachineHost {
+  readonly container?: Container | undefined;
+  readonly onExit?: (detail: string, generation: number) => void;
+}
+
+/** What a thread asks a backend for. */
+export interface MachineRequest extends Omit<MachineEnsureRequest, "modelGatewayUrl"> {
+  readonly machineClass: MachineClass;
+}
+
+/**
+ * The backend each machine class runs on; both may be the same one. A thread
+ * that changes class stops its machine on the other backend first.
+ */
+export interface MachineBackends {
+  readonly light: MachineBackendShape;
+  readonly heavy: MachineBackendShape;
+}
+
+export class MachineBackend extends Context.Service<MachineBackend, MachineBackends>()(
   "@signalbox/cloud/thread/runner/MachineBackend",
 ) {}
+
+/** Whether `status` says the machine is gone or going. */
+export const isStopped = (status: MachineStatus) =>
+  status.actual === "none" || status.actual === "stopped" || status.actual === "stopping";
+
+/** The distinct backends, for what a thread does on all of them (stop, pending). */
+export const distinctBackends = (backends: MachineBackends): ReadonlyArray<MachineBackendShape> =>
+  backends.light === backends.heavy ? [backends.light] : [backends.light, backends.heavy];
 
 /**
  * The thread's machine as a backend recorded it. Written before every provider
@@ -141,3 +178,6 @@ export class MachineRecords extends Context.Service<
 
 /** Default connect timeout: a machine that is already there and only starts a Runner. */
 export const CONNECT_TIMEOUT_MS = 60_000;
+
+/** The default idle tail (#110: 10 minutes, the heavy class). */
+export const IDLE_TAIL_MS = 10 * 60_000;

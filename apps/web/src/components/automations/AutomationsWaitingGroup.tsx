@@ -43,7 +43,7 @@ const WaitingAutomation = memo(function WaitingAutomation(props: { entry: Automa
     <li className="flex flex-col gap-2 rounded-lg border border-warning/32 bg-warning-surface p-2.5">
       <button
         type="button"
-        className="-m-1 flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md p-1 text-left text-sm font-medium text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring"
+        className="-m-1 flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md p-1 text-left text-sm font-medium text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={() => openAutomation({ environmentId, automationId: automation.id }, firstRunId)}
       >
         <StatusIcon status="needsYou" className="size-3.5" />

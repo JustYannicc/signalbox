@@ -1,3 +1,4 @@
+import { MachineClass } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
@@ -70,6 +71,10 @@ export interface MachineLease {
   /** When the machine last ran out of work. */
   readonly idleSince: number | null;
   readonly ackedSequence: number;
+  /** The class of machine this generation asked for (`runner/machineClass.ts`). Absent: heavy. */
+  readonly machineClass?: MachineClass | undefined;
+  /** The thread outgrew the light class, so every machine from now on is heavy. Kept across leases. */
+  readonly movedUp?: boolean | undefined;
 }
 
 export const NO_MACHINE: MachineLease = {
@@ -222,6 +227,8 @@ const MachineLeaseJson = Schema.fromJsonString(
     disconnectedAt: Schema.NullOr(Schema.Number),
     idleSince: Schema.NullOr(Schema.Number),
     ackedSequence: Schema.Number,
+    machineClass: Schema.optional(MachineClass),
+    movedUp: Schema.optional(Schema.Boolean),
   }),
 );
 const encodeMachine = Schema.encodeSync(MachineLeaseJson);

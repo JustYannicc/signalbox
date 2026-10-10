@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import { CommandResolutionCache, resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
@@ -22,7 +22,7 @@ export const findPackageRunner = (candidates: ReadonlyArray<PackageRunnerCandida
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const exe = (name: string) => (platform === "win32" ? `${name}.cmd` : name);
     for (const candidate of candidates) {
       if (candidate.besideNode) {

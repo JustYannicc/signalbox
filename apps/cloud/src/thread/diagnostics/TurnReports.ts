@@ -7,7 +7,6 @@ import * as Layer from "effect/Layer";
 
 import { isHarnessInstance } from "../providerCatalog.ts";
 import { isLiveRun } from "../runLifecycle.ts";
-import { MachineBackend } from "../runner/MachineBackend.ts";
 import * as ThreadStore from "../ThreadStore.ts";
 import { CloudAnalytics } from "./CloudAnalytics.ts";
 import { DiagnosticsStore } from "./DiagnosticsStore.ts";
@@ -66,7 +65,6 @@ const runsAfter = (projection: Projection, through: number) =>
 const make = Effect.gen(function* () {
   const store = yield* DiagnosticsStore;
   const threads = yield* ThreadStore.ThreadStore;
-  const backend = yield* MachineBackend;
   const analytics = yield* CloudAnalytics;
   const crypto = yield* Crypto.Crypto;
   const withCrypto = <A>(effect: Effect.Effect<A, never, Crypto.Crypto>) =>
@@ -93,14 +91,17 @@ const make = Effect.gen(function* () {
       const generations = diagnostics?.generations ?? [];
       const from = epochMs(run.requestedAt) ?? 0;
       const to = (epochMs(run.completedAt) ?? Number.MAX_SAFE_INTEGER) + FINALIZE_GRACE_MS;
+      const sessions = yield* store.sessionsIn(generations);
       return {
         diagnostics,
+        // The machine that ran the turn last: a run that moved up ended on the heavy one.
+        backend: sessions.at(-1)?.backend ?? null,
         record: turnRecord({
           projection,
           run,
           traceId: diagnostics?.traceId ?? (yield* withCrypto(traceIdOf(run.id))),
           diagnostics,
-          sessions: yield* store.sessionsIn(generations),
+          sessions,
           log: yield* store.logFor({ runId: run.id, generations, from, to }),
         }),
       };
@@ -119,7 +120,7 @@ const make = Effect.gen(function* () {
             wakeAt = due;
             break;
           }
-          const { diagnostics, record } = yield* recordOf(projection, run);
+          const { diagnostics, backend, record } = yield* recordOf(projection, run);
           if (diagnostics !== null) {
             yield* Effect.logInfo("cloud turn diagnostic", record).pipe(
               Effect.annotateLogs({ traceId: record.traceId, runId: run.id }),
@@ -135,7 +136,7 @@ const make = Effect.gen(function* () {
                 projection,
                 run,
                 diagnostics,
-                backend: backend.kind === "none" ? null : backend.kind,
+                backend: backend === "none" ? null : backend,
                 threadHash: yield* hashOnce(projection.thread.id),
                 projectHash: yield* hashOnce(projection.thread.projectId),
               }),

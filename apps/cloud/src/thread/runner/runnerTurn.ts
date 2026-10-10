@@ -259,12 +259,17 @@ function itemEvents(
         },
         ctx,
       );
+    // The lease decides what a move means (`ThreadRunner`'s batch).
+    case "machine.outgrown":
+      return [];
   }
 }
 
 /**
  * A batch's events, each item decided against the projection the earlier ones
- * left, and the adapter event types it could not read.
+ * left, and the adapter event types it could not read. A `machine.outgrown`
+ * for the live run ends the batch: the caller moves the run to a heavy
+ * machine (`outgrown` is why), and nothing the light one said after that counts.
  */
 export function runnerBatchEvents(
   projection: Projection,
@@ -273,11 +278,15 @@ export function runnerBatchEvents(
 ): {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly undecodable: ReadonlyArray<string>;
+  readonly outgrown: string | null;
 } {
   const events: Array<OrchestrationV2DomainEvent> = [];
   const undecodable: Array<string> = [];
   let current = projection;
   for (const item of items) {
+    if (item.kind === "machine.outgrown" && harnessRun(current)?.id === item.runId) {
+      return { events, undecodable, outgrown: item.reason };
+    }
     const next = itemEvents(current, item, ctx);
     if (next === "undecodable") {
       undecodable.push(item.kind === "provider" ? String(item.event.type) : item.kind);
@@ -287,5 +296,5 @@ export function runnerBatchEvents(
     events.push(...next);
     current = applyEvents(current, next) ?? current;
   }
-  return { events, undecodable };
+  return { events, undecodable, outgrown: null };
 }

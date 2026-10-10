@@ -13,25 +13,29 @@ import {
   ProviderDriverKind,
   type AntigravitySettings,
   type ClaudeSettings,
-  type CursorSettings,
-  type GrokSettings,
-  type OpenCodeSettings,
   type ProviderInstanceEnvironment,
 } from "@t3tools/contracts";
+import type { CursorSettings } from "@t3tools/provider-cursor/settings";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
+import type { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { HttpClient } from "effect/http";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import { ProviderDriverError } from "../provider/Errors.ts";
-import type { ProviderDriverCreateInput, ProviderInstance } from "../provider/ProviderDriver.ts";
+import type {
+  ProviderDriverCreateInput,
+  ProviderInstance,
+} from "@t3tools/provider-core/server/driver";
 import * as AccountHub from "./AccountHub.ts";
 import type { AccountHubEndpoint, AccountHubOAuthProvider } from "./accountHubManagement.ts";
-import * as CursorAgentSdk from "../orchestration-v2/Adapters/CursorAgentSdk.ts";
-import { CursorPoolCredentials, makeCursorPool, makeCursorPoolSignIn } from "./hubCursor.ts";
+import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
+import { CursorPoolCredentials } from "@t3tools/provider-cursor/server/poolCredentials";
+import { makeCursorPool, makeCursorPoolSignIn } from "./hubCursor.ts";
 import {
   OPENCODE_POOL_KEY_VARIABLE,
   configuredModels,

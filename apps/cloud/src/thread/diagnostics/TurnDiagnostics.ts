@@ -1,4 +1,5 @@
 import type {
+  MachineClass,
   MachineUsage,
   RunnerHello,
   RunnerItem,
@@ -42,6 +43,8 @@ export class TurnDiagnostics extends Context.Service<
       readonly generation: number;
       readonly run: Run;
       readonly now: number;
+      /** The class asked for, which picks the backend. */
+      readonly machineClass: MachineClass;
     }) => Effect.Effect<void>;
     /** What the backend answered, or why it failed. Repeats of the same answer are not logged. */
     readonly machineReported: (input: {
@@ -136,7 +139,7 @@ const attach = (diagnostics: RunDiagnostics, generation: number): RunDiagnostics
 
 const make = Effect.gen(function* () {
   const store = yield* DiagnosticsStore;
-  const backend = yield* MachineBackend;
+  const backends = yield* MachineBackend;
   const crypto = yield* Crypto.Crypto;
   /** The last answer logged per generation and operation, so a polled backend logs once per change. */
   const lastReported = new Map<string, string>();
@@ -178,8 +181,10 @@ const make = Effect.gen(function* () {
     generation,
     run,
     now,
+    machineClass,
   }) =>
     Effect.gen(function* () {
+      const backend = backends[machineClass];
       yield* store.saveRun(attach(yield* runOf(run), generation));
       yield* store.saveSession({
         generation,
@@ -206,7 +211,7 @@ const make = Effect.gen(function* () {
         generation,
         runId: run.id,
         source: "thread",
-        message: `Asked the ${backend.kind} backend for machine generation ${generation}${
+        message: `Asked the ${backend.kind} backend for ${machineClass} machine generation ${generation}${
           backend.image === null ? "" : ` running ${backend.image}`
         }.`,
       });
