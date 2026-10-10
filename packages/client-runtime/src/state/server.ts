@@ -1170,6 +1170,11 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:account-pool-views:live",
       tag: WS_METHODS.accountPoolSubscribeViews,
     }),
+    // What each pool's usage history advises; for pool admins.
+    accountPoolAdviceLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:account-pool-advice:live",
+      tag: WS_METHODS.accountPoolSubscribeAdvice,
+    }),
     createAccountPool: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:create-account-pool",
       tag: WS_METHODS.accountPoolCreate,

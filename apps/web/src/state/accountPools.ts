@@ -1,5 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { AccountPool, AccountPoolOverview, PoolFeature } from "@t3tools/contracts/accountHub";
+import type {
+  AccountPool,
+  AccountPoolAdvice,
+  AccountPoolOverview,
+  PoolFeature,
+} from "@t3tools/contracts/accountHub";
 
 import { useServerConfigs } from "./entities";
 import { useEnvironment } from "./environments";
@@ -8,6 +13,7 @@ import { serverEnvironment } from "./server";
 
 const NO_POOLS: ReadonlyArray<AccountPool> = [];
 const NO_VIEWS: ReadonlyArray<AccountPoolOverview> = [];
+const NO_ADVICE: ReadonlyArray<AccountPoolAdvice> = [];
 
 function useConnectedEnvironmentId(environmentId: EnvironmentId | null | undefined) {
   const environment = useEnvironment(environmentId ?? null);
@@ -47,4 +53,23 @@ export function usePoolViews(environmentId: EnvironmentId | null | undefined) {
       : null,
   );
   return query.data ?? NO_VIEWS;
+}
+
+/**
+ * What each pool's usage history advises, kept live; for pool admins. Empty
+ * until it connects, and on environments whose pools don't keep history.
+ */
+export function usePoolAdvice(environmentId: EnvironmentId | null | undefined) {
+  const connectedId = useConnectedEnvironmentId(environmentId);
+  const configs = useServerConfigs();
+  const features = connectedId
+    ? configs.get(connectedId)?.environment.capabilities.poolFeatures
+    : undefined;
+  const advises = !features || features.includes("advice");
+  const query = useEnvironmentQuery(
+    connectedId && advises
+      ? serverEnvironment.accountPoolAdviceLive({ environmentId: connectedId, input: {} })
+      : null,
+  );
+  return query.data ?? NO_ADVICE;
 }

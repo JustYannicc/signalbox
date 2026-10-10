@@ -155,6 +155,11 @@ Each account appears on **Usage → Limits** under its pool. Use its menu to pau
 it. ChatGPT accounts added with Sign in with ChatGPT link to ChatGPT's usage page instead of showing
 bars.
 
+Each pool remembers its last 35 days of use. After a day of it, Limits says under each provider when
+that provider will run out at the pool's current pace and how many more accounts would keep it going
+for the week, or that it lasts the week. The pace follows the pool's own daily and weekly rhythm,
+at the level of the last seven days. Signalbox Cloud pools don't keep this history yet.
+
 When an account's login expires, it shows **Signed out**, Usage gets a red dot, and Signalbox tells
 you. Choose **Sign in again** on the account and sign in with the same account; it keeps its place in
 the pool. Using the same account directly in Codex or Claude Code as well can sign it out of the

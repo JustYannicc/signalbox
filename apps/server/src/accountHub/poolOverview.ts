@@ -35,7 +35,8 @@ const KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
 };
 
 /** Accounts the pool routes turns to: paused and signed-out ones take none. */
-const takesTurns = (account: UsageLimitSourceAccount) => !account.disabled && !account.signedOut;
+export const takesTurns = (account: UsageLimitSourceAccount) =>
+  !account.disabled && !account.signedOut;
 
 /**
  * A window as it stands at `now`: one whose reset has passed since the last
