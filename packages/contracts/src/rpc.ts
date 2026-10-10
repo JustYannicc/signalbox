@@ -2,6 +2,7 @@ import {
   AccountHubImportResult,
   AccountHubRpcError,
   AccountPool,
+  AccountPoolAdvice,
   AccountPoolCreateInput,
   AccountPoolDeleteInput,
   AccountPoolImportInput,
@@ -430,6 +431,7 @@ export const WS_METHODS = {
   usageLimitSourceUpdateAccount: "usageLimitSource.updateAccount",
   accountPoolSubscribe: "accountPool.subscribe",
   accountPoolSubscribeViews: "accountPool.subscribeViews",
+  accountPoolSubscribeAdvice: "accountPool.subscribeAdvice",
   accountPoolCreate: "accountPool.create",
   accountPoolRename: "accountPool.rename",
   accountPoolDelete: "accountPool.delete",
@@ -695,6 +697,13 @@ const WsAccountPoolSubscribeViewsRpc = Rpc.make(WS_METHODS.accountPoolSubscribeV
   error: AccountPoolRpcFailure,
   stream: true,
 });
+/** What each pool's usage history advises, kept live. It rests on account counts, so admins only. */
+const WsAccountPoolSubscribeAdviceRpc = Rpc.make(WS_METHODS.accountPoolSubscribeAdvice, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AccountPoolAdvice),
+  error: AccountPoolRpcFailure,
+  stream: true,
+});
 const WsAccountPoolCreateRpc = Rpc.make(WS_METHODS.accountPoolCreate, {
   payload: AccountPoolCreateInput,
   success: AccountPool,
@@ -738,6 +747,7 @@ const ACCOUNT_POOL_RPCS = [
   WsUsageLimitSourceUpdateAccountRpc,
   WsAccountPoolSubscribeRpc,
   WsAccountPoolSubscribeViewsRpc,
+  WsAccountPoolSubscribeAdviceRpc,
   WsAccountPoolCreateRpc,
   WsAccountPoolRenameRpc,
   WsAccountPoolDeleteRpc,

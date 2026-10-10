@@ -1,3 +1,4 @@
+import type { AccountPoolAdvice } from "@t3tools/contracts/accountHub";
 import {
   displayLimitWindows,
   type LimitAccount,
@@ -7,6 +8,7 @@ import {
 import type { ReactNode } from "react";
 
 import { HubAccountActions } from "../accountHub/HubAccountActions";
+import { PoolAdvice } from "../accountPool/PoolAdvice";
 import { SignInAgainButton } from "../accountHub/SignInAgainButton";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
@@ -93,6 +95,7 @@ export function UsageLimitsAccountList({
   now,
   actions,
   title = "Accounts",
+  advice,
 }: {
   readonly pools: readonly LimitPool[];
   readonly now: number;
@@ -100,6 +103,8 @@ export function UsageLimitsAccountList({
   readonly actions?: ReactNode;
   /** The account pool's name when the list shows one pool. */
   readonly title?: string;
+  /** The pool's advice, shown under each provider it covers. */
+  readonly advice?: AccountPoolAdvice["providers"] | undefined;
 }) {
   if (pools.length === 0 && !actions) return null;
   return (
@@ -122,6 +127,7 @@ export function UsageLimitsAccountList({
       ) : null}
       {pools.map((pool) => {
         const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
+        const providerAdvice = advice?.find((entry) => entry.driver === pool.driver);
         return (
           <section key={pool.driver} aria-label={`${label} accounts`} className="min-w-0">
             <h3 className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
@@ -137,6 +143,11 @@ export function UsageLimitsAccountList({
                 {pool.accounts.length} {pool.accounts.length === 1 ? "account" : "accounts"}
               </span>
             </h3>
+            {providerAdvice ? (
+              <div className="mb-1.5">
+                <PoolAdvice advice={providerAdvice} label={label} now={now} />
+              </div>
+            ) : null}
             <ul className="divide-y divide-border/60 border-y border-border/60">
               {pool.accounts.map((account) => (
                 <AccountRow key={account.key} account={account} pool={pool} now={now} />

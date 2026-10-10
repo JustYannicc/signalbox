@@ -95,6 +95,7 @@ describe("poolRole", () => {
       WS_METHODS.providerConsumeResetCredit,
       WS_METHODS.usageLimitSourceUpdateAccount,
       WS_METHODS.accountPoolSubscribe,
+      WS_METHODS.accountPoolSubscribeAdvice,
       WS_METHODS.accountPoolCreate,
       WS_METHODS.accountPoolRename,
       WS_METHODS.accountPoolDelete,
