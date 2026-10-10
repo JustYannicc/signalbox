@@ -860,6 +860,7 @@ describe("RunnerTurns", () => {
           settle: (_kind, event) => Effect.sync(() => void log.push(`settle ${event.type}`)),
           failures,
           claude: undefined as never,
+          flush: (kind) => Effect.sync(() => void log.push(`flush ${kind}`)),
         } satisfies RunnerSessions,
       }));
 
@@ -988,5 +989,121 @@ describe("RunnerTurns", () => {
         }),
       ),
     );
+
+    describe("on a light machine", () => {
+      const command = (status: "running" | "completed", input: string, exitCode?: number) => {
+        const now = DateTime.makeUnsafe(0);
+        return {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: TurnItemId.make(`item-${input}`),
+            threadId,
+            runId: RunId.make("run-1"),
+            nodeId: null,
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make("native-1"),
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status,
+            title: null,
+            startedAt: now,
+            completedAt: status === "completed" ? now : null,
+            updatedAt: now,
+            type: "command_execution",
+            input,
+            ...(exitCode === undefined ? {} : { exitCode }),
+          },
+        } as ProviderAdapterV2Event;
+      };
+
+      /** A light machine's turn with a drive, and everything it did in order. */
+      const lightTurn = (machineClass: "light" | "heavy") =>
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const log: Array<string> = [];
+          const { sessions } = yield* makeFakeSessions(log);
+          const drive = {
+            prepare: () => Effect.void,
+            autosave: Effect.sync(() => void log.push("autosave")),
+            flush: Effect.sync(() => void log.push("drive flush")),
+          } as unknown as RunnerDrive;
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) =>
+              Effect.sync(
+                () =>
+                  void log.push(
+                    item.kind === "provider" ? `emit ${String(item.event.type)}` : item.kind,
+                  ),
+              ),
+            openDrive: () => Effect.succeed(drive),
+            sessions,
+            machineClass,
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          yield* turns.start({
+            turn: turnFor(1),
+            modelToken: "token-1",
+            drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: null },
+            sessions: { token: "sbs1.t.1" },
+          });
+          yield* settle;
+          log.length = 0;
+          return { fake, log };
+        });
+
+      it.effect("saves everything, then hands a build to a heavy machine and drops the rest", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { fake, log } = yield* lightTurn("light");
+            yield* Queue.offer(fake.events, command("running", "sed -n 1,5p notes.md"));
+            yield* Queue.offer(fake.events, command("running", "/bin/bash -lc 'npm run build'"));
+            yield* Queue.offer(fake.events, command("completed", "npm run build"));
+            yield* Queue.offer(fake.events, turnEnded(1));
+            for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+
+            expect(log).toEqual([
+              "settle turn_item.updated",
+              "emit turn_item.updated",
+              "settle turn_item.updated",
+              // The build shows as started, so the thread can report it interrupted.
+              "emit turn_item.updated",
+              "autosave",
+              "drive flush",
+              "flush codex",
+              "machine.outgrown",
+            ]);
+          }),
+        ),
+      );
+
+      it.effect("moves a turn up when a command is killed for memory", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { fake, log } = yield* lightTurn("light");
+            yield* Queue.offer(fake.events, command("completed", "node render.js", 137));
+            for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+            expect(log.at(-1)).toBe("machine.outgrown");
+          }),
+        ),
+      );
+
+      it.effect("never moves a heavy machine's turn", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { fake, log } = yield* lightTurn("heavy");
+            yield* Queue.offer(fake.events, command("running", "npm run build"));
+            for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
+            expect(log).not.toContain("machine.outgrown");
+          }),
+        ),
+      );
+    });
   });
 });
