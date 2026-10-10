@@ -42,7 +42,7 @@ export const takesTurns = (account: UsageLimitSourceAccount) =>
  * A window as it stands at `now`: one whose reset has passed since the last
  * read is open again, and has no reset ahead.
  */
-const asOf = (window: ServerProviderUsageWindow, now: number): ServerProviderUsageWindow => {
+export const asOf = (window: ServerProviderUsageWindow, now: number): ServerProviderUsageWindow => {
   const { resetsAt, ...rest } = window;
   if (resetsAt === undefined) return window;
   const at = Date.parse(resetsAt);

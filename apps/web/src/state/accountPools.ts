@@ -39,8 +39,11 @@ export function usePoolName(environmentId: EnvironmentId | null | undefined, poo
 }
 
 /** Whether this environment's pools can do that; servers that don't say can do everything. */
-export function usePoolFeatures(environmentId: EnvironmentId) {
-  const features = useServerConfigs().get(environmentId)?.environment.capabilities.poolFeatures;
+export function usePoolFeatures(environmentId: EnvironmentId | null | undefined) {
+  const configs = useServerConfigs();
+  const features = environmentId
+    ? configs.get(environmentId)?.environment.capabilities.poolFeatures
+    : undefined;
   return (feature: PoolFeature) => !features || features.includes(feature);
 }
 
@@ -61,11 +64,7 @@ export function usePoolViews(environmentId: EnvironmentId | null | undefined) {
  */
 export function usePoolAdvice(environmentId: EnvironmentId | null | undefined) {
   const connectedId = useConnectedEnvironmentId(environmentId);
-  const configs = useServerConfigs();
-  const features = connectedId
-    ? configs.get(connectedId)?.environment.capabilities.poolFeatures
-    : undefined;
-  const advises = !features || features.includes("advice");
+  const advises = usePoolFeatures(connectedId)("advice");
   const query = useEnvironmentQuery(
     connectedId && advises
       ? serverEnvironment.accountPoolAdviceLive({ environmentId: connectedId, input: {} })

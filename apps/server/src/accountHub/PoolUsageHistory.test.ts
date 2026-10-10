@@ -30,19 +30,19 @@ const pool: AccountPool = {
   personal: false,
 };
 
-/** The team pool's one Claude account with `used` of its weekly window spent. */
-const snapshot = (used: number): ReadonlyArray<UsageLimitSourceSnapshot> => [
+/** The team pool's one Claude account with `used` of its weekly window spent, read at `readAt`. */
+const snapshot = (used: number, readAt = NOW): ReadonlyArray<UsageLimitSourceSnapshot> => [
   {
     id: pool.sourceId,
     kind: "cliproxy",
     label: "Team",
-    checkedAt: iso(NOW),
+    checkedAt: iso(readAt),
     accounts: [
       {
         id: "claude-a.json",
         driver: ProviderDriverKind.make("claudeAgent"),
         usageLimits: {
-          checkedAt: iso(NOW),
+          checkedAt: iso(readAt),
           windows: [
             {
               id: "seven_day",
@@ -123,8 +123,9 @@ it.effect("advises from history recorded before a restart", () =>
       yield* Effect.gen(function* () {
         yield* PoolUsageHistory.PoolUsageHistory;
         for (let hour = 0; hour <= 30; hour++) {
-          yield* TestClock.setTime(start + hour * HOUR_MS);
-          yield* reads.read(snapshot(2 * hour));
+          const readAt = start + hour * HOUR_MS;
+          yield* TestClock.setTime(readAt);
+          yield* reads.read(snapshot(2 * hour, readAt));
         }
       }).pipe(Effect.provide(historyLayer(databasePath, [], reads.changes)), Effect.scoped);
     });

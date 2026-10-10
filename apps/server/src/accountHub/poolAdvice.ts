@@ -14,17 +14,20 @@
  * @module accountHub/poolAdvice
  */
 import type { UsageLimitSourceAccount } from "@t3tools/contracts";
-import type { AccountPoolProviderAdvice } from "@t3tools/contracts/accountHub";
+import {
+  type AccountPoolProviderAdvice,
+  POOL_ADVICE_MIN_HISTORY_HOURS as MIN_HISTORY_HOURS,
+} from "@t3tools/contracts/accountHub";
 import * as DateTime from "effect/DateTime";
 
+import { asOf } from "./poolOverview.ts";
 import { HOUR_MS, type UsageHour, windowDurationMs } from "./poolUsageRecording.ts";
 
 const STEP_MS = 15 * 60_000;
 const HORIZON_MS = 7 * 24 * HOUR_MS;
-const PROFILE_HOURS = 28 * 24;
+/** How far back the pace looks. */
+export const PROFILE_HOURS = 28 * 24;
 const RECENT_HOURS = 7 * 24;
-/** Less than a day of history says nothing about the daily rhythm. */
-export const MIN_HISTORY_HOURS = 24;
 const MAX_ADDED_ACCOUNTS = 64;
 
 const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
@@ -34,13 +37,17 @@ const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
  * when there is less than {@link MIN_HISTORY_HOURS} of it. `history` holds the
  * window's watched hours; the hour under way is left out as unfinished.
  */
+/** The finished hours in the pace's reach; the hour under way doesn't count yet. */
+const watchedHours = <T extends Pick<UsageHour, "hour">>(
+  history: ReadonlyArray<T>,
+  nowHour: number,
+) => history.filter((entry) => entry.hour < nowHour && entry.hour >= nowHour - PROFILE_HOURS);
+
 export function paceFrom(
   history: ReadonlyArray<Pick<UsageHour, "hour" | "consumed">>,
   nowHour: number,
 ): ((hour: number) => number) | null {
-  const watched = history.filter(
-    (entry) => entry.hour < nowHour && entry.hour >= nowHour - PROFILE_HOURS,
-  );
+  const watched = watchedHours(history, nowHour);
   if (watched.length < MIN_HISTORY_HOURS) return null;
   const meanBy = (slot: (hour: number) => number) => {
     const totals = new Map<number, { sum: number; count: number }>();
@@ -100,7 +107,9 @@ export function forecastRunOut(
     }),
   );
   const isOpen = (account: SimWindow[]) => account.every((window) => window.used < 100);
-  for (let at = now; at < now + HORIZON_MS; at += STEP_MS) {
+  // Steps on the quarter hour, so the same state forecasts the same moment on every read.
+  const start = Math.ceil(now / STEP_MS) * STEP_MS;
+  for (let at = start; at < start + HORIZON_MS; at += STEP_MS) {
     for (const account of state) {
       account.forEach((window, index) => {
         const duration = windows[index]!.durationMs;
@@ -142,7 +151,10 @@ export function forecastRunOut(
   return null;
 }
 
-/** Fresh accounts to add before `accounts` last the week; monotone, so a binary search. */
+/**
+ * Fresh accounts to add before `accounts`, which run out, last the week. More
+ * accounts never hurt, so double until enough, then bisect.
+ */
 function accountsToAdd(
   windows: ReadonlyArray<ForecastWindow>,
   accounts: ReadonlyArray<ForecastAccount>,
@@ -154,10 +166,13 @@ function accountsToAdd(
       [...accounts, ...Array.from({ length: added }, () => new Map())],
       now,
     ) === null;
-  if (lasts(0)) return 0;
-  if (!lasts(MAX_ADDED_ACCOUNTS)) return MAX_ADDED_ACCOUNTS;
   let low = 0;
-  let high = MAX_ADDED_ACCOUNTS;
+  let high = 1;
+  while (!lasts(high)) {
+    if (high >= MAX_ADDED_ACCOUNTS) return MAX_ADDED_ACCOUNTS;
+    low = high;
+    high = Math.min(high * 2, MAX_ADDED_ACCOUNTS);
+  }
   while (high - low > 1) {
     const middle = Math.floor((low + high) / 2);
     if (lasts(middle)) high = middle;
@@ -199,11 +214,9 @@ export function advisePool(input: {
       0,
       ...windows.map(
         (window) =>
-          history.filter(
-            (entry) =>
-              entry.windowId === window.id &&
-              entry.hour < nowHour &&
-              entry.hour >= nowHour - PROFILE_HOURS,
+          watchedHours(
+            history.filter((entry) => entry.windowId === window.id),
+            nowHour,
           ).length,
       ),
     );
@@ -213,13 +226,16 @@ export function advisePool(input: {
     const accounts = own.map(
       (account): ForecastAccount =>
         new Map(
-          account.usageLimits.windows.map((window) => {
-            const parsed = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
-            const resetsAt = Number.isFinite(parsed) ? parsed : null;
+          account.usageLimits.windows.map((reported) => {
             // A reset already past has handed the window back.
-            return resetsAt !== null && resetsAt <= now
-              ? [window.id, { used: 0, resetsAt: null }]
-              : [window.id, { used: window.usedPercent, resetsAt }];
+            const window = asOf(reported, now);
+            return [
+              window.id,
+              {
+                used: window.usedPercent,
+                resetsAt: window.resetsAt === undefined ? null : Date.parse(window.resetsAt),
+              },
+            ];
           }),
         ),
     );

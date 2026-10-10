@@ -17,18 +17,19 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as AccountPools from "./AccountPools.ts";
-import { advisePool } from "./poolAdvice.ts";
+import { advisePool, PROFILE_HOURS } from "./poolAdvice.ts";
 import { takesTurns } from "./poolOverview.ts";
 import {
   type AccountWindowState,
@@ -39,8 +40,6 @@ import {
 } from "./poolUsageRecording.ts";
 
 const KEEP_MS = 35 * 24 * HOUR_MS;
-/** Advice reads four weeks back; see `poolAdvice.ts`. */
-const ADVICE_HOURS = 28 * 24;
 /** Without a client polling Limits, pools are still read this often. */
 const READ_EVERY = Duration.minutes(15);
 
@@ -94,8 +93,39 @@ export const make = Effect.gen(function* () {
     ),
   );
   const lastReadAt = yield* Ref.make(0);
-  const recorded = yield* Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown);
+  // Built once per read for every subscriber; none until the first build.
+  const latest = yield* SubscriptionRef.make(Option.none<ReadonlyArray<AccountPoolAdvice>>());
   const lock = yield* Semaphore.make(1);
+
+  const adviceNow = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const sources = yield* usage.current;
+    const rows = yield* sql<UsageHour>`
+      SELECT pool_id AS "poolId", driver, window_id AS "windowId", hour, consumed
+      FROM signalbox_pool_usage_hours
+      WHERE hour >= ${Math.floor(now / HOUR_MS) - PROFILE_HOURS}
+    `;
+    return (yield* pools.list).map((pool): AccountPoolAdvice => ({
+      poolId: pool.id,
+      providers: advisePool({
+        accounts: (sources.find((source) => source.id === pool.sourceId)?.accounts ?? []).filter(
+          takesTurns,
+        ),
+        history: rows.filter((row) => row.poolId === pool.id),
+        now,
+      }),
+    }));
+  });
+  const rebuildAdvice = adviceNow.pipe(
+    Effect.flatMap((advice) =>
+      SubscriptionRef.update(latest, (current) =>
+        Option.isSome(current) && Equal.equals(current.value, advice)
+          ? current
+          : Option.some(advice),
+      ),
+    ),
+    Effect.ignoreCause({ log: true }),
+  );
 
   const record = (sources: ReadonlyArray<UsageLimitSourceSnapshot>) =>
     Effect.gen(function* () {
@@ -105,12 +135,14 @@ export const make = Effect.gen(function* () {
         // A hub that failed to answer lists no accounts; that is no read at all.
         pools: sources.flatMap((source) => {
           const poolId = poolIdForSourceId(source.id);
-          return isAccountPoolSourceId(source.id) && poolId && source.error === undefined
+          return poolId && source.error === undefined
             ? [{ poolId, accounts: source.accounts }]
             : [];
         }),
         now,
       });
+      // No pool answered: nothing to record, and the advice stands.
+      if (read.states.length === 0) return;
       yield* sql.withTransaction(
         Effect.gen(function* () {
           for (const state of read.states) {
@@ -141,7 +173,7 @@ export const make = Effect.gen(function* () {
         return next;
       });
       yield* Ref.set(lastReadAt, now);
-      yield* PubSub.publish(recorded, undefined);
+      yield* rebuildAdvice;
     }).pipe(lock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   /** Drops history past {@link KEEP_MS} and history of pools that are gone. */
@@ -173,6 +205,7 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(lock.withPermits(1), Effect.ignoreCause({ log: true }));
 
+  yield* rebuildAdvice.pipe(Effect.forkScoped);
   yield* usage.streamChanges.pipe(Stream.runForEach(record), Effect.forkScoped);
   yield* pools.listChanges.pipe(
     Stream.runForEach(() => prune),
@@ -187,7 +220,10 @@ export const make = Effect.gen(function* () {
       Effect.andThen(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
-          if (now - (yield* Ref.get(lastReadAt)) >= Duration.toMillis(READ_EVERY)) {
+          const pooled = (yield* usage.current).some(
+            (source) => isAccountPoolSourceId(source.id) && source.accounts.length > 0,
+          );
+          if (pooled && now - (yield* Ref.get(lastReadAt)) >= Duration.toMillis(READ_EVERY)) {
             yield* usage.refresh;
           }
         }),
@@ -195,40 +231,11 @@ export const make = Effect.gen(function* () {
     ),
   ).pipe(Effect.forkScoped);
 
-  const adviceNow = Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const sources = yield* usage.current;
-    const rows = yield* sql<UsageHour>`
-      SELECT pool_id AS "poolId", driver, window_id AS "windowId", hour, consumed
-      FROM signalbox_pool_usage_hours
-      WHERE hour >= ${Math.floor(now / HOUR_MS) - ADVICE_HOURS}
-    `;
-    return (yield* pools.list).map((pool): AccountPoolAdvice => ({
-      poolId: pool.id,
-      providers: advisePool({
-        accounts: (sources.find((source) => source.id === pool.sourceId)?.accounts ?? []).filter(
-          takesTurns,
-        ),
-        history: rows.filter((row) => row.poolId === pool.id),
-        now,
-      }),
-    }));
-  });
-
   return {
-    get advice() {
-      return Stream.unwrap(
-        Effect.gen(function* () {
-          const subscription = yield* PubSub.subscribe(recorded);
-          return Stream.concat(Stream.make(undefined), Stream.fromSubscription(subscription)).pipe(
-            Stream.mapEffect(() => Effect.option(adviceNow)),
-            Stream.filter(Option.isSome),
-            Stream.map((advice) => advice.value),
-            Stream.changesWith((left, right) => JSON.stringify(left) === JSON.stringify(right)),
-          );
-        }),
-      );
-    },
+    advice: SubscriptionRef.changes(latest).pipe(
+      Stream.filter(Option.isSome),
+      Stream.map((advice) => advice.value),
+    ),
   } satisfies PoolUsageHistory["Service"];
 });
 

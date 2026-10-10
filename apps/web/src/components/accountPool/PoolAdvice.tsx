@@ -1,9 +1,8 @@
-import type { AccountPoolProviderAdvice } from "@t3tools/contracts/accountHub";
+import {
+  type AccountPoolProviderAdvice,
+  POOL_ADVICE_MIN_HISTORY_HOURS,
+} from "@t3tools/contracts/accountHub";
 import { formatDuration } from "@t3tools/shared/usageLimits";
-
-import { getDriverOption } from "../settings/providerDriverMeta";
-
-const MIN_HISTORY_HOURS = 24;
 
 /**
  * One provider's line of pool advice, from the server's usage history: when
@@ -12,13 +11,15 @@ const MIN_HISTORY_HOURS = 24;
  */
 export function PoolAdvice({
   advice,
+  label,
   now,
 }: {
   readonly advice: AccountPoolProviderAdvice;
+  /** The provider's name, as its heading shows it. */
+  readonly label: string;
   readonly now: number;
 }) {
-  const label = getDriverOption(advice.driver)?.label ?? String(advice.driver);
-  if (advice.historyHours < MIN_HISTORY_HOURS && !advice.runsOut) {
+  if (advice.historyHours < POOL_ADVICE_MIN_HISTORY_HOURS) {
     return (
       <p className="text-xs text-muted-foreground">
         Learning this pool's pace: advice after a day of use.

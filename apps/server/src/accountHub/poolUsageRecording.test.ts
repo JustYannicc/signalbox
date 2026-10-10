@@ -11,15 +11,18 @@ import {
 const at = (time: string) => Date.parse(`2026-10-05T${time}:00.000Z`);
 const hourOf = (time: string) => Math.floor(at(time) / HOUR_MS);
 
-const account = (window: {
-  readonly used: number;
-  readonly resetsAt?: string;
-  readonly kind?: "session" | "weekly";
-}): UsageLimitSourceAccount => ({
+const account = (
+  time: string,
+  window: {
+    readonly used: number;
+    readonly resetsAt?: string;
+    readonly kind?: "session" | "weekly";
+  },
+): UsageLimitSourceAccount => ({
   id: "claude-a.json",
   driver: ProviderDriverKind.make("claudeAgent"),
   usageLimits: {
-    checkedAt: "2026-10-05T00:00:00.000Z",
+    checkedAt: `2026-10-05T${time}:00.000Z`,
     windows: [
       {
         id: "five_hour",
@@ -34,7 +37,7 @@ const account = (window: {
 
 const read = (
   previous: ReadonlyArray<AccountWindowState>,
-  window: Parameters<typeof account>[0],
+  window: Parameters<typeof account>[1],
   now: string,
 ) =>
   recordRead({
@@ -44,7 +47,7 @@ const read = (
         state,
       ]),
     ),
-    pools: [{ poolId: "team", accounts: [account(window)] }],
+    pools: [{ poolId: "team", accounts: [account(now, window)] }],
     now: at(now),
   });
 
@@ -90,6 +93,27 @@ describe("recordRead", () => {
     // The new five-hour window started at 11:00, so its 15% was all used after then.
     const second = read(first.states, { used: 15, resetsAt: "16:00" }, "12:00");
     expect(consumedByHour(second.hours)).toEqual({ [hourOf("11:00")]: 15 });
+  });
+
+  it("doesn't count a drop without a new reset as use", () => {
+    const first = read([], { used: 80, resetsAt: "14:00" }, "10:00");
+    const second = read(first.states, { used: 79, resetsAt: "14:00" }, "11:00");
+    expect(consumedByHour(second.hours)).toEqual({ [hourOf("10:00")]: 0 });
+  });
+
+  it("skips a read no newer than the last one, such as a republished snapshot", () => {
+    const first = read([], { used: 10, resetsAt: "14:00" }, "10:00");
+    const replay = recordRead({
+      previous: new Map(
+        first.states.map((state) => [
+          accountWindowKey(state.poolId, state.accountId, state.windowId),
+          state,
+        ]),
+      ),
+      pools: [{ poolId: "team", accounts: [account("10:00", { used: 10, resetsAt: "14:00" })] }],
+      now: at("11:00"),
+    });
+    expect(replay).toEqual({ states: [], hours: [] });
   });
 
   it("skips a read whose reset has already passed", () => {

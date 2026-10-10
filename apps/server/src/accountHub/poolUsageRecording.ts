@@ -14,6 +14,8 @@
 import type { ServerProviderUsageWindow, UsageLimitSourceAccount } from "@t3tools/contracts";
 
 export const HOUR_MS = 3_600_000;
+/** Providers recompute a window's reset time on every read; a minute either way is the same reset. */
+const RESET_JITTER_MS = 60_000;
 
 const DEFAULT_WINDOW_MINUTES: Partial<Record<ServerProviderUsageWindow["kind"], number>> = {
   session: 5 * 60,
@@ -89,20 +91,19 @@ export function recordRead(input: {
       consumed: (current?.consumed ?? 0) + consumed,
     });
   };
-  /** `consumed` spread over [from, now] in proportion to each hour's overlap. */
+  /** `consumed` spread over [from, to] in proportion to each hour's overlap. */
   const spread = (
     poolId: string,
     driver: string,
     windowId: string,
     consumed: number,
     from: number,
+    to: number,
   ) => {
-    const start = Math.min(from, now);
-    const span = now - start;
-    const firstHour = Math.floor(start / HOUR_MS);
-    const lastHour = Math.floor(now / HOUR_MS);
-    for (let hour = firstHour; hour <= lastHour; hour++) {
-      const overlap = Math.min(now, (hour + 1) * HOUR_MS) - Math.max(start, hour * HOUR_MS);
+    const start = Math.min(from, to);
+    const span = to - start;
+    for (let hour = Math.floor(start / HOUR_MS); hour <= Math.floor(to / HOUR_MS); hour++) {
+      const overlap = Math.min(to, (hour + 1) * HOUR_MS) - Math.max(start, hour * HOUR_MS);
       if (span === 0) add(poolId, driver, windowId, hour, consumed);
       else if (overlap > 0) add(poolId, driver, windowId, hour, (consumed * overlap) / span);
     }
@@ -110,10 +111,17 @@ export function recordRead(input: {
 
   for (const { poolId, accounts } of input.pools) {
     for (const account of accounts) {
+      // When the account was actually read: a cached or republished read keeps its old time.
+      const checkedAt = Date.parse(account.usageLimits.checkedAt);
+      const observedAt = Number.isFinite(checkedAt) ? Math.min(checkedAt, now) : now;
       for (const window of account.usageLimits.windows) {
-        const resetsAt = window.resetsAt === undefined ? null : Date.parse(window.resetsAt);
+        const parsed = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
+        const resetsAt = Number.isFinite(parsed) ? parsed : null;
         // A reset already past means this read is older than the window; skip it.
-        if (resetsAt !== null && (!Number.isFinite(resetsAt) || resetsAt <= now)) continue;
+        if (resetsAt !== null && resetsAt <= observedAt) continue;
+        const before = input.previous.get(accountWindowKey(poolId, account.id, window.id));
+        // Nothing new since the last time this window was recorded.
+        if (before && observedAt <= before.observedAt) continue;
         const used = window.usedPercent;
         states.push({
           poolId,
@@ -121,17 +129,22 @@ export function recordRead(input: {
           windowId: window.id,
           used,
           resetsAt,
-          observedAt: now,
+          observedAt,
         });
-        const before = input.previous.get(accountWindowKey(poolId, account.id, window.id));
         if (!before) {
-          add(poolId, account.driver, window.id, Math.floor(now / HOUR_MS), 0);
+          add(poolId, account.driver, window.id, Math.floor(observedAt / HOUR_MS), 0);
           continue;
         }
-        const resetSince = before.resetsAt !== null && before.resetsAt <= now;
-        const rolled = resetSince || used < before.used;
-        if (!rolled) {
-          spread(poolId, account.driver, window.id, used - before.used, before.observedAt);
+        const resetSince = before.resetsAt !== null && before.resetsAt <= observedAt;
+        // A drop with a later reset is a fresh window (a redeemed reset); a drop
+        // without one is the provider recounting, not use.
+        const restarted =
+          used < before.used &&
+          resetsAt !== null &&
+          (before.resetsAt === null || resetsAt > before.resetsAt + RESET_JITTER_MS);
+        if (!resetSince && !restarted) {
+          const rise = Math.max(0, used - before.used);
+          spread(poolId, account.driver, window.id, rise, before.observedAt, observedAt);
           continue;
         }
         // Rolled over: all of `used` came after the reset, and nothing before it is known.
@@ -141,7 +154,7 @@ export function recordRead(input: {
           resetSince ? before.resetsAt! : before.observedAt,
           resetsAt !== null && duration !== null ? resetsAt - duration : before.observedAt,
         );
-        spread(poolId, account.driver, window.id, used, from);
+        spread(poolId, account.driver, window.id, used, from, observedAt);
       }
     }
   }

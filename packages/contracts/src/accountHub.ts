@@ -161,6 +161,9 @@ export type AccountPoolOverview = typeof AccountPoolOverview.Type;
  * of that provider would carry it through the next week. For pool admins:
  * it rests on how many accounts the pool has.
  */
+/** Less than a day of history says nothing about a pool's daily rhythm, so there's no forecast yet. */
+export const POOL_ADVICE_MIN_HISTORY_HOURS = 24;
+
 export const AccountPoolProviderAdvice = Schema.Struct({
   driver: ProviderDriverKind,
   /** Hours of history behind it; under a day there is no forecast yet. */

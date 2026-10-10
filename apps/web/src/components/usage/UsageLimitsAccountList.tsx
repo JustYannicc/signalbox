@@ -145,7 +145,7 @@ export function UsageLimitsAccountList({
             </h3>
             {providerAdvice ? (
               <div className="mb-1.5">
-                <PoolAdvice advice={providerAdvice} now={now} />
+                <PoolAdvice advice={providerAdvice} label={label} now={now} />
               </div>
             ) : null}
             <ul className="divide-y divide-border/60 border-y border-border/60">
