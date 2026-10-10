@@ -1,5 +1,6 @@
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type {
+  MachineClass,
   MachineUsage,
   RunnerItem,
   RunnerTurn,
@@ -45,6 +46,7 @@ import type { RunnerDrive } from "./RunnerDrive.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
+import { outgrownBy } from "./RunnerMachineClass.ts";
 import { FILE_CHANGING_ITEMS, finishDriveTurn } from "./RunnerTurnDrive.ts";
 import { isUnmeasured } from "./RunnerUsage.ts";
 
@@ -76,6 +78,9 @@ import { isUnmeasured } from "./RunnerUsage.ts";
  * and a turn whose rows stop being saved is stopped. A turn that continues one
  * lost with its machine (`restartContinuationOfRunId`) resumes the restored
  * session natively.
+ *
+ * On a light machine, a turn that starts a build or runs out of memory moves
+ * to a heavy one (`moveUp`), resuming there the same way.
  *
  * The machine's usage goes out just before each `turn.started`, right after
  * each turn's end is reported, and every half minute while a turn runs (every
@@ -167,6 +172,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
   readonly sessions?: RunnerSessions;
+  /** This machine's class. On a light one, a turn that needs more moves up (`RunnerMachineClass.ts`). */
+  readonly machineClass?: MachineClass;
   /** Pins this turn's view of every drive the user can read (#141). Never fails. */
   readonly pinDrives?: (access: DriveAccess) => Effect.Effect<void>;
 }) {
@@ -209,6 +216,40 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** Agent turns run to resolve a merge, by attempt, and their provider turns once named. */
   const mergeAttempts = new Set<RunAttemptId>();
   const mergeProviderTurns = new Set<ProviderTurnId>();
+  /** Runs that moved to a heavy machine: this one does nothing more for them. */
+  const outgrown = new Set<RunId>();
+  /** Commands already checked, by item and phase: a running one repeats as its output grows. */
+  const classified = new Set<string>();
+  /** Why `event` moves its run up, checking each command once as it starts and once as it ends. */
+  const outgrownByOnce = (event: ProviderAdapterV2Event) => {
+    if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution") {
+      return null;
+    }
+    const { id, status } = event.turnItem;
+    const key = `${id}:${status === "running" || status === "pending" ? "start" : "end"}`;
+    if (classified.has(key)) return null;
+    classified.add(key);
+    return outgrownBy(event);
+  };
+
+  /**
+   * Hands `runId` to a heavy machine (#134), on the same path as a lost
+   * machine (#132) but with nothing in flight: its files and session rows are
+   * saved as of now, then the thread hears it outgrew this machine and
+   * continues it on a heavy one. What the harness does after that is dropped;
+   * this machine is stopped once the thread asks for the next one.
+   */
+  const moveUp = (runId: RunId, driver: ProviderAdapterV2["Service"]["driver"], reason: string) =>
+    Effect.gen(function* () {
+      outgrown.add(runId);
+      yield* Effect.logInfo("the turn outgrew this machine", { runId, reason });
+      if (drive !== null) {
+        yield* drive.drive.autosave;
+        yield* drive.drive.flush;
+      }
+      if (input.sessions !== undefined) yield* input.sessions.flush(driver);
+      yield* input.emit({ kind: "machine.outgrown", runId, reason });
+    });
   /** One turn readies the working directory at a time, even after a stop left one installing. */
   const preparing = yield* Semaphore.make(1);
 
@@ -426,9 +467,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     return runtime.events.pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
+          if (latestRunId !== null && outgrown.has(latestRunId)) return;
           if (yield* holdForDrive(event, (held, runId) => deliver(held, runId))) return;
           yield* track(event);
           yield* deliver(event);
+          const reason = input.machineClass === "light" ? outgrownByOnce(event) : null;
+          if (reason !== null && latestRunId !== null) {
+            yield* moveUp(latestRunId, adapter.driver, reason);
+          }
         }),
       ),
       Effect.catchCause((cause) =>

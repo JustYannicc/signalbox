@@ -90,6 +90,8 @@ export function recoverRunEvents(
   projection: Projection,
   run: Run,
   ctx: DecisionContext,
+  /** Why the run moves on, when that is not a lost machine: it outgrew a light one (#134). */
+  move?: { readonly reason: string },
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   if (!isLiveRun(run)) return [];
   const aborted = abortedEvents(projection, run, ctx);
@@ -105,11 +107,17 @@ export function recoverRunEvents(
       ...systemNoticeEvents(
         projection,
         run,
-        {
-          id: TurnItemId.make(`turn-item:${run.id}:machine-lost`),
-          title: "Machine",
-          message: "The machine running this turn went away. It picks up on a new one.",
-        },
+        move === undefined
+          ? {
+              id: TurnItemId.make(`turn-item:${run.id}:machine-lost`),
+              title: "Machine",
+              message: "The machine running this turn went away. It picks up on a new one.",
+            }
+          : {
+              id: TurnItemId.make(`turn-item:${run.id}:machine-outgrown`),
+              title: "Machine",
+              message: `${move.reason} This turn picks up on a bigger machine.`,
+            },
         ctx,
       ),
     ],
