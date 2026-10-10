@@ -2,7 +2,7 @@ import type { LimitAccount } from "@t3tools/shared/usageLimits";
 
 import { cn } from "../../lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { providerClients } from "../settings/providerDriverMeta";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 export function accountInitials(email: string): string {
@@ -47,7 +47,9 @@ export function AccountAvatar({
       <ProviderInstanceIcon
         driverKind={account.driver}
         displayName={
-          account.displayName ?? getDriverOption(account.driver)?.label ?? String(account.driver)
+          account.displayName ??
+          providerClients.get(account.driver)?.label ??
+          String(account.driver)
         }
         accentColor={account.accentColor}
         showBadge={Boolean(account.displayName)}
@@ -78,7 +80,7 @@ export function AccountName({
   }
   return (
     <span className={className}>
-      {getDriverOption(account.driver)?.label ?? String(account.driver)}
+      {providerClients.get(account.driver)?.label ?? String(account.driver)}
     </span>
   );
 }

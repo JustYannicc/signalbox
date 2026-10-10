@@ -35,7 +35,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../../config.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 

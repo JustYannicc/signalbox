@@ -29,8 +29,8 @@ import * as TestClock from "effect/testing/TestClock";
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2SessionRuntime,
-  ProviderAdapterV2Shape,
-} from "../../orchestration-v2/ProviderAdapter.ts";
+  ProviderAdapterV2,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import type { DriveOutcome, PreparedDrive, RunnerDrive } from "./RunnerDrive.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
@@ -141,7 +141,7 @@ const makeFakeAdapter = Effect.gen(function* () {
     instanceId,
     driver,
     openSession: () => Effect.succeed(session),
-  } as unknown as ProviderAdapterV2Shape;
+  } as unknown as ProviderAdapterV2["Service"];
   return { adapter, events, loaded, calls };
 });
 
@@ -626,7 +626,7 @@ describe("RunnerTurns", () => {
           instanceId,
           driver,
           openSession: () => Effect.die(new Error("login refused: token=sk-live-start-secret")),
-        } as unknown as ProviderAdapterV2Shape;
+        } as unknown as ProviderAdapterV2["Service"];
         const turns = yield* makeRunnerTurns({
           threadId,
           adapters: new Map([[instanceId, adapter]]),
@@ -763,7 +763,7 @@ describe("RunnerTurns", () => {
                       }),
                   } as unknown as ProviderAdapterV2SessionRuntime;
                 }),
-            } as unknown as ProviderAdapterV2Shape;
+            } as unknown as ProviderAdapterV2["Service"];
             const prepared = (instructions: string) =>
               Effect.succeed({ instructions, notices: [] } satisfies PreparedDrive);
             const turns = yield* makeRunnerTurns({

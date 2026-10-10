@@ -32,11 +32,13 @@ import * as NodeUtil from "node:util";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { RunnerBuild } from "@signalbox/runner-protocol/RunnerProtocol";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { ChildProcess } from "effect/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
-import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { runRunnerHost } from "./RunnerHost.ts";
 import { runRunnerMachine } from "./RunnerMachine.ts";
 
@@ -105,4 +107,8 @@ const program = Effect.gen(function* () {
   });
 });
 
-program.pipe(Effect.scoped, Effect.provide(NodeServices.layer), NodeRuntime.runMain);
+program.pipe(
+  Effect.scoped,
+  Effect.provide(Layer.mergeAll(NodeServices.layer, McpProviderSessions.layer)),
+  NodeRuntime.runMain,
+);

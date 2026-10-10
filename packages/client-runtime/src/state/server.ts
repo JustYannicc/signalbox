@@ -983,6 +983,16 @@ export function createServerEnvironmentAtoms<R, E>(
 
   return {
     configValueAtom,
+    runStorageCleanup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-storage-cleanup",
+      tag: WS_METHODS.serverRunStorageCleanup,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:storage-cleanup-report",
+      tag: WS_METHODS.serverGetStorageCleanupReport,
+      idleTtlMs: 0,
+    }),
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
@@ -1169,6 +1179,11 @@ export function createServerEnvironmentAtoms<R, E>(
     accountPoolViewsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:account-pool-views:live",
       tag: WS_METHODS.accountPoolSubscribeViews,
+    }),
+    // What each pool's usage history advises; for pool admins.
+    accountPoolAdviceLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:account-pool-advice:live",
+      tag: WS_METHODS.accountPoolSubscribeAdvice,
     }),
     createAccountPool: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:create-account-pool",

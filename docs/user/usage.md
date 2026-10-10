@@ -103,7 +103,9 @@ anything. The command is offered only for providers that appear under **Usage â†
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. Signalbox cannot report limits for external OpenCode servers because their credentials
-belong to the remote server. Cursor reports
+belong to the remote server. Limits need an OpenCode Go API key. A Console sign-in alone
+does not report them. Add your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's
+**Environment variables**, then refresh provider status. Cursor reports
 its monthly allowance, including separate Auto and API usage, using the CLI login or
 `CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
 usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
@@ -154,6 +156,11 @@ serves and uses only the pool's accounts, never an OpenCode login on the server.
 Each account appears on **Usage â†’ Limits** under its pool. Use its menu to pause, resume, or remove
 it. ChatGPT accounts added with Sign in with ChatGPT link to ChatGPT's usage page instead of showing
 bars.
+
+Each pool remembers its last 35 days of use. After a day of it, Limits says under each provider when
+that provider will run out at the pool's current pace and how many more accounts would keep it going
+for the week, or that it lasts the week. The pace follows the pool's own daily and weekly rhythm,
+at the level of the last seven days. Signalbox Cloud pools don't keep this history yet.
 
 When an account's login expires, it shows **Signed out**, Usage gets a red dot, and Signalbox tells
 you. Choose **Sign in again** on the account and sign in with the same account; it keeps its place in

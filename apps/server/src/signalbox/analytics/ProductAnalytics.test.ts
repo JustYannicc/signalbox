@@ -9,7 +9,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../../config.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
@@ -82,8 +82,8 @@ const layerProductAnalytics = (options: {
     ),
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(HostProcessPlatform, "linux"),
-        Layer.succeed(HostProcessArchitecture, "arm64"),
+        Layer.succeed(HostProcess.Platform, "linux"),
+        Layer.succeed(HostProcess.Architecture, "arm64"),
         layerRecordingClient(options.sent, options.failingHost ?? null),
       ),
     ),

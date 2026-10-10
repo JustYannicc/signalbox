@@ -22,11 +22,7 @@ import {
   type AccountHubImportResult,
   type AccountHubSetConnectionInput,
 } from "@t3tools/contracts/accountHub";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -253,9 +249,9 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const net = yield* NetService.NetService;
-  const platform = yield* HostProcessPlatform;
-  const arch = yield* HostProcessArchitecture;
-  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
+  const environment = yield* HostProcess.Environment;
   const serviceScope = yield* Effect.scope;
   const installContext = yield* Effect.context<
     | FileSystem.FileSystem

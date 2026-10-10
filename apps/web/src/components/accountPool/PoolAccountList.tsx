@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts/accountHub";
 import type { LimitAccount, LimitPool } from "@t3tools/shared/usageLimits";
 
-import { useAccountPools } from "../../state/accountPools";
+import { useAccountPools, usePoolAdvice } from "../../state/accountPools";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { AddHubAccountMenu } from "../accountHub/AddHubAccountMenu";
 import { UsageLimitsAccountList } from "../usage/UsageLimitsAccountList";
@@ -56,6 +56,7 @@ export function PoolAccountList({
         ? primary
         : environmentIds[0];
   const accountPools = useAccountPools(environmentId);
+  const advice = usePoolAdvice(environmentId);
 
   // Every pool of this environment, even an empty one, so accounts can be added to it.
   const groups: Group[] = environmentId
@@ -102,6 +103,11 @@ export function PoolAccountList({
           title={group.title}
           pools={only(pools, group.include)}
           now={now}
+          advice={
+            group.own
+              ? advice.find((entry) => entry.poolId === group.own?.pool.id)?.providers
+              : undefined
+          }
           actions={
             group.own ? (
               <span className="flex items-center gap-1.5">

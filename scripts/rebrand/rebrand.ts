@@ -122,7 +122,7 @@ export const EXTERNAL_CONTRACT_PROPERTIES: Readonly<Record<string, ReadonlyArray
   "apps/server/src/provider/CodexProvider.ts": ["name", "title"],
   "apps/server/src/provider/CodexChatGptAuth.ts": ["agent_name_hint"],
   // Muse's SDK handshake; the replay fixtures record it verbatim.
-  "apps/server/src/provider/museSdk.ts": ["title"],
+  "packages/provider-muse/src/server/sdk.ts": ["title"],
   // The t3.json format is shared with upstream; its schema keeps its name.
   "packages/contracts/src/t3ProjectFile.ts": ["title"],
 };

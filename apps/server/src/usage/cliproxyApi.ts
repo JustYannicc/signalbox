@@ -16,8 +16,11 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
-import { makeUnavailableUsageLimits, makeUsageLimits } from "../provider/providerUsageLimits.ts";
-import { grokUsageResponseToLimits } from "../provider/grokUsageLimits.ts";
+import {
+  makeUnavailableUsageLimits,
+  makeUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
+import { grokUsageResponseToLimits } from "@t3tools/provider-grok/server/usageLimits";
 import { isSignedOutAuthFile, normalizeHubUrl } from "../accountHub/accountHubManagement.ts";
 import { isApiKeyAccountId, listApiKeys, removeApiKey } from "../accountHub/hubApiKeys.ts";
 import {
@@ -381,6 +384,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       id: account.id,
       driver: driverForProvider(account.provider),
       ...(account.email ? { email: account.email } : {}),
+      ...(account.id_token?.chatgpt_account_id?.trim()
+        ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
+        : {}),
     };
     const read = Effect.gen(function* () {
       // signalbox: Grok and Antigravity accounts the hub pools.
