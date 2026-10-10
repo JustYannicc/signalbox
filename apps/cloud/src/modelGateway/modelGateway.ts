@@ -3,36 +3,39 @@ import {
   type ModelGatewayProvider,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 
+import type { ModelServeReply } from "../thread/runner/modelGrants.ts";
 import { threadOfModelToken } from "../thread/runner/modelToken.ts";
-import type { ModelAuthorization } from "../thread/runner/ThreadRunner.ts";
 import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
 import { makeUsageScanner } from "./usageScanner.ts";
 
 /**
- * The ModelGateway: the only place provider keys live. Harnesses on a machine
- * call it as their provider's API (Claude Code through `ANTHROPIC_BASE_URL`,
- * Codex through a custom provider's `base_url`) with a model token instead of
- * a key. Each request is checked with the token's thread, which grants it only
- * while the turn the token was minted for is running, then forwarded with the
- * real key. The upstream response streams back as it arrives.
+ * The ModelGateway: how a turn reaches its pool's accounts. Harnesses on a
+ * machine call it as their provider's API (Claude Code through
+ * `ANTHROPIC_BASE_URL`, Codex through a custom provider's `base_url`) with a
+ * model token instead of a key, exactly as they would call a pool's
+ * CLIProxyAPI. Each request is checked with the token's thread, which grants
+ * it only while the turn the token was minted for is running and names the
+ * turn's pool. The pool's object then checks the requester may still use the
+ * pool and sends the request to its CLIProxyAPI with the pool's client key.
+ * The response streams back as it arrives. No key or credential ever reaches
+ * the gateway or the machine.
  *
  * Only the endpoints a harness needs for a turn are served, so a token is no
- * use for anything else the key could do.
+ * use for anything else the pool could do.
  */
 
-export interface Upstream {
-  /** e.g. `https://api.anthropic.com`; request paths start at `/v1`. */
-  readonly baseUrl: string;
-  readonly apiKey: string;
-}
-
 export interface ModelGatewayDeps {
-  readonly authorize: (
+  /**
+   * Checks the token and, granted, sends the request to the turn's pool
+   * (`ModelGrants.serve`). Throws when the token could not be checked.
+   * `path` includes the query.
+   */
+  readonly serve: (
     token: string,
     provider: ModelGatewayProvider,
-  ) => Promise<ModelAuthorization>;
-  readonly upstreams: Readonly<Record<ModelGatewayProvider, Upstream | null>>;
-  readonly fetch: (request: Request) => Promise<Response>;
+    path: string,
+    request: Request,
+  ) => Promise<ModelServeReply>;
   readonly now: () => number;
   readonly log: (record: ModelGatewayRecord) => void;
 }
@@ -44,7 +47,7 @@ const SERVED_PATHS: Readonly<Record<ModelGatewayProvider, ReadonlyArray<string>>
 
 const PROVIDERS = Object.keys(MODEL_GATEWAY_PATHS) as ReadonlyArray<ModelGatewayProvider>;
 
-/** Headers that carry the caller's credential, or describe the hop rather than the request. */
+/** Headers that carry the caller's credential, or describe the hop rather than the request. The pool adds its own key. */
 const DROPPED_REQUEST_HEADERS = new Set([
   "authorization",
   "x-api-key",
@@ -54,6 +57,11 @@ const DROPPED_REQUEST_HEADERS = new Set([
 ]);
 /** The runtime decodes the upstream body, so its encoding and length no longer apply. */
 const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfer-encoding"];
+
+const ANTHROPIC_ERROR_TYPES: Readonly<Record<number, string>> = {
+  401: "authentication_error",
+  403: "permission_error",
+};
 
 /** An error in the shape the provider's own API uses, so the harness shows the message. */
 function errorResponse(provider: ModelGatewayProvider | null, status: number, message: string) {
@@ -68,7 +76,7 @@ function errorResponse(provider: ModelGatewayProvider | null, status: number, me
         }
       : {
           type: "error",
-          error: { type: status === 401 ? "authentication_error" : "api_error", message },
+          error: { type: ANTHROPIC_ERROR_TYPES[status] ?? "api_error", message },
         };
   return Response.json(body, { status });
 }
@@ -81,7 +89,7 @@ function bearerOrKey(headers: Headers): string | null {
   return match?.[1] ?? null;
 }
 
-function withUpstreamKey(provider: ModelGatewayProvider, source: Headers, apiKey: string) {
+function withoutCaller(source: Headers) {
   const headers = new Headers();
   for (const [name, value] of source) {
     const dropped =
@@ -90,8 +98,6 @@ function withUpstreamKey(provider: ModelGatewayProvider, source: Headers, apiKey
       name.startsWith("x-forwarded-");
     if (!dropped) headers.append(name, value);
   }
-  if (provider === "anthropic") headers.set("x-api-key", apiKey);
-  else headers.set("authorization", `Bearer ${apiKey}`);
   return headers;
 }
 
@@ -110,10 +116,6 @@ export async function handleModelRequest(
   }
   const token = bearerOrKey(request.headers);
   if (token === null) return errorResponse(provider, 401, "Missing model token.");
-  const upstream = deps.upstreams[provider];
-  if (upstream === null) {
-    return errorResponse(provider, 503, `The ModelGateway has no ${provider} key.`);
-  }
 
   const startedAt = deps.now();
   const threadId = threadOfModelToken(token);
@@ -128,50 +130,58 @@ export async function handleModelRequest(
       authMs: 0,
       upstreamHeadersMs: null,
       firstChunkMs: null,
+      addedMs: null,
       totalMs: deps.now() - startedAt,
       model: null,
       usage: null,
       ...fields,
     });
 
-  let authorization: ModelAuthorization;
-  try {
-    authorization = await deps.authorize(token, provider);
-  } catch {
-    record({ status: 503, authMs: deps.now() - startedAt });
-    return errorResponse(provider, 503, "Could not check the model token. Try again.");
-  }
-  const authMs = deps.now() - startedAt;
-  if (authorization._tag === "denied") {
-    record({ status: 401, authMs, denied: authorization.reason });
-    return errorResponse(provider, 401, authorization.reason);
-  }
-  const { runId, traceId } = authorization;
-
   const forwarded: RequestInit & { readonly duplex: "half" } = {
     method: request.method,
-    headers: withUpstreamKey(provider, request.headers, upstream.apiKey),
+    headers: withoutCaller(request.headers),
     body: request.body,
     redirect: "manual",
     // The request body streams through rather than being buffered (Node requires saying so).
     duplex: "half",
   };
-  const forwardedAt = deps.now();
-  let response: Response;
+  let served: ModelServeReply;
   try {
-    response = await deps.fetch(
-      new Request(`${upstream.baseUrl.replace(/\/+$/, "")}${path}${url.search}`, forwarded),
+    served = await deps.serve(
+      token,
+      provider,
+      `${path}${url.search}`,
+      new Request(request.url, forwarded),
     );
   } catch {
-    record({ status: 502, runId, traceId, authMs, outcome: "failed" });
-    return errorResponse(provider, 502, `Could not reach ${provider}. Try again.`);
+    record({ status: 503, authMs: deps.now() - startedAt });
+    return errorResponse(provider, 503, "Could not check the model token. Try again.");
   }
-  const upstreamHeadersMs = deps.now() - forwardedAt;
+  const { authMs } = served;
+  if (served._tag === "denied") {
+    record({ status: 401, authMs, denied: served.reason });
+    return errorResponse(provider, 401, served.reason);
+  }
+  const { runId, traceId, reply } = served;
+  if (reply._tag === "denied") {
+    record({ status: 403, runId, traceId, authMs, denied: reply.reason });
+    return errorResponse(provider, 403, reply.reason);
+  }
+  if (reply._tag === "failed") {
+    record({ status: 502, runId, traceId, authMs, outcome: "failed" });
+    return errorResponse(provider, 502, `This thread's pool is unavailable: ${reply.reason}`);
+  }
+  const { response } = reply;
+  const headersMs = deps.now() - startedAt;
+  const upstreamHeadersMs = headersMs - authMs;
+  // Everything before the pool's CLIProxyAPI answered that it did not spend itself:
+  // the token check, the hops to the pool, its access check and a cold container's start.
+  const addedMs = Math.max(0, headersMs - reply.upstreamMs);
   const headers = new Headers(response.headers);
   for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name);
   const init = { status: response.status, statusText: response.statusText, headers };
   if (response.body === null) {
-    record({ status: response.status, runId, traceId, authMs, upstreamHeadersMs });
+    record({ status: response.status, runId, traceId, authMs, upstreamHeadersMs, addedMs });
     return new Response(null, init);
   }
 
@@ -196,6 +206,7 @@ export async function handleModelRequest(
       authMs,
       upstreamHeadersMs,
       firstChunkMs,
+      addedMs,
       outcome,
       model,
       usage,
@@ -211,7 +222,7 @@ export async function handleModelRequest(
             controller.close();
             return;
           }
-          firstChunkMs ??= deps.now() - forwardedAt;
+          firstChunkMs ??= deps.now() - startedAt - authMs;
           controller.enqueue(value);
           // After the chunk is on its way, so reading usage never delays it.
           scanner.push(value);

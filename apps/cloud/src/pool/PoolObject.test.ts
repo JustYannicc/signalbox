@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 
 import * as PoolContainer from "./PoolContainer.ts";
 import { handleFor } from "./PoolDirectory.ts";
@@ -144,6 +146,52 @@ describe("PoolObject", () => {
 
       // A pool that is already gone counts as deleted, so a retry clears the user's list.
       yield* makePool().pool.delete(alice);
+    }),
+  );
+
+  it.effect("sends a member's model requests on with its own key, until they lose the pool", () =>
+    Effect.gen(function* () {
+      const { api, pool, runtime, container } = makePool();
+      yield* pool.create(alice, { name: "Work", personal: false });
+      const sql = <A>(run: (sql: SqlClient.SqlClient) => Effect.Effect<A, SqlError>) =>
+        Effect.promise(() => runtime.runPromise(SqlClient.SqlClient.use(run)));
+      yield* sql(
+        (sql) => sql`INSERT INTO grants (user_id, role, granted_at)
+        VALUES (${bob.userId}, 'member', 0)`,
+      );
+      const forward = () =>
+        Effect.promise(() =>
+          api.forwardModel(
+            bob,
+            "/v1/messages?beta=true",
+            new Request("http://gateway.test/anthropic/v1/messages", {
+              method: "POST",
+              headers: { "anthropic-version": "2023-06-01" },
+              body: '{"model":"claude-opus-5-5"}',
+            }),
+          ),
+        );
+
+      const reply = yield* forward();
+      if (reply._tag !== "forwarded") throw new Error(`expected a response, got ${reply._tag}`);
+      const [row] = yield* sql(
+        (sql) => sql<{ readonly client_key: string }>`SELECT client_key FROM pool`,
+      );
+      expect(yield* Effect.promise(() => reply.response.json())).toEqual({
+        path: "/v1/messages?beta=true",
+        authorization: `Bearer ${row?.client_key}`,
+        apiKey: null,
+        body: '{"model":"claude-opus-5-5"}',
+      });
+      // A sleeping pool wakes for a turn.
+      expect(container.starts).toBe(1);
+
+      // Removed from the pool, the next request fails and says why.
+      yield* sql((sql) => sql`DELETE FROM grants WHERE user_id = ${bob.userId}`);
+      expect(yield* forward()).toEqual({
+        _tag: "denied",
+        reason: "You no longer have access to this thread's pool. Pick another pool for it.",
+      });
     }),
   );
 });

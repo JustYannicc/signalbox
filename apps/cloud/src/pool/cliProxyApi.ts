@@ -90,6 +90,24 @@ const send = (endpoint: PoolEndpoint, request: Request) =>
       new PoolBackendError({ detail: `${hostOf(endpoint)} could not be reached.`, cause }),
   });
 
+/**
+ * A harness's model request (`/v1/messages`, `/v1/responses`, `/v1/models`),
+ * sent on with the pool's client key. The body streams through both ways.
+ */
+export const forwardModel = (endpoint: PoolEndpoint, path: string, request: Request) => {
+  const headers = new Headers(request.headers);
+  headers.delete("x-api-key");
+  headers.set("authorization", `Bearer ${endpoint.clientKey}`);
+  const init: RequestInit & { readonly duplex: "half" } = {
+    method: request.method,
+    headers,
+    body: request.body,
+    redirect: "manual",
+    duplex: "half",
+  };
+  return send(endpoint, new Request(`${endpoint.baseUrl}${path}`, init));
+};
+
 const management = (endpoint: PoolEndpoint, method: string, path: string, body?: unknown) =>
   Effect.gen(function* () {
     const response = yield* send(

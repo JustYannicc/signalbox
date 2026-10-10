@@ -395,6 +395,7 @@ const make = Effect.gen(function* () {
         record.outcome,
         record.model,
         record.firstChunkMs === null ? null : `first chunk ${record.firstChunkMs} ms`,
+        record.addedMs === null ? null : `gateway added ${record.addedMs} ms`,
         `${record.totalMs} ms`,
         tokens === null
           ? null

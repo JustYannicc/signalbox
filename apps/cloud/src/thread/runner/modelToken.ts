@@ -5,14 +5,14 @@ import { isLeaseToken, signLeaseToken, threadOfLeaseToken } from "./leaseToken.t
 
 /**
  * Model tokens: what a thread's harness presents to the ModelGateway. There is
- * one per thread, provider and turn, derived from the machine's lease token
- * (`leaseToken.ts`):
+ * one per thread, turn, provider, pool and requester, derived from the
+ * machine's lease token (`leaseToken.ts`):
  *
- *   sbm1.<base64url(thread id)>.<base64url(HMAC-SHA256(lease token, run id + provider))>
+ *   sbm1.<base64url(thread id)>.<base64url(HMAC-SHA256(lease token, grant))>
  *
  * The gateway reads the thread id to know which thread to ask, and the thread
  * recomputes the token for the run it has live. A token from a finished run,
- * another provider, an older machine or another thread never matches.
+ * another provider or pool, an older machine or another thread never matches.
  */
 
 const PREFIX = "sbm1";
@@ -21,10 +21,19 @@ export interface ModelGrant {
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly provider: ModelGatewayProvider;
+  /** The pool object whose accounts the turn runs on (`poolObjectName`). */
+  readonly pool: string;
+  /** The user the turn runs for, whose access to `pool` the pool checks. */
+  readonly requester: string;
 }
 
 export const modelToken = (leaseToken: string, grant: ModelGrant) =>
-  signLeaseToken(PREFIX, leaseToken, grant.threadId, `${grant.runId}\n${grant.provider}`);
+  signLeaseToken(
+    PREFIX,
+    leaseToken,
+    grant.threadId,
+    [grant.runId, grant.provider, grant.pool, grant.requester].join("\n"),
+  );
 
 /** The thread a model token names, or null when it is not one. Says nothing about validity. */
 export const threadOfModelToken = (token: string) => threadOfLeaseToken(PREFIX, token);

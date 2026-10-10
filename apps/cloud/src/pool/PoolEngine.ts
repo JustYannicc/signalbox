@@ -126,6 +126,17 @@ export class PoolEngine extends Context.Service<
       name: string,
       action: AccountAction,
     ) => Effect.Effect<void, Failure>;
+    /**
+     * A model request from a turn `actor` runs, sent to the pool's
+     * CLIProxyAPI. Checked against the grants on every request, so losing
+     * access stops the next one. `upstreamMs`: from handing it to the
+     * CLIProxyAPI to its response headers.
+     */
+    readonly forwardModel: (
+      actor: PoolActor,
+      path: string,
+      request: Request,
+    ) => Effect.Effect<{ readonly response: Response; readonly upstreamMs: number }, Failure>;
     /** A request from the pool's container to its store. */
     readonly storeRequest: (request: Request) => Effect.Effect<Response, SqlError>;
   }
@@ -249,15 +260,25 @@ const make = Effect.gen(function* () {
         VALUES (${at}, ${actor.userId}, ${action}, ${detail})`;
     });
 
-  /** The pool row and the actor's role, when they hold at least `needed`. */
-  const access = (actor: PoolActor, needed: PoolRole) =>
+  /**
+   * The pool row and the actor's role, when they hold at least `needed`.
+   * `reasons` words a missing pool or grant for where the refusal shows.
+   */
+  const access = (
+    actor: PoolActor,
+    needed: PoolRole,
+    reasons = {
+      gone: "This pool no longer exists.",
+      denied: "You don't have access to this pool.",
+    },
+  ) =>
     Effect.gen(function* () {
       const row = yield* poolRow;
-      if (row === null) return yield* reject("This pool no longer exists.");
+      if (row === null) return yield* reject(reasons.gone);
       const [grant] = yield* sql<{
         readonly role: PoolRole;
       }>`SELECT role FROM grants WHERE user_id = ${actor.userId}`;
-      if (grant === undefined) return yield* reject("You don't have access to this pool.");
+      if (grant === undefined) return yield* reject(reasons.denied);
       if (needed === "admin" && grant.role !== "admin") {
         return yield* reject("Only the pool's admins can do that.");
       }
@@ -274,17 +295,21 @@ const make = Effect.gen(function* () {
   /**
    * Where the pool's CLIProxyAPI answers. `passive` reads reach a managed
    * pool's container only while it is up anyway, and never keep it up.
+   * `onSend` runs as a request goes to the CLIProxyAPI, after any cold start.
    */
   const endpointOf = (
     row: PoolRow,
-    options?: { readonly passive: true },
+    options?: { readonly passive?: true; readonly onSend?: () => void },
   ): CliProxyApi.PoolEndpoint =>
     row.backing === "external" &&
     row.external_url !== null &&
     row.external_management_key !== null &&
     row.external_client_key !== null
       ? {
-          fetch: external.fetch,
+          fetch: (request) => {
+            options?.onSend?.();
+            return external.fetch(request);
+          },
           baseUrl: row.external_url,
           managementKey: row.external_management_key,
           clientKey: row.external_client_key,
@@ -293,10 +318,11 @@ const make = Effect.gen(function* () {
           fetch: (request) =>
             options?.passive
               ? container.peek(request)
-              : container.fetch(request, {
-                  accessKey: row.store_access_key,
-                  secretKey: row.store_secret_key,
-                }),
+              : container.fetch(
+                  request,
+                  { accessKey: row.store_access_key, secretKey: row.store_secret_key },
+                  options?.onSend,
+                ),
           baseUrl: PoolContainer.CONTAINER_ORIGIN,
           managementKey: row.management_key,
           clientKey: row.client_key,
@@ -531,6 +557,24 @@ const make = Effect.gen(function* () {
       yield* refreshAccounts(row).pipe(Effect.ignore);
     });
 
+  const forwardModel: PoolEngine["Service"]["forwardModel"] = (actor, path, request) =>
+    Effect.gen(function* () {
+      // Said in the turn that fails, which is how someone removed from the pool finds out.
+      const { row } = yield* access(actor, "member", {
+        gone: "This thread's pool no longer exists. Pick another pool for it.",
+        denied: "You no longer have access to this thread's pool. Pick another pool for it.",
+      });
+      const clock = yield* Clock.Clock;
+      const sent = { at: clock.currentTimeMillisUnsafe() };
+      const endpoint = endpointOf(row, {
+        onSend: () => {
+          sent.at = clock.currentTimeMillisUnsafe();
+        },
+      });
+      const response = yield* CliProxyApi.forwardModel(endpoint, path, request);
+      return { response, upstreamMs: clock.currentTimeMillisUnsafe() - sent.at };
+    });
+
   const storeRequest: PoolEngine["Service"]["storeRequest"] = (request) =>
     Effect.gen(function* () {
       const row = yield* poolRow;
@@ -551,6 +595,7 @@ const make = Effect.gen(function* () {
     completeLogin,
     cancelLogin,
     updateAccount,
+    forwardModel,
     storeRequest,
   });
 });

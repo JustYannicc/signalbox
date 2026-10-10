@@ -1,5 +1,5 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
-import { POOL_INSTANCE_KINDS } from "@t3tools/contracts/accountHub";
+import { PERSONAL_POOL_ID, POOL_INSTANCE_KINDS } from "@t3tools/contracts/accountHub";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -18,10 +18,11 @@ import {
 /**
  * The providers a cloud thread can run on. The scripted provider runs inside
  * the thread's own object; Claude Code and Codex run on a machine, driven by
- * the Runner, so the cloud offers them only when it has a machine backend.
+ * the Runner, on a pool's accounts: the cloud offers them only as each pool's
+ * instances (`pool/poolViews.ts`).
  *
- * Instance ids match a self-hosted server's defaults, so a thread's model
- * selection means the same thing in either environment.
+ * Instance ids match a self-hosted server's, so a thread's model selection
+ * means the same thing in either environment.
  */
 
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
@@ -30,7 +31,6 @@ const CODEX_DRIVER = ProviderDriverKind.make("codex");
 interface HarnessProvider {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
-  readonly displayName: string;
   /** The API its harness calls through the ModelGateway. */
   readonly gatewayProvider: ModelGatewayProvider;
   readonly models: ReadonlyArray<{ readonly slug: string; readonly name: string }>;
@@ -41,7 +41,6 @@ const HARNESS_PROVIDERS: ReadonlyArray<HarnessProvider> = [
   {
     instanceId: defaultInstanceIdForDriver(CLAUDE_DRIVER),
     driver: CLAUDE_DRIVER,
-    displayName: "Claude",
     gatewayProvider: "anthropic",
     models: [
       { slug: "claude-fable-5-1", name: "Claude Fable 5.1" },
@@ -52,7 +51,6 @@ const HARNESS_PROVIDERS: ReadonlyArray<HarnessProvider> = [
   {
     instanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
     driver: CODEX_DRIVER,
-    displayName: "Codex",
     gatewayProvider: "openai",
     models: [
       { slug: "gpt-6-astra", name: "GPT-6 Astra" },
@@ -77,11 +75,21 @@ const harnessByPoolKind = new Map(
 );
 
 /** A pool's instance (`claude_hub`, `codex_hub_<poolId>`) runs on its kind's harness. */
-const POOL_INSTANCE_PATTERN = /^(claude|codex)_hub(?:_[a-z0-9-]{1,40})?$/u;
+const POOL_INSTANCE_PATTERN = /^(claude|codex)_hub(?:_([a-z0-9-]{1,40}))?$/u;
 
 const harnessFor = (instanceId: ProviderInstanceId) => {
   const kind = POOL_INSTANCE_PATTERN.exec(instanceId)?.[1] as CloudPoolKind | undefined;
   return harnessByInstance.get(instanceId) ?? (kind ? harnessByPoolKind.get(kind) : undefined);
+};
+
+/**
+ * The pool, among its owner's, whose accounts a harness instance's turns run
+ * on. Threads from before pools ran on the plain `claudeAgent` and `codex`
+ * instances; those run on the owner's personal pool.
+ */
+export const poolIdOfInstance = (instanceId: ProviderInstanceId): string | undefined => {
+  if (harnessFor(instanceId) === undefined) return undefined;
+  return POOL_INSTANCE_PATTERN.exec(instanceId)?.[2] ?? PERSONAL_POOL_ID;
 };
 
 /** Whether runs on this instance go to a Runner rather than the thread's own object. */
@@ -102,8 +110,8 @@ const harnessServerProvider = (
   instance: {
     readonly instanceId: ProviderInstanceId;
     readonly displayName: string;
-    readonly auth?: ServerProvider["auth"];
-  } = provider,
+    readonly auth: ServerProvider["auth"];
+  },
 ): ServerProvider => ({
   instanceId: instance.instanceId,
   driver: provider.driver,
@@ -116,7 +124,7 @@ const harnessServerProvider = (
   installed: true,
   version: null,
   status: "ready",
-  auth: instance.auth ?? { status: "authenticated" },
+  auth: instance.auth,
   checkedAt,
   availability: "available",
   models: provider.models.map((model): ServerProviderModel => ({
@@ -130,28 +138,15 @@ const harnessServerProvider = (
   skills: [],
 });
 
-/** What the cloud advertises. `harnesses`: whether a machine backend can run Claude and Codex. */
-export const cloudProviders = (input: {
-  readonly checkedAt: string;
-  readonly harnesses: boolean;
-}): ReadonlyArray<ServerProvider> => [
-  scriptedServerProvider(input.checkedAt),
-  ...(input.harnesses
-    ? HARNESS_PROVIDERS.map((provider) => harnessServerProvider(provider, input.checkedAt))
-    : []),
+/** What the cloud advertises besides the pools' instances. */
+export const cloudProviders = (checkedAt: string): ReadonlyArray<ServerProvider> => [
+  scriptedServerProvider(checkedAt),
 ];
 
 /** Settings list an instance for clients to enable it. */
-export const cloudProviderInstances = (harnesses: boolean) =>
-  Object.fromEntries([
-    [SCRIPTED_INSTANCE_ID, { driver: SCRIPTED_DRIVER, enabled: true }],
-    ...(harnesses
-      ? HARNESS_PROVIDERS.map((provider) => [
-          provider.instanceId,
-          { driver: provider.driver, enabled: true },
-        ])
-      : []),
-  ]);
+export const cloudProviderInstances = () => ({
+  [SCRIPTED_INSTANCE_ID]: { driver: SCRIPTED_DRIVER, enabled: true },
+});
 
 /**
  * A pool's instance of `kind`, offered whether or not the cloud has a machine

@@ -46,8 +46,15 @@ export interface StoreCredentials {
 export class PoolContainer extends Context.Service<
   PoolContainer,
   {
-    /** Sends a request to the CLIProxyAPI, starting the container first if it sleeps. */
-    readonly fetch: (request: Request, store: StoreCredentials) => Promise<Response>;
+    /**
+     * Sends a request to the CLIProxyAPI, starting the container first if it
+     * sleeps. `onSend` runs once it is up, as the request goes in.
+     */
+    readonly fetch: (
+      request: Request,
+      store: StoreCredentials,
+      onSend?: () => void,
+    ) => Promise<Response>;
     /**
      * Sends a request only if the container is already up, without keeping
      * it up: for reads that must never wake it or delay its sleep.
@@ -113,26 +120,29 @@ const makeActivity = (onIdleFrom: (at: number) => void) => {
       };
       // Ends on the last chunk, an error, or a reader that gives up.
       const reader = response.body.getReader();
-      const body = new ReadableStream<Uint8Array>({
-        pull: async (controller) => {
-          try {
-            const { done, value } = await reader.read();
-            if (done) {
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull: async (controller) => {
+            try {
+              const { done, value } = await reader.read();
+              if (done) {
+                once();
+                controller.close();
+              } else {
+                controller.enqueue(value);
+              }
+            } catch (error) {
               once();
-              controller.close();
-            } else {
-              controller.enqueue(value);
+              controller.error(error);
             }
-          } catch (error) {
+          },
+          cancel: (reason) => {
             once();
-            controller.error(error);
-          }
+            return reader.cancel(reason);
+          },
         },
-        cancel: (reason) => {
-          once();
-          return reader.cancel(reason);
-        },
-      });
+        { highWaterMark: 0 },
+      );
       return new Response(body, response);
     },
     /** When the container may sleep, given nothing new arrives; null while a request is open. */
@@ -210,9 +220,10 @@ export const layerCloudflare = (input: {
   return Layer.succeed(
     PoolContainer,
     PoolContainer.of({
-      fetch: (request, store) =>
+      fetch: (request, store, onSend) =>
         activity.track(async () => {
           await ensure(store);
+          onSend?.();
           return container.getTcpPort(CLI_PROXY_API_PORT).fetch(request);
         }),
       peek: async (request) => {
@@ -269,11 +280,12 @@ export const makeFake = (
   const layer = Layer.succeed(
     PoolContainer,
     PoolContainer.of({
-      fetch: (request, store) => {
+      fetch: (request, store, onSend) => {
         if (!running) {
           running = true;
           state.starts += 1;
         }
+        onSend?.();
         return serve(request, store);
       },
       peek: (request) =>

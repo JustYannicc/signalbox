@@ -201,12 +201,14 @@ describe("ThreadRunner", () => {
           const token = work.modelToken ?? "";
           expect(token).toMatch(/^sbm1\./);
 
-          // The grant names the same trace the Runner was handed with the turn.
+          // The grant names the same trace the Runner was handed with the turn, and
+          // sends it to the owner's pool: a thread from before pools uses Personal.
           expect(turn.traceId).toMatch(/^[0-9a-f]{32}$/);
           expect(yield* runner.authorizeModel(token, "anthropic")).toEqual({
             _tag: "granted",
             runId: turn.runId,
             traceId: turn.traceId,
+            pool: { objectName: `${owner.userId}:personal`, userId: owner.userId },
           });
           // Claude's turn, so not Codex's API; and nothing but the exact token.
           expect((yield* runner.authorizeModel(token, "openai"))._tag).toBe("denied");
