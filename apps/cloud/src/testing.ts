@@ -23,6 +23,8 @@ import type { DrivePerson } from "./drive/DriveMembers.ts";
 import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
+import * as PoolDirectory from "./pool/PoolDirectory.ts";
+import { makeMemoryPools } from "./pool/testing.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
@@ -51,6 +53,8 @@ import * as UserSections from "./user/UserSections.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import * as UserDrives from "./user/UserDrives.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
+import * as PoolSignIns from "./user/PoolSignIns.ts";
+import * as UserPools from "./user/UserPools.ts";
 import * as UserShell from "./user/UserShell.ts";
 import * as UserStore from "./user/UserStore.ts";
 
@@ -153,6 +157,7 @@ const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.laye
 
 const makeUserRuntime = (
   threads: ThreadDirectory.ThreadDirectory["Service"],
+  pools: PoolDirectory.PoolDirectory["Service"],
   drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
   people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
@@ -164,11 +169,17 @@ const makeUserRuntime = (
       DriveShortcuts.layer,
       DriveFiles.layer,
       GitHubConnection.layer,
+      PoolSignIns.layer,
     ).pipe(
-      Layer.provideMerge(UserDrives.layer),
+      Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
       Layer.provideMerge(layerMemoryStore),
       Layer.provideMerge(Layer.mergeAll(drives, people, github)),
-      Layer.provideMerge(Layer.succeed(ThreadDirectory.ThreadDirectory, threads)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
+          Layer.succeed(PoolDirectory.PoolDirectory, pools),
+        ),
+      ),
     ),
   );
 
@@ -209,6 +220,7 @@ export const makeMemoryCloud = (
   const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
     forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),
   };
+  const pools = makeMemoryPools();
   const drives = makeMemoryDrives({ users: () => userDirectory });
   const people = layerTestPeople(options.people ?? []);
   const userFor = (userId: string) => {
@@ -216,6 +228,7 @@ export const makeMemoryCloud = (
     if (existing) return existing;
     const runtime = makeUserRuntime(
       threadDirectory,
+      pools.directory,
       drives.layer,
       people,
       options.github ?? layerNoGitHub,
@@ -284,6 +297,8 @@ export const makeMemoryCloud = (
   return {
     userDirectory,
     threadDirectory,
+    /** Pool objects by name, each with its fake CLIProxyAPI. */
+    pools,
     /** The drives' objects and packs, shared by every user and thread here. */
     drives,
     /** Who owns a thread, and the context and drive it was created in. */

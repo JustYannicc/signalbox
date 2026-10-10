@@ -53,6 +53,7 @@ import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
+import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -62,7 +63,8 @@ import * as UserShell from "./UserShell.ts";
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
  * for a client to connect, render the user's sidebar with its contexts and
- * sections (see `UserContexts` and `UserSections`), and work in threads. The
+ * sections (see `UserContexts` and `UserSections`), work in threads, and
+ * manage their account pools (see `poolRpc.ts`). The
  * group is `WsRpcGroup` itself with everything else omitted, so every payload
  * and stream item is the contract's own schema. A client calling anything
  * else gets a per-request "unknown request tag" failure rather than a dropped
@@ -113,6 +115,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...SECTION_METHODS,
+  ...POOL_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -167,6 +170,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.sectionsMove]: AuthOrchestrationOperateScope,
   [WS_METHODS.sectionsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.sectionsMoveProject]: AuthOrchestrationOperateScope,
+  ...POOL_REQUIRED_SCOPES,
 } as const satisfies Record<ServedTag, AuthEnvironmentScope>;
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
@@ -289,17 +293,11 @@ export const layerHandlers = (input: {
             : call(service.value);
       const sharingCall = withDrives(sharing);
       const shortcutsCall = withDrives(shortcuts);
-      const config = Effect.map(Clock.currentTimeMillis, (now) =>
-        Environment.serverConfig(identity, DateTime.formatIso(DateTime.makeUnsafe(now))),
-      );
+      const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       return {
-        [WS_METHODS.subscribeServerConfig]: () =>
-          Stream.unwrap(
-            Effect.map(config, (current) =>
-              thenHold([{ version: 1, type: "snapshot", config: current } as const]),
-            ),
-          ),
-        [WS_METHODS.serverGetConfig]: () => config,
+        ...pools.handlers,
+        [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
+        [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
         [WS_METHODS.serverReportClientActivity]: () => Effect.void,
         [WS_METHODS.subscribeServerLifecycle]: () =>

@@ -242,7 +242,9 @@ jobs:
 
       - name: Delete preview containers
         run: |
-          id="$(npx --yes wrangler@4 containers list --json \
-            | jq -r --arg name "signalbox-cloud-pr-$PR_NUMBER-threads" '.[] | select(.name == $name) | .id' \
-            || true)"
-          if [ -n "$id" ]; then npx --yes wrangler@4 containers delete "$id"; else echo "No preview containers to delete."; fi
+          for app in pools threads; do
+            id="$(npx --yes wrangler@4 containers list --json \
+              | jq -r --arg name "signalbox-cloud-pr-$PR_NUMBER-$app" '.[] | select(.name == $name) | .id' \
+              || true)"
+            if [ -n "$id" ]; then npx --yes wrangler@4 containers delete "$id"; else echo "No preview $app containers to delete."; fi
+          done

@@ -25,6 +25,7 @@
     "bindings": [
       { "name": "USERS", "class_name": "UserObject" },
       { "name": "THREADS", "class_name": "ThreadObject" },
+      { "name": "POOLS", "class_name": "PoolObject" },
       { "name": "DRIVES", "class_name": "DriveObject" },
     ],
   },
@@ -32,14 +33,23 @@
     { "tag": "v1", "new_sqlite_classes": ["UserObject"] },
     { "tag": "v2", "new_sqlite_classes": ["ThreadObject"] },
     { "tag": "v3", "new_sqlite_classes": ["DriveObject"] },
+    { "tag": "v4", "new_sqlite_classes": ["PoolObject"] },
   ],
   // Containers bound to Durable Objects. One entry per class: each object of
   // `class_name` gets its own container from `image`, started and stopped
-  // through `ctx.container` in that object. `max_instances` caps how many run
-  // at once across all objects of the class. Not inherited by `env`, so the
-  // preview repeats it, and `dev` leaves it out (threads run on the local
-  // Runner host there).
+  // through `ctx.container` in that object (see src/pool/PoolContainer.ts and
+  // src/thread/runner/cloudflare/). `max_instances` caps how many run at once
+  // across all objects of the class. Not inherited by `env`, so dev and the
+  // preview repeat it (dev without threads, which run on the local Runner host).
   "containers": [
+    {
+      // A managed pool's CLIProxyAPI. Small on purpose: every pool has one.
+      "class_name": "PoolObject",
+      "image": "./containers/cliproxyapi/Dockerfile",
+      "instance_type": "lite",
+      "max_instances": 10,
+      "constraints": { "jurisdiction": "eu" },
+    },
     {
       // A thread's light machine (src/thread/runner/cloudflare/): the Runner
       // image built from the same commit as this Worker, so the two always
@@ -75,12 +85,22 @@
         "bindings": [
           { "name": "USERS", "class_name": "UserObject" },
           { "name": "THREADS", "class_name": "ThreadObject" },
+          { "name": "POOLS", "class_name": "PoolObject" },
           { "name": "DRIVES", "class_name": "DriveObject" },
         ],
       },
       // Local only: `wrangler dev` simulates the bucket under .wrangler/.
       "r2_buckets": [
         { "binding": "DRIVE_PACKS", "bucket_name": "signalbox-drives", "jurisdiction": "eu" },
+      ],
+      // Local Docker builds and runs it.
+      "containers": [
+        {
+          "class_name": "PoolObject",
+          "image": "./containers/cliproxyapi/Dockerfile",
+          "instance_type": "lite",
+          "max_instances": 2,
+        },
       ],
       "vars": {},
     },
@@ -93,6 +113,7 @@
         "bindings": [
           { "name": "USERS", "class_name": "UserObject" },
           { "name": "THREADS", "class_name": "ThreadObject" },
+          { "name": "POOLS", "class_name": "PoolObject" },
           { "name": "DRIVES", "class_name": "DriveObject" },
         ],
       },
@@ -108,6 +129,14 @@
         {
           // The deploy workflow puts the pull request's number in place of
           // PR_NUMBER, so each preview has its own container application.
+          "name": "signalbox-cloud-pr-PR_NUMBER-pools",
+          "class_name": "PoolObject",
+          "image": "./containers/cliproxyapi/Dockerfile",
+          "instance_type": "lite",
+          "max_instances": 2,
+          "constraints": { "jurisdiction": "eu" },
+        },
+        {
           "name": "signalbox-cloud-pr-PR_NUMBER-threads",
           "class_name": "ThreadObject",
           "image": "../server/src/signalbox/runner/image/Dockerfile",

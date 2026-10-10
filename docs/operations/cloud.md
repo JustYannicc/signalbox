@@ -212,6 +212,26 @@ A machine follows `RUNNER_IMAGE` at its next wake. Bump the Runner protocol
 only together with a published image, since a machine on an older image is
 refused.
 
+### Account pools
+
+Each account pool is a `PoolObject` (`apps/cloud/src/pool/`), and a managed
+pool runs its own CLIProxyAPI in a Cloudflare Container bound to that object:
+the image in `apps/cloud/containers/cliproxyapi/` (CLIProxyAPI's static
+release build on distroless, about 24 MB), `lite` instances, started by the
+first request and stopped two minutes after the object goes idle. The
+container's disk is thrown away every time; CLIProxyAPI keeps its config and
+accounts in its object-store backend, which is served from the pool object's
+own SQLite through a host only that container can reach. A pool connected to
+an admin's own CLIProxyAPI never starts a container.
+
+`wrangler dev` and `wrangler deploy` build the image with Docker, so local
+development needs Docker running. Containers need the Cloudflare account on the
+Workers Paid plan; on any other plan every deploy fails at
+`/containers/me`. Each preview gets its own container application,
+`signalbox-cloud-pr-<number>-pools`, deleted with the preview. Bump the CLIProxyAPI version in the
+Dockerfile together with `ACCOUNT_HUB_VERSION` in
+`apps/server/src/accountHub/AccountHubRelease.ts`.
+
 ### Drives
 
 Each person has a My Drive in every context, work organizations have shared
@@ -439,15 +459,15 @@ Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
 which each preview derives its own session secret.
 
-| Name                           | Kind     | What                                                                            |
-| ------------------------------ | -------- | ------------------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts: Edit and Account › Account Settings: Read            |
-| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                          |
-| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.         |
-| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                |
-| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing |
-| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                          |
-| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build            |
+| Name                           | Kind     | What                                                                                             |
+| ------------------------------ | -------- | ------------------------------------------------------------------------------------------------ |
+| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts: Edit, Account › Containers: Edit and Account › Account Settings: Read |
+| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                                           |
+| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.                          |
+| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                                 |
+| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                  |
+| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                                           |
+| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                             |
 
 WorkOS must list each origin's `/api/account/callback` as a redirect URI:
 `https://app.signalbox.run/...` for production and

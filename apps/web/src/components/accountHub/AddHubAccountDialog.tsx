@@ -8,7 +8,7 @@ import {
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
-import { useAccountPools } from "../../state/accountPools";
+import { usePoolName } from "../../state/accountPools";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
@@ -44,7 +44,7 @@ export function AddHubAccountDialog({
   const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const update = useAtomCommand(serverEnvironment.updateSettings, `Add ${hub.account} account`);
-  const poolName = useAccountPools(environmentId).find((pool) => pool.id === poolId)?.name;
+  const poolName = usePoolName(environmentId, poolId);
   const [instanceId, instanceEntry] = poolInstanceEntry(kind, { id: poolId, name: poolName });
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
   const exists = instanceId in settings.providerInstances;

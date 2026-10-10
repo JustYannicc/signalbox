@@ -6,14 +6,21 @@ import {
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
   ProjectId,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
   type ServerAuthDescriptor,
   type ServerConfig,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import webPackage from "../../web/package.json" with { type: "json" };
-import { cloudProviderInstances, cloudProviders } from "./thread/providerCatalog.ts";
+import {
+  CLOUD_POOL_KINDS,
+  cloudProviderInstances,
+  cloudProviders,
+} from "./thread/providerCatalog.ts";
 import { scriptedModelSelection } from "./thread/scriptedProvider.ts";
 
 /**
@@ -88,16 +95,29 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     sections: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
+    // Each account pool reports its accounts as a source (`pool/poolViews.ts`).
+    usageLimitSources: true,
+    // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.
+    poolFeatures: CLOUD_POOL_KINDS,
     signalboxPreviews: identity.previews === true,
     // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
     projectCloneTracking: true,
   },
 });
 
+/** The user's pools as provider instances (see `pool/poolViews.ts`). */
+export interface PoolProviders {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly instances: Record<ProviderInstanceId, ProviderInstanceConfig>;
+}
+
+const NO_POOL_PROVIDERS: PoolProviders = { providers: [], instances: {} };
+
 /** `checkedAt`: when the connection asked; the cloud's providers are always ready. */
 export const serverConfig = (
   identity: CloudEnvironmentIdentity,
   checkedAt: string,
+  pools: PoolProviders = NO_POOL_PROVIDERS,
 ): ServerConfig => ({
   environment: descriptor(identity),
   auth: authDescriptor,
@@ -105,7 +125,10 @@ export const serverConfig = (
   keybindingsConfigPath: CLOUD_ROOT,
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
   issues: [],
-  providers: [...cloudProviders({ checkedAt, harnesses: identity.harnesses === true })],
+  providers: [
+    ...cloudProviders({ checkedAt, harnesses: identity.harnesses === true }),
+    ...pools.providers,
+  ],
   availableEditors: [],
   observability: {
     logsDirectoryPath: CLOUD_ROOT,
@@ -117,7 +140,10 @@ export const serverConfig = (
   settings: {
     ...DEFAULT_SERVER_SETTINGS,
     // Clients enable a provider instance only when settings list it.
-    providerInstances: cloudProviderInstances(identity.harnesses === true),
+    providerInstances: {
+      ...cloudProviderInstances(identity.harnesses === true),
+      ...pools.instances,
+    },
   },
   shellResumeCompletionMarker: true,
   threadResumeCompletionMarker: true,
