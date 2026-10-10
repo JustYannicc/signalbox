@@ -1,6 +1,7 @@
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import {
+  type MachineClass,
   type ModelGatewayProvider,
   RUNNER_PROTOCOL_VERSION,
   type RunnerHello,
@@ -8,12 +9,18 @@ import {
   type RunnerRefusal,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
-import type { OrchestrationV2ThreadProjection, RunId, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2DomainEvent,
+  OrchestrationV2ThreadProjection,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import { myDriveId } from "../../drive/driveAccess.ts";
 import { type ModelPoolRoute, poolObjectName } from "../../pool/PoolDirectory.ts";
@@ -30,6 +37,7 @@ import * as ThreadStore from "../ThreadStore.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend } from "./MachineBackend.ts";
+import { machineClassFor } from "./machineClass.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
 import { recoverRunEvents } from "./runRecovery.ts";
 import {
@@ -48,12 +56,17 @@ import {
  * sequence and changes nothing.
  *
  * The lease moves toward what the thread needs whenever the object asks
- * (`reconcile`): a live run on Claude or Codex gets a machine at the next
- * generation, a run whose machine never connects (within the backend's
- * connect timeout) fails with a reason, a run whose machine is lost goes on
- * as a continuation on the next one (`runRecovery.ts`), and an idle machine
- * is released after its tail. Whenever no lease stands, the plan says to stop
- * the machine; the next run starts it again at a new generation.
+ * (`reconcile`): a live run on Claude or Codex gets a machine of its class
+ * (`machineClass.ts`) at the next generation, a run whose machine never
+ * connects (within the backend's connect timeout) fails with a reason, a run
+ * whose machine is lost goes on as a continuation on the next one
+ * (`runRecovery.ts`), and an idle machine is released after its class's tail.
+ * Whenever no lease stands, the plan says to stop the machine; the next run
+ * starts it again at a new generation.
+ *
+ * A run on a light machine that needs more moves up the same way: its Runner
+ * reports `machine.outgrown` once everything is saved (or its machine dies
+ * mid-turn), and the run continues on a heavy machine, as does every later one.
  *
  * An open preview (`PreviewHold`) keeps a connected machine up as a live run
  * does, and the idle tail counts from the later of the last run and the last
@@ -65,8 +78,6 @@ import {
 
 /** How long a Runner whose socket dropped mid-turn has to come back. */
 const RECONNECT_TIMEOUT_MS = 60_000;
-/** How long an idle machine stays up for the next message (#110: 10 minutes, heavy class). */
-export const IDLE_TAIL_MS = 10 * 60_000;
 /** Retry interval for a backend that has not confirmed a request. */
 const ENSURE_RETRY_MS = 5_000;
 
@@ -164,6 +175,8 @@ export type ModelAuthorization =
 export interface MachinePlan {
   /** Ask the backend for this machine. Idempotent per generation. */
   readonly ensure: { readonly generation: number; readonly token: string } | null;
+  /** The class of the lease the plan is about, current or just released: `ensure`'s too. */
+  readonly machineClass: MachineClass;
   /** End any Runner of this generation: its lease is gone. */
   readonly release: number | null;
   /** No lease stands: the machine should be stopped. */
@@ -204,6 +217,12 @@ export class ThreadRunner extends Context.Service<
     }) => Effect.Effect<BatchResult>;
     /** The Runner said `end`: its machine is going away, and with it any turn it ran. */
     readonly ended: (generation: number, reason: string) => Effect.Effect<void>;
+    /**
+     * The machine running `generation` stopped on its own (its backend saw it
+     * exit). A light one that dies mid-turn most likely ran out of memory, so
+     * its run moves up. An exit of an older generation's machine changes nothing.
+     */
+    readonly machineExited: (generation: number, detail: string) => Effect.Effect<void>;
     readonly disconnected: (input: {
       readonly generation: number;
       readonly connection: number;
@@ -236,6 +255,7 @@ export class ThreadRunner extends Context.Service<
 
 const IDLE: MachinePlan = {
   ensure: null,
+  machineClass: "heavy",
   release: null,
   stop: false,
   busy: false,
@@ -293,7 +313,8 @@ const make = Effect.gen(function* () {
   const previews = yield* PreviewHold;
   const store = yield* ThreadStore.ThreadStore;
   const crypto = yield* Crypto.Crypto;
-  const { connectTimeoutMs } = yield* MachineBackend;
+  const backends = yield* MachineBackend;
+  const classOf = (lease: ThreadStore.MachineLease): MachineClass => lease.machineClass ?? "heavy";
   const diagnostics = yield* TurnDiagnostics;
   const withCrypto = <A>(effect: Effect.Effect<A, never, Crypto.Crypto>) =>
     Effect.provideService(effect, Crypto.Crypto, crypto);
@@ -423,25 +444,35 @@ const make = Effect.gen(function* () {
           keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence }),
         );
       }
-      const { events, undecodable } = runnerBatchEvents(projection, input.items, ctx);
-      return Effect.as(
-        Effect.andThen(
-          diagnostics.batch({
-            ...input,
-            liveRunId: harnessRun(projection)?.id ?? null,
-            runs: projection.runs,
-            now,
-          }),
-          undecodable.length === 0
-            ? Effect.void
-            : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
-        ),
-        {
-          events,
-          machine: { ...lease, ackedSequence: input.sequence },
-          result: { _tag: "ack", sequence: input.sequence } as const,
-        },
+      const { events, undecodable, outgrown } = runnerBatchEvents(projection, input.items, ctx);
+      const recorded = Effect.andThen(
+        diagnostics.batch({
+          ...input,
+          liveRunId: harnessRun(projection)?.id ?? null,
+          runs: projection.runs,
+          now,
+        }),
+        undecodable.length === 0
+          ? Effect.void
+          : Effect.logWarning("dropped Runner events this build cannot read", { undecodable }),
       );
+      const acked = { _tag: "ack", sequence: input.sequence } as const;
+      // The Runner saved everything and stopped reporting: its machine is done
+      // either way, and only a light one's run moves up.
+      if (outgrown !== null) {
+        return Effect.andThen(
+          recorded,
+          Effect.map(
+            machineGone({ projection, lease, now, ctx, detail: outgrown, moveUp: true, events }),
+            (gone) => ({ ...gone, result: acked }),
+          ),
+        );
+      }
+      return Effect.as(recorded, {
+        events,
+        machine: { ...lease, ackedSequence: input.sequence },
+        result: acked,
+      });
     });
 
   /** Updates the lease when it is still at `generation`. */
@@ -459,6 +490,8 @@ const make = Effect.gen(function* () {
   const released = (lease: ThreadStore.MachineLease): ThreadStore.MachineLease => ({
     ...ThreadStore.NO_MACHINE,
     generation: lease.generation,
+    machineClass: lease.machineClass,
+    movedUp: lease.movedUp,
   });
 
   /** Ends the lease's machine session in the diagnostics. */
@@ -479,23 +512,72 @@ const make = Effect.gen(function* () {
       idleSince: input.idleSince ?? lease.idleSince,
     });
 
+  /**
+   * The lease's machine goes, whatever the reason: its session ends, a live run
+   * continues on the next machine (`runRecovery.ts`), and with `moveUp` a light
+   * machine's run moves to the heavy class for good. `events` are the reporting
+   * batch's own, which go first.
+   */
+  const machineGone = (input: {
+    readonly projection: OrchestrationV2ThreadProjection;
+    readonly lease: ThreadStore.MachineLease;
+    readonly now: number;
+    readonly ctx: Parameters<typeof recoverRunEvents>[2];
+    readonly detail: string;
+    readonly moveUp: boolean;
+    readonly events?: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => {
+    const { lease, ctx, detail, events = [] } = input;
+    const after = events.length === 0 ? input.projection : applyEvents(input.projection, events);
+    const run = after === null ? undefined : harnessRun(after);
+    const moves = input.moveUp && run !== undefined && classOf(lease) === "light";
+    return Effect.as(
+      sessionEnded(lease, {
+        reason: moves ? "outgrown" : "error",
+        detail,
+        runId: run?.id ?? null,
+        now: input.now,
+      }),
+      {
+        events: [
+          ...events,
+          ...(after === null || run === undefined
+            ? []
+            : recoverRunEvents(after, run, ctx, moves ? { reason: detail } : undefined)),
+        ],
+        machine: { ...released(lease), movedUp: lease.movedUp === true || moves },
+      },
+    );
+  };
+
   const ended: ThreadRunner["Service"]["ended"] = (generation, reason) =>
     withLease(({ projection, lease, now }, ctx) => {
       if (projection === null || lease.generation !== generation || lease.status === "none") {
         return Effect.succeed(keep(undefined));
       }
-      const run = harnessRun(projection);
-      const detail = `The Runner ended: ${reason}`;
-      return Effect.as(
-        sessionEnded(lease, { reason: "error", detail, runId: run?.id ?? null, now }),
-        {
-          // A machine that goes away mid-turn is a lost machine: the run goes on.
-          events: run === undefined ? [] : recoverRunEvents(projection, run, ctx),
-          machine: released(lease),
-          result: undefined,
-        },
+      // A machine that goes away mid-turn is a lost machine: the run goes on.
+      return Effect.map(
+        machineGone({
+          projection,
+          lease,
+          now,
+          ctx,
+          detail: `The Runner ended: ${reason}`,
+          moveUp: false,
+        }),
+        (gone) => ({ ...gone, result: undefined }),
       );
     });
+
+  const machineExited: ThreadRunner["Service"]["machineExited"] = (generation, detail) =>
+    withLease(({ projection, lease, now }, ctx) =>
+      projection === null || lease.status === "none" || lease.generation !== generation
+        ? Effect.succeed(keep(undefined))
+        : Effect.map(
+            machineGone({ projection, lease, now, ctx, detail, moveUp: true }),
+            (gone) => ({ ...gone, result: undefined }),
+          ),
+    );
 
   const disconnected: ThreadRunner["Service"]["disconnected"] = ({
     generation,
@@ -682,6 +764,7 @@ const make = Effect.gen(function* () {
   const reconcile: ThreadRunner["Service"]["reconcile"] = withLease(
     ({ projection, lease, now }, ctx) =>
       Effect.gen(function* () {
+        const backend = backends[classOf(lease)];
         const run = projection === null ? undefined : harnessRun(projection);
         const runId = run?.id ?? null;
         /**
@@ -726,15 +809,21 @@ const make = Effect.gen(function* () {
           if (run === undefined || projection === null) return keep(UNNEEDED);
           const generation = lease.generation + 1;
           const token = yield* newToken;
-          yield* diagnostics.machineRequested({ generation, run, now });
+          const machineClass = machineClassFor({
+            worktreePath: projection.thread.worktreePath,
+            movedUp: lease.movedUp === true,
+          });
+          yield* diagnostics.machineRequested({ generation, run, now, machineClass });
           return {
             events: [],
             machine: {
               ...ThreadStore.NO_MACHINE,
               generation,
               token,
-              status: "requested",
+              status: "requested" as const,
               requestedAt: now,
+              machineClass,
+              movedUp: lease.movedUp,
             },
             result: {
               ...IDLE,
@@ -749,12 +838,12 @@ const make = Effect.gen(function* () {
           if (run === undefined) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
-          const deadline = (lease.requestedAt ?? now) + connectTimeoutMs;
+          const deadline = (lease.requestedAt ?? now) + backend.connectTimeoutMs;
           if (now >= deadline) {
             const failure = "No machine came up to run this turn.";
             return yield* release({
               reason: "error",
-              detail: `No Runner connected within ${Math.round(connectTimeoutMs / 1000)} s.`,
+              detail: `No Runner connected within ${Math.round(backend.connectTimeoutMs / 1000)} s.`,
               failure,
             });
           }
@@ -785,19 +874,28 @@ const make = Effect.gen(function* () {
         const idleSince = lease.idleSince ?? now;
         // An open preview pushes the tail out to its last traffic.
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
-        if (now - tailFrom >= IDLE_TAIL_MS) {
+        if (now - tailFrom >= backend.idleTailMs) {
           return yield* release({
             reason: "idle",
-            detail: `Idle for ${Math.round((now - tailFrom) / 60_000)} min.`,
+            detail: `Idle for ${formatDuration(now - tailFrom)}.`,
             idleSince: tailFrom,
           });
         }
         return {
           events: [],
           ...(lease.idleSince === null ? { machine: { ...lease, idleSince } } : {}),
-          result: { ...IDLE, wakeAt: tailFrom + IDLE_TAIL_MS },
+          result: { ...IDLE, wakeAt: tailFrom + backend.idleTailMs },
         };
-      }),
+      }).pipe(
+        // Every plan names the class of the lease it is about, for the object's backend calls.
+        Effect.map((decision) => ({
+          ...decision,
+          result: {
+            ...decision.result,
+            machineClass: classOf(decision.machine ?? lease),
+          },
+        })),
+      ),
   );
 
   const leaseToken: ThreadRunner["Service"]["leaseToken"] = (generation, token) =>
@@ -815,6 +913,7 @@ const make = Effect.gen(function* () {
     hello,
     batch,
     ended,
+    machineExited,
     disconnected,
     ensured,
     work,

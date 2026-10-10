@@ -9,7 +9,8 @@
  * there, which needs FUSE: run it in the Runner image under Docker.
  *
  * Point the cloud at it with `LOCAL_RUNNER_URL=http://localhost:8790` in
- * `apps/cloud/.dev.vars`. Turns run this machine's `claude` and `codex`, which
+ * `apps/cloud/.dev.vars`. The same host runs in a light machine's container,
+ * where the cloud starts it with `--listen 0.0.0.0` and `--machine-id`. Turns run this machine's `claude` and `codex`, which
  * reach their models through the cloud's ModelGateway rather than any login on
  * this machine. See docs/operations/cloud.md.
  *
@@ -46,6 +47,8 @@ const { values, positionals } = NodeUtil.parseArgs({
     port: { type: "string", default: "8790" },
     home: { type: "string" },
     config: { type: "string", default: "/home/user/signalbox/machine.json" },
+    listen: { type: "string", default: "127.0.0.1" },
+    "machine-id": { type: "string" },
     // Host mode only: mount /drives here for every thread (one at a time); the Runner image in Docker.
     drives: { type: "string" },
   },
@@ -93,8 +96,9 @@ const program = Effect.gen(function* () {
   return yield* runRunnerHost({
     cloudUrl: values.cloud,
     port,
+    listen: values.listen,
     home: NodePath.resolve(values.home ?? NodePath.join(".t3", "runner")),
-    machineId: `local:${NodeOS.hostname()}`,
+    machineId: values["machine-id"] ?? `local:${NodeOS.hostname()}`,
     imageVersion,
     build: yield* runnerBuild,
     ...(values.drives === undefined ? {} : { drivesMountPoint: values.drives }),

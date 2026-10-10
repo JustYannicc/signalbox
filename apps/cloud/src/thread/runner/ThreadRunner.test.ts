@@ -8,7 +8,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
 import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
-import { CONNECT_TIMEOUT_MS } from "./MachineBackend.ts";
+import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
 import {
   claude,
@@ -27,7 +27,6 @@ import {
   turnReport,
   withObject,
 } from "./runnerTestKit.ts";
-import * as ThreadRunner from "./ThreadRunner.ts";
 
 describe("ThreadRunner", () => {
   it.effect("answers for a thread that does not exist without touching storage", () =>
@@ -299,8 +298,8 @@ describe("ThreadRunner", () => {
         });
         const idle = yield* runner.reconcile;
         expect(idle).toMatchObject({ release: null, stop: false });
-        expect(idle.wakeAt).toBe(ThreadRunner.IDLE_TAIL_MS);
-        yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS);
+        expect(idle.wakeAt).toBe(IDLE_TAIL_MS);
+        yield* TestClock.adjust(IDLE_TAIL_MS);
         // The machine stops with the lease, and stays stopped until the next run.
         expect(yield* runner.reconcile).toMatchObject({ release: machine.generation, stop: true });
         expect((yield* runner.work).needsUpkeep).toBe(false);
@@ -710,7 +709,7 @@ describe("ThreadRunner", () => {
             sequence: 1,
             items: [report.started, report.full, report.terminal],
           });
-          expect((yield* runner.reconcile).wakeAt).toBe(ThreadRunner.IDLE_TAIL_MS);
+          expect((yield* runner.reconcile).wakeAt).toBe(IDLE_TAIL_MS);
           // A browser opens the preview's HMR socket: the tail is off, the TTL kept pushed out.
           previews.held = true;
           expect((yield* runner.work).needsUpkeep).toBe(true);
@@ -719,7 +718,7 @@ describe("ThreadRunner", () => {
             release: null,
             wakeAt: null,
           });
-          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS * 3);
+          yield* TestClock.adjust(IDLE_TAIL_MS * 3);
           expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null });
           expect((yield* runner.work).needsUpkeep).toBe(false);
           // The last preview closes: the tail starts over from then.
@@ -727,14 +726,14 @@ describe("ThreadRunner", () => {
           const closedAt = yield* Clock.currentTimeMillis;
           previews.lastActiveAt = closedAt;
           expect((yield* runner.work).needsUpkeep).toBe(true);
-          expect((yield* runner.reconcile).wakeAt).toBe(closedAt + ThreadRunner.IDLE_TAIL_MS);
+          expect((yield* runner.reconcile).wakeAt).toBe(closedAt + IDLE_TAIL_MS);
           // A late request pushes it out without holding the machine.
-          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS - 1);
+          yield* TestClock.adjust(IDLE_TAIL_MS - 1);
           previews.lastActiveAt = yield* Clock.currentTimeMillis;
           const pushed = yield* runner.reconcile;
           expect(pushed).toMatchObject({ release: null, busy: false });
-          expect(pushed.wakeAt).toBe(previews.lastActiveAt + ThreadRunner.IDLE_TAIL_MS);
-          yield* TestClock.adjust(ThreadRunner.IDLE_TAIL_MS);
+          expect(pushed.wakeAt).toBe(previews.lastActiveAt + IDLE_TAIL_MS);
+          yield* TestClock.adjust(IDLE_TAIL_MS);
           expect(yield* runner.reconcile).toMatchObject({
             release: machine.generation,
             stop: true,

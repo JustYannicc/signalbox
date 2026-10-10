@@ -20,6 +20,9 @@ on:
       - packages/client-runtime/**
       - packages/contracts/**
       - packages/shared/**
+      # Light machines run the Runner built with the Worker.
+      - apps/server/src/signalbox/runner/**
+      - apps/server/src/orchestration-v2/Adapters/**
       - pnpm-lock.yaml
       - .github/workflows/deploy-cloud.yml
       # Every deploy reconnects every client, so skip what never ships.
@@ -69,6 +72,7 @@ jobs:
             args:
               - --filter=@signalbox/cloud...
               - --filter=@t3tools/web...
+              - --filter=t3...
 
       # The cloud serves this build from its own origin.
       - &build
@@ -79,6 +83,12 @@ jobs:
           T3CODE_WEB_SOURCEMAP: "false"
           # The sidebar feedback button sends here; without it the button hides.
           VITE_T3CODE_FEEDBACK_DSN: ${{ vars.VITE_T3CODE_FEEDBACK_DSN }}
+
+      # Light machines' container image is built from this Runner bundle.
+      - &bundle_runner
+        name: Bundle the Runner
+        working-directory: apps/server
+        run: vp run runner:bundle
 
       - name: Write Worker secrets
         run: |
@@ -164,6 +174,7 @@ jobs:
       - *checkout
       - *setup
       - *build
+      - *bundle_runner
 
       # Each preview signs its own sessions: stable across its redeploys, and
       # never accepted by production or another preview.
@@ -258,7 +269,9 @@ jobs:
 
       - name: Delete preview containers
         run: |
-          id="$(npx --yes wrangler@4 containers list --json \
-            | jq -r --arg name "signalbox-cloud-pr-$PR_NUMBER-pools" '.[] | select(.name == $name) | .id' \
-            || true)"
-          if [ -n "$id" ]; then npx --yes wrangler@4 containers delete "$id"; else echo "No preview containers to delete."; fi
+          for app in pools threads; do
+            id="$(npx --yes wrangler@4 containers list --json \
+              | jq -r --arg name "signalbox-cloud-pr-$PR_NUMBER-$app" '.[] | select(.name == $name) | .id' \
+              || true)"
+            if [ -n "$id" ]; then npx --yes wrangler@4 containers delete "$id"; else echo "No preview $app containers to delete."; fi
+          done
