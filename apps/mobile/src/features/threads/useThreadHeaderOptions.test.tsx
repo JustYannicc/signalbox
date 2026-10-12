@@ -31,6 +31,8 @@ vi.mock("@react-navigation/native", () => {
     useNavigation: () => navigation,
   };
 });
+vi.mock("../../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => () => {} }));
+
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("./ThreadPreviewsScreenHeader", async () => ({
   ThreadPreviewsScreenHeader: (await import("../../components/ScreenHeader")).ScreenHeader,

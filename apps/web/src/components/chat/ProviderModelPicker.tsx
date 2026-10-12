@@ -1,6 +1,7 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
+  type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
@@ -32,6 +33,7 @@ import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
+  environmentId: EnvironmentId | null;
   /**
    * The instance currently selected in the composer. Drives the trigger
    * icon, label and the default-highlighted combobox row.
@@ -323,6 +325,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         ) : null}
         <ModelPickerContent
           key={poolId ?? undefined}
+          environmentId={props.environmentId}
           // A pool without the current model opens on its own first provider.
           activeInstanceId={
             poolInstanceIds && !poolInstanceIds.has(activeInstanceId)

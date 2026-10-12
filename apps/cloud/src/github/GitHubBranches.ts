@@ -4,6 +4,7 @@ import {
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   type GitStackedAction,
+  SourceControlProviderKind,
   type ThreadId,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
@@ -50,7 +51,11 @@ import { GitHubConnection } from "./GitHubConnection.ts";
 /** How often a watched branch's status is recomputed. */
 const STATUS_INTERVAL = "30 seconds";
 
-const PROVIDER = { kind: "github", name: "GitHub", baseUrl: "https://github.com" } as const;
+const PROVIDER = {
+  kind: SourceControlProviderKind.make("github"),
+  name: "GitHub",
+  baseUrl: "https://github.com",
+} as const;
 
 const failure = (cwd: string, operation: string, detail: string) =>
   new GitManagerError({ operation, cwd, detail });
