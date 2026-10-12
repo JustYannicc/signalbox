@@ -96,6 +96,14 @@ export const poolIdOfInstance = (instanceId: ProviderInstanceId): string | undef
 export const isHarnessInstance = (instanceId: ProviderInstanceId) =>
   harnessFor(instanceId) !== undefined;
 
+/**
+ * The instance a machine's Runner knows a harness by (`claudeAgent`, `codex`).
+ * A pool's instance names the pool, which reaches the gateway in the model
+ * token instead; the Runner only needs the harness.
+ */
+export const runnerInstanceFor = (instanceId: ProviderInstanceId) =>
+  harnessFor(instanceId)?.instanceId;
+
 /** The ModelGateway provider a harness instance calls; undefined for anything else. */
 export const gatewayProviderFor = (instanceId: ProviderInstanceId) =>
   harnessFor(instanceId)?.gatewayProvider;
