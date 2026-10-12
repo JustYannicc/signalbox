@@ -7496,6 +7496,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     literalText={isLiteralPendingAnswer}
+                    isPathQueryActive={() =>
+                      resolveActiveComposerTrigger().trigger?.kind === "path"
+                    }
                     value={
                       isComposerApprovalState
                         ? ""
