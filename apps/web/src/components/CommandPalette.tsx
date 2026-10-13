@@ -3028,6 +3028,14 @@ function OpenCommandPaletteDialog(props: {
         ];
 
   // signalbox: the account's repositories to pick from, where the server can list them.
+  const repositoryPickerSource = addProjectCloneFlow?.source ?? null;
+  const repositoryPickerIcon = useMemo(
+    () =>
+      repositoryPickerSource === null
+        ? null
+        : remoteProjectSourceIcon(repositoryPickerSource, ITEM_ICON_CLASS),
+    [repositoryPickerSource],
+  );
   const repositoryPickerGroups = useRepositoryPickerGroups({
     environmentId:
       addProjectCloneFlow?.step === "repository" ? addProjectCloneFlow.environmentId : null,
@@ -3036,10 +3044,7 @@ function OpenCommandPaletteDialog(props: {
         ? addProjectRemoteSourceProvider(addProjectCloneFlow.source)
         : null,
     query,
-    icon:
-      addProjectCloneFlow?.step === "repository"
-        ? remoteProjectSourceIcon(addProjectCloneFlow.source, ITEM_ICON_CLASS)
-        : null,
+    icon: repositoryPickerIcon,
     onPick: (repository) => void submitAddProjectCloneFlow(repository),
   });
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
