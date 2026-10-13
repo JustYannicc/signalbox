@@ -24,7 +24,8 @@ interface FakeAccount {
 
 /**
  * The management API of a CLIProxyAPI. A login finishes when its redirect is
- * pasted back (`oauth-callback`), adding `<provider>-<n>@example.test`.
+ * pasted back (`oauth-callback`), adding `<provider>-<n>@example.test`. Model
+ * requests echo what they got.
  */
 export const makeFakeCliProxyApi = () => {
   const accounts = new Map<string, FakeAccount>();
@@ -35,11 +36,12 @@ export const makeFakeCliProxyApi = () => {
   const serve = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (url.pathname === "/v1/models") return json({ data: [] });
-    // Model requests echo what reached the CLIProxyAPI.
+    // A model request: says what it got, so tests can check what the pool sent.
     if (url.pathname.startsWith("/v1/")) {
       return json({
-        path: url.pathname,
+        path: `${url.pathname}${url.search}`,
         authorization: request.headers.get("authorization"),
+        apiKey: request.headers.get("x-api-key"),
         body: await request.text(),
       });
     }

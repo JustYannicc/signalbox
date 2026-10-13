@@ -107,7 +107,8 @@ describe("pool link", () => {
         body: '{"model":"claude"}',
       });
       expect(answer.status).toBe(200);
-      expect(answer.body.path).toBe("/v1/messages");
+      expect(answer.body.path).toBe("/v1/messages?beta=true");
+      expect(answer.body.apiKey).toBeNull();
       expect(answer.body.body).toBe('{"model":"claude"}');
       expect(answer.body.authorization).toMatch(/^Bearer [0-9a-f]{64}$/u);
       expect(answer.body.authorization).not.toContain(received.token);

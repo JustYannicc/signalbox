@@ -1,9 +1,9 @@
 {
-  // The ModelGateway: the only Worker that holds provider keys. Machines'
-  // harnesses call it as their provider's API with per-turn model tokens,
-  // which it checks with the cloud Worker over the GRANTS service binding.
-  // `vp run dev:gateway` runs it locally next to `vp run dev`. See
-  // docs/operations/cloud.md.
+  // The ModelGateway: the origin machines' harnesses call as their provider's
+  // API with per-turn model tokens. It holds no keys: it checks each token
+  // with the cloud Worker and sends the request to the turn's pool over the
+  // GRANTS service binding. `vp run dev:gateway` runs it locally next to
+  // `vp run dev`. See docs/operations/cloud.md.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "signalbox-model-gateway",
   "main": "src/modelGateway/worker.ts",
@@ -11,8 +11,23 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  // Production's `MODEL_GATEWAY_URL`.
+  "routes": [{ "pattern": "gateway.signalbox.run", "custom_domain": true }],
   "services": [{ "binding": "GRANTS", "service": "signalbox-cloud", "entrypoint": "ModelGrants" }],
-  // Secrets: ANTHROPIC_API_KEY, OPENAI_API_KEY (`.dev.vars.model-gateway` locally).
-  // Optional vars: ANTHROPIC_UPSTREAM_URL, OPENAI_UPSTREAM_URL.
   "observability": { "enabled": true },
+  "env": {
+    // A pull request preview's own gateway, for its own cloud Worker. The
+    // deploy workflow puts the pull request's number in place of PR_NUMBER
+    // and passes the name and domain.
+    "preview": {
+      "routes": [],
+      "services": [
+        {
+          "binding": "GRANTS",
+          "service": "signalbox-cloud-pr-PR_NUMBER",
+          "entrypoint": "ModelGrants",
+        },
+      ],
+    },
+  },
 }

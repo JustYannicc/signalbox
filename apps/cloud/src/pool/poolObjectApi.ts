@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 
-import type { PoolObjectApi, PoolReply } from "./PoolDirectory.ts";
+import type { ModelForwardReply, PoolModelApi, PoolObjectApi, PoolReply } from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";
 import { handleLinkRequest, type PoolLinkTarget } from "./poolLink.ts";
 import * as PoolLinks from "./PoolLinks.ts";
@@ -18,7 +18,7 @@ export const makePoolObjectApi = (
     effect: Effect.Effect<A, E, PoolEngine.PoolEngine | PoolLinks.PoolLinks>,
   ) => Promise<A>,
   erase: () => Promise<void>,
-): PoolObjectApi & PoolLinkTarget => {
+): PoolObjectApi & PoolModelApi & PoolLinkTarget => {
   const reply = <A>(
     f: (
       engine: PoolEngine.PoolEngine["Service"],
@@ -57,5 +57,23 @@ export const makePoolObjectApi = (
       reply((engine) => done(engine.updateAccount(actor, name, action))),
     openLink: (actor) => reply((engine) => engine.openLink(actor)),
     linkFetch: (secret, request) => run(handleLinkRequest(secret, request)),
+    forwardModel: (actor, path, request) =>
+      run(
+        PoolEngine.PoolEngine.use((engine) => engine.forwardModel(actor, path, request)).pipe(
+          Effect.map(({ response, upstreamMs }): ModelForwardReply => ({
+            _tag: "forwarded",
+            response,
+            upstreamMs,
+          })),
+          Effect.catchTags({
+            PoolRejectedError: (error: PoolEngine.PoolRejectedError) =>
+              Effect.succeed({ _tag: "denied", reason: error.reason } as const),
+            PoolBackendError: (error: PoolBackendError) =>
+              Effect.logWarning("pool model request failed", error.detail, error.cause).pipe(
+                Effect.as({ _tag: "failed", reason: error.detail } as const),
+              ),
+          }),
+        ),
+      ),
   };
 };

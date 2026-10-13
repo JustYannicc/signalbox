@@ -5,7 +5,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { bearerOrKey, errorResponse } from "../modelGateway/modelGateway.ts";
+import { bearerOrKey, errorResponse, withoutCaller } from "../modelGateway/modelGateway.ts";
 import type { PoolBackendError } from "./cliProxyApi.ts";
 import { poolObjectStub, type PoolObjectNamespace } from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";
@@ -77,9 +77,13 @@ export const handleLinkRequest = (secret: string, request: Request) =>
     const link = yield* links.resolve(secret);
     if (link === null) return failure(request, 401, "This pool link no longer works.");
     const actor = { userId: link.userId };
-    const path = new URL(request.url).pathname.slice(POOL_LINK_PATH.length);
+    const url = new URL(request.url);
+    const path = url.pathname.slice(POOL_LINK_PATH.length);
     if (path.startsWith("/v1/")) {
-      return yield* engine.modelRequest(actor, request, path.slice("/v1".length));
+      // The link token stays here; the pool sends its own key.
+      const forwarded = new Request(request, { headers: withoutCaller(request.headers) });
+      const { response } = yield* engine.forwardModel(actor, `${path}${url.search}`, forwarded);
+      return response;
     }
     if (path === "" && request.method === "GET") {
       return Response.json(yield* engine.linkInfo(actor));

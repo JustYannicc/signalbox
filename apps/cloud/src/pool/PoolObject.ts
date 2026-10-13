@@ -7,6 +7,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Platform from "../platform.ts";
 import {
   POOL_OBJECT_JURISDICTION,
+  type PoolModelApi,
   type PoolObjectApi,
   type PoolObjectNamespace,
 } from "./PoolDirectory.ts";
@@ -76,10 +77,10 @@ const makeRuntime = (ctx: DurableObjectState) =>
 
 export class PoolObject
   extends DurableObject<PoolObjectEnv>
-  implements PoolObjectApi, PoolLinkTarget
+  implements PoolObjectApi, PoolModelApi, PoolLinkTarget
 {
   private readonly runtime: ReturnType<typeof makeRuntime>;
-  private readonly api: PoolObjectApi & PoolLinkTarget;
+  private readonly api: PoolObjectApi & PoolModelApi & PoolLinkTarget;
 
   constructor(ctx: DurableObjectState, env: PoolObjectEnv) {
     super(ctx, env);
@@ -157,6 +158,10 @@ export class PoolObject
   /** A request on one of the pool's links (`poolLink.ts`), from the Worker. */
   linkFetch(...args: Parameters<PoolLinkTarget["linkFetch"]>) {
     return this.api.linkFetch(...args);
+  }
+
+  forwardModel(...args: Parameters<PoolModelApi["forwardModel"]>) {
+    return this.api.forwardModel(...args);
   }
 
   /** Puts an idle container to sleep (see `PoolContainer.sleepIfIdle`). */

@@ -8,6 +8,8 @@ const grant = {
   threadId: ThreadId.make("thread-a"),
   runId: RunId.make("run-1"),
   provider: "anthropic" as const,
+  pool: "user_1:personal",
+  requester: "user_1",
 };
 
 describe("model tokens", () => {
@@ -16,11 +18,13 @@ describe("model tokens", () => {
       const token = yield* modelToken("lease-a", grant);
       expect(threadOfModelToken(token)).toBe("thread-a");
       expect(yield* isModelToken(token, "lease-a", grant)).toBe(true);
-      // Another thread, run, provider or machine lease.
+      // Another thread, run, provider, pool, requester or machine lease.
       for (const [lease, other] of [
         ["lease-a", { ...grant, threadId: ThreadId.make("thread-b") }],
         ["lease-a", { ...grant, runId: RunId.make("run-2") }],
         ["lease-a", { ...grant, provider: "openai" as const }],
+        ["lease-a", { ...grant, pool: "user_1:work" }],
+        ["lease-a", { ...grant, requester: "user_2" }],
         ["lease-b", grant],
       ] as const) {
         expect(yield* isModelToken(token, lease, other)).toBe(false);

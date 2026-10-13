@@ -1,9 +1,11 @@
 # Signalbox-only: deploys Signalbox Cloud (apps/cloud) to Cloudflare. Its own
 # file so upstream merges never touch it. Setup: docs/operations/cloud.md.
 #
-# - main deploys production at app.signalbox.run.
+# - main deploys production at app.signalbox.run, and its ModelGateway at
+#   gateway.signalbox.run.
 # - Pull requests from JustYannicc get a preview at preview-<number>.signalbox.run:
-#   its own Worker and Durable Objects, deleted when the pull request closes.
+#   its own Worker, Durable Objects and ModelGateway (gateway-preview-<number>),
+#   deleted when the pull request closes.
 name: Deploy Signalbox Cloud
 
 on:
@@ -136,6 +138,13 @@ jobs:
           GITHUB_APP_CLIENT_ID: ${{ vars.GITHUB_APP_CLIENT_ID }}
           GITHUB_APP_SLUG: ${{ vars.GITHUB_APP_SLUG }}
 
+      # After the cloud, whose `ModelGrants` entrypoint it calls.
+      - name: Deploy ModelGateway
+        working-directory: apps/cloud
+        run: ./node_modules/.bin/wrangler deploy --config wrangler.model-gateway.jsonc --env ""
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
       - &cleanup
         name: Remove secrets file
         if: always()
@@ -185,11 +194,13 @@ jobs:
           BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
           GITHUB_APP_CLIENT_SECRET: ${{ secrets.GITHUB_APP_CLIENT_SECRET }}
 
-      # Containers have no command-line name, so the preview deploys from a
-      # copy of the config with its own container application name.
-      - name: Name the preview's containers
+      # Containers and service bindings have no command-line names, so the
+      # preview deploys from copies of the configs with its own names.
+      - name: Name the preview's containers and gateway binding
         working-directory: apps/cloud
-        run: sed "s/PR_NUMBER/$PR_NUMBER/g" wrangler.jsonc > wrangler.preview.jsonc
+        run: |
+          sed "s/PR_NUMBER/$PR_NUMBER/g" wrangler.jsonc > wrangler.preview.jsonc
+          sed "s/PR_NUMBER/$PR_NUMBER/g" wrangler.model-gateway.jsonc > wrangler.model-gateway.preview.jsonc
 
       - name: Deploy
         working-directory: apps/cloud
@@ -203,16 +214,26 @@ jobs:
           --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
           --var "CLOUD_URL:https://preview-$PR_NUMBER.signalbox.run"
           --var "MACHINE_BACKEND:$MACHINE_BACKEND"
-          --var "MODEL_GATEWAY_URL:$MODEL_GATEWAY_URL"
+          --var "MODEL_GATEWAY_URL:https://gateway-preview-$PR_NUMBER.signalbox.run"
           --var "GITHUB_APP_CLIENT_ID:$GITHUB_APP_CLIENT_ID"
           --var "GITHUB_APP_SLUG:$GITHUB_APP_SLUG"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
           MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
-          MODEL_GATEWAY_URL: ${{ vars.MODEL_GATEWAY_URL }}
           GITHUB_APP_CLIENT_ID: ${{ vars.GITHUB_APP_CLIENT_ID }}
           GITHUB_APP_SLUG: ${{ vars.GITHUB_APP_SLUG }}
+
+      # The preview's own gateway: its binding reaches only this preview's Worker.
+      - name: Deploy ModelGateway
+        working-directory: apps/cloud
+        run: >-
+          ./node_modules/.bin/wrangler deploy --config wrangler.model-gateway.preview.jsonc
+          --env preview
+          --name "signalbox-model-gateway-pr-$PR_NUMBER"
+          --domain "gateway-preview-$PR_NUMBER.signalbox.run"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - *cleanup
 
@@ -235,6 +256,12 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
+      # The gateway first: its binding points at the preview's Worker.
+      - name: Delete preview ModelGateway
+        run: |
+          npx --yes wrangler@4 delete --name "signalbox-model-gateway-pr-$PR_NUMBER" --force \
+            || echo "No preview ModelGateway to delete."
+
       - name: Delete preview Worker
         run: |
           npx --yes wrangler@4 delete --name "signalbox-cloud-pr-$PR_NUMBER" --force \
