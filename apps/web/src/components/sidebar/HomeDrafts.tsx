@@ -2,11 +2,12 @@
  * Home's Drafts group: unsent work, most recently edited first. One row per
  * T3 draft session with content (several per project show separately; a row
  * opens `/draft/$draftId`), plus the New bar's unsent capture (reopens New).
- * The X discards, the same way the Pipeline's draft rows do.
+ * The X discards, the same way the Pipeline's draft rows do. Drafts started at
+ * the top level list here too; ones started in a folder sit in that folder.
  */
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { SquarePenIcon, XIcon, ZapIcon } from "lucide-react";
+import { LockIcon, SquarePenIcon, XIcon, ZapIcon } from "lucide-react";
 import { memo, useCallback, useMemo, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -25,7 +26,10 @@ import { captureDraftHasContent, useCaptureDraftStore } from "../capture/capture
 import { openQuickCapture } from "../capture/captureModel";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSidebar } from "../ui/sidebar";
+import { TOP_LEVEL } from "../levels/levels";
 import { useDraftEditTimes } from "./draftEditTimes";
+import { LevelDraftRows } from "./sections/LevelDraftRows";
+import { useLevelDrafts } from "./sections/levelDrafts";
 
 const SEPARATOR = "\u0000";
 // Row key for the New bar's draft; T3 draft ids never collide with it.
@@ -87,13 +91,18 @@ const HomeDraftRow = memo(function HomeDraftRow(props: {
         aria-current={props.isActive ? "page" : undefined}
         aria-label={`Draft in ${props.context}: ${props.preview}`}
         onClick={() => props.onOpen(props.rowKey)}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-hidden after:absolute after:inset-0 after:rounded-md after:ring-ring focus-visible:after:ring-2"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-hidden after:absolute after:inset-0 after:rounded-md after:ring-ring after:ring-inset focus-visible:after:ring-2"
       >
         <Icon aria-hidden className="size-4 shrink-0 opacity-70" />
         <span className="min-w-0 flex-1 truncate">{props.preview}</span>
         <span className="max-w-24 shrink-0 truncate text-xs font-normal text-sidebar-muted-foreground/60">
           {props.context}
         </span>
+        {/* Drafts are only yours until sent. */}
+        <LockIcon
+          aria-label="Only you"
+          className="size-3 shrink-0 text-sidebar-muted-foreground/60"
+        />
       </button>
       <span className="w-7 shrink-0 text-right text-xs font-normal text-sidebar-muted-foreground/60 tabular-nums group-has-focus-visible/home-draft:opacity-0 group-hover/home-draft:opacity-0 pointer-coarse:hidden">
         {compactAge(props.editedAt)}
@@ -106,7 +115,7 @@ const HomeDraftRow = memo(function HomeDraftRow(props: {
                 type="button"
                 aria-label={`Discard draft: ${props.preview}`}
                 onClick={() => discardDraft(props.rowKey)}
-                className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground outline-hidden ring-ring hover:bg-sidebar-row-active hover:text-sidebar-foreground focus-visible:ring-2"
+                className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground outline-hidden ring-ring ring-inset hover:bg-sidebar-row-active hover:text-sidebar-foreground focus-visible:ring-2"
               />
             }
           >
@@ -131,6 +140,8 @@ export function HomeDrafts(props: { label: ReactNode }) {
   const { isMobile, setOpenMobile } = useSidebar();
   const projects = useProjects();
   const editedAtByDraftKey = useDraftEditTimes((state) => state.editedAtByDraftKey);
+  // Unsent drafts started at the top level; folder drafts sit in their folder.
+  const topLevelDrafts = useLevelDrafts(TOP_LEVEL);
   const routeDraftId = useParams({
     strict: false,
     select: (params) => {
@@ -209,7 +220,7 @@ export function HomeDrafts(props: { label: ReactNode }) {
     [isMobile, navigate, setOpenMobile],
   );
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && topLevelDrafts.length === 0) return null;
 
   return (
     <section aria-label="Drafts">
@@ -226,6 +237,7 @@ export function HomeDrafts(props: { label: ReactNode }) {
             onOpen={openDraft}
           />
         ))}
+        <LevelDraftRows level={TOP_LEVEL} />
       </ul>
     </section>
   );

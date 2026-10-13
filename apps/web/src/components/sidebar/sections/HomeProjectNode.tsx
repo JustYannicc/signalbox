@@ -12,6 +12,7 @@ import { homeThreadKey } from "../useHomeSidebarData";
 import { isContentsEmpty } from "./containerContents";
 import { ContainerItems } from "./HomeItems";
 import { HomeTreeNode } from "./HomeTreeNode";
+import { LevelDraftRows } from "./LevelDraftRows";
 import { MappedStrip } from "./MappedStrip";
 import { NodeAddButton, NodeMoreMenu } from "./NodeMenus";
 import { archiveInHome, useHomeSectionStore } from "./sectionStore";
@@ -82,6 +83,7 @@ export const HomeProjectNode = memo(function HomeProjectNode(props: {
       }
     >
       <MappedStrip items={view.contents.mapped} containerKey={nodeKey} pullRequestScope={group} />
+      <LevelDraftRows level={nodeKey} />
       {threads.length === 0 && isContentsEmpty(view.contents) ? (
         <li className="flex h-8 items-center px-2.5 text-xs text-sidebar-muted-foreground/50">
           Empty

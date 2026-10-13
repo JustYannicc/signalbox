@@ -7,6 +7,7 @@ import { renderHomeThreadRow, type HomeThreadRowContext } from "../HomeThreadRow
 import { isContentsEmpty } from "./containerContents";
 import { ContainerItems } from "./HomeItems";
 import { HomeTreeNode } from "./HomeTreeNode";
+import { LevelDraftRows } from "./LevelDraftRows";
 import { MappedStrip } from "./MappedStrip";
 import { NodeAddButton, NodeMoreMenu } from "./NodeMenus";
 import { archiveInHome, useHomeSectionStore } from "./sectionStore";
@@ -51,6 +52,7 @@ export function TeamProjectNode(props: {
       }
     >
       <MappedStrip items={contents.mapped} containerKey={nodeKey} />
+      <LevelDraftRows level={nodeKey} />
       {isContentsEmpty(contents) ? (
         <li className="flex h-8 items-center px-2.5 text-xs text-sidebar-muted-foreground/50">
           Empty
