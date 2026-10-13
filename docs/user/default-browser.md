@@ -9,6 +9,6 @@ Choose **Signalbox** under **System Settings → Desktop & Dock → Default web 
 choose another browser there.
 
 HTML files you open from Finder open the same way. [Prompt links](prompt-links.md) to
-app.t3.codes open in the app as a draft.
+app.signalbox.run open in the app as a draft.
 
 A link that launches Signalbox waits until the app has connected to its environment, then opens.

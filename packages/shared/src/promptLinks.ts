@@ -1,4 +1,4 @@
-import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
+import { SIGNALBOX_APP_URL as DEFAULT_HOSTED_APP_URL } from "./signalboxAppUrl.ts"; // signalbox: prompt links open on Signalbox's app
 
 /**
  * Prompt links open T3 Code from outside it with a prompt ready to send. They never send it:

@@ -98,6 +98,7 @@ describe("link round trips", () => {
       provider: "claudeAgent",
       model: "opus",
     });
+    expect(new URL(link).origin).toBe("https://app.signalbox.run"); // signalbox: prompt links
     const path = promptLinkAppPath(link);
     expect(path).toBe(new URL(link).pathname + new URL(link).search);
     const parsed = parseNewThreadLink(new URL(link).search);
@@ -109,10 +110,11 @@ describe("link round trips", () => {
   it("maps app scheme and hosted links to in-app paths, and nothing else", () => {
     expect(promptLinkAppPath("signalbox://new?prompt=hi")).toBe("/new?prompt=hi");
     expect(promptLinkAppPath("signalbox-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
-    expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBe(
+    expect(promptLinkAppPath("https://app.signalbox.run/env-1/thread-1?prompt=go")).toBe(
       "/env-1/thread-1?prompt=go",
     );
-    expect(promptLinkAppPath("https://app.t3.codes/settings/general")).toBeNull();
+    expect(promptLinkAppPath("https://app.signalbox.run/settings/general")).toBeNull();
+    expect(promptLinkAppPath("https://app.t3.codes/new?prompt=hi")).toBeNull();
     expect(promptLinkAppPath("https://evil.test/new?prompt=hi")).toBeNull();
     expect(promptLinkAppPath("signalbox://app/index.html")).toBeNull();
   });
