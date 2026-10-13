@@ -13,7 +13,12 @@ import { useMemo } from "react";
 
 import { useAutomations } from "../../homeAutomations/runDecisions";
 import { SKILLS, useSkillLevels } from "../../levels/leveledThings";
-import { registerProjectRoots, registerProjectSections, TOP_LEVEL } from "../../levels/levels";
+import {
+  registerProjectMembers,
+  registerProjectRoots,
+  registerProjectSections,
+  TOP_LEVEL,
+} from "../../levels/levels";
 import { TEAM_PROJECTS } from "../../multiplayer/multiplayerFixtures";
 import type { TeamProject } from "../../multiplayer/multiplayerModel";
 import { useRoomArchiveStore } from "../../rooms/rooms";
@@ -187,6 +192,15 @@ export function useHomeSectionTree(input: {
 
     // Access follows the tree: a project's agent sits under the section shown here.
     registerProjectSections(sectionIdByProjectKey);
+    registerProjectMembers(
+      new Map(
+        projectEntries.flatMap((entry) =>
+          entry.group.memberProjects.map(
+            (member) => [`${member.environmentId}:${member.id}`, entry.group.projectKey] as const,
+          ),
+        ),
+      ),
+    );
     registerProjectRoots(
       new Map(projectEntries.map((entry) => [entry.group.workspaceRoot, entry.group.projectKey])),
     );

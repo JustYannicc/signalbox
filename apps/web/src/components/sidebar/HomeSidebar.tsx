@@ -27,6 +27,7 @@ import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { HomeSidebarTree } from "./HomeSidebarTree";
 import { useArchiveHomeThread, type HomeThreadRowContext } from "./HomeThreadRow";
 import { HomeSearchResults, useHomeSearch } from "./sections/HomeSearch";
+import { useSeedProjectDrafts } from "./sections/useSeedProjectDrafts";
 import { useHomeSectionTree } from "./sections/useHomeSectionTree";
 import { useHomeSidebarData } from "./useHomeSidebarData";
 import { useHomeThreadShortcuts } from "./useHomeThreadShortcuts";
@@ -40,6 +41,7 @@ export function HomeSidebar() {
   const activeThreadRef = useParams({ strict: false, select: resolveThreadRouteRef });
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const sectionTree = useHomeSectionTree({ projectEntries, activeThreadKey });
+  useSeedProjectDrafts(projectEntries);
 
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) setOpenMobile(false);

@@ -45,6 +45,19 @@ export function registerProjectRoots(roots: ReadonlyMap<string, string>) {
   for (const [workspaceRoot, projectKey] of roots) projectRoots.set(workspaceRoot, projectKey);
 }
 
+/** `environmentId:projectId` of every real project → the Home project it groups under. */
+const projectMembers = new Map<string, string>();
+
+export function registerProjectMembers(members: ReadonlyMap<string, string>) {
+  for (const [memberKey, projectKey] of members) projectMembers.set(memberKey, projectKey);
+}
+
+/** The Home project level a real project (environment + id) sits in, or null before Home knows it. */
+export function levelForProject(environmentId: string, projectId: string): LevelKey | null {
+  const projectKey = projectMembers.get(`${environmentId}:${projectId}`);
+  return projectKey ? `project:${projectKey}` : null;
+}
+
 /** The project level a working directory belongs to, or null (e.g. a worktree path). */
 export function levelForWorkspace(cwd: string): LevelKey | null {
   const projectKey = projectRoots.get(cwd);

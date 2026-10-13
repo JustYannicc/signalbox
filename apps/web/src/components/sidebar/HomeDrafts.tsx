@@ -3,7 +3,8 @@
  * T3 draft session with content (several per project show separately; a row
  * opens `/draft/$draftId`), plus the New bar's unsent capture (reopens New).
  * The X discards, the same way the Pipeline's draft rows do. Drafts started at
- * the top level list here too; ones started in a folder sit in that folder.
+ * the top level list here too; ones started in a project or folder sit there
+ * (`ProjectDraftRows`, `LevelDraftRows`). All share T3's warm draft tint.
  */
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -26,12 +27,15 @@ import { captureDraftHasContent, useCaptureDraftStore } from "../capture/capture
 import { openQuickCapture } from "../capture/captureModel";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSidebar } from "../ui/sidebar";
-import { TOP_LEVEL } from "../levels/levels";
+import { levelForProject, TOP_LEVEL, type LevelKey } from "../levels/levels";
 import { useDraftEditTimes } from "./draftEditTimes";
 import { LevelDraftRows } from "./sections/LevelDraftRows";
 import { useLevelDrafts } from "./sections/levelDrafts";
 
 const SEPARATOR = "\u0000";
+/** T3's unsent-work look (the Pipeline's draft rows): a warm tint and an orange pen. */
+export const DRAFT_SURFACE_CLASS_NAME = "bg-warning/4 text-sidebar-foreground hover:bg-warning/8";
+export const DRAFT_PEN_CLASS_NAME = "size-4 shrink-0 text-warning-foreground";
 // Row key for the New bar's draft; T3 draft ids never collide with it.
 const CAPTURE_ROW_KEY = "capture";
 
@@ -83,7 +87,7 @@ const HomeDraftRow = memo(function HomeDraftRow(props: {
         "group/home-draft relative flex h-9 items-center gap-2 rounded-md px-2.5 text-sm",
         props.isActive
           ? "bg-sidebar-row-selected font-medium text-sidebar-foreground"
-          : "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+          : DRAFT_SURFACE_CLASS_NAME,
       )}
     >
       <button
@@ -93,11 +97,13 @@ const HomeDraftRow = memo(function HomeDraftRow(props: {
         onClick={() => props.onOpen(props.rowKey)}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-hidden after:absolute after:inset-0 after:rounded-md after:ring-ring after:ring-inset focus-visible:after:ring-2"
       >
-        <Icon aria-hidden className="size-4 shrink-0 opacity-70" />
+        <Icon aria-hidden className={DRAFT_PEN_CLASS_NAME} />
         <span className="min-w-0 flex-1 truncate">{props.preview}</span>
-        <span className="max-w-24 shrink-0 truncate text-xs font-normal text-sidebar-muted-foreground/60">
-          {props.context}
-        </span>
+        {props.context ? (
+          <span className="max-w-24 shrink-0 truncate text-xs font-normal text-sidebar-muted-foreground/60">
+            {props.context}
+          </span>
+        ) : null}
         {/* Drafts are only yours until sent. */}
         <LockIcon
           aria-label="Only you"
@@ -133,15 +139,16 @@ interface DraftRow {
   readonly preview: string;
   readonly context: string;
   readonly editedAt: string;
+  /** The Home project it was started in, or null (top level, New, or not in Home yet). */
+  readonly level: LevelKey | null;
 }
 
-export function HomeDrafts(props: { label: ReactNode }) {
+/** Every unsent draft (T3 draft sessions plus the New bar's), newest first, with how to open one. */
+function useDraftRows() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const projects = useProjects();
   const editedAtByDraftKey = useDraftEditTimes((state) => state.editedAtByDraftKey);
-  // Unsent drafts started at the top level; folder drafts sit in their folder.
-  const topLevelDrafts = useLevelDrafts(TOP_LEVEL);
   const routeDraftId = useParams({
     strict: false,
     select: (params) => {
@@ -162,7 +169,8 @@ export function HomeDrafts(props: { label: ReactNode }) {
           [
             draftKey,
             session.createdAt,
-            `${session.environmentId}:${session.projectId}`,
+            session.environmentId,
+            session.projectId,
             draftPreview(composer),
           ].join(SEPARATOR),
         );
@@ -189,12 +197,14 @@ export function HomeDrafts(props: { label: ReactNode }) {
       projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
     );
     const list: DraftRow[] = encodedDrafts.map((encoded) => {
-      const [rowKey = "", createdAt = "", projectKey = "", preview = ""] = encoded.split(SEPARATOR);
+      const [rowKey = "", createdAt = "", environmentId = "", projectId = "", preview = ""] =
+        encoded.split(SEPARATOR);
       return {
         rowKey,
         preview,
-        context: projectTitleByKey.get(projectKey) ?? "Unknown project",
+        context: projectTitleByKey.get(`${environmentId}:${projectId}`) ?? "Unknown project",
         editedAt: editedAtByDraftKey[rowKey] ?? createdAt,
+        level: levelForProject(environmentId, projectId),
       };
     });
     if (captureRow) {
@@ -203,6 +213,7 @@ export function HomeDrafts(props: { label: ReactNode }) {
         preview: captureRow[0],
         context: "New",
         editedAt: captureRow[1],
+        level: null,
       });
     }
     return list.toSorted((left, right) => right.editedAt.localeCompare(left.editedAt));
@@ -220,25 +231,54 @@ export function HomeDrafts(props: { label: ReactNode }) {
     [isMobile, navigate, setOpenMobile],
   );
 
-  if (rows.length === 0 && topLevelDrafts.length === 0) return null;
+  return { rows, routeDraftId, openDraft };
+}
+
+function renderRows(
+  rows: readonly DraftRow[],
+  routeDraftId: string | null,
+  openDraft: (rowKey: string) => void,
+  showContext: boolean,
+) {
+  return rows.map((row) => (
+    <HomeDraftRow
+      key={row.rowKey}
+      rowKey={row.rowKey}
+      preview={row.preview}
+      context={showContext ? row.context : ""}
+      editedAt={row.editedAt}
+      isActive={row.rowKey === routeDraftId}
+      onOpen={openDraft}
+    />
+  ));
+}
+
+/** Drafts that belong to no Home project: the top level's, New's, and any Home doesn't place yet. */
+export function HomeDrafts(props: { label: ReactNode }) {
+  const { rows, routeDraftId, openDraft } = useDraftRows();
+  // Drafts started at the top level; folder drafts sit in their folder.
+  const topLevelDrafts = useLevelDrafts(TOP_LEVEL);
+  const loose = rows.filter((row) => row.level === null);
+  if (loose.length === 0 && topLevelDrafts.length === 0) return null;
 
   return (
     <section aria-label="Drafts">
       {props.label}
       <ul className="flex flex-col gap-px">
-        {rows.map((row) => (
-          <HomeDraftRow
-            key={row.rowKey}
-            rowKey={row.rowKey}
-            preview={row.preview}
-            context={row.context}
-            editedAt={row.editedAt}
-            isActive={row.rowKey === routeDraftId}
-            onOpen={openDraft}
-          />
-        ))}
+        {renderRows(loose, routeDraftId, openDraft, true)}
         <LevelDraftRows level={TOP_LEVEL} />
       </ul>
     </section>
+  );
+}
+
+/** A Home project's own unsent T3 drafts, listed inside its folder. */
+export function ProjectDraftRows(props: { level: LevelKey }) {
+  const { rows, routeDraftId, openDraft } = useDraftRows();
+  return renderRows(
+    rows.filter((row) => row.level === props.level),
+    routeDraftId,
+    openDraft,
+    false,
   );
 }

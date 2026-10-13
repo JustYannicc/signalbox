@@ -3,8 +3,10 @@
  * Home. A draft started in merchant-portal shows inside merchant-portal; one
  * started at the top shows in the top Drafts group. Drafts are always private:
  * nobody else at that level (team members, other agents) sees them until you
- * send. Opening one resumes it in the New bar with its folder chip, which
- * takes it off its folder here. Real composer drafts still list in Drafts.
+ * send. Drafts in a team project become real T3 drafts in the demo project of
+ * the same name (`useSeedProjectDrafts`), so they open in the composer like
+ * any T3 draft. The rest (top level, sections) have no project: opening one
+ * resumes it in the New bar with its folder chip.
  */
 import { useMemo } from "react";
 import { create } from "zustand";
@@ -76,14 +78,19 @@ export const LEVEL_DRAFTS: readonly LevelDraft[] = [
 interface LevelDraftState {
   /** Drafts you sent to New or discarded; they leave their folder. */
   gone: Record<string, true>;
+  /** Project drafts turned into real T3 drafts (fixture id → draft id), once. */
+  seeded: Record<string, string>;
   remove: (id: string) => void;
   restore: (id: string) => void;
+  markSeeded: (id: string, draftId: string) => void;
 }
 
 export const useLevelDraftStore = create<LevelDraftState>()(
   persist(
     (set) => ({
       gone: {},
+      seeded: {},
+      markSeeded: (id, draftId) => set((state) => ({ seeded: { ...state.seeded, [id]: draftId } })),
       remove: (id) => set((state) => ({ gone: { ...state.gone, [id]: true } })),
       restore: (id) =>
         set((state) => {
@@ -98,12 +105,13 @@ export const useLevelDraftStore = create<LevelDraftState>()(
 /** Drafts at one level, most recently edited first. */
 export function useLevelDrafts(level: LevelKey): readonly LevelDraft[] {
   const gone = useLevelDraftStore((state) => state.gone);
+  const seeded = useLevelDraftStore((state) => state.seeded);
   return useMemo(
     () =>
-      LEVEL_DRAFTS.filter((draft) => draft.level === level && !(draft.id in gone)).toSorted(
-        (left, right) => right.editedAt.localeCompare(left.editedAt),
-      ),
-    [gone, level],
+      LEVEL_DRAFTS.filter(
+        (draft) => draft.level === level && !(draft.id in gone) && !(draft.id in seeded),
+      ).toSorted((left, right) => right.editedAt.localeCompare(left.editedAt)),
+    [gone, level, seeded],
   );
 }
 
@@ -122,4 +130,10 @@ export function levelCaptureToken(level: LevelKey): CaptureToken | null {
       : null;
   }
   return null;
+}
+
+/** The team project a draft sits in, by name; null for every other level. */
+export function teamProjectNameOf(level: LevelKey): string | null {
+  if (!level.startsWith("team-project:")) return null;
+  return TEAM_PROJECTS.find((project) => project.id === level.slice(13))?.name ?? null;
 }

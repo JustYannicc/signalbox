@@ -1,13 +1,15 @@
 /**
  * A folder's unsent drafts, at the top of what it lists. Same row as Home's
  * Drafts group, plus a lock: drafts are only yours, even in a team folder.
- * Opening one resumes it in the New bar with its folder chip; X discards it.
+ * Rows use T3's warm draft tint. Opening one resumes it in the New bar with
+ * its folder chip (or the composer, for a project's real drafts); X discards.
  */
 import { LockIcon, SquarePenIcon, XIcon } from "lucide-react";
 import { memo } from "react";
 
+import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "../../../timestampFormat";
-import { useCaptureDraftStore, captureDraftHasContent } from "../../capture/captureDraftStore";
+import { useCaptureDraftStore } from "../../capture/captureDraftStore";
 import { openQuickCapture } from "../../capture/captureModel";
 import type { LevelKey } from "../../levels/levels";
 import { useSidebar } from "../../ui/sidebar";
@@ -19,6 +21,7 @@ import {
   useLevelDrafts,
   type LevelDraft,
 } from "./levelDrafts";
+import { DRAFT_PEN_CLASS_NAME, DRAFT_SURFACE_CLASS_NAME, ProjectDraftRows } from "../HomeDrafts";
 
 function compactAge(timestamp: string): string {
   const label = formatRelativeTimeLabel(timestamp);
@@ -28,7 +31,8 @@ function compactAge(timestamp: string): string {
 
 function resume(draft: LevelDraft) {
   const capture = useCaptureDraftStore.getState();
-  if (captureDraftHasContent(capture)) {
+  // Only real unsent text or links block it; a lone chip (e.g. @Appa) gets replaced.
+  if (capture.text.trim().length > 0 || capture.links.length > 0) {
     toastManager.add({
       type: "info",
       title: "Finish or discard what's in New first",
@@ -64,7 +68,12 @@ const LevelDraftRow = memo(function LevelDraftRow(props: { draft: LevelDraft }) 
   const { draft } = props;
   const { isMobile, setOpenMobile } = useSidebar();
   return (
-    <li className="group/home-draft relative flex h-9 items-center gap-2 rounded-md px-2.5 text-sm text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
+    <li
+      className={cn(
+        "group/home-draft relative flex h-9 items-center gap-2 rounded-md px-2.5 text-sm",
+        DRAFT_SURFACE_CLASS_NAME,
+      )}
+    >
       <button
         type="button"
         aria-label={`Draft, only you: ${draft.text}`}
@@ -74,8 +83,8 @@ const LevelDraftRow = memo(function LevelDraftRow(props: { draft: LevelDraft }) 
         }}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-hidden after:absolute after:inset-0 after:rounded-md after:ring-ring after:ring-inset focus-visible:after:ring-2"
       >
-        <SquarePenIcon aria-hidden className="size-4 shrink-0 opacity-70" />
-        <span className="min-w-0 flex-1 truncate italic">{draft.text}</span>
+        <SquarePenIcon aria-hidden className={DRAFT_PEN_CLASS_NAME} />
+        <span className="min-w-0 flex-1 truncate">{draft.text}</span>
       </button>
       <span className="relative z-10 flex shrink-0 items-center gap-1.5 group-has-focus-visible/home-draft:opacity-0 group-hover/home-draft:opacity-0 pointer-coarse:hidden">
         <Tooltip>
@@ -116,8 +125,15 @@ const LevelDraftRow = memo(function LevelDraftRow(props: { draft: LevelDraft }) 
   );
 });
 
-/** The drafts sitting at `level`; renders nothing when there are none. */
+/** The drafts sitting at `level` (a project's real T3 drafts first); nothing when there are none. */
 export function LevelDraftRows(props: { level: LevelKey }) {
   const drafts = useLevelDrafts(props.level);
-  return drafts.map((draft) => <LevelDraftRow key={draft.id} draft={draft} />);
+  return (
+    <>
+      {props.level.startsWith("project:") ? <ProjectDraftRows level={props.level} /> : null}
+      {drafts.map((draft) => (
+        <LevelDraftRow key={draft.id} draft={draft} />
+      ))}
+    </>
+  );
 }
