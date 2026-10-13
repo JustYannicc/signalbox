@@ -7,7 +7,7 @@
  * attention (the Pipeline's rule), never by type. Rows drag into any
  * container. The title button stretches under the row so any gap opens it.
  */
-import { ArchiveIcon, CheckIcon } from "lucide-react";
+import { ArchiveIcon, CheckCircle2Icon, CheckIcon } from "lucide-react";
 import { useRef, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -26,7 +26,7 @@ import {
 } from "./ThreadKindIcon";
 
 const ROW_BUTTON_CLASS_NAME =
-  "flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-hidden after:absolute after:inset-0 after:rounded-md after:ring-ring focus-visible:after:ring-2";
+  "flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-hidden after:absolute after:inset-0 after:rounded-md after:ring-ring focus-visible:after:ring-2 focus-visible:after:ring-inset";
 
 function compactAge(timestamp: string): string {
   const label = formatRelativeTimeLabel(timestamp);
@@ -66,6 +66,8 @@ export function HomeItemRow(props: {
   markers?: ReactNode;
   lastActiveAt: string;
   onArchive: () => void;
+  /** A real thread whose server settles: the action is Settle, not Archive. */
+  settles?: boolean;
   movable: HomeMovable;
   /** Where the row sits now, left out of Move to…. */
   containerKey: string;
@@ -76,7 +78,8 @@ export function HomeItemRow(props: {
   const rowRef = useRef<HTMLLIElement>(null);
   const type: HomeItemType = props.kind ? props.kind.kind : props.type;
   const isTask = type === "task";
-  const ActionIcon = isTask ? CheckIcon : ArchiveIcon;
+  const ActionIcon = isTask ? CheckIcon : props.settles ? CheckCircle2Icon : ArchiveIcon;
+  const actionLabel = isTask ? "Done" : props.settles ? "Settle" : "Archive";
   const TypeIcon = ITEM_TYPE_ICON[type];
   const recedes = threadRowRecedes(
     props.status ?? (props.waitingOnId ? "waiting" : null),
@@ -150,15 +153,15 @@ export function HomeItemRow(props: {
             render={
               <button
                 type="button"
-                aria-label={`${isTask ? "Mark done" : "Archive"}: ${props.title}`}
+                aria-label={`${isTask ? "Mark done" : actionLabel}: ${props.title}`}
                 onClick={props.onArchive}
-                className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground outline-hidden ring-ring hover:bg-sidebar-row-active hover:text-sidebar-foreground focus-visible:ring-2"
+                className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground outline-hidden ring-ring hover:bg-sidebar-row-active hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset"
               />
             }
           >
             <ActionIcon className="size-3.5" />
           </TooltipTrigger>
-          <TooltipPopup side="top">{isTask ? "Done" : "Archive"}</TooltipPopup>
+          <TooltipPopup side="top">{actionLabel}</TooltipPopup>
         </Tooltip>
         <RowMoreMenu movable={props.movable} currentKey={props.containerKey} />
       </div>

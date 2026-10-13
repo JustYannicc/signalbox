@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/contracts",
-  "version": "0.0.44",
+  "version": "0.0.45",
   "private": true,
   "files": [
     "dist"
@@ -18,11 +18,43 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
+    },
+    "./account": {
+      "types": "./src/account.ts",
+      "import": "./src/account.ts"
+    },
+    "./accountHub": {
+      "types": "./src/accountHub.ts",
+      "import": "./src/accountHub.ts"
+    },
+    "./sections": {
+      "types": "./src/sections.ts",
+      "import": "./src/sections.ts"
+    },
+    "./signalboxAnalytics": {
+      "types": "./src/signalboxAnalytics.ts",
+      "import": "./src/signalboxAnalytics.ts"
+    },
+    "./poolSettings": {
+      "types": "./src/poolSettings.ts",
+      "import": "./src/poolSettings.ts"
+    },
+    "./signalboxContexts": {
+      "types": "./src/signalboxContexts.ts",
+      "import": "./src/signalboxContexts.ts"
+    },
+    "./signalboxDrives": {
+      "types": "./src/signalboxDrives.ts",
+      "import": "./src/signalboxDrives.ts"
+    },
+    "./signalboxPreviews": {
+      "types": "./src/signalboxPreviews.ts",
+      "import": "./src/signalboxPreviews.ts"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
     "effect": "catalog:"

@@ -1,7 +1,7 @@
 /**
  * A real thread in the Home tree, in the shared item-row anatomy: type icon
  * (the Chat/Task toggle), title, the Pipeline's status, a lock when it is
- * private inside a shared container, and age; Done or Archive on hover. The
+ * private inside a shared container, and age; Done, Settle or Archive on hover. The
  * harness, branch, and worktree live in the details tooltip. Management beyond
  * that (Later, reorder) stays in the Pipeline.
  */
@@ -42,10 +42,10 @@ import { EMPTY_PROVIDER_ENTRIES, homeThreadKey } from "./useHomeSidebarData";
 export type ArchiveHomeThread = (thread: EnvironmentThreadShell) => void;
 
 /**
- * Archive the way the Pipeline does: where the server supports settling, Archive
- * is a settle (undo lives in the sidebar notice; the thread comes back on its
- * own when the agent needs you). Older servers fall back to the server archive
- * with the Pipeline's confirmation setting and Home's Undo toast.
+ * The row's hover action, the way the Pipeline does it: where the server
+ * supports settling it settles (undo lives in the sidebar notice; the thread
+ * comes back on its own when the agent needs you). Older servers fall back to
+ * the server archive with the Pipeline's confirmation setting and Home's Undo toast.
  */
 export function useArchiveHomeThread(): ArchiveHomeThread {
   const { archiveThread, settleThread, unarchiveThread } = useThreadActions();
@@ -115,12 +115,12 @@ function resolveHarness(
   thread: EnvironmentThreadShell,
   providerEntries: ReadonlyMap<string, ProviderInstanceEntry>,
 ) {
-  const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const entry = providerEntries.get(instanceId) ?? null;
   const model = entry?.models.find((candidate) => candidate.slug === thread.modelSelection.model);
   return {
     entry,
-    displayName: entry?.displayName ?? thread.session?.providerName ?? instanceId,
+    displayName: entry?.displayName ?? thread.runtime?.providerName ?? instanceId,
     showInstanceBadge: entry !== null && shouldShowInstanceBadge(entry, providerEntries.values()),
     modelLabel: model ? getTriggerDisplayModelLabel(model) : thread.modelSelection.model,
   };
@@ -240,6 +240,7 @@ export const HomeThreadRow = memo(function HomeThreadRow(props: {
       containerKey={props.place?.containerKey ?? ""}
       lastActiveAt={thread.latestUserMessageAt ?? thread.updatedAt}
       onArchive={() => props.onArchive(thread)}
+      settles={readEnvironmentSupportsSettlement(thread.environmentId)}
       details={
         <HomeThreadDetails
           thread={thread}

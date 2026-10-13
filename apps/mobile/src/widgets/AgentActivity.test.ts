@@ -47,7 +47,7 @@ function makeRow(overrides: Partial<AgentActivityRowProps>): AgentActivityRowPro
 }
 
 const props = {
-  title: "T3 Code",
+  title: "Signalbox",
   subtitle: "Agent work in progress",
   activeCount: 1,
   updatedAt: "2026-05-25T13:07:00.000Z",
@@ -80,6 +80,26 @@ describe("AgentActivity widget layout", () => {
     const banner = JSON.stringify(layout.banner);
     expect(banner).toContain("#7dd3fc"); // sky-300: running
     expect(banner).toContain("#fcd34d"); // amber-300: waiting_for_approval
+  });
+
+  it("degrades in-flight rows once the system marks the activity stale", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        activeCount: 2,
+        activities: [
+          makeRow({}),
+          makeRow({ threadId: "thread-2", phase: "completed", status: "Done" }),
+        ],
+      },
+      { ...environment, isStale: true } as never,
+    );
+    const banner = JSON.stringify(layout.banner);
+    expect(banner).toContain("Agent status out of date");
+    expect(banner).toContain("Out of date");
+    expect(banner).not.toContain("#7dd3fc"); // sky-300: running
+    expect(banner).toContain("Done");
+    expect(JSON.stringify(layout.minimal)).not.toContain("2");
   });
 
   it("switches to the web sidebar's light palette when the scheme is light", () => {
@@ -177,14 +197,14 @@ describe("AgentActivity widget layout", () => {
       environment as never,
     );
     expect(JSON.stringify(layout.banner)).toContain(
-      '"widgetURL":"t3code://threads/env-1/thread-2"',
+      '"widgetURL":"signalbox://threads/env-1/thread-2"',
     );
   });
 
   it("deep links the banner to the first row when nothing needs attention", () => {
     const layout = AgentActivity({ ...props, activities: [makeRow({})] }, environment as never);
     expect(JSON.stringify(layout.banner)).toContain(
-      '"widgetURL":"t3code://threads/env-1/thread-1"',
+      '"widgetURL":"signalbox://threads/env-1/thread-1"',
     );
   });
 

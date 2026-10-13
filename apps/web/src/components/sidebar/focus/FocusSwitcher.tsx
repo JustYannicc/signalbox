@@ -140,7 +140,7 @@ export function FocusSwitcher() {
           onClick={() => {
             if (isMobile) setOpenMobile(false);
             void navigate({
-              to: "/automations/$automationId",
+              to: "/home/automations/$automationId",
               params: { automationId: FOCUS_AUTOMATION_ID },
             });
           }}

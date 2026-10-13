@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as OtlpResource from "effect/unstable/observability/OtlpResource";
+import * as OtlpResource from "effect/observability/OtlpResource";
 
 import * as OtelEnvironment from "./otelEnvironment.ts";
 
@@ -244,7 +244,7 @@ describe("OtelEnvironment", () => {
         warnings: [],
       },
       {
-        name: "an exporter T3 Code does not have is ignored with a warning",
+        name: "an exporter Signalbox does not have is ignored with a warning",
         env: {
           OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector:4318",
           OTEL_METRICS_EXPORTER: "prometheus",
@@ -253,7 +253,7 @@ describe("OtelEnvironment", () => {
         metrics: "https://collector:4318/v1/metrics",
         logs: "https://collector:4318/v1/logs",
         warnings: [
-          "OTEL_METRICS_EXPORTER names prometheus, which T3 Code does not export to, so it was ignored",
+          "OTEL_METRICS_EXPORTER names prometheus, which Signalbox does not export to, so it was ignored",
         ],
       },
       {
@@ -267,8 +267,8 @@ describe("OtelEnvironment", () => {
         metrics: "https://collector:4318/v1/metrics",
         logs: "https://collector:4318/v1/logs",
         warnings: [
-          "OTEL_TRACES_EXPORTER names console, which T3 Code does not export to, so it was ignored",
-          "OTEL_LOGS_EXPORTER names console, otlpp, which T3 Code does not export to, so they were ignored",
+          "OTEL_TRACES_EXPORTER names console, which Signalbox does not export to, so it was ignored",
+          "OTEL_LOGS_EXPORTER names console, otlpp, which Signalbox does not export to, so they were ignored",
         ],
       },
     ])("$name", ({ env, traces, metrics, logs, warnings }) =>
@@ -488,17 +488,23 @@ describe("OtelEnvironment", () => {
       { name: "encoded separators", raw: "a%2Cb=x%3Dy", attributes: ["a,b"] },
     ])("lets the exporters' own read succeed with $name", ({ raw, attributes }) =>
       Effect.gen(function* () {
-        const env = ConfigProvider.layer(
+        const layerEnv = ConfigProvider.layer(
           ConfigProvider.fromEnv({ env: { OTEL_RESOURCE_ATTRIBUTES: raw } }),
         );
-        const otel = yield* OtelEnvironment.load.pipe(Effect.provide(env));
+        const otel = yield* OtelEnvironment.load.pipe(Effect.provide(layerEnv));
         const resource = yield* OtlpResource.fromConfig({ serviceName: "t3" }).pipe(
           Effect.provide(
-            Layer.provide(OtelEnvironment.layerResourceAttributes(otel.resourceAttributes), env),
+            Layer.provide(
+              OtelEnvironment.layerResourceAttributes(otel.resourceAttributes),
+              layerEnv,
+            ),
           ),
         );
         assert.deepStrictEqual(
-          resource.attributes.map((attribute) => attribute.key),
+          resource.attributes
+            .map((attribute) => attribute.key)
+            // Effect adds these to every resource.
+            .filter((key) => !key.startsWith("telemetry.sdk.")),
           [...attributes, "service.name"],
         );
       }),

@@ -55,9 +55,9 @@ describe("live turns", () => {
       messages: TEAM_MESSAGES["mp-settlement-pagination"] ?? [],
       endsAt: "2026-09-30T10:00:00.000Z",
     });
-    expect(timeline.activeTurn?.turnId).toBe("t:m4:turn");
+    expect(timeline.activeTurn?.runId).toBe("t:m4:turn");
     const last = timeline.entries.at(-1);
-    expect(last?.kind === "message" ? last.message.role : null).toBe("reasoning");
+    expect(last?.kind === "work" ? last.entry.itemType : null).toBe("reasoning");
   });
 
   it("surfaces the approval a working turn waits on", () => {

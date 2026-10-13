@@ -1,8 +1,6 @@
-import { APP_BASE_NAME } from "../branding";
-
 /** Shows startup failures before React can replace the boot splash. */
 export function showBootError(error: unknown) {
-  console.error(`${APP_BASE_NAME} failed to start.`, error);
+  console.error("Signalbox failed to start.", error);
   const bootShell = document.getElementById("boot-shell");
   if (!bootShell) return;
 
@@ -11,7 +9,7 @@ export function showBootError(error: unknown) {
   content.setAttribute("role", "alert");
 
   const message = document.createElement("p");
-  message.textContent = `${APP_BASE_NAME} could not load.`;
+  message.textContent = "Signalbox could not load.";
   content.append(message);
 
   if (import.meta.env.DEV && error instanceof Error) {

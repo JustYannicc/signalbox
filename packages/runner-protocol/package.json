@@ -1,0 +1,41 @@
+{
+  "name": "@signalbox/runner-protocol",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./RunnerProtocol": {
+      "types": "./src/RunnerProtocol.ts",
+      "import": "./src/RunnerProtocol.ts"
+    },
+    "./PreviewTunnel": {
+      "types": "./src/PreviewTunnel.ts",
+      "import": "./src/PreviewTunnel.ts"
+    },
+    "./DriveProtocol": {
+      "types": "./src/DriveProtocol.ts",
+      "import": "./src/DriveProtocol.ts"
+    },
+    "./SessionProtocol": {
+      "types": "./src/SessionProtocol.ts",
+      "import": "./src/SessionProtocol.ts"
+    },
+    "./ContextProtocol": {
+      "types": "./src/ContextProtocol.ts",
+      "import": "./src/ContextProtocol.ts"
+    },
+    "./drivePaths": {
+      "types": "./src/drivePaths.ts",
+      "import": "./src/drivePaths.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

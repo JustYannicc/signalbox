@@ -56,7 +56,7 @@ export class CaptureFeedback {
     } catch (error) {
       // Optional decoration must not prevent attaching a successfully captured image.
       this._clearActors();
-      console.warn(`T3 capture effects unavailable: ${error.message}`);
+      console.warn(`Signalbox capture effects unavailable: ${error.message}`);
     }
     return Boolean(this._actor);
   }

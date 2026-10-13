@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "../../branding";
 import type {
   ServerProvider,
   ServerProviderVersionAdvisory,
@@ -46,7 +45,7 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       headline: "Disabled",
       detail:
         provider.message ??
-        `This provider is installed but disabled for new sessions in ${APP_BASE_NAME}.`,
+        "This provider is installed but disabled for new sessions in Signalbox.",
     };
   }
   if (!provider.installed) {
@@ -56,8 +55,9 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     };
   }
   if (provider.auth.status === "unauthenticated") {
+    const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: "Not authenticated",
+      headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
       detail: provider.message ?? null,
     };
   }

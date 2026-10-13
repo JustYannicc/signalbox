@@ -5,11 +5,10 @@
  * plan, and system events (model switches, shares) as separator rows. The
  * side tables say who wrote each user turn and which harness answered.
  */
-import { MessageId, TurnId } from "@t3tools/contracts";
+import { MessageId, PlanId, RunId } from "@t3tools/contracts";
 
 import type { TimelineEntry, WorkLogEntry } from "../../session-logic";
-import type { ChatMessage, ProposedPlan } from "../../types";
-import { deriveTimelineEntries } from "../../session-logic";
+import type { ChatMessage } from "../../types";
 import { mentionLabel, segmentMentions } from "./mentions";
 import type { HarnessRef, SystemEvent, TeamMessage } from "./multiplayerModel";
 
@@ -47,7 +46,7 @@ export interface TeamTimeline {
 }
 
 export interface ActiveTeamTurn {
-  readonly turnId: TurnId;
+  readonly runId: RunId;
   readonly startedAt: string;
   readonly harness: HarnessRef;
   /** Who started it, and so who can answer its approval. */
@@ -66,9 +65,11 @@ export function buildTeamTimeline(input: {
   waitingLabel?: string | null;
 }): TeamTimeline {
   const { threadId, messages } = input;
-  const chatMessages: ChatMessage[] = [];
-  const workEntries: WorkLogEntry[] = [];
-  const plans: ProposedPlan[] = [];
+  const entries: TimelineEntry[] = [];
+  const pushMessage = (message: ChatMessage) =>
+    entries.push({ id: message.id, kind: "message", createdAt: message.createdAt, message });
+  const pushWork = (entry: WorkLogEntry) =>
+    entries.push({ id: entry.id, kind: "work", createdAt: entry.createdAt, entry });
   const authors = new Map<string, string>();
   const harnesses = new Map<string, { harness: HarnessRef; forPersonId: string }>();
   const events = new Map<string, SystemEvent>();
@@ -89,10 +90,10 @@ export function buildTeamTimeline(input: {
     const key = `${threadId}:${message.id}`;
     const { author } = message;
     if (author.kind === "system") {
-      workEntries.push({
+      pushWork({
         id: key,
         createdAt: iso,
-        turnId: null,
+        runId: null,
         label: message.body,
         tone: "info",
         sourceActivityKind: "context-compaction",
@@ -102,11 +103,11 @@ export function buildTeamTimeline(input: {
     }
     if (author.kind === "person") {
       authors.set(key, author.personId);
-      chatMessages.push({
+      pushMessage({
         id: MessageId.make(key),
         role: "user",
         text: encodeMentions(message.body),
-        turnId: null,
+        runId: null,
         streaming: false,
         createdAt: iso,
         updatedAt: iso,
@@ -125,7 +126,7 @@ export function buildTeamTimeline(input: {
       });
       return;
     }
-    const turnId = TurnId.make(`${key}:turn`);
+    const runId = RunId.make(`${key}:turn`);
     const steps = message.work ?? [];
     const live = index === messages.length - 1 ? (message.live ?? null) : null;
     // The turn's reasoning and work sit between the message it answers and its
@@ -134,10 +135,10 @@ export function buildTeamTimeline(input: {
     const turnStart = at - gap * (steps.length + 1);
     steps.forEach((step, stepIndex) => {
       const stepAt = new Date(turnStart + gap * (stepIndex + 1)).toISOString();
-      workEntries.push({
+      pushWork({
         id: `${key}:work-${stepIndex}`,
         createdAt: stepAt,
-        turnId,
+        runId,
         toolCallId: `${key}:call-${stepIndex}`,
         label: step.label,
         tone: step.failed ? "error" : "tool",
@@ -151,22 +152,24 @@ export function buildTeamTimeline(input: {
     });
     if (live) {
       activeTurn = {
-        turnId,
+        runId,
         startedAt: new Date(turnStart).toISOString(),
         harness: author.harness ?? DEFAULT_HARNESS,
         forPersonId: author.startedById,
         approval: message.approval ?? null,
       };
     }
+    // Reasoning is a work row, as the real timeline projects a reasoning item.
     if (live && message.reasoning) {
-      chatMessages.push({
-        id: MessageId.make(`${key}:reasoning`),
-        role: "reasoning",
-        text: message.reasoning,
-        turnId,
-        streaming: live === "thinking",
+      pushWork({
+        id: `${key}:reasoning`,
         createdAt: new Date(turnStart + gap / 2).toISOString(),
-        updatedAt: iso,
+        runId,
+        label: "Thinking",
+        detail: message.reasoning,
+        tone: "thinking",
+        itemType: "reasoning",
+        toolLifecycleStatus: live === "thinking" ? "inProgress" : "completed",
       });
     }
     harnesses.set(key, {
@@ -176,35 +179,40 @@ export function buildTeamTimeline(input: {
     // Mid-thinking or mid-tool turns have no answer yet; nor does one that was
     // interrupted before answering.
     if (live === "thinking" || live === "working" || message.body.trim() === "") return;
-    chatMessages.push({
+    pushMessage({
       id: MessageId.make(key),
       role: "assistant",
       text: message.body,
-      turnId,
+      runId,
       streaming: live === "answering",
       createdAt: iso,
       updatedAt: iso,
     });
     if (message.plan) {
       const planAt = new Date(at + 500).toISOString();
-      plans.push({
-        id: `${key}:plan`,
-        turnId,
-        planMarkdown: message.plan,
-        implementedAt: null,
-        implementationThreadId: null,
+      const planId = `${key}:plan`;
+      entries.push({
+        id: planId,
+        kind: "proposed-plan",
         createdAt: planAt,
-        updatedAt: planAt,
+        proposedPlan: {
+          id: PlanId.make(planId),
+          runId,
+          planMarkdown: message.plan,
+          status: "active",
+          createdAt: planAt,
+          updatedAt: planAt,
+        },
       });
     }
   });
 
   if (input.waitingLabel) {
     const key = `${threadId}:waiting`;
-    workEntries.push({
+    pushWork({
       id: key,
       createdAt: new Date(clock + 1_000).toISOString(),
-      turnId: null,
+      runId: null,
       label: input.waitingLabel,
       tone: "info",
       sourceActivityKind: "context-compaction",
@@ -213,7 +221,8 @@ export function buildTeamTimeline(input: {
   }
 
   return {
-    entries: deriveTimelineEntries(chatMessages, plans, workEntries),
+    // Stable sort: rows sharing a timestamp keep their push order.
+    entries: entries.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt)),
     authors,
     harnesses,
     events,

@@ -18,6 +18,7 @@ export function isSidebarUtilityPage(pathname: string) {
     pathname === "/plugins" ||
     pathname === "/automations" ||
     pathname.startsWith("/automations/") ||
+    pathname.startsWith("/home/automations") ||
     ["/devices", "/team", "/computers", "/setup", "/capture"].some(
       (page) => pathname === page || pathname.startsWith(`${page}/`),
     )

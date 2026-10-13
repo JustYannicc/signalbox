@@ -6,11 +6,12 @@ import type {
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
+import { ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
+import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -27,6 +28,7 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { useDriveFolderMenu } from "../drives/useDriveFolderMenu"; // signalbox: drives
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -114,7 +116,9 @@ export default function FileBrowserPanel({
     ready,
     error,
     isPending,
+    loadingDirectories,
   } = useDirectoryEntries(environmentId, cwd);
+  const driveFolderMenu = useDriveFolderMenu(environmentId, cwd, refresh); // signalbox: drives
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
   const pathSearch = useProjectPathSearch({ environmentId, cwd, query: query.slice(0, 256) }, 200);
@@ -179,16 +183,22 @@ export default function FileBrowserPanel({
       : { x: anchorRect.left, y: anchorRect.bottom };
     const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
     const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+    const driveMenuItems = driveFolderMenu.buildItems(relativePath, item.path.endsWith("/"));
     try {
       const clicked = await api.contextMenu.show(
         [
           ...fileMenuItems,
+          ...driveMenuItems,
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
         ],
         position,
       );
       if (clicked === null) return;
+      if (driveFolderMenu.handles(clicked)) {
+        driveFolderMenu.activate(clicked, relativePath);
+        return;
+      }
       // "Open with" submenu selections report the child id ("editor:<id>"),
       // which is not present in the top-level item list.
       const isFileMenuAction =
@@ -238,6 +248,9 @@ export default function FileBrowserPanel({
     showEntryContextMenuRef.current = showEntryContextMenu;
   });
 
+  // The tree reads decorations at render time; a folder still loading its
+  // children shows a spinner in its row instead of a banner that shifts the tree.
+  const loadingDirectoriesRef = useRef(loadingDirectories);
   const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
   const dragMention = useMemo(
     () =>
@@ -282,10 +295,22 @@ export default function FileBrowserPanel({
       }
     },
     paths: [],
+    renderRowDecoration: ({ item, row }) =>
+      row.kind === "directory" &&
+      row.isExpanded &&
+      loadingDirectoriesRef.current.has(item.path.replace(/\/$/, ""))
+        ? { icon: "t3-tree-icon-loading", title: "Loading…" }
+        : null,
     search: false,
     onSearchChange: (value) => setQuery(value ?? ""),
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
+  useEffect(() => {
+    if (loadingDirectoriesRef.current === loadingDirectories) return;
+    loadingDirectoriesRef.current = loadingDirectories;
+    // Re-render the rows with the current options so decorations update.
+    model.setComposition(model.getComposition());
+  }, [loadingDirectories, model]);
   const search = useFileTreeSearch(model);
   const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
     areAllDirectoriesExpanded(currentModel, directoryPaths),
@@ -516,17 +541,17 @@ export default function FileBrowserPanel({
                 />
               }
             >
-              {allDirectoriesExpanded ? (
-                <ChevronsDownUpIcon className="size-3.5" />
-              ) : (
-                <ChevronsUpDownIcon className="size-3.5" />
-              )}
+              <MorphIcon
+                className="size-3.5"
+                icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
+              />
             </TooltipTrigger>
             <TooltipPopup>
               {expandAll || allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {driveFolderMenu.toolbarButton /* signalbox: drives */}
       </div>
       {error || pathSearch.error ? (
         <button
@@ -542,7 +567,7 @@ export default function FileBrowserPanel({
           More matches available. Refine your search.
         </div>
       ) : null}
-      {(isPending || pathSearch.isPending) && (
+      {(!ready || pathSearch.isPending) && (
         <div role="status" className="px-3 py-1 text-xs text-muted-foreground">
           Loading files…
         </div>
@@ -553,6 +578,7 @@ export default function FileBrowserPanel({
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
       />
+      {driveFolderMenu.dialog}
     </div>
   );
 }

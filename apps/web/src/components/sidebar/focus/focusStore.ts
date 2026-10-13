@@ -14,7 +14,7 @@ import { prototypeStorage } from "../../../lib/prototypeStorage";
 import { TOP_LEVEL, type LevelKey } from "../../levels/levels";
 import { liveFocusedLevel } from "./focusLevels";
 
-/** The automation that owns the rules below (`/automations/$automationId`). */
+/** The automation that owns the rules below (`/home/automations/$automationId`). */
 export const FOCUS_AUTOMATION_ID = "work-out-of-sight";
 
 export interface FocusRule {

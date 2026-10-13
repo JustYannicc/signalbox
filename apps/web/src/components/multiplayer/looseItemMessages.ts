@@ -19,10 +19,10 @@ export const LOOSE_ITEM_MESSAGES: Readonly<Record<string, readonly TeamMessage[]
       author: agent("yannic", CODEX),
       at: "08:42",
       work: [
-        { label: "Google Drive", itemType: "mcp_tool_call", detail: "Read “Q3 OKR review”" },
+        { label: "Google Drive", itemType: "dynamic_tool", detail: "Read “Q3 OKR review”" },
         {
           label: "Jira",
-          itemType: "mcp_tool_call",
+          itemType: "dynamic_tool",
           detail: "project = TERM AND created >= -90d · 212 issues",
         },
       ],
@@ -55,12 +55,12 @@ export const LOOSE_ITEM_MESSAGES: Readonly<Record<string, readonly TeamMessage[]
       work: [
         {
           label: "Google Drive",
-          itemType: "mcp_tool_call",
+          itemType: "dynamic_tool",
           detail: "Read “Card statement 2026-09.pdf” · 14 charges",
         },
         {
           label: "Gmail",
-          itemType: "mcp_tool_call",
+          itemType: "dynamic_tool",
           detail: "receipt OR invoice after:2026/09/01 before:2026/10/01 · 12 threads",
         },
         {
@@ -86,12 +86,12 @@ export const LOOSE_ITEM_MESSAGES: Readonly<Record<string, readonly TeamMessage[]
       work: [
         {
           label: "Google Sheets",
-          itemType: "mcp_tool_call",
+          itemType: "dynamic_tool",
           detail: "Read “Firmware pilot list” · 48 rows",
         },
         {
           label: "Jira",
-          itemType: "mcp_tool_call",
+          itemType: "dynamic_tool",
           detail: "fixVersion = 3.3 AND status != Done · 3 issues",
         },
       ],
@@ -102,7 +102,7 @@ export const LOOSE_ITEM_MESSAGES: Readonly<Record<string, readonly TeamMessage[]
       id: "m4",
       author: agent("yannic", SONNET),
       at: "Fri",
-      work: [{ label: "Jira", itemType: "mcp_tool_call", detail: "Read TERM-412" }],
+      work: [{ label: "Jira", itemType: "dynamic_tool", detail: "Read TERM-412" }],
       body: "TERM-412: on 3.3, contactless reads time out after the terminal resumes from sleep. Same resume path that broke 3.2. The fix is in review, not merged, so the A77s move to wave 2.",
     },
   ],
@@ -144,10 +144,10 @@ export const LOOSE_ITEM_MESSAGES: Readonly<Record<string, readonly TeamMessage[]
       author: agent("yannic", CODEX),
       at: "Mon",
       work: [
-        { label: "Google Drive", itemType: "mcp_tool_call", detail: "List Taxes · 17 files" },
+        { label: "Google Drive", itemType: "dynamic_tool", detail: "List Taxes · 17 files" },
         {
           label: "Google Drive",
-          itemType: "mcp_tool_call",
+          itemType: "dynamic_tool",
           detail: "Read the income and deduction documents",
         },
       ],

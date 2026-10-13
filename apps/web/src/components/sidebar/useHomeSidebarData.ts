@@ -17,6 +17,7 @@ import { useProjects, useServerConfigs, useThreadShells } from "../../state/enti
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../../uiStateStore";
 import {
   firstValidTimestampMs,
+  isSidebarSubagentThread,
   orderItemsByPreferredIds,
   sortLogicalProjectsForSidebar,
 } from "../Sidebar.logic";
@@ -28,6 +29,15 @@ export interface HomeProjectEntry {
 }
 
 export const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
+
+/**
+ * Every thread Home shows. Subagent threads stay out, as in the Pipeline: they
+ * show in their parent's lineage (breadcrumb and Thread details) instead.
+ */
+export function useHomeThreadShells(): readonly EnvironmentThreadShell[] {
+  const threads = useThreadShells();
+  return useMemo(() => threads.filter((thread) => !isSidebarSubagentThread(thread)), [threads]);
+}
 
 export function homeThreadKey(thread: EnvironmentThreadShell): string {
   return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -43,7 +53,7 @@ function threadRecencyMs(thread: EnvironmentThreadShell): number {
  */
 export function useHomeSidebarData() {
   const projects = useProjects();
-  const threads = useThreadShells();
+  const threads = useHomeThreadShells();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const sortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -97,9 +107,9 @@ export function useHomeSidebarData() {
   ]);
 
   const lists = useMemo(() => {
-    // One Archive: the Pipeline's settle is shown as Archive, so settled
-    // threads live in Home › Archived next to server-archived ones (same
-    // capability gate as the Pipeline's Archived group).
+    // Settled threads leave the live tree and sit in Home › Archived, tagged
+    // Settled, next to server-archived ones (same capability gate as the
+    // Pipeline's settled group).
     const isArchived = (thread: EnvironmentThreadShell) =>
       thread.archivedAt !== null ||
       (thread.settledOverride === "settled" &&

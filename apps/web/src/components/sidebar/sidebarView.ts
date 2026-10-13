@@ -15,12 +15,21 @@ export type SidebarView = typeof SidebarView.Type;
 
 const SIDEBAR_VIEW_STORAGE_KEY = "t3code:sidebar:view";
 
-/** Spaces folded into Home; a saved "spaces" view opens Home instead of failing to decode. */
-const StoredSidebarView = Schema.Literals(["home", "spaces", "pipeline", "plugins"]).pipe(
+/**
+ * Spaces and automations folded into Home; a saved "spaces" view, or main's
+ * "automations" view, opens Home instead of failing to decode.
+ */
+const StoredSidebarView = Schema.Literals([
+  "home",
+  "spaces",
+  "automations",
+  "pipeline",
+  "plugins",
+]).pipe(
   Schema.decodeTo(
     SidebarView,
     SchemaTransformation.transform({
-      decode: (view) => (view === "spaces" ? "home" : view),
+      decode: (view) => (view === "spaces" || view === "automations" ? "home" : view),
       encode: (view) => view,
     }),
   ),
@@ -34,11 +43,14 @@ export function useSidebarView() {
 export function sidebarViewForPathname(pathname: string): SidebarView | null {
   if (pathname === "/plugins") return "plugins";
   // Places, accounts, repositories' pull requests and automations open from Home folders.
+  // There is no Automations view, so main's real automation pages keep Home lit too.
   if (
     pathname === "/spaces" ||
     pathname === "/pull-requests" ||
     pathname === "/automations" ||
-    pathname.startsWith("/automations/")
+    pathname.startsWith("/automations/") ||
+    pathname === "/home/automations" ||
+    pathname.startsWith("/home/automations/")
   ) {
     return "home";
   }

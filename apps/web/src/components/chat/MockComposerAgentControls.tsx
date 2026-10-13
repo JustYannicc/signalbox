@@ -38,6 +38,9 @@ import { ComposerControlSeparator } from "./ComposerControl";
 import { renderProviderTraitsPicker } from "./composerProviderState";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { ALWAYS_FULL_ACCESS, effectiveRuntimeMode } from "../../lib/fullAccessPolicy";
+import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
+
+const RUNTIME_MODE_OPTIONS = runtimeModes.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
 
 export function MockComposerAgentControls(props: {
   targetKey: string;
@@ -76,6 +79,12 @@ export function MockComposerAgentControls(props: {
     lockedProvider: null,
     lockedInstanceId: null,
   });
+  // Same filter as the chat composer: only modes the selected provider supports.
+  const supportedRuntimeModes = selectedProviderEntry?.snapshot.supportedRuntimeModes;
+  const runtimeModeOptions =
+    supportedRuntimeModes && supportedRuntimeModes.length > 0
+      ? RUNTIME_MODE_OPTIONS.filter((option) => supportedRuntimeModes.includes(option.mode))
+      : RUNTIME_MODE_OPTIONS;
   const selectedInstanceId: ProviderInstanceId =
     selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
@@ -155,6 +164,7 @@ export function MockComposerAgentControls(props: {
         <CompactComposerControlsMenu
           interactionMode={interactionMode}
           runtimeMode={runtimeMode}
+          runtimeModeOptions={runtimeModeOptions}
           showInteractionModeToggle={planModeUiEnabled}
           onToggleInteractionMode={() =>
             setInteractionMode((mode) => (mode === "plan" ? "default" : "plan"))

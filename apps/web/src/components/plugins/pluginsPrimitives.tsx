@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Badge } from "../ui/badge";
 import { toastManager } from "../ui/toast";
 import { Toggle } from "../ui/toggle";
@@ -112,7 +113,6 @@ export function HarnessToggles(props: {
     >
       {HARNESSES.map((harness) => {
         const on = props.enabled.includes(harness.id);
-        const HarnessIcon = harness.icon;
         return (
           <Tooltip key={harness.id}>
             <TooltipTrigger
@@ -126,11 +126,12 @@ export function HarnessToggles(props: {
                 />
               }
             >
-              {HarnessIcon ? (
-                <HarnessIcon className={cn("size-3.5", on ? "opacity-100" : "opacity-25")} />
-              ) : (
-                <span className="text-3xs font-semibold">{harness.label.slice(0, 2)}</span>
-              )}
+              <ProviderInstanceIcon
+                driverKind={harness.driverKind}
+                displayName={harness.label}
+                className={on ? "opacity-100" : "opacity-25"}
+                iconClassName="size-3.5"
+              />
             </TooltipTrigger>
             <TooltipPopup side="top">
               {harness.label}: {on ? "on" : "off"}
@@ -143,8 +144,14 @@ export function HarnessToggles(props: {
 }
 
 export function HarnessGlyph(props: { harness: HarnessId }) {
-  const HarnessIcon = HARNESSES.find((entry) => entry.id === props.harness)?.icon;
-  return HarnessIcon ? <HarnessIcon aria-hidden className="size-4 shrink-0" /> : null;
+  const harness = HARNESSES.find((entry) => entry.id === props.harness);
+  return harness ? (
+    <ProviderInstanceIcon
+      driverKind={harness.driverKind}
+      displayName={harness.label}
+      iconClassName="size-4"
+    />
+  ) : null;
 }
 
 export function HarnessIconLabel(props: { harness: HarnessId }) {

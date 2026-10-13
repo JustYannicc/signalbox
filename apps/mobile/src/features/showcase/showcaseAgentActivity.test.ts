@@ -29,7 +29,7 @@ const thread = (environmentId: string, id: string, projectId: string, title: str
   }) as EnvironmentThreadShell;
 
 const projects = [
-  project("moonbase-terminal", "t3code", "T3 Code"),
+  project("moonbase-terminal", "t3code", "Signalbox"),
   project("suspense-station", "react", "React"),
   project("kernel-cabin", "linux", "Linux"),
 ];
@@ -60,10 +60,10 @@ it("stages relay-shaped rows against the seeded threads", () => {
   assert.deepStrictEqual(
     activity.activities.map((row) => [row.threadId, row.status, row.projectTitle, row.updatedAt]),
     [
-      ["pocket-command-center", "Approval", "T3 Code", "2026-07-16T08:59:00.000Z"],
+      ["pocket-command-center", "Approval", "Signalbox", "2026-07-16T08:59:00.000Z"],
       ["beautiful-boot", "Input", "Linux", "2026-07-16T08:56:00.000Z"],
       ["buttery-suspense", "Working", "React", "2026-07-16T08:58:00.000Z"],
-      ["remote-command-center", "Done", "T3 Code", "2026-07-16T08:57:00.000Z"],
+      ["remote-command-center", "Done", "Signalbox", "2026-07-16T08:57:00.000Z"],
     ],
   );
   assert.strictEqual(
@@ -84,10 +84,10 @@ it("encodes the Android Live Update and its alert like a relay push", () => {
   assert.strictEqual(data.activity_title, "3 active agents · 2 need attention");
   assert.strictEqual(
     data.activity_line_0,
-    "Approval\tPut the command center in your pocket\tT3 Code",
+    "Approval\tPut the command center in your pocket\tSignalbox",
   );
-  assert.strictEqual(data.activity_line_3, "Done\tMake remote coding feel local\tT3 Code");
+  assert.strictEqual(data.activity_line_3, "Done\tMake remote coding feel local\tSignalbox");
   assert.strictEqual(data.alert_title, "Put the command center in your pocket");
-  assert.strictEqual(data.alert_body, "Approval: T3 Code");
+  assert.strictEqual(data.alert_body, "Approval: Signalbox");
   assert.strictEqual(data.alert_path, "/threads/moonbase-terminal/pocket-command-center");
 });

@@ -23,7 +23,7 @@ export function useOpenNode() {
       if (node.kind === "automations") return void navigate({ to: "/" });
       if (node.kind === "trigger") {
         const automationId = node.id.replace(/^trigger:/, "");
-        return void navigate({ to: "/automations/$automationId", params: { automationId } });
+        return void navigate({ to: "/home/automations/$automationId", params: { automationId } });
       }
       if (node.kind !== "thread") {
         return void navigate({

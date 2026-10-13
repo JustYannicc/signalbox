@@ -4,7 +4,8 @@
  * (the sidebar's `icon` collapse, whose icon width is the rail's width). The
  * panel holds the titlebar row, New chat and the assistant, then the chosen
  * view. Pipeline is the existing attention-ordered sidebar, rendered unchanged
- * apart from its titlebar, which this layout owns.
+ * apart from its titlebar, which this layout owns (see SidebarRailContext);
+ * real automations waiting on the user sit on top of it.
  *
  * Plugins owns a page; picking it opens its page, and landing on a page opens
  * its panel. Place pages, pull requests and automations open from Home
@@ -16,6 +17,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useCallback, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
+import { AutomationsWaitingGroup } from "../automations/AutomationsWaitingGroup";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import ThreadSidebar from "../Sidebar";
 import { SidebarStageBackdrop, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
@@ -35,7 +37,8 @@ function PipelineSidebar() {
           Pipeline
         </h2>
       </div>
-      <ThreadSidebar showChromeHeader={false} />
+      <AutomationsWaitingGroup />
+      <ThreadSidebar />
     </>
   );
 }
@@ -97,7 +100,7 @@ export function SidebarViews(props: {
           <SidebarViewRail view={highlightedView} onViewChange={changeView} />
         </div>
         <div className="relative flex min-w-0 flex-1 flex-col group-data-[collapsible=icon]:hidden">
-          <SidebarChromeHeader isElectron={isElectron} />
+          <SidebarChromeHeader isElectron={isElectron} inRail />
           <div
             className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-tl-xl border-t border-l border-sidebar-border bg-sidebar"
             data-sidebar-view={view}

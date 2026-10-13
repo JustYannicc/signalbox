@@ -23,7 +23,7 @@ const window = {
   resetsAt: "2026-09-05T12:10:00.000Z",
 } as const;
 const limits = { checkedAt, windows: [window] };
-const deepLink = "t3code-dev://settings/usage?tab=limits";
+const deepLink = "signalbox-dev://settings/usage?tab=limits";
 function provider(overrides: Partial<ServerProvider> = {}): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make("codex"),

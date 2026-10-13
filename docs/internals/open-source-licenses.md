@@ -3,7 +3,7 @@
 License notices are generated independently for the client that ships them:
 
 - The web build emits `third-party-licenses.json` beside `index.html`. The Settings page loads that
-  static file, so the same artifact works in hosted web, the client bundled with `npx t3`, and
+  static file, so the same artifact works in hosted web, the client bundled with `npx signalbox-cli`, and
   desktop.
 - The mobile Metro config generates an ignored virtual module before each development, native, or
   over-the-air JavaScript bundle. Mobile loads and decodes that module only when a license screen
@@ -75,6 +75,8 @@ metadata:
   "sourceUrl": "https://example.com/package-name"
 }
 ```
+
+For packages containing separately licensed code, use `generatedNotices` with an array of templates instead of `generatedNotice`. The generator includes every notice in the package row.
 
 `version`, `license`, and `sourceUrl` are optional. Omitting `version` applies the override to every
 installed version of that package. An override can use `repositoryUrl` instead of `name` when

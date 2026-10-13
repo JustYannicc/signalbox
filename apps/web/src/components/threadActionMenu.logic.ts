@@ -30,7 +30,47 @@ export type ThreadActionMenuId =
   | "archive"
   | "delete";
 
+export type DraftActionMenuId =
+  | "copy"
+  | "copy-path"
+  | "copy-branch"
+  | "project-settings"
+  | "discard";
+
+/** Right-click menu for an unsent draft row in the sidebar. */
+export function buildDraftActionMenuItems(options: {
+  readonly hasPath: boolean;
+  readonly hasBranch: boolean;
+  readonly hasProject: boolean;
+}): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
+  return [
+    {
+      id: "copy",
+      label: "Copy",
+      icon: "copy",
+      disabled: !options.hasPath && !options.hasBranch,
+      children: [
+        ...(options.hasPath ? [{ id: "copy-path" as const, label: "Path", icon: "folder" }] : []),
+        ...(options.hasBranch
+          ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
+          : []),
+      ],
+    },
+    ...(options.hasProject
+      ? [{ id: "project-settings" as const, label: "Project settings", icon: "settings" }]
+      : []),
+    {
+      id: "discard",
+      label: "Discard draft",
+      icon: "trash",
+      destructive: true,
+      separatorBefore: true,
+    },
+  ];
+}
+
 export interface ThreadActionMenuState {
+  readonly canOperate: boolean;
   readonly branch: string | null;
   /**
    * Project scoping for the thread list. Null on surfaces with no scoped
@@ -48,7 +88,7 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
-  /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
+  /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
   readonly supports: {
     readonly settlement: boolean;
@@ -61,6 +101,19 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
 
+/** Local navigation, read markers, and copying remain available to read-only clients. */
+export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
+  return ![
+    "new-thread-on-branch",
+    "project-settings",
+    "mark-unread",
+    "copy",
+    "copy-path",
+    "copy-branch",
+    "copy-thread-id",
+  ].includes(action);
+}
+
 /**
  * Single source for the per-thread action menu: the sidebar row's right-click
  * menu and the chat header menu share labels, ordering, and capability gating.
@@ -69,7 +122,7 @@ export interface ThreadActionMenuState {
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
-  return [
+  const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.branch
       ? [
           {
@@ -89,13 +142,12 @@ export function buildThreadActionMenuItems(
     // Both lifecycle actions stay available on pinned threads: settling
     // clears the pin ("done" beats "keep on top"), and snoozing hides the
     // card until wake with the pin intact.
-    // Fork: settle is shown as Archive (it comes back on its own when the
-    // agent needs you) and snooze as "Remind me later".
+    // Fork: snooze reads as "Remind me later".
     ...(state.supports.settlement
       ? [
           state.isSettled
-            ? { id: "unsettle" as const, label: "Restore thread", icon: "archive" }
-            : { id: "settle" as const, label: "Archive thread", icon: "archive" },
+            ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
+            : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
         ]
       : []),
     ...(state.supports.snooze
@@ -148,7 +200,7 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "auto-settle" as const,
-            label: "Auto-archive",
+            label: "Auto-settle behavior",
             icon: "timer",
             children: [
               {
@@ -183,25 +235,32 @@ export function buildThreadActionMenuItems(
     // conversation under Settings > Archived threads — distinct from Settle
     // (stays visible in the Settled shelf) and Delete (clears history for
     // good), so it sits beside Delete without borrowing its destructive
-    // styling. Fork: where settle exists it already is "Archive", so the
-    // server-side archive is only offered on environments without it.
-    ...(state.supports.settlement
-      ? []
-      : [
-          {
-            id: "archive" as const,
-            label: "Archive thread",
-            icon: "archive",
-            disabled: state.isRunning,
-            separatorBefore: true,
-          },
-        ]),
+    // styling.
+    {
+      id: "archive",
+      label: "Archive thread",
+      icon: "archive",
+      disabled: state.isRunning,
+      separatorBefore: true,
+    },
     {
       id: "delete",
       label: "Delete",
       destructive: true,
       icon: "trash",
-      separatorBefore: state.supports.settlement,
     },
   ];
+  return state.canOperate
+    ? items
+    : items.map((item) =>
+        threadActionRequiresOperate(item.id)
+          ? {
+              ...item,
+              disabled: true,
+              ...(item.children
+                ? { children: item.children.map((child) => ({ ...child, disabled: true })) }
+                : {}),
+            }
+          : item,
+      );
 }

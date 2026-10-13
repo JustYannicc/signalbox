@@ -25,8 +25,8 @@ import {
 import { createContext, memo, useContext } from "react";
 
 import { cn } from "~/lib/utils";
-import { automationAttention } from "../../automations/automationStatus";
-import { useAssistantName } from "../../automations/useAssistantName";
+import { automationAttention } from "../../homeAutomations/automationStatus";
+import { useAssistantName } from "../../homeAutomations/useAssistantName";
 import { SourceMark } from "../../spaces/SpacesGlyphs";
 import { mappingHealth } from "../../spaces/spacesMappings";
 import type { SpacesSearch } from "../../spaces/spacesModel";
@@ -179,7 +179,7 @@ const MappedRow = memo(function MappedRow(props: {
         // Land on the run that needs you, traced on the workflow.
         const run = automationAttention([item.automation])[0]?.run;
         return linkOptions({
-          to: "/automations/$automationId",
+          to: "/home/automations/$automationId",
           params: { automationId: item.automation.id },
           search: run ? { run: run.id, show: "workflow" as const } : {},
         });

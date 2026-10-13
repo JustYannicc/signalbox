@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "../../branding";
 import { PermissionChecklist, PermissionContinueButton } from "../permissions/PermissionChecklist";
 import { usePermissionStatus } from "../permissions/usePermissionStatus";
 import type { BrowserImportSource } from "@t3tools/contracts";
@@ -286,12 +285,10 @@ function FullDiskAccessStep({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>
-          Let {APP_BASE_NAME} read {source.name}&rsquo;s cookies
-        </DialogTitle>
+        <DialogTitle>Let Signalbox read {source.name}&rsquo;s cookies</DialogTitle>
         <DialogDescription>
-          To import cookies from {source.name}, {APP_BASE_NAME} needs Full Disk Access. Turn it on
-          in System Settings, then come back to finish the import — you can revoke it again once the
+          To import cookies from {source.name}, Signalbox needs Full Disk Access. Turn it on in
+          System Settings, then come back to finish the import — you can revoke it again once the
           import is done.
         </DialogDescription>
       </DialogHeader>
@@ -322,8 +319,8 @@ function FullDiskAccessStep({
         {!permission.isReady(["fullDiskAccess"]) ? (
           <p className="mt-3 text-xs text-muted-foreground">
             {stillRequired
-              ? `Access is still required. Quit and reopen ${APP_BASE_NAME} if you just allowed it, then retry the import.`
-              : `If access doesn't update after you allow it, quit and reopen ${APP_BASE_NAME}, then retry the import.`}
+              ? "Access is still required. Quit and reopen Signalbox if you just allowed it, then retry the import."
+              : "If access doesn't update after you allow it, quit and reopen Signalbox, then retry the import."}
           </p>
         ) : null}
       </DialogPanel>
@@ -460,7 +457,7 @@ function SelectableTile({
       aria-pressed={selected}
       onClick={onSelect}
       className={cn(
-        "flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+        "flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         selected
           ? "border-primary bg-primary/8"
           : "border-border/60 hover:border-border hover:bg-muted/40",

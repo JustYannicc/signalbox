@@ -1,8 +1,8 @@
 # Mobile app-store screenshot harness
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Signalbox? See [docs/user](../user/).
 
-The screenshot harness runs the real mobile application against three disposable local T3
+The screenshot harness runs the real mobile application against three disposable local Signalbox
 environments. It creates an isolated base directory and server for each environment, real Git
 projects with deterministic content, seeded orchestration projections, and persisted terminal
 history. The app pairs with every server through its normal connection flow and React Navigation
@@ -10,7 +10,7 @@ opens the production Home, Thread, ThreadTerminal, ThreadReview, and SettingsEnv
 
 No screenshot-specific screen recreates application UI. `EXPO_PUBLIC_SHOWCASE=1` only enables the
 non-rendering pairing/readiness coordinator, disables terminal autofocus so captures do not contain
-the software keyboard, and supplies deterministic T3 Connect discovery rows to the real
+the software keyboard, and supplies deterministic Signalbox Connect discovery rows to the real
 Environments screen. The local environment cards always come from real paired servers.
 
 ## Capture the default matrix
@@ -21,10 +21,10 @@ From the repository root:
 
 The command:
 
-1. Creates three temporary T3 base directories and starts a local server for each on an available
+1. Creates three temporary Signalbox base directories and starts a local server for each on an available
    port.
-2. Creates T3 Code, React, and Linux Git repositories with recognizable favicons, feature branches,
-   and a deterministic T3 Code review diff.
+2. Creates Signalbox, React, and Linux Git repositories with recognizable favicons, feature branches,
+   and a deterministic Signalbox review diff.
 3. Seeds each server's migrated SQLite database with playful threads, messages, activities, and
    terminal history, then adds two persisted mobile-outbox tasks waiting to send.
 4. Starts an isolated Metro server, builds the selected native apps, and boots each device.
@@ -186,7 +186,7 @@ labels while the server still receives valid current data. The same deterministi
 ensemble serves iPhone, iPad, Android phone, and Android tablet captures; responsive differences
 come entirely from the production app layout.
 
-The Pending rows use the production offline outbox and point at the real T3 Code and React fixture
+The Pending rows use the production offline outbox and point at the real Signalbox and React fixture
 projects. Showcase coordination holds those two entries in the outbox for capture, just like a task
 currently open for editing, so reconnecting the seeded environments cannot deliver and remove them
 before the screenshot is taken.

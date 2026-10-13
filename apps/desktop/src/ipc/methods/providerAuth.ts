@@ -6,6 +6,11 @@ import {
   cancelCodexAuthCallback,
   CodexAuthCallbackError,
 } from "../../app/CodexAuthCallback.ts";
+import {
+  cancelHubAuthCallback,
+  hubAuthorizationRequest,
+  receiveHubAuthCallback,
+} from "@t3tools/shared/hubAuthCallback";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -22,13 +27,17 @@ export const receiveProviderAuthCallback = DesktopIpc.makeIpcMethod({
     const windows = yield* ElectronWindow.ElectronWindow;
     const context = yield* Effect.context<ElectronShell.ElectronShell>();
     const runPromise = Effect.runPromiseWith(context);
+    const open = (url: string) => runPromise(shell.openExternal(url));
     const callbackUrl = yield* Effect.tryPromise({
+      // signalbox: the account hub's own logins (Codex, Claude, Antigravity) too.
       try: () =>
-        receiveCodexAuthCallback(authorizationUrl, (url) => runPromise(shell.openExternal(url))),
+        hubAuthorizationRequest(authorizationUrl)
+          ? receiveHubAuthCallback(authorizationUrl, open)
+          : receiveCodexAuthCallback(authorizationUrl, open),
       catch: () =>
         new CodexAuthCallbackError({
           detail:
-            "Could not receive ChatGPT sign-in on this computer. Try again or paste the redirect URL.",
+            "Could not receive the sign-in on this computer. Try again or paste the redirect URL.",
         }),
     });
     const window = yield* windows.currentMainOrFirst;
@@ -43,7 +52,10 @@ export const cancelProviderAuthCallback = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: (authorizationUrl) =>
     Effect.try({
-      try: () => cancelCodexAuthCallback(authorizationUrl),
+      try: () =>
+        hubAuthorizationRequest(authorizationUrl)
+          ? cancelHubAuthCallback(authorizationUrl)
+          : cancelCodexAuthCallback(authorizationUrl),
       catch: () => new CodexAuthCallbackError({ detail: "Invalid ChatGPT sign-in request." }),
     }),
 });

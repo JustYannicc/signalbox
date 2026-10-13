@@ -1,6 +1,6 @@
 # Composer context references
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Signalbox? See [docs/user](../user/).
 
 Inline context references let a user message point at a typed payload from an exact position in
 its prose: an image, a file, a terminal excerpt, a picked page element, a preview annotation, a
@@ -23,8 +23,8 @@ union is open: a kind this build does not know decodes to `UnknownContextRecord`
 `payload` preserved, and known kinds are excluded from that member so a malformed image record
 fails its own schema rather than sliding through unchecked. `OrchestrationMessageContext` wraps
 the records with `ForwardCompatibleArray`, so one undecodable record is dropped instead of failing
-the whole message. The field is optional on `OrchestrationMessage`, both turn-start commands, and
-`ThreadMessageSentPayload`. The decider and projector carry it through untouched.
+the whole message. The field is optional on the V2 conversation message and the commands that
+start or queue a turn; the orchestrator carries it through untouched.
 
 ## Identity namespaces
 
@@ -123,7 +123,7 @@ trailing `<terminal_context>` form is parsed only when reading messages sent by 
 The composer sends `message.text` as canonical prose with reference links and
 `message.context.records` built from the draft (`buildMessageContext` in
 `apps/web/src/lib/composerContextRecords.ts`). Expired terminal excerpts are dropped from both.
-The server projects provider text at turn start (`ProviderCommandReactor`), so the persisted
+The server projects provider text at turn start (`projectComposerContextForProvider`), so the persisted
 message stays readable and the provider receives markers plus one envelope.
 
 Review comments and preview annotations enter the draft through store mutators. A mounted composer

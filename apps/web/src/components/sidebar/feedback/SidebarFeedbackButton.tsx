@@ -1,13 +1,17 @@
 /**
  * One-click feedback from the rail: click, type, Send (or Enter). Shift+Enter
- * adds a line. A screenshot of the window and recent console logs ride along
- * unless unchecked. The draft survives a failed send so nothing typed is lost.
- * Builds without a feedback DSN show the button disabled with the reason.
+ * adds a line. A screenshot of the window and recent server warnings and
+ * errors ride along unless unchecked. The draft survives a failed send so
+ * nothing typed is lost. Builds without a feedback DSN show the button
+ * disabled with the reason.
  */
 import { ImageOffIcon, MessageSquareHeartIcon } from "lucide-react";
-import { useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useId, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 
+import { recordProductAnalyticsEvent } from "../../../analytics/productAnalytics";
 import { APP_BASE_NAME } from "../../../branding";
+import { usePrimaryEnvironmentId } from "../../../state/environments";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
 import { Checkbox } from "../../ui/checkbox";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../ui/popover";
@@ -15,12 +19,15 @@ import { SidebarMenuButton } from "../../ui/sidebar";
 import { Textarea } from "../../ui/textarea";
 import { toastManager } from "../../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
-import { installFeedbackLogCapture, readFeedbackLogs } from "./feedbackLogs";
-import { FEEDBACK_DSN, sendFeedback } from "./sendFeedback";
+import { readFeedbackServerLogs } from "./feedbackServerLogs";
+import { FEEDBACK_DSN, preloadFeedbackSdk, sendFeedback } from "./sendFeedback";
 import { useFeedbackScreenshot, type FeedbackScreenshot } from "./useFeedbackScreenshot";
 
-// The rail mounts with the app, so logs from startup onward are available.
-installFeedbackLogCapture();
+const SCREENSHOT_WAIT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T | null>, ms: number): Promise<T | null> {
+  return Promise.race([promise, new Promise<null>((resolve) => setTimeout(resolve, ms, null))]);
+}
 
 function ScreenshotPreview(props: { enabled: boolean; screenshot: FeedbackScreenshot }) {
   const { screenshot } = props;
@@ -69,11 +76,17 @@ function AttachmentOption(props: {
 }
 
 export function SidebarFeedbackButton() {
+  const textareaId = useId();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [attachScreenshot, setAttachScreenshot] = useState(true);
   const [attachLogs, setAttachLogs] = useState(true);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const recordAnalyticsEvent = useAtomCommand(recordProductAnalyticsEvent, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const {
     screenshot,
     start: captureScreenshot,
@@ -84,6 +97,7 @@ export function SidebarFeedbackButton() {
   // Each open captures what is on screen right then; closing drops it.
   const changeOpen = (next: boolean) => {
     setOpen(next);
+    if (next) preloadFeedbackSdk();
     if (next && attachScreenshot) captureScreenshot();
     else if (!next) clearScreenshot();
   };
@@ -94,16 +108,32 @@ export function SidebarFeedbackButton() {
   };
   const canSend = draft.trim().length > 0 && !sending;
 
+  const resolveAttachments = async () => {
+    const [screenshotBlob, serverLogs] = await Promise.all([
+      // A slow capture drops the screenshot rather than holding up Send.
+      attachScreenshot ? withTimeout(resolveScreenshot(), SCREENSHOT_WAIT_MS) : null,
+      attachLogs ? readFeedbackServerLogs() : null,
+    ]);
+    return { screenshot: screenshotBlob, serverLogs };
+  };
+
   const submit = async () => {
     const message = draft.trim();
     if (message.length === 0 || sending) return;
     setSending(true);
     try {
-      await sendFeedback({
-        message,
-        screenshot: attachScreenshot ? await resolveScreenshot() : null,
-        logs: attachLogs ? readFeedbackLogs() : null,
-      });
+      const attachments = await resolveAttachments();
+      await sendFeedback({ message, ...attachments });
+      if (primaryEnvironmentId !== null) {
+        void recordAnalyticsEvent({
+          environmentId: primaryEnvironmentId,
+          input: {
+            event: "feedback.sent",
+            screenshotAttached: attachments.screenshot !== null,
+            serverLogsAttached: attachments.serverLogs !== null,
+          },
+        });
+      }
       setDraft("");
       changeOpen(false);
       toastManager.add({ type: "success", title: "Feedback sent", description: "Thanks." });
@@ -128,7 +158,7 @@ export function SidebarFeedbackButton() {
     return (
       <Tooltip>
         {/* A disabled button gets no pointer events, so the tooltip hangs off a wrapper. */}
-        <TooltipTrigger render={<span className="inline-flex" />}>
+        <TooltipTrigger render={<span className="flex" />}>
           <SidebarMenuButton aria-label="Send feedback" size="icon" disabled>
             <MessageSquareHeartIcon />
           </SidebarMenuButton>
@@ -161,11 +191,11 @@ export function SidebarFeedbackButton() {
           }}
         >
           <div className="flex flex-col gap-2">
-            <label htmlFor="sidebar-feedback" className="text-sm font-medium text-foreground">
+            <label htmlFor={textareaId} className="text-sm font-medium text-foreground">
               Feedback about {APP_BASE_NAME}
             </label>
             <Textarea
-              id="sidebar-feedback"
+              id={textareaId}
               autoFocus
               value={draft}
               disabled={sending}
@@ -189,7 +219,7 @@ export function SidebarFeedbackButton() {
                 disabled={sending}
                 onCheckedChange={setAttachLogs}
               >
-                Attach recent logs
+                Attach recent server logs
               </AttachmentOption>
             </div>
           </div>

@@ -1,0 +1,30 @@
+{
+  "name": "@signalbox/cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "mkdir -p ../web/dist && wrangler dev --env dev --port 8787 --var LOCAL_WORKERD:1 --var ENVIRONMENT_ID:cloud-dev --var 'ENVIRONMENT_LABEL:Signalbox Cloud (dev)'",
+    "dev:gateway": "wrangler dev -c wrangler.model-gateway.jsonc --env-file .dev.vars.model-gateway --port 8788 --inspector-port 9230",
+    "deploy": "vp run --filter @t3tools/web build && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@effect/sql-sqlite-do": "catalog:",
+    "@signalbox/account": "workspace:*",
+    "@signalbox/runner-protocol": "workspace:*",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "diff": "8.0.3",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260604.1",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "wrangler": "^4.147.0"
+  }
+}

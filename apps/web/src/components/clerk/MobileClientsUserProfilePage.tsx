@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "../../branding";
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
 import { SmartphoneIcon } from "lucide-react";
 
@@ -95,8 +94,8 @@ function EmptyMobileClients() {
       <EmptyHeader>
         <EmptyTitle>No mobile clients</EmptyTitle>
         <EmptyDescription>
-          Sign in to {APP_BASE_NAME} on your iPhone to register it for push notifications and Live
-          Activities.
+          Install Signalbox on your phone and sign in to Signalbox Connect to get push notifications
+          and Live Activities.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -113,7 +112,7 @@ export function MobileClientsUserProfilePage() {
   return (
     <ClerkUserProfilePage
       title="Mobile clients"
-      description="Devices registered to receive T3 Connect activity from your environments."
+      description="Mobile devices that get notifications from your environments."
       action={
         <ClerkUserProfileRefreshButton
           isPending={devicesState.isPending}

@@ -4,6 +4,7 @@ import { defineConfig, mergeConfig } from "vite-plus";
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import packageJson from "./package.json" with { type: "json" };
+import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
 
 // The bundle used to inline only workspace packages, leaving every third-party
 // runtime dep external. External deps must exist on the real filesystem (the WSL
@@ -84,7 +85,7 @@ export default mergeConfig(
       ...(packExecutable
         ? {
             exe: {
-              fileName: "t3",
+              fileName: "signalbox",
               outDir: "dist-exe",
               ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
               // Node's SEA docs: `import()` does not work when useCodeCache is
@@ -127,12 +128,21 @@ export default mergeConfig(
         __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: JSON.stringify(
           repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ?? "",
         ),
+        // signalbox: our PostHog project, beside T3 Code's (src/signalbox/analytics)
+        __SIGNALBOX_BUILD_POSTHOG_KEY__: JSON.stringify(
+          repoEnv.SIGNALBOX_POSTHOG_KEY?.trim() ?? "",
+        ),
+        __SIGNALBOX_BUILD_POSTHOG_HOST__: JSON.stringify(
+          repoEnv.SIGNALBOX_POSTHOG_HOST?.trim() ?? "",
+        ),
       },
     },
     test: {
       // The server suite exercises sqlite, git, temp worktrees, and orchestration
       // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
       fileParallelism: false,
+      // CI runs the suite as `--shard` runs of equal recorded duration.
+      sequence: { sequencer: WeightedShardSequencer },
       // Appended to the root setup, which mergeConfig concatenates.
       setupFiles: ["./src/testUtils/gitConfig.setup.ts"],
       // Server integration tests exercise sqlite, git, and orchestration together.

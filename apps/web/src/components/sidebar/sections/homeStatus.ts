@@ -32,6 +32,7 @@ export function statusForThread(
 ): ThreadDisplayStatus | null {
   return resolveThreadDisplayStatus({
     status: resolveSidebarThreadStatus(thread),
+    goalActive: thread.goal?.status === "active",
     planReady: threadHasPlanReady(thread),
     isWoke: isWoke(thread, lastVisitedAt),
     isUnread: hasUnseenCompletion({ ...thread, lastVisitedAt }),

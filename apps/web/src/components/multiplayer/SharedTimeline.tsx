@@ -31,6 +31,8 @@ import { currentPerson, findPerson } from "./teamThreads";
 
 const PREVIEW_ENVIRONMENT_ID = EnvironmentId.make("multiplayer-preview");
 const noop = () => {};
+const noopAsync = async () => {};
+const EMPTY: readonly never[] = [];
 
 function EventIcon(props: { event: SystemEvent }) {
   const Icon =
@@ -97,23 +99,29 @@ export function SharedTimeline(props: { threadKey: string; timeline: TeamTimelin
     <TimelineAnnotationsContext value={annotations}>
       <MessagesTimeline
         isWorking={active !== null}
+        activeTurnInProgress={active !== null}
         activeTurnStartedAt={active?.startedAt ?? null}
         listRef={listRef}
         timelineEntries={props.timeline.entries}
-        latestTurn={
+        latestRun={
           active
             ? {
-                turnId: active.turnId,
-                state: "running",
+                runId: active.runId,
+                status: "running",
                 startedAt: active.startedAt,
                 completedAt: null,
               }
             : null
         }
-        runningTurnId={active?.turnId ?? null}
-        turnDiffSummaries={[]}
+        runningRunId={active?.runId ?? null}
+        turnDiffSummaries={EMPTY}
+        providerStatuses={EMPTY}
+        runs={EMPTY}
         routeThreadKey={`shared:${props.threadKey}`}
         onOpenTurnDiff={noop}
+        onOpenThread={noop}
+        onForkFromRun={noopAsync}
+        onRollbackCheckpoint={noop}
         supportsConversationRollback={false}
         onRevertToTurnCount={noop}
         isRevertingCheckpoint={false}
@@ -125,6 +133,7 @@ export function SharedTimeline(props: { threadKey: string; timeline: TeamTimelin
         workspaceRoot={undefined}
         anchorMessageId={null}
         onAnchorReady={noop}
+        onAnchorSizeChanged={noop}
         contentInsetEndAdjustment={0}
         liveFollowEnabled
         onIsAtEndChange={noop}

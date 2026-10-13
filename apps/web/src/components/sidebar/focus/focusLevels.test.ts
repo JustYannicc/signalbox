@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { AUTOMATIONS } from "../../automations/automationFixtures";
+import { AUTOMATIONS } from "../../homeAutomations/automationFixtures";
 import { TOP_LEVEL } from "../../levels/levels";
 import {
   hiddenRootSectionIds,

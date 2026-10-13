@@ -1,10 +1,8 @@
 /**
- * Pan and zoom for the workflow canvas. Drag the background or scroll to pan,
+ * Pan and zoom for the diagram canvas. Drag the background or scroll to pan,
  * pinch or Cmd/Ctrl+scroll to zoom around the pointer. Until the user moves
- * the view it keeps refitting the graph as the canvas resizes, so opening the
- * details panel never strands nodes off-screen. Tall graphs in a short pane
- * fit the width and start at the top, so the trigger is where you begin
- * reading and you scroll down the run.
+ * the view it keeps the diagram fitted as the canvas resizes, so opening the
+ * details panel never strands the diagram off-screen.
  */
 import {
   useCallback,
@@ -15,8 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-
-import type { WorkflowLayout } from "./workflowLayout";
+import { observeResize } from "~/lib/observeResize";
 
 export interface Viewport {
   x: number;
@@ -24,39 +21,38 @@ export interface Viewport {
   zoom: number;
 }
 
-const MIN_ZOOM = 0.4;
+const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 1.75;
-const FIT_PADDING = 56;
+const FIT_PADDING = 40;
 /** Pointer travel below this still counts as a click on the background. */
 const DRAG_THRESHOLD = 3;
 
 const clampZoom = (zoom: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 
-/** Below this, a fit that shows everything is too small to read; fit the width instead. */
-const READABLE_ZOOM = 0.7;
-
-function fitViewport(bounds: WorkflowLayout["bounds"], width: number, height: number): Viewport {
-  const boundsWidth = bounds.maxX - bounds.minX;
-  const boundsHeight = bounds.maxY - bounds.minY;
-  if (boundsWidth <= 0 || width === 0 || height === 0) return { x: 0, y: 0, zoom: 1 };
-  const byWidth = (width - FIT_PADDING * 2) / boundsWidth;
-  const byHeight = (height - FIT_PADDING * 2) / boundsHeight;
-  const whole = clampZoom(Math.min(byWidth, byHeight, 1));
-  const zoom = whole >= READABLE_ZOOM ? whole : clampZoom(Math.min(byWidth, READABLE_ZOOM));
-  const top =
-    boundsHeight * zoom <= height - FIT_PADDING * 2
-      ? (height - boundsHeight * zoom) / 2
-      : FIT_PADDING;
+/**
+ * Fits the diagram's width, but never shrinks a tall diagram below a readable
+ * size just to show all of it: a long automation starts at the top and scrolls.
+ */
+function fitViewport(
+  bounds: { width: number; height: number },
+  width: number,
+  height: number,
+): Viewport {
+  if (bounds.width === 0 || width === 0 || height === 0) return { x: 0, y: 0, zoom: 1 };
+  const fitWidth = (width - FIT_PADDING * 2) / bounds.width;
+  const fitHeight = (height - FIT_PADDING * 2) / bounds.height;
+  const zoom = clampZoom(Math.min(1, fitWidth, Math.max(fitHeight, 0.7)));
+  const tall = bounds.height * zoom > height - FIT_PADDING * 2;
   return {
-    x: (width - boundsWidth * zoom) / 2 - bounds.minX * zoom,
-    y: top - bounds.minY * zoom,
+    x: (width - bounds.width * zoom) / 2,
+    y: tall ? FIT_PADDING / 2 : (height - bounds.height * zoom) / 2,
     zoom,
   };
 }
 
 export function useCanvasViewport(
   containerRef: RefObject<HTMLDivElement | null>,
-  bounds: WorkflowLayout["bounds"],
+  bounds: { width: number; height: number },
   onBackgroundClick: () => void,
 ) {
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
@@ -68,23 +64,22 @@ export function useCanvasViewport(
     moved: boolean;
     origin: Viewport;
   } | null>(null);
+  const { width, height } = bounds;
 
   const fit = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
     userMovedRef.current = false;
-    setViewport(fitViewport(bounds, container.clientWidth, container.clientHeight));
-  }, [containerRef, bounds]);
+    setViewport(fitViewport({ width, height }, container.clientWidth, container.clientHeight));
+  }, [containerRef, width, height]);
 
   useLayoutEffect(() => {
     fit();
     const container = containerRef.current;
     if (!container) return;
-    const observer = new ResizeObserver(() => {
+    return observeResize(container, () => {
       if (!userMovedRef.current) fit();
     });
-    observer.observe(container);
-    return () => observer.disconnect();
   }, [containerRef, fit]);
 
   const zoomAround = useCallback(

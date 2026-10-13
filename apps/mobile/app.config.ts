@@ -28,7 +28,7 @@ if (
     !IOS_BUNDLE_IDENTIFIER_PATTERN.test(personalTeamBundleIdentifier))
 ) {
   throw new Error(
-    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
+    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.signalbox when T3CODE_IOS_PERSONAL_TEAM=1.",
   );
 }
 
@@ -74,25 +74,25 @@ const RELEASE_ASSETS = {
 const VARIANT_CONFIG = {
   development: {
     appName: "Signalbox Dev",
-    scheme: "t3code-dev",
-    iosBundleIdentifier: "com.t3tools.t3code.dev",
-    androidPackage: "com.t3tools.t3code.dev",
+    scheme: "signalbox-dev",
+    iosBundleIdentifier: "com.justyannicc.signalbox.dev",
+    androidPackage: "com.justyannicc.signalbox.dev",
     relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
     appName: "Signalbox Preview",
-    scheme: "t3code-preview",
-    iosBundleIdentifier: "com.t3tools.t3code.preview",
-    androidPackage: "com.t3tools.t3code.preview",
+    scheme: "signalbox-preview",
+    iosBundleIdentifier: "com.justyannicc.signalbox.preview",
+    androidPackage: "com.justyannicc.signalbox.preview",
     relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
   },
   production: {
     appName: "Signalbox",
-    scheme: "t3code",
-    iosBundleIdentifier: "com.t3tools.t3code",
-    androidPackage: "com.t3tools.t3code",
+    scheme: "signalbox",
+    iosBundleIdentifier: "com.justyannicc.signalbox",
+    androidPackage: "com.justyannicc.signalbox",
     relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
   },
@@ -129,51 +129,66 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
     // Agent activity can update many times an hour; without the
     // frequent-updates entitlement iOS throttles the update budget sooner.
     frequentUpdates: true,
+    enableAndroid: true,
     widgets: [
       {
         name: "SubscriptionUsage",
         displayName: "Subscription usage",
         description: "Subscription quotas from your connected Signalbox environments.",
-        configuration: {
-          title: "Subscription usage",
-          description:
-            "Both shows Session and Weekly when available. The Lock Screen shows the tightest selected limit.",
-          parameters: {
-            codexPeriod: {
-              title: "Codex limits",
-              type: "enum",
-              default: "auto",
-              values: [
-                { name: "Both", value: "auto" },
-                { name: "Session", value: "session" },
-                { name: "Weekly", value: "weekly" },
-              ],
-            },
-            claudePeriod: {
-              title: "Claude limits",
-              type: "enum",
-              default: "auto",
-              values: [
-                { name: "Both", value: "auto" },
-                { name: "Session", value: "session" },
-                { name: "Weekly", value: "weekly" },
-              ],
+        ios: {
+          configuration: {
+            title: "Subscription usage",
+            description:
+              "Both shows Session and Weekly when available. The Lock Screen shows the tightest selected limit.",
+            parameters: {
+              codexPeriod: {
+                title: "Codex limits",
+                type: "enum",
+                default: "auto",
+                values: [
+                  { name: "Both", value: "auto" },
+                  { name: "Session", value: "session" },
+                  { name: "Weekly", value: "weekly" },
+                ],
+              },
+              claudePeriod: {
+                title: "Claude limits",
+                type: "enum",
+                default: "auto",
+                values: [
+                  { name: "Both", value: "auto" },
+                  { name: "Session", value: "session" },
+                  { name: "Weekly", value: "weekly" },
+                ],
+              },
             },
           },
+          supportedFamilies: [
+            "systemSmall",
+            "systemMedium",
+            "systemLarge",
+            "systemExtraLarge",
+            "accessoryRectangular",
+          ],
         },
-        supportedFamilies: [
-          "systemSmall",
-          "systemMedium",
-          "systemLarge",
-          "systemExtraLarge",
-          "accessoryRectangular",
-        ],
+        android: {
+          minWidth: 250,
+          minHeight: 180,
+          targetCellWidth: 4,
+          targetCellHeight: 3,
+          resizeMode: "both",
+          // Embeds the layout in the APK so the widget renders before the app
+          // has run once; the app replaces it with stored props on publish.
+          initialLayout: "./src/widgets/SubscriptionUsage.android.tsx",
+        },
       },
       {
         name: "AgentActivity",
         displayName: "Agent Activity",
         description: "Shows the current state of active Signalbox agents.",
-        supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+        // Live Activity companion; there is no Android presentation for it.
+        android: null,
+        ios: { supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"] },
       },
     ],
   },
@@ -211,10 +226,10 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 
 const config: ExpoConfig = {
   name: variant.appName,
-  slug: "t3-code",
+  slug: "signalbox", // signalbox: our Expo project
   platforms: ["ios", "android"],
   scheme: variant.scheme,
-  version: "1.3.1",
+  version: "2.0.0",
   runtimeVersion: {
     // Development manifests resolve on every launch, so avoid fingerprint's
     // expensive native-project calculation there. Preview and production stay
@@ -226,7 +241,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: {
     enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    url: "https://u.expo.dev/56da3071-6d9f-4475-97a0-251d21a462d8", // signalbox: our Expo project
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
@@ -249,12 +264,20 @@ const config: ExpoConfig = {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
     },
     infoPlist: {
+      UISupportedInterfaceOrientations: [
+        "UIInterfaceOrientationPortrait",
+        "UIInterfaceOrientationLandscapeLeft",
+        "UIInterfaceOrientationLandscapeRight",
+      ],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
       NSLocalNetworkUsageDescription:
         "Allow Signalbox to connect to Signalbox servers on your local network or tailnet.",
       NSPhotoLibraryAddUsageDescription: "Allow Signalbox to save images to your photo library.",
+      // "Audio, AirPlay, and Picture in Picture": the browser screen's system
+      // picture in picture needs it to start and to stay up outside the app.
+      UIBackgroundModes: ["audio"],
       ITSAppUsesNonExemptEncryption: false,
       // The App Store screenshot harness rotates the iPad interface from
       // inside the app (CI denies osascript the Accessibility access that
@@ -291,6 +314,8 @@ const config: ExpoConfig = {
     // JS back handling survives it via react-native's Android 16 shim plus
     // withAndroidPredictiveBackCompat on Android 13-15.
     predictiveBackGestureEnabled: true,
+    // expo-sensors declares this for its pedometer, which the app does not use.
+    blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
   },
   web: {
     favicon: variant.assets.appIcon,
@@ -401,6 +426,18 @@ const config: ExpoConfig = {
         android: {
           // Keep the supported floor explicit and covered by native notification tests.
           minSdkVersion: 24,
+          // kotlinx-io uses Kotlin 2.3's return-value checker annotation, while
+          // SDK 58 builds with Kotlin 2.2. It has no runtime behavior.
+          //
+          // WorkManager 2.9 keeps InputMerger classes but not their constructors,
+          // and R8 full mode no longer keeps a default constructor implicitly.
+          // Without it no work request can start, so the Glance session behind
+          // the widget never renders and it stays on "Loading widget". WorkManager
+          // 2.10 ships this rule itself; drop it once the resolved version gets there.
+          extraProguardRules: [
+            "-dontwarn kotlin.MustUseReturnValues",
+            "-keep class * extends androidx.work.InputMerger { <init>(); }",
+          ].join("\n"),
         },
         ios: {
           deploymentTarget: "18.0",
@@ -413,13 +450,15 @@ const config: ExpoConfig = {
       },
     ],
     "./plugins/withIosCocoaPodsUuidCache.cjs",
+    // Only the accelerometer is used (device viewer shake). Compile out the
+    // pedometer so iOS needs no motion purpose string.
+    ["expo-sensors", { motionPermission: false }],
     // Must be listed BEFORE expo-widgets: same-type mods run last-registered-
     // first, so registering earlier makes this plugin's mods run AFTER
     // expo-widgets' — its dangerous mod wipes ios/ExpoWidgetsTarget/ (which
     // would delete the asset catalog) and its xcodeproj mod creates the widget
     // target (which must exist before the compile phase can be attached).
     ...(!isIosPersonalTeamBuild ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
-    "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
     "./plugins/withAndroidInputBackground.cjs",
@@ -454,10 +493,10 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      projectId: "56da3071-6d9f-4475-97a0-251d21a462d8", // signalbox: our Expo project
     },
   },
-  owner: "pingdotgg",
+  owner: "justyannicc", // signalbox: our Expo project
 };
 
 export default config;

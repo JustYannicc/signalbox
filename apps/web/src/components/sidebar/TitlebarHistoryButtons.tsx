@@ -1,9 +1,9 @@
 /**
- * Back and forward in the fixed titlebar cluster, beside the sidebar toggle,
+ * Back and forward in the fixed titlebar cluster, before the sidebar toggle,
  * as in the Codex app. They step through the app's route history, the same as
- * the navigation.back/forward shortcuts. Desktop widths only: the cluster's
- * width is reserved through --workspace-titlebar-content-left in
- * AppSidebarLayout, which uses the same breakpoint.
+ * the navigation.back/forward shortcuts. Desktop widths only: AppSidebarLayout
+ * reserves their width through --workspace-titlebar-content-left at the same
+ * breakpoint.
  */
 import { useAtomValue } from "@effect/atom-react";
 import type { RouterHistory } from "@tanstack/react-router";
@@ -16,7 +16,7 @@ import { primaryServerKeybindingsAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-/** Buttons before the toggle: two controls plus their gap-1 gaps. */
+/** Width the buttons add before the toggle: two controls plus their gap-1 gaps. */
 export const TITLEBAR_HISTORY_WIDTH = "2 * (var(--workspace-titlebar-control-size) + 0.25rem)";
 
 function historyIndex(history: RouterHistory): number {

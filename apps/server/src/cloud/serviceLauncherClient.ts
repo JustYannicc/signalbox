@@ -1,5 +1,5 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -34,7 +34,7 @@ export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLaunch
       case "decode-context":
         return "The service launcher supplied invalid startup context.";
       case "version-mismatch":
-        return "The service launcher started a different t3 version.";
+        return "The service launcher started a different signalbox version.";
       case "ipc-unavailable":
         return "The service launcher IPC channel is unavailable.";
       case "unmanaged":
@@ -114,7 +114,7 @@ export class ServiceLauncherClient extends Context.Service<
 const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup")(
   function* (options?: { readonly currentVersion?: string }) {
     const host = yield* ServiceLauncherHostProcess;
-    const environment = yield* HostProcessEnvironment;
+    const environment = yield* HostProcess.Environment;
     const currentVersion = options?.currentVersion ?? packageJson.version;
     const rawContext = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
     const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);

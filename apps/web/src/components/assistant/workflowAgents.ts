@@ -3,18 +3,18 @@
  * fixtures (read-only): a run starts at the automation's trigger, not at the
  * assistant, so its trace is trigger → the run's thread. Automations have no
  * agents of their own; the agent of the level an automation lives in is
- * responsible for it (see `automations/automationHome.ts`). Only the trace
+ * responsible for it (see `homeAutomations/automationHome.ts`). Only the trace
  * lookups in `assistantModel` read these.
  */
 import { ProviderDriverKind } from "@t3tools/contracts";
 
-import { AUTOMATIONS } from "../automations/automationFixtures";
+import { AUTOMATIONS } from "../homeAutomations/automationFixtures";
 import type {
   Automation,
   AutomationRun,
   AutomationRunStatus,
   AutomationRunTrigger,
-} from "../automations/automationModel";
+} from "../homeAutomations/automationModel";
 import type { DelegationFixture, DelegationStatus, TraceNodeFixture } from "./assistantFixtures";
 
 const STATUS: Record<AutomationRunStatus, DelegationStatus> = {

@@ -15,7 +15,12 @@ export { isHyprlandCaptureSession } from "./linuxCaptureSession.ts";
 export const HYPRLAND_CAPTURE_EXECUTABLE = "t3-hyprland-snap-shot";
 export type HyprlandCapturePaths = { readonly bundle: string; readonly dataHome: string };
 export function hyprlandCaptureExecutable(paths: HyprlandCapturePaths) {
-  return NodePath.join(paths.dataHome, "t3code", "hyprland-capture", HYPRLAND_CAPTURE_EXECUTABLE);
+  return NodePath.join(
+    paths.dataHome,
+    "signalbox",
+    "hyprland-capture",
+    HYPRLAND_CAPTURE_EXECUTABLE,
+  );
 }
 
 function hyprlandCaptureBinding(appId: string, lua: boolean): string {
@@ -29,7 +34,8 @@ function hyprlandCaptureBinding(appId: string, lua: boolean): string {
 /** Omarchy owns its defaults; instructions always point at a user-owned config. */
 export async function hyprlandCaptureShortcut(
   appId: string,
-  configHome = process.env.XDG_CONFIG_HOME || NodePath.join(NodeOS.homedir(), ".config"),
+  home: string,
+  configHome = process.env.XDG_CONFIG_HOME || NodePath.join(home, ".config"),
 ) {
   const directory = NodePath.join(configHome, "hypr");
   const exists = async (name: string) =>

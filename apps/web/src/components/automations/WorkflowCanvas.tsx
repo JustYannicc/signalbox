@@ -1,18 +1,18 @@
 /**
- * The workflow editor surface: the graph laid out top to bottom over a dotted
- * grid that pans and zooms with it, plus zoom controls in the corner. Clicking the background clears
- * the node selection.
+ * The diagram surface: a dotted grid that pans and zooms with the diagram,
+ * plus zoom controls in the corner. Clicking the background clears the
+ * selection. `topLeft` holds the run picker.
  */
+import type { DiagramRun } from "@t3tools/client-runtime/automations/diagram";
+import type { WorkflowLayout } from "@t3tools/client-runtime/automations/layout";
+import type { LucideIcon } from "lucide-react";
 import { MaximizeIcon, MinusIcon, PlusIcon } from "lucide-react";
-import { useMemo, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { AddStepPalette } from "./AddStepPalette";
-import type { Automation, AutomationRun } from "./automationModel";
 import { useCanvasViewport } from "./useCanvasViewport";
-import { WorkflowGraph } from "./WorkflowGraph";
-import { verticalLayout } from "./workflowLayout";
+import { WorkflowDiagram } from "./WorkflowDiagram";
 
 const GRID_SIZE = 20;
 
@@ -37,17 +37,19 @@ function CanvasControl(props: { label: string; onClick: () => void; children: Re
 }
 
 export function WorkflowCanvas(props: {
-  automation: Automation;
-  run: AutomationRun | null;
-  selectedNodeId: string | null;
-  onSelectNode: (nodeId: string | null) => void;
+  name: string;
+  layout: WorkflowLayout;
+  run: DiagramRun | null;
+  selectedId: string | null;
+  triggerIcon: LucideIcon;
+  onSelect: (id: string | null) => void;
+  topLeft?: ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const layout = useMemo(() => verticalLayout(props.automation), [props.automation]);
   const { viewport, fit, zoomIn, zoomOut, canvasHandlers } = useCanvasViewport(
     containerRef,
-    layout.bounds,
-    () => props.onSelectNode(null),
+    props.layout,
+    () => props.onSelect(null),
   );
   const gridStep = GRID_SIZE * viewport.zoom;
 
@@ -55,11 +57,11 @@ export function WorkflowCanvas(props: {
     <div
       ref={containerRef}
       role="application"
-      aria-label={`${props.automation.name} workflow`}
+      aria-label={`${props.name} diagram`}
       className="relative min-h-0 min-w-0 flex-1 cursor-grab touch-none overflow-hidden bg-background select-none active:cursor-grabbing"
       style={{
         backgroundImage:
-          "radial-gradient(circle, color-mix(in srgb, var(--contrast-muted-foreground) 32%, transparent) 1px, transparent 1.5px)",
+          "radial-gradient(circle, color-mix(in srgb, var(--contrast-muted-foreground) 28%, transparent) 1px, transparent 1.5px)",
         backgroundSize: `${gridStep}px ${gridStep}px`,
         backgroundPosition: `${viewport.x}px ${viewport.y}px`,
       }}
@@ -69,17 +71,20 @@ export function WorkflowCanvas(props: {
         className="absolute top-0 left-0 origin-top-left"
         style={{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` }}
       >
-        <WorkflowGraph
-          layout={layout}
+        <WorkflowDiagram
+          layout={props.layout}
           run={props.run}
-          selectedNodeId={props.selectedNodeId}
-          onSelectNode={props.onSelectNode}
+          selectedId={props.selectedId}
+          triggerIcon={props.triggerIcon}
+          onSelect={props.onSelect}
         />
       </div>
 
-      <div data-canvas-control className="absolute top-3 left-3 cursor-default">
-        <AddStepPalette automation={props.automation} />
-      </div>
+      {props.topLeft ? (
+        <div data-canvas-control className="absolute top-3 left-3 cursor-default">
+          {props.topLeft}
+        </div>
+      ) : null}
       <div
         data-canvas-control
         className="absolute bottom-3 left-3 flex cursor-default items-center gap-0.5 rounded-lg border bg-card p-0.5 shadow-sm/5"

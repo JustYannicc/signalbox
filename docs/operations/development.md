@@ -21,15 +21,17 @@ Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron cl
 `dev:server` and `dev:web` start those processes separately.
 See the [mobile README](../../apps/mobile/README.md) for native builds and Metro.
 
-Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
+Flags go directly after the task name, for example `vp run dev --home-dir /tmp/signalbox-dev`.
 Add `--browser` to open a browser automatically.
 
 ### State and ports
 
-Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
-The main checkout defaults to `~/.t3/dev/userdata`. An explicit `--home-dir` wins in both cases.
-Never run a development server against the live `~/.t3/userdata`.
+Linked worktrees default to their own `.t3/userdata`, even when `SIGNALBOX_HOME` is set.
+The main checkout defaults to `~/.signalbox/dev/userdata`. An explicit `--home-dir` wins in both cases.
+Never run a development server against the live `~/.signalbox/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
+
+Use `SIGNALBOX_PORT` or `--port` to override the server port.
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
@@ -60,7 +62,7 @@ The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
 
 Use this only on a hostname where you trust every service. Browsers send cookies to all ports
 on that hostname. Any service you visit there can receive the reusable admin credential,
-including services unrelated to T3 Code. If you run untrusted services on that hostname, keep
+including services unrelated to Signalbox. If you run untrusted services on that hostname, keep
 normal per-environment pairing instead.
 
 To use one browser profile across web dev worktrees on the same hostname, generate one fixed

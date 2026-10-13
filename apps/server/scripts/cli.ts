@@ -6,8 +6,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
@@ -19,6 +19,7 @@ import {
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
 } from "./cliErrors.ts";
+import { publishPlatformsThenLauncher } from "./publishOrder.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -152,7 +153,7 @@ const buildExeCmd = Command.make(
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
       yield* Effect.log(
-        "[cli] Built dist-exe/t3 (expects client/, resource-monitor/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)",
+        "[cli] Built dist-exe/signalbox (expects client/, resource-monitor/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)",
       );
     }),
 ).pipe(
@@ -167,7 +168,7 @@ const buildExeCmd = Command.make(
 
 /**
  * Publishes the tarballs scripts/build-npm-platform-packages.ts produced:
- * every `@t3code/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
+ * every `@signalbox-cli/signalbox-<platform>.tgz` first, `signalbox-cli.tgz` (the launcher) last, so
  * the launcher is never installable before the executables it depends on.
  * Tarballs rather than directories because `npm publish <dir>` strips the
  * `node_modules/` the executable loads its native addons from.
@@ -191,17 +192,17 @@ const publishCmd = Command.make(
       // npm runs with cwd set to the packages dir below, so tarball paths are
       // resolved once here rather than joined twice.
       const packagesDir = path.resolve(config.packagesDir);
-      const scopeDir = path.join(packagesDir, "@t3code");
-      const launcherTarball = path.join(packagesDir, "t3.tgz");
+      const scopeDir = path.join(packagesDir, "@signalbox-cli");
+      const launcherTarball = path.join(packagesDir, "signalbox-cli.tgz");
       const platformTarballs = (yield* fs
         .readDirectory(scopeDir)
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])))
-        .filter((entry) => entry.startsWith("t3-") && entry.endsWith(".tgz"))
+        .filter((entry) => entry.startsWith("signalbox-") && entry.endsWith(".tgz"))
         .sort()
         .map((entry) => path.join(scopeDir, entry));
       if (platformTarballs.length === 0) {
         return yield* new ServerCliBuildAssetMissingError({
-          assetPath: path.join(scopeDir, "t3-<platform>.tgz"),
+          assetPath: path.join(scopeDir, "signalbox-<platform>.tgz"),
         });
       }
       if (!(yield* fs.exists(launcherTarball))) {
@@ -212,7 +213,7 @@ const publishCmd = Command.make(
       if (config.provenance) args.push("--provenance");
       if (config.dryRun) args.push("--dry-run");
 
-      for (const tarball of [...platformTarballs, launcherTarball]) {
+      const publish = Effect.fn("publish")(function* (tarball: string) {
         const spawnCommand = yield* resolveSpawnCommand("npm", [...args, tarball]);
         yield* Effect.log(`[cli] npm ${args.join(" ")} ${path.basename(tarball)}`);
         yield* runCommand(
@@ -223,11 +224,14 @@ const publishCmd = Command.make(
             shell: spawnCommand.shell,
           }),
         );
-      }
+      });
+
+      // Each publish takes about 17s, so the platform packages go at once.
+      yield* publishPlatformsThenLauncher({ platformTarballs, launcherTarball, publish });
     }),
 ).pipe(
   Command.withDescription(
-    "Publish the @t3code/t3-<platform> tarballs and then the t3 launcher to npm.",
+    "Publish the @signalbox-cli/signalbox-<platform> tarballs and then the signalbox-cli launcher to npm.",
   ),
 );
 
@@ -236,7 +240,7 @@ const publishCmd = Command.make(
 // ---------------------------------------------------------------------------
 
 const cli = Command.make("cli").pipe(
-  Command.withDescription("T3 server build & publish CLI."),
+  Command.withDescription("Signalbox server build & publish CLI."),
   Command.withSubcommands([buildCmd, buildExeCmd, publishCmd]),
 );
 

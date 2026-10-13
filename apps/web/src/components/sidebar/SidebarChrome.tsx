@@ -1,12 +1,12 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createContext, memo, use, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { useEnvironments } from "../../state/environments";
-import { SignalboxLogo } from "../SignalboxMark";
+import { usePullRequestsSupported } from "../../state/environments";
+import { SignalboxLogo } from "../SignalboxMark"; // signalbox: brand
 import { useAssistantIdentity } from "../assistant/assistantIdentity";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -29,19 +29,21 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { UsageNavIcon } from "../usage/UsageNavIcon";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { observeResize } from "~/lib/observeResize";
 
-/** True inside the view-rail layout, where the rail carries the utility buttons
- * and the titlebar row starts after the rail. */
+// signalbox: true inside the view-rail layout (SidebarViews). The rail carries
+// the utility buttons, and the layout renders the one titlebar row itself.
 export const SidebarRailContext = createContext(false);
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
-  showBrand = true,
+  inRail = false,
 }: {
   isElectron: boolean;
-  /** Off when the panel below names itself. */
-  showBrand?: boolean;
+  /** The rail layout's own row: it starts after the rail and paints no backdrop. */
+  inRail?: boolean;
 }) {
   const railLayout = use(SidebarRailContext);
   const stageLabel = useEnvironmentStageLabel();
@@ -54,83 +56,92 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
-  const onBackdrop = backdropVariant !== null;
-  const trigger = (
-    <SidebarTrigger
-      // Over the stage artwork: the media viewer's control-on-imagery treatment.
-      variant={onBackdrop ? "media-navigation" : "ghost"}
-      className="relative top-auto z-10 translate-y-0 md:hidden"
-    />
-  );
-  const pill = pillLabel ? (
-    <Badge
-      className="relative z-10 ml-1 hidden @[15rem]/sidebar-header:inline-flex"
-      data-environment-identification="pill"
-      size="sm"
-      variant="secondary"
-    >
-      {pillLabel}
-    </Badge>
-  ) : null;
-
-  if (railLayout) {
-    // The rail layout: this row sits beside the rail, so the brand clears the
-    // fixed back/forward/toggle cluster minus the rail's width. The rail layout
-    // paints the stage backdrop across rail and panel itself.
-    return (
-      <div
-        className={cn(
-          "@container/sidebar-header relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 px-3 md:px-0",
-          isElectron && "drag-region",
-        )}
-      >
-        {trigger}
-        {showBrand ? <SidebarBrand onBackdrop={onBackdrop} placement="rail" /> : null}
-        {pill}
-      </div>
-    );
-  }
+  // signalbox: in the rail layout, only the layout's own row renders.
+  if (railLayout && !inRail) return null;
 
   return (
     // The titlebar row, not a padded SidebarHeader: it aligns to the window controls.
     <div
       className={cn(
-        "@container/sidebar-header relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 px-3 md:px-0",
+        "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 px-3 md:pl-0",
         isElectron && "drag-region",
       )}
     >
-      {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
-      {trigger}
-      {showBrand ? <SidebarBrand onBackdrop={onBackdrop} placement="titlebar" /> : null}
-      {pill}
+      {backdropVariant && !inRail ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
+      <SidebarTrigger
+        // Over the stage artwork: the media viewer's control-on-imagery treatment.
+        variant={backdropVariant ? "media-navigation" : "ghost"}
+        className="relative top-auto z-10 translate-y-0 md:hidden"
+      />
+      {/* One visible line: the pill wraps onto the clipped second line once it no longer fits.
+          The padding keeps the brand's focus ring inside the clip. */}
+      <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
+        <SidebarBrand onBackdrop={backdropVariant !== null} inRail={inRail} />
+        {pillLabel ? (
+          <div className="ml-1 flex h-7 items-center">
+            <Badge data-environment-identification="pill" size="sm" variant="secondary">
+              {pillLabel}
+            </Badge>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 });
 
-function SidebarBrand({
-  onBackdrop,
-  placement,
+// Measures the brand at its titlebar inset, plus the header's right padding and the
+// sidebar border, so the sidebar minimum follows font size, zoom and macOS window controls.
+export function SidebarBrandWidthProbe({
+  onWidthChange,
 }: {
-  onBackdrop: boolean;
-  /** Both sit after the fixed controls; "rail" starts a rail's width further right. */
-  placement: "titlebar" | "rail";
+  onWidthChange: (width: number) => void;
 }) {
+  const observeWidth = useCallback(
+    (probe: HTMLDivElement) => {
+      return observeResize(probe, ([entry]) => {
+        if (entry) onWidthChange(entry.borderBoxSize[0]?.inlineSize ?? probe.offsetWidth);
+      });
+    },
+    [onWidthChange],
+  );
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
+      ref={observeWidth}
+    >
+      <div className="ml-[var(--workspace-titlebar-content-left)] flex">
+        <SidebarBrandMark onBackdrop={false} />
+      </div>
+    </div>
+  );
+}
+
+// signalbox: the brand opens the assistant.
+function SidebarBrand({ onBackdrop, inRail }: { onBackdrop: boolean; inRail: boolean }) {
   const assistant = useAssistantIdentity();
   return (
     <Link
       aria-label={`Go to ${assistant.name}`}
       className={cn(
-        "relative z-10 flex w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
-        placement === "titlebar"
-          ? "ml-[var(--workspace-titlebar-content-left)] h-7 max-md:hidden"
-          : "h-7 md:ml-[calc(var(--workspace-titlebar-content-left)-3rem)]",
+        "relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
+        // Clears the fixed titlebar controls; beside the rail, minus its width.
+        inRail
+          ? "ml-[calc(var(--workspace-titlebar-content-left)-3rem)]"
+          : "ml-[var(--workspace-titlebar-content-left)]",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/assistant"
     >
-      <SignalboxLogo className={placement === "titlebar" ? "text-sm" : "text-base"} />
+      <SidebarBrandMark onBackdrop={onBackdrop} />
     </Link>
   );
+}
+
+function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  // signalbox: brand
+  return <SignalboxLogo className={cn("text-sm", onBackdrop && "text-white")} />;
 }
 
 function SidebarUtilityItem({
@@ -165,12 +176,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
-  const { environments } = useEnvironments();
-  // The page reads every connected server, so one of them offering pull requests is enough for
-  // the link to lead somewhere.
-  const pullRequestsSupported = environments.some(
-    (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-  );
+  const pullRequestsSupported = usePullRequestsSupported();
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -223,11 +229,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
+          <SidebarUtilityItem icon={<UsageNavIcon />} label="Usage" onClick={handleUsageClick} />
         </>
       )}
       <SidebarUpdatePill />
@@ -236,13 +238,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 });
 
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
-  const railOwnsUtilities = use(SidebarRailContext);
+  const railLayout = use(SidebarRailContext);
   return (
     <SidebarFooter>
       <SidebarThreadUndoNotice />
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      {railOwnsUtilities ? (
+      {/* signalbox: the rail carries Settings and Usage. */}
+      {railLayout ? (
         <SidebarMenu className="flex-row items-center empty:hidden">
           <SidebarUpdatePill />
         </SidebarMenu>

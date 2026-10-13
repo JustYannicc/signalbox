@@ -106,7 +106,7 @@ describe("getProviderStatusMessage", () => {
     ).toBe(message);
   });
 
-  it("points a signed-out Antigravity account to Google sign-in without a CLI command", () => {
+  it("points a signed-out Antigravity provider to its pool, not a native sign-in", () => {
     expect(
       getProviderStatusMessage({
         ...warningProvider(),
@@ -115,7 +115,7 @@ describe("getProviderStatusMessage", () => {
         auth: { status: "unauthenticated" },
         message: "",
       }),
-    ).toBe("Open provider setup to sign in with Google.");
+    ).toBe("Add an account to its pool from Usage → Limits.");
   });
 
   it("requires installation on the environment before sign-in", () => {
@@ -132,7 +132,7 @@ describe("getProviderStatusMessage", () => {
     ).toBe("Open provider setup to install Antigravity on this environment.");
   });
 
-  it("keeps CLI sign-in advice for a provider without integrated setup", () => {
+  it("never sends a signed-out provider to the CLI to sign in", () => {
     expect(
       getProviderStatusMessage({
         ...warningProvider(),
@@ -140,6 +140,6 @@ describe("getProviderStatusMessage", () => {
         auth: { status: "unauthenticated" },
         message: "",
       }),
-    ).toBe("Sign in via the CLI to authenticate again.");
+    ).toBe("Add an account to its pool from Usage → Limits.");
   });
 });

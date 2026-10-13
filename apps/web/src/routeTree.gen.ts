@@ -14,25 +14,28 @@ import { Route as UsageRouteImport } from './routes/usage'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as TeamRouteImport } from './routes/team'
 import { Route as SpacesRouteImport } from './routes/spaces'
+import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PluginsRouteImport } from './routes/plugins'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as DevicesRouteImport } from './routes/devices'
+import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as CaptureRouteImport } from './routes/capture'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ComputersIndexRouteImport } from './routes/computers.index'
-import { Route as AutomationsIndexRouteImport } from './routes/automations.index'
 import { Route as AssistantIndexRouteImport } from './routes/assistant.index'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SharedThreadIdRouteImport } from './routes/shared.$threadId'
 import { Route as SettingsStorageRouteImport } from './routes/settings.storage'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsSnapShotRouteImport } from './routes/settings.snap-shot'
+import { Route as SettingsScheduledTasksRouteImport } from './routes/settings.scheduled-tasks'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
+import { Route as SettingsPoolsRouteImport } from './routes/settings.pools'
 import { Route as SettingsOpenSourceLicensesRouteImport } from './routes/settings.open-source-licenses'
 import { Route as SettingsNotificationsRouteImport } from './routes/settings.notifications'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
@@ -45,12 +48,15 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as RoomsRoomIdRouteImport } from './routes/rooms.$roomId'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ComputersComputerIdRouteImport } from './routes/computers.$computerId'
-import { Route as AutomationsAutomationIdRouteImport } from './routes/automations.$automationId'
 import { Route as AssistantCallRouteImport } from './routes/assistant.call'
 import { Route as AgentAgentIdRouteImport } from './routes/agent.$agentId'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as HomeAutomationsIndexRouteImport } from './routes/home.automations.index'
+import { Route as ChatAutomationsIndexRouteImport } from './routes/_chat.automations.index'
+import { Route as HomeAutomationsAutomationIdRouteImport } from './routes/home.automations.$automationId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatAutomationsEnvironmentIdAutomationIdRouteImport } from './routes/_chat.automations.$environmentId.$automationId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -75,6 +81,11 @@ const TeamRoute = TeamRouteImport.update({
 const SpacesRoute = SpacesRouteImport.update({
   id: '/spaces',
   path: '/spaces',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignInRoute = SignInRouteImport.update({
+  id: '/sign-in',
+  path: '/sign-in',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -102,6 +113,11 @@ const DevicesRoute = DevicesRouteImport.update({
   path: '/devices',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConnectAgentRoute = ConnectAgentRouteImport.update({
+  id: '/connect-agent',
+  path: '/connect-agent',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConnectRoute = ConnectRouteImport.update({
   id: '/connect',
   path: '/connect',
@@ -124,11 +140,6 @@ const ChatRoute = ChatRouteImport.update({
 const ComputersIndexRoute = ComputersIndexRouteImport.update({
   id: '/computers/',
   path: '/computers/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AutomationsIndexRoute = AutomationsIndexRouteImport.update({
-  id: '/automations/',
-  path: '/automations/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AssistantIndexRoute = AssistantIndexRouteImport.update({
@@ -161,6 +172,11 @@ const SettingsSnapShotRoute = SettingsSnapShotRouteImport.update({
   path: '/snap-shot',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsScheduledTasksRoute = SettingsScheduledTasksRouteImport.update({
+  id: '/scheduled-tasks',
+  path: '/scheduled-tasks',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -169,6 +185,11 @@ const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
 const SettingsProjectsRoute = SettingsProjectsRouteImport.update({
   id: '/projects',
   path: '/projects',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsPoolsRoute = SettingsPoolsRouteImport.update({
+  id: '/pools',
+  path: '/pools',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsOpenSourceLicensesRoute =
@@ -232,11 +253,6 @@ const ComputersComputerIdRoute = ComputersComputerIdRouteImport.update({
   path: '/computers/$computerId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AutomationsAutomationIdRoute = AutomationsAutomationIdRouteImport.update({
-  id: '/automations/$automationId',
-  path: '/automations/$automationId',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AssistantCallRoute = AssistantCallRouteImport.update({
   id: '/assistant/call',
   path: '/assistant/call',
@@ -252,6 +268,22 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
+const HomeAutomationsIndexRoute = HomeAutomationsIndexRouteImport.update({
+  id: '/home/automations/',
+  path: '/home/automations/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChatAutomationsIndexRoute = ChatAutomationsIndexRouteImport.update({
+  id: '/automations/',
+  path: '/automations/',
+  getParentRoute: () => ChatRoute,
+} as any)
+const HomeAutomationsAutomationIdRoute =
+  HomeAutomationsAutomationIdRouteImport.update({
+    id: '/home/automations/$automationId',
+    path: '/home/automations/$automationId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -263,17 +295,25 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatAutomationsEnvironmentIdAutomationIdRoute =
+  ChatAutomationsEnvironmentIdAutomationIdRouteImport.update({
+    id: '/automations/$environmentId/$automationId',
+    path: '/automations/$environmentId/$automationId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/accounts': typeof AccountsRoute
   '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
+  '/connect-agent': typeof ConnectAgentRoute
   '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
   '/plugins': typeof PluginsRoute
   '/settings': typeof SettingsRouteWithChildren
   '/setup': typeof SetupRoute
+  '/sign-in': typeof SignInRoute
   '/spaces': typeof SpacesRoute
   '/team': typeof TeamRoute
   '/today': typeof TodayRoute
@@ -282,7 +322,6 @@ export interface FileRoutesByFullPath {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/agent/$agentId': typeof AgentAgentIdRoute
   '/assistant/call': typeof AssistantCallRoute
-  '/automations/$automationId': typeof AutomationsAutomationIdRoute
   '/computers/$computerId': typeof ComputersComputerIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/rooms/$roomId': typeof RoomsRoomIdRoute
@@ -295,27 +334,34 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
+  '/settings/pools': typeof SettingsPoolsRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/scheduled-tasks': typeof SettingsScheduledTasksRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/shared/$threadId': typeof SharedThreadIdRoute
   '/assistant/': typeof AssistantIndexRoute
-  '/automations/': typeof AutomationsIndexRoute
   '/computers/': typeof ComputersIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/home/automations/$automationId': typeof HomeAutomationsAutomationIdRoute
+  '/automations/': typeof ChatAutomationsIndexRoute
+  '/home/automations/': typeof HomeAutomationsIndexRoute
+  '/automations/$environmentId/$automationId': typeof ChatAutomationsEnvironmentIdAutomationIdRoute
 }
 export interface FileRoutesByTo {
   '/accounts': typeof AccountsRoute
   '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
+  '/connect-agent': typeof ConnectAgentRoute
   '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
   '/plugins': typeof PluginsRoute
   '/settings': typeof SettingsRouteWithChildren
   '/setup': typeof SetupRoute
+  '/sign-in': typeof SignInRoute
   '/spaces': typeof SpacesRoute
   '/team': typeof TeamRoute
   '/today': typeof TodayRoute
@@ -324,7 +370,6 @@ export interface FileRoutesByTo {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/agent/$agentId': typeof AgentAgentIdRoute
   '/assistant/call': typeof AssistantCallRoute
-  '/automations/$automationId': typeof AutomationsAutomationIdRoute
   '/computers/$computerId': typeof ComputersComputerIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/rooms/$roomId': typeof RoomsRoomIdRoute
@@ -337,18 +382,23 @@ export interface FileRoutesByTo {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
+  '/settings/pools': typeof SettingsPoolsRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/scheduled-tasks': typeof SettingsScheduledTasksRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/shared/$threadId': typeof SharedThreadIdRoute
   '/': typeof ChatIndexRoute
   '/assistant': typeof AssistantIndexRoute
-  '/automations': typeof AutomationsIndexRoute
   '/computers': typeof ComputersIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/home/automations/$automationId': typeof HomeAutomationsAutomationIdRoute
+  '/automations': typeof ChatAutomationsIndexRoute
+  '/home/automations': typeof HomeAutomationsIndexRoute
+  '/automations/$environmentId/$automationId': typeof ChatAutomationsEnvironmentIdAutomationIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -356,11 +406,13 @@ export interface FileRoutesById {
   '/accounts': typeof AccountsRoute
   '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
+  '/connect-agent': typeof ConnectAgentRoute
   '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
   '/plugins': typeof PluginsRoute
   '/settings': typeof SettingsRouteWithChildren
   '/setup': typeof SetupRoute
+  '/sign-in': typeof SignInRoute
   '/spaces': typeof SpacesRoute
   '/team': typeof TeamRoute
   '/today': typeof TodayRoute
@@ -369,7 +421,6 @@ export interface FileRoutesById {
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/agent/$agentId': typeof AgentAgentIdRoute
   '/assistant/call': typeof AssistantCallRoute
-  '/automations/$automationId': typeof AutomationsAutomationIdRoute
   '/computers/$computerId': typeof ComputersComputerIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/rooms/$roomId': typeof RoomsRoomIdRoute
@@ -382,18 +433,23 @@ export interface FileRoutesById {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/open-source-licenses': typeof SettingsOpenSourceLicensesRoute
+  '/settings/pools': typeof SettingsPoolsRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/scheduled-tasks': typeof SettingsScheduledTasksRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/shared/$threadId': typeof SharedThreadIdRoute
   '/_chat/': typeof ChatIndexRoute
   '/assistant/': typeof AssistantIndexRoute
-  '/automations/': typeof AutomationsIndexRoute
   '/computers/': typeof ComputersIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/home/automations/$automationId': typeof HomeAutomationsAutomationIdRoute
+  '/_chat/automations/': typeof ChatAutomationsIndexRoute
+  '/home/automations/': typeof HomeAutomationsIndexRoute
+  '/_chat/automations/$environmentId/$automationId': typeof ChatAutomationsEnvironmentIdAutomationIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -402,11 +458,13 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/capture'
     | '/connect'
+    | '/connect-agent'
     | '/devices'
     | '/pair'
     | '/plugins'
     | '/settings'
     | '/setup'
+    | '/sign-in'
     | '/spaces'
     | '/team'
     | '/today'
@@ -415,7 +473,6 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/agent/$agentId'
     | '/assistant/call'
-    | '/automations/$automationId'
     | '/computers/$computerId'
     | '/projects/$projectKey'
     | '/rooms/$roomId'
@@ -428,27 +485,34 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/notifications'
     | '/settings/open-source-licenses'
+    | '/settings/pools'
     | '/settings/projects'
     | '/settings/providers'
+    | '/settings/scheduled-tasks'
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
     | '/shared/$threadId'
     | '/assistant/'
-    | '/automations/'
     | '/computers/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/home/automations/$automationId'
+    | '/automations/'
+    | '/home/automations/'
+    | '/automations/$environmentId/$automationId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/accounts'
     | '/capture'
     | '/connect'
+    | '/connect-agent'
     | '/devices'
     | '/pair'
     | '/plugins'
     | '/settings'
     | '/setup'
+    | '/sign-in'
     | '/spaces'
     | '/team'
     | '/today'
@@ -457,7 +521,6 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/agent/$agentId'
     | '/assistant/call'
-    | '/automations/$automationId'
     | '/computers/$computerId'
     | '/projects/$projectKey'
     | '/rooms/$roomId'
@@ -470,29 +533,36 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/notifications'
     | '/settings/open-source-licenses'
+    | '/settings/pools'
     | '/settings/projects'
     | '/settings/providers'
+    | '/settings/scheduled-tasks'
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
     | '/shared/$threadId'
     | '/'
     | '/assistant'
-    | '/automations'
     | '/computers'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/home/automations/$automationId'
+    | '/automations'
+    | '/home/automations'
+    | '/automations/$environmentId/$automationId'
   id:
     | '__root__'
     | '/_chat'
     | '/accounts'
     | '/capture'
     | '/connect'
+    | '/connect-agent'
     | '/devices'
     | '/pair'
     | '/plugins'
     | '/settings'
     | '/setup'
+    | '/sign-in'
     | '/spaces'
     | '/team'
     | '/today'
@@ -501,7 +571,6 @@ export interface FileRouteTypes {
     | '/_chat/pull-requests'
     | '/agent/$agentId'
     | '/assistant/call'
-    | '/automations/$automationId'
     | '/computers/$computerId'
     | '/projects/$projectKey'
     | '/rooms/$roomId'
@@ -514,18 +583,23 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/notifications'
     | '/settings/open-source-licenses'
+    | '/settings/pools'
     | '/settings/projects'
     | '/settings/providers'
+    | '/settings/scheduled-tasks'
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
     | '/shared/$threadId'
     | '/_chat/'
     | '/assistant/'
-    | '/automations/'
     | '/computers/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/home/automations/$automationId'
+    | '/_chat/automations/'
+    | '/home/automations/'
+    | '/_chat/automations/$environmentId/$automationId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -533,11 +607,13 @@ export interface RootRouteChildren {
   AccountsRoute: typeof AccountsRoute
   CaptureRoute: typeof CaptureRoute
   ConnectRoute: typeof ConnectRoute
+  ConnectAgentRoute: typeof ConnectAgentRoute
   DevicesRoute: typeof DevicesRoute
   PairRoute: typeof PairRoute
   PluginsRoute: typeof PluginsRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   SetupRoute: typeof SetupRoute
+  SignInRoute: typeof SignInRoute
   SpacesRoute: typeof SpacesRoute
   TeamRoute: typeof TeamRoute
   TodayRoute: typeof TodayRoute
@@ -545,14 +621,14 @@ export interface RootRouteChildren {
   WelcomeRoute: typeof WelcomeRoute
   AgentAgentIdRoute: typeof AgentAgentIdRoute
   AssistantCallRoute: typeof AssistantCallRoute
-  AutomationsAutomationIdRoute: typeof AutomationsAutomationIdRoute
   ComputersComputerIdRoute: typeof ComputersComputerIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
   RoomsRoomIdRoute: typeof RoomsRoomIdRoute
   SharedThreadIdRoute: typeof SharedThreadIdRoute
   AssistantIndexRoute: typeof AssistantIndexRoute
-  AutomationsIndexRoute: typeof AutomationsIndexRoute
   ComputersIndexRoute: typeof ComputersIndexRoute
+  HomeAutomationsAutomationIdRoute: typeof HomeAutomationsAutomationIdRoute
+  HomeAutomationsIndexRoute: typeof HomeAutomationsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -592,6 +668,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sign-in': {
+      id: '/sign-in'
+      path: '/sign-in'
+      fullPath: '/sign-in'
+      preLoaderRoute: typeof SignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/setup': {
       id: '/setup'
       path: '/setup'
@@ -627,6 +710,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DevicesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/connect-agent': {
+      id: '/connect-agent'
+      path: '/connect-agent'
+      fullPath: '/connect-agent'
+      preLoaderRoute: typeof ConnectAgentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/connect': {
       id: '/connect'
       path: '/connect'
@@ -660,13 +750,6 @@ declare module '@tanstack/react-router' {
       path: '/computers'
       fullPath: '/computers/'
       preLoaderRoute: typeof ComputersIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/automations/': {
-      id: '/automations/'
-      path: '/automations'
-      fullPath: '/automations/'
-      preLoaderRoute: typeof AutomationsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/assistant/': {
@@ -711,6 +794,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSnapShotRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/scheduled-tasks': {
+      id: '/settings/scheduled-tasks'
+      path: '/scheduled-tasks'
+      fullPath: '/settings/scheduled-tasks'
+      preLoaderRoute: typeof SettingsScheduledTasksRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/providers': {
       id: '/settings/providers'
       path: '/providers'
@@ -723,6 +813,13 @@ declare module '@tanstack/react-router' {
       path: '/projects'
       fullPath: '/settings/projects'
       preLoaderRoute: typeof SettingsProjectsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/pools': {
+      id: '/settings/pools'
+      path: '/pools'
+      fullPath: '/settings/pools'
+      preLoaderRoute: typeof SettingsPoolsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/open-source-licenses': {
@@ -809,13 +906,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ComputersComputerIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/automations/$automationId': {
-      id: '/automations/$automationId'
-      path: '/automations/$automationId'
-      fullPath: '/automations/$automationId'
-      preLoaderRoute: typeof AutomationsAutomationIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/assistant/call': {
       id: '/assistant/call'
       path: '/assistant/call'
@@ -837,6 +927,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/home/automations/': {
+      id: '/home/automations/'
+      path: '/home/automations'
+      fullPath: '/home/automations/'
+      preLoaderRoute: typeof HomeAutomationsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_chat/automations/': {
+      id: '/_chat/automations/'
+      path: '/automations'
+      fullPath: '/automations/'
+      preLoaderRoute: typeof ChatAutomationsIndexRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/home/automations/$automationId': {
+      id: '/home/automations/$automationId'
+      path: '/home/automations/$automationId'
+      fullPath: '/home/automations/$automationId'
+      preLoaderRoute: typeof HomeAutomationsAutomationIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -851,6 +962,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/automations/$environmentId/$automationId': {
+      id: '/_chat/automations/$environmentId/$automationId'
+      path: '/automations/$environmentId/$automationId'
+      fullPath: '/automations/$environmentId/$automationId'
+      preLoaderRoute: typeof ChatAutomationsEnvironmentIdAutomationIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
   }
 }
 
@@ -859,6 +977,8 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatAutomationsIndexRoute: typeof ChatAutomationsIndexRoute
+  ChatAutomationsEnvironmentIdAutomationIdRoute: typeof ChatAutomationsEnvironmentIdAutomationIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -866,6 +986,9 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatAutomationsIndexRoute: ChatAutomationsIndexRoute,
+  ChatAutomationsEnvironmentIdAutomationIdRoute:
+    ChatAutomationsEnvironmentIdAutomationIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
@@ -880,8 +1003,10 @@ interface SettingsRouteChildren {
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsNotificationsRoute: typeof SettingsNotificationsRoute
   SettingsOpenSourceLicensesRoute: typeof SettingsOpenSourceLicensesRoute
+  SettingsPoolsRoute: typeof SettingsPoolsRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
+  SettingsScheduledTasksRoute: typeof SettingsScheduledTasksRoute
   SettingsSnapShotRoute: typeof SettingsSnapShotRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
   SettingsStorageRoute: typeof SettingsStorageRoute
@@ -897,8 +1022,10 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsNotificationsRoute: SettingsNotificationsRoute,
   SettingsOpenSourceLicensesRoute: SettingsOpenSourceLicensesRoute,
+  SettingsPoolsRoute: SettingsPoolsRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsScheduledTasksRoute: SettingsScheduledTasksRoute,
   SettingsSnapShotRoute: SettingsSnapShotRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsStorageRoute: SettingsStorageRoute,
@@ -913,11 +1040,13 @@ const rootRouteChildren: RootRouteChildren = {
   AccountsRoute: AccountsRoute,
   CaptureRoute: CaptureRoute,
   ConnectRoute: ConnectRoute,
+  ConnectAgentRoute: ConnectAgentRoute,
   DevicesRoute: DevicesRoute,
   PairRoute: PairRoute,
   PluginsRoute: PluginsRoute,
   SettingsRoute: SettingsRouteWithChildren,
   SetupRoute: SetupRoute,
+  SignInRoute: SignInRoute,
   SpacesRoute: SpacesRoute,
   TeamRoute: TeamRoute,
   TodayRoute: TodayRoute,
@@ -925,14 +1054,14 @@ const rootRouteChildren: RootRouteChildren = {
   WelcomeRoute: WelcomeRoute,
   AgentAgentIdRoute: AgentAgentIdRoute,
   AssistantCallRoute: AssistantCallRoute,
-  AutomationsAutomationIdRoute: AutomationsAutomationIdRoute,
   ComputersComputerIdRoute: ComputersComputerIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
   RoomsRoomIdRoute: RoomsRoomIdRoute,
   SharedThreadIdRoute: SharedThreadIdRoute,
   AssistantIndexRoute: AssistantIndexRoute,
-  AutomationsIndexRoute: AutomationsIndexRoute,
   ComputersIndexRoute: ComputersIndexRoute,
+  HomeAutomationsAutomationIdRoute: HomeAutomationsAutomationIdRoute,
+  HomeAutomationsIndexRoute: HomeAutomationsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

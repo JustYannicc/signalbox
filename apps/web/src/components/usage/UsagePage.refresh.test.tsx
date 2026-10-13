@@ -26,6 +26,8 @@ vi.mock("../../state/server", () => ({
   primaryServerKeybindingsAtom: "keybindings",
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.refreshProviders }));
+// signalbox: the pool account list reads environments the page's own mocks don't cover.
+vi.mock("../accountPool/PoolAccountList", () => ({ PoolAccountList: () => null }));
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
 vi.mock("../../state/usage", () => ({
@@ -50,6 +52,7 @@ vi.mock("../../state/usage", () => ({
       },
     ],
     isPending: false,
+    shown: null,
     isPartial: false,
     refresh: async () => undefined,
   }),
@@ -83,6 +86,7 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
   WorkspaceBreadcrumb: "div",
   WorkspaceBreadcrumbItem: "div",
   WorkspaceBreadcrumbSeparator: "span",
+  WorkspaceBreadcrumbText: "span",
 }));
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
@@ -90,7 +94,9 @@ vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
 vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("../chat/ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
 vi.mock("../settings/RedactedSensitiveText", () => ({ RedactedSensitiveText: "span" }));
-vi.mock("../settings/providerDriverMeta", () => ({ getDriverOption: () => ({ label: "Codex" }) }));
+vi.mock("../settings/providerDriverMeta", () => ({
+  providerClients: { get: () => ({ label: "Codex" }) },
+}));
 
 import { UsagePage } from "./UsagePage";
 

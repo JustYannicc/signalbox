@@ -1,0 +1,27 @@
+# Local secrets for `vp run dev`. Copy to .dev.vars (gitignored).
+# Any random string of 32+ characters; `openssl rand -base64 32` works.
+SESSION_SECRET=
+# A WorkOS staging client id whose redirect URIs include http://localhost:*.
+T3CODE_WORKOS_CLIENT_ID=
+# Optional, but GitHub sign-ins need it to finish email verification.
+T3CODE_WORKOS_API_KEY=
+# Optional: Claude and Codex turns. A local Runner host (see
+# docs/operations/cloud.md) and the ModelGateway that holds the provider keys.
+# LOCAL_RUNNER_URL=http://127.0.0.1:8790
+# MODEL_GATEWAY_URL=http://127.0.0.1:8788
+# Optional: boat VMs instead of a local Runner host (docs/operations/cloud.md).
+# The machines must reach CLOUD_URL and MODEL_GATEWAY_URL, e.g. through tunnels.
+# MACHINE_BACKEND=boat
+# BOAT_API_KEY=
+# CLOUD_URL=https://<tunnel to wrangler dev>
+# Optional: send cloud.* usage analytics to a PostHog project (docs/operations/cloud.md).
+# SIGNALBOX_POSTHOG_KEY=
+# SIGNALBOX_POSTHOG_HOST=https://us.i.posthog.com
+# Optional: previews of dev servers on threads' machines, at
+# http://<label>.localhost:8787 (docs/operations/cloud.md).
+# PREVIEW_DOMAIN=localhost:8787
+# Optional: GitHub-backed drives through a GitHub App whose callback URL is
+# http://localhost:8787/api/github/callback (docs/operations/cloud.md).
+# GITHUB_APP_CLIENT_ID=
+# GITHUB_APP_CLIENT_SECRET=
+# GITHUB_APP_SLUG=

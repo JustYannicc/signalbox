@@ -1,7 +1,8 @@
 /**
- * "Archived" at the bottom of Home: one place for everything archived —
- * real threads (from Home or the Pipeline), fixture chats and tasks, rooms,
- * projects, sections, notes — each with Restore. Projects and sections are hidden for you only.
+ * "Archived" at the bottom of Home: one place for everything put away —
+ * real threads (archived or settled, from Home or the Pipeline; settled ones
+ * say so), fixture chats and tasks, rooms, projects, sections, notes — each
+ * with Restore. Projects and sections are hidden for you only.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -40,6 +41,8 @@ interface ArchivedRow {
   readonly label: string;
   readonly kind: string;
   readonly at: string;
+  /** Settled, not archived: tagged so, and restoring un-settles. */
+  readonly settled?: boolean;
   readonly restore: () => void;
 }
 
@@ -68,7 +71,8 @@ export function ArchivedList(props: { archivedThreads: readonly EnvironmentThrea
       label: thread.title,
       kind: "Thread",
       at: thread.archivedAt ?? thread.settledAt ?? thread.updatedAt,
-      // Pipeline archives are settles; server archives come back via unarchive.
+      settled: thread.archivedAt === null,
+      // Settled threads come back via unsettle; server archives via unarchive.
       restore: () =>
         void (thread.archivedAt === null ? unsettleThread : unarchiveThread)(
           scopeThreadRef(thread.environmentId, thread.id),
@@ -103,20 +107,23 @@ export function ArchivedList(props: { archivedThreads: readonly EnvironmentThrea
               >
                 <Icon aria-label={row.kind} className="size-4 shrink-0 opacity-70" />
                 <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                {row.settled ? (
+                  <span className="shrink-0 text-xs text-sidebar-muted-foreground/60">Settled</span>
+                ) : null}
                 <Tooltip>
                   <TooltipTrigger
                     render={
                       <button
                         type="button"
-                        aria-label={`Restore ${row.label}`}
+                        aria-label={`${row.settled ? "Un-settle" : "Restore"} ${row.label}`}
                         onClick={row.restore}
-                        className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground outline-hidden ring-ring hover:bg-sidebar-row-active hover:text-sidebar-foreground focus-visible:ring-2"
+                        className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground outline-hidden ring-ring hover:bg-sidebar-row-active hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset"
                       />
                     }
                   >
                     <ArchiveRestoreIcon className="size-3.5" />
                   </TooltipTrigger>
-                  <TooltipPopup side="top">Restore</TooltipPopup>
+                  <TooltipPopup side="top">{row.settled ? "Un-settle" : "Restore"}</TooltipPopup>
                 </Tooltip>
               </li>
             );

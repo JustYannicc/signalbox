@@ -3,8 +3,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-  EventId,
-  type OrchestrationThreadActivity,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -26,7 +24,7 @@ import {
   paceOf,
   providersWithLimits,
   remainingPercent,
-  isChatGptUsageLimitError,
+  summarizeLimitPool,
   usesChatGptSharing,
 } from "./usageLimits.ts";
 
@@ -320,6 +318,77 @@ describe("pools", () => {
     expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
   });
 
+  it("keeps every hub account as a row, even without windows, so the hub can manage it", () => {
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "chatgpt-siwc-a@example.com.json",
+                    driver: ProviderDriverKind.make("codex"),
+                    email: "a@example.com",
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: { reason: "unsupported" as const, message: "No usage API." },
+                    },
+                  },
+                  {
+                    id: "claude-paused@example.com.json",
+                    driver: claude,
+                    email: "paused@example.com",
+                    disabled: true,
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: { reason: "unsupported" as const, message: "Paused." },
+                    },
+                  },
+                  {
+                    id: "claude-broken@example.com.json",
+                    driver: claude,
+                    email: "broken@example.com",
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: { reason: "probeFailed" as const },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((account) => [account.email, account.hubAccount?.disabled])).toEqual([
+      ["a@example.com", false],
+      ["paused@example.com", true],
+      ["broken@example.com", false],
+    ]);
+    expect(accounts[0]?.hubAccount).toEqual({
+      environmentId: "env-a",
+      sourceId: source.id,
+      accountId: "chatgpt-siwc-a@example.com.json",
+      disabled: false,
+      signedOut: false,
+      apiKey: false,
+    });
+    // Windowless rows add nothing to the pooled bars.
+    const claudePool = collectLimitPools(accounts, Date.parse(checkedAt)).find(
+      (pool) => pool.driver === claude,
+    );
+    expect(claudePool?.windows).toEqual([]);
+  });
+
   it("redeems through the hub when it holds a credit, even with a fresher native read", () => {
     const native = provider({
       driver: claude,
@@ -499,6 +568,128 @@ describe("pools", () => {
     expect(account?.redeem?.environmentId).toBe("env-2");
   });
 
+  it("keeps one email in two workspaces apart while merging each workspace's duplicates", () => {
+    const login = (instanceId: string, workspaceId: string, usedPercent: number) =>
+      provider({
+        instanceId: ProviderInstanceId.make(instanceId),
+        auth: { status: "authenticated", email: "same@example.com", workspaceId },
+        usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent }] },
+      });
+    const hubAccount = (id: string, workspaceId?: string) => ({
+      id,
+      driver: ProviderDriverKind.make("codex"),
+      email: "same@example.com",
+      ...(workspaceId ? { workspaceId } : {}),
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 50 }] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [login("business", "ws-business", 8), login("personal", "ws-plus", 26)],
+            usageLimitSources: [
+              // A hub that names the workspace joins it; one that does not
+              // cannot say which of the two it read, so it keeps its own row.
+              { ...source, accounts: [hubAccount("plus.json", "ws-plus"), hubAccount("x.json")] },
+            ],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: { providers: [login("personal", "ws-plus", 26)] },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((account) => account.key)).toEqual([
+      "env-a:business",
+      "env-a:personal",
+      "hub:x.json",
+    ]);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(8);
+    // One hub file name in two workspaces stays two accounts, even without an
+    // email to tell them apart.
+    const withoutEmail = (id: string, workspaceId: string) => {
+      const { email: _email, ...account } = hubAccount(id, workspaceId);
+      return account;
+    };
+    const sameFile = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            usageLimitSources: [{ ...source, accounts: [withoutEmail("a.json", "ws-1")] }],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          ...laptop,
+          serverConfig: {
+            usageLimitSources: [{ ...source, accounts: [withoutEmail("a.json", "ws-2")] }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(sameFile).map((account) => account.key)).toEqual([
+      "hub:a.json:ws-1",
+      "hub:a.json:ws-2",
+    ]);
+    expect(accounts[1]?.environments.map((environment) => environment.label)).toEqual([
+      "Laptop",
+      "Desktop",
+    ]);
+  });
+
+  it("joins a report without a workspace to the only workspace signed in with its email", () => {
+    const native = provider({
+      driver: claude,
+      auth: { status: "authenticated", email: "same@example.com", workspaceId: "org-a" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const hubAccount = {
+      id: "claude.json",
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: { checkedAt, windows: [window] },
+    };
+    const withOther = (other: ServerProvider) =>
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [native, other],
+              usageLimitSources: [{ ...source, accounts: [hubAccount] }],
+            },
+          },
+        ],
+      ]);
+    const unrelated = provider({ instanceId: ProviderInstanceId.make("codex-2") });
+    expect(collectLimitAccounts(withOther(unrelated)).map((account) => account.key)).toEqual([
+      "env-a:codex",
+    ]);
+    // A second org whose limits could not be read still makes the hub ambiguous.
+    const unreadable = provider({
+      ...native,
+      instanceId: ProviderInstanceId.make("team"),
+      auth: { ...native.auth, workspaceId: "org-b" },
+      usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+    });
+    expect(collectLimitAccounts(withOther(unreadable)).map((account) => account.key)).toEqual([
+      "env-a:codex",
+      "hub:claude.json",
+    ]);
+  });
+
   it("names an environment once however many of its instances share the account", () => {
     const shared = provider({
       auth: { status: "authenticated", email: "same@example.com" },
@@ -537,6 +728,45 @@ describe("pools", () => {
     const accounts = collectLimitAccounts(input);
     expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
     expect(accounts[0]?.displayName).toBe("claude-team-seat");
+  });
+
+  it("pools Codex windows by kind, whichever slot reported them", () => {
+    const codexAccount = (id: string, slots: readonly string[]) => ({
+      id,
+      driver: ProviderDriverKind.make("codex"),
+      usageLimits: {
+        checkedAt,
+        windows: slots.map((slot) => ({ ...weekly, id: slot, usedPercent: 50 })),
+      },
+    });
+    const pooled = (accounts: ReturnType<typeof codexAccount>[]) =>
+      collectLimitPools(
+        collectLimitAccounts(
+          new Map([
+            [
+              EnvironmentId.make("env-a"),
+              { ...laptop, serverConfig: { usageLimitSources: [{ ...source, accounts }] } },
+            ],
+          ]),
+        ),
+        now,
+      )[0]?.windows ?? [];
+    // A weekly-only plan reports weekly as `primary`. The pool keeps one id
+    // whichever account sorts first.
+    for (const order of [
+      [codexAccount("business", ["primary"]), codexAccount("plus", ["secondary"])],
+      [codexAccount("plus", ["secondary"]), codexAccount("business", ["primary"])],
+    ]) {
+      const windows = pooled(order);
+      expect(windows.map((window) => window.id)).toEqual(["weekly"]);
+      expect(windows[0]?.members).toHaveLength(2);
+    }
+    // A second window of the same kind on one account stays apart, with its own id.
+    expect(
+      pooled([codexAccount("a", ["secondary"]), codexAccount("b", ["primary", "secondary"])]).map(
+        (window) => window.id,
+      ),
+    ).toEqual(["weekly", "weekly:secondary"]);
   });
 
   it("pools windows by id across accounts and orders resets by when they land", () => {
@@ -592,8 +822,9 @@ describe("pools", () => {
       ],
     ]);
     const pools = collectLimitPools(collectLimitAccounts(input), now);
+    // The windowless hub account is listed (it can be managed there) but adds no bar segment.
     expect(pools.map((pool) => [pool.driver, pool.accounts.length])).toEqual([
-      ["claudeAgent", 2],
+      ["claudeAgent", 3],
       ["codex", 1],
     ]);
     const [session, week] = pools[0]!.windows;
@@ -666,7 +897,12 @@ describe("pools", () => {
     ]);
     // Session resets determine the account order for every row.
     expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
-    expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+    // Accounts without windows sort after every reset, by name.
+    expect(pools[0]?.accounts.map((account) => account.key)).toEqual([
+      "hub:a",
+      "hub:b",
+      "hub:unsupported",
+    ]);
   });
 });
 
@@ -761,6 +997,87 @@ describe("pooled account columns", () => {
   });
 });
 
+describe("provider pool summary", () => {
+  const account = (
+    key: string,
+    windows: LimitAccount["limits"]["windows"],
+    resetCredits?: NonNullable<LimitAccount["limits"]["resetCredits"]>,
+  ): LimitAccount => ({
+    key,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    displayName: key,
+    email: undefined,
+    plan: undefined,
+    accentColor: undefined,
+    environments: [],
+    sourceLabel: "Hub",
+    redeem: null,
+    limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows, resetCredits },
+  });
+
+  it("chooses the earliest reset that restores quota and totals banked credits", () => {
+    const pool = collectLimitPools(
+      [
+        account(
+          "a",
+          [
+            { ...window, usedPercent: 20, resetsAt: "2026-09-03T13:00:00.000Z" },
+            {
+              ...window,
+              id: "empty",
+              label: "Empty",
+              usedPercent: 0,
+              resetsAt: "2026-09-03T12:30:00.000Z",
+            },
+            {
+              ...window,
+              id: "weekly",
+              kind: "weekly",
+              label: "Weekly",
+              usedPercent: 80,
+              resetsAt: "2026-09-03T14:00:00.000Z",
+            },
+          ],
+          { availableCount: 2, nextExpiresAt: "2026-09-10T00:00:00.000Z" },
+        ),
+        account("b", [{ ...window, usedPercent: 60, resetsAt: "2026-09-03T15:00:00.000Z" }], {
+          availableCount: 3,
+          nextExpiresAt: "2026-09-08T00:00:00.000Z",
+        }),
+      ],
+      now,
+    )[0]!;
+
+    expect(summarizeLimitPool(pool)).toEqual({
+      nextReset: {
+        at: Date.parse("2026-09-03T13:00:00.000Z"),
+        restoresPercent: 10,
+        window: { id: "five_hour", kind: "session", label: "Session" },
+      },
+      bankedResets: {
+        availableCount: 5,
+        nextExpiresAt: "2026-09-08T00:00:00.000Z",
+      },
+    });
+  });
+
+  it("returns no next reset when no reset hands quota back", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("a", [{ ...window, usedPercent: 0, resetsAt: "2026-09-03T13:00:00.000Z" }], {
+          availableCount: 0,
+        }),
+      ],
+      now,
+    );
+
+    expect(summarizeLimitPool(pool!)).toEqual({
+      nextReset: null,
+      bankedResets: { availableCount: 0, nextExpiresAt: null },
+    });
+  });
+});
+
 describe("Cursor limit presentation", () => {
   const cursorAccount: LimitAccount = {
     key: "cursor",
@@ -805,6 +1122,31 @@ describe("Cursor limit presentation", () => {
     );
     const display = displayLimitWindows(pool!);
     expect(display.map((window) => window.id)).toEqual(["totalPercentUsed", "autoPercentUsed"]);
+  });
+
+  it("summarizes resets from Cursor's displayed allowances, not the hidden combined window", () => {
+    const [pool] = collectLimitPools(
+      [
+        {
+          ...cursorAccount,
+          limits: {
+            ...cursorAccount.limits,
+            windows: cursorAccount.limits.windows.map((window) => ({
+              ...window,
+              resetsAt:
+                window.id === "totalPercentUsed"
+                  ? "2026-09-03T12:30:00.000Z"
+                  : window.id === "autoPercentUsed"
+                    ? "2026-09-03T13:30:00.000Z"
+                    : "2026-09-03T15:00:00.000Z",
+            })),
+          },
+        },
+      ],
+      now,
+    );
+
+    expect(summarizeLimitPool(pool!).nextReset?.window.id).toBe("autoPercentUsed");
   });
 });
 
@@ -911,6 +1253,35 @@ describe("/usage-limits", () => {
       accountId: "oss",
       creditId: "oss-credit",
     });
+  });
+
+  it("gives a hub credit to no native row when its email is signed in to two workspaces", () => {
+    const workspaces = ["ws-a", "ws-b"].map((workspaceId) =>
+      provider({
+        instanceId: ProviderInstanceId.make(workspaceId),
+        usageLimits: limits,
+        auth: { status: "authenticated", email: "same@example.com", workspaceId },
+      }),
+    );
+    const hub = [
+      {
+        ...sources[0]!,
+        accounts: [
+          {
+            id: "duplicate",
+            driver: selected.driver,
+            email: "same@example.com",
+            usageLimits: { ...limits, resetCredits: { availableCount: 2, nextCreditId: "c" } },
+          },
+        ],
+      },
+    ];
+    const report = collectProviderUsageLimits(workspaces[0]!.instanceId, workspaces, hub, now);
+    expect(report?.accounts.map((account) => account.resetCreditInput)).toEqual([
+      { instanceId: "ws-a" },
+      { instanceId: "ws-b" },
+      { sourceId: "hub", accountId: "duplicate", creditId: "c" },
+    ]);
   });
 
   it("redeems a native duplicate through the hub even when the native snapshot is fresher", () => {
@@ -1205,32 +1576,6 @@ describe("ChatGPT sharing presentation", () => {
         ...codex,
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
-    ).toBe(false);
-  });
-  it("only gives the matching current structured limit error a management action", () => {
-    const limit: OrchestrationThreadActivity = {
-      id: EventId.make("sharing-limit"),
-      tone: "error",
-      kind: "runtime.error",
-      summary: "Runtime error",
-      turnId: null,
-      createdAt: "2026-09-03T12:00:00.000Z",
-      payload: { code: "subscription_sharing_usage_limit_exceeded", message: "Limit reached" },
-    };
-    expect(isChatGptUsageLimitError([limit], "Limit reached")).toBe(true);
-    expect(isChatGptUsageLimitError([limit], "A different failure")).toBe(false);
-    expect(isChatGptUsageLimitError([limit], null)).toBe(false);
-    expect(
-      isChatGptUsageLimitError(
-        [{ ...limit, payload: { message: "Limit reached" } }],
-        "Limit reached",
-      ),
-    ).toBe(false);
-    expect(
-      isChatGptUsageLimitError(
-        [limit, { ...limit, payload: { code: "unrelated", message: "Limit reached" } }],
-        "Limit reached",
-      ),
     ).toBe(false);
   });
 });

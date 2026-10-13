@@ -32,14 +32,17 @@ import {
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
-const ANDROID_PACKAGE = "com.t3tools.t3code";
-const APP_SCHEME = "t3code";
+const ANDROID_PACKAGE = "com.justyannicc.signalbox";
+const APP_SCHEME = "signalbox";
+// expo-dev-launcher reads these off the manifest URL and updates the dev menu
+// preferences before the app loads, keeping captures free of dev chrome.
+const DEV_CLIENT_LAUNCH_FLAGS = "disableOnboarding=1&disableFab=1&disableAutoLaunch=1";
 const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
 const SERVER_HOST = "0.0.0.0";
 const IOS_SIMULATOR_ARCH = NodeProcess.arch === "arm64" ? "arm64" : "x86_64";
 const IOS_APP_PATH = NodePath.join(
   MOBILE_ROOT,
-  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3Code.app",
+  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/Signalbox.app",
 );
 const ANDROID_APK_PATH = NodePath.join(
   MOBILE_ROOT,
@@ -704,9 +707,9 @@ async function buildIos(): Promise<string> {
     "xcodebuild",
     [
       "-workspace",
-      NodePath.join(MOBILE_ROOT, "ios/T3Code.xcworkspace"),
+      NodePath.join(MOBILE_ROOT, "ios/Signalbox.xcworkspace"),
       "-scheme",
-      "T3Code",
+      "Signalbox",
       "-configuration",
       "Debug",
       "-sdk",
@@ -1107,25 +1110,9 @@ async function captureIos(
     await runCommand("xcrun", ["simctl", "install", simulator.udid, appPath]);
   }
 
-  for (const [key, value] of [
-    ["EXDevMenuIsOnboardingFinished", "true"],
-    ["EXDevMenuShowFloatingActionButton", "false"],
-    ["EXDevMenuShowsAtLaunch", "false"],
-  ] as const) {
-    await runCommand("xcrun", [
-      "simctl",
-      "spawn",
-      simulator.udid,
-      "defaults",
-      "write",
-      ANDROID_PACKAGE,
-      key,
-      "-bool",
-      value,
-    ]);
-  }
-
-  const metroUrl = `http://${metroHost}:${config.metroPort}?disableOnboarding=1`;
+  // The dev-client launch URL carries the dev menu preferences (SDK 58), so
+  // nothing is written into the app container ahead of launch.
+  const metroUrl = `http://${metroHost}:${config.metroPort}?${DEV_CLIENT_LAUNCH_FLAGS}`;
   const scenePath = NodePath.join(
     await iosAppContainer(simulator.udid),
     "Library/Caches/T3ShowcaseScene",
@@ -1357,12 +1344,12 @@ async function writeAndroidShowcaseScene(serial: string, scene: ShowcaseScene): 
   ]);
 }
 
+// Gesture and key-command toggles have no launch-URL flag, so they still go
+// through the preferences file; onboarding, auto-launch and the floating button
+// come from DEV_CLIENT_LAUNCH_FLAGS on the launch URL.
 async function prepareAndroidShowcaseApp(serial: string): Promise<void> {
   const preferences = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <map>
-  <boolean name="isOnboardingFinished" value="true" />
-  <boolean name="showsAtLaunch" value="false" />
-  <boolean name="showFab" value="false" />
   <boolean name="motionGestureEnabled" value="false" />
   <boolean name="touchGestureEnabled" value="false" />
   <boolean name="keyCommandsEnabled" value="false" />
@@ -1435,7 +1422,7 @@ async function captureAndroid(
     "-a",
     "android.intent.action.VIEW",
     "-d",
-    `${APP_SCHEME}://expo-development-client/?url=${metroUrl}`,
+    `'${APP_SCHEME}://expo-development-client/?url=${metroUrl}&${DEV_CLIENT_LAUNCH_FLAGS}'`,
     "--es",
     "showcasePairingUrl",
     encodeAndroidPairingUrls(pairingUrls),

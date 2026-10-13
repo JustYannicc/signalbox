@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "../branding";
 import type {
   AuthClientMetadataDeviceType,
   AuthClientPresentationMetadata,
@@ -78,7 +77,7 @@ export function clientPresentationMetadata(input: {
 }): AuthClientPresentationMetadata {
   if (input.desktopBridge !== undefined) {
     return {
-      label: `${APP_BASE_NAME} Desktop`,
+      label: "Signalbox Desktop",
       deviceType: "desktop",
       os: clientOsFromElectronPlatform(input.desktopBridge.getClientPlatform?.()),
       surface: "desktop",
@@ -87,7 +86,7 @@ export function clientPresentationMetadata(input: {
   }
 
   return {
-    label: `${APP_BASE_NAME} Web`,
+    label: "Signalbox Web",
     deviceType: browserDeviceType(input.identity),
     os: browserClientOs(input.identity),
     surface: "web",

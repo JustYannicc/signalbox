@@ -28,7 +28,7 @@ export function useDemoUnreadSeed() {
     const { markThreadUnread } = useUiStateStore.getState();
     for (const thread of demo) {
       const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      markThreadUnread(key, thread.latestTurn?.completedAt);
+      markThreadUnread(key, thread.latestRun?.completedAt);
     }
     seeded = true;
   }, [threads]);

@@ -11,7 +11,11 @@ export type SettingsSheetTarget =
   | "SettingsEnvironmentSourceControl"
   | "SettingsEnvironmentAgentBehavior"
   | "SettingsEnvironmentMaintenance"
+  | "SettingsProviderAccounts"
   | "SettingsKeyboard"
+  | "SettingsFollowUp"
+  | "SettingsScheduledTasks"
+  | "SettingsConnectedServices" // signalbox: automations
   | "SettingsProjectGrouping"
   | "SettingsClientStorage"
   | "SettingsDiagnostics"

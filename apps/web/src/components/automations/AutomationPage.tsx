@@ -1,272 +1,223 @@
 /**
- * One automation: its runs beside its workflow graph (or the TypeScript source
- * it is derived from). The workflow is the core: picking a run from the list
- * traces it on the canvas (`?run=…&show=workflow`), opening on the step that
- * failed or waits on you. A bare `?run=` opens the run's chat. It lives in a
- * Home folder, which the breadcrumb names, and that level's agent is
- * responsible for it: changes go through it. Prototype only: placeholder
- * fixtures, nothing is edited.
+ * One automation: a header with its controls, then one of three views. Run
+ * shows a run as a chat of what happened, Diagram draws it over the diagram,
+ * Code shows the file the diagram is derived from. A run picked in `?run=`
+ * shows; without one the latest run does. A pending draft adds a bar to
+ * switch Diagram and Code between the live version and the draft.
  */
-import { Link, useNavigate } from "@tanstack/react-router";
-import { HistoryIcon, MessageSquareIcon, PlayIcon, XIcon } from "lucide-react";
-import { useCallback, useState } from "react";
+import type { Automation, AutomationDetail, EnvironmentId } from "@t3tools/contracts";
+import { triggerSummary } from "@t3tools/client-runtime/automations/triggers";
+import * as Schema from "effect/Schema";
+import { useNavigate } from "@tanstack/react-router";
+import { CalendarClockIcon, PlayIcon, WebhookIcon, ZapIcon, type LucideIcon } from "lucide-react";
+import { createElement, useState } from "react";
 
-import { isElectron } from "../../env";
-import { Button } from "../ui/button";
-import { SidebarInset } from "../ui/sidebar";
-import { Switch } from "../ui/switch";
+import { useEnvironmentQuery } from "../../state/query";
+import { automationState } from "../../state/automations";
+import { formatRelativeTimeUntil } from "../../timestampFormat";
+import { Badge } from "../ui/badge";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-  WorkspaceBreadcrumbSeparator,
-  WorkspaceBreadcrumbText,
-} from "../WorkspaceBreadcrumb";
-import { WorkspacePageHeader } from "../WorkspacePageHeader";
-import { AutomationActionsMenu } from "./AutomationActionsMenu";
-import { AutomationAgentButton, AutomationAgentProvider } from "./AutomationAgent";
-import { useAutomationLevel } from "./automationHome";
-import { AutomationRunList } from "./AutomationRunList";
+import { AutomationActions } from "./AutomationActions";
+import { AutomationDraftBar, type DraftSide } from "./AutomationDraftBar";
+import { AutomationView, automationRoute } from "./automationFormat";
 import { AutomationRunChat } from "./AutomationRunChat";
-import { formatRunStarted } from "./automationFormat";
-import { maxIterations, type Automation, type AutomationRun } from "./automationModel";
-import { runDisplayStatus } from "./automationStatus";
-import { useAutomation } from "./runDecisions";
-import { notifyAutomationsComingSoon } from "./comingSoon";
-import { RunStatusMarker } from "./RunStatusMarker";
-import { useAssistantName } from "./useAssistantName";
-import { WorkflowCanvas } from "./WorkflowCanvas";
-import { WorkflowNodeDetails } from "./WorkflowNodeDetails";
-import { WorkflowSourceView } from "./WorkflowSourceView";
+import { AutomationsPageShell } from "./AutomationsPageShell";
+import { AutomationSourceView } from "./AutomationSourceView";
+import { AutomationWorkspace } from "./AutomationWorkspace";
 
-type AutomationTab = "workflow" | "source";
+const isAutomationView = Schema.is(AutomationView);
 
-/** The step a run needs you to look at: where it failed or what waits on you. */
-function attentionNodeId(run: AutomationRun | null) {
-  if (!run) return null;
-  const entry = Object.entries(run.nodes).find(
-    ([, result]) => result.status === "failed" || result.status === "waiting",
-  );
-  return entry?.[0] ?? null;
+function triggerIcon(automation: Pick<Automation, "triggers">): LucideIcon {
+  if (automation.triggers.some((trigger) => "webhook" in trigger)) return WebhookIcon;
+  if (automation.triggers.some((trigger) => "on" in trigger)) return ZapIcon;
+  return automation.triggers.length > 0 ? CalendarClockIcon : PlayIcon;
 }
 
-/** Only scheduled workflows can simply run again; event-driven ones replay a past run. */
-function canRunNow(automation: Automation) {
-  return automation.nodes.some(
-    (node) => node.config.kind === "trigger" && node.config.source === "schedule",
-  );
+function nextRunText(automation: Automation): string | null {
+  if (automation.version === 0) return "Not published yet";
+  if (!automation.enabled) return "Paused · runs only when you run it";
+  if (!automation.nextRunAt) return null;
+  const until = formatRelativeTimeUntil(automation.nextRunAt);
+  return until?.suffix ? `Next run in ${until.value}` : "Next run in a moment";
 }
 
-function SelectedRunChip(props: {
-  run: AutomationRun;
-  onOpenChat: () => void;
-  onClear: () => void;
-}) {
-  const nameText = useAssistantName();
+function Loading(props: { label: string }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 rounded-md border bg-card py-0.5 pr-0.5 pl-2 text-xs">
-      <RunStatusMarker status={runDisplayStatus(props.run)} />
-      <span className="min-w-0 truncate text-foreground">{nameText(props.run.title)}</span>
-      <span className="shrink-0 text-muted-foreground">{formatRunStarted(props.run)}</span>
-      <Button
-        variant="ghost-muted"
-        size="icon-micro"
-        aria-label="Open run chat"
-        onClick={props.onOpenChat}
-      >
-        <MessageSquareIcon />
-      </Button>
-      <Button
-        variant="ghost-muted"
-        size="icon-micro"
-        aria-label="Clear selected run"
-        onClick={props.onClear}
-      >
-        <XIcon />
-      </Button>
+    <div className="flex flex-1 flex-col items-center gap-9 border-t pt-10" role="status">
+      <span className="sr-only">{props.label}</span>
+      {[0, 1, 2].map((index) => (
+        <Skeleton key={index} className="h-15 w-62" />
+      ))}
     </div>
   );
 }
 
-function PauseSwitch(props: { automation: Automation }) {
-  const [enabled, setEnabled] = useState(props.automation.enabled);
-  const { system } = props.automation;
-  const control = (
-    <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground has-disabled:cursor-not-allowed">
-      <Switch
-        size="sm"
-        checked={enabled}
-        disabled={system !== undefined}
-        onCheckedChange={setEnabled}
-      />
-      {enabled ? "On" : "Paused"}
-    </label>
-  );
-  if (!system) return control;
+function Notice(props: { title: string; children: string }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span />}>{control}</TooltipTrigger>
-      <TooltipPopup side="bottom">Always on: {system.reason}</TooltipPopup>
-    </Tooltip>
+    <div className="flex flex-1 flex-col border-t">
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>{props.title}</EmptyTitle>
+          <EmptyDescription>{props.children}</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    </div>
   );
 }
 
 export function AutomationPage(props: {
+  environmentId: EnvironmentId;
   automationId: string;
   runId: string | null;
-  showRunOnWorkflow: boolean;
+  view: AutomationView;
+  line: number | null;
 }) {
   const navigate = useNavigate();
-  const nameText = useAssistantName();
-  const automation = useAutomation(props.automationId);
-  const level = useAutomationLevel(automation);
-  const run = automation?.runs.find((candidate) => candidate.id === props.runId) ?? null;
-  const runChat = run !== null && !props.showRunOnWorkflow;
-  const [tab, setTab] = useState<AutomationTab>("workflow");
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(() => attentionNodeId(run));
-
-  // A run newly shown on the workflow opens with its failing or waiting step inspected.
-  const shownKey = run && props.showRunOnWorkflow ? run.id : null;
-  const [shownRunId, setShownRunId] = useState(shownKey);
-  if (shownKey !== shownRunId) {
-    setShownRunId(shownKey);
-    if (run && shownKey) {
-      setTab("workflow");
-      const nodeId = attentionNodeId(run);
-      if (nodeId) setSelectedNodeId(nodeId);
-    }
-  }
-
-  const go = useCallback(
-    (search: { run?: string; show?: "workflow" }) => {
-      void navigate({
-        to: "/automations/$automationId",
-        params: { automationId: props.automationId },
-        search,
-      });
-    },
-    [navigate, props.automationId],
+  const { environmentId } = props;
+  const detailQuery = useEnvironmentQuery(
+    automationState.detail({ environmentId, input: { automationId: props.automationId } }),
   );
+  const detail: AutomationDetail | null = detailQuery.data;
+  // An older run linked by `?run=` still loads after it drops out of the recent list.
+  const shownRunId = props.runId ?? detail?.runs[0]?.id ?? null;
+  const runQuery = useEnvironmentQuery(
+    shownRunId ? automationState.run({ environmentId, input: { runId: shownRunId } }) : null,
+  );
+  const runDetail = runQuery.data?.run.id === shownRunId ? runQuery.data : null;
+  const [draftSide, setDraftSide] = useState<DraftSide>("draft");
 
-  if (!automation) {
+  if (!detail) {
     return (
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden">
-        <WorkspacePageHeader electron={isElectron} />
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-          <p className="text-sm font-medium text-foreground">Automation not found</p>
-          <Link to="/" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
-            Back to Home
-          </Link>
-        </div>
-      </SidebarInset>
+      <AutomationsPageShell title={null}>
+        {detailQuery.error ? (
+          <Notice title="This automation isn't available">
+            {`It may have been deleted, or its environment is offline. ${detailQuery.error}`}
+          </Notice>
+        ) : (
+          <Loading label="Loading automation" />
+        )}
+      </AutomationsPageShell>
     );
   }
 
-  const selectedNode = automation.nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const canvasRun = runChat ? null : run;
+  const { automation } = detail;
+  const target = { environmentId, automationId: automation.id };
+  const show = (view: AutomationView, runId: string | null, line?: number) => {
+    const route = automationRoute(target, runId, view);
+    void navigate({
+      ...route,
+      search: line ? { ...route.search, line } : route.search,
+      replace: true,
+    });
+  };
+  const nextRun = nextRunText(automation);
+  const TriggerIcon = triggerIcon(automation);
+  const selectedRun = detail.runs.find((run) => run.id === shownRunId) ?? runDetail?.run ?? null;
+  // A never-published automation has nothing live to show.
+  const shownDraft =
+    detail.draft && (draftSide === "draft" || automation.version === 0) ? detail.draft : null;
 
   return (
-    <AutomationAgentProvider automation={automation} level={level}>
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-          <WorkspacePageHeader electron={isElectron}>
-            <WorkspaceBreadcrumb ariaLabel="Automation breadcrumb" className="min-w-0 shrink">
-              <WorkspaceBreadcrumbItem>
-                <WorkspaceBreadcrumbText>{level.label}</WorkspaceBreadcrumbText>
-              </WorkspaceBreadcrumbItem>
-              <WorkspaceBreadcrumbSeparator />
-              <WorkspaceBreadcrumbItem current className="min-w-10">
-                <h1 className="min-w-0">
-                  <WorkspaceBreadcrumbText>{nameText(automation.name)}</WorkspaceBreadcrumbText>
-                </h1>
-              </WorkspaceBreadcrumbItem>
-            </WorkspaceBreadcrumb>
-            <AutomationAgentButton automation={automation} />
-            {canvasRun ? (
-              <div className="hidden min-w-0 md:flex">
-                <SelectedRunChip
-                  run={canvasRun}
-                  onOpenChat={() => go({ run: canvasRun.id })}
-                  onClear={() => go({})}
-                />
-              </div>
-            ) : null}
-            <div className="ms-auto flex shrink-0 items-center gap-3">
-              <ToggleGroup
-                aria-label="Automation view"
-                variant="segmented"
-                value={runChat ? [] : [tab]}
-                onValueChange={(next) => {
-                  const value = next[0];
-                  if (value !== "workflow" && value !== "source") return;
-                  setTab(value);
-                  if (runChat) go({});
-                }}
-              >
-                <Toggle value="workflow">Workflow</Toggle>
-                <Toggle value="source">Source</Toggle>
-              </ToggleGroup>
-              <PauseSwitch automation={automation} />
-              {canRunNow(automation) ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => notifyAutomationsComingSoon("Run now")}
-                >
-                  <PlayIcon />
-                  Run now
-                </Button>
-              ) : (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={automation.runs.length === 0}
-                  onClick={() => notifyAutomationsComingSoon("Replaying a run")}
-                >
-                  <HistoryIcon />
-                  Replay a past run
-                </Button>
-              )}
-              <AutomationActionsMenu automation={automation} />
-            </div>
-          </WorkspacePageHeader>
-
-          <div className="flex min-h-0 flex-1 border-t">
-            <AutomationRunList
-              automation={automation}
-              activeRunId={run?.id ?? null}
-              onSelect={(runId) => go({ run: runId, show: "workflow" })}
-            />
-            {runChat && run ? (
-              <AutomationRunChat
-                automation={automation}
-                run={run}
-                onShowOnWorkflow={() => go({ run: run.id, show: "workflow" })}
-              />
-            ) : tab === "source" ? (
-              <WorkflowSourceView automation={automation} />
-            ) : (
-              <>
-                <WorkflowCanvas
-                  automation={automation}
-                  run={canvasRun}
-                  selectedNodeId={selectedNodeId}
-                  onSelectNode={setSelectedNodeId}
-                />
-                {selectedNode ? (
-                  <WorkflowNodeDetails
-                    node={selectedNode}
-                    run={canvasRun}
-                    maxIterations={maxIterations(automation.nodes)}
-                    onClose={() => setSelectedNodeId(null)}
-                  />
-                ) : null}
-              </>
-            )}
-          </div>
+    <AutomationsPageShell
+      title={automation.name}
+      header={
+        <div className="ms-auto flex shrink-0 items-center gap-3">
+          <ToggleGroup
+            aria-label="Automation view"
+            variant="segmented"
+            value={[props.view]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (isAutomationView(value)) show(value, props.runId);
+            }}
+          >
+            <Toggle value="run" disabled={!shownRunId}>
+              Run
+            </Toggle>
+            <Toggle value="diagram">Diagram</Toggle>
+            <Toggle value="code">Code</Toggle>
+          </ToggleGroup>
+          <AutomationActions
+            environmentId={environmentId}
+            automation={automation}
+            shownRun={runDetail}
+            onRunStarted={(runId) => show("run", runId)}
+          />
         </div>
-      </SidebarInset>
-    </AutomationAgentProvider>
+      }
+    >
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-2 text-xs">
+        {automation.builtIn ? <Badge variant="secondary">Built-in</Badge> : null}
+        <span className="flex items-center gap-1.5 font-medium text-foreground">
+          {createElement(TriggerIcon, {
+            "aria-hidden": true,
+            className: "size-3.5 text-muted-foreground",
+          })}
+          {triggerSummary(automation.triggers)}
+        </span>
+        {nextRun ? <span className="text-muted-foreground">{nextRun}</span> : null}
+        {automation.description ? (
+          <span className="line-clamp-2 min-w-0 flex-1 text-muted-foreground">
+            {automation.description}
+          </span>
+        ) : null}
+        {automation.intent ? (
+          <span className="line-clamp-2 w-full text-muted-foreground/80">
+            {`Asked for: “${automation.intent}”`}
+          </span>
+        ) : null}
+      </div>
+      {detail.draft ? (
+        <AutomationDraftBar
+          environmentId={environmentId}
+          automation={automation}
+          draft={detail.draft}
+          side={draftSide}
+          onSideChange={setDraftSide}
+        />
+      ) : null}
+      {props.view === "code" ? (
+        <AutomationSourceView
+          environmentId={environmentId}
+          automation={automation}
+          source={shownDraft?.source ?? detail.source}
+          compareTo={shownDraft && automation.version > 0 ? detail.source : null}
+          line={props.line}
+        />
+      ) : props.view === "run" ? (
+        runDetail ? (
+          <AutomationRunChat
+            environmentId={environmentId}
+            run={runDetail}
+            version={automation.version}
+            triggerIcon={TriggerIcon}
+            onShowOnDiagram={() => show("diagram", runDetail.run.id)}
+          />
+        ) : runQuery.error ? (
+          <Notice title="Couldn't load this run">{runQuery.error}</Notice>
+        ) : shownRunId ? (
+          <Loading label="Loading run" />
+        ) : (
+          <Notice title="No runs yet">Run it now to see what each step does.</Notice>
+        )
+      ) : (
+        <div className="flex min-h-0 flex-1 border-t">
+          <AutomationWorkspace
+            environmentId={environmentId}
+            detail={detail}
+            runDetail={runDetail}
+            selectedRun={selectedRun}
+            runError={props.runId ? runQuery.error : null}
+            triggerIcon={TriggerIcon}
+            onSelectRun={(runId) => show("diagram", runId)}
+            onOpenRunChat={(runId) => show("run", runId)}
+            onShowLine={(line) => show("code", props.runId, line)}
+            draft={shownDraft}
+          />
+        </div>
+      )}
+    </AutomationsPageShell>
   );
 }

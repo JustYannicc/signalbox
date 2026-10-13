@@ -9,7 +9,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useMemo } from "react";
 
-import { useAutomations } from "../automations/runDecisions";
+import { useAutomations } from "../homeAutomations/runDecisions";
 import { useRoomArchiveStore } from "../rooms/rooms";
 import { buildContainerIndex, contentsOf } from "../sidebar/sections/containerContents";
 import { buildMappedIndex, useMappedStore } from "../sidebar/sections/mappedItems";

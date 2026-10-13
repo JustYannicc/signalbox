@@ -1,12 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  ProviderConsumeResetCreditOutcome,
-  ProviderConsumeResetCreditInput,
-  ServerProvider,
-  ServerProviderResetCredits,
-  ServerProviderUsageWindow,
-  UsageProviderKind,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderConsumeResetCreditOutcome,
+  type ProviderConsumeResetCreditInput,
+  type ServerProvider,
+  type ServerProviderResetCredits,
+  type ServerProviderUsageWindow,
+  type UsageProviderKind,
 } from "@t3tools/contracts";
 import {
   elapsedShare,
@@ -24,6 +25,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
 
@@ -59,8 +61,10 @@ function WindowRow(props: {
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
-        <Text className="text-sm text-foreground">{window.label}</Text>
-        <Text className="text-sm font-t3-medium tabular-nums text-foreground">
+        <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>
+          {window.label}
+        </Text>
+        <Text className="shrink-0 text-sm font-t3-medium tabular-nums text-foreground">
           {remaining}% left
         </Text>
       </View>
@@ -98,9 +102,22 @@ function WindowRow(props: {
   );
 }
 
-function AccountInstanceLabel({ value }: { readonly value: string }) {
+function AccountInstanceLabel({
+  value,
+  revealByDefault,
+}: {
+  readonly value: string;
+  readonly revealByDefault: boolean;
+}) {
   const [revealed, setRevealed] = useState(false);
   if (!value.includes("@")) {
+    return (
+      <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
+        · {value}
+      </Text>
+    );
+  }
+  if (revealByDefault) {
     return (
       <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
         · {value}
@@ -128,6 +145,7 @@ export function AccountLimits(props: {
   readonly instanceLabel: string;
   readonly detail: string | undefined;
   readonly limits: ServerProvider["usageLimits"];
+  readonly windows?: readonly ServerProviderUsageWindow[] | undefined;
   readonly now: number;
   readonly first: boolean;
   /** Tighter padding for the composer card. */
@@ -135,12 +153,16 @@ export function AccountLimits(props: {
   /** Sits at the end of the heading row, such as a close control. */
   readonly trailing?: ReactNode;
   readonly footer?: ReactNode;
+  /** Keeps a normal account row from repeating its separate usage destination. */
+  readonly showExternalUsage?: boolean;
+  /** Usage → Limits rows show the account address beside its display name. */
+  readonly revealInstanceLabel?: boolean;
 }) {
   const { limits, now, dense = false } = props;
   const color = useBarColor(props.driver);
   if (!limits) return null;
   const notice = limitsNotice(limits);
-  const externalUsage = limits.externalUsage;
+  const externalUsage = props.showExternalUsage === false ? undefined : limits.externalUsage;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (
     <View
@@ -151,9 +173,18 @@ export function AccountLimits(props: {
       <View className="flex-row items-center gap-2">
         <ProviderIcon provider={props.driver} size={16} />
         <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
-          <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
+          <Text
+            className="min-w-0 shrink text-base font-t3-medium text-foreground"
+            numberOfLines={1}
+          >
+            {props.label}
+          </Text>
           {props.instanceLabel !== props.label ? (
-            <AccountInstanceLabel key={props.instanceLabel} value={props.instanceLabel} />
+            <AccountInstanceLabel
+              key={props.instanceLabel}
+              value={props.instanceLabel}
+              revealByDefault={props.revealInstanceLabel ?? false}
+            />
           ) : null}
           {props.detail ? (
             <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
@@ -167,7 +198,7 @@ export function AccountLimits(props: {
         <Text className="text-sm text-foreground-muted">{notice}</Text>
       ) : (
         <View className="gap-3">
-          {limits.windows.map((window) => (
+          {(props.windows ?? limits.windows).map((window) => (
             <WindowRow key={window.id} window={window} color={color} now={now} />
           ))}
         </View>
@@ -207,6 +238,7 @@ export function ResetCredits(props: {
   readonly dense?: boolean;
 }) {
   const { environmentId, input, credits, now, dense = false } = props;
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
@@ -225,6 +257,7 @@ export function ResetCredits(props: {
         }`;
 
   const redeem = async () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input });
@@ -241,6 +274,7 @@ export function ResetCredits(props: {
   };
 
   const confirm = () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     Alert.alert(
       "Use a reset credit?",
       "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
@@ -257,13 +291,13 @@ export function ResetCredits(props: {
       {credits.availableCount > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: busy }}
-          disabled={busy}
+          accessibilityState={{ disabled: busy || !canManageProviders }}
+          disabled={busy || !canManageProviders}
           onPress={confirm}
           className={
             dense
-              ? "rounded-full bg-subtle-strong px-2.5 py-1"
-              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5"
+              ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
+              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
           }
         >
           <Text
@@ -276,6 +310,11 @@ export function ResetCredits(props: {
             {busy ? "Using…" : "Use reset"}
           </Text>
         </Pressable>
+      ) : null}
+      {!canManageProviders ? (
+        <Text className="text-xs text-foreground-tertiary">
+          This connection cannot manage provider accounts.
+        </Text>
       ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>

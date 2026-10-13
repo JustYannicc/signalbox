@@ -8,17 +8,17 @@
  */
 import { useMemo } from "react";
 
-import { useAutomations } from "../../automations/runDecisions";
+import { useAutomations } from "../../homeAutomations/runDecisions";
 import { TOP_LEVEL } from "../../levels/levels";
 import { TEAM_PROJECTS } from "../../multiplayer/multiplayerFixtures";
 import { useRoomArchiveStore } from "../../rooms/rooms";
 import { THREAD_STATUS_DISPLAY, type ThreadDisplayStatus } from "../../threadStatusDisplay";
-import { useProjects, useThreadShells } from "../../../state/entities";
+import { useProjects } from "../../../state/entities";
 import { useUiStateStore } from "../../../uiStateStore";
 import { isInSight } from "../focus/focusLevels";
 import { useFocusedLevel } from "../focus/focusStore";
 import { automationAttentionInFocus } from "../focus/needsYouInFocus";
-import { homeThreadKey } from "../useHomeSidebarData";
+import { homeThreadKey, useHomeThreadShells } from "../useHomeSidebarData";
 import { buildContainerIndex, roomNeedsYou } from "./containerContents";
 import { containerIdForKey, containerIdForThread, HOME_TOP_LEVEL_ID } from "./containerIds";
 import { statusForThread } from "./homeStatus";
@@ -37,7 +37,7 @@ function levelOfContainer(containerId: string): string {
 }
 
 export function useNeedsYouCount(): number {
-  const threads = useThreadShells();
+  const threads = useHomeThreadShells();
   const projects = useProjects();
   const lastVisited = useUiStateStore((state) => state.threadLastVisitedAtById);
   const archived = useHomeSectionStore((state) => state.archived);

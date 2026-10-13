@@ -12,6 +12,23 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Formatting
+
+The composer writes Markdown and shows it styled as you type. Markers such as
+`**` stay in the text and show beside the styled words when your cursor is on
+them. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become lists,
+task lists, quotes, headings and rules; ` ``` ` followed by Enter opens a code
+block. What you typed is what the agent receives, markers and numbering
+included, and `#1234` without a space still looks up a pull request.
+
+Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
+on an empty line leaves it; **Tab** nests a list item. In a code block, Enter
+starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
+the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
+at the end, leave the block. **Backspace** at the start of a code block turns it
+back into plain lines. Choose the language in a code block's corner to change
+it. Very large code blocks are shown without syntax highlighting.
+
 ## Attach files
 
 Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
@@ -28,32 +45,38 @@ before an upload finishes requires you to attach that file again.
 You can drag or paste images into the web or desktop composer. HEIC and HEIF
 photos are converted to JPEG there and when selected from the mobile photo
 library; photos over the image limit are also resized to fit. On mobile, you can
-also send files to T3 Code through another app's system share sheet.
+also send files to Signalbox through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
 ## Send while the agent is working
 
-On web and desktop, a message sent during a running turn waits at the end of the conversation as a
-dashed bubble. It goes out on its own when the agent finishes its next tool
-call, or when the turn ends, even while you have another thread open. Use the arrow under the bubble to send it right
-away, or the X to move it back into the composer. Stop returns every queued
-message to the composer.
-
-In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
-behavior or **Steer** to send new messages immediately. This setting applies to
-the current client. Messages already queued keep their place.
+On web and desktop, choose **Settings → General → Follow-up behavior** to queue
+new messages for a later turn or steer the running turn immediately. The setting
+applies to this client; already queued messages keep their place. Queued messages
+are saved on the server and can be edited, reordered, or removed above the composer.
+`Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses the opposite action:
+it steers when your default is Queue and queues when your default is Steer.
 
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
-the oldest queued message now. Change `thread.steerQueuedMessage` in
-**Settings → Keybindings** to use another shortcut. It leaves the current draft
-in the composer and waits if the agent needs an approval or an answer.
+the oldest queued message as a steer. This leaves the current draft intact and
+requires an active turn that supports steering. Change
+`thread.steerQueuedMessage` in **Settings → Keybindings** to use another shortcut.
+
+Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at the
+start of the composer to edit the most recently queued message. Change
+`thread.editQueuedMessage` to use another shortcut.
+
+Mobile has the same choice under **Settings → Follow-ups**. While a turn is
+running the send button shows which action it will take. Long-press it to use the
+other action for a single message, or hold `Cmd` while sending from a hardware
+keyboard. The button only offers Steer when the running agent supports it.
 
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue
 messages while disconnected. Uploads resume when you reconnect. Drafts and queued
-messages survive app restarts. Signing out of T3 Connect keeps that work on your
+messages survive app restarts. Signing out of Signalbox Connect keeps that work on your
 device until you sign back into the same account.
 
 ## Custom models
@@ -64,7 +87,7 @@ uses its account catalog and does not support custom models.
 
 ## Model defaults
 
-T3 Code remembers your provider, model, and model options for new threads. A
+Signalbox remembers your provider, model, and model options for new threads. A
 project's configured model takes precedence; resetting that project setting
 returns to the remembered selection.
 
@@ -108,7 +131,8 @@ On web and desktop, choose **Edit from here** beneath a sent message to rewind
 the conversation to before that message. Choose **Revert and keep changes** to
 leave workspace files as they are, or **Revert files too** to restore them as well.
 File restore is only offered for threads running in a worktree, and it is
-refused when another thread or agent session also uses that directory, since
+refused when another thread or agent session also uses that directory, a folder
+inside it, or a folder that contains it, since
 restoring would erase their changes. A thread that works in the project directory
 rewinds the conversation only. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
@@ -116,6 +140,17 @@ resending. Any unsent draft stays above the restored prompt.
 This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
 memory. The action is available only when the provider supports rewind.
+
+## Lock sending
+
+On web and desktop, click the shackle above the send button to lock sending for
+the current draft. While it is locked, Enter adds a new line and nothing sends,
+so you can write a long prompt without sending it early. Click the shackle again
+to unlock. Each draft keeps its own lock, including after a reload. Answering an
+agent's question or a proposed plan is never locked.
+
+To lock and unlock from the keyboard, bind **Composer: Toggle Send Lock** in
+Settings > Keybindings.
 
 ## Prompt stash
 
@@ -140,8 +175,32 @@ minutes long. Canceling, leaving the screen, or an audio interruption discards t
 recording and preserves your existing draft. While recording, the screen stays
 awake; it can sleep normally once recording stops.
 
-Transcription runs on your device. T3 Code deletes the temporary audio after
+Transcription runs on your device. Signalbox deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
+
+## Queued messages
+
+On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is
+empty. Adding text or attachments replaces it with a steer arrow. Click it to send a message into
+the active turn, or press `Enter` on desktop. Hold `Cmd` on macOS or `Ctrl` on Windows and Linux to
+switch the button to a queue icon. Click while holding that key, or press `Cmd+Enter` or
+`Ctrl+Enter` on desktop, to queue the message for after the active turn.
+
+Queued messages appear above the composer. Rows show a thumbnail of any attached image alongside
+the text. Drag a row by its handle to reorder it, use the handle's arrow keys, promote the message
+to a steer, or remove it.
+
+If the server restarts, saved queued messages keep their order and are held. Press
+**Resume** in an empty composer on web or desktop, or **Resume queue** in the queue
+sheet on mobile, to continue. You can edit, reorder, or remove held messages without starting them.
+
+The pencil on a queued row opens that message in the composer for editing. The original message
+stays in the queue until you save, and its row is highlighted while you edit. The message's
+attachments appear above the text with a remove control, and new images can be added the usual way.
+The checkmark saves the queued message in place; **Cancel** on its row leaves it unchanged. Whatever
+you had typed in the composer before starting the edit is restored afterwards. If the queued
+message starts or is removed while you are editing, the edit ends: changed content moves into the
+composer when it is empty, and is discarded otherwise.
 
 ## Commands and skills
 
@@ -152,11 +211,28 @@ provider. On mobile, both are also available before starting a thread on
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
 
-Provider commands must start the message to run. T3 Code commands such as
+After you add or change skills, plugins, or MCP servers, use **Restart agent
+session** in the command palette on web and desktop. The conversation continues,
+and your next message starts the agent again with the new setup.
+
+Provider commands must start the message to run. Signalbox commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
+
+## Goals
+
+With Codex and Claude, send `/goal` followed by what "done" means, for example
+`/goal all tests in packages/api pass`. The agent keeps working across turns
+until it judges the goal met. The thread shows **Goal** while it works, and a
+row above the composer shows the goal and its progress.
+
+- `/goal` alone shows the current goal. `/goal clear` removes it.
+- Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
+  pauses it.
+- Stopping Claude ends the current turn, but the goal stays set. Claude checks it
+  again at the end of your next message.
 
 ## Context in your message
 
@@ -175,6 +251,13 @@ by any part of its pull request numbers. A complete number is also resolved dire
 pull request is older than the recent list. Type a single word after `#` to search pull requests in
 the repository by text. Choose a result to insert it as a chip.
 
+Another thread can be context too. Type `@` followed by part of its title to pick one from
+the same server, or on web and desktop drag a thread out of the sidebar and drop it on the
+composer; a multi-selection drops together. The chip shows the thread's current title and
+opens it when selected. Your prompt only carries a reference: the agent reads the thread's
+history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
+thread does not change it, and the agent cannot send messages to it unless you ask.
+
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
 the thumbnail asks first when the image is still mentioned in your text, then removes both. Files
@@ -183,7 +266,7 @@ exist only as chips: deleting a file's last chip removes the file from the messa
 Copy text that holds chips and paste it into another draft, in the same thread or another one,
 and the chips come along with what they point to. Images and files are fetched again from the
 environment they came from; while that happens the chip shows a dashed outline, and if it cannot
-complete T3 Code tells you and leaves the chip for you to remove or replace. A chip whose
+complete Signalbox tells you and leaves the chip for you to remove or replace. A chip whose
 context is no longer available shows the same dashed outline; hover it for what to do.
 
 Copying a message with the copy button, or copying text out of it, gives other apps readable
@@ -230,7 +313,10 @@ styles, or images from neighboring files.
 
 On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML
 file to source view to read its markup; a link to a specific line opens source
-automatically. HTML previews cannot access your T3 Code session.
+automatically. HTML previews cannot access your Signalbox session.
+
+The file viewer recognizes images, HTML, and PDF files by their filename extension,
+including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.

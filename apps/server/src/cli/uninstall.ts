@@ -4,23 +4,19 @@
 // cannot express: it kills the child when the scope closes.
 import * as NodeChildProcess from "node:child_process";
 
-import {
-  HostProcessEnvironment,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
+import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimeVersionsDir } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { bootServiceLayer } from "./service.ts";
+import * as CliService from "./service.ts";
 import { findWindowsShim, launcherOwnsVersionsDir, resolveLauncherPath } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
@@ -58,7 +54,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (input.launchedAs === undefined) return undefined;
   if (platform === "win32") {
     const shimPath = yield* findWindowsShim(input.launchedAs);
@@ -87,7 +83,7 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
     path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const runtimeDir = path.dirname(versionsDir);
-  const launchedAs = (yield* HostProcessIsExecutable) ? yield* resolveLauncherPath : undefined;
+  const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
   const plan: UninstallPlan = {
     service: status.supported && status.installed && servesThisHome,
     launcher: yield* findOwnedLauncher({ launchedAs, versionsDir }),
@@ -110,14 +106,14 @@ export const uninstallCommand = Command.make("uninstall", {
   ),
 }).pipe(
   Command.withDescription(
-    "Remove t3 from this machine: the background service, the launcher, and every downloaded version. Your projects and threads are kept.",
+    "Remove signalbox from this machine: the background service, the launcher, and every downloaded version. Your projects and threads are kept.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUninstall({ baseDir: config.baseDir, assumeYes: flags.yes }).pipe(
-        Effect.provide(bootServiceLayer(config)),
+        Effect.provide(CliService.layer(config)),
       );
     }),
   ),
@@ -128,16 +124,16 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   readonly assumeYes: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
-  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const environment = yield* HostProcess.Environment;
   const service = yield* BootService.BootService;
   const plan = yield* planUninstall({ baseDir: input.baseDir });
 
   if (!plan.service && plan.launcher === undefined && plan.runtimeDir === undefined) {
-    yield* Console.log(`Nothing to remove: t3 is not installed for ${input.baseDir}.`);
-    if (!(yield* HostProcessIsExecutable)) {
+    yield* Console.log(`Nothing to remove: signalbox is not installed for ${input.baseDir}.`);
+    if (!(yield* HostProcess.IsExecutable)) {
       yield* Console.log(
-        "  This t3 runs from a Node script, so it was installed by npm or built from source. Remove it the same way (`npm uninstall -g t3`, or delete the checkout).",
+        "  This signalbox runs from a Node script, so it was installed by npm or built from source. Remove it the same way (`npm uninstall -g signalbox-cli`, or delete the checkout).",
       );
     }
     return;
@@ -161,8 +157,8 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
       });
     }
     const confirmed = yield* Prompt.run(
-      Prompt.Confirm({ message: "Remove t3 from this machine?", initial: false }),
-    ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
+      Prompt.Confirm({ message: "Remove signalbox from this machine?", initial: false }),
+    ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
     if (!confirmed) {
       yield* Console.log("Left as is.");
       return;
@@ -205,7 +201,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
             reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
           }),
       });
-      yield* Console.log(`${runtimeDir} will be removed once t3 exits.`);
+      yield* Console.log(`${runtimeDir} will be removed once signalbox exits.`);
     } else {
       yield* fs
         .remove(plan.runtimeDir, { recursive: true, force: true })
@@ -218,5 +214,5 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     }
   }
   yield* Console.log("");
-  yield* Console.log("t3 is uninstalled. Thanks for trying T3 Code.");
+  yield* Console.log("signalbox is uninstalled. Thanks for trying Signalbox.");
 });

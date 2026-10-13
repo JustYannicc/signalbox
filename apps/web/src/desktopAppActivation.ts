@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "./branding";
 import type {
   DesktopAppActivationFailure,
   DesktopAppActivationRequest,
@@ -86,7 +85,7 @@ export async function handleDesktopAppActivationRequest(
       return failure(
         request.requestId,
         "project-create-failed",
-        errorMessage(error, `${APP_BASE_NAME} could not add the project.`),
+        errorMessage(error, "Signalbox could not add the project."),
       );
     }
   }
@@ -100,7 +99,7 @@ export async function handleDesktopAppActivationRequest(
       return failure(
         request.requestId,
         "thread-open-failed",
-        `${APP_BASE_NAME} could not open a new thread for the project.`,
+        "Signalbox could not open a new thread for the project.",
       );
     }
     return {
@@ -114,7 +113,7 @@ export async function handleDesktopAppActivationRequest(
     return failure(
       request.requestId,
       "thread-open-failed",
-      errorMessage(error, `${APP_BASE_NAME} could not open a new thread for the project.`),
+      errorMessage(error, "Signalbox could not open a new thread for the project."),
     );
   }
 }

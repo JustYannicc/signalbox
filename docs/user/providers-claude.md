@@ -1,45 +1,21 @@
 # Claude
 
-T3 Code uses Claude Code's login and configuration. Start with the default provider
-for one account; [provider setup](./install.md#providers) covers installation and
-shared provider settings.
+Signalbox runs Claude Code on the accounts in a pool. [Provider setup](./install.md#providers)
+covers installation and shared provider settings.
 
-## Separate accounts or configurations
+## Accounts
 
-Use a separate Claude config directory for each account. This also works for named
-presets that need different Claude settings or a router connection.
+Claude subscriptions and Anthropic API keys live in a pool. On **Usage → Limits**, choose **Add
+account → Claude** to sign in, or **Add account → API key** for an Anthropic key. Both can sit in one
+pool; each conversation stays on one account, and work moves to another when one runs out. See
+[Use several subscription accounts](./usage.md#use-several-subscription-accounts).
 
-Keep your existing account in the default directory. On the environment's machine,
-create the second login:
-
-```bash
-mkdir -p ~/.claude_personal
-CLAUDE_CONFIG_DIR=~/.claude_personal claude auth login
-```
-
-Add another Claude instance in **Settings > Providers**:
-
-| Instance        | Binary path | CLAUDE_CONFIG_DIR path |
-| --------------- | ----------- | ---------------------- |
-| Claude Work     | `claude`    | Leave empty            |
-| Claude Personal | `claude`    | `~/.claude_personal`   |
-
-An empty config-directory setting uses Claude Code's normal configuration. The
-custom setting changes `CLAUDE_CONFIG_DIR`, leaving `HOME` and the system keychain
-location intact. Use the same variable for the login command. Setting `HOME`
-instead can put credentials where this provider will not find them.
-
-Check the account reported in provider settings after signing in. Existing
-threads can switch only between Claude instances with the same config directory.
-Separate account directories stay isolated, including their local conversation
-state. Claude does not have Codex's shared-home and shadow-home arrangement.
-
-For presets that differ only in API keys or endpoints, use the instance's
-**Environment variables**. Variable assignments do not belong in **Launch arguments**.
+If Claude Code is already signed in on the server, choose **Move into** a pool in **Settings →
+Providers**. Signalbox then stops using that login directly.
 
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
-T3 Code uses the Claude configuration on the connected server.
+Signalbox uses the Claude configuration on the connected server.
 
 ## Compact long conversations
 
@@ -49,9 +25,12 @@ Set **Auto-compact after** in the Claude provider settings to an integer between
 window. Leave it empty for Claude Code's default.
 
 You can also send `/compact` in an existing conversation. Web and desktop offer
-**Compact context** from the context meter and may suggest it when you return to
-a large older thread. See [commands and skills](./composer.md#commands-and-skills)
-for using composer commands.
+**Compact context** from the context meter. When you return to a large thread
+after more than an hour, a **Compact** chip with the thread's token count shows
+next to the send button. While it is on, Enter summarizes the history first, then
+sends your message. Click the chip to switch it to **Full** and keep the full
+history for that message. See [commands and skills](./composer.md#commands-and-skills) for using
+composer commands.
 
 ## Usage limits
 
@@ -88,11 +67,11 @@ If that Claude config directory has a cached Anthropic login, run `/logout` in a
 Claude Code session using that directory before starting the router setup. Cached
 login credentials can conflict with the router token.
 
-Select the model you want in T3 Code. For an OpenRouter model outside the built-in
+Select the model you want in Signalbox. For an OpenRouter model outside the built-in
 list, open that Claude instance in **Settings > Providers** and add its full model
 ID with **Add custom model**. Then select it in the chat model picker.
 `ANTHROPIC_DEFAULT_*_MODEL` variables map Claude Code aliases such as `sonnet`; they
-do not replace the explicit model ID selected in T3 Code. Custom models may have
+do not replace the explicit model ID selected in Signalbox. Custom models may have
 fewer effort, thinking, or context controls than built-in models.
 
 Verify the model used in OpenRouter's activity dashboard. For current compatibility

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { NETWORK_BLOCKING_HINT } from "./network.ts";
 import { isTransportConnectionErrorMessage, sanitizeThreadErrorMessage } from "./transport.ts";
 
 describe("isTransportConnectionErrorMessage", () => {
@@ -21,6 +22,7 @@ describe("isTransportConnectionErrorMessage", () => {
 
   it("recognizes connection errors emitted by the Effect RPC session", () => {
     expect(isTransportConnectionErrorMessage("Test environment disconnected.")).toBe(true);
+    expect(isTransportConnectionErrorMessage("Test environment stopped responding.")).toBe(true);
     expect(
       isTransportConnectionErrorMessage(
         "Test environment could not establish a WebSocket connection.",
@@ -30,10 +32,25 @@ describe("isTransportConnectionErrorMessage", () => {
     expect(isTransportConnectionErrorMessage("ClientProtocolError: socket closed")).toBe(true);
   });
 
+  it("recognizes relay connection errors that carry the network hint", () => {
+    for (const sentence of [
+      "Relay environment disconnected.",
+      "Relay environment stopped responding.",
+      "Relay environment could not establish a WebSocket connection.",
+    ]) {
+      expect(isTransportConnectionErrorMessage(`${sentence} ${NETWORK_BLOCKING_HINT}`)).toBe(true);
+    }
+    expect(
+      isTransportConnectionErrorMessage(
+        "Your ChatGPT connection expired or was disconnected. Sign in again.",
+      ),
+    ).toBe(false);
+  });
+
   it("returns true for the T3 server WebSocket message", () => {
-    expect(isTransportConnectionErrorMessage("Unable to connect to the T3 server WebSocket.")).toBe(
-      true,
-    );
+    expect(
+      isTransportConnectionErrorMessage("Unable to connect to the Signalbox server WebSocket."),
+    ).toBe(true);
   });
 
   it("returns true for ping timeout", () => {

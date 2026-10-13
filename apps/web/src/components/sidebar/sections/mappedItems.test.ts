@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { AUTOMATIONS } from "../../automations/automationFixtures";
+import { AUTOMATIONS } from "../../homeAutomations/automationFixtures";
 import { SKILLS } from "../../levels/leveledThings";
 import { SPACES_ITEMS } from "../../spaces/spacesFixtures";
 import { isLoose } from "../../spaces/spacesMappings";

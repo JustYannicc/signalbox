@@ -7,8 +7,8 @@
 import {
   automationAttention,
   type AutomationAttentionItem,
-} from "../../automations/automationStatus";
-import type { Automation } from "../../automations/automationModel";
+} from "../../homeAutomations/automationStatus";
+import type { Automation } from "../../homeAutomations/automationModel";
 import type { LevelKey } from "../../levels/levels";
 import { buildMappedIndex, type MappedOverrides, type ProjectRef } from "../sections/mappedItems";
 import { focusLevelOf, isInSight } from "./focusLevels";

@@ -12,14 +12,12 @@ export function SidebarThreadUndoNotice() {
 
   if (!notice) return null;
   const shortcut = shortcutLabelForCommand(keybindings, "thread.undo");
-  const threads = `${notice.count} thread${notice.count === 1 ? "" : "s"}`;
-  // Fork: settle reads as Archive and snooze as Later everywhere.
+  const noun = `${notice.action === "Discarded" ? "draft" : "thread"}${notice.count === 1 ? "" : "s"}`;
+  // Fork: snooze reads as Later everywhere.
   const summary =
-    notice.action === "Settled"
-      ? `Archived ${threads}`
-      : notice.action === "Snoozed"
-        ? `Moved ${threads} to Later`
-        : `${notice.action} ${threads}`;
+    notice.action === "Snoozed"
+      ? `Moved ${notice.count} ${noun} to Later`
+      : `${notice.action} ${notice.count} ${noun}`;
 
   return (
     <Alert role="status" variant="sidebar">

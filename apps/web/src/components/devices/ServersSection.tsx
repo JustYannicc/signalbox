@@ -1,6 +1,7 @@
 import { CloudIcon, CpuIcon, HouseIcon, ServerIcon, type LucideIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { PROVIDER_PRESENTATION } from "../usage/usageProviders";
 import type { ReactNode } from "react";
 
@@ -123,10 +124,14 @@ function ServerRow({
         {exiting.length > 0 ? (
           <ul className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {exiting.map((account) => {
-              const Mark = PROVIDER_PRESENTATION[account.harness].mark;
+              const provider = PROVIDER_PRESENTATION[account.harness];
               return (
                 <li key={account.id} className="flex min-w-0 items-center gap-1">
-                  <Mark className="size-3 shrink-0" aria-hidden />
+                  <ProviderInstanceIcon
+                    driverKind={provider.driverKind}
+                    displayName={provider.label}
+                    iconClassName="size-3"
+                  />
                   <span className="truncate">{account.name}</span>
                   {account.pin.reroutedViaServerId ? (
                     <span className="shrink-0 text-warning-foreground">(for now)</span>

@@ -80,7 +80,7 @@ const LOOKUP_ICON = {
 function AutomationLink(props: { automationId: string; label: string }) {
   return (
     <Link
-      to="/automations/$automationId"
+      to="/home/automations/$automationId"
       params={{ automationId: props.automationId }}
       className="flex items-center gap-2.5 rounded-xl border border-border px-3 py-2 text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
     >

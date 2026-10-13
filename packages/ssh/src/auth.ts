@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -72,14 +72,14 @@ function joinSshAskpassPath(
 }
 
 const ASKPASS_POSIX_SCRIPT = `#!/bin/sh
-# Invoked by ssh via SSH_ASKPASS when T3 Code re-runs ssh with a cached password
+# Invoked by ssh via SSH_ASKPASS when Signalbox re-runs ssh with a cached password
 # from the renderer's in-app prompt. We never expose a native dialog here - if
 # T3_SSH_AUTH_SECRET is missing, that's a caller bug and we fail loudly.
 if [ "\${T3_SSH_AUTH_SECRET+x}" = "x" ]; then
   printf "%s\\n" "$T3_SSH_AUTH_SECRET"
   exit 0
 fi
-printf 'T3 Code ssh-askpass invoked without T3_SSH_AUTH_SECRET.\\n' >&2
+printf 'Signalbox ssh-askpass invoked without T3_SSH_AUTH_SECRET.\\n' >&2
 exit 1
 `;
 
@@ -87,7 +87,7 @@ const ASKPASS_WINDOWS_LAUNCHER_SCRIPT = `@echo off\r
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ssh-askpass.ps1" %*\r
 `;
 
-const ASKPASS_WINDOWS_SCRIPT = `# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when T3 Code re-runs\r
+const ASKPASS_WINDOWS_SCRIPT = `# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when Signalbox re-runs\r
 # ssh with a cached password from the renderer's in-app prompt. We never expose\r
 # a native dialog here - if T3_SSH_AUTH_SECRET is missing, that's a caller bug\r
 # and we fail loudly.\r
@@ -95,7 +95,7 @@ if ($null -ne $env:T3_SSH_AUTH_SECRET) {\r
   [Console]::Out.WriteLine($env:T3_SSH_AUTH_SECRET)\r
   exit 0\r
 }\r
-[Console]::Error.WriteLine("T3 Code ssh-askpass invoked without T3_SSH_AUTH_SECRET.")\r
+[Console]::Error.WriteLine("Signalbox ssh-askpass invoked without T3_SSH_AUTH_SECRET.")\r
 exit 1\r
 `;
 
@@ -113,7 +113,7 @@ export const buildSshAskpassHelperDescriptor = Effect.fn(
 )(function* (input: {
   readonly directory: string;
 }): Effect.fn.Return<SshAskpassHelperDescriptor, never, Path.Path> {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
   const directory = input.directory;
 
@@ -152,7 +152,7 @@ const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(fu
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const descriptor = yield* buildSshAskpassHelperDescriptor(input);
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
 
   yield* fs.makeDirectory(path.dirname(descriptor.launcherPath), { recursive: true });
 
@@ -182,7 +182,7 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
     return baseEnv;
   }
 
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const hostDisplay = input.baseEnv
     ? input.baseEnv.DISPLAY
     : yield* Config.String("DISPLAY").pipe(

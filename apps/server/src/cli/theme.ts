@@ -33,9 +33,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import {
   MAX_THEME_FILE_BYTES,
@@ -107,7 +107,7 @@ export class ThemeFileInvalidError extends Schema.TaggedError<ThemeFileInvalidEr
   { filePath: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `${this.filePath} is not a valid theme file. Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`;
+    return `${this.filePath} is not a valid theme file. Use a theme exported from Signalbox, or a seeded file with name, appearance, canvas, and accent.`;
   }
 }
 
@@ -174,15 +174,15 @@ export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissi
   {},
 ) {
   override get message(): string {
-    return "Provide a theme id or file, or run `t3 theme clear` to remove the theme.";
+    return "Provide a theme id or file, or run `signalbox theme clear` to remove the theme.";
   }
 }
 
 const envT3Home = Config.String("T3CODE_HOME").pipe(Config.option);
 
 const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<string>) {
-  // Same precedence as the rest of the CLI: --base-dir, then T3CODE_HOME,
-  // then the default home. A provisioning script exporting T3CODE_HOME must
+  // Same precedence as the rest of the CLI: --base-dir, then SIGNALBOX_HOME,
+  // then the default home. A provisioning script exporting SIGNALBOX_HOME must
   // not have this one command silently target the default install.
   const envHome = Option.filter(yield* envT3Home, (value) => value.trim().length > 0);
   const configuredBaseDir = Option.orElse(explicitBaseDir, () => envHome);

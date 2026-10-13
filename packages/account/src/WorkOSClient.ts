@@ -1,0 +1,299 @@
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+
+/**
+ * The WorkOS endpoints Signalbox calls: exchanging an authorization code (or,
+ * when WorkOS asks for it, an email verification code) for the user, and
+ * listing the organizations that user belongs to. WorkOS tokens in the
+ * response are ignored; the server issues its own environment session.
+ *
+ * Never log the request or the raw response: they carry the code, the PKCE
+ * verifier, the client secret, and WorkOS tokens.
+ */
+
+export interface WorkOSConfig {
+  readonly clientId: string;
+  readonly apiKey?: Redacted.Redacted<string>;
+  readonly apiBaseUrl: string;
+}
+
+const WorkOSUserBody = Schema.Struct({
+  id: Schema.String,
+  email: Schema.String,
+  first_name: Schema.optional(Schema.NullOr(Schema.String)),
+  last_name: Schema.optional(Schema.NullOr(Schema.String)),
+  profile_picture_url: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const AuthenticateResponse = Schema.Struct({ user: WorkOSUserBody });
+/**
+ * WorkOS uses two error shapes: `{ error, error_description }` (OAuth) and
+ * `{ code, message, pending_authentication_token, ... }` (AuthKit flows).
+ */
+const AuthenticateErrorBody = Schema.Struct({
+  error: Schema.optional(Schema.String),
+  code: Schema.optional(Schema.String),
+  pending_authentication_token: Schema.optional(Schema.String),
+  email: Schema.optional(Schema.String),
+});
+
+export interface WorkOSUser {
+  readonly id: string;
+  readonly email: string;
+  readonly firstName?: string;
+  readonly lastName?: string;
+  readonly avatarUrl?: string;
+}
+
+export class WorkOSAuthenticateError extends Schema.TaggedError<WorkOSAuthenticateError>()(
+  "WorkOSAuthenticateError",
+  {
+    /** HTTP status, absent when the request never got a response. */
+    status: Schema.optional(Schema.Number),
+    /** WorkOS's OAuth `error` (e.g. `invalid_grant`). Safe to log. */
+    error: Schema.optional(Schema.String),
+    /** WorkOS's AuthKit `code` (e.g. `mfa_enrollment`). Safe to log. */
+    code: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    const detail = [this.status ?? "no response", this.error, this.code].filter(Boolean);
+    return `WorkOS authentication failed (${detail.join(", ")}).`;
+  }
+}
+
+/**
+ * WorkOS wants the user to prove their email (it trusts Google's emails, not
+ * GitHub's) and has sent them a code. The token finishes the sign-in.
+ */
+export class WorkOSEmailVerificationRequired extends Schema.TaggedError<WorkOSEmailVerificationRequired>()(
+  "WorkOSEmailVerificationRequired",
+  {
+    pendingToken: Schema.Redacted(Schema.String),
+    email: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "WorkOS requires email verification before sign-in.";
+  }
+}
+
+export type WorkOSGrant =
+  | { readonly kind: "authorization-code"; readonly code: string; readonly codeVerifier: string }
+  | {
+      readonly kind: "email-verification";
+      readonly code: string;
+      readonly pendingToken: Redacted.Redacted<string>;
+    };
+
+/** Either way a grant can fail. */
+export type WorkOSGrantError = WorkOSAuthenticateError | WorkOSEmailVerificationRequired;
+
+/**
+ * How a failed email-code exchange affects a paused sign-in. WorkOS does not
+ * document its wrong-code error, so any other 4xx counts as a wrong code; 5xx
+ * and network failures leave the attempt untouched. A dead pending token
+ * (observed: `invalid_pending_authentication_token`) cannot be retried, so it
+ * is expired.
+ */
+export const classifyEmailVerificationFailure = (
+  error: WorkOSGrantError,
+): "invalid-code" | "expired" | "failed" => {
+  if (error._tag === "WorkOSEmailVerificationRequired") return "invalid-code";
+  if (error.status === undefined || error.status >= 500) return "failed";
+  return /expire|pending_authentication_token/i.test(`${error.code ?? ""} ${error.error ?? ""}`)
+    ? "expired"
+    : "invalid-code";
+};
+
+const grantBody = (grant: WorkOSGrant) =>
+  grant.kind === "authorization-code"
+    ? {
+        grant_type: "authorization_code",
+        code: grant.code,
+        code_verifier: grant.codeVerifier,
+      }
+    : {
+        grant_type: "urn:workos:oauth:grant-type:email-verification:code",
+        code: grant.code,
+        pending_authentication_token: Redacted.value(grant.pendingToken),
+      };
+
+const nonEmpty = (value: string | null | undefined) =>
+  value === null || value === undefined || value.length === 0 ? undefined : value;
+
+/** `POST /user_management/authenticate` for either grant. */
+export const authenticate = Effect.fn("WorkOS.authenticate")(function* (
+  config: WorkOSConfig,
+  grant: WorkOSGrant,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const request = yield* HttpClientRequest.post(
+    new URL("/user_management/authenticate", config.apiBaseUrl),
+  ).pipe(
+    HttpClientRequest.acceptJson,
+    HttpClientRequest.bodyJson({
+      client_id: config.clientId,
+      ...(config.apiKey ? { client_secret: Redacted.value(config.apiKey) } : {}),
+      ...grantBody(grant),
+    }),
+    Effect.mapError(() => new WorkOSAuthenticateError({})),
+  );
+  const response = yield* httpClient
+    .execute(request)
+    .pipe(Effect.mapError(() => new WorkOSAuthenticateError({})));
+
+  if (response.status < 200 || response.status >= 300) {
+    const body = yield* HttpClientResponse.schemaBodyJson(AuthenticateErrorBody)(response).pipe(
+      Effect.orElseSucceed(() => ({}) as typeof AuthenticateErrorBody.Type),
+    );
+    if (
+      body.code === "email_verification_required" &&
+      body.pending_authentication_token &&
+      body.email
+    ) {
+      return yield* new WorkOSEmailVerificationRequired({
+        pendingToken: Redacted.make(body.pending_authentication_token),
+        email: body.email,
+      });
+    }
+    return yield* new WorkOSAuthenticateError({
+      status: response.status,
+      ...(body.error ? { error: body.error } : {}),
+      ...(body.code ? { code: body.code } : {}),
+    });
+  }
+
+  const { user } = yield* HttpClientResponse.schemaBodyJson(AuthenticateResponse)(response).pipe(
+    Effect.mapError(
+      () => new WorkOSAuthenticateError({ status: response.status, error: "invalid_response" }),
+    ),
+  );
+  return toUser(user);
+});
+
+const toUser = (user: typeof WorkOSUserBody.Type): WorkOSUser => {
+  const firstName = nonEmpty(user.first_name);
+  const lastName = nonEmpty(user.last_name);
+  const avatarUrl = nonEmpty(user.profile_picture_url);
+  return {
+    id: user.id,
+    email: user.email,
+    ...(firstName ? { firstName } : {}),
+    ...(lastName ? { lastName } : {}),
+    ...(avatarUrl ? { avatarUrl } : {}),
+  };
+};
+
+export class WorkOSUserLookupError extends Schema.TaggedError<WorkOSUserLookupError>()(
+  "WorkOSUserLookupError",
+  { status: Schema.optional(Schema.Number) },
+) {
+  override get message(): string {
+    return `Looking up a WorkOS user failed (${this.status ?? "no response"}).`;
+  }
+}
+
+const UsersPage = Schema.Struct({ data: Schema.Array(WorkOSUserBody) });
+
+/**
+ * `GET /user_management/users?email=`: the account signed up with `email`, or
+ * null when there is none. Needs the API key.
+ */
+export const findUserByEmail = Effect.fn("WorkOS.findUserByEmail")(function* (
+  config: WorkOSConfig & { readonly apiKey: Redacted.Redacted<string> },
+  email: string,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const url = new URL("/user_management/users", config.apiBaseUrl);
+  url.searchParams.set("email", email.trim().toLowerCase());
+  url.searchParams.set("limit", "1");
+  const response = yield* httpClient
+    .execute(
+      HttpClientRequest.get(url).pipe(
+        HttpClientRequest.acceptJson,
+        HttpClientRequest.bearerToken(Redacted.value(config.apiKey)),
+      ),
+    )
+    .pipe(Effect.mapError(() => new WorkOSUserLookupError({})));
+  if (response.status < 200 || response.status >= 300) {
+    return yield* new WorkOSUserLookupError({ status: response.status });
+  }
+  const body = yield* HttpClientResponse.schemaBodyJson(UsersPage)(response).pipe(
+    Effect.mapError(() => new WorkOSUserLookupError({ status: response.status })),
+  );
+  const [user] = body.data;
+  return user === undefined ? null : toUser(user);
+});
+
+export interface WorkOSOrganization {
+  readonly id: string;
+  readonly name: string;
+}
+
+export class WorkOSOrganizationsError extends Schema.TaggedError<WorkOSOrganizationsError>()(
+  "WorkOSOrganizationsError",
+  {
+    /** HTTP status, absent when the request never got a response. */
+    status: Schema.optional(Schema.Number),
+  },
+) {
+  override get message(): string {
+    return `Listing WorkOS organization memberships failed (${this.status ?? "no response"}).`;
+  }
+}
+
+const MembershipsPage = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({ organization_id: Schema.String, organization_name: Schema.String }),
+  ),
+  list_metadata: Schema.Struct({ after: Schema.optional(Schema.NullOr(Schema.String)) }),
+});
+
+/** WorkOS's page size limit. */
+const MEMBERSHIPS_PAGE_SIZE = 100;
+/** Far beyond any real user; stops a misbehaving cursor from looping forever. */
+const MAX_MEMBERSHIP_PAGES = 20;
+
+/**
+ * `GET /user_management/organization_memberships`: the organizations the user
+ * is an active member of. Needs the API key.
+ */
+export const listOrganizations = Effect.fn("WorkOS.listOrganizations")(function* (
+  config: WorkOSConfig & { readonly apiKey: Redacted.Redacted<string> },
+  userId: string,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const organizations: Array<WorkOSOrganization> = [];
+  let after: string | undefined;
+  for (let page = 0; page < MAX_MEMBERSHIP_PAGES; page++) {
+    const url = new URL("/user_management/organization_memberships", config.apiBaseUrl);
+    url.searchParams.set("user_id", userId);
+    url.searchParams.set("statuses", "active");
+    url.searchParams.set("limit", String(MEMBERSHIPS_PAGE_SIZE));
+    if (after) url.searchParams.set("after", after);
+    const response = yield* httpClient
+      .execute(
+        HttpClientRequest.get(url).pipe(
+          HttpClientRequest.acceptJson,
+          HttpClientRequest.bearerToken(Redacted.value(config.apiKey)),
+        ),
+      )
+      .pipe(Effect.mapError(() => new WorkOSOrganizationsError({})));
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new WorkOSOrganizationsError({ status: response.status });
+    }
+    const body = yield* HttpClientResponse.schemaBodyJson(MembershipsPage)(response).pipe(
+      Effect.mapError(() => new WorkOSOrganizationsError({ status: response.status })),
+    );
+    for (const membership of body.data) {
+      organizations.push({ id: membership.organization_id, name: membership.organization_name });
+    }
+    after = body.list_metadata.after ?? undefined;
+    if (!after || body.data.length === 0) return organizations;
+  }
+  // A partial list would read as leaving every organization it missed.
+  return yield* new WorkOSOrganizationsError({});
+});

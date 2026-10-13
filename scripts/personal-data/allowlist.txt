@@ -1,0 +1,25 @@
+# Email domains and addresses scripts/personal-data/check.ts accepts in lines
+# this fork adds. `example.com` also covers its subdomains, `*.example` is a
+# suffix, and a full address allows only that address. Add placeholders and
+# noreply addresses here, never a real person's address.
+
+# Reserved for documentation and tests (RFC 2606, RFC 6761).
+example.com
+example.org
+example.net
+*.example
+*.invalid
+*.test
+*.localhost
+
+# Git hosting noreply addresses and SSH remotes.
+users.noreply.github.com
+noreply.github.com
+git@github.com
+git@gitlab.com
+
+# GNOME extension UUID in apps/desktop/gnome-extension, not a mailbox.
+justyannicc.github.io
+
+# Short placeholder used by account tests.
+a@b.co

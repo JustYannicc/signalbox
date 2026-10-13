@@ -1,3 +1,5 @@
+import { normalizeAutomationRunDeepLink } from "@t3tools/contracts/relay"; // signalbox: automations
+
 function dataFromNotificationResponse(response: unknown): Record<string, unknown> | null {
   if (typeof response !== "object" || response === null) {
     return null;
@@ -69,11 +71,25 @@ function normalizeThreadDeepLink(value: string): string | null {
   }
 }
 
+/**
+ * The deep link a notification would have to carry to target the thread the
+ * given route is showing, including its nested screens such as the file
+ * inspector. Null when the route is not inside a thread.
+ */
+export function threadDeepLinkOnScreen(pathname: string): string | null {
+  const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+  return `/threads/${match[1]}/${match[2]}`;
+}
+
 export function extractAgentNotificationDeepLink(response: unknown): string | null {
   const data = dataFromNotificationResponse(response);
   const deepLink = data?.deepLink;
   if (typeof deepLink === "string") {
-    const normalizedDeepLink = normalizeThreadDeepLink(deepLink);
+    const normalizedDeepLink =
+      normalizeThreadDeepLink(deepLink) ?? normalizeAutomationRunDeepLink(deepLink); // signalbox: automations
     if (normalizedDeepLink) {
       return normalizedDeepLink;
     }

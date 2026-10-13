@@ -32,6 +32,7 @@ export const SURFACE_HEADER_CONTAINER = "@container/surface-header";
 
 const LABEL = "sr-only @3xl/surface-header:not-sr-only @3xl/surface-header:ml-0.5";
 const NO_PROJECT = "Add a project first";
+const noop = () => {};
 
 /** The most recently active real project, the one "/" used to land in. */
 function useBoundProject(): EnvironmentProject | null {
@@ -132,6 +133,12 @@ export function SurfaceHeaderActions(props: {
         </div>
       ) : null}
       <PanelLayoutControls
+        // No real thread here, so no thread panel (lineage, subagents) to toggle.
+        showThreadPanelControl={false}
+        threadPanelOpen={false}
+        threadPanelPresentation="inline"
+        threadPanelShortcutLabel={null}
+        onToggleThreadPanel={noop}
         showTerminalControl={projectControls ?? false}
         terminalAvailable={project !== null}
         terminalOpen={false}
@@ -143,7 +150,6 @@ export function SurfaceHeaderActions(props: {
         rightPanelOpen={ownPanel?.open ?? false}
         rightPanelShortcutLabel={null}
         {...panelLabels}
-        liveAgentCount={0}
         onToggleTerminal={() => void openInProject("terminal")}
         onToggleRightPanel={() =>
           ownPanel ? ownPanel.onOpenChange(!ownPanel.open) : void openInProject("right-panel")

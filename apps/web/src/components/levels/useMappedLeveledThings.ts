@@ -8,7 +8,7 @@
  */
 import { useMemo } from "react";
 
-import { useAutomations } from "../automations/runDecisions";
+import { useAutomations } from "../homeAutomations/runDecisions";
 import { buildMappedIndex, useMappedStore } from "../sidebar/sections/mappedItems";
 import { useProjects } from "../../state/entities";
 import type { LeveledThing } from "./leveledThings";

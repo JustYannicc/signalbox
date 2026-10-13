@@ -1,8 +1,7 @@
-import { APP_BASE_NAME } from "../../branding";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
 import {
@@ -135,7 +134,8 @@ export function FirstRunGate({
         environmentCount: environments.length,
       })
     : resolveFirstRunDecision({
-        enabled,
+        // signalbox: the cloud has no computers, agents or projects to set up yet.
+        enabled: enabled && serverConfig?.environment.capabilities.signalboxCloud !== true,
         hydrated,
         completed: onboardingCompletedAt !== null,
         bootstrapped,
@@ -215,7 +215,7 @@ function FirstRunRecovery({
         <p className="mt-2 text-sm text-muted-foreground">
           {settingsReadFailed
             ? "Your saved settings could not be loaded."
-            : `${APP_BASE_NAME} could not confirm this workspace.`}
+            : "Signalbox could not confirm this workspace."}
         </p>
         <Button
           className="mt-5"

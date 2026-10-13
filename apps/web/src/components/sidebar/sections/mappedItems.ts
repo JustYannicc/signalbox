@@ -16,8 +16,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { prototypeStorage } from "../../../lib/prototypeStorage";
-import type { Automation } from "../../automations/automationModel";
-import { automationDisplayStatus } from "../../automations/automationStatus";
+import type { Automation } from "../../homeAutomations/automationModel";
+import { automationDisplayStatus } from "../../homeAutomations/automationStatus";
 import {
   SPACES_MAPPINGS,
   T3CODE_PROJECT,

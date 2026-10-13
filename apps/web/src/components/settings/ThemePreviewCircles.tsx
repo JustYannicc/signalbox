@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "../../branding";
 import { MoonIcon, SunIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import {
@@ -59,7 +58,7 @@ const STANDARD_THEME_PREVIEW_COLORS: Record<
 export const STANDARD_THEME_CARDS: ReadonlyArray<ThemeCardDefinition> = [
   {
     id: "default",
-    label: APP_BASE_NAME,
+    label: "Signalbox",
     previews: (["light", "dark"] as const).map((mode) => ({
       mode,
       colors: STANDARD_THEME_PREVIEW_COLORS[mode],
@@ -188,7 +187,7 @@ export function ThemePreviewCircles({
                   aria-label={`Use ${label} ${mode} mode`}
                   aria-pressed={isPicked}
                   className={cn(
-                    "relative flex size-[68px] shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1 outline-none transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+                    "relative flex size-[68px] shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1 outline-none transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
                     isPicked && "hover:scale-100",
                   )}
                   onClick={(event) => {

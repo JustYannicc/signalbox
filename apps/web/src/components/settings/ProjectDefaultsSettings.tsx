@@ -40,6 +40,7 @@ import {
   useScopedSettingSource,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { usePickerPools } from "../accountPool/ModelPoolSwitcher"; // signalbox
 
 /**
  * Rows for the settings a project may override. The same rows edit
@@ -72,6 +73,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     selection?.model,
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
+  // signalbox: the default model carries its pool, so a project's default picks the pool too.
+  const pools = usePickerPools(target?.environmentId ?? null, entries, settings.providerInstances);
   const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
@@ -79,6 +82,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -161,6 +165,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               model={selection.model}
               lockedProvider={null}
               instanceEntries={entries}
+              pools={pools}
               modelOptionsByInstance={modelOptions}
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
               {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
@@ -409,6 +414,32 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 mixed={mixedAutoPull}
                 checked={mixedAutoPull ? false : settings.defaultAutoPull}
                 onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["removeAgentCreditsOnMerge"]}
+            mixed={mixedAgentCredits}
+            {...searchableSetting("remove-agent-credits-on-merge")}
+            description="Remove recognized agent credit lines from GitHub merge and squash messages, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
+            resetAction={
+              settings.removeAgentCreditsOnMerge ? (
+                <SettingResetButton
+                  label="agent credit removal"
+                  tooltip="Keep agent credits"
+                  onClick={() => updateSettings({ removeAgentCreditsOnMerge: false })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Remove agent credits when merging"
+                mixed={mixedAgentCredits}
+                checked={mixedAgentCredits ? false : settings.removeAgentCreditsOnMerge}
+                onCheckedChange={(enabled) =>
+                  updateSettings({ removeAgentCreditsOnMerge: enabled })
+                }
               />
             }
           />

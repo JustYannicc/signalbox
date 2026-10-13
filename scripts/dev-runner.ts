@@ -6,7 +6,8 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
-import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+import { applySignalboxEnvironment } from "@t3tools/shared/signalboxEnvironment";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -16,8 +17,8 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import { ChildProcess } from "effect/unstable/process";
+import { Argument, Command, Flag } from "effect/cli";
+import { ChildProcess } from "effect/process";
 
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
@@ -68,7 +69,7 @@ export function isProxiableBindHost(host: string): boolean {
 }
 
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".t3"),
+  path.join(NodeOS.homedir(), ".signalbox"),
 );
 
 const MODE_ARGS = {
@@ -309,7 +310,7 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    // Precedence (--home-dir > worktree .t3 > ambient T3CODE_HOME) is resolved
+    // Precedence (--home-dir > worktree .t3 > ambient SIGNALBOX_HOME) is resolved
     // by the caller; an unset t3Home here genuinely means "use the default".
     const configuredBaseDir = t3Home?.trim() || undefined;
     const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
@@ -328,6 +329,10 @@ export function createDevRunnerEnv({
     } else {
       delete output.T3CODE_HOME;
     }
+    Object.assign(output, {
+      SIGNALBOX_HOME: configuredBaseDir === undefined ? undefined : resolvedBaseDir,
+      SIGNALBOX_PORT: String(serverPort),
+    }); // signalbox: propagate resolved state and port through process boundaries
 
     // A dev-runner server is never launcher-managed. When the shell that runs
     // this script was itself spawned by the machine's managed t3 service (an
@@ -645,7 +650,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       return yield* new DevRunnerHostNotProxiableError({ mode: input.mode, host: input.host });
     }
 
-    const worktreePath = yield* resolveGitWorktreePath(yield* HostProcessWorkingDirectory);
+    const worktreePath = yield* resolveGitWorktreePath(yield* HostProcess.WorkingDirectory);
 
     const { offset, source } = yield* resolveOffset({
       portOffset,
@@ -663,11 +668,11 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       checkPortAvailability: makeDefaultCheckPortAvailability(input.host),
     });
 
-    const hostEnvironment = yield* HostProcessEnvironment;
+    const hostEnvironment = yield* HostProcess.Environment;
     // A dev server started inside a worktree defaults to that worktree's own
     // (gitignored) `.t3` — see @t3tools/shared/devHome for why this must
-    // outrank an ambient T3CODE_HOME. `--home-dir` still wins.
-    const worktreeHome = yield* resolveWorktreeT3Home(yield* HostProcessWorkingDirectory);
+    // outrank an ambient SIGNALBOX_HOME. `--home-dir` still wins.
+    const worktreeHome = yield* resolveWorktreeT3Home(yield* HostProcess.WorkingDirectory);
     // Trim before choosing: `--home-dir ""` is not a selection, and treating it
     // as one would skip the worktree default and land on the shared home —
     // exactly the outcome this precedence exists to prevent.
@@ -850,7 +855,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   t3Home: Flag.String("home-dir").pipe(
     Flag.withDescription(
-      "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME). Inside a git worktree this defaults to that worktree's own .t3 so dev state stays off the shared home.",
+      "Explicit Signalbox data directory; runtime state is stored under userdata (equivalent to SIGNALBOX_HOME). Inside a git worktree this defaults to that worktree's own .t3 so dev state stays off the shared home.",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),
@@ -876,7 +881,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to T3CODE_PORT)."),
+    Flag.withDescription("Server port override (forwards to SIGNALBOX_PORT)."),
     Flag.withFallbackConfig(optionalPortConfig("T3CODE_PORT")),
   ),
   devUrl: Flag.String("dev-url").pipe(
@@ -913,6 +918,7 @@ const cliRuntimeLayer = Layer.mergeAll(
 );
 
 if (import.meta.main) {
+  applySignalboxEnvironment(process.env); // signalbox: accept Signalbox settings and ignore T3 Code's ambient home and port
   Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
     Effect.provide(cliRuntimeLayer),

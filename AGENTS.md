@@ -1,78 +1,112 @@
-# T3 Code
+# Signalbox
 
-## This fork: upstream nightly compatibility
+Signalbox is one app for working with AI. You start a thread, say what you want, and agents do the work on a server and tell you when they need you. It is meant for knowledge workers as much as for developers.
 
-The goal is to keep custom changes while receiving upstream source updates. `origin` is `JustYannicc/t3code`; `upstream` is `pingdotgg/t3code`. A daily Codex automation syncs upstream `main` into this fork's `main`. It does not build or install desktop releases.
-
-- Keep custom changes cohesive and avoid unrelated formatting or renames in upstream-owned code. Prefer existing extension points when they fit the feature; introduce abstractions only for a real responsibility.
-- Preserve upstream history. Integrate updates by fast-forward or merge, keeping this section when upstream changes `AGENTS.md`.
-- Before syncing, fetch both remotes and pin their commits. Integrate in an isolated worktree and preserve dirty or unpushed local work. Push normally after focused validation; leave conflicts or failed checks recoverable and report the blocker.
-- When changing shared contracts, persistence, dependencies, or release tooling, verify the affected compatibility and migration behavior. Keep existing user data usable across updates.
-- For custom desktop releases, set `T3CODE_DESKTOP_UPDATE_REPOSITORY=JustYannicc/t3code` at build time. Official upstream binaries replace custom code. A fork updater needs its own built releases and channel manifests; source syncing alone does not provide those.
-- Before enabling release workflows in this fork, check their publishing destinations, package ownership, signing, and secrets. Upstream workflows also publish services beyond the desktop app.
+Signalbox is built on [T3 Code](https://github.com/pingdotgg/t3code). T3 Code gets a lot right, and we want to keep receiving its updates. See [Staying on T3 Code](#staying-on-t3-code).
 
 Explicit user instructions take precedence over these defaults and skill guidance. Continue authorized work without inventing approval gates. If an instruction blocks work, identify its file and exact rule, explain the conflict, and state what remains unfinished.
 
-T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
+## What makes Signalbox special?
 
-You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
+No single feature. It is many small decisions that together make working with AI feel right. Above all, never compromise the product. Proton set out to do mail, but private. For a normal user the mail matters more than the privacy, and Proton let privacy cost it basic mail features. It forgot the problem it was solving. Know which problem a feature solves, and never let a secondary value break it. These are the things we never trade away.
 
-## What makes T3 Code special?
+### 1. Dead simple
 
-We have over 200,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
+Everything is one click. Connecting a provider, adding a second Gmail account, sharing a thread. T3 Code is great, and even we barely used it because it needs setup. If a feature needs a tutorial, a config file, or a terminal, it is not done.
 
-### 1. Open at the core
+### 2. The cloud runs everything
 
-T3 Code is truly open. We share our roadmap, we share how we think about things, and of course we share all our code. A large number of our users run forks. We work in the open, and should strive to stay that way.
+Work runs on a server; clients are only gateways. Logging in feels like Notion or Google: everything is already there, on every device. The server can be self-hosted, but nothing runs on the client.
 
-### 2. Performance without compromise
+### 3. Push, not pull
 
-Lots of apps have gotten bogged down with bad tech decisions and "slop". We have not, and we're proud of the performance of T3 Code. We regularly audit for performance regressions, often caused by sending too much data over websockets, css animations causing gpu spikes, lists being hard to render, and more. Make sure all changes are considerate of performance impact.
+Today people pull work and hand it to an agent. Signalbox moves to push: agents do the work and tell you when they need you. Attention is the scarce resource, so every notification, badge, and status has to earn it.
 
-### 3. Remote ready
+### 4. Nobody has to understand it, anyone can dig in
 
-The architecture of T3 Code's websocket layer (npx t3) enables a lot of awesome remote features. These have become core to the product. Whether users are connecting directly over their local network, using Tailscale, or leaning in fully with T3 Connect (our tunnel solution, also in this repo), we need to make sure new features are properly supported.
+If the user has to understand the complexity, we failed. The average user never looks under the hood. When something goes wrong, the power user wants to, so every action stays observable and traceable down to the exact message one agent sent another. The assistant coordinates and never executes, which keeps that trail readable.
 
-### 4. Multi-surface
+### 5. Every agent represents someone
 
-T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
+Most of AI never settled who an agent works for, which is why everyone runs their own agents on their own machine. In Signalbox it is explicit. Your assistant represents you. An agent building a feature represents its project. A workflow's supervisor represents you for a personal workflow and the company for a company one. When you design anything agents touch, decide whose interests the agent serves and how that shapes its design.
 
-**Web** is kind of two surfaces, as we have the public facing "app.t3.codes" as well as locally hosting the web app through the `npx t3` command. Both need to be supported by all new features where reasonable.
+### 6. Works with everything until you need nothing else
 
-**Desktop** is the main surface most users install first. It's a full Electron app that bundles the server runner as well. The desktop app can also be used as the host server, allowing remote connections from app.t3.codes or the mobile app.
+The goal is one app. Until it is good enough, it plugs into what people already use every day. Meta's display glasses made you adopt their whole ecosystem instead of showing your Google Maps and your phone's notifications, and that's why Yannic didn't buy them. Nobody adopts Signalbox wholesale. Everything connects outward, and nothing locks you in.
 
-**Mobile** is a React Native app for both iOS and Android, available on the App Store and Google Play. The mobile app allows for connecting to any T3 Code server to control work remotely.
+### 7. One interface, wherever you are
 
-## A note from Theo
+Signalbox follows the person, not the job. Work, personal life, a new employer: it stays the same app, and a new context is something you connect, never something you install. When you design a feature, picture one person bringing several contexts into it at once.
 
-I like ambitious ideas, simple systems, and software that feels obvious. Do not preserve complexity just because it already exists. Do not introduce machinery because it looks architecturally impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising.
+### 8. Opinionated defaults, full freedom
 
-Channel both "measure twice, cut once" and "yagni". Fight scope creep. Try to honor the dev's intent in both a minimal and realistic fashion.
+T3 Code is built for its maintainers' workflow. Signalbox is built so everyone can shape it to theirs. Ship defaults that prevent the avoidable fuckups, so people never have to care about the machinery. Then let them change anything. Workflow behavior, such as watching a PR or waking an agent when CI finishes, ships as a default automation built from primitives that people can read and edit. It never ships as special-case code. Tighter guardrails leave less room to do useful work.
 
-The rest of this document is meant to help you navigate the codebase and make changes effectively. Think of these instructions less as "hard rules", more as "good defaults". The developer's preferences should be able to override anything here.
+### 9. How it feels is how it works
 
-Of note: Most T3 Code contributions will come from T3 Code itself, often controlled remotely. This means you should be careful about accessing data, killing dev servers, and other things that may damage the T3 Code instance that the contributor is using.
+Presentation matters as much as mechanics. The same system with a different label, entry point, or flow changes how people use it. OpenAI renaming live voice to calls is the kind of change we care about. Copy, motion, and layout are part of the feature.
+
+### 10. Better together
+
+One person gets full value alone. Each extra person adds more: multiplayer threads, shared workflows, assistants that talk to each other. Build features so they work solo and get better with a team.
+
+### 11. Hosting is the convenience
+
+Everything works self-hosted. The hosted service adds convenience: no servers to keep running and scaling, and one-click setup for everything. Connecting Gmail is one click because the service provides the Google credentials; self-hosted, you bring your own. Same product either way, one is just less work.
+
+### 12. Fast and everywhere
+
+Inherited from T3 Code. Performance is a feature: watch websocket payloads, GPU-heavy CSS, and long lists. Web, desktop (Electron), and mobile (React Native) all ship every feature where reasonable.
+
+## A note from Yannic
+
+I like ambitious ideas, simple systems, and software that feels obvious. Don't preserve complexity just because it already exists, and don't add machinery because it looks impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising. Measure twice, cut once, and YAGNI. Fight scope creep.
+
+We are building Photoshop, not Canva. Canva feels restrictive. Photoshop trusts the user, and its complexity scares people off. A well-designed system does both: the floor is low enough that anyone starts in a minute, and there is no ceiling. That balance is hard, and it is the job.
+
+AI is a force multiplier. It amplifies whatever you give it, a well-designed system to the extreme, and a mess just as much. So every system has to be well designed, at every level, technical or not. When a system is designed well, it fades away. You stop noticing the complexity you're working with.
+
+Most of this has been figured out somewhere. Before designing anything, look at how others solved it, take the best parts, and combine them. The quick capture is Todoist's, and that's fine. The combination is what makes Signalbox good.
+
+Two interaction models I don't want. The first is the department bot: a university chatbot, a company's accounting agent, Grokbot's roster of bots. Grokbot made AI dead simple to start, and that was a real step for most people. But it doesn't remove the complexity. You still pay the supervisor tax of picking the right bot and managing it. People want to go to the one assistant they already use and have it handle everything from there. The second is the void: OpenClaw started as a CLI, and its front ends still feel bolted on. I tell it something and trust the void to handle it. That trust is the goal. But when something breaks, I need to see what happened. T3 Code's site shows you the app immediately. That difference is felt before anything else.
+
+## Staying on T3 Code
+
+`origin` is `JustYannicc/signalbox`. `pingdotgg/t3code` is the remote `t3code`, fetched into `refs/remotes/upstream/*` so `upstream/main` is T3 Code's main (`git fetch t3code`). Don't name a remote `upstream`: T3 Code and Signalbox name a project after it, and the sidebar would show T3 Code's repository. Upstream ships hundreds of commits a week, so every fork change is a future merge.
+
+- Merge upstream into `main`; never rebase shared history.
+- Rename what users see, type, or install. Keep upstream's internal names (`@t3tools/*`, `T3CODE_*`, symbols, `t3.json`) so upstream patches apply cleanly.
+- Put fork features in their own modules. Give an upstream file at most a hook line, using existing seams (routes, provider registries, settings sections) before adding new ones.
+- When upstream ships a workflow-shaped feature, adopt the primitive it implies, not the feature itself (principle 8). Make the primitive available to automations and agents, and leave upstream's code in place so merges stay clean.
+- Generic fixes and seams belong upstream. Open those as PRs to T3 Code instead of carrying them.
+- Persistence migrations are numbered and the runner only applies ids above the latest recorded one. A fork migration that takes a number upstream later uses silently skips upstream's. Fork tables create themselves (`CREATE TABLE IF NOT EXISTS`) instead.
+- `settings.json` decodes through the contracts schema and drops unknown keys on write. Fork settings live in their own file.
 
 ## A small glossary
 
 We need to be on the same page with terminology. When communicating, use this language:
 
-- **you** means the agent reading this file and changing T3 Code.
-- **we, us, and maintainers** mean Theo, Julius and the people building T3 Code. These are who you are talking to now.
-- **user** means the person using T3 Code to direct coding agents.
-- **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
-- **provider** means the agent runtime or harness T3 Code talks to, such as Codex, Claude, Cursor, or OpenCode.
-- **client** means the web, desktop, or mobile UI.
-- **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
+- **you** means the agent reading this file and changing Signalbox.
+- **we, us** means Yannic. This is who you are talking to now.
+- **user** means a person using Signalbox.
+- **agent** means an AI agent doing work inside Signalbox. Depending on context, that may also include you.
+- **assistant** means a user's personal coordinator. It delegates and never executes.
+- **provider** means the agent runtime Signalbox talks to, such as Codex, Claude, Cursor, or OpenCode.
+- **client** means the web, desktop, or mobile app. Clients are gateways; they hold no work.
+- **environment** means one running server and the machine, filesystem, provider credentials, and state it owns.
 - **project** means an environment-local workspace record rooted at a directory.
-- **thread** means the durable conversation and work history for a project.
+- **thread** means the durable conversation and work history. A thread shows as a chat or a task; the difference is display only.
 - **turn** means one user-to-agent cycle, including follow-up work such as checkpointing.
-- **T3 home** means the base data directory. Runtime state normally lives below its userdata directory.
+- **Signalbox home** means the base data directory. Runtime state normally lives below its userdata directory.
+
+The rest of this document helps you navigate the codebase. Treat it as good defaults, not hard rules; the developer's preferences override anything here.
+
+Most Signalbox contributions come from Signalbox itself, often controlled remotely. Be careful about accessing data, killing dev servers, and anything else that could damage the instance the contributor is using.
 
 ## The three ways to hurt yourself
 
 1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
-2. **Writing to the live install.** `~/.t3/userdata` is the developer's real T3 Code database, in use while you work. Reading it and copying from it are fine, and a good way to get real test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
+2. **Writing to the live install.** `~/.signalbox/userdata` is the developer's real Signalbox database, in use while you work. `~/.t3/userdata` is T3 Code's, if it is installed alongside; treat it the same way. Reading it and copying from it are fine, and a good way to get real test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
 3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
 
 ## Hit every surface
@@ -82,6 +116,7 @@ The most common defect in this repo is a change that works on the path you teste
 - **Entry points.** A behavior reachable from the chat view is usually also reachable from Settings, the command palette, and a keybinding. Fixing one is not fixing the feature.
 - **Clients.** Web, desktop (wraps web, adds Electron shell/IPC), and mobile (React Native, separate navigation). Shared logic lives in `packages/client-runtime`
 - **Providers.** Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each have an adapter. Provider-shaped features need a decision per adapter, even if the decision is "not supported here".
+- **Agents.** A capability a user can trigger is usually one an agent should reach through MCP tools, and scheduled tasks run the same paths. That only works when it is a service method, not handler code.
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
@@ -90,7 +125,7 @@ The most common defect in this repo is a change that works on the path you teste
 ## Dev servers
 
 - `vp i` installs. Worktrees get this from the t3.json setup script; if module resolution looks broken, it probably did not run.
-- `vp run dev` starts server and web. In a worktree, state defaults to that worktree's gitignored `.t3`, which deliberately outranks an ambient `T3CODE_HOME` so you cannot land on shared state by accident. An explicit `--home-dir` still wins.
+- `vp run dev` starts server and web. In a worktree, state defaults to that worktree's gitignored `.t3`, which deliberately outranks an ambient `SIGNALBOX_HOME` so you cannot land on shared state by accident. An explicit `--home-dir` still wins.
 - Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift.
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `t3.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
@@ -100,17 +135,8 @@ The most common defect in this repo is a change that works on the path you teste
 
 An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
 
-- Copy from `~/.t3/userdata` (the developer's real data, the most realistic test set) or `~/.t3/dev`. Worktree state lives at `<worktree>/.t3/userdata`.
-- Snapshot the database with `VACUUM INTO`, which is safe even while a server has the source open and yields one consistent file:
-
-  ```bash
-  mkdir -p .t3/userdata
-  rm -f .t3/userdata/state.sqlite*  # VACUUM INTO refuses to overwrite
-  bun -e "new (require('bun:sqlite').Database)(process.env.HOME + '/.t3/userdata/state.sqlite', { readonly: true }).run(\"VACUUM INTO '.t3/userdata/state.sqlite'\")"
-  ```
-
-  A plain `cp` is only safe when no server has the source open, and must bring the `-wal` and `-shm` siblings along. A live file copy is a corrupt copy.
-
+- Run `vp run migrate-dev-db` with your dev server stopped. It rebuilds `<worktree>/.t3/userdata/statev2.sqlite` from a read-only snapshot of `~/.signalbox/userdata/statev2.sqlite`, the developer's real data. It keeps recent projects and their stopped threads, and drops scheduled tasks, pending work, and auth sessions, so your dev server never runs the developer's agents. Raise `--projects` and `--threads-per-project` for more data. Point `--source` at another database file (`~/.signalbox/dev/userdata/statev2.sqlite`, or T3 Code's `~/.t3/userdata/statev2.sqlite`, which uses the same format) when you need it.
+- Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
 
@@ -120,7 +146,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Test meaningful logic or observable behavior. Do not render components to static markup to assert props or attributes, or add tests that merely assert callback wiring or mirror the implementation.
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask. CI owns the full suite.
 - Backend behavior changes ship with focused tests for that behavior.
-- The server is event-sourced and its async flows emit typed receipts. Wait on receipts and worker drains, never on sleeps or polling. A test that needs a timeout to pass is wrong.
+- The server is event-sourced, and side effects run after the command commits. In tests, drain the effect worker (`OrchestrationEffectWorkerV2.drain`) or await the specific persisted event or `Deferred` that marks the milestone. Never wait on sleeps or polling. A test that needs a timeout to pass is wrong.
 - Upon request, user-visible frontend changes should get one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
 
 For authorized mobile verification, a missing or outdated native client is a build step, not a blocker. Run `node scripts/mobile-native-client.ts ensure <ios|android> <device-id>` on the simulator host before starting Metro. It checks the local Expo fingerprint and builds/installs when needed. See `test-t3-mobile` for the full workflow.
@@ -145,7 +171,7 @@ Most code changes do not need an internal documentation change. Agents can read 
 - When a documented decision or constraint changes, rewrite or remove the affected text. Do not append another account of the new behavior. A new internal page needs a distinct, durable reason to exist.
 - `docs/user/` helps users accomplish tasks. Give each major feature a concise section explaining what it does, how to start, and anything unintuitive. A settings path is useful; descriptions of visible buttons, icons, layouts, animations, or every UI state are not. Before adding text, ask what task or decision it helps the user with.
 - Keep user docs in the shipped product's voice, without implementation details or contributor tooling. Update the relevant feature section when how to use it changes. A UI tweak does not need a documentation entry, and a new control does not need its own page.
-- `docs/operations/` holds maintainer setup, release, and debugging procedures. Keep instructions for operating an installed T3 Code server in the user guides.
+- `docs/operations/` holds maintainer setup, release, and debugging procedures. Keep instructions for operating an installed Signalbox server in the user guides.
 
 ## Plans and work artifacts
 
@@ -155,13 +181,13 @@ Most code changes do not need an internal documentation change. Agents can read 
 
 ## How it works
 
-Clients send typed WebSocket requests. The server turns them into _commands_, a pure _decider_ turns commands into persisted _events_, and a _projector_ derives the read model the UI renders. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Side effects run in queue-backed _reactors_ that emit _receipts_ when milestones land. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
+Clients send typed WebSocket requests. The server turns them into _commands_. The _orchestrator_ (`apps/server/src/orchestration-v2/Orchestrator.ts`) serializes commands and decides _events_ without doing any I/O. The _event sink_ commits those events, the _projections_ the UI reads, the _command receipt_, and _outbox_ effects in one transaction. The _effect worker_ then runs the effects, such as starting a provider turn or capturing a checkpoint, and feeds results back as commands. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
 
-Full glossary with file links: `docs/internals/glossary.md`
+Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/internals/glossary.md`
 
 ## Where code lives
 
-- `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read `.repos/effect-smol/LLMS.md` before writing Effect code.
+- `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
 - `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
@@ -171,7 +197,9 @@ Full glossary with file links: `docs/internals/glossary.md`
 ## Taste
 
 - Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
-- `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations.
+- Client mutations use `createEnvironmentRpcCommand`. Add protected methods to `CLIENT_GUARDED_RPC_SCOPES` in contracts and use the command's `permissionAtom` for UI availability. Grants are checked at execution against the destination environment; the server remains authoritative. Keep raw RPC clients inside `rpc/`, and extend the permission behavior tests when adding a protected method.
+- Server features are services; transports stay thin. A `ws.ts` RPC handler, HTTP route, or MCP tool decodes input, calls one service method, and maps errors. See [Effect services](docs/internals/effect-services.md).
+- `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations. See [Web UI](docs/internals/web-ui.md).
 - Inferred types over annotations. `any` is the enemy.
 - Comments describe how a thing is used, and move when the code moves. To be used mostly to describe functions, not to annotate every line of behavior.
 - Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.

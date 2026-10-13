@@ -1,5 +1,4 @@
 // @effect-diagnostics globalTimers:off -- The Node socket client owns its response deadline and clears it on every completion path.
-import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
@@ -11,18 +10,15 @@ import {
   type DesktopAppActivationRequest,
 } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
-import {
-  HostProcessPlatform,
-  HostProcessUserId,
-  HostProcessWorkingDirectory,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command } from "effect/cli";
 
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
@@ -36,7 +32,7 @@ export class DesktopAppSshUnsupportedError extends Schema.TaggedError<DesktopApp
   {},
 ) {
   override get message(): string {
-    return "`t3 app` only controls a desktop app on the same machine. It cannot run over SSH.";
+    return "`signalbox app` only controls a desktop app on the same machine. It cannot run over SSH.";
   }
 }
 
@@ -45,7 +41,7 @@ export class DesktopAppPlatformUnsupportedError extends Schema.TaggedError<Deskt
   { platform: Schema.String },
 ) {
   override get message(): string {
-    return `\`t3 app\` is not supported on ${this.platform}.`;
+    return `\`signalbox app\` is not supported on ${this.platform}.`;
   }
 }
 
@@ -59,7 +55,7 @@ export class DesktopAppUnreachableError extends Schema.TaggedError<DesktopAppUnr
   },
 ) {
   override get message(): string {
-    return "Could not reach the T3 Code desktop app. Start or update the desktop app on this machine, then run `t3 app` again. A running T3 Code server is not enough.";
+    return "Could not reach the Signalbox desktop app. Start or update the desktop app on this machine, then run `signalbox app` again. A running Signalbox server is not enough.";
   }
 }
 
@@ -73,7 +69,7 @@ export class DesktopAppRequestFailedError extends Schema.TaggedError<DesktopAppR
   },
 ) {
   override get message(): string {
-    return `T3 Code could not open ${this.workspaceRoot} (${this.code}).`;
+    return `Signalbox could not open ${this.workspaceRoot} (${this.code}).`;
   }
 }
 
@@ -188,7 +184,7 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   readonly workspaceRoot: Option.Option<string>;
 }) {
   const environment = yield* appEnvironment;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   if (Option.isSome(environment.sshConnection) || Option.isSome(environment.sshTty)) {
     return yield* new DesktopAppSshUnsupportedError({});
   }
@@ -201,9 +197,9 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   const baseDir = yield* resolveBaseDir(configuredBaseDir);
   const allowDevFallback = Option.isNone(flags.baseDir) && !environment.t3Home?.trim();
   const rawWorkspaceRoot =
-    Option.getOrUndefined(flags.workspaceRoot) ?? (yield* HostProcessWorkingDirectory);
+    Option.getOrUndefined(flags.workspaceRoot) ?? (yield* HostProcess.WorkingDirectory);
   const workspaceRoot = path.resolve(yield* expandHomePath(rawWorkspaceRoot));
-  const userId = yield* HostProcessUserId;
+  const userId = yield* HostProcess.UserId;
   const resolveAddress = (stateSubdirectory: "userdata" | "dev") =>
     resolveDesktopAppControlAddress({
       stateDir: path.join(baseDir, stateSubdirectory),
@@ -212,9 +208,11 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
       userId,
       joinPath: path.join,
     }).address;
+  const crypto = yield* Crypto.Crypto;
+  const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
   const request: DesktopAppActivationRequest = {
     version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
-    requestId: NodeCrypto.randomUUID(),
+    requestId,
     type: "open-workspace",
     workspaceRoot,
     platform: hostPlatform,
@@ -246,7 +244,7 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
     });
   }
 
-  yield* Console.log(`Opened ${workspaceRoot} in T3 Code.`);
+  yield* Console.log(`Opened ${workspaceRoot} in Signalbox.`);
 });
 
 export const appCommand = Command.make("app", {
@@ -256,6 +254,6 @@ export const appCommand = Command.make("app", {
     Argument.optional,
   ),
 }).pipe(
-  Command.withDescription("Open a project in the running T3 Code desktop app."),
+  Command.withDescription("Open a project in the running Signalbox desktop app."),
   Command.withHandler(runAppCommand),
 );

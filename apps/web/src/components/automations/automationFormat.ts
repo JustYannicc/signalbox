@@ -1,81 +1,56 @@
-/** Display labels and time formatting for automations and their runs. */
-import { formatRelativeTimeLabel } from "../../timestampFormat";
-import {
-  isTriggerNode,
-  type Automation,
-  type AutomationRun,
-  type AutomationRunTrigger,
-  type NodeRunStatus,
-} from "./automationModel";
+import type { EnvironmentId, TimestampFormat, WorkflowDetailValue } from "@t3tools/contracts";
+import { compactJson } from "@t3tools/client-runtime/automations/labels";
+import * as Schema from "effect/Schema";
 
-export const RUN_STATUS_LABEL: Record<NodeRunStatus, string> = {
-  success: "Succeeded",
-  failed: "Failed",
-  running: "Running",
-  waiting: "Needs approval",
-  skipped: "Skipped",
-};
+import { formatUpcomingTimestamp } from "../../timestampFormat";
 
-export const RUN_TRIGGER_LABEL: Record<AutomationRunTrigger, string> = {
-  schedule: "Schedule",
-  webhook: "Webhook",
-  event: "Event",
-  hook: "Hook",
-  device: "Client signal",
-  manual: "Manual",
-};
-
-function isSameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+/** A step's arguments as written: a single options object shows as itself. */
+export function stepArgs(args: unknown): unknown {
+  return Array.isArray(args) && args.length === 1 ? args[0] : args;
 }
 
-function formatClock(date: Date) {
-  return date.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    ...(date.getMinutes() === 0 ? {} : { minute: "2-digit" }),
-  });
+/** The code behind each option of a step that hasn't run: literals as values, expressions as source. */
+export function detailText(detail: { readonly [key: string]: WorkflowDetailValue }): string | null {
+  const entries = Object.entries(detail);
+  if (entries.length === 0) return null;
+  return entries
+    .map(([key, value]) =>
+      "expression" in value
+        ? `${key}: ${value.expression}`
+        : `${key}: ${compactJson(value.literal, 400)}`,
+    )
+    .join("\n");
 }
 
-/** "Today 4 PM", "Tomorrow 3 AM", or "Oct 26" for anything further out. */
-export function formatNextRun(iso: string, now = new Date()) {
-  const date = new Date(iso);
-  if (isSameDay(date, now)) return `Today ${formatClock(date)}`;
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  if (isSameDay(date, tomorrow)) return `Tomorrow ${formatClock(date)}`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+/** "Next run tomorrow at 9:00 AM", in the user's time format. */
+export function nextRunLabel(timestampFormat: TimestampFormat) {
+  return (iso: string) => `Next run ${formatUpcomingTimestamp(iso, timestampFormat)}`;
 }
 
-/** "Task marked done", or "Task marked done +1" when several triggers start it. */
-function triggerSummary(automation: Automation) {
-  const triggers = automation.nodes.filter((node) => isTriggerNode(node.config));
-  const first = triggers[0];
-  if (!first) return automation.cadence;
-  return triggers.length > 1 ? `${first.title} +${triggers.length - 1}` : first.title;
+export interface AutomationRouteTarget {
+  readonly environmentId: EnvironmentId;
+  readonly automationId: string;
 }
 
-/** Next run for scheduled automations; the trigger for event and hook ones, plus the pass count for inline hooks. */
-export function automationSubtitle(automation: Automation) {
-  if (!automation.enabled) return "Paused";
-  if (automation.nextRunAt) return `Next ${formatNextRun(automation.nextRunAt)}`;
-  const trigger = triggerSummary(automation);
-  if (automation.allowedToday === undefined) return trigger;
-  return `${trigger} · ${automation.allowedToday.toLocaleString()} allowed today`;
-}
+/** The automation page's body: a run as its chat, the diagram, or the code. */
+export const AutomationView = Schema.Literals(["run", "diagram", "code"]);
+export type AutomationView = typeof AutomationView.Type;
 
-export function formatRunStarted(run: AutomationRun) {
-  return formatRelativeTimeLabel(run.startedAt);
-}
-
-export function formatRunTimestamp(run: AutomationRun) {
-  return new Date(run.startedAt).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+/**
+ * Navigation options for an automation page. A run opens as its chat unless
+ * another view is named; without a run the diagram shows.
+ */
+export function automationRoute(
+  target: AutomationRouteTarget,
+  runId?: string | null,
+  view?: AutomationView,
+) {
+  return {
+    to: "/automations/$environmentId/$automationId",
+    params: { environmentId: target.environmentId, automationId: target.automationId },
+    search: {
+      ...(runId ? { run: runId } : {}),
+      ...(view && view !== (runId ? "run" : "diagram") ? { view } : {}),
+    },
+  } as const;
 }

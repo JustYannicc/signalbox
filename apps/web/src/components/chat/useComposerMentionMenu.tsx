@@ -7,7 +7,7 @@
  * An optional `tags` source does the same for `#tag` (projects, sections,
  * chats), riding the `#` trigger the real composer uses for pull requests.
  */
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import {
   collapseExpandedComposerCursor,
@@ -18,7 +18,11 @@ import {
 import { useTheme } from "../../hooks/useTheme";
 import { formatComposerMention } from "../composerMentionRenderer";
 import { ComposerCommandMenuLayer } from "./ChatComposer";
-import { ComposerCommandMenu, type ComposerCommandItem } from "./ComposerCommandMenu";
+import {
+  ComposerCommandMenu,
+  composerSuggestionOptionId,
+  type ComposerCommandItem,
+} from "./ComposerCommandMenu";
 
 export type ComposerMentionItem = Extract<ComposerCommandItem, { type: "person" }>;
 
@@ -50,6 +54,7 @@ export function useComposerMentionMenu(input: {
 }) {
   const { source, tags } = input;
   const { resolvedTheme } = useTheme();
+  const listId = `${useId()}-mentions`;
   const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<HTMLDivElement | null>(null);
@@ -82,6 +87,9 @@ export function useComposerMentionMenu(input: {
   return {
     anchorRef: setAnchor,
     renderMention: source?.renderMention ?? null,
+    /** Pass to the editor's `suggestionListId` / `activeSuggestionId` for a11y. */
+    listId,
+    activeOptionId: open && active ? composerSuggestionOptionId(listId, active.id) : undefined,
     /** Call from the editor's `onChange`. */
     onEditorChange: (value: string, expandedCursor: number, adjacentToChip: boolean) => {
       const next =
@@ -92,7 +100,7 @@ export function useComposerMentionMenu(input: {
       else if (next?.kind === "pull-request") tags?.onQueryChange?.(next.query);
     },
     /** Call first from `onCommandKeyDown`; `true` means the menu took the key. */
-    onCommandKey: (key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab" | "Escape") => {
+    onCommandKey: (key: string) => {
       if (!open) return false;
       if (key === "Escape") {
         setTrigger(null);
@@ -102,13 +110,14 @@ export function useComposerMentionMenu(input: {
         move(key === "ArrowDown" ? 1 : -1);
         return true;
       }
-      if (!active) return false;
+      if ((key !== "Enter" && key !== "Tab") || !active) return false;
       select(active);
       return true;
     },
     menu: menuSource ? (
       <ComposerCommandMenuLayer anchor={anchor}>
         <ComposerCommandMenu
+          listId={listId}
           items={[...items]}
           resolvedTheme={resolvedTheme}
           isLoading={false}

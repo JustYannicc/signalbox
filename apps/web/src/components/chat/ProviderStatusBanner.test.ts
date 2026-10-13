@@ -117,7 +117,7 @@ describe("compatibility banners", () => {
       auth: { status: "unauthenticated" },
     };
     expect(getProviderStatusMessage(unauthenticated)).toBe(
-      "Sign in via the CLI to authenticate again.",
+      "Add an account to its pool from Usage → Limits.",
     );
     expect(getProviderStatusMessage({ ...unauthenticated, message: "Credentials expired" })).toBe(
       "Credentials expired",

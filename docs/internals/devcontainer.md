@@ -1,6 +1,6 @@
 # Dev container
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Signalbox? See [docs/user](../user/).
 
 `.devcontainer/` gives you a ready-to-code Linux environment matching CI: Ubuntu 24.04, Node 24, pnpm, Rust stable, the global `vp` CLI, and the GitHub CLI. Open the repo in VS Code and "Reopen in Container", or create a GitHub Codespace. Dependency install (`vp i`), the Electron exec-bit repair, and the Vite dep-cache warmup all run automatically before you attach.
 
@@ -11,7 +11,7 @@
 
 ## State and safety
 
-`T3CODE_HOME` points at the workspace's gitignored `.t3`, so all runtime state stays inside the container workspace, mirroring the worktree default. There is no live install to damage inside a container, but the test-data rule from AGENTS.md still holds: copy data in, never point at shared state.
+`SIGNALBOX_HOME` points at the workspace's gitignored `.t3`, so all runtime state stays inside the container workspace, mirroring the worktree default. There is no live install to damage inside a container, but the test-data rule from AGENTS.md still holds: copy data in, never point at shared state.
 
 ## Caching
 

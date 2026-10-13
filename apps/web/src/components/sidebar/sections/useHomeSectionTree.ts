@@ -10,7 +10,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useMemo } from "react";
 
-import { useAutomations } from "../../automations/runDecisions";
+import { useAutomations } from "../../homeAutomations/runDecisions";
 import { SKILLS, useSkillLevels } from "../../levels/leveledThings";
 import { registerProjectRoots, registerProjectSections } from "../../levels/levels";
 import { TEAM_PROJECTS } from "../../multiplayer/multiplayerFixtures";

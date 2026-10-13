@@ -5,9 +5,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import type { Icon } from "../Icons";
 import type { LevelKey } from "../levels/levels";
-import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 
 export const PluginsSection = Schema.Literals([
   "overview",
@@ -44,7 +42,7 @@ export type HarnessId = (typeof HARNESS_IDS)[number];
 export interface Harness {
   readonly id: HarnessId;
   readonly label: string;
-  readonly icon: Icon | null;
+  readonly driverKind: ProviderDriverKind;
 }
 
 const HARNESS_LABEL: Record<HarnessId, string> = {
@@ -59,7 +57,7 @@ const HARNESS_LABEL: Record<HarnessId, string> = {
 export const HARNESSES: readonly Harness[] = HARNESS_IDS.map((id) => ({
   id,
   label: HARNESS_LABEL[id],
-  icon: PROVIDER_ICON_BY_PROVIDER[ProviderDriverKind.make(id)] ?? null,
+  driverKind: ProviderDriverKind.make(id),
 }));
 
 export type IntegrationKind = "mcp" | "openapi" | "graphql";

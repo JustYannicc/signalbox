@@ -22,7 +22,7 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
-import { androidActivityData, androidActivityHero, fitFcmData } from "./fcmPayloads.ts";
+import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
@@ -31,6 +31,7 @@ import {
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
+import { AutomationAndroidJob, automationAlertAllowed } from "./automationAndroidAlert.ts"; // signalbox: automations
 
 export const FcmDeliveryJob = Schema.Struct({
   userId: Schema.String,
@@ -39,6 +40,7 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
+  automation: Schema.optional(AutomationAndroidJob), // signalbox: automations
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -67,6 +69,7 @@ export function androidAlertForState(
   const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
   return {
     alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
+    alert_group: JSON.stringify([state.environmentId, state.threadId]),
     alert_title: notification.title,
     alert_body: notification.body,
     alert_path: notification.deepLink,
@@ -92,6 +95,7 @@ export function androidAlertForAggregate(input: {
     const notification = notificationForActivity(first);
     return {
       alert_id: JSON.stringify([first.environmentId, first.threadId, first.phase, first.updatedAt]),
+      alert_group: JSON.stringify([first.environmentId, first.threadId]),
       alert_title: notification.title,
       alert_body: notification.body,
       alert_path: notification.deepLink,
@@ -107,7 +111,9 @@ export function androidAlertForAggregate(input: {
     ),
     alert_title: alert.title,
     alert_body: alert.body,
-    alert_path: androidActivityHero(input.nextAggregate)?.deepLink ?? "/",
+    // A multi-thread alert targets the overview so one visible thread cannot
+    // suppress notifications for the other threads in the group.
+    alert_path: "/",
   };
 }
 
@@ -118,6 +124,7 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
+      readonly automation?: AutomationAndroidJob; // signalbox: automations
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -167,6 +174,7 @@ export const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
+          ...(input.automation ? { automation: input.automation } : {}), // signalbox: automations
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -196,6 +204,7 @@ export const make = Effect.gen(function* () {
       if (!target) return;
       const preferences = decodePreferences(target.preferences_json);
       if (Option.isNone(preferences)) return;
+      if (job.automation && !automationAlertAllowed(job.automation.kind, preferences.value)) return; // signalbox: automations
 
       // Re-read links and state when consuming: queued messages must honor
       // sign-out, token rotation, disabled publishing, and newer thread states.
@@ -210,7 +219,7 @@ export const make = Effect.gen(function* () {
       const previousAggregate = target.last_aggregate_json
         ? Option.getOrNull(decodePreviousActivity(target.last_aggregate_json))
         : null;
-      let alert: ReturnType<typeof androidAlertForState> = null;
+      let alert: ReturnType<typeof androidAlertForState | typeof androidAlertForAggregate> = null;
       // Deletion jobs can observe another thread's newly completed state. They
       // update the card, but must leave that transition for its own alert job.
       // Registration replay deliberately establishes a silent baseline.
@@ -283,6 +292,7 @@ export const make = Effect.gen(function* () {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
         }
       }
+      if (job.automation) alert = job.automation.alert; // signalbox: automations
       const displayedAggregate =
         preferences.value.notificationsEnabled && preferences.value.liveActivitiesEnabled
           ? aggregate
@@ -291,7 +301,7 @@ export const make = Effect.gen(function* () {
       // A registration replay must clear an orphan even when the relay has
       // already forgotten its baseline. Finished cards are visible, but idle.
       if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
-      const data = {
+      const data: Record<string, string> = {
         t3_kind: "agent_activity",
         device_id: job.deviceId,
         user_id: job.userId,

@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "../../branding";
 import { DownloadIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import type { RelayClientInstallProgressStage } from "@t3tools/contracts";
@@ -70,8 +69,8 @@ export function RelayClientInstallDialog() {
           </DialogTitle>
           <DialogDescription>
             {isInstalling
-              ? `${APP_BASE_NAME} is preparing this environment for secure access through T3 Connect.`
-              : `${APP_BASE_NAME} needs the relay client to make this environment available through T3 Connect.`}
+              ? "Signalbox is preparing this environment for secure access through Signalbox Connect."
+              : "Signalbox needs the relay client to make this environment available through Signalbox Connect."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -92,14 +91,14 @@ export function RelayClientInstallDialog() {
                 value={activeStepIndex + 1}
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Keep {APP_BASE_NAME} open while the relay client is installed.
+                Keep Signalbox open while the relay client is installed.
               </p>
             </div>
           ) : (
             <div className="rounded-xl border border-border/70 bg-muted/35 p-3">
               <p className="text-sm font-medium text-foreground">Managed relay client</p>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                {APP_BASE_NAME} will download and install version{" "}
+                Signalbox will download and install version{" "}
                 {view.status === "confirming" ? view.version : ""} locally.
               </p>
             </div>

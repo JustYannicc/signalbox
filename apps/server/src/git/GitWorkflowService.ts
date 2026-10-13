@@ -31,12 +31,22 @@ import {
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { guardT3HomeWorktree } from "../signalbox/T3WorktreeGuard.ts"; // signalbox: keep T3 Code's worktrees
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
   {
     readonly isRepository: (cwd: string) => Effect.Effect<boolean, GitManagerServiceError>;
     readonly hasCommit: (input: {
+      readonly cwd: string;
+      readonly refName: string;
+    }) => Effect.Effect<boolean, GitCommandError>;
+    /**
+     * Whether a ref in any namespace ends in this name: a local branch, a
+     * remote-tracking branch of any remote, a tag. Git falls back to these
+     * when a branch name is not a revision by itself.
+     */
+    readonly hasRefNamed: (input: {
       readonly cwd: string;
       readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
@@ -71,6 +81,7 @@ export class GitWorkflowService extends Context.Service<
       input: VcsCreateWorktreeInput,
       options?: GitVcsDriver.CreateWorktreeOptions,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+    readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
     readonly fetchRemote: (input: {
       readonly cwd: string;
       readonly remoteName: string;
@@ -99,6 +110,9 @@ export class GitWorkflowService extends Context.Service<
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
+    readonly deleteLocalBranch: (
+      input: GitVcsDriver.GitDeleteLocalBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
     readonly createRef: (
       input: VcsCreateRefInput,
     ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
@@ -106,6 +120,7 @@ export class GitWorkflowService extends Context.Service<
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
     readonly renameBranch: (input: {
+      readonly exactName?: boolean;
       readonly cwd: string;
       readonly oldBranch: string;
       readonly newBranch: string;
@@ -295,6 +310,25 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map((result) => result.exitCode === 0),
       ),
+    hasRefNamed: (input) =>
+      // No ref name holds a pattern character, and one here would widen the match.
+      /[*?[\\]/.test(input.refName)
+        ? Effect.succeed(false)
+        : ensureGitCommand("GitWorkflowService.hasRefNamed", input.cwd).pipe(
+            Effect.andThen(
+              git.execute({
+                operation: "GitWorkflowService.hasRefNamed",
+                cwd: input.cwd,
+                args: [
+                  "for-each-ref",
+                  "--count=1",
+                  "--format=%(refname)",
+                  `refs/**/${input.refName}`,
+                ],
+              }),
+            ),
+            Effect.map((result) => result.stdout.trim().length > 0),
+          ),
     status: (input) =>
       detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
@@ -342,7 +376,11 @@ export const make = Effect.gen(function* () {
       ),
     createWorktree: (input, options) =>
       ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
-        Effect.andThen(git.createWorktree(input, options)),
+        Effect.andThen(gitManager.createWorktree(input, options)),
+      ),
+    listLocalBranchNames: (cwd) =>
+      ensureGitCommand("GitWorkflowService.listLocalBranchNames", cwd).pipe(
+        Effect.andThen(git.listLocalBranchNames(cwd)),
       ),
     fetchRemote: (input) =>
       ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(
@@ -363,10 +401,15 @@ export const make = Effect.gen(function* () {
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
         Effect.andThen(git.removeWorktree(input)),
+        guardT3HomeWorktree(input), // signalbox: keep T3 Code's worktrees
       ),
     pruneWorktrees: (input) =>
       ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
         Effect.andThen(git.pruneWorktrees(input)),
+      ),
+    deleteLocalBranch: (input) =>
+      ensureGitCommand("GitWorkflowService.deleteLocalBranch", input.cwd).pipe(
+        Effect.andThen(git.deleteLocalBranch(input)),
       ),
     createRef: (input) =>
       ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(

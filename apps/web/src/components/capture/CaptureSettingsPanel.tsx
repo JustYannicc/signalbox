@@ -76,7 +76,7 @@ export function CaptureSettingsPanel() {
               variant="outline"
               onClick={() =>
                 void navigate({
-                  to: "/automations/$automationId",
+                  to: "/home/automations/$automationId",
                   params: { automationId: "capture-routing" },
                 })
               }

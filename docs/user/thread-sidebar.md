@@ -3,6 +3,62 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+## Home and Pipeline
+
+The icon rail on the left edge of the sidebar switches between two views of your
+threads. **Home** groups them under their projects. **Pipeline** orders them by what
+needs your attention, and is the view the rest of this page describes. Collapsing the
+sidebar hides the view but keeps the rail. The back and forward arrows beside the
+sidebar toggle step through where you've been.
+
+To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
+**Settings**.
+
+## Organize projects into sections
+
+On web and desktop, choose **Create section** beside **Projects**. Use a section's menu to add a
+subsection, rename it, move it, change its order, or delete it. Deleting a section moves its
+projects and child sections to its parent; deleting a top-level section moves them to the project
+root. Use a project's move menu to place it in a section or back at the root. This organization is
+shared by clients connected to the same environment. On mobile, choose **Browse sections** from
+Home to navigate the project tree.
+
+These sections organize projects. **Pinned**, **Active**, **Snoozed**, and **Settled** in Pipeline
+are thread status groups.
+
+### Contexts in Signalbox Cloud
+
+When you're signed in to Signalbox Cloud, Home shows Personal and every work organization you
+belong to, side by side. You don't switch accounts. Each context has its own sections: use the
+**New section** button beside a context's name. Sections and projects stay in their own context.
+Organizations you join show up the next time you sign in.
+
+A thread acts as the context it starts in, for good: a work thread uses that organization's
+identity and connections, a personal one uses yours. New threads start in Personal. To start one
+in a work context, pick the organization in **New thread in…**.
+
+### Drives and sharing
+
+Each context has a private **My Drive**. In a work organization, choose **New shared drive** beside
+its name to create a drive for the organization. To share a folder from My Drive, right-click it in
+**Files** and choose **Share folder…**. People you share it with can see that folder and its history.
+Removing someone cuts their access everywhere at once. Threads stay private, even in a shared drive;
+only their file changes land in the drive.
+
+To show another drive inside one, such as a team's shared drive or a GitHub repository you imported,
+right-click a folder in **Files** and choose **Add shortcut here…**, or use the shortcut button above
+the file list to add one at the top. Threads in the drive see the shortcut as a read-only folder with
+that drive's own history, and follow its `AGENTS.md` as well as the drive's own. To change files
+there, start a thread in that drive. Only people who can open the drive a shortcut points to see it.
+Right-click a shortcut and choose **Remove shortcut** to take it away; threads stop seeing it, and
+its instructions, from their next message. Agents can load up to 64 KiB of instructions: if a drive
+and its shortcuts bring more, the message fails and says which files to shorten.
+
+Agents read every drive you can, in every context, but change only the drive their thread works in.
+To reuse work, tell the agent where it happened, like "in Billing we added a dark mode toggle, do the
+same here". It finds the thread and its changes and redoes them in its own drive. If it can't find
+enough to go on, it says so instead of guessing.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model
@@ -10,8 +66,26 @@ and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
-When you change a new thread's project, T3 Code stays in the current environment
+When you change a new thread's project, Signalbox stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
+
+### Start without a project
+
+A thread does not need a project. To start one without a project, click **or
+start without a project** under a new thread's heading, pick **No project** from
+the project menu in that heading or from **New thread in...** in the command
+palette, or press `mod+alt+n`. On mobile, pick **No project** from the project
+list. It starts on your current machine; before sending, pick another machine
+from the machine menu to move it there. To move a draft into a project, pick the
+project in the heading.
+
+Each thread without a project works in its own folder under `~/.signalbox/scratch` (the
+`scratch` folder of your Signalbox data directory), named after its date, the first words
+of its first message, and a short id, like
+`2026-09-25-convert-these-pngs-to-webp-a1b2c3d4`. Deleting a thread keeps its
+folder, so the files the agent wrote stay until you delete them. Branch, worktree, and diff controls stay hidden because
+these folders are not Git repositories. This is unavailable when the data
+directory itself sits inside a Git checkout.
 
 ### Start in the background
 
@@ -32,7 +106,8 @@ Pin a thread from its menu to keep it above your active work.
 On web and desktop, unpinning, settling, snoozing, and archiving a thread each show
 a notification with **Undo** for five seconds. Undo restores the thread's previous
 state, including its pinned position, and reopens an archived thread you were
-viewing. `mod+z` triggers the most recent Undo when no text field is focused; see
+viewing. Discarding an unsent draft from the sidebar works the same way: Undo brings
+back its text and attachments. `mod+z` triggers the most recent Undo when no text field is focused; see
 [Keybindings](./keybindings.md#commands-with-special-behavior).
 
 On web and desktop, you can also drag files from your computer onto any thread row:
@@ -45,7 +120,7 @@ scroll position instead of following the thread to its new place in the list.
 
 Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
-On web and desktop, drag a thread between sections to change its state. Drag a thread up into
+In Pipeline on web and desktop, drag a thread between status groups to change its state. Drag a thread up into
 the pinned section to pin it at the spot you drop it; drag a pinned thread down into the active
 list to unpin it. Dragging a thread onto the **Settled** header settles it, and dragging a settled
 thread into the active list un-settles it. A snoozed thread can be dragged out of the snoozed
@@ -80,9 +155,30 @@ position, so using **Un-settle** returns it to the top. Pinning and snoozing pre
 position until you move it again. Thread activity does not change the order. The settled shelf
 continues to use settlement time.
 
-If dragging is unavailable for one environment, update the T3 Code server running in that
+If dragging is unavailable for one environment, update the Signalbox server running in that
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
+
+To generate a fresh title from the conversation, open a thread's menu and choose
+**Regenerate title**. The action is unavailable while title generation is in progress
+or when the connected environment needs a server update.
+
+Agents connected through Signalbox can use the same server-owned metadata workflow to
+rename a thread, regenerate its title, or link and unlink a pull request. These changes
+appear on web, desktop, and mobile without requiring the originating browser to remain
+open.
+
+### Fold working threads (beta)
+
+Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
+Thread behavior → Working section** on iOS and Android, to move threads that are working or
+monitoring into a collapsed **Working** section below the active list. A thread returns to the top
+of the active list when it finishes, fails, or needs an approval or answer. The Working section
+lists the thread you last sent work to first. Pinned threads stay in the pinned section. Each
+device keeps its own choice.
+
+While this is on, the active list is ordered by when each thread last came back to you, so you
+cannot drag or move threads within it. Your saved order returns when you turn it off.
 
 ## Settle finished work
 
@@ -94,12 +190,25 @@ sending an answer or restarting the agent. Settling also closes the thread's
 terminals that wait at an idle prompt, and keeps their output. A terminal that
 runs a command, such as a dev server, stays open.
 
+To reclaim disk space from settled work, turn on **Run in the thread's worktree when the
+thread settles** for one of the project's actions, or set `"runOnSettle": true` on a
+`t3.json` script, for example `cargo clean`. It runs each time a thread in its own
+worktree settles, manually or automatically, even if a terminal there still runs a
+command such as a dev server. Threads in the project's main checkout skip it. Its terminal
+closes when the command succeeds and stays open when it fails.
+
+On web and desktop, press a thread's **Settle** button and drag up or down to
+settle every thread in that section between it and the one you release on.
+The **Un-settle** and **Wake** buttons work the same way in their sections.
+Press `Escape` while dragging to cancel.
+
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity
 settlement, but an old closed or merged pull request does not settle work you
-resumed after it closed.
+resumed after it closed. Only your own messages count as resuming. A turn that
+finished background work or a pull request watch starts on its own does not.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
@@ -138,7 +247,35 @@ for custom configuration.
 
 ## Inspect agent work
 
+**Limited** means the provider stopped on a usage or rate limit. The conversation
+keeps the provider's explanation. Retry after the limit resets, or switch to
+another provider instance.
+On web and desktop, press **Resume** in an empty composer to continue a limited
+or interrupted turn manually.
+Queued messages stay saved while the limit blocks the thread. They run after
+the continuation finishes. If the queue was held by a restart, resume it then.
+
+When the provider reports a reset time, choose **Resume at reset** to schedule a
+continuation. You can cancel it from the thread. Enable **Auto-resume limited
+threads** in **Settings → General** on web and desktop, or **Settings → Thread
+behavior** on mobile, to schedule limit stops by default.
+The environment must be running when the reset arrives; it resumes overdue
+continuations after a restart. Sending a new message, archiving, or settling the
+thread prevents a pending continuation from starting.
+
+Choose **Snooze until reset** to hide the thread until its allowance returns.
+Snooze and auto-resume are independent: snooze alone wakes the thread without
+sending a message; enabling both wakes and continues it. **Wake now** cancels
+the snooze. Enable **Snooze limited threads** in thread behavior settings to
+snooze limit stops by default. Providers without a reset time offer manual
+retry and the normal snooze choices.
+
 On web and desktop, use **Agents** to follow work delegated to subagents.
+Stop on a thread also stops the subagents it delegated to.
+
+Subagent threads started by the agent can't take messages; message the parent
+thread instead. When such a subagent needs an approval or an answer, the parent
+thread asks for it.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

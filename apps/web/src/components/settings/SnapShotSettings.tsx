@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "../../branding";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isModifierPairShortcut,
@@ -264,7 +263,7 @@ export function SnapShotSettings() {
   const shortcutStatus = recording
     ? "Press your shortcut. Esc cancels."
     : candidateConflict
-      ? `${APP_BASE_NAME} already uses this for "${commandLabel(candidateConflict)}".`
+      ? `Signalbox already uses this for "${commandLabel(candidateConflict)}".`
       : shortcutCheck.status === "checking"
         ? "Checking shortcut…"
         : shortcutCheck.availability
@@ -316,8 +315,7 @@ export function SnapShotSettings() {
     try {
       if (state?.macPermissions) {
         saveSnapShotSetupResume(wizard?.wasEnabled ?? settings.snapShotEnabled);
-        if (!bridge?.setupSnapShot)
-          throw new Error(`Restart ${APP_BASE_NAME} to finish capture setup.`);
+        if (!bridge?.setupSnapShot) throw new Error("Restart Signalbox to finish capture setup.");
         await bridge.setupSnapShot("test-mac-capture");
       }
       if (state?.mode === "direct")

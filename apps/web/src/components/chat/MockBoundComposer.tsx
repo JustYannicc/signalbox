@@ -9,7 +9,6 @@
 import { PaperclipIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
-import { useComposerSendLockStore, useComposerSendLocked } from "../../composerSendLockStore";
 import { cn } from "~/lib/utils";
 import { CaptureChipRow } from "../capture/CaptureContext";
 import { ComposerMentionRendererContext } from "../composerMentionRenderer";
@@ -23,6 +22,7 @@ import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBan
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerSurface } from "./ComposerSurface";
 import { MockComposerAgentControls } from "./MockComposerAgentControls";
+import { useComposerSendLock } from "./sendLock/composerSendLock";
 import {
   useComposerMentionMenu,
   type ComposerMentionSource,
@@ -66,7 +66,7 @@ export function MockBoundComposer(props: {
   const [cursor, setCursor] = useState(prompt.length);
   const editorRef = useRef<ComposerPromptEditorHandle | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const sendLocked = useComposerSendLocked(props.targetKey);
+  const sendLock = useComposerSendLock(props.targetKey, false);
   const attachments = useMockComposerAttachments(props.attachments === true);
   const hasText = prompt.trim().length > 0;
   const hasSendableContent = hasText || attachments.files.length > 0;
@@ -94,7 +94,7 @@ export function MockBoundComposer(props: {
           {...attachments.dropHandlers}
           onSubmit={(event) => {
             event.preventDefault();
-            if (!hasSendableContent || sendLocked) return;
+            if (!hasSendableContent || sendLock.locked) return;
             props.onSend(
               prompt,
               attachments.files.map((attached) => attached.file),
@@ -136,6 +136,8 @@ export function MockBoundComposer(props: {
                 <ComposerMentionRendererContext value={mentionMenu.renderMention}>
                   <ComposerPromptEditor
                     editorRef={editorRef}
+                    suggestionListId={mentionMenu.listId}
+                    activeSuggestionId={mentionMenu.activeOptionId}
                     value={prompt}
                     cursor={Math.min(cursor, prompt.length)}
                     contextRecords={NO_CONTEXT_RECORDS}
@@ -150,7 +152,7 @@ export function MockBoundComposer(props: {
                     }}
                     onCommandKeyDown={(key, event, isTaskItem) => {
                       if (mentionMenu.onCommandKey(key)) return true;
-                      if (key !== "Enter" || event.shiftKey || isTaskItem || sendLocked)
+                      if (key !== "Enter" || event.shiftKey || isTaskItem || sendLock.locked)
                         return false;
                       formRef.current?.requestSubmit();
                       return true;
@@ -207,16 +209,15 @@ export function MockBoundComposer(props: {
                   ) : null}
                   <ComposerPrimaryActions
                     compact={false}
+                    canOperateThread
                     pendingAction={null}
                     isRunning={false}
+                    canInterrupt={false}
                     showPlanFollowUpPrompt={false}
                     promptHasText={hasText}
                     isSendBusy={false}
-                    sendDisabledReason={null}
-                    sendLocked={sendLocked}
-                    onToggleSendLock={() =>
-                      useComposerSendLockStore.getState().toggleSendLocked(props.targetKey)
-                    }
+                    sendDisabledReason={sendLock.disabledReason}
+                    sendLock={sendLock}
                     isConnecting={false}
                     isEnvironmentUnavailable={false}
                     isPreparingWorktree={false}

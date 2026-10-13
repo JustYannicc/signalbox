@@ -13,13 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  type NativeSyntheticEvent,
-  type TextLayoutEventData,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, type TextLayoutEvent, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -120,7 +114,9 @@ function CloudEnvironmentRowsContent(
     <View collapsable={false} className={cn("gap-3", showHeader && "mt-5")}>
       {showHeader ? (
         <View className="px-1">
-          <Text className="text-sm font-t3-bold uppercase text-foreground-muted">T3 Connect</Text>
+          <Text className="text-sm font-t3-bold uppercase text-foreground-muted">
+            Signalbox Connect
+          </Text>
         </View>
       ) : null}
 
@@ -177,7 +173,7 @@ function CloudEnvironmentRowsContent(
       !controller.relayDiscovery.isRefreshing ? (
         <View collapsable={false} className="gap-3 rounded-[24px] bg-grouped-card p-5">
           <Text className="text-base font-t3-bold text-foreground">
-            Could not load T3 Connect environments
+            Could not load Signalbox Connect environments
           </Text>
           <Text className="text-sm text-foreground-muted">{controller.relayDiscovery.error}</Text>
           {controller.relayDiscovery.errorTraceId ? (
@@ -334,7 +330,7 @@ function CloudEnvironmentRowShell(props: {
   const isErrorExpanded = errorCanExpand && props.errorExpanded;
   const StatusContainer = errorCanExpand ? Pressable : View;
   const onMeasuredErrorTextLayout = useCallback(
-    (event: NativeSyntheticEvent<TextLayoutEventData>) => {
+    (event: TextLayoutEvent) => {
       if (!props.connectionError) {
         return;
       }

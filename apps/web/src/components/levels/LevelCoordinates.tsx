@@ -55,7 +55,7 @@ function EntryLink(props: { entry: LevelEntry; level: LevelKey }) {
     case "automation":
       return (
         <Link
-          to="/automations/$automationId"
+          to="/home/automations/$automationId"
           params={{ automationId: target.automationId }}
           className={className}
         >

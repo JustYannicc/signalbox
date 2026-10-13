@@ -1,4 +1,3 @@
-import { APP_BASE_NAME } from "../../branding";
 import {
   isModifierPairShortcut,
   type DesktopCaptureConfigApplied,
@@ -218,8 +217,8 @@ export function CaptureShortcutConfig({
       ) : (
         <>
           <p className="text-muted-foreground">
-            Allow {APP_BASE_NAME} to read your desktop settings. You'll review any changes here
-            before saving.
+            Allow Signalbox to read your desktop settings. You'll review any changes here before
+            saving.
           </p>
           <Button
             disabled={actionBusy || !supported}
@@ -230,7 +229,7 @@ export function CaptureShortcutConfig({
           </Button>
           {!supported ? (
             <p className="text-xs text-muted-foreground">
-              Update {APP_BASE_NAME} to finish setting up your shortcut.
+              Update Signalbox to finish setting up your shortcut.
             </p>
           ) : null}
         </>
@@ -244,7 +243,7 @@ export function CaptureShortcutConfig({
         <p role="status" className="text-muted-foreground">
           {state.shortcutPending
             ? "Connecting to your desktop…"
-            : `Restart ${APP_BASE_NAME} to finish connecting your shortcut.`}
+            : "Restart Signalbox to finish connecting your shortcut."}
         </p>
       ) : null}
       <details className="text-xs text-muted-foreground">
@@ -263,7 +262,7 @@ export function CaptureShortcutConfig({
                 state.shortcutConfigPath ??
                 (niri ? "~/.config/niri/config.kdl" : "~/.config/hypr/hyprland.conf")}
             </p>
-            {niri ? <p>{APP_BASE_NAME} also reads any files included by this file.</p> : null}
+            {niri ? <p>Signalbox also reads any files included by this file.</p> : null}
             {preview && preview.resolvedPath !== preview.path ? (
               <p className="break-all">Linked to {preview.resolvedPath}. The link will be kept.</p>
             ) : null}
@@ -324,8 +323,8 @@ export function CaptureShortcutConfig({
             {isCopied ? "Copied" : "Copy shortcut"}
           </Button>
           <p>
-            Turn capture off in {APP_BASE_NAME} to stop it. Remove the shortcut from {desktop} to
-            free up the keys.
+            Turn capture off in Signalbox to stop it. Remove the shortcut from {desktop} to free up
+            the keys.
           </p>
           {state.shortcutActionRegistered === false ? (
             <p role="status">{state.shortcutMessage}</p>

@@ -3,9 +3,10 @@ import type {
   AuthClientMetadataDeviceType,
   AuthClientPresentationMetadata,
 } from "@t3tools/contracts";
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac or timingSafeEqual.
 import * as NodeCrypto from "node:crypto";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "t3_session";
@@ -19,7 +20,7 @@ const SESSION_COOKIE_NAME = "t3_session";
  * Remote web servers use their persisted environment identity and omit the
  * port, so the name survives state-directory moves and public port changes.
  *
- * Desktop scans upward from 3773 for a free port and binds
+ * Desktop scans upward from 4783 for a free port and binds
  *   127.0.0.1, so a second instance lands on a different port and the same host.
  */
 export function resolveSessionCookieName(input: {
@@ -81,12 +82,12 @@ export function isRemoteReachableHost(host: string | undefined): boolean {
 
 export function base64UrlEncode(input: string | Uint8Array): string {
   return typeof input === "string"
-    ? Encoding.encodeBase64Url(new TextEncoder().encode(input))
-    : Encoding.encodeBase64Url(input);
+    ? Base64Url.encode(new TextEncoder().encode(input))
+    : Base64Url.encode(input);
 }
 
 export function base64UrlDecodeUtf8(input: string): string {
-  return Result.getOrThrow(Encoding.decodeBase64UrlString(input));
+  return Result.getOrThrow(Base64Url.decodeString(input));
 }
 
 export function signPayload(payload: string, secret: Uint8Array): string {

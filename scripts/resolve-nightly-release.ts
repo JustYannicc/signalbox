@@ -9,7 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 export interface NightlyReleaseMetadata {
   readonly baseVersion: string;
@@ -121,7 +121,7 @@ export const resolveNightlyReleaseMetadata = (
     baseVersion,
     version,
     tag: `v${version}`,
-    name: `T3 Code ${CHANNEL_RELEASE_LABELS[channel]} ${version} (${shortSha})`,
+    name: `Signalbox ${CHANNEL_RELEASE_LABELS[channel]} ${version} (${shortSha})`,
     shortSha,
   };
 };

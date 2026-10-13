@@ -1,8 +1,8 @@
 # Observability
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Signalbox? See [docs/user](../user/).
 
-T3 Code has one server-side observability model:
+Signalbox has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -10,7 +10,7 @@ T3 Code has one server-side observability model:
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
+stdout/stderr at `~/.signalbox/ssh-launch/<state>/server.log`.
 
 ## Where To Find Things
 
@@ -21,7 +21,7 @@ Logs are human-facing:
 - destination: stdout
 - format: `Logger.consolePretty()`
 - normal local persistence: none
-- SSH-managed launch persistence: `~/.t3/ssh-launch/<state>/server.log`
+- SSH-managed launch persistence: `~/.signalbox/ssh-launch/<state>/server.log`
 - remote export: OTLP only, when configured
 
 If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
@@ -36,10 +36,10 @@ SSH-managed launch persistence stay unchanged either way.
 
 Completed spans are written as NDJSON records to `serverTracePath`. The default depends on how the
 server starts: production and explicitly configured homes use
-`<home>/userdata/logs/server.trace.ndjson` (so `~/.t3/userdata/...` by default, or
+`<home>/userdata/logs/server.trace.ndjson` (so `~/.signalbox/userdata/...` by default, or
 `/custom/path/userdata/...` with `--home-dir /custom/path`), a linked worktree dev run uses
 `<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
-worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
+worktree uses `~/.signalbox/dev/logs/server.trace.ndjson`.
 
 Important fields common to both record types:
 
@@ -64,16 +64,16 @@ request.
 
 #### Summarize the trace file
 
-`t3 trace summary` reads the trace file and its rotated backups directly, so it works while the
+`signalbox trace summary` reads the trace file and its rotated backups directly, so it works while the
 server is stalled or stopped. It prints counts, rates, and latency percentiles per span name. Use
 it to measure background work or to compare two builds.
 
 ```bash
-t3 trace summary --since 30m --limit 40
+signalbox trace summary --since 30m --limit 40
 ```
 
 It reads `T3CODE_TRACE_FILE` if set, else `<home>/userdata/logs/server.trace.ndjson` for
-`--base-dir` or `T3CODE_HOME`, plus the `T3CODE_TRACE_MAX_FILES` rotated backups. For a dev run or
+`--base-dir` or `SIGNALBOX_HOME`, plus the `T3CODE_TRACE_MAX_FILES` rotated backups. For a dev run or
 a copied file, set `T3CODE_TRACE_FILE`. `--since 30m` keeps spans that ended in the last 30
 minutes. The rate is per minute between the first and last span end.
 
@@ -139,7 +139,7 @@ You do not need any extra env vars. Just run the app normally and inspect `serve
 Examples:
 
 ```bash
-npx t3
+npx signalbox-cli
 ```
 
 ```bash
@@ -191,7 +191,7 @@ export T3CODE_TRACE_TIMING_ENABLED=true
 CLI:
 
 ```bash
-npx t3
+npx signalbox-cli
 ```
 
 Monorepo web/server dev:
@@ -216,7 +216,7 @@ macOS app bundle example:
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
 T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
-"/Applications/T3 Code.app/Contents/MacOS/T3 Code"
+"/Applications/Signalbox.app/Contents/MacOS/Signalbox"
 ```
 
 Direct binary example:
@@ -244,7 +244,7 @@ Resolve the path for the launch mode once. Production and explicitly configured 
 state under the base directory's `userdata` folder:
 
 ```bash
-TRACE_FILE="${T3CODE_HOME:-$HOME/.t3}/userdata/logs/server.trace.ndjson"
+TRACE_FILE="${SIGNALBOX_HOME:-$HOME/.signalbox}/userdata/logs/server.trace.ndjson"
 ```
 
 A dev server started from a linked worktree defaults to that worktree's local home:
@@ -256,7 +256,7 @@ TRACE_FILE="$WORKTREE/.t3/userdata/logs/server.trace.ndjson"
 Only an implicit dev run outside a linked worktree uses the shared dev directory:
 
 ```bash
-TRACE_FILE="$HOME/.t3/dev/logs/server.trace.ndjson"
+TRACE_FILE="$HOME/.signalbox/dev/logs/server.trace.ndjson"
 ```
 
 Tail the selected file:
@@ -318,11 +318,11 @@ jq -r 'select(.traceId == "TRACE_ID_HERE") | [
 Filter orchestration commands:
 
 ```bash
-jq -c 'select(.attributes["orchestration.command_type"] != null) | {
+jq -c 'select(.attributes["orchestration_v2.command_type"] != null) | {
   name,
   durationMs,
-  commandType: .attributes["orchestration.command_type"],
-  aggregateKind: .attributes["orchestration.aggregate_kind"]
+  commandType: .attributes["orchestration_v2.command_type"],
+  threadId: .attributes["orchestration_v2.thread_id"]
 }' "$TRACE_FILE"
 ```
 
@@ -365,7 +365,7 @@ Good first searches:
   `deployment.environment.name`
 - span names like `sendTurn` or a Git operation such as `GitVcsDriver.statusDetails.status`
 - Git spans whose `git.operation` attribute identifies the operation
-- orchestration spans with attributes like `orchestration.command_type`
+- orchestration spans with attributes like `orchestration_v2.command_type`
 
 Once you know traces are arriving, narrower TraceQL queries for names such as `sendTurn` or Git
 operation names become useful.
@@ -377,17 +377,33 @@ Traces are best for one request. Metrics are best for trends.
 Good metric families to watch:
 
 - `t3_rpc_request_duration`
-- `t3_orchestration_command_duration`
-- `t3_orchestration_command_ack_duration`
-- `t3_provider_turn_duration`
+- `t3_provider_turn_duration` (how long the provider adapter takes to start a turn, not the turn's run time)
 - `t3_git_command_duration`
 
 Counters tell you volume and failure rate:
 
 - `t3_rpc_requests_total`
-- `t3_orchestration_commands_total`
 - `t3_provider_turns_total`
 - `t3_git_commands_total`
+
+Webhooks have their own families:
+
+- `t3_webhook_deliveries_total` by `outcome` and `source` (`relay` or `direct`). Beyond what the
+  sender sees, `queue_full` means a task already had its limit of deliveries waiting,
+  `prompt_too_long` means the filled-in prompt passed the provider limit, and `duplicate` means
+  the relay delivered a request this environment had already run.
+- `t3_webhook_runs_total` by `outcome` (`started`, `skipped`, `failed`) for the runs those
+  deliveries start, which happen after the sender has its answer.
+- `t3_webhook_held_delay` for how long requests the relay held waited before arriving.
+
+- `t3_secret_requests_total` by `status` (`saved`, `declined`, `cancelled`, `timed_out`) for secrets
+  agents asked users for, and `t3_secret_refs_consumed_total` by `result` (`used`, `rejected`) for
+  tools redeeming them. Neither ever carries a value.
+
+`ScheduledTaskService.triggerWebhook` spans carry the same outcome per request, and each run
+started from a delivery is its own `ScheduledTaskService.runWebhookDelivery` trace. For a request
+the relay forwarded, the span also goes to the Signalbox Connect trace export as a child of the relay's
+span; requests that reach the environment directly never join a sender's trace.
 
 Use metrics when the question is:
 
@@ -400,21 +416,6 @@ Use traces when the question is:
 - "what happened in this specific request?"
 - "which child span caused this one slow interaction?"
 - "what logs were emitted inside the failing flow?"
-
-### What The New Ack Metric Means
-
-`t3_orchestration_command_ack_duration` measures:
-
-- start: command dispatch enters the orchestration engine
-- end: the first committed domain event for that command is published by the server
-
-That is a server-side acknowledgment metric. It does not measure:
-
-- websocket transit to the browser
-- client receipt
-- React render time
-
-If you need those later, add client-side instrumentation or a dedicated server fanout metric.
 
 ## Common Workflows
 
@@ -431,12 +432,6 @@ If you need those later, add client-side instrumentation or a dedicated server f
 1. Search for slow top-level spans in the trace file or Tempo.
 2. Check child spans for sqlite, git, provider, or terminal work.
 3. Look at the matching duration metrics to see whether the slowness is systemic.
-
-### "Did this command take too long to acknowledge?"
-
-1. Check `t3_orchestration_command_ack_duration` by `commandType`.
-2. If it is high, inspect the corresponding orchestration trace.
-3. Look at child spans for projection, sqlite, provider, or git work.
 
 ### "Are git hooks causing latency?"
 
@@ -557,7 +552,7 @@ const program = doWork().pipe(
 
 ### Runtime Wiring
 
-The server observability layer is assembled in `apps/server/src/observability/Layers/Observability.ts`.
+The server observability layer is assembled in `apps/server/src/observability/Observability.ts`.
 
 It provides:
 
@@ -584,7 +579,7 @@ Local trace file:
 - `T3CODE_TRACE_FILE`: override trace file path
 - `T3CODE_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
 - `T3CODE_TRACE_MAX_FILES`: rotated file count, default `10`
-- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
+- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `1000`
 - `T3CODE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
 - `T3CODE_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
@@ -640,11 +635,10 @@ wins for its signal. `otlp` is the default, and any other exporter name, such as
 
 Current high-value span and metric boundaries include:
 
-- Effect RPC websocket request spans from `effect/rpc`
-- RPC request metrics in `apps/server/src/observability/RpcInstrumentation.ts`
+- WebSocket RPC request spans (`ws.rpc.<method>`) and metrics in
+  `apps/server/src/observability/RpcInstrumentation.ts`
 - startup phases
 - orchestration command processing
-- orchestration command acknowledgment latency
 - provider session and turn operations
 - git command execution and git hook events
 - terminal session lifecycle
@@ -660,7 +654,7 @@ Current high-value span and metric boundaries include:
 ## Heap Snapshots
 
 To see what a long-running server holds in memory, send it `SIGUSR2`. The server writes a V8 heap
-snapshot to its logs dir and logs the path. This works for desktop, `npx t3`, and service installs
+snapshot to its logs dir and logs the path. This works for desktop, `npx signalbox-cli`, and service installs
 on macOS and Linux. Windows has no `SIGUSR2`.
 
 Send the signal to the server pid in `server-runtime.json`, which sits in the server's state dir
@@ -670,11 +664,11 @@ handler exits on `SIGUSR2`. After a crash the file can keep a stale pid that now
 different process, so check the pid first.
 
 ```bash
-pid="$(jq .pid "${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json")"
+pid="$(jq .pid "${SIGNALBOX_HOME:-$HOME/.signalbox}/userdata/server-runtime.json")"
 ps -p "$pid" -o command=
 ```
 
-If `ps` shows the T3 Code server, send the signal:
+If `ps` shows the Signalbox server, send the signal:
 
 ```bash
 kill -USR2 "$pid"

@@ -101,7 +101,7 @@ export type SystemEvent = "model" | "share" | "kind" | "mode" | "waiting" | "not
 /** One step of an agent's work, shaped like a real work-log row. */
 export interface WorkStep {
   readonly label: string;
-  readonly itemType?: "command_execution" | "file_change" | "web_search" | "mcp_tool_call";
+  readonly itemType?: "command_execution" | "file_change" | "web_search" | "dynamic_tool";
   readonly command?: string;
   readonly detail?: string;
   readonly changedFiles?: readonly string[];

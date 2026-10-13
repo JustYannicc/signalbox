@@ -12,6 +12,7 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type TextInputInstance,
 } from "react-native";
 
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -25,7 +26,7 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
-import { useWorkspaceState } from "../../state/workspace";
+import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -37,6 +38,7 @@ import {
 } from "./commandPaletteItems";
 import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
+import { automationPaletteActions } from "../automations/palette"; // signalbox: automations
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "commandPalette",
@@ -144,14 +146,14 @@ export function CommandPalette(props: {
   const threads = useThreadShells();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
-  const { environments } = useWorkspaceState();
+  const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<string | null>(null);
   const [visible, setVisible] = useState(true);
   const pendingAction = useRef<(() => void) | null>(null);
   const closing = useRef(false);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const listRef = useRef<FlatList<CommandPaletteItem>>(null);
   const { width, height } = useWindowDimensions();
   const searchEnvironmentIds = useMemo(
@@ -223,6 +225,18 @@ export function CommandPalette(props: {
           navigation.navigate("SettingsSheet", {
             screen: "SettingsContent",
             params: { screen: "SettingsEnvironments" },
+          }),
+      },
+      ...automationPaletteActions(navigation), // signalbox: automations
+      {
+        key: "scheduledTasks",
+        kind: "action",
+        title: "Scheduled tasks",
+        searchTerms: ["schedule", "automations", "recurring"],
+        run: () =>
+          navigation.navigate("SettingsSheet", {
+            screen: "SettingsContent",
+            params: { screen: "SettingsScheduledTasks" },
           }),
       },
       {

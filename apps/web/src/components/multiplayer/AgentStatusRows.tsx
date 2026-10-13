@@ -5,7 +5,7 @@
  * running turn is waiting on: yours to answer with the real approval
  * actions, or someone else's to wait for.
  */
-import { ApprovalRequestId } from "@t3tools/contracts";
+import { RuntimeRequestId } from "@t3tools/contracts";
 import { ShieldAlertIcon } from "lucide-react";
 
 import type { ComposerBannerStackItem } from "../chat/ComposerBannerStack";
@@ -101,8 +101,9 @@ export function approvalBanner(input: {
       ? {
           actions: (
             <ComposerPendingApprovalActions
-              requestId={ApprovalRequestId.make(`${input.threadId}:approval`)}
+              requestId={RuntimeRequestId.make(`${input.threadId}:approval`)}
               isResponding={false}
+              canRespond
               onRespondToApproval={(_requestId, decision) => {
                 input.onDecide(decision);
                 return Promise.resolve();

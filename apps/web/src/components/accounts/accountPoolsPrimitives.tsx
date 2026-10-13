@@ -1,6 +1,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { PROVIDER_PRESENTATION } from "../usage/usageProviders";
 import type { PoolHarness } from "./accountPoolsModel";
 
@@ -23,6 +24,12 @@ export function PoolMark({
   readonly harness: PoolHarness;
   readonly className?: string;
 }) {
-  const Mark = PROVIDER_PRESENTATION[harness].mark;
-  return <Mark className={cn("shrink-0", className)} aria-hidden />;
+  const provider = PROVIDER_PRESENTATION[harness];
+  return (
+    <ProviderInstanceIcon
+      driverKind={provider.driverKind}
+      displayName={provider.label}
+      iconClassName={cn("shrink-0", className)}
+    />
+  );
 }

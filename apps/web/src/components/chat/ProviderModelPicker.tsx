@@ -13,6 +13,11 @@ import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPick
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
+  initialPickerPool,
+  ModelPoolSwitcher,
+  type PickerPool,
+} from "../accountPool/ModelPoolSwitcher"; // signalbox
+import {
   ModelEsque,
   getTriggerDisplayModelLabel,
   getTriggerDisplayModelName,
@@ -44,6 +49,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeProviderIconClassName?: string;
   instanceIndicatorBackground?: string;
   size?: ComposerControlSize;
+  compact?: boolean;
   isComposerOwned?: boolean;
   disabled?: boolean;
   terminalOpen?: boolean;
@@ -56,6 +62,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  /** signalbox: account pools; the pool is picked first, then its models. */
+  pools?: ReadonlyArray<PickerPool>;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
@@ -72,6 +80,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   }, [props.activeInstanceId, props.instanceEntries]);
 
   const activeInstanceId = props.activeInstanceId;
+  // signalbox: the picker shows one pool's providers at a time.
+  const pools = props.pools ?? [];
+  const [poolChoice, setPoolChoice] = useState<string | null>(null);
+  const poolId = pools.some((pool) => pool.id === poolChoice)
+    ? poolChoice
+    : initialPickerPool(pools, activeInstanceId);
+  const poolInstanceIds = pools.find((pool) => pool.id === poolId)?.instanceIds;
+  const pickerEntries = useMemo(
+    () =>
+      poolInstanceIds
+        ? props.instanceEntries.filter((entry) => poolInstanceIds.has(entry.instanceId))
+        : props.instanceEntries,
+    [poolInstanceIds, props.instanceEntries],
+  );
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
   // Account-specific catalogs must keep the selected model label while unavailable.
   const selectedModel =
@@ -100,6 +122,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       setUncontrolledIsMenuOpen(open);
     }
   };
+
+  // signalbox: a pool browsed without picking a model is forgotten, so the picker reopens on the thread's pool.
+  const [poolChoiceOpen, setPoolChoiceOpen] = useState(isMenuOpen);
+  if (poolChoiceOpen !== isMenuOpen) {
+    setPoolChoiceOpen(isMenuOpen);
+    if (!isMenuOpen) setPoolChoice(null);
+  }
 
   useEffect(() => {
     if (!isMenuOpen) {
@@ -209,7 +238,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             data-chat-provider-model-picker="true"
             className={cn(
               "min-w-0 shrink justify-between whitespace-nowrap",
-              !props.isComposerOwned && "max-w-48 sm:max-w-56",
+              props.compact
+                ? "max-w-42 shrink-0"
+                : !props.isComposerOwned && "max-w-48 sm:max-w-56",
               props.triggerClassName,
             )}
             disabled={props.disabled}
@@ -246,6 +277,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}
               accentColor={activeEntry.accentColor}
+              acpRegistryAgentId={activeEntry.acpRegistryAgentId}
+              acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
               showBadge={showInstanceBadge}
               className="size-4"
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
@@ -285,8 +318,17 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         className="before:hidden"
         padding="none"
       >
+        {poolId && pools.length > 1 ? (
+          <ModelPoolSwitcher pools={pools} selected={poolId} onSelect={setPoolChoice} />
+        ) : null}
         <ModelPickerContent
-          activeInstanceId={activeInstanceId}
+          key={poolId ?? undefined}
+          // A pool without the current model opens on its own first provider.
+          activeInstanceId={
+            poolInstanceIds && !poolInstanceIds.has(activeInstanceId)
+              ? (pickerEntries[0]?.instanceId ?? activeInstanceId)
+              : activeInstanceId
+          }
           model={props.model}
           {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
           {...(props.onToggleModel
@@ -298,7 +340,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             : {})}
           lockedProvider={props.lockedProvider}
           lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
-          instanceEntries={props.instanceEntries}
+          instanceEntries={pickerEntries}
           {...(props.keybindings ? { keybindings: props.keybindings } : {})}
           modelOptionsByInstance={props.modelOptionsByInstance}
           terminalOpen={props.terminalOpen ?? false}

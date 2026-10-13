@@ -55,7 +55,16 @@ export function useFeedbackScreenshot() {
 
   const resolve = useCallback(() => pendingRef.current ?? Promise.resolve(null), []);
 
-  useEffect(() => releaseUrl, [releaseUrl]);
+  // Unmounting (e.g. the mobile sidebar sheet closing) also orphans any
+  // in-flight capture, so it can't create a URL nobody revokes.
+  useEffect(
+    () => () => {
+      sessionRef.current += 1;
+      pendingRef.current = null;
+      releaseUrl();
+    },
+    [releaseUrl],
+  );
 
   return { screenshot, start, clear, resolve };
 }

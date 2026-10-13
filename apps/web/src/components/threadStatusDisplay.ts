@@ -1,13 +1,14 @@
 /**
  * The one status vocabulary for thread rows, shared by the Pipeline and Home:
  * label, icon, color, and priority per state. States come from
- * `resolveSidebarThreadStatus`, then (for otherwise ready threads) Plan ready,
- * Woke, and unread Done. "Waiting" (on someone else) only comes from
- * multiplayer data; a single-user thread never produces it.
+ * `resolveSidebarThreadStatus` (Goal is Working with an active /goal), then
+ * (for otherwise ready threads) Plan ready, Woke, and unread Done. "Waiting"
+ * is the agent stopped with background work that will wake it, or (from
+ * multiplayer data) waiting on someone else.
  *
  * Status hues follow the system-wide convention set by sidebar v1 and the
- * mobile Live Activity/widgets (amber approval, indigo input, sky working) so a
- * thread reads the same color everywhere it surfaces. Nothing here animates.
+ * mobile Live Activity/widgets (amber approval, indigo input, info working) so
+ * a thread reads the same color everywhere it surfaces. Nothing here animates.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
@@ -15,7 +16,6 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
-  EyeIcon,
   HourglassIcon,
   ListChecksIcon,
   MessageCircleQuestionIcon,
@@ -23,18 +23,19 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { isLatestTurnSettled } from "../session-logic";
+import { isLatestRunSettled } from "../session-logic";
 import { shouldRecedeSidebarThread, type SidebarThreadStatus } from "./Sidebar.logic";
 
 export type ThreadDisplayStatus =
   | "approval"
   | "input"
   | "failed"
+  | "limited"
   | "plan"
   | "woke"
   | "waiting"
+  | "goal"
   | "working"
-  | "monitoring"
   | "done";
 
 export interface ThreadStatusDisplay {
@@ -71,7 +72,15 @@ export const THREAD_STATUS_DISPLAY: Record<ThreadDisplayStatus, ThreadStatusDisp
     label: "Failed",
     description: "Failed",
     icon: CircleAlertIcon,
-    className: "text-red-700 dark:text-red-300",
+    className: "text-error",
+    needsYou: true,
+    priority: 7,
+  },
+  limited: {
+    label: "Limited",
+    description: "Hit a usage limit",
+    icon: CircleAlertIcon,
+    className: "text-warning",
     needsYou: true,
     priority: 7,
   },
@@ -87,15 +96,25 @@ export const THREAD_STATUS_DISPLAY: Record<ThreadDisplayStatus, ThreadStatusDisp
     label: "Back",
     description: "Back from Later",
     icon: AlarmClockIcon,
-    className: "text-warning-foreground",
+    className: "text-warning",
     needsYou: true,
     priority: 5,
   },
   waiting: {
     label: "Waiting",
-    description: "Waiting on someone else",
+    // Calm background presence, not active progress, so the label keeps full strength.
+    description: "Waiting on background work or someone else",
     icon: HourglassIcon,
     className: "text-muted-foreground",
+    needsYou: false,
+    priority: 2,
+  },
+  goal: {
+    // A native /goal keeps the agent going across turns until it is met.
+    label: "Goal",
+    description: "Working toward a goal",
+    icon: CircleDashedIcon,
+    className: "text-info",
     needsYou: false,
     priority: 4,
   },
@@ -103,24 +122,15 @@ export const THREAD_STATUS_DISPLAY: Record<ThreadDisplayStatus, ThreadStatusDisp
     label: "Working",
     description: "Working",
     icon: CircleDashedIcon,
-    className: "text-sky-600 dark:text-sky-400",
+    className: "text-info",
     needsYou: false,
     priority: 3,
-  },
-  monitoring: {
-    // Calm background presence, not active progress, so the label stays at full strength.
-    label: "Monitoring",
-    description: "Monitoring in the background",
-    icon: EyeIcon,
-    className: "text-foreground dark:text-white",
-    needsYou: false,
-    priority: 2,
   },
   done: {
     label: "Done",
     description: "Finished · unread",
     icon: CircleCheckIcon,
-    className: "text-emerald-700 dark:text-emerald-300",
+    className: "text-success",
     needsYou: false,
     priority: 1,
   },
@@ -128,7 +138,7 @@ export const THREAD_STATUS_DISPLAY: Record<ThreadDisplayStatus, ThreadStatusDisp
 
 type PlanInput = Pick<
   EnvironmentThreadShell,
-  "hasPendingUserInput" | "interactionMode" | "latestTurn" | "session" | "hasActionableProposedPlan"
+  "hasPendingUserInput" | "interactionMode" | "latestRun" | "runtime" | "hasActionableProposedPlan"
 >;
 
 /** An actionable plan prompt on a settled turn. */
@@ -136,17 +146,20 @@ export function threadHasPlanReady(thread: PlanInput): boolean {
   return (
     !thread.hasPendingUserInput &&
     thread.interactionMode === "plan" &&
-    isLatestTurnSettled(thread.latestTurn, thread.session) &&
+    isLatestRunSettled(thread.latestRun, thread.runtime) &&
     thread.hasActionableProposedPlan
   );
 }
 
 export function resolveThreadDisplayStatus(input: {
   status: SidebarThreadStatus;
+  /** Working with an active native /goal. */
+  goalActive?: boolean;
   planReady: boolean;
   isWoke: boolean;
   isUnread: boolean;
 }): ThreadDisplayStatus | null {
+  if (input.status === "working" && input.goalActive) return "goal";
   if (input.status !== "ready") return input.status;
   if (input.planReady) return "plan";
   if (input.isWoke) return "woke";
@@ -157,12 +170,13 @@ const RECEDE_STATUS: Record<ThreadDisplayStatus, SidebarThreadStatus> = {
   approval: "approval",
   input: "input",
   failed: "failed",
+  limited: "limited",
   // A plan waits on you like input does, so it never recedes.
   plan: "input",
   woke: "ready",
-  waiting: "working",
+  waiting: "waiting",
+  goal: "working",
   working: "working",
-  monitoring: "monitoring",
   done: "ready",
 };
 
