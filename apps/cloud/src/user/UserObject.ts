@@ -163,7 +163,6 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     this.identity = {
       environmentId: decodeEnvironmentId(env.ENVIRONMENT_ID),
       label: env.ENVIRONMENT_LABEL ?? Environment.DEFAULT_ENVIRONMENT_LABEL,
-      harnesses: machineSettings(env) !== null,
       // Only machines run dev servers.
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
     };

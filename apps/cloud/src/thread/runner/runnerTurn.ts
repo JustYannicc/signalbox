@@ -11,7 +11,7 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { isHarnessInstance } from "../providerCatalog.ts";
+import { isHarnessInstance, runnerInstanceFor } from "../providerCatalog.ts";
 import { activeRun, finishRunEvents, providerThreadFor, type RunEnding } from "../runLifecycle.ts";
 import {
   attemptEvent,
@@ -67,6 +67,8 @@ export function runnerTurnFor(projection: Projection): Omit<RunnerTurn, "traceId
   ) {
     return null;
   }
+  // The Runner knows harnesses, not pools: the pool travels in the model token.
+  const instanceId = runnerInstanceFor(run.providerInstanceId) ?? run.providerInstanceId;
   // The harness counts turns on its own session; runs that never started never reached it.
   const priorTurns = projection.runs.filter(
     (candidate) =>
@@ -82,7 +84,7 @@ export function runnerTurnFor(projection: Projection): Omit<RunnerTurn, "traceId
     attemptId: run.activeAttemptId,
     rootNodeId: run.rootNodeId,
     appThread: projection.thread,
-    providerThread,
+    providerThread: { ...providerThread, providerInstanceId: instanceId },
     message: {
       messageId: message.id,
       text: message.text,
@@ -90,7 +92,7 @@ export function runnerTurnFor(projection: Projection): Omit<RunnerTurn, "traceId
       createdBy: message.createdBy,
       creationSource: message.creationSource,
     },
-    modelSelection: run.modelSelection,
+    modelSelection: { ...run.modelSelection, instanceId },
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
     ...(run.restartContinuationOfRunId === undefined

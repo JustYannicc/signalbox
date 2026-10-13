@@ -2,7 +2,8 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import type { ModelAuthorization } from "../thread/runner/ThreadRunner.ts";
+import type { ModelForwardReply } from "../pool/PoolDirectory.ts";
+import type { ModelServeReply } from "../thread/runner/modelGrants.ts";
 import { handleModelRequest, type ModelGatewayDeps } from "./modelGateway.ts";
 import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
 
@@ -10,34 +11,45 @@ const LIVE = "sbm1.dGhyZWFkLWE.live";
 const runId = RunId.make("run-1");
 const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
 
+interface Forwarded {
+  readonly path: string;
+  readonly request: Request;
+}
+
+/**
+ * A gateway whose pool answers with `upstream`, or `pool` in full. The clock
+ * moves 5 ms while the token is checked and 30 ms to the pool's answer, of
+ * which its CLIProxyAPI took 20.
+ */
 const makeGateway = (options: {
   readonly upstream?: (request: Request) => Response;
-  readonly authorize?: ModelGatewayDeps["authorize"];
-  readonly withoutKeys?: boolean;
+  readonly pool?: (forwarded: Forwarded) => ModelForwardReply;
+  /** The cloud cannot check tokens. */
+  readonly unreachable?: boolean;
 }) => {
-  const forwarded: Array<Request> = [];
+  const forwarded: Array<Forwarded> = [];
   const asked: Array<[string, ModelGatewayProvider]> = [];
   const logs: Array<ModelGatewayRecord> = [];
+  let clock = 0;
   const deps: ModelGatewayDeps = {
-    authorize:
-      options.authorize ??
-      (async (token, provider): Promise<ModelAuthorization> => {
-        asked.push([token, provider]);
-        return token === LIVE
-          ? { _tag: "granted", runId, traceId }
-          : { _tag: "denied", reason: "This token is not for the running turn." };
-      }),
-    upstreams: options.withoutKeys
-      ? { anthropic: null, openai: null }
-      : {
-          anthropic: { baseUrl: "https://anthropic.test/", apiKey: "sk-ant-real" },
-          openai: { baseUrl: "https://openai.test", apiKey: "sk-openai-real" },
-        },
-    fetch: async (request) => {
-      forwarded.push(request);
-      return options.upstream?.(request) ?? new Response("ok");
+    serve: async (token, provider, path, request): Promise<ModelServeReply> => {
+      if (options.unreachable) throw new Error("cloud down");
+      asked.push([token, provider]);
+      clock += 5;
+      if (token !== LIVE) {
+        return { _tag: "denied", reason: "This token is not for the running turn.", authMs: 5 };
+      }
+      const call = { path, request };
+      forwarded.push(call);
+      clock += 30;
+      const reply: ModelForwardReply = options.pool?.(call) ?? {
+        _tag: "forwarded",
+        response: options.upstream?.(request) ?? new Response("ok"),
+        upstreamMs: 20,
+      };
+      return { _tag: "granted", runId, traceId, authMs: 5, reply };
     },
-    now: () => 0,
+    now: () => clock,
     log: (record) => void logs.push(record),
   };
   const call = (path: string, init: RequestInit = {}) =>
@@ -46,7 +58,7 @@ const makeGateway = (options: {
 };
 
 describe("ModelGateway", () => {
-  it("forwards a live turn's request with the real key, never the token", async () => {
+  it("forwards a live turn's request to its pool with no token or credential", async () => {
     const gateway = makeGateway({});
     const response = await gateway.call("/anthropic/v1/messages?beta=true", {
       method: "POST",
@@ -62,9 +74,10 @@ describe("ModelGateway", () => {
     expect(await response.text()).toBe("ok");
     expect(gateway.asked).toEqual([[LIVE, "anthropic"]]);
 
-    const [upstream] = gateway.forwarded;
-    expect(upstream?.url).toBe("https://anthropic.test/v1/messages?beta=true");
-    expect(upstream?.headers.get("x-api-key")).toBe("sk-ant-real");
+    const [forwarded] = gateway.forwarded;
+    expect(forwarded?.path).toBe("/v1/messages?beta=true");
+    const upstream = forwarded?.request;
+    expect(upstream?.headers.get("x-api-key")).toBeNull();
     expect(upstream?.headers.get("authorization")).toBeNull();
     expect(upstream?.headers.get("cookie")).toBeNull();
     expect(upstream?.headers.get("anthropic-version")).toBe("2023-06-01");
@@ -74,16 +87,43 @@ describe("ModelGateway", () => {
     ]);
   });
 
-  it("sends OpenAI its key as a bearer token", async () => {
+  it("sends Codex's requests to the same pool under OpenAI's paths", async () => {
     const gateway = makeGateway({});
     await gateway.call("/openai/v1/responses", {
       method: "POST",
       headers: { authorization: `Bearer ${LIVE}` },
       body: "{}",
     });
-    expect(gateway.forwarded[0]?.url).toBe("https://openai.test/v1/responses");
-    expect(gateway.forwarded[0]?.headers.get("authorization")).toBe("Bearer sk-openai-real");
-    expect(gateway.forwarded[0]?.headers.get("x-api-key")).toBeNull();
+    expect(gateway.forwarded[0]?.path).toBe("/v1/responses");
+    expect(gateway.forwarded[0]?.request.headers.get("authorization")).toBeNull();
+  });
+
+  it("records the time to first token it adds, apart from the pool's own", async () => {
+    const gateway = makeGateway({});
+    await (await gateway.call("/anthropic/v1/messages", auth())).text();
+    // 5 ms checking the token, plus 30 ms to the pool's answer less the 20 its CLIProxyAPI took.
+    expect(gateway.logs).toMatchObject([{ authMs: 5, upstreamHeadersMs: 30, addedMs: 15 }]);
+  });
+
+  it("fails the request with the pool's reason when the requester lost the pool", async () => {
+    const reason = "You no longer have access to this thread's pool. Pick another pool for it.";
+    const gateway = makeGateway({ pool: () => ({ _tag: "denied", reason }) });
+    const anthropic = await gateway.call("/anthropic/v1/messages", auth());
+    expect(anthropic.status).toBe(403);
+    expect(await anthropic.json()).toEqual({
+      type: "error",
+      error: { type: "permission_error", message: reason },
+    });
+    const openai = await gateway.call("/openai/v1/responses", {
+      method: "POST",
+      headers: { authorization: `Bearer ${LIVE}` },
+    });
+    expect(openai.status).toBe(403);
+    expect(await openai.json()).toMatchObject({ error: { message: reason } });
+    expect(gateway.logs).toMatchObject([
+      { status: 403, runId, denied: reason },
+      { status: 403, runId, denied: reason },
+    ]);
   });
 
   it("streams the response through as it arrives", async () => {
@@ -118,7 +158,7 @@ describe("ModelGateway", () => {
     expect(gateway.logs).toEqual([]);
     end?.();
     expect((await reader.read()).done).toBe(true);
-    expect(gateway.logs).toMatchObject([{ status: 200, firstChunkMs: 0, outcome: "complete" }]);
+    expect(gateway.logs).toMatchObject([{ status: 200, firstChunkMs: 30, outcome: "complete" }]);
   });
 
   it("still records a response the harness stops reading", async () => {
@@ -140,7 +180,7 @@ describe("ModelGateway", () => {
     const reader = response.body!.getReader();
     await reader.read();
     await reader.cancel();
-    expect(gateway.logs).toMatchObject([{ status: 200, firstChunkMs: 0, outcome: "cancelled" }]);
+    expect(gateway.logs).toMatchObject([{ status: 200, firstChunkMs: 30, outcome: "cancelled" }]);
   });
 
   it("turns down a token the thread does not grant, in the provider's error shape", async () => {
@@ -181,15 +221,18 @@ describe("ModelGateway", () => {
     expect(gateway.asked).toHaveLength(1);
   });
 
-  it("says so when it has no key or cannot reach the thread", async () => {
-    const auth = { headers: { "x-api-key": LIVE } };
-    const keyless = makeGateway({ withoutKeys: true });
-    expect((await keyless.call("/anthropic/v1/messages", auth)).status).toBe(503);
-    const unreachable = makeGateway({
-      authorize: () => Promise.reject(new Error("cloud down")),
-    });
-    expect((await unreachable.call("/anthropic/v1/messages", auth)).status).toBe(503);
+  it("says so when it cannot reach the thread or the pool", async () => {
+    const unreachable = makeGateway({ unreachable: true });
+    expect((await unreachable.call("/anthropic/v1/messages", auth())).status).toBe(503);
     expect(unreachable.forwarded).toEqual([]);
+    const poolDown = makeGateway({
+      pool: () => ({ _tag: "failed", reason: "The pool's CLIProxyAPI could not be reached." }),
+    });
+    const response = await poolDown.call("/anthropic/v1/messages", auth());
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({
+      error: { message: expect.stringContaining("could not be reached") },
+    });
   });
 
   it("records the model and token usage an Anthropic stream reports", async () => {
@@ -245,6 +288,8 @@ describe("ModelGateway", () => {
     ]);
   });
 });
+
+const auth = (): RequestInit => ({ method: "POST", headers: { "x-api-key": LIVE }, body: "{}" });
 
 /** An event stream sent in the given pieces, which need not end on line boundaries. */
 const sse = (pieces: ReadonlyArray<string>) =>

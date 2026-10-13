@@ -68,8 +68,6 @@ export const SESSION_COOKIE_NAME = "signalbox_cloud_session";
 export interface CloudEnvironmentIdentity {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  /** Whether a machine backend can run Claude and Codex here. */
-  readonly harnesses?: boolean;
   /** Whether the PreviewGateway serves threads' dev servers (`thread/preview/`). */
   readonly previews?: boolean;
 }
@@ -125,10 +123,7 @@ export const serverConfig = (
   keybindingsConfigPath: CLOUD_ROOT,
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
   issues: [],
-  providers: [
-    ...cloudProviders({ checkedAt, harnesses: identity.harnesses === true }),
-    ...pools.providers,
-  ],
+  providers: [...cloudProviders(checkedAt), ...pools.providers],
   availableEditors: [],
   observability: {
     logsDirectoryPath: CLOUD_ROOT,
@@ -141,7 +136,7 @@ export const serverConfig = (
     ...DEFAULT_SERVER_SETTINGS,
     // Clients enable a provider instance only when settings list it.
     providerInstances: {
-      ...cloudProviderInstances(identity.harnesses === true),
+      ...cloudProviderInstances(),
       ...pools.instances,
     },
   },

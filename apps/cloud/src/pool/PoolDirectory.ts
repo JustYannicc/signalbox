@@ -67,6 +67,38 @@ export interface PoolObjectApi {
   ) => Promise<PoolReply<null>>;
 }
 
+/** Where a turn's model requests go: a pool's object, for the user the turn runs for. */
+export interface ModelPoolRoute {
+  readonly objectName: string;
+  readonly userId: string;
+}
+
+/** How a pool object answered a model request. */
+export type ModelForwardReply =
+  | {
+      readonly _tag: "forwarded";
+      readonly response: Response;
+      /** From handing the request to the pool's CLIProxyAPI to its response headers. */
+      readonly upstreamMs: number;
+    }
+  /** The user may not use the pool, or it is gone. */
+  | { readonly _tag: "denied"; readonly reason: string }
+  /** The pool's CLIProxyAPI could not be reached. */
+  | { readonly _tag: "failed"; readonly reason: string };
+
+/**
+ * What the ModelGateway asks of a pool object, through the cloud's
+ * `ModelGrants` entrypoint. Apart from `PoolObjectApi`: it hands back a
+ * stream, not a `PoolReply`. `path` includes the query.
+ */
+export interface PoolModelApi {
+  readonly forwardModel: (
+    actor: PoolActor,
+    path: string,
+    request: Request,
+  ) => Promise<ModelForwardReply>;
+}
+
 type Method = keyof PoolObjectApi;
 
 export type PoolHandle = {
@@ -134,7 +166,7 @@ export interface PoolObjectNamespace {
   readonly jurisdiction: (name: typeof POOL_OBJECT_JURISDICTION) => {
     readonly idFromName: (name: string) => DurableObjectId;
   };
-  readonly get: (id: DurableObjectId) => PoolObjectApi & Fetcher;
+  readonly get: (id: DurableObjectId) => PoolObjectApi & PoolModelApi & Fetcher;
 }
 
 /** Local workerd has no jurisdictions, so `wrangler dev` uses the plain namespace. */
