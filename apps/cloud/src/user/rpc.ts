@@ -38,6 +38,10 @@ import {
   SignalboxPreviewError,
   SignalboxPreviewsUnavailableError,
 } from "@t3tools/contracts/signalboxPreviews";
+import {
+  SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
+  SIGNALBOX_REPOSITORIES_WS_METHODS,
+} from "@t3tools/contracts/signalboxRepositories";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -114,6 +118,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
+  ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
 ] as const;
@@ -163,6 +168,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
+  ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -429,6 +435,7 @@ export const layerHandlers = (input: {
         [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
         [WS_METHODS.sourceControlLookupRepository]: (request) =>
           githubImport.lookup(request.repository),
+        [SIGNALBOX_REPOSITORIES_WS_METHODS.list]: (request) => githubImport.list(request.provider),
         [WS_METHODS.projectCloneStart]: (request) => githubImport.importRepository(request),
         // Imports register at once and clone nothing, so there is never a clone to track.
         [WS_METHODS.projectCloneCancel]: () => Effect.succeed({ applied: false }),

@@ -70,6 +70,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { useRepositoriesToPick } from "../../state/signalboxRepositories"; // signalbox: repositories
+import { matchRepositories } from "@t3tools/client-runtime/state/signalboxRepositories"; // signalbox: repositories
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ErrorBanner } from "../../components/ErrorBanner";
@@ -805,50 +807,67 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // signalbox: the account's repositories to pick from, where the server can list them.
+  const repositoriesToPick = useRepositoriesToPick(
+    environment?.environmentId ?? null,
+    addProjectRemoteSourceProvider(source),
+  );
+  const repositoryMatches = useMemo(
+    () =>
+      repositoriesToPick === null
+        ? []
+        : matchRepositories(repositoriesToPick, repositoryInput).slice(0, 50),
+    [repositoriesToPick, repositoryInput],
+  );
 
-  const lookupRepository = useCallback(async () => {
-    if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
-    setError(null);
-    setIsSubmitting(true);
-    const provider = addProjectRemoteSourceProvider(source);
-    if (!provider) {
-      const remoteUrl = normalizePastedCloneUrl(repositoryInput);
-      navigation.dispatch(
-        StackActions.push("AddProjectDestination", {
-          environmentId: environment.environmentId,
-          source,
-          remoteUrl,
-          repositoryTitle: remoteUrl,
-          repositoryName: getCloneDirectoryName(remoteUrl),
-        }),
-      );
+  // signalbox: a repository picked from the list arrives as `picked`.
+  const lookupRepository = useCallback(
+    async (picked?: string) => {
+      const repositoryName = (picked ?? repositoryInput).trim();
+      if (!environment || repositoryName.length === 0 || isSubmitting) return;
+      setError(null);
+      setIsSubmitting(true);
+      const provider = addProjectRemoteSourceProvider(source);
+      if (!provider) {
+        const remoteUrl = normalizePastedCloneUrl(repositoryName);
+        navigation.dispatch(
+          StackActions.push("AddProjectDestination", {
+            environmentId: environment.environmentId,
+            source,
+            remoteUrl,
+            repositoryTitle: remoteUrl,
+            repositoryName: getCloneDirectoryName(remoteUrl),
+          }),
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      const result = await lookupRepositoryQuery({
+        environmentId: environment.environmentId,
+        input: {
+          provider,
+          repository: repositoryName,
+        },
+      });
+      if (AsyncResult.isFailure(result)) {
+        setError(errorMessage(Cause.squash(result.cause)));
+      } else {
+        const repository = result.value;
+        navigation.dispatch(
+          StackActions.push("AddProjectDestination", {
+            environmentId: environment.environmentId,
+            source,
+            remoteUrl: getDefaultCloneUrl(repository),
+            repositoryTitle: repository.nameWithOwner,
+            repositoryName: getCloneDirectoryName(repository.nameWithOwner),
+          }),
+        );
+      }
       setIsSubmitting(false);
-      return;
-    }
-
-    const result = await lookupRepositoryQuery({
-      environmentId: environment.environmentId,
-      input: {
-        provider,
-        repository: repositoryInput.trim(),
-      },
-    });
-    if (AsyncResult.isFailure(result)) {
-      setError(errorMessage(Cause.squash(result.cause)));
-    } else {
-      const repository = result.value;
-      navigation.dispatch(
-        StackActions.push("AddProjectDestination", {
-          environmentId: environment.environmentId,
-          source,
-          remoteUrl: getDefaultCloneUrl(repository),
-          repositoryTitle: repository.nameWithOwner,
-          repositoryName: getCloneDirectoryName(repository.nameWithOwner),
-        }),
-      );
-    }
-    setIsSubmitting(false);
-  }, [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
+    },
+    [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source],
+  );
 
   return (
     <AddProjectShell title={source === "url" ? "Git URL" : addProjectRemoteSourceLabel(source)}>
@@ -875,6 +894,29 @@ export function AddProjectRepositoryScreen(props: {
             onPress={() => void lookupRepository()}
             loading={isSubmitting}
           />
+          {repositoryMatches.length > 0 && source !== "url" ? (
+            <>
+              <SectionTitle>Your repositories</SectionTitle>
+              <ListSection>
+                {repositoryMatches.map((repository, index) => (
+                  <ListRow
+                    key={repository.nameWithOwner}
+                    title={repository.nameWithOwner}
+                    icon={
+                      <SourceControlIcon
+                        kind={sourceControlClients.get(source).icon}
+                        size={Platform.OS === "android" ? 24 : 18}
+                        colorClassName="accent-icon"
+                      />
+                    }
+                    disabled={isSubmitting}
+                    isFirst={index === 0}
+                    onPress={() => void lookupRepository(repository.nameWithOwner)}
+                  />
+                ))}
+              </ListSection>
+            </>
+          ) : null}
         </>
       ) : (
         <EmptyEnvironmentState />

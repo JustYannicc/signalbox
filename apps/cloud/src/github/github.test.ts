@@ -16,6 +16,7 @@ import {
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { SIGNALBOX_REPOSITORIES_WS_METHODS } from "@t3tools/contracts/signalboxRepositories";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -36,6 +37,7 @@ import * as Platform from "../platform.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
+import * as UserStore from "../user/UserStore.ts";
 import * as CloudRpc from "../user/rpc.ts";
 import * as GitHubConnection from "./GitHubConnection.ts";
 import { makeFakeGitHub } from "./githubTesting.ts";
@@ -108,18 +110,18 @@ describe("GitHub-backed drives", () => {
       const user = cloud.userDirectory.forUser(userId);
       yield* user.recordSignIn({ id: userId, email: "a@b.c" });
 
-      // Connecting: the grant works once, and only through the App's flow.
-      const started = yield* user.beginGitHubConnect(REDIRECT);
+      // Connecting: WorkOS runs GitHub's consent and comes back with the attempt's state,
+      // and the grant works once.
+      const started = yield* user.beginGitHubConnect({ grantId: "g1", returnTo: REDIRECT });
       if (started._tag !== "started") return expect.unreachable();
-      expect(started.url).toContain("client_id=Iv1.test");
-      expect(started.url).toContain(`state=${started.grantId}`);
-      const connected = { grantId: started.grantId, code: "code-1", redirectUri: REDIRECT };
-      expect(yield* user.completeGitHubConnect(connected)).toEqual({
+      expect(yield* user.githubAccessToken()).toBeNull();
+      expect(github.authorize(userId)).toBe(REDIRECT);
+      expect(yield* user.completeGitHubConnect("g1")).toEqual({
         _tag: "connected",
         login: "octo",
       });
-      expect((yield* user.completeGitHubConnect(connected))._tag).toBe("failed");
-      expect(yield* user.githubAccessToken()).toBe("ghu_0");
+      expect((yield* user.completeGitHubConnect("g1"))._tag).toBe("failed");
+      expect(yield* user.githubAccessToken()).toBe(`gho_${userId}`);
 
       const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
         Effect.provide(
@@ -144,9 +146,14 @@ describe("GitHub-backed drives", () => {
         provider: SourceControlProviderKind.make("github"),
         repository: "owner/elsewhere",
       }).pipe(Effect.flip);
-      expect(missing.message).toContain(
-        "https://github.test/apps/signalbox-test/installations/new",
-      );
+      expect(missing.message).toContain("Authorized OAuth Apps");
+      // "Add project" offers what the connection can reach.
+      const listed = yield* rpc[SIGNALBOX_REPOSITORIES_WS_METHODS.list]({
+        provider: SourceControlProviderKind.make("github"),
+      });
+      expect(listed.repositories.map((repository) => repository.nameWithOwner)).toEqual([
+        "owner/repo",
+      ]);
 
       // Importing makes the repository a drive at once; nothing is cloned. The cloud names
       // the project, so clients follow the id it answers with.
@@ -279,55 +286,76 @@ describe("GitHub-backed drives", () => {
     }).pipe(Effect.provide(Layer.mergeAll(drives.layer, github.layer)));
   });
 
-  it.effect(
-    "refreshes a token about to expire, and forgets a connection GitHub turned down",
-    () => {
-      const remote = setup();
-      const github = makeFakeGitHub({
-        bare: remote.bare,
-        repository: "owner/repo",
-        defaultBranch: "main",
-      });
-      return Effect.gen(function* () {
-        const connection = yield* GitHubConnection.GitHubConnection;
-        const started = yield* connection.begin(REDIRECT);
+  it.effect("asks Pipes for tokens, and forgets connections WorkOS can't use", () => {
+    const remote = setup();
+    const github = makeFakeGitHub({
+      bare: remote.bare,
+      repository: "owner/repo",
+      defaultBranch: "main",
+    });
+    return Effect.gen(function* () {
+      const store = yield* UserStore.UserStore;
+      yield* store.recordSignIn({ id: userId, email: "a@b.c" });
+      const connection = yield* GitHubConnection.GitHubConnection;
+      let grants = 0;
+      const connect = Effect.gen(function* () {
+        const grantId = `g${++grants}`;
+        const started = yield* connection.begin({ grantId, returnTo: REDIRECT });
         if (started._tag !== "started") return expect.unreachable();
-        yield* connection.complete({ grantId: started.grantId, code: "c", redirectUri: REDIRECT });
-        expect(yield* connection.accessToken).toBe("ghu_0");
+        github.authorize(userId);
+        return yield* connection.complete(grantId);
+      });
+      expect((yield* connect)._tag).toBe("connected");
+      expect(yield* connection.accessToken).toBe(`gho_${userId}`);
 
-        // GitHub's user tokens last eight hours; this one is close enough to renew.
-        yield* TestClock.adjust("478 minutes");
-        expect(yield* connection.accessToken).toBe("ghu_1");
-        expect(yield* connection.accessToken).toBe("ghu_1");
+      // A burst of requests reuses the token; a few minutes later Pipes is asked again.
+      const asked = () => github.calls.filter((call) => call.endsWith("/token")).length;
+      const before = asked();
+      expect(yield* connection.accessToken).toBe(`gho_${userId}`);
+      expect(asked()).toBe(before);
+      yield* TestClock.adjust("6 minutes");
 
-        // An outage is not a refusal: the connection stays for the next try.
-        github.settings.refreshOutage = true;
-        yield* TestClock.adjust("8 hours");
-        expect((yield* connection.accessToken.pipe(Effect.flip))._tag).toBe("GitHubError");
-        expect(yield* connection.account).toEqual({ login: "octo" });
+      // An outage is not a refusal: the connection stays for the next try.
+      github.settings.workosOutage = true;
+      expect((yield* connection.accessToken.pipe(Effect.flip))._tag).toBe("GitHubError");
+      expect(yield* connection.account).toEqual({ login: "octo" });
+      github.settings.workosOutage = false;
 
-        github.settings.refreshOutage = false;
-        github.settings.refuseRefresh = true;
-        expect(yield* connection.accessToken).toBeNull();
-        expect(yield* connection.account).toBeNull();
-        // Gone for good: the next request doesn't even ask GitHub.
-        const asked = github.calls.length;
-        expect(yield* connection.accessToken).toBeNull();
-        expect(github.calls.length).toBe(asked);
-      }).pipe(
-        Effect.provide(
-          GitHubConnection.layer.pipe(
-            Layer.provideMerge(github.layer),
-            Layer.provideMerge(Layer.effectDiscard(GitHubConnection.createTables)),
-            Layer.provideMerge(
-              Layer.mergeAll(
-                NodeSqliteClient.layer({ filename: ":memory:" }),
-                Platform.layerCrypto,
-              ),
-            ),
+      // Revoked on GitHub: WorkOS can't refresh it, so it's gone until the user connects again.
+      github.revoke(userId);
+      expect(yield* connection.accessToken).toBeNull();
+      expect(yield* connection.account).toBeNull();
+
+      // A return in another browser throws the attempt away, along with what WorkOS stored.
+      yield* connection.begin({ grantId: "stray", returnTo: REDIRECT });
+      github.authorize(userId);
+      yield* connection.abort("stray");
+      expect(github.isConnected(userId)).toBe(false);
+      expect((yield* connection.complete("stray"))._tag).toBe("failed");
+      expect(yield* connection.accessToken).toBeNull();
+
+      // Even when whoever sent the link out completed it first.
+      expect((yield* connect)._tag).toBe("connected");
+      yield* connection.abort(`g${grants}`);
+      expect(github.isConnected(userId)).toBe(false);
+      expect(yield* connection.accessToken).toBeNull();
+
+      // Disconnecting forgets it here and in WorkOS.
+      expect((yield* connect)._tag).toBe("connected");
+      yield* connection.disconnect;
+      expect(github.isConnected(userId)).toBe(false);
+      expect(yield* connection.accessToken).toBeNull();
+    }).pipe(
+      Effect.provide(
+        GitHubConnection.layer.pipe(
+          Layer.provideMerge(github.layer),
+          Layer.provideMerge(UserStore.layer),
+          Layer.provideMerge(Layer.effectDiscard(UserStore.migrate)),
+          Layer.provideMerge(
+            Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
           ),
         ),
-      );
-    },
-  );
+      ),
+    );
+  });
 });

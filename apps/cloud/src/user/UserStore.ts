@@ -186,6 +186,7 @@ const migrations = Migrator.fromRecord({
   "0005_drives": UserDriveIndex.createTables,
   "0006_github": GitHubConnection.createTables,
   "0007_pools": UserPools.createTables,
+  "0008_github_pipes": GitHubConnection.moveToPipes,
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */

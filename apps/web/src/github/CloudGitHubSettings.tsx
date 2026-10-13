@@ -17,11 +17,11 @@ export function useIsSignalboxCloud(environmentId: EnvironmentId | null): boolea
 }
 
 /**
- * GitHub in Signalbox Cloud (#135): connecting runs Signalbox's GitHub App in
- * a browser signed in to the cloud, which then acts as the user on the
- * repositories they install the App on. The cloud keeps the tokens; this only
- * opens its pages. On the cloud's own web app that is this tab; anywhere
- * else, the system browser.
+ * GitHub in Signalbox Cloud: connecting runs GitHub's sign-in through WorkOS
+ * Pipes in a browser signed in to the cloud, which then acts as the user on
+ * their repositories. WorkOS keeps the tokens; this only opens the cloud's
+ * pages. On the cloud's own web app that is this tab; anywhere else, the
+ * system browser.
  */
 export function CloudGitHubSettings({
   environmentId,
@@ -65,8 +65,8 @@ export function CloudGitHubSettings({
     <div className="grid gap-3">
       <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
         {account === null
-          ? "Connect GitHub to import its repositories and open pull requests from threads. Signalbox acts as you, on the repositories you install its GitHub app on."
-          : "Signalbox acts as this account on the repositories its GitHub app is installed on. Install it on more to import them."}
+          ? "Connect GitHub to add its repositories as projects and open pull requests from threads. Signalbox acts as you on GitHub."
+          : "Signalbox acts as this account on GitHub. For an organization's repositories, grant Signalbox access to the organization on GitHub."}
       </p>
       <div className="flex flex-wrap gap-2">
         {account === null ? (
@@ -75,8 +75,14 @@ export function CloudGitHubSettings({
           </Button>
         ) : (
           <>
-            <Button size="sm" variant="outline" onClick={() => open("/api/github/install")}>
-              Choose repositories
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                void readLocalApi()?.shell.openExternal("https://github.com/settings/applications")
+              }
+            >
+              Organization access
             </Button>
             {/* Disconnecting needs this browser's cloud session; elsewhere it happens on the web. */}
             {sameOrigin ? (

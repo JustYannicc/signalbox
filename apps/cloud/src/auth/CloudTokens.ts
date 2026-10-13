@@ -50,7 +50,20 @@ const HandoffClaims = Schema.TaggedStruct("handoff", {
   exp: ExpiresAt,
 });
 
-const SignedClaims = Schema.Union([SessionClaims, TicketClaims, CredentialClaims, HandoffClaims]);
+/** A GitHub connect attempt, carried through WorkOS Pipes as the callback's `state`. */
+const GitHubConnectClaims = Schema.TaggedStruct("github-connect", {
+  u: UserId,
+  gid: Schema.String,
+  exp: ExpiresAt,
+});
+
+const SignedClaims = Schema.Union([
+  SessionClaims,
+  TicketClaims,
+  CredentialClaims,
+  HandoffClaims,
+  GitHubConnectClaims,
+]);
 export type SignedClaims = typeof SignedClaims.Type;
 type SignedKind = SignedClaims["_tag"];
 

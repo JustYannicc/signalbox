@@ -50,6 +50,10 @@
     "./signalboxPreviews": {
       "types": "./src/signalboxPreviews.ts",
       "import": "./src/signalboxPreviews.ts"
+    },
+    "./signalboxRepositories": {
+      "types": "./src/signalboxRepositories.ts",
+      "import": "./src/signalboxRepositories.ts"
     }
   },
   "scripts": {

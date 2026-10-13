@@ -51,8 +51,9 @@ export const makeUserObjectApi = (
     recordThreadSummary: (summary) =>
       shell((service) => service.recordThreadSummary(wire.summary.decode(summary))),
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
-    beginGitHubConnect: (redirectUri) => github((service) => service.begin(redirectUri)),
-    completeGitHubConnect: (input) => github((service) => service.complete(input)),
+    beginGitHubConnect: (input) => github((service) => service.begin(input)),
+    completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),
+    abortGitHubConnect: (grantId) => github((service) => service.abort(grantId)),
     disconnectGitHub: () => github((service) => service.disconnect),
     githubAccessToken: () => github((service) => service.accessToken),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),

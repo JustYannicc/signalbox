@@ -71,7 +71,7 @@ export const layerServices = (input: {
     Layer.provideMerge(ThreadContexts.layerWorker),
     Layer.provideMerge(CloudSessions.layer),
     Layer.provideMerge(
-      GitHub.layer(GitHub.gitHubAppConfig(input.vars), GitHub.gitHubEndpoints(input.vars)),
+      GitHub.layer(GitHub.gitHubPipesConfig(input.vars), GitHub.gitHubEndpoints(input.vars)),
     ),
     Layer.provideMerge(CloudTokens.layer),
     Layer.provideMerge(CloudConfig.layer),

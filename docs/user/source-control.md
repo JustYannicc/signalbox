@@ -37,10 +37,12 @@ custom server name as GitHub once it has a credential for that host.
 ### GitHub in Signalbox Cloud
 
 In Signalbox Cloud there is nothing to install. Open **Settings → Source Control** and choose
-**Connect GitHub**. Signalbox then works as you on the repositories you install its GitHub app
-on; **Choose repositories** adds more.
+**Connect GitHub**. Signalbox then works as you on your repositories. An organization's
+repositories need the organization to allow Signalbox: **Organization access** opens the page on
+GitHub where you grant or request it.
 
-To work on a repository, choose **Add project → GitHub repository**. Signalbox doesn't copy
+To work on a repository, choose **Add project → GitHub repository** and pick it from your
+repositories, or type its `owner/name`. Signalbox doesn't copy
 anything up front: each new thread starts from the latest commit on the default branch. Every
 thread has its own branch, `signalbox/…`. Push it or open a pull request from the thread's git
 panel. Once the pull request is merged on GitHub, new threads start from the merged commit.

@@ -3,6 +3,7 @@
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // signalbox: accounts
 import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
+import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -2567,7 +2568,8 @@ function OpenCommandPaletteDialog(props: {
     }
 
     if (addProjectCloneFlow.step === "repository") {
-      const rawRepository = query.trim();
+      // signalbox: a repository picked from the list arrives as the argument.
+      const rawRepository = (destinationPathInput ?? query).trim();
       if (rawRepository.length === 0 || isRemoteProjectLookingUp) {
         return;
       }
@@ -3025,6 +3027,26 @@ function OpenCommandPaletteDialog(props: {
           },
         ];
 
+  // signalbox: the account's repositories to pick from, where the server can list them.
+  const repositoryPickerSource = addProjectCloneFlow?.source ?? null;
+  const repositoryPickerIcon = useMemo(
+    () =>
+      repositoryPickerSource === null
+        ? null
+        : remoteProjectSourceIcon(repositoryPickerSource, ITEM_ICON_CLASS),
+    [repositoryPickerSource],
+  );
+  const repositoryPickerGroups = useRepositoryPickerGroups({
+    environmentId:
+      addProjectCloneFlow?.step === "repository" ? addProjectCloneFlow.environmentId : null,
+    provider:
+      addProjectCloneFlow?.step === "repository"
+        ? addProjectRemoteSourceProvider(addProjectCloneFlow.source)
+        : null,
+    query,
+    icon: repositoryPickerIcon,
+    onPick: (repository) => void submitAddProjectCloneFlow(repository),
+  });
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (newProjectFlow !== null) {
     displayedGroups = [
@@ -3033,7 +3055,7 @@ function OpenCommandPaletteDialog(props: {
       ...(newProjectExistingGroup ? [newProjectExistingGroup] : []),
     ];
   } else if (addProjectCloneFlow?.step === "repository") {
-    displayedGroups = [];
+    displayedGroups = repositoryPickerGroups; // signalbox: repositories
   } else if (addProjectCloneFlow?.step === "confirm") {
     displayedGroups = relativePathNeedsActiveProject ? [] : cloneDestinationBrowseGroups;
   } else if (isBrowsing) {
@@ -3169,7 +3191,11 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
+    if (
+      addProjectCloneFlow?.step === "repository" &&
+      event.key === "Enter" &&
+      highlightedItemValue === null // signalbox: Enter on a listed repository picks it
+    ) {
       event.preventDefault();
       void submitAddProjectCloneFlow();
       return;

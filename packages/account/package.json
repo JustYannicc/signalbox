@@ -15,6 +15,10 @@
       "types": "./src/WorkOSClient.ts",
       "import": "./src/WorkOSClient.ts"
     },
+    "./WorkOSPipes": {
+      "types": "./src/WorkOSPipes.ts",
+      "import": "./src/WorkOSPipes.ts"
+    },
     "./WorkOSTesting": {
       "types": "./src/WorkOSTesting.ts",
       "import": "./src/WorkOSTesting.ts"
