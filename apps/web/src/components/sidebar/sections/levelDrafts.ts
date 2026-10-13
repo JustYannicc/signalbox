@@ -6,17 +6,15 @@
  * send. Drafts in a team project become real T3 drafts in the demo project of
  * the same name (`useSeedProjectDrafts`), so they open in the composer like
  * any T3 draft. The rest (top level, sections) have no project: opening one
- * resumes it in the New bar with its folder chip.
+ * opens that level's agent (Appa at the top) with the draft in its composer.
  */
 import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { prototypeStorage } from "../../../lib/prototypeStorage";
-import type { CaptureToken } from "../../capture/captureTokens";
 import { TEAM_PROJECTS } from "../../multiplayer/multiplayerFixtures";
 import { TOP_LEVEL, type LevelKey } from "../../levels/levels";
-import { findHomeSection } from "./sectionModel";
 
 export interface LevelDraft {
   readonly id: string;
@@ -113,23 +111,6 @@ export function useLevelDrafts(level: LevelKey): readonly LevelDraft[] {
       ).toSorted((left, right) => right.editedAt.localeCompare(left.editedAt)),
     [gone, level, seeded],
   );
-}
-
-/** The `#` chip that puts a resumed draft back in its folder; none at the top level. */
-export function levelCaptureToken(level: LevelKey): CaptureToken | null {
-  if (level.startsWith("section:")) {
-    const section = findHomeSection(level.slice(8));
-    return section
-      ? { id: level, kind: "section", label: section.name, containerKey: level }
-      : null;
-  }
-  if (level.startsWith("team-project:")) {
-    const project = TEAM_PROJECTS.find((entry) => entry.id === level.slice(13));
-    return project
-      ? { id: level, kind: "project", label: project.name, containerKey: level }
-      : null;
-  }
-  return null;
 }
 
 /** The team project a draft sits in, by name; null for every other level. */
