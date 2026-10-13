@@ -1,33 +1,36 @@
 /**
- * The shared chat's ⋯ menu: when the agent replies (each message, or once
- * everyone has replied). Changes are logged in the timeline.
+ * The shared chat's "Agent replies" setting in Thread details: when the agent
+ * replies (each message, or once everyone has replied). Changes are logged in
+ * the timeline.
  */
-import { EllipsisIcon } from "lucide-react";
+import { MessagesSquareIcon } from "lucide-react";
 
-import { Button } from "../ui/button";
+import { ThreadDetailsControl } from "../chat/ThreadDetailsControl";
+import { ThreadDetailsSection } from "../chat/ThreadDetailsSection";
 import {
-  Menu,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuTrigger,
-} from "../ui/menu";
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
+} from "../chat/threadDetailsPanelStyles";
+import { cn } from "../../lib/utils";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { logTeamEvent } from "./localMessages";
 import { firstName, type ReplyMode } from "./multiplayerModel";
 import { REPLY_MODE_LABEL, useReplyModeStore } from "./replyMode";
 import { currentPerson } from "./teamThreads";
 
-export function ReplyModeMenu(props: { threadId: string; mode: ReplyMode }) {
+export function ReplyModeSection(props: { threadId: string; mode: ReplyMode }) {
   return (
-    <Menu>
-      <MenuTrigger render={<Button size="icon-xs" variant="ghost" aria-label="Chat options" />}>
-        <EllipsisIcon />
-      </MenuTrigger>
-      <MenuPopup align="end">
-        <MenuGroup>
-          <MenuGroupLabel>Agent replies</MenuGroupLabel>
+    <ThreadDetailsSection headingId="surface-details-replies-heading" title="Agent replies">
+      <Menu>
+        <MenuTrigger
+          render={<ThreadDetailsControl part="select" aria-label="When the agent replies" />}
+        >
+          <MessagesSquareIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+          <span className={cn("min-w-0 flex-1 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+            {REPLY_MODE_LABEL[props.mode]}
+          </span>
+        </MenuTrigger>
+        <MenuPopup align="end">
           <MenuRadioGroup
             value={props.mode}
             onValueChange={(value) => {
@@ -45,8 +48,8 @@ export function ReplyModeMenu(props: { threadId: string; mode: ReplyMode }) {
             <MenuRadioItem value="each">{REPLY_MODE_LABEL.each}</MenuRadioItem>
             <MenuRadioItem value="everyone">{REPLY_MODE_LABEL.everyone}</MenuRadioItem>
           </MenuRadioGroup>
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
+        </MenuPopup>
+      </Menu>
+    </ThreadDetailsSection>
   );
 }

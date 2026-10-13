@@ -48,6 +48,7 @@ import {
   SURFACE_HEADER_CONTAINER,
   SurfaceHeaderActions,
 } from "../multiplayer/SurfaceHeaderActions";
+import { SurfaceDetailsCard, useSurfaceDetails } from "../multiplayer/SurfaceDetails";
 
 const HISTORY = PAST_DAYS.map((day) => {
   const count = dayDelegations(day).length;
@@ -141,6 +142,7 @@ export function AssistantPage() {
   const navigate = useNavigate({ from: "/assistant/" });
   const { name } = useAssistantIdentity();
   const [traceOpen, setTraceOpen] = useState(false);
+  const details = useSurfaceDetails("assistant");
   const day = resolveDay(search.day);
   const isCurrent = day === CURRENT_DAY;
   const fresh = isCurrent && search.fresh === 1;
@@ -254,12 +256,15 @@ export function AssistantPage() {
               onCustomize={() => setCustomizeTab("identity")}
             />
             <SurfaceHeaderActions
-              projectControls
+              level={TOP_LEVEL}
+              details={details}
+              terminal
               // Trace is this chat's side panel, so the panel toggle opens it.
               rightPanel={{ open: traceOpen, onOpenChange: setTraceOpen, label: "Trace" }}
             />
           </div>
         </WorkspacePageHeader>
+        <SurfaceDetailsCard details={details} level={TOP_LEVEL} workspace />
 
         <ChatWithTrace
           key={`${day.date}:${fresh}`}

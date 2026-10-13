@@ -1,14 +1,14 @@
 /**
- * Google-Docs-style access in a page header: the others who can see this item
- * (people here now first, with a presence dot), "Waiting on Samir" / "Needs you",
- * and a Share button whose icon says private or shared. Avatars and Share both
- * open the Share dialog. In the chat header it collapses to the avatars when
- * narrow (`@container/header-actions`).
+ * Google-style access in a page header: one control, the others who can see
+ * this item (people here now first, with a presence dot) followed by a "+".
+ * Clicking either opens the Share dialog; the tooltip says who can see it.
+ * "Waiting on Samir" / "Needs you" badges sit before it and hide when the
+ * chat header is narrow (`@container/header-actions`).
  */
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { AtSignIcon, LockIcon, UsersIcon } from "lucide-react";
+import { AtSignIcon, PlusIcon } from "lucide-react";
 import { useMemo } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -19,7 +19,6 @@ import {
 import { useContainerIdForThread } from "../sidebar/sections/containerIds";
 import { classifyThreadKind, useThreadKind } from "../sidebar/sections/threadKind";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { localThreadAccessBase, useAccessItem } from "./itemAccess";
 import { pendingMentionLabel } from "./mentions";
@@ -91,6 +90,7 @@ export function ThreadAccessBar(props: {
   const summary = `${joinNames(others, "")} ${others.length === 1 ? "has" : "have"} access${
     hereNow.length > 0 ? ` · ${joinNames(hereNow, "")} here now` : ""
   }`;
+  const hint = others.length > 0 ? `${scope} · ${summary}` : scope;
 
   return (
     // Headers open their own context menu; the bar and its dialogs keep the native one.
@@ -117,41 +117,27 @@ export function ThreadAccessBar(props: {
           </span>
         );
       })}
-      {others.length > 0 ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={`${summary}. Open sharing.`}
-                onClick={openShareDialog}
-                className="flex cursor-pointer items-center rounded-full outline-hidden ring-ring focus-visible:ring-2"
-              />
-            }
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={`Share. ${hint}`}
+              onClick={openShareDialog}
+              className="group/share flex cursor-pointer items-center gap-1 rounded-full outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset"
+            />
+          }
+        >
+          {others.length > 0 ? <PresenceStack people={others} activeIds={activeIds} /> : null}
+          <span
+            aria-hidden
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover/share:bg-accent group-hover/share:text-foreground"
           >
-            <PresenceStack people={others} activeIds={activeIds} />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">{summary}</TooltipPopup>
-        </Tooltip>
-      ) : null}
-      <span className={COLLAPSIBLE}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="xs"
-                variant="outline"
-                aria-label={`Share · ${scope}`}
-                onClick={openShareDialog}
-              />
-            }
-          >
-            {isShared ? <UsersIcon /> : <LockIcon />}
-            Share
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">{scope}</TooltipPopup>
-        </Tooltip>
-      </span>
+            <PlusIcon className="size-3.5" />
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">{hint}</TooltipPopup>
+      </Tooltip>
       {props.controls.dialogs}
     </div>
   );

@@ -21,7 +21,6 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/pools" // signalbox
   | "/settings/integrations"
-  | "/settings/scheduled-tasks"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -100,7 +99,6 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/pools": "Pools", // signalbox
   "/settings/integrations": "Integrations",
-  "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -669,9 +667,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   // signalbox: automations
   {
     id: "connected-services",
-    title: "Connected services",
+    title: "Executor",
     to: "/settings/integrations",
-    searchTerms: ["executor automations w.call accounts gmail github api key connect"],
+    searchTerms: ["connected services automations w.call api key connect"],
   },
   {
     id: "device-hosts",
@@ -984,7 +982,6 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
-  "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
 

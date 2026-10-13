@@ -1,4 +1,4 @@
-import { LaptopIcon, SmartphoneIcon } from "lucide-react";
+import { LaptopIcon, MonitorIcon, SmartphoneIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -20,6 +20,12 @@ import { useDeviceLevelsStore } from "./deviceLevelsStore";
 
 const GROUP_ORDER: readonly CapabilityGroup[] = ["files", "device", "signals"];
 
+const KIND_ICON = {
+  laptop: LaptopIcon,
+  desktop: MonitorIcon,
+  phone: SmartphoneIcon,
+} satisfies Record<ClientDevice["kind"], unknown>;
+
 /**
  * A client is a gateway: servers reach into it for files, screenshots and
  * signals, but no turn ever executes on it. It sits at a Home level, which
@@ -31,7 +37,7 @@ export function ClientDeviceCard({ device }: { readonly device: ClientDevice }) 
   const [enabled, setEnabled] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(device.capabilities.map((cap) => [cap.id, cap.enabled])),
   );
-  const Icon = device.kind === "phone" ? SmartphoneIcon : LaptopIcon;
+  const Icon = KIND_ICON[device.kind];
 
   return (
     <article className="flex min-w-0 flex-col gap-4 rounded-lg border border-border p-4">

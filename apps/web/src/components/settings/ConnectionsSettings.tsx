@@ -1,6 +1,8 @@
 import { SessionPermissions } from "./SessionPermissions";
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
+import { Link } from "@tanstack/react-router";
 import {
+  ArrowRightIcon,
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
   EllipsisIcon,
@@ -414,18 +416,9 @@ function sortDesktopPairingLinks(links: ReadonlyArray<ServerPairingLinkRecord>) 
   );
 }
 
-/** Closed-header summary for the Authorized clients fold. */
-function summarizeAuthorizedClients(
-  sessions: ReadonlyArray<ServerClientSessionRecord>,
-  links: ReadonlyArray<ServerPairingLinkRecord>,
-): string {
-  const parts = [
-    `${sessions.length} ${sessions.length === 1 ? "client" : "clients"}`,
-    links.length > 0
-      ? `${links.length} ${links.length === 1 ? "pairing link" : "pairing links"}`
-      : null,
-  ];
-  return parts.filter((part): part is string => part !== null).join(" · ");
+/** Closed-header summary for the Pairing links fold. */
+function summarizePairingLinks(links: ReadonlyArray<ServerPairingLinkRecord>): string {
+  return links.length === 0 ? "None open" : `${links.length} open`;
 }
 
 function sortDesktopClientSessions(sessions: ReadonlyArray<ServerClientSessionRecord>) {
@@ -1293,7 +1286,7 @@ const PairingClientsList = memo(function PairingClientsList({
 
       {pairingLinks.length === 0 && clientSessions.length === 0 && !isLoading ? (
         <div className={accessRowClassName(presentation)}>
-          <p className="text-xs text-muted-foreground/60">No pairing links or client sessions.</p>
+          <p className="text-xs text-muted-foreground/60">No open pairing links.</p>
         </div>
       ) : null}
     </>
@@ -3531,7 +3524,8 @@ export function ConnectionsSettings() {
         isLoading={isLoadingDesktopAccessManagement}
         pairingLinks={visibleDesktopPairingLinks}
         createdPairingCredentials={createdPairingCredentials}
-        clientSessions={desktopClientSessions}
+        // signalbox: paired clients are listed on Devices, at their Home levels.
+        clientSessions={[]}
         revokingPairingLinkId={revokingDesktopPairingLinkId}
         revokingClientSessionId={revokingDesktopClientSessionId}
         onRevokePairingLink={handleRevokeDesktopPairingLink}
@@ -3739,11 +3733,8 @@ export function ConnectionsSettings() {
           {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
               id="authorized-clients"
-              title="Authorized clients"
-              summary={summarizeAuthorizedClients(
-                desktopClientSessions,
-                visibleDesktopPairingLinks,
-              )}
+              title="Pairing links"
+              summary={summarizePairingLinks(visibleDesktopPairingLinks)}
               control={
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
@@ -3772,10 +3763,20 @@ export function ConnectionsSettings() {
                   renderAuthorizedClients("current")
                 ) : (
                   <p className="px-4 py-3 text-xs text-muted-foreground">
-                    This connection can create access links but cannot view authorized clients.
+                    This connection can create pairing links but cannot view them.
                   </p>
                 )}
               </ScrollArea>
+              <SettingsRow
+                title="Paired devices"
+                description="Your phones and computers, and the Home level each sits at, are on Devices."
+                control={
+                  <Button size="sm" variant="outline" render={<Link to="/devices" />}>
+                    Open Devices
+                    <ArrowRightIcon aria-hidden />
+                  </Button>
+                }
+              />
             </FoldedSettingsSection>
           ) : null}
           <AlertDialog

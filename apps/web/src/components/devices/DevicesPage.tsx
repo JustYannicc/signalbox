@@ -1,6 +1,7 @@
 /**
  * Devices: servers that run chats and the client apps they can reach into.
  * UI prototype on placeholder data (see fleet.ts and devicesFixtures.ts).
+ * "Pair a client" opens the real pairing links in Settings › Connections.
  */
 import { Link } from "@tanstack/react-router";
 import { ArrowRightIcon, PlusIcon, QrCodeIcon } from "lucide-react";
@@ -41,7 +42,7 @@ export function DevicesPage() {
             <Button
               size="xs"
               variant="ghost-muted"
-              onClick={() => notifyDevicesComingSoon("Pairing a client")}
+              render={<Link to="/settings/connections" hash="authorized-clients" />}
             >
               <QrCodeIcon aria-hidden />
               Pair a client

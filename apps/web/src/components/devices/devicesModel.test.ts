@@ -34,4 +34,13 @@ describe("deviceGateways", () => {
     expect(askFor("pixel:sms")).toBe(TOP_LEVEL);
     expect(askFor("work-laptop:screenshot")).toBe("section:work");
   });
+
+  it("keeps each phone in its own section", () => {
+    const work = agentAccess("section:work", gateways, placement);
+    const personal = agentAccess("section:personal", gateways, placement);
+    expect(names(work.usable)).toContain("work-phone:notifications");
+    expect(names(personal.usable)).not.toContain("work-phone:notifications");
+    expect(names(personal.usable)).toContain("pixel:notifications");
+    expect(names(personal.usable)).toContain("gaming-pc:time");
+  });
 });

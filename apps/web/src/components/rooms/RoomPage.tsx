@@ -1,15 +1,22 @@
 /**
  * A room where two people's assistants talk on their owners' behalf: the
- * exchange, then the outcome. Each side's sharing policy sits behind the
- * shield. The header shows Pipeline status, who it waits on, and access (a
- * room starts with just its two owners; widening asks the other owner).
- * Archive and restore live in the header menu.
+ * exchange, then the outcome. The header shows Pipeline status, who it waits
+ * on, and access (a room starts with just its two owners; widening asks the
+ * other owner). Thread details holds the room's Level, what each side may
+ * share, and archive/restore.
  */
-import { ArchiveIcon, ArchiveRestoreIcon, EllipsisIcon, ShieldIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ShieldIcon } from "lucide-react";
 import { useMemo } from "react";
 
 import { isElectron } from "../../env";
 import { cn } from "~/lib/utils";
+import { ChatCanvas } from "../chat/ChatCanvas";
+import { ThreadDetailsControl } from "../chat/ThreadDetailsControl";
+import { ThreadDetailsSection } from "../chat/ThreadDetailsSection";
+import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
+} from "../chat/threadDetailsPanelStyles";
 import { AssistantAvatar } from "../assistant/avatar";
 import { ContainerCrumbs } from "../multiplayer/ContainerCrumbs";
 import { roomAccessBase, useAccessItem } from "../multiplayer/itemAccess";
@@ -21,12 +28,9 @@ import { currentPerson, findPerson, peopleByIds } from "../multiplayer/teamThrea
 import { ThreadAccessBar } from "../multiplayer/ThreadAccessBar";
 import { useAccessControls } from "../multiplayer/useAccessControls";
 import { THREAD_STATUS_DISPLAY, type ThreadDisplayStatus } from "../threadStatusDisplay";
-import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { SidebarInset } from "../ui/sidebar";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -41,6 +45,7 @@ import {
   SURFACE_HEADER_CONTAINER,
   SurfaceHeaderActions,
 } from "../multiplayer/SurfaceHeaderActions";
+import { SurfaceDetailsCard, useSurfaceDetails } from "../multiplayer/SurfaceDetails";
 import { resolveRoom, useRoomArchiveStore } from "./rooms";
 
 /** Pipeline status for the header; waits show as the access bar's badge instead. */
@@ -117,6 +122,7 @@ function RoomView(props: { room: Room }) {
   const controls = useAccessControls(item);
   const waitingOn =
     room.status === "open" && room.waitingOnId ? findPerson(room.waitingOnId) : undefined;
+  const details = useSurfaceDetails(`room:${room.id}`);
 
   const setArchived = (next: boolean) => {
     useRoomArchiveStore.getState().setArchived(room.id, next);
@@ -153,47 +159,10 @@ function RoomView(props: { room: Room }) {
               activeIds={room.status === "open" && other ? [other.id] : []}
               pending={waitingOn ? [{ person: waitingOn }] : []}
             />
-            <Popover>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <PopoverTrigger
-                      render={
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label="What each side may share"
-                        />
-                      }
-                    />
-                  }
-                >
-                  <ShieldIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">What each side may share</TooltipPopup>
-              </Tooltip>
-              <PopoverPopup side="bottom" align="end" width="md" padding="compact">
-                <div className="flex flex-col gap-3">
-                  <PopoverTitle>What each side may share</PopoverTitle>
-                  <RoomPolicyStrip policies={room.policies} resolveAssistant={resolveAssistant} />
-                </div>
-              </PopoverPopup>
-            </Popover>
-            <Menu>
-              <MenuTrigger
-                render={<Button size="icon-xs" variant="ghost" aria-label="Room actions" />}
-              >
-                <EllipsisIcon />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                <MenuItem onClick={() => setArchived(!archived)}>
-                  {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-                  {archived ? "Restore room" : "Archive room"}
-                </MenuItem>
-              </MenuPopup>
-            </Menu>
-            {/* Rooms only talk; nothing runs here, so just the panel toggle. */}
+            {/* Rooms only talk; nothing runs here, so no terminal or Workspace. */}
             <SurfaceHeaderActions
+              level={room.containerKey}
+              details={details}
               rightPanel={{
                 unavailable: "Nothing runs in a room, so there's nothing to preview yet",
               }}
@@ -201,27 +170,62 @@ function RoomView(props: { room: Room }) {
           </div>
         </WorkspacePageHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-(--chat-max-width) flex-col gap-6 px-4 py-6">
-            {room.messages.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 pt-10 text-center">
-                {otherAssistant ? (
-                  <AssistantAvatar config={otherAssistant.config} size={48} />
-                ) : null}
-                <h1 className="text-base font-semibold">
-                  Ask {otherAssistant?.name ?? "their assistant"}
-                </h1>
-                <p className="max-w-sm text-sm text-muted-foreground text-pretty">
-                  {otherAssistant?.name ?? "Their assistant"} answers within{" "}
-                  {other ? `${firstName(other.name)}'s` : "their"} policy.
-                </p>
-              </div>
-            ) : (
-              <RoomMessageList messages={room.messages} resolveAssistant={resolveAssistant} />
-            )}
-            {room.outcome ? <OutcomeCard outcome={room.outcome} /> : null}
+        <ChatCanvas composerOverlayElement={null}>
+          <div className="chat-composer-lane min-h-0 flex-1 overflow-y-auto scrollbar-gutter-both">
+            <div className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-6 px-4 py-6">
+              {room.messages.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 pt-10 text-center">
+                  {otherAssistant ? (
+                    <AssistantAvatar config={otherAssistant.config} size={48} />
+                  ) : null}
+                  <h1 className="text-base font-semibold">
+                    Ask {otherAssistant?.name ?? "their assistant"}
+                  </h1>
+                  <p className="max-w-sm text-sm text-muted-foreground text-pretty">
+                    {otherAssistant?.name ?? "Their assistant"} answers within{" "}
+                    {other ? `${firstName(other.name)}'s` : "their"} policy.
+                  </p>
+                </div>
+              ) : (
+                <RoomMessageList messages={room.messages} resolveAssistant={resolveAssistant} />
+              )}
+              {room.outcome ? <OutcomeCard outcome={room.outcome} /> : null}
+            </div>
           </div>
-        </div>
+          <SurfaceDetailsCard details={details} level={room.containerKey}>
+            <ThreadDetailsSection headingId="room-details-room-heading" title="Room">
+              <div className="flex flex-col">
+                <Popover>
+                  <PopoverTrigger render={<ThreadDetailsControl />}>
+                    <ShieldIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                    <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                      What each side may share
+                    </span>
+                  </PopoverTrigger>
+                  <PopoverPopup side="left" align="start" width="md" padding="compact">
+                    <div className="flex flex-col gap-3">
+                      <PopoverTitle>What each side may share</PopoverTitle>
+                      <RoomPolicyStrip
+                        policies={room.policies}
+                        resolveAssistant={resolveAssistant}
+                      />
+                    </div>
+                  </PopoverPopup>
+                </Popover>
+                <ThreadDetailsControl onClick={() => setArchived(!archived)}>
+                  {archived ? (
+                    <ArchiveRestoreIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                  ) : (
+                    <ArchiveIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                  )}
+                  <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                    {archived ? "Restore room" : "Archive room"}
+                  </span>
+                </ThreadDetailsControl>
+              </div>
+            </ThreadDetailsSection>
+          </SurfaceDetailsCard>
+        </ChatCanvas>
 
         <div className="shrink-0 px-4 pb-4">
           <RoomComposer room={room} other={other} />

@@ -1,9 +1,10 @@
 /**
  * PLACEHOLDER DATA. The client apps on the Devices page; nothing here comes
  * from a client. Servers and account pins live in ./fleet.ts. Delete once
- * clients register for real. Your laptop and phone sit in Personal, the work
- * laptop in Work; moves live in `deviceLevelsStore.ts`. Keep the MacBook the
- * first laptop: chat notification rows name "your computer" by it.
+ * clients register for real. Your MacBook, Pixel and gaming PC sit in
+ * Personal, the work laptop and work phone in Work; moves live in
+ * `deviceLevelsStore.ts`. Keep the MacBook the first laptop and the Pixel the
+ * first phone: chat notification rows and new escalation rules use them.
  */
 import type { ClientDevice } from "./devicesModel";
 
@@ -80,8 +81,37 @@ export const CLIENT_DEVICES: readonly ClientDevice[] = [
     ],
   },
   {
+    id: "gaming-pc",
+    name: "Gaming PC",
+    kind: "desktop",
+    os: "Windows 12",
+    thisDevice: false,
+    activeNow: false,
+    lastSeen: "Yesterday",
+    notify: "none",
+    level: "section:personal",
+    capabilities: [
+      { id: "downloads", group: "files", label: "Downloads", detail: "Read", enabled: false },
+      {
+        id: "screenshot",
+        group: "device",
+        label: "Screenshot",
+        detail: "On request",
+        enabled: false,
+      },
+      {
+        id: "notifications",
+        group: "device",
+        label: "Notifications",
+        detail: "Send",
+        enabled: false,
+      },
+      { id: "time", group: "signals", label: "Time", detail: "Local time zone", enabled: true },
+    ],
+  },
+  {
     id: "work-laptop",
-    name: "Northwind ThinkPad",
+    name: "Work ThinkPad",
     kind: "laptop",
     os: "Windows 12",
     thisDevice: false,
@@ -106,6 +136,30 @@ export const CLIENT_DEVICES: readonly ClientDevice[] = [
         enabled: true,
       },
       { id: "wifi", group: "signals", label: "Wi-Fi", detail: "Network name", enabled: true },
+      { id: "time", group: "signals", label: "Time", detail: "Local time zone", enabled: true },
+    ],
+  },
+  {
+    id: "work-phone",
+    name: "Work iPhone",
+    kind: "phone",
+    os: "iOS 27",
+    thisDevice: false,
+    activeNow: false,
+    lastSeen: "12m ago",
+    notify: "urgent",
+    level: "section:work",
+    capabilities: [
+      { id: "screenshot", group: "device", label: "Screenshot", detail: "Ask", enabled: false },
+      {
+        id: "notifications",
+        group: "device",
+        label: "Notifications",
+        detail: "Send",
+        enabled: true,
+      },
+      { id: "wifi", group: "signals", label: "Wi-Fi", detail: "Network name", enabled: true },
+      { id: "location", group: "signals", label: "Location", detail: "Geofences", enabled: false },
       { id: "time", group: "signals", label: "Time", detail: "Local time zone", enabled: true },
     ],
   },

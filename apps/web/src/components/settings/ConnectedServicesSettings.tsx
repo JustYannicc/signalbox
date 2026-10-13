@@ -1,28 +1,24 @@
 /**
- * Settings → Integrations → Connected services: the Executor connection that
- * automations reach the user's accounts through with `w.call`. One environment
- * at a time, the one the settings header selects.
+ * Settings → Integrations → Executor: the Executor connection that automations
+ * reach the user's accounts through with `w.call`. One environment at a time,
+ * the one the settings header selects. The accounts themselves sit at Home
+ * levels in Plugins › Connections, so this page doesn't list them.
  *
  * @module ConnectedServicesSettings
  */
 import type { AutomationConnectionStatus, EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  groupConnectedServices,
-  type ConnectedServiceGroup,
-} from "@t3tools/client-runtime/automations/connectedServices";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { ExternalLinkIcon, PlugIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ArrowRightIcon, ExternalLinkIcon, PlugIcon } from "lucide-react";
 import { useState } from "react";
 
-import { faviconUrlForOrigin } from "~/lib/favicon";
 import { automationState } from "~/state/automations";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { GitHubIcon } from "../Icons";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -60,8 +56,8 @@ export function ConnectedServicesSettings() {
         />
       ) : (
         <SettingsRow
-          title="Executor"
-          description="Connect to an environment to see the services its automations can use."
+          title="Connection"
+          description="Connect to an environment to set up its Executor."
         />
       )}
     </SettingsSection>
@@ -93,7 +89,7 @@ function ExecutorConnection(props: {
   if (status === null) {
     return (
       <SettingsRow
-        title="Executor"
+        title="Connection"
         description={description}
         status={
           loadError ? (
@@ -110,12 +106,11 @@ function ExecutorConnection(props: {
 
   const envManaged = status.source === "environment";
   const showForm = !status.configured || editing;
-  const groups = groupConnectedServices(status.services);
 
   return (
     <>
       <SettingsRow
-        title="Executor"
+        title="Connection"
         description={description}
         status={<ConnectionStatusLine status={status} />}
         control={
@@ -175,14 +170,20 @@ function ExecutorConnection(props: {
         />
       ) : null}
       {status.configured && !status.error ? (
-        groups.length > 0 ? (
-          groups.map((group) => <ServiceRow key={group.integration} group={group} />)
-        ) : (
-          <SettingsRow
-            title="Nothing connected yet"
-            description="Connect Gmail, GitHub, Linear and more in Executor. They show up here, ready for w.call."
-          />
-        )
+        <SettingsRow
+          title="Accounts"
+          description="Each account sits at a Home level, and only the agents there and above use it."
+          control={
+            <Button
+              size="sm"
+              variant="outline"
+              render={<Link to="/plugins" search={{ section: "connections" }} />}
+            >
+              Open in Plugins
+              <ArrowRightIcon aria-hidden />
+            </Button>
+          }
+        />
       ) : null}
     </>
   );
@@ -299,52 +300,5 @@ function ConnectForm(props: {
         </div>
       </fieldset>
     </form>
-  );
-}
-
-function ServiceRow({ group }: { readonly group: ConnectedServiceGroup }) {
-  return (
-    <SettingsRow
-      title={
-        <span className="inline-flex items-center gap-2">
-          <ServiceFavicon domain={group.domain} />
-          {group.label}
-        </span>
-      }
-      description={
-        <>
-          <code className="font-mono">{group.integration}</code>
-          {group.accounts.length > 1
-            ? ` · pass { connection: "${group.accounts[0]}" } to pick an account`
-            : null}
-        </>
-      }
-      control={
-        <span className="truncate text-xs text-muted-foreground">{group.accounts.join(", ")}</span>
-      }
-    />
-  );
-}
-
-/** Domains whose favicon already failed this session go straight to the fallback. */
-const failedDomains = new Set<string>();
-
-function ServiceFavicon({ domain }: { readonly domain: string }) {
-  const [failed, setFailed] = useState(() => failedDomains.has(domain));
-  const url = faviconUrlForOrigin(`https://${domain}`, 64);
-  if (domain === "github.com") return <GitHubIcon aria-hidden className="size-4" />;
-  if (!url || failed) return <PlugIcon aria-hidden className="size-4 text-muted-foreground" />;
-  return (
-    <img
-      src={url}
-      alt=""
-      loading="lazy"
-      draggable={false}
-      className="size-4 rounded-sm"
-      onError={() => {
-        failedDomains.add(domain);
-        setFailed(true);
-      }}
-    />
   );
 }

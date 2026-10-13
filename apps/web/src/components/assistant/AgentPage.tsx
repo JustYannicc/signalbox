@@ -39,6 +39,7 @@ import {
   SURFACE_HEADER_CONTAINER,
   SurfaceHeaderActions,
 } from "../multiplayer/SurfaceHeaderActions";
+import { SurfaceDetailsCard, useSurfaceDetails } from "../multiplayer/SurfaceDetails";
 
 export function AgentPage(props: {
   agentId: string;
@@ -50,6 +51,7 @@ export function AgentPage(props: {
   const navigate = useNavigate({ from: "/agent/$agentId" });
   const { name: assistantName } = useAssistantIdentity();
   const [traceOpen, setTraceOpen] = useState(false);
+  const details = useSurfaceDetails(`agent:${props.agentId}`);
   const mappedThings = useMappedLeveledThings();
   const levelOptions = useLevelOptions();
   const projects = useHomeProjectRefs();
@@ -116,12 +118,15 @@ export function AgentPage(props: {
               onSelect={selectChat}
             />
             <SurfaceHeaderActions
-              projectControls
+              level={level?.key ?? null}
+              details={details}
+              terminal
               // Trace is this chat's side panel, so the panel toggle opens it.
               rightPanel={{ open: traceOpen, onOpenChange: setTraceOpen, label: "Trace" }}
             />
           </div>
         </WorkspacePageHeader>
+        <SurfaceDetailsCard details={details} level={level?.key ?? null} workspace />
 
         <ChatWithTrace
           key={chat.id}

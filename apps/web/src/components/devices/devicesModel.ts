@@ -72,13 +72,13 @@ export function isDeviceNotifyLevel(value: unknown): value is DeviceNotifyLevel 
 export interface ClientDevice {
   readonly id: string;
   readonly name: string;
-  readonly kind: "laptop" | "phone";
+  readonly kind: "laptop" | "desktop" | "phone";
   readonly os: string;
   readonly thisDevice: boolean;
   readonly activeNow: boolean;
   readonly lastSeen: string;
   readonly notify: DeviceNotifyLevel;
-  /** Home level: your laptop and phone in Personal, a work computer in Work. */
+  /** Home level: your own laptop, phone and PC in Personal, work ones in Work. */
   readonly level: LevelKey;
   /** Whether folders inside its level may use its gateways too. Absent means `here`. */
   readonly reach?: Reach;

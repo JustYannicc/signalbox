@@ -2,14 +2,17 @@
  * A multiplayer chat or task: a team-project thread, a loose Home item, a
  * private fork, or a new draft (every draft has its own `draft-…` id). The
  * header carries the Chat/Task toggle, container crumbs that open your agents,
- * the access bar and the reply mode. The conversation renders in the real chat
- * timeline (`SharedTimeline`). Kind and visibility are independent; visibility
+ * the people + share control and the panel toggles; Workspace, Level, reply
+ * mode and lineage live in Thread details (`SurfaceDetails`). The
+ * conversation renders in the real chat timeline (`SharedTimeline`). Kind and visibility are independent; visibility
  * starts from the container's default. Private items show their whole history.
  */
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { isElectron } from "../../env";
+import { ChatCanvas } from "../chat/ChatCanvas";
+import { ThreadDetailsSection } from "../chat/ThreadDetailsSection";
 import { ThreadKindIcon } from "../sidebar/sections/ThreadKindIcon";
 import { useThreadKind } from "../sidebar/sections/threadKind";
 import { SidebarInset } from "../ui/sidebar";
@@ -39,7 +42,9 @@ import {
   type TeamMessage,
 } from "./multiplayerModel";
 import { useReplyMode, waitingForReplies } from "./replyMode";
-import { ReplyModeMenu } from "./ReplyModeMenu";
+import { ReplyModeSection } from "./ReplyModeMenu";
+import { useForkStore } from "./forks";
+import { SurfaceDetailsCard, useSurfaceDetails } from "./SurfaceDetails";
 import { ProfileContainerContext } from "./PersonProfile";
 import { containerInfo, hasAccess, peopleWithAccess, sharingTeamId } from "./sharing";
 import { SharedTimeline } from "./SharedTimeline";
@@ -52,6 +57,7 @@ import {
   findPerson,
   findTeam,
   findTeamProject,
+  findTeamThread,
   messagesForThread,
   resolveSharedThread,
   type ResolvedSharedThread,
@@ -80,6 +86,27 @@ function jumpToMessage(threadId: string, messageId: string) {
   document
     .querySelector(`[data-message-id="${CSS.escape(`${threadId}:${messageId}`)}"]`)
     ?.scrollIntoView({ block: "start" });
+}
+
+/** A private fork's lineage: the item it copies. */
+function ForkLineageSection(props: { sourceId: string }) {
+  const sourceFork = useForkStore((state) => state.forks[props.sourceId]);
+  const sourceTitle = findTeamThread(props.sourceId)?.title ?? sourceFork?.title ?? "the original";
+  return (
+    <ThreadDetailsSection headingId="surface-details-lineage-heading" title="Lineage">
+      <p className="truncate px-1.5 text-xs text-muted-foreground">
+        Private copy of{" "}
+        <Link
+          to="/shared/$threadId"
+          params={{ threadId: props.sourceId }}
+          search={{}}
+          className="text-foreground underline-offset-2 hover:underline"
+        >
+          {sourceTitle}
+        </Link>
+      </p>
+    </ThreadDetailsSection>
+  );
 }
 
 function SharedThreadView(props: { resolved: ResolvedSharedThread; initialPrompt: string }) {
@@ -142,6 +169,8 @@ function SharedThreadView(props: { resolved: ResolvedSharedThread; initialPrompt
     shownKind.current = kind.kind;
     logTeamEvent(thread.id, "kind", `${firstName(currentPerson.name)} made this a ${kind.kind}`);
   }, [kind.kind, thread.id]);
+  const details = useSurfaceDetails(`shared:${thread.id}`);
+  const fork = useForkStore((state) => state.forks[thread.id]);
   const typing = !isPrivate && thread.typingId ? (findPerson(thread.typingId) ?? null) : null;
   const activeIds = [...(thread.presentIds ?? []), ...(typing ? [typing.id] : [])].filter((id) =>
     hasAccess(item, id),
@@ -176,34 +205,44 @@ function SharedThreadView(props: { resolved: ResolvedSharedThread; initialPrompt
               pending={unansweredMentions(messages)}
               onJumpToMessage={(messageId) => jumpToMessage(thread.id, messageId)}
             />
-            <ReplyModeMenu threadId={thread.id} mode={replyMode} />
-            <SurfaceHeaderActions projectControls rightPanel="project" />
+            <SurfaceHeaderActions
+              details={details}
+              level={containerKeyOf(containerId)}
+              terminal
+              rightPanel="project"
+            />
           </div>
         </WorkspacePageHeader>
 
-        {messages.length === 0 ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center gap-2 px-4 pt-16 text-center">
-            <h1 className="text-base font-semibold">
-              New {kind.kind} in {container.name}
-            </h1>
-            <p className="max-w-sm text-sm text-muted-foreground text-pretty">
-              {isPrivate ? "Only you and people you add see it." : `${teamName} can read along.`}
-            </p>
-          </div>
-        ) : (
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            <SharedTimeline threadKey={thread.id} timeline={timeline} />
-            {waitingFor.length > 0 && !timeline.activeTurn ? (
-              <AgentWaitingRow
-                harness={harness}
-                waitingFor={waitingFor}
-                onReplyNow={replyNow}
-                onStopWaiting={wait.waitingFor.length > 0 ? wait.stopWaiting : undefined}
-              />
-            ) : null}
-            {typing ? <TypingRow person={typing} /> : null}
-          </div>
-        )}
+        <ChatCanvas composerOverlayElement={null}>
+          {messages.length === 0 ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center gap-2 px-4 pt-16 text-center">
+              <h1 className="text-base font-semibold">
+                New {kind.kind} in {container.name}
+              </h1>
+              <p className="max-w-sm text-sm text-muted-foreground text-pretty">
+                {isPrivate ? "Only you and people you add see it." : `${teamName} can read along.`}
+              </p>
+            </div>
+          ) : (
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              <SharedTimeline threadKey={thread.id} timeline={timeline} />
+              {waitingFor.length > 0 && !timeline.activeTurn ? (
+                <AgentWaitingRow
+                  harness={harness}
+                  waitingFor={waitingFor}
+                  onReplyNow={replyNow}
+                  onStopWaiting={wait.waitingFor.length > 0 ? wait.stopWaiting : undefined}
+                />
+              ) : null}
+              {typing ? <TypingRow person={typing} /> : null}
+            </div>
+          )}
+          <SurfaceDetailsCard details={details} level={containerKeyOf(containerId)} workspace>
+            <ReplyModeSection threadId={thread.id} mode={replyMode} />
+            {fork ? <ForkLineageSection sourceId={fork.sourceId} /> : null}
+          </SurfaceDetailsCard>
+        </ChatCanvas>
 
         <div className="shrink-0 px-4 pb-4">
           <TeamComposer
