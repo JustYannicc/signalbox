@@ -370,9 +370,10 @@ that WorkOS environment's Pipes:
 - **Provider:** GitHub (slug `github`), user-owned, enabled.
 - **Scopes:** `repo`, `workflow`, `read:org`, `read:user`, `user:email`.
 - **Credentials:** a GitHub OAuth App whose callback URL is the redirect URI
-  WorkOS shows for the integration, with expiring user tokens on (Pipes
-  refreshes them). The hosted service's App is "Signalbox" under
-  `JustYannicc`.
+  WorkOS shows for the integration, with token expiration opted out (Optional
+  features). Signalbox hands the token to the user's Executor once, and
+  Executor can't swap a credential in place, so an 8-hour token would break
+  there. The hosted service's App is "Signalbox" under `JustYannicc`.
 
 Production, previews and local development share it, because the callback is
 WorkOS's, not the cloud's. Organizations that restrict OAuth Apps have to
