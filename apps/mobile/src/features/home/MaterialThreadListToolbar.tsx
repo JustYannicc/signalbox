@@ -6,6 +6,8 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
+import { useNavigation, useNavigationState } from "@react-navigation/native";
+import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import {
   BackHandler,
   Keyboard,
@@ -43,6 +45,12 @@ export function MaterialThreadListToolbar(props: {
   readonly onRequestVisibility?: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  const workspace = useWorkspaceTabs();
+  const isTabActive = workspace?.isTabActive;
+  const homeFocused = useNavigationState((state) => state.routes[state.index]?.name === "Home");
+  const listFocused =
+    homeFocused && (workspace === null || workspace.state.selectedTab === "threads");
   const { fabSize } = useAndroidControlSizing();
   const { height: toolbarHeight, ...headerPadding } = useMaterialToolbarLayout();
   const { state } = useWorkspaceState();
@@ -65,13 +73,22 @@ export function MaterialThreadListToolbar(props: {
   }, [onSearchQueryChange]);
 
   useEffect(() => {
-    if (!searching) return;
+    if (!searching || !listFocused) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      closeSearch();
+      // Frozen Home screens can keep effects alive after a detail route opens.
+      const state = navigation.getState();
+      if (
+        !state ||
+        state.routes[state.index]?.name !== "Home" ||
+        isTabActive?.("threads") === false
+      )
+        return false;
+      if (Keyboard.isVisible()) Keyboard.dismiss();
+      else closeSearch();
       return true;
     });
     return () => subscription.remove();
-  }, [closeSearch, searching]);
+  }, [closeSearch, searching, listFocused, navigation, isTabActive]);
 
   const filterIcon = props.filterCustomized
     ? "line.3.horizontal.decrease.circle.fill"

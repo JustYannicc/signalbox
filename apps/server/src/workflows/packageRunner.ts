@@ -38,7 +38,10 @@ export const findPackageRunner = (candidates: ReadonlyArray<PackageRunnerCandida
         Effect.provideService(CommandResolutionCache, new Map()),
         Effect.option,
       );
-      if (Option.isSome(found)) return Option.some({ command: found.value, args: candidate.args });
+      // An unresolved command comes back as null.
+      if (Option.isSome(found) && found.value !== null) {
+        return Option.some({ command: found.value, args: candidate.args });
+      }
     }
     return Option.none<{ readonly command: string; readonly args: ReadonlyArray<string> }>();
   });

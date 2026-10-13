@@ -115,6 +115,12 @@ describe("rebrandScript", () => {
     expect(rebrandScript("apps/server/src/mcp/McpHttpServer.ts", code)).toBe(
       'const p = { clientInfo: { name: "Signalbox", title: "Signalbox" }, message: "Signalbox" };',
     );
+
+    // The contract can live in a named constant that clientInfo reads.
+    const constant = 'const CODEX_CLIENT_NAME = "T3 Code";\nconst OTHER = "T3 Code";';
+    expect(rebrandScript("apps/server/src/provider/CodexProvider.ts", constant)).toBe(
+      'const CODEX_CLIENT_NAME = "T3 Code";\nconst OTHER = "Signalbox";',
+    );
   });
 
   it("leaves test titles alone but keeps expectations in step with the source", () => {

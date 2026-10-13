@@ -3,6 +3,7 @@ import {
   type ProjectCloneStartResult,
   type SourceControlDiscoveryResult,
   type SourceControlRepositoryInfo,
+  SourceControlProviderKind,
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
@@ -34,11 +35,13 @@ import { GitHubConnection } from "./GitHubConnection.ts";
  * on it. It lands in Personal for now; picking a context is still to come.
  */
 
+const GITHUB = SourceControlProviderKind.make("github");
+
 const repositoryError = (operation: string, detail: string) =>
-  new SourceControlRepositoryError({ provider: "github", operation, detail });
+  new SourceControlRepositoryError({ provider: GITHUB, operation, detail });
 
 const toInfo = (repository: GitHubRepository): SourceControlRepositoryInfo => ({
-  provider: "github",
+  provider: GITHUB,
   nameWithOwner: repository.full_name,
   url: repository.clone_url,
   sshUrl: repository.ssh_url,
@@ -63,7 +66,7 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
       versionControlSystems: [],
       sourceControlProviders: [
         {
-          kind: "github",
+          kind: GITHUB,
           label: "GitHub",
           status: github.app === null ? "missing" : "available",
           version: Option.none(),
