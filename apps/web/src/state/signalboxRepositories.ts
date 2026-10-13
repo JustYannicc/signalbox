@@ -5,7 +5,7 @@ import type { EnvironmentId, SourceControlProviderKind } from "@t3tools/contract
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentQuery } from "./query";
 
-export const signalboxRepositories = createSignalboxRepositoriesAtoms(connectionAtomRuntime);
+const signalboxRepositories = createSignalboxRepositoriesAtoms(connectionAtomRuntime);
 
 /** The connected account's repositories on `provider`; null while loading or where the server can't list. */
 export function useRepositoriesToPick(
