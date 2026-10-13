@@ -94,7 +94,8 @@ export const AUTOMATION_HOMES: Readonly<Record<string, HomeTarget>> = {
   "work-out-of-sight": "section:personal",
   "water-plants": "section:personal",
   "reconcile-card-bill": "section:work",
-  "monthly-expenses": "section:work",
+  // Northwind's expenses: its agent asks up to Appa for the receipts in your mail.
+  "monthly-expenses": "section:work-northwind",
   "notion-digest": "section:work",
   "customer-replies": "section:work-northwind",
 };

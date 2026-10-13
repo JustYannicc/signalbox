@@ -9,8 +9,10 @@ import {
   type AutomationEntry,
 } from "@t3tools/client-runtime/automations/list";
 import { ChevronRightIcon } from "lucide-react";
-import { memo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 
+import { useProjects } from "../../state/entities";
+import { useRealThingInSight } from "../levels/threadLevel";
 import { AskAnswer } from "./AskAnswer";
 import { StatusIcon } from "./RunStatus";
 import { useAllAutomations } from "./useAutomations";
@@ -72,10 +74,27 @@ export function WaitingAutomationList(props: { entries: ReadonlyArray<Automation
   );
 }
 
-/** Pipeline's top group. Renders nothing until an automation waits on the user. */
+/**
+ * Pipeline's top group. Renders nothing until an automation waits on the user.
+ * An automation sits at its project's level, so Focus hides the ones in levels
+ * out of sight unless an escalation rule lets "needs input" through.
+ */
 export function AutomationsWaitingGroup() {
   const { entries } = useAllAutomations();
-  const waiting = entries.filter((entry) => waitsOnYou(entry.automation));
+  const projects = useProjects();
+  const { automation: inSight } = useRealThingInSight();
+  const projectByKey = useMemo(
+    () => new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project])),
+    [projects],
+  );
+  const waiting = entries.filter(
+    (entry) =>
+      waitsOnYou(entry.automation) &&
+      inSight(
+        projectByKey.get(`${entry.environmentId}:${entry.automation.projectId}`) ?? null,
+        true,
+      ),
+  );
   if (waiting.length === 0) return null;
   return (
     <section

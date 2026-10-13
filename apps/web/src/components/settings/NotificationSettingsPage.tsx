@@ -1,7 +1,8 @@
 /**
  * Fork: Settings > Notifications, the defaults for when supervisor agents may
  * ping you, which devices pings land on, the rules agents' bells set per
- * folder, and what breaks through Focus. Prototype state, so it skips the
+ * folder, what breaks through Focus, and where recent pings landed through
+ * all of that. Prototype state, so it skips the
  * settings scope sentence that `SettingsPageContainer` shows.
  */
 import {
@@ -13,6 +14,7 @@ import { useNotifyDefaults } from "../assistant/notificationPolicy";
 import { EscalationRulesSection } from "../levels/EscalationRulesSection";
 import { LevelOptionsProvider } from "../levels/LevelOptionsProvider";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
+import { RecentPingsSection } from "./RecentPingsSection";
 
 export function NotificationSettingsPage() {
   const [defaults, setDefaults] = useNotifyDefaults();
@@ -24,6 +26,7 @@ export function NotificationSettingsPage() {
           <NotificationDefaultsForm value={defaults} onChange={setDefaults} assistantName={name} />
           <NotificationOverridesSection />
           <EscalationRulesSection />
+          <RecentPingsSection />
         </WorkspacePageContainer>
       </LevelOptionsProvider>
     </div>

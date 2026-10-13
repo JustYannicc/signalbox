@@ -29,7 +29,6 @@ const PERSONAL: readonly LevelKey[] = ["section:personal"];
 const BOTH: readonly LevelKey[] = ["section:work-northwind", "section:personal"];
 /** The assistant's own: only the top-level agent uses these directly. */
 const TOP: readonly LevelKey[] = ["root"];
-const TERMINAL_APP: readonly LevelKey[] = ["team-project:terminal-app"];
 
 const account = (
   id: string,
@@ -207,8 +206,10 @@ export const INTEGRATIONS: readonly Integration[] = [
     via: "executor",
     auth: "connected",
     accounts: [
+      // Reaches below: merchant-portal's and terminal-app's agents read the team channels too.
       account("slack-northwind", "Northwind workspace", "northwind-pay.slack.com", NORTHWIND, {
         addedBy: "admins",
+        reach: "below",
       }),
     ],
     toolCount: 21,
@@ -613,12 +614,14 @@ export const SKILLS: readonly Skill[] = [
     source: "skills.sh",
     origin: "northwind/agent-skills",
     harnesses: ["codex", "claudeAgent"],
-    levels: TERMINAL_APP,
+    // Sits at the team and reaches below, so terminal-app and merchant-portal both get it.
+    levels: NORTHWIND,
+    reach: "below",
   },
   {
     id: "northwind-expenses",
     name: "northwind-expenses",
-    description: "File monthly expenses with the company Expense agent.",
+    description: "File monthly expenses in the company expense tool.",
     source: "team",
     origin: "Flynn",
     harnesses: ["codex", "claudeAgent"],

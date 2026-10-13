@@ -11,7 +11,7 @@ import { ChevronDownIcon } from "lucide-react";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import type { LevelKey } from "./levels";
+import { TOP_LEVEL, type LevelKey } from "./levels";
 import { useLevelContents, type LevelEntry } from "./useLevelContents";
 
 const VISIBLE_ROWS = 4;
@@ -127,9 +127,16 @@ export function LevelCoordinates(props: {
       <PopoverPopup align="start" width="md">
         <div className="flex flex-col gap-3 text-sm">
           <p className="text-muted-foreground text-pretty">
-            {props.agentName} coordinates the work in{" "}
-            <span className="text-foreground">{props.levelLabel}</span>: it spins up tasks, keeps
-            them moving and runs the automations here. The work itself happens in each thread.
+            {props.agentName} coordinates the work{" "}
+            {level === TOP_LEVEL ? (
+              "at the top level"
+            ) : (
+              <>
+                in <span className="text-foreground">{props.levelLabel}</span>
+              </>
+            )}
+            : it spins up tasks, keeps them moving and runs the automations here. The work itself
+            happens in each thread; folders inside have agents of their own.
           </p>
           {counts.length === 0 ? (
             <p className="text-muted-foreground">Nothing lives here yet.</p>

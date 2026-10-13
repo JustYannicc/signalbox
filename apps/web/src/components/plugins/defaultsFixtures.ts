@@ -62,7 +62,8 @@ export const DEFAULTS_PRESETS: readonly DefaultsPreset[] = [
       own("github", "GitHub", "Gh", "Each member connects their own"),
       skill("customer-email-triage", "Published by you in Northwind"),
       skill("northwind-expenses", "Published by Flynn in Northwind"),
-      skill("diagnosing-bugs", "Shared from Personal"),
+      skill("diagnosing-bugs", "Also in Personal"),
+      skill("northwind-terminal", "Reaches every project inside"),
       {
         id: "plugin:code-review",
         kind: "plugins",
@@ -91,23 +92,24 @@ export const DEFAULTS_PRESETS: readonly DefaultsPreset[] = [
         detail: "Team rules for its agent and threads",
       },
       {
-        id: "model:claude-team",
+        id: "model:northwind-claude",
         kind: "models",
-        name: "Claude Team",
-        detail: "Pooled seats via CLIProxyAPI",
+        name: "Northwind Claude pool",
+        detail: "Reaches every project inside; the nearest pool wins",
         harness: "claudeAgent",
       },
       {
-        id: "model:chatgpt-business",
+        id: "model:northwind-codex",
         kind: "models",
-        name: "ChatGPT Business",
-        detail: "Pooled seats via CLIProxyAPI",
+        name: "Northwind Codex pool",
+        detail: "Reaches every project inside; the nearest pool wins",
         harness: "codex",
       },
     ],
   }),
   preset("team-project:merchant-portal", "merchant-portal", {
-    removes: ["plugin:figma"],
+    // Its own Codex pool is nearer than Northwind's, so it replaces it here.
+    removes: ["plugin:figma", "model:northwind-codex"],
     items: [
       shared(
         "vercel-northwind",
@@ -129,12 +131,18 @@ export const DEFAULTS_PRESETS: readonly DefaultsPreset[] = [
         name: "merchant-portal AGENTS.md",
         detail: "Project rules on top of the team's",
       },
+      {
+        id: "model:merchant-portal-codex",
+        kind: "models",
+        name: "merchant-portal Codex",
+        detail: "The project's own pool, nearer than Northwind's",
+        harness: "codex",
+      },
     ],
   }),
   preset("team-project:terminal-app", "terminal-app", {
     removes: ["skill:customer-email-triage", "plugin:figma"],
     items: [
-      skill("northwind-terminal", "Neptune APIs and PAX rules"),
       own("play-console", "Google Play Console", "Pl", "Each member connects their own"),
       {
         id: "instructions:thread-terminal",

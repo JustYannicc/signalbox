@@ -39,7 +39,6 @@ import {
   NOTIFY_POLICY_LABEL,
   notifyDeliveryHint,
   notifyPolicyHint,
-  useNotifyDefaults,
   useNotifyPolicy,
 } from "./notificationPolicy";
 
@@ -74,7 +73,6 @@ function PolicyMenu(props: { agentName: string; level: string }) {
   const navigate = useNavigate();
   const options = useLevelOptionsContext();
   const levelLabel = useLevelLabel();
-  const [defaults] = useNotifyDefaults();
   const [policy, setPolicy, isOverridden, inherited] = useNotifyPolicy(props.level, options);
   const Icon = POLICY_ICON[policy];
   const devices = useClientDevices();
@@ -83,7 +81,7 @@ function PolicyMenu(props: { agentName: string; level: string }) {
   const routed = useMemo(() => devicesFor(props.level, devices, TOP_LEVEL), [devices, props.level]);
   const escalations = useMemo(() => rulesAt(props.level, rules), [props.level, rules]);
   const deviceName = (id: string) => devices.find((device) => device.id === id)?.name ?? id;
-  const delivery = notifyDeliveryHint(policy, defaults.phone, routed);
+  const delivery = notifyDeliveryHint(policy, routed);
   const inheritLabel = inherited.from
     ? `Same as ${levelLabel(inherited.from)} (${NOTIFY_POLICY_LABEL[inherited.policy]})`
     : `Default (${NOTIFY_POLICY_LABEL[inherited.policy]})`;

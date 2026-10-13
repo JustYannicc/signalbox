@@ -31,11 +31,13 @@ export const SETUP_PROMPT = `Set up ${PRODUCT_NAME} for me. Run each command you
    npx ${CLI_PACKAGE} accounts connect codex claude grok
    npx ${CLI_PACKAGE} executor connect
 
-6. Pair my phone. Show me the QR code this prints:
-   npx ${CLI_PACKAGE} devices pair
+6. Pair my phone into Personal, so it gets Personal's pings and yours. Show me the QR code this prints:
+   npx ${CLI_PACKAGE} devices pair --at Personal
 
-7. Set up Focus. Ask my working hours, then:
-   npx ${CLI_PACKAGE} focus set work --hours "Mon-Fri 08:00-18:00"
+7. Set up Focus. Ask my working hours, then keep Work out of sight after them:
+   npx ${CLI_PACKAGE} focus rule "Mon-Fri 18:00" --focus Personal
+   Ask what from Work should still reach my phone while it's hidden, e.g.:
+   npx ${CLI_PACKAGE} escalation add Work --approvals --failures --to phone
 
 8. Verify with a test workflow and read the diagnosis:
    npx ${CLI_PACKAGE} workflows create --template hello-world
@@ -61,8 +63,12 @@ export const SETUP_STEPS: ReadonlyArray<SetupStep> = [
     label: "Connect accounts and tools",
     detail: "Codex, Claude, and Grok through CLIProxyAPI; tools through Executor.",
   },
-  { id: "phone", label: "Pair your phone", detail: "You scan a QR code." },
-  { id: "focus", label: "Set up Focus", detail: "Work stays out of sight after hours." },
+  { id: "phone", label: "Pair your phone", detail: "You scan a QR code; it sits in Personal." },
+  {
+    id: "focus",
+    label: "Set up Focus",
+    detail: "Work stays out of sight after hours; what you pick still reaches your phone.",
+  },
   { id: "verify", label: "Run a test workflow", detail: "Proves everything is wired up." },
 ];
 

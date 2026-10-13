@@ -1,12 +1,12 @@
 /**
- * The Home view's list: the Focus chip, "Chats" (everything unfiled, newest
- * first, capped with "Show N more", like Codex's chat list), then
- * sections › projects › automations, accounts, places, tasks, chats, and rooms, a quiet
- * "New section", and everything archived (from Home or the Pipeline). What sits
- * at the top level itself (built-in automations, global guards, skills,
- * connections) is the first strip. Rows navigate, archive,
- * move, and flip Chat/Task; the rest of thread management (Later, reorder,
- * pin) stays in the Pipeline.
+ * The Home view's list: the Focus chip and whatever breaks through it, then
+ * "Chats" (everything unfiled, newest first, capped with "Show N more", like
+ * Codex's chat list), then sections › projects › automations, accounts,
+ * places, tasks, chats, and rooms, a quiet "New section", and everything
+ * archived (from Home or the Pipeline). What sits at the top level itself
+ * (built-in automations, global guards, skills) is the first strip. Rows
+ * navigate, archive, move, and flip Chat/Task; the rest of thread management
+ * (Later, reorder, pin) stays in the Pipeline.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ScopedProjectRef } from "@t3tools/contracts";
@@ -14,6 +14,7 @@ import { FolderPlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { FocusBreakthrough } from "./focus/FocusBreakthrough";
 import { FocusPausedChip } from "./focus/FocusPausedChip";
 import { HomeDrafts } from "./HomeDrafts";
 import { useFocusStore } from "./focus/focusStore";
@@ -79,8 +80,9 @@ export function HomeSidebarTree(props: {
               onTogglePeek={togglePeek}
             />
           ) : null}
+          <FocusBreakthrough groups={tree.breakthrough} rowContext={props.rowContext} />
           <HomeDrafts label={<HomeSectionLabel>Drafts</HomeSectionLabel>} />
-          {/* What sits at the top level itself (Appa's): rules for everything below, skills, connections. */}
+          {/* What sits at the top level itself (Appa's): rules for everything below, and skills. */}
           {tree.rootContents.mapped.length > 0 ? (
             <ul aria-label="Top level" className="flex flex-col gap-px pt-2">
               <MappedStrip items={tree.rootContents.mapped} containerKey={ROOT_CONTAINER_KEY} />

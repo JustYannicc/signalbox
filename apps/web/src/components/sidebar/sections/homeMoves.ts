@@ -1,7 +1,9 @@
 /**
  * Moving things around Home, by drag or by "Move to…": items go to any
  * container, projects to any section, sections under any other section (never
- * into themselves) or to the top level. Local only; a toast confirms.
+ * into themselves) or to the top level. A move changes the thing's level, so
+ * access follows it (`levels.ts` reads the same placement). Local only; a
+ * toast confirms.
  */
 import {
   createContext,
@@ -35,11 +37,14 @@ export function startHomeDrag(event: ReactDragEvent, movable: HomeMovable) {
   event.dataTransfer.effectAllowed = "move";
 }
 
-/** Which kinds a container accepts: sections take everything, projects take items. */
+/**
+ * Which kinds a container accepts, by level: sections take everything, the
+ * top level takes items and sections (a project always sits in a section),
+ * projects take items.
+ */
 export function acceptedKinds(containerKey: string): readonly HomeMovable["kind"][] {
-  if (containerKey === ROOT_CONTAINER_KEY || containerKey.startsWith("section:")) {
-    return ["item", "project", "section"];
-  }
+  if (containerKey.startsWith("section:")) return ["item", "project", "section"];
+  if (containerKey === ROOT_CONTAINER_KEY) return ["item", "section"];
   return ["item"];
 }
 

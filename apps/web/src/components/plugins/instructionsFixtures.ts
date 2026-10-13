@@ -1,8 +1,8 @@
 /**
  * PLACEHOLDER DATA: the AGENTS.md at each level. The top level's rules reach
  * every level; Work keeps its file to itself; Northwind's "Voice" overrides
- * the top level's for everything inside the team. Edits live in
- * `instructionsStore`.
+ * the top level's for everything inside the team, and terminal-app's
+ * "Terminal work" overrides Northwind's there. Edits live in `instructionsStore`.
  */
 import { TOP_LEVEL } from "../levels/levels";
 import type { InstructionBlock, LevelInstructions } from "./instructionsModel";
@@ -128,6 +128,17 @@ export const LEVEL_INSTRUCTIONS: readonly LevelInstructions[] = [
         "portal-claude",
         "Use the frontend-design skill before changing layout.",
         "claudeAgent",
+      ),
+    ],
+  },
+  {
+    level: "team-project:terminal-app",
+    reach: "below",
+    agent: [],
+    threads: [
+      block(
+        "terminal-work",
+        "## Terminal work\n\nRead docs/README.md and the local Neptune Javadocs first. Use only documented Neptune APIs; generic Android APIs are forbidden. Support is unknown until it runs on the exact A920 firmware.",
       ),
     ],
   },

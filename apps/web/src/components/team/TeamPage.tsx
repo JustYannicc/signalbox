@@ -1,7 +1,8 @@
 /**
  * Organization › Team: the organizations your own account is connected to,
  * then the connected organization's team (Home › Work › Northwind team), how
- * people sign up, and the company agents that act for it. What's shared lives
+ * people sign up, and the team's agents (its levels' agents, shared with the
+ * team) beside everyone's own assistant. What's shared lives
  * on the section's share editor; routing lives in Plugins groups.
  * UI prototype on placeholder data (see teamFixtures.ts and multiplayer).
  */
@@ -25,12 +26,7 @@ import { AgentRepresentation } from "./AgentRepresentation";
 import { MembersSection } from "./MembersSection";
 import { SignUpFlowCard } from "./SignUpFlowCard";
 import { OrganizationsSection } from "./OrganizationsSection";
-import {
-  COMPANY_AGENTS,
-  CONNECTED_ORGANIZATIONS,
-  TEAM_INVITES,
-  TEAM_SIGN_IN,
-} from "./teamFixtures";
+import { CONNECTED_ORGANIZATIONS, TEAM_INVITES, TEAM_SIGN_IN } from "./teamFixtures";
 import { isMemberRole, MEMBER_ROLES, type MemberRole } from "./teamModel";
 
 const ORG = CONNECTED_ORGANIZATIONS[0];
@@ -118,7 +114,7 @@ export function TeamPage() {
                   />
                   <SignUpFlowCard />
                 </div>
-                <AgentRepresentation members={MEMBERS} companyAgents={COMPANY_AGENTS} />
+                {TEAM ? <AgentRepresentation team={TEAM} members={MEMBERS} /> : null}
               </>
             ) : null}
           </WorkspacePageContainer>

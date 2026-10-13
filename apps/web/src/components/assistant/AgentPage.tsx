@@ -1,10 +1,11 @@
 /**
  * A section or project agent's persistent thread: work handed in from above,
- * what it passed on, and chats with the user. The agent represents its level
- * and coordinates what lives there (threads, automations, places); it's
- * shared with the team in team levels and just yours otherwise. The chat
- * resets once all of its work is done; earlier chats live in History
- * (`?chat=`). UI prototype.
+ * the tasks it spun up, what it asked up for, and chats with the user. The
+ * route's agent id is just a readable slug; everything here keys off the
+ * level it represents (found in Home's level options). The agent coordinates
+ * what lives at that level (threads, automations, places); it's shared with
+ * the team in team levels and just yours otherwise. The chat resets once all
+ * of its work is done; earlier chats live in History (`?chat=`). UI prototype.
  */
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
@@ -14,6 +15,7 @@ import { AgentAccess } from "../levels/AgentAccess";
 import { AgentSharingChip } from "../levels/AgentSharingChip";
 import { LevelCoordinates } from "../levels/LevelCoordinates";
 import { useLevelOptions } from "../levels/LevelOptionsProvider";
+import { useHomeProjectRefs } from "../levels/useHomeProjectRefs";
 import { useMappedLeveledThings } from "../levels/useMappedLeveledThings";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
@@ -24,7 +26,7 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
-import { resolveAgent } from "./agentFixtures";
+import { agentForLevel } from "./agentFixtures";
 import { AgentInstructionsDialog } from "./AgentInstructionsDialog";
 import { SupervisorAvatar } from "./AssistantGlyphs";
 import { AssistantComposer } from "./AssistantComposer";
@@ -49,15 +51,21 @@ export function AgentPage(props: {
   const { name: assistantName } = useAssistantIdentity();
   const [traceOpen, setTraceOpen] = useState(false);
   const mappedThings = useMappedLeveledThings();
-  const agent = resolveAgent(props.agentId);
+  const levelOptions = useLevelOptions();
+  const projects = useHomeProjectRefs();
+  const level = useMemo(
+    () => levelOptions.find((option) => option.agentId === props.agentId) ?? null,
+    [props.agentId, levelOptions],
+  );
+  const agent = useMemo(
+    () => agentForLevel(props.agentId, level, projects),
+    [level, projects, props.agentId],
+  );
+  const agentId = props.agentId;
   const previous = agent.previous.find((chat) => chat.id === props.chatId);
   const chat = previous ?? agent.current;
-  const agentName = `${agent.name} agent`;
-  const levelOptions = useLevelOptions();
-  const level = useMemo(
-    () => levelOptions.find((option) => option.agentId === agent.id) ?? null,
-    [agent.id, levelOptions],
-  );
+  const levelName = level?.name ?? agent.name;
+  const agentName = level?.agentName ?? `${levelName} agent`;
 
   const selectChat = useCallback(
     (chatId: string | null) => void navigate({ search: chatId ? { chat: chatId } : {} }),
@@ -71,7 +79,7 @@ export function AgentPage(props: {
           <WorkspaceBreadcrumb ariaLabel="Agent breadcrumb" className="flex-1">
             <WorkspaceBreadcrumbItem current={!previous}>
               <span className="flex min-w-0 items-center gap-2">
-                <SupervisorAvatar agentId={agent.id} size={20} />
+                <SupervisorAvatar agentId={agentId} size={20} />
                 <WorkspaceBreadcrumbText>{agentName}</WorkspaceBreadcrumbText>
                 {level ? (
                   <LevelCoordinates
@@ -81,7 +89,7 @@ export function AgentPage(props: {
                   />
                 ) : (
                   <WorkspaceBreadcrumbText className="font-normal text-muted-foreground max-sm:hidden">
-                    · {agent.scope}
+                    · not in Home
                   </WorkspaceBreadcrumbText>
                 )}
               </span>
@@ -97,9 +105,9 @@ export function AgentPage(props: {
           </WorkspaceBreadcrumb>
           <div className="flex shrink-0 items-center gap-1">
             <AgentSharingChip level={level?.key ?? null} agentName={agentName} />
-            <AgentAccess agentId={agent.id} mappedThings={mappedThings} />
-            <AgentInstructionsDialog agent={agent} agentName={agentName} />
-            <NotificationMenu agentKey={agent.id} agentName={agentName} />
+            <AgentAccess level={level?.key ?? null} mappedThings={mappedThings} />
+            <AgentInstructionsDialog level={level} agentName={agentName} />
+            <NotificationMenu agentKey={agentId} agentName={agentName} />
             <ChatHistoryMenu
               groupLabel="Earlier chats"
               entries={agent.previous.map(({ id, title, meta }) => ({ id, title, meta }))}
@@ -121,17 +129,17 @@ export function AgentPage(props: {
           speaker={{
             name: agentName,
             nodeId: agent.nodeId,
-            agentId: agent.id,
+            agentId,
           }}
-          chatKey={`agent:${agent.id}:${chat.id}`}
+          chatKey={`agent:${agentId}:${chat.id}`}
           traceOpen={traceOpen}
           onTraceOpenChange={setTraceOpen}
           empty={
             <div className="flex flex-col items-center gap-2 pt-20 text-center">
-              <SupervisorAvatar agentId={agent.id} size={56} />
-              <h1 className="text-base font-semibold">Nothing open for {agent.name}</h1>
+              <SupervisorAvatar agentId={agentId} size={56} />
+              <h1 className="text-base font-semibold">Nothing open for {levelName}</h1>
               <p className="max-w-sm text-sm text-muted-foreground text-pretty">
-                {`Work ${assistantName} hands to ${agent.name} shows up here. Message it to start a task at its level.`}
+                {`Work ${assistantName} hands down, the tasks this agent starts in ${levelName} and what it asks up for show up here. Message it to start something there.`}
               </p>
             </div>
           }
@@ -149,13 +157,13 @@ export function AgentPage(props: {
             ) : (
               <AssistantComposer
                 recipient={agentName}
-                targetKey={`agent:${agent.id}`}
+                targetKey={`agent:${agentId}`}
                 placeholder={`Message ${agentName}`}
                 prompt={prompt}
                 onPromptChange={setPrompt}
                 onSend={(text, files) =>
                   sendMockMessage({
-                    chatKey: `agent:${agent.id}:${chat.id}`,
+                    chatKey: `agent:${agentId}:${chat.id}`,
                     text,
                     files,
                     speakerNodeId: agent.nodeId,

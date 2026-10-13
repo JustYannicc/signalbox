@@ -1,19 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ASK_UPS, asksFor, loanState } from "./askUp";
-import { levelChain, TOP_LEVEL } from "./levels";
+import { askLevel, levelChain, TOP_LEVEL } from "./levels";
 import { levelAgentPeople, levelTeam } from "./levelSharing";
 
 describe("asking up", () => {
-  it("only ever asks an agent above the asker", () => {
+  it("asks the lowest agent above the asker that covers the thing", () => {
     for (const ask of ASK_UPS) {
       expect(levelChain(ask.from).slice(1)).toContain(ask.to);
+      expect(ask.to).toBe(askLevel(ask.from, ask.where));
     }
   });
 
   it("shows an ask on both the asker's and the answerer's page", () => {
     const ids = (level: string) => asksFor(level).map((ask) => ask.id);
-    expect(ids("section:work-northwind")).toEqual(["ask-board-deck", "ask-sentry"]);
+    expect(ids("section:work-northwind")).toEqual([
+      "ask-board-deck",
+      "ask-sentry",
+      "ask-release-page",
+    ]);
+    expect(ids(TOP_LEVEL)).toEqual(["ask-board-deck", "ask-todoist", "ask-receipts", "ask-porto"]);
     expect(ids("team-project:merchant-portal")).toEqual(["ask-sentry"]);
   });
 

@@ -165,6 +165,12 @@ export interface DemoThread {
    * into real checkpoint refs so the Diff panel has turn and thread diffs.
    */
   readonly checkpoints?: ReadonlyArray<Readonly<Record<string, string>>>;
+  /**
+   * The thread that delegated this one (T3's `delegate_task`, often to another
+   * harness). Seeded as its subagent, so the breadcrumb and Thread details show
+   * the chain; subagents stay out of the sidebar and inherit the parent's level.
+   */
+  readonly delegatedBy?: string;
 }
 
 /** Context window size the demo reports per provider. */
@@ -976,6 +982,56 @@ export function AccountPools() {
     ],
     error:
       "stream disconnected before completion: error sending request for url (https://api.openai.com/v1/responses)",
+  },
+  // Lineage: the ledger port (Claude) delegated the fee backfill to Codex, which
+  // handed the invoice check to OpenCode. Three harnesses, one chain.
+  {
+    id: "demo-ledger-fee-backfill",
+    projectId: "demo-merchant-portal",
+    title: "Backfill legacy plan fees as ledger entries",
+    provider: "codex",
+    state: "done",
+    minutesAgo: 95,
+    delegatedBy: "demo-ledger-port",
+    workMinutes: 6,
+    exchanges: [
+      [
+        'Delegated from "Port settlement jobs to the ledger service": fees for merchants on legacy plans were computed at invoice time. Backfill the last 13 months as ledger fee entries, dry-run first, and report the count.',
+        "Wrote migrations/0051_backfill_legacy_fees.sql. Dry run inserts 4,112 entries across 386 merchants. I asked a subagent to check them against the issued invoices before you run it for real; it found no differences.",
+        [
+          "Read src/jobs/monthlyFees.ts",
+          "Created migrations/0051_backfill_legacy_fees.sql",
+          {
+            command: "pnpm db:migrate --dry-run",
+            output: "0051_backfill_legacy_fees.sql: 4,112 rows would be inserted",
+            exitCode: 0,
+          },
+        ],
+      ],
+    ],
+  },
+  {
+    id: "demo-ledger-fee-check",
+    projectId: "demo-merchant-portal",
+    title: "Check backfilled fees against issued invoices",
+    provider: "opencode",
+    state: "done",
+    minutesAgo: 100,
+    delegatedBy: "demo-ledger-fee-backfill",
+    workMinutes: 4,
+    exchanges: [
+      [
+        'Delegated from "Backfill legacy plan fees as ledger entries": compare the 4,112 dry-run fee entries with the fee lines on the invoices we issued over the same 13 months. Report merchants whose totals differ.',
+        "No differences. All 386 merchants match to the cent; 17 invoices had a manual credit, which the backfill already books as a separate entry.",
+        [
+          {
+            command: "pnpm tsx scripts/compare-fees.ts --from 2025-09 --to 2026-09",
+            output: "merchants compared: 386\nentries: 4,112\nmismatches: 0\nmanual credits: 17",
+            exitCode: 0,
+          },
+        ],
+      ],
+    ],
   },
   {
     id: "demo-ledger-port",

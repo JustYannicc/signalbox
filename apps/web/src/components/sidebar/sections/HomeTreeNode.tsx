@@ -1,10 +1,12 @@
 /**
  * One foldable node of the Home tree (section, team, or project). The chevron
- * folds it (so do ←/→ on the name); the avatar and name open the node's agent,
- * which is always yours, even inside a team. The row stays calm: while folded
- * it shows only how many things below need you; the avatar looks busy while
- * the agent works. On hover the end swaps to "+" and "⋯". Nodes can be dragged
- * and take drops; the name edits inline when renaming.
+ * folds it (so do ←/→ on the name); the avatar and name open the level's
+ * agent: just yours in your own folders, shared with the team inside a team
+ * (your private chats stay yours either way, `levels/levelSharing`). The row
+ * stays calm: while folded it shows only how many things below need you; the
+ * avatar looks busy while the agent works; hovering the name says what sits
+ * below. On hover the end swaps to "+" and "⋯". Nodes can be dragged and take
+ * drops; the name edits inline when renaming.
  */
 import { ChevronRightIcon } from "lucide-react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
@@ -14,6 +16,7 @@ import { SupervisorAvatar } from "../../assistant/AssistantGlyphs";
 import { THREAD_STATUS_DISPLAY } from "../../threadStatusDisplay";
 import { SidebarMenuItem } from "../../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
+import { describeSummary, type SubtreeSummary } from "./containerContents";
 import { mergeRollups, rollupOf, type HomeItemStatus, type StatusRollup } from "./homeStatus";
 import { startHomeDrag, useHomeDropTarget, type HomeMovable } from "./homeMoves";
 import { useOpenHomeAgent } from "./openHomeAgent";
@@ -45,14 +48,16 @@ export function HomeTreeNode(props: {
   nodeKey: string;
   label: string;
   agentId: string;
-  /** e.g. "Northwind agent"; always yours, so copy reads "your Northwind agent". */
+  /** e.g. "Northwind agent". */
   agentName: string;
   agentStatus: HomeItemStatus | null;
-  /** Inside a team: say out loud that the agent is still just yours. */
+  /** Inside a team the agent is shared with the team, not just yours. */
   inTeam?: boolean;
   /** Always-visible, clickable extra (the team's people cluster). */
   cluster?: ReactNode;
   rollup: StatusRollup;
+  /** Everything below, for the name's tooltip. */
+  summary: SubtreeSummary;
   /** Hover actions: one "+" and one "⋯". */
   actions?: ReactNode;
   movable: HomeMovable;
@@ -73,6 +78,8 @@ export function HomeTreeNode(props: {
   // The agent needing you always shows; everything below only while folded.
   const agentRollup = rollupOf([{ status: props.agentStatus }]);
   const shownRollup = expanded ? agentRollup : mergeRollups([props.rollup, agentRollup]);
+  const whose = props.inTeam ? "the" : "your";
+  const below = describeSummary(props.summary);
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "ArrowRight" && !expanded) {
@@ -121,10 +128,10 @@ export function HomeTreeNode(props: {
                 <button
                   type="button"
                   aria-expanded={expanded}
-                  aria-label={`${props.label}, open your ${props.agentName}`}
+                  aria-label={`${props.label}, open ${whose} ${props.agentName}`}
                   onClick={() => openAgent(props.agentId)}
                   onKeyDown={handleKeyDown}
-                  className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md pr-1 text-left text-sm font-medium text-sidebar-muted-foreground/80 outline-hidden ring-ring hover:text-sidebar-foreground focus-visible:ring-2"
+                  className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md pr-1 text-left text-sm font-medium text-sidebar-muted-foreground/80 outline-hidden ring-ring hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset"
                 />
               }
             >
@@ -136,9 +143,14 @@ export function HomeTreeNode(props: {
               <span className="min-w-0 flex-1 truncate">{props.label}</span>
             </TooltipTrigger>
             <TooltipPopup side="right">
-              Open your {props.agentName}
-              {agentInfo ? ` · ${agentInfo.label.toLowerCase()}` : ""}
-              {props.inTeam ? " · only you see this conversation" : ""}
+              <span className="block">
+                Open {whose} {props.agentName}
+                {agentInfo ? ` · ${agentInfo.label.toLowerCase()}` : ""}
+                {props.inTeam ? " · shared with the team" : ""}
+              </span>
+              <span className="block text-muted-foreground">
+                {below ? `Below: ${below}` : "Nothing here yet"}
+              </span>
             </TooltipPopup>
           </Tooltip>
         )}

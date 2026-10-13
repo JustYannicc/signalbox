@@ -8,16 +8,12 @@ import { TOP_LEVEL } from "../levels/levels";
 import { LevelSelectMenu } from "../levels/LevelSelectMenu";
 import { Badge } from "../ui/badge";
 import { MenuCheckboxItem, MenuSeparator } from "../ui/menu";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { DeviceNotifySelect } from "./DeviceNotifySelect";
 import {
   CAPABILITY_GROUP_LABEL,
-  DEVICE_NOTIFY_LABEL,
-  DEVICE_NOTIFY_LEVELS,
-  isDeviceNotifyLevel,
   type CapabilityGroup,
   type ClientDevice,
-  type DeviceNotifyLevel,
   type GatewayCapability,
 } from "./devicesModel";
 import { useDeviceLevelsStore } from "./deviceLevelsStore";
@@ -32,7 +28,6 @@ const GROUP_ORDER: readonly CapabilityGroup[] = ["files", "device", "signals"];
  */
 export function ClientDeviceCard({ device }: { readonly device: ClientDevice }) {
   const levelLabel = useLevelLabel();
-  const [notify, setNotify] = useState<DeviceNotifyLevel>(device.notify);
   const [enabled, setEnabled] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(device.capabilities.map((cap) => [cap.id, cap.enabled])),
   );
@@ -82,28 +77,7 @@ export function ClientDeviceCard({ device }: { readonly device: ClientDevice }) 
             {device.activeNow ? "Pings go here first while you're on it" : "Used when you're away"}
           </span>
         </span>
-        <Select
-          value={notify}
-          onValueChange={(next) => {
-            if (isDeviceNotifyLevel(next)) setNotify(next);
-          }}
-        >
-          <SelectTrigger
-            aria-label={`Notifications on ${device.name}`}
-            size="compact"
-            variant="ghost"
-            className="w-auto min-w-0"
-          >
-            <SelectValue>{DEVICE_NOTIFY_LABEL[notify]}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {DEVICE_NOTIFY_LEVELS.map((level) => (
-              <SelectItem key={level} value={level}>
-                {DEVICE_NOTIFY_LABEL[level]}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+        <DeviceNotifySelect device={device} variant="ghost" />
       </div>
 
       <div className="flex flex-col gap-3">

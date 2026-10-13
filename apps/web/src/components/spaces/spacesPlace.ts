@@ -1,24 +1,20 @@
 /**
  * The place /spaces shows, read from its URL: a connected account at the level
  * it is connected at (the items no mapped place covers, or all of them), one
- * mapped place inside an account, or everything in sight. Also the folder path
- * the page's breadcrumb reads, `levelLabel › place`.
+ * mapped place inside an account, or everything in sight. Also where it lives
+ * (one home, the folders referencing it, its reach), which the page's
+ * breadcrumb and summary read.
  */
 import { useMemo } from "react";
 
-import { useClientSettings } from "../../hooks/useSettings";
-import { selectProjectGroupingSettings } from "../../logicalProject";
-import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
-import { useProjects } from "../../state/entities";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { TOP_LEVEL, levelLabel, type LevelKey } from "../levels/levels";
+import { TOP_LEVEL, type LevelKey, type Reach } from "../levels/levels";
+import { useHomeProjectRefs } from "../levels/useHomeProjectRefs";
 import {
   accountItemId,
+  buildMappedIndex,
   placeItemId,
-  resolveTarget,
-  type MappedOverrides,
+  useMappedStore,
 } from "../sidebar/sections/mappedItems";
-import { useHomeSectionStore } from "../sidebar/sections/sectionStore";
 import type { SpacesItemFixture, SpacesSourceFixture } from "./spacesFixtures";
 import {
   findMapping,
@@ -91,38 +87,54 @@ export function placeSummary(place: SpacesPlace, shown: number, accountTotal: nu
   }
 }
 
-/** The level the place sits at: the folder it was opened from, else its home. */
-export function placeLevel(
-  place: SpacesPlace,
-  at: string | undefined,
-  homeOverrides: MappedOverrides["homes"],
-): LevelKey {
-  if (at) return at;
-  switch (place.kind) {
-    case "account":
-      return homeOverrides[accountItemId(place.source.id)] ?? `section:${place.source.space}`;
-    case "mapping":
-      return homeOverrides[placeItemId(place.mapping.id)] ?? resolveTarget(place.mapping.home, []);
-    case "everything":
-      return TOP_LEVEL;
-  }
+export interface PlacePlacement {
+  /** The one folder it lives in; an unmapped place falls back to its account's. */
+  readonly home: LevelKey;
+  /** Other folders that reference it; their agents may use it too. */
+  readonly references: readonly LevelKey[];
+  readonly reach: Reach;
 }
 
-/** `levelLabel`, with the name of a real project (renamed or as grouped in the sidebar). */
-export function useLevelLabel(level: LevelKey): string {
-  const renamed = useHomeSectionStore((state) => state.names[level]);
-  const projects = useProjects();
-  const settings = useClientSettings(selectProjectGroupingSettings);
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectName = useMemo(() => {
-    if (!level.startsWith("project:")) return undefined;
-    const projectKey = level.slice(8);
-    return buildSidebarProjectSnapshots({
+const EVERYTHING_PLACEMENT: PlacePlacement = { home: TOP_LEVEL, references: [], reach: "here" };
+
+/**
+ * Where the place lives, read from the same index as the Home tree: the
+ * breadcrumb names its home even when it was opened from a folder that only
+ * references it.
+ */
+export function usePlacePlacement(place: SpacesPlace): PlacePlacement {
+  const projects = useHomeProjectRefs();
+  const homes = useMappedStore((state) => state.homes);
+  const references = useMappedStore((state) => state.references);
+  const reach = useMappedStore((state) => state.reach);
+  return useMemo(() => {
+    if (place.kind === "everything") return EVERYTHING_PLACEMENT;
+    const index = buildMappedIndex({
+      automations: [],
       projects,
-      settings,
-      primaryEnvironmentId,
-      resolveEnvironmentLabel: () => null,
-    }).find((group) => group.projectKey === projectKey)?.displayName;
-  }, [level, primaryEnvironmentId, projects, settings]);
-  return levelLabel(level, renamed ?? projectName);
+      overrides: { homes, references, reach },
+    });
+    const accountId = accountItemId(place.source?.id ?? "");
+    const id = place.kind === "account" ? accountId : placeItemId(place.mapping.id);
+    const home = index.homeById.get(id) ?? index.homeById.get(accountId) ?? null;
+    if (home === null) return EVERYTHING_PLACEMENT;
+    return {
+      home,
+      references: index.referencesById.get(id) ?? [],
+      reach: index.reachById.get(id) ?? "here",
+    };
+  }, [homes, place, projects, reach, references]);
+}
+
+/** "Also in terminal-app · available to every folder inside", or null; `labelOf` names folders. */
+export function placeSharing(
+  placement: PlacePlacement,
+  labelOf: (key: LevelKey) => string,
+): string | null {
+  const name = (key: LevelKey) => labelOf(key).split(" › ").at(-1) ?? key;
+  const parts = [
+    placement.references.length > 0 ? `Also in ${placement.references.map(name).join(", ")}` : null,
+    placement.reach === "below" ? `Available to every folder inside ${name(placement.home)}` : null,
+  ].filter((part) => part !== null);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }

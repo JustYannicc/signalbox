@@ -65,6 +65,8 @@ export const SPACES_MAPPINGS: readonly SpacesMapping[] = [
     what: "Folder",
     locations: ["My Drive / Admin"],
     home: "section:personal",
+    // Card receipts live here; the Work agent files the expense report from them.
+    references: ["section:work"],
   },
   {
     id: "notion-reading",
@@ -83,6 +85,16 @@ export const SPACES_MAPPINGS: readonly SpacesMapping[] = [
     // The team's drive, referenced from the project that lives off it.
     home: "section:work-northwind",
     references: ["team-project:terminal-app"],
+  },
+  {
+    id: "slack-northwind-eng",
+    source: "slack",
+    name: "#northwind-eng",
+    what: "Channel",
+    locations: ["#northwind-eng"],
+    // The whole team's channel: every project inside Northwind team can use it.
+    home: "section:work-northwind",
+    reach: "below",
   },
   {
     id: "slack-terminal-team",

@@ -4,7 +4,7 @@
  * home and moves via `itemContainers`. Real threads moved out of their project
  * travel too. Automations, accounts and mapped places come from `mappedItems`:
  * each has one home, and places and accounts also show where they're referenced. Also the rollup inputs, so folders can summarize
- * what needs you.
+ * what needs you, and the calm count of what sits below them.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
@@ -14,6 +14,7 @@ import { currentPerson } from "../../multiplayer/teamThreads";
 import type { Room } from "../../rooms/roomModel";
 import { ALL_ROOMS } from "../../rooms/rooms";
 import { homeThreadKey, type HomeProjectEntry } from "../useHomeSidebarData";
+import type { ThreadDisplayStatus } from "../../threadStatusDisplay";
 import { rollupOf, statusForThread, type RollupInput, type StatusRollup } from "./homeStatus";
 import { signalsForTeamThread } from "./itemSignals";
 import type { MappedIndex, MappedItem } from "./mappedItems";
@@ -144,4 +145,81 @@ export function rollupForContents(
     })),
     ...contents.mapped.map((item) => ({ status: item.status })),
   ]);
+}
+
+/**
+ * What a folder holds, counted down the tree ("go into that scope, that's
+ * everything below"). Calm: folder rows only show it on hover.
+ */
+export interface SubtreeSummary {
+  /** Chats, tasks, rooms and real threads. */
+  readonly threads: number;
+  readonly automations: number;
+  /** Places and the accounts they sit in. */
+  readonly places: number;
+  /** Threads and automations working right now. */
+  readonly working: number;
+}
+
+export const EMPTY_SUMMARY: SubtreeSummary = { threads: 0, automations: 0, places: 0, working: 0 };
+
+const isWorking = (status: ThreadDisplayStatus | null | undefined) =>
+  status === "working" || status === "goal";
+
+/**
+ * One container's own things. Mapped items count only at their home, so a
+ * reference elsewhere in the same subtree isn't counted twice. Pass a
+ * project's own threads as `threads` (its contents carry only moved-in ones).
+ */
+export function summarizeContents(
+  contents: ContainerContents,
+  containerKey: string,
+  homeById: ReadonlyMap<string, string | null>,
+  lastVisitedAtByKey: Readonly<Record<string, string>>,
+  threads: readonly EnvironmentThreadShell[] = contents.threads,
+): SubtreeSummary {
+  const statuses = [
+    ...contents.loose.map((item) => item.status),
+    ...contents.teamThreads.map((thread) => signalsForTeamThread(thread.id).status),
+    ...threads.map((thread) => statusForThread(thread, lastVisitedAtByKey[homeThreadKey(thread)])),
+  ];
+  const homed = contents.mapped.filter((item) => homeById.get(item.id) === containerKey);
+  const automations = homed.filter((item) => item.kind === "automation");
+  return {
+    threads:
+      contents.loose.length + contents.teamThreads.length + contents.rooms.length + threads.length,
+    automations: automations.length,
+    places: homed.filter((item) => item.kind === "place" || item.kind === "account").length,
+    working:
+      statuses.filter(isWorking).length +
+      automations.filter((item) => isWorking(item.status)).length,
+  };
+}
+
+export function mergeSummaries(summaries: Iterable<SubtreeSummary>): SubtreeSummary {
+  let threads = 0;
+  let automations = 0;
+  let places = 0;
+  let working = 0;
+  for (const summary of summaries) {
+    threads += summary.threads;
+    automations += summary.automations;
+    places += summary.places;
+    working += summary.working;
+  }
+  return { threads, automations, places, working };
+}
+
+const plural = (count: number, one: string, many: string) =>
+  count > 0 ? `${count} ${count === 1 ? one : many}` : null;
+
+/** "14 threads · 3 automations · 5 places · 2 working", or null when the folder is empty. */
+export function describeSummary(summary: SubtreeSummary): string | null {
+  const parts = [
+    plural(summary.threads, "thread", "threads"),
+    plural(summary.automations, "automation", "automations"),
+    plural(summary.places, "place", "places"),
+    summary.working > 0 ? `${summary.working} working` : null,
+  ].filter((part) => part !== null);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }

@@ -7,6 +7,8 @@ import { ArrowRightIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 
 import { isElectron } from "../../env";
 import { COMPUTERS } from "../computers/computerFixtures";
+import { computersInSight } from "../computers/computerModel";
+import { useFocusedLevel } from "../sidebar/focus/focusStore";
 import { LevelOptionsProvider } from "../levels/LevelOptionsProvider";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -21,10 +23,11 @@ import { FLEET_SERVERS, ROLLOUT_STEPS, ROLLOUT_VERSION } from "./fleet";
 import { RolloutDisclosure } from "./RolloutDisclosure";
 import { ServersSection } from "./ServersSection";
 
-const LIVE_COMPUTERS = COMPUTERS.filter((computer) => computer.state === "live").length;
-
 export function DevicesPage() {
   const clients = useClientDevices();
+  const liveComputers = computersInSight(COMPUTERS, useFocusedLevel()).filter(
+    (computer) => computer.state === "live",
+  ).length;
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
@@ -72,7 +75,7 @@ export function DevicesPage() {
                 className="flex w-fit items-center gap-1.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
               >
                 <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />
-                {plural(LIVE_COMPUTERS, "computer")} live
+                {plural(liveComputers, "computer")} live
                 <ArrowRightIcon className="size-3" aria-hidden />
               </Link>
             </ServersSection>

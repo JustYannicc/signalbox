@@ -67,9 +67,9 @@ function RailButton(props: {
 // Pages opened from the bottom group; each lights up while any of its paths is
 // open. Computers, devices, and team moved into Settings, so they light it too.
 const USAGE_PAGE = {
-  to: "/accounts",
+  to: "/costs",
   label: "Usage",
-  paths: ["/accounts", "/usage"],
+  paths: ["/costs", "/accounts", "/usage"],
 } as const;
 const SETTINGS_PAGE = {
   to: "/settings",

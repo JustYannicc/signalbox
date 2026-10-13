@@ -60,7 +60,7 @@ export function useArchiveHomeThread(): ArchiveHomeThread {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Failed to archive thread",
+                title: "Failed to settle thread",
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );

@@ -1,7 +1,7 @@
 /**
  * Shapes for the Team prototype: one team (a team Section in Home), its
- * members and invites, and the company agents that act for it. People come
- * from the multiplayer fixtures so every surface shows the same team.
+ * members and invites. Its agents are its levels' agents (`levels/`). People
+ * come from the multiplayer fixtures so every surface shows the same team.
  */
 import type { TeamPerson } from "../multiplayer/multiplayerModel";
 import { toastManager } from "../ui/toast";
@@ -31,15 +31,6 @@ export interface PendingInvite {
   readonly email: string;
   readonly role: MemberRole;
   readonly sent: string;
-}
-
-/** An agent that acts for the company and asks people's own agents for what it needs. */
-export interface CompanyAgent {
-  readonly id: string;
-  readonly name: string;
-  readonly ownerId: string;
-  /** What it may ask a person's agent for; their agent decides what to hand over. */
-  readonly mayAsk: string;
 }
 
 export function isMemberRole(value: unknown): value is MemberRole {

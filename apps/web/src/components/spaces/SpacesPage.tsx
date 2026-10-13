@@ -2,7 +2,9 @@
  * The place page: one connected account at the level it is connected at (its
  * items no mapped place covers, with a switch to see all of them), one mapped
  * place inside it, or everything in sight when no place is set. Places open
- * from Home folders; the breadcrumb reads like the folder path. The previewed
+ * from Home folders; the breadcrumb reads like the path of the one folder the
+ * place lives in, and the summary says where else it's referenced and whether
+ * folders inside may use it. The previewed
  * item, the open note and the Library / Just Files lens live in the URL too. A
  * Notes account is that level's native pages, so "New page" lands there.
  * Dropping files anywhere opens quick capture.
@@ -14,6 +16,8 @@ import { useCallback, useMemo, useState, type DragEvent } from "react";
 import { isElectron } from "../../env";
 import { openQuickCapture } from "../capture/captureModel";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { useLevelOptions } from "../levels/LevelOptionsProvider";
+import { levelLabel, type LevelKey } from "../levels/levels";
 import { useFocusedLevel } from "../sidebar/focus/focusStore";
 import { activeMappings, useMappedStore } from "../sidebar/sections/mappedItems";
 import { sectionPathLabel } from "../sidebar/sections/sectionModel";
@@ -38,11 +42,11 @@ import { noteTitle, useSpaceItems, useSpacesNotes } from "./spacesNotes";
 import { SpacesEmptyState, SpacesSourceProblem } from "./SpacesNotices";
 import {
   inPlace,
-  placeLevel,
+  placeSharing,
   placeSummary,
   placeTitle,
   resolvePlace,
-  useLevelLabel,
+  usePlacePlacement,
 } from "./spacesPlace";
 import { SpacesPreviewPanel } from "./SpacesPreviewPanel";
 import { pullRequestsSearch, usePullRequestsSupported } from "./spacesPullRequests";
@@ -69,7 +73,15 @@ export function SpacesPage() {
     () => (source && sectionSpace(source.space)) || everythingSpace(sections),
     [sections, source],
   );
-  const levelText = useLevelLabel(placeLevel(place, search.at, homeOverrides));
+  const levelOptions = useLevelOptions();
+  const labelOf = useCallback(
+    (key: LevelKey) => levelOptions.find((option) => option.key === key)?.label ?? levelLabel(key),
+    [levelOptions],
+  );
+  // The breadcrumb names the folder it lives in, even when opened from one that references it.
+  const placement = usePlacePlacement(place);
+  const levelText = labelOf(placement.home);
+  const sharing = place.kind === "everything" ? null : placeSharing(placement, labelOf);
   const mappings = useMemo(() => activeMappings(homeOverrides), [homeOverrides]);
 
   const filesLens = search.lens === "files";
@@ -231,6 +243,7 @@ export function SpacesPage() {
                     </h1>
                     <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
                       {summary}
+                      {sharing ? <span>· {sharing}</span> : null}
                       {canToggleAll || search.all ? (
                         <Button size="micro" variant="ghost-muted" onClick={toggleAll}>
                           {search.all

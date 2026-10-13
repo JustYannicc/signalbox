@@ -5,7 +5,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import type { LevelKey } from "../levels/levels";
+import type { LevelKey, Reach } from "../levels/levels";
 
 export const PluginsSection = Schema.Literals([
   "overview",
@@ -81,6 +81,8 @@ export interface ConnectionAccount {
   readonly authDetail?: string;
   /** Home levels whose agents may use it (see components/levels). */
   readonly levels: readonly LevelKey[];
+  /** `below`: folders inside its levels may use it too. Absent means `here`. */
+  readonly reach?: Reach;
   readonly addedBy: AddedBy;
 }
 
@@ -99,6 +101,8 @@ export interface Integration {
   readonly accounts: readonly ConnectionAccount[];
   /** Levels for account-less (direct) servers; account-backed ones use their accounts'. */
   readonly levels?: readonly LevelKey[];
+  /** Reach for account-less servers, like `ConnectionAccount.reach`. */
+  readonly reach?: Reach;
   readonly toolCount: number;
   readonly tools: readonly IntegrationTool[];
   readonly scopes: readonly string[];
@@ -129,6 +133,8 @@ export interface Skill {
   readonly origin?: string;
   readonly harnesses: readonly HarnessId[];
   readonly levels: readonly LevelKey[];
+  /** `below`: every folder inside its levels gets it too. Absent means `here`. */
+  readonly reach?: Reach;
 }
 
 export interface ExecutorStatus {

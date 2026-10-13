@@ -63,7 +63,7 @@ function SkillEditor(props: {
         onChange={(event) => setBody(event.currentTarget.value)}
         aria-label={`${props.skill.name} SKILL.md`}
         spellCheck={false}
-        className="field-sizing-content min-h-40 w-full resize-none rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="field-sizing-content min-h-40 w-full resize-none rounded-lg border border-input bg-background px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       />
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         {next !== null ? (
@@ -103,7 +103,7 @@ export function SkillDetail(props: { skill: Skill }) {
   const org = ORG_POLICY?.org;
   const levelLabel = useLevelLabel();
   const levels = useThingLevels(`skill:${skill.id}`, skill.levels);
-  const reach = useThingReach(`skill:${skill.id}`);
+  const reach = useThingReach(`skill:${skill.id}`, skill.reach);
   const canPublish = !publication && skill.source === "personal" && org !== undefined;
 
   return (

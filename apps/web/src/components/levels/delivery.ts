@@ -6,18 +6,34 @@
  * things are yours and Appa's, so they go to every device in sight.
  *
  * Focus is view-only, but out of sight is out of mind: nothing about a hidden
- * thing lands anywhere. Escalation rules (`escalation.ts`) add their devices
- * on top, whatever Focus hides. Each device's own setting (badge, urgent
- * only, off) still decides how it shows; this only picks which ones.
+ * thing lands anywhere. Each device's own setting filters its route: "urgent
+ * only" takes approvals, questions and failures, "off" nothing. Escalation
+ * rules (`escalation.ts`) add the devices they name on top, whatever Focus
+ * hides or the device's setting says: the rule is the more specific ask.
  */
 import { isLevelInFocus } from "../sidebar/focus/focusLevels";
-import { matchingRules, type EscalationRule, type EscalationSubject } from "./escalation";
+import type { DeviceNotifyLevel } from "../devices/devicesModel";
+import {
+  ESCALATION_STATUSES,
+  matchingRules,
+  type EscalationRule,
+  type EscalationSubject,
+} from "./escalation";
 import { levelChain, TOP_LEVEL, type LevelKey } from "./levels";
 
 /** Anything placed like a client device. */
 export interface PlacedDevice {
   readonly id: string;
   readonly level: LevelKey;
+  /** The device's own setting; absent takes everything. */
+  readonly notify?: DeviceNotifyLevel;
+}
+
+/** Whether a device's own setting takes a ping with this status. */
+function takes(device: PlacedDevice, status: EscalationSubject["status"]): boolean {
+  if (device.notify === "none") return false;
+  if (device.notify !== "urgent") return true;
+  return ESCALATION_STATUSES.some((urgent) => urgent === status);
 }
 
 type Placement = Parameters<typeof isLevelInFocus>[2];
@@ -45,8 +61,8 @@ export interface Delivery<D> {
 
 /**
  * Where a notification about `subject` lands: the devices its levels route
- * to (empty levels = the top level), plus every device a matching escalation
- * rule names. Device order follows `devices`.
+ * to that take it (empty levels = the top level), plus every device a
+ * matching escalation rule names. Device order follows `devices`.
  */
 export function deliveryFor<D extends PlacedDevice>(
   subject: EscalationSubject,
@@ -57,7 +73,10 @@ export function deliveryFor<D extends PlacedDevice>(
 ): Delivery<D> {
   const levels = subject.levels.length > 0 ? subject.levels : [TOP_LEVEL];
   const ids = new Set(
-    levels.flatMap((level) => devicesFor(level, devices, focus, placement)).map((d) => d.id),
+    levels
+      .flatMap((level) => devicesFor(level, devices, focus, placement))
+      .filter((device) => takes(device, subject.status))
+      .map((device) => device.id),
   );
   const escalatedBy = matchingRules(subject, rules, placement);
   for (const rule of escalatedBy) for (const id of rule.deviceIds) ids.add(id);

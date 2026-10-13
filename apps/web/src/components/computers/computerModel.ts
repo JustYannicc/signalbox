@@ -1,7 +1,11 @@
 /**
  * Shape of a visible computer session: a real OS an agent acquired for work
  * that just-bash can't do. Compute and retained disk are billed separately.
+ * A computer sits at the level of the task that acquired it, so Focus hides
+ * it (and its cost) with that level.
  */
+import { isLevelInFocus } from "../sidebar/focus/focusLevels";
+import type { LevelKey } from "../levels/levels";
 
 export type ComputerOs = "linux" | "windows" | "macos";
 
@@ -42,6 +46,8 @@ export interface Computer {
   readonly region: string;
   readonly size: string;
   readonly acquiredBy: ComputerOwner;
+  /** The acquiring task's level. */
+  readonly level: LevelKey;
   readonly state: ComputerState;
   /** Minutes since the computer was acquired (live) or since it stopped (paused/released). */
   readonly minutes: number;
@@ -54,6 +60,14 @@ export interface Computer {
   readonly steps: ReadonlyArray<ComputerStep>;
   readonly artifacts: ReadonlyArray<ComputerArtifact>;
   readonly lastSyncMinutesAgo: number;
+}
+
+/** The computers Focus keeps in sight: out of sight, out of mind, costs included. */
+export function computersInSight(
+  computers: readonly Computer[],
+  focus: LevelKey,
+): readonly Computer[] {
+  return computers.filter((computer) => isLevelInFocus(computer.level, focus));
 }
 
 export const OS_LABEL: Record<ComputerOs, string> = {

@@ -211,3 +211,26 @@ it("keeps the public demo free of real machine paths and addresses", () => {
   const emails = text.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? [];
   for (const email of emails) assert.match(email, /\.invalid$|@example\.com$/, email);
 });
+
+it("shows a delegation chain three threads deep across harnesses", () => {
+  const byId = new Map(DEMO_THREADS.map((thread) => [thread.id, thread] as const));
+  const chainOf = (thread: DemoThread): DemoThread[] => {
+    const chain = [thread];
+    for (let current = thread; current.delegatedBy;) {
+      const parent = byId.get(current.delegatedBy);
+      assert.isDefined(parent, current.id);
+      assert.notInclude(chain, parent, `${current.id} delegates in a cycle`);
+      assert.strictEqual(parent!.projectId, current.projectId, current.id);
+      chain.push(parent!);
+      current = parent!;
+    }
+    return chain;
+  };
+  const chains = DEMO_THREADS.filter((thread) => thread.delegatedBy).map(chainOf);
+  const deepest = chains.reduce(
+    (longest, chain) => (chain.length > longest.length ? chain : longest),
+    [],
+  );
+  assert.isAtLeast(deepest.length, 3);
+  assert.strictEqual(new Set(deepest.map((thread) => thread.provider)).size, deepest.length);
+});

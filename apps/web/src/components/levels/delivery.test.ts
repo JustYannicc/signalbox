@@ -120,6 +120,31 @@ describe("deliveryFor", () => {
     expect(delivery).toEqual({ devices: [], escalatedBy: [] });
   });
 
+  it("lets each device's own setting filter its route, but not an escalation", () => {
+    const urgentPhone = { ...PHONE, notify: "urgent" as const };
+    const offMac = { ...MAC, notify: "none" as const };
+    const devices = [offMac, urgentPhone, WORK_LAPTOP];
+    const update = deliveryFor(
+      { levels: [DOTFILES], status: null },
+      devices,
+      TOP_LEVEL,
+      [],
+      placement,
+    );
+    expect(ids(update.devices)).toEqual([]);
+    const failure = deliveryFor({ levels: [DOTFILES], status: "failed" }, devices, TOP_LEVEL, []);
+    expect(ids(failure.devices)).toEqual(["pixel"]);
+    const ruleToMac = { ...RULE, deviceIds: ["macbook"] };
+    const escalated = deliveryFor(
+      { levels: [TERMINAL_APP], status: "approval" },
+      devices,
+      PERSONAL,
+      [ruleToMac],
+      placement,
+    );
+    expect(ids(escalated.devices)).toEqual(["macbook"]);
+  });
+
   it("treats a subject with no levels as top level", () => {
     const delivery = deliveryFor({ levels: [], status: null }, DEVICES, WORK, [RULE], placement);
     expect(ids(delivery.devices)).toEqual(["work-laptop", "desk"]);

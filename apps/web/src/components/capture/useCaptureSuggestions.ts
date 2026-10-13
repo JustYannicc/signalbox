@@ -108,6 +108,8 @@ export function useCaptureSuggestions(
       .filter(
         (thread) =>
           thread.archivedAt === null &&
+          // Subagents work for their parent; capture into the parent instead.
+          thread.lineage.relationshipToParent !== "subagent" &&
           projectKeys.has(`${thread.environmentId}:${thread.projectId}`),
       )
       .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))

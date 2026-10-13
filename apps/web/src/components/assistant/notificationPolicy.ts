@@ -1,10 +1,9 @@
 /**
  * When supervisors (the assistant, section, project and workflow agents) may
  * notify the user, and where it lands. PLACEHOLDER: prototype state
- * (`usePrototypeState`). Each agent's bell can override the default policy ("important":
- * the agent decides what is worth a ping). The computer is always quiet (badge and
- * sidebar marker, no sound); the phone only gets urgent things while you're
- * away, and can be switched off. Presence is detected, not configured.
+ * (`usePrototypeState`). Each agent's bell can override the default policy
+ * ("important": the agent decides what is worth a ping). Each device has its
+ * own setting (quiet badge, urgent only, off) on the Devices page.
  *
  * An override is a rule at a level (the bell of the level's agent sets it) and
  * holds for everything below: the nearest override up the chain wins, so
@@ -17,7 +16,6 @@ import * as Schema from "effect/Schema";
 import { useCallback, useMemo } from "react";
 
 import { usePrototypeState } from "../../lib/prototypeStorage";
-import { CLIENT_DEVICES } from "../devices/devicesFixtures";
 import type { ClientDevice } from "../devices/devicesModel";
 import { joinWords } from "../levels/escalation";
 import type { LevelOption } from "../levels/levelOptions";
@@ -39,12 +37,6 @@ export const NOTIFY_POLICY_DETAIL: Record<NotifyPolicy, string> = {
   none: "Stays in the chat",
 };
 
-/** Names of the user's computer and phone, for copy. */
-export const NOTIFY_DEVICE_NAMES = {
-  computer: CLIENT_DEVICES.find((device) => device.kind === "laptop")?.name ?? "computer",
-  phone: CLIENT_DEVICES.find((device) => device.kind === "phone")?.name ?? "phone",
-};
-
 export function notifyPolicyHint(policy: NotifyPolicy, agentName: string): string {
   if (policy === "all") return `Every update from ${agentName} pings you.`;
   if (policy === "none") return `${agentName} never pings you. Everything stays in the chat.`;
@@ -52,54 +44,41 @@ export function notifyPolicyHint(policy: NotifyPolicy, agentName: string): strin
 }
 
 /**
- * Where pings land, given the phone switch. Empty when nothing pings. Pass
- * `devices` (the ones a level routes to, see `levels/delivery.ts`) to name
- * them; without it the copy speaks of your computer and phone.
+ * Where pings land: the devices a level routes to (see `levels/delivery.ts`),
+ * by each device's own setting. Empty when nothing pings.
  */
 export function notifyDeliveryHint(
   policy: NotifyPolicy,
-  phone: boolean,
-  devices?: readonly Pick<ClientDevice, "kind" | "name">[],
+  devices: readonly Pick<ClientDevice, "name" | "notify">[],
 ): string {
   if (policy === "none") return "";
-  if (devices) {
-    if (devices.length === 0)
-      return "No device sits on this folder's chain, so pings stay in the app.";
-    const computers = joinWords(devices.filter((d) => d.kind === "laptop").map((d) => d.name));
-    const phones = joinWords(devices.filter((d) => d.kind === "phone").map((d) => d.name));
-    const badge = computers ? `A quiet badge on ${computers}.` : "";
-    const away = !phones
-      ? ""
-      : phone
-        ? `Away: urgent things go to ${phones}.`
-        : `Nothing goes to ${phones}.`;
-    return [badge, away].filter(Boolean).join(" ");
-  }
-  const { phone: phoneName } = NOTIFY_DEVICE_NAMES;
-  return phone
-    ? `At your computer: a quiet badge. Away: urgent things go to your ${phoneName}.`
-    : `A quiet badge on your computer. Nothing goes to your ${phoneName}.`;
+  const named = (notify: ClientDevice["notify"]) =>
+    joinWords(devices.filter((device) => device.notify === notify).map((device) => device.name));
+  const lines = [
+    named("all") && `Everything shows on ${named("all")}.`,
+    named("badge") && `A quiet badge on ${named("badge")}.`,
+    named("urgent") && `Only urgent things reach ${named("urgent")}.`,
+  ].filter(Boolean);
+  return lines.length > 0
+    ? lines.join(" ")
+    : "No device on this folder's chain takes pings, so they stay in the app.";
 }
 
 const NotifyDefaultsSchema = Schema.Struct({
   policy: NotifyPolicySchema,
   /** Plain-words rule the agents apply under "important". */
   rule: Schema.String,
-  /** Phone push for urgent things while you're away. */
-  phone: Schema.Boolean,
 });
 export type NotifyDefaults = typeof NotifyDefaultsSchema.Type;
 
 export const DEFAULT_NOTIFY_DEFAULTS: NotifyDefaults = {
   policy: "important",
   rule: "Only ping me if something breaks or needs my approval.",
-  phone: true,
 };
 
 const OverridesSchema = Schema.Record(Schema.String, NotifyPolicySchema);
 /** Policy per level key (older saves: per agent id, see `migrateNotifyOverrides`). */
 type NotifyOverrides = typeof OverridesSchema.Type;
-const NO_OVERRIDES: NotifyOverrides = {};
 
 const DEFAULTS_KEY = "t3code:assistant-notify-defaults:v3";
 const OVERRIDES_KEY = "t3code:assistant-notify-overrides:v1";
@@ -150,11 +129,40 @@ export function resolveNotifyPolicy(
 }
 
 /**
+ * PLACEHOLDER demo: a project in Personal (signalbox or t3code when you have
+ * one, else the first), the one that keeps pinging while Personal is muted.
+ */
+export function demoPersonalProject(options: readonly LevelOption[]): LevelOption | null {
+  const section = options.findIndex((option) => option.key === "section:personal");
+  if (section < 0) return null;
+  const depth = options[section]?.depth ?? 0;
+  const inside: LevelOption[] = [];
+  for (const option of options.slice(section + 1)) {
+    if (option.depth <= depth) break;
+    if (option.kind === "project" && option.depth === depth + 1) inside.push(option);
+  }
+  return inside.find((option) => /signalbox|t3code/i.test(option.name)) ?? inside[0] ?? null;
+}
+
+/**
+ * PLACEHOLDER demo overrides until you set your own: Personal muted, with one
+ * of its projects still pinging what's important (the nearest rule wins).
+ */
+export function demoNotifyOverrides(options: readonly LevelOption[]): NotifyOverrides {
+  const project = demoPersonalProject(options);
+  return {
+    "section:personal": "none",
+    ...(project ? { [project.key]: "important" as const } : {}),
+  };
+}
+
+/**
  * Every override by level (legacy agent-keyed entries re-keyed via `options`)
  * and a setter; `setOverride(level, null)` clears it so the level inherits.
  */
 export function useNotifyOverrides(options: readonly LevelOption[]) {
-  const [stored, setStored] = usePrototypeState(OVERRIDES_KEY, NO_OVERRIDES);
+  const demo = useMemo(() => demoNotifyOverrides(options), [options]);
+  const [stored, setStored] = usePrototypeState(OVERRIDES_KEY, demo);
   const levelOf = useCallback((agentKey: string) => agentLevel(agentKey, options), [options]);
   const overrides = useMemo(() => migrateNotifyOverrides(stored, levelOf), [levelOf, stored]);
   const setOverride = useCallback(

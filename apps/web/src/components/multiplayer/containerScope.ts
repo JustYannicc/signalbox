@@ -4,10 +4,18 @@
  * inherit the default; an item that differs is a deviation the Home tree marks.
  * Import these through `sharing.ts`.
  */
-import { TOP_LEVEL, type LevelKey } from "../levels/levels";
+import { levelChain, TOP_LEVEL, type LevelKey } from "../levels/levels";
 import { HOME_SECTIONS, findHomeSection } from "../sidebar/sections/sectionModel";
 import { TEAMS, TEAM_PROJECTS } from "./multiplayerFixtures";
 import type { ThreadVisibility } from "./multiplayerModel";
+
+/**
+ * Container ids spell the top level `"home"` (loose items, rooms); level keys
+ * spell it `TOP_LEVEL`. Both mean the same place.
+ */
+const HOME_CONTAINER = "home";
+const isTopLevel = (containerIdOrKey: string) =>
+  containerIdOrKey === HOME_CONTAINER || containerIdOrKey === TOP_LEVEL;
 
 export interface ContainerInfo {
   readonly id: string;
@@ -17,20 +25,24 @@ export interface ContainerInfo {
   readonly defaultScope: ThreadVisibility;
 }
 
+/** The team of the nearest team section on the level chain (people axis; access never reads it). */
 function sectionTeamId(sectionId: string): string | null {
-  let section = findHomeSection(sectionId);
-  while (section) {
-    if (section.kind === "team" && section.teamId) return section.teamId;
-    section = section.parentId ? findHomeSection(section.parentId) : undefined;
+  if (!findHomeSection(sectionId)) return null;
+  for (const level of levelChain(`section:${sectionId}`)) {
+    const section = level.startsWith("section:") ? findHomeSection(level.slice(8)) : undefined;
+    if (section?.kind === "team" && section.teamId) return section.teamId;
   }
   return null;
 }
 
 /**
- * Accepts a team id, a Home section id, a team project id, `"home"`, or a Home
- * container key (`section:<id>`, `team-project:<id>`).
+ * Accepts a team id, a Home section id, a team project id, the top level
+ * (`"home"` or `TOP_LEVEL`), or a Home container key (`section:<id>`, `team-project:<id>`).
  */
 export function containerInfo(containerIdOrKey: string): ContainerInfo {
+  if (isTopLevel(containerIdOrKey)) {
+    return { id: HOME_CONTAINER, name: "Home", teamId: null, defaultScope: "private" };
+  }
   const containerId = containerIdOrKey.replace(/^(section|team-project):/, "");
   const team = TEAMS.find((candidate) => candidate.id === containerId);
   if (team) return { id: team.id, name: team.name, teamId: team.id, defaultScope: "shared" };
@@ -42,8 +54,7 @@ export function containerInfo(containerIdOrKey: string): ContainerInfo {
   const teamId = sectionTeamId(containerId);
   return {
     id: containerId,
-    // "home" is the top level, where loose items without a section live.
-    name: section?.name ?? (containerId === "home" ? "Home" : containerId),
+    name: section?.name ?? containerId,
     teamId,
     defaultScope: teamId ? "shared" : "private",
   };
@@ -64,9 +75,8 @@ export function containerSectionId(containerIdOrKey: string): string | null {
  * Its agent and the ones above come from `levels/chainAgents`.
  */
 export function containerLevel(containerIdOrKey: string): LevelKey {
-  if (containerIdOrKey === TOP_LEVEL || containerIdOrKey.startsWith("project:")) {
-    return containerIdOrKey;
-  }
+  if (isTopLevel(containerIdOrKey)) return TOP_LEVEL;
+  if (containerIdOrKey.startsWith("project:")) return containerIdOrKey;
   const containerId = containerIdOrKey.replace(/^(section|team-project):/, "");
   if (TEAM_PROJECTS.some((candidate) => candidate.id === containerId)) {
     return `team-project:${containerId}`;

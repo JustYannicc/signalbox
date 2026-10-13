@@ -1,7 +1,8 @@
 /**
  * How many things need you right now, across everything Home knows about:
  * real threads (Pipeline statuses), fixture chats and tasks, team threads and
- * @mentions, rooms waiting on you, your section agents, and automation runs.
+ * @mentions, rooms waiting on you, your section agents, places and accounts
+ * that broke, and automation runs.
  * Respects Focus: whatever sits out of sight doesn't count (every item goes
  * through `isInSight`, where escalation rules will land). One selector so the
  * rail bell, Home, and anything else agree.
@@ -22,7 +23,7 @@ import { homeThreadKey, useHomeThreadShells } from "../useHomeSidebarData";
 import { buildContainerIndex, roomNeedsYou } from "./containerContents";
 import { containerIdForKey, containerIdForThread, HOME_TOP_LEVEL_ID } from "./containerIds";
 import { statusForThread } from "./homeStatus";
-import { EMPTY_MAPPED_INDEX, useMappedStore } from "./mappedItems";
+import { buildMappedIndex, EMPTY_MAPPED_INDEX, needsYou, useMappedStore } from "./mappedItems";
 import { signalsForTeamThread } from "./itemSignals";
 import { allHomeSections, allLooseItems, findHomeSection } from "./sectionModel";
 import { useHomeSectionStore } from "./sectionStore";
@@ -118,14 +119,25 @@ export function useNeedsYouCount(): number {
       if (section.agentStatus && THREAD_STATUS_DISPLAY[section.agentStatus].needsYou) count += 1;
     }
 
+    const projectRefs = [...projectById].map(([projectKey, project]) => ({
+      projectKey,
+      displayName: project.title,
+      workspaceRoot: project.workspaceRoot,
+    }));
+    const overrides = { homes: mappedHomes, references: mappedReferences, reach: mappedReach };
+    // Places and accounts that need you count once, at their home, like the tree's rollups.
+    const mapped = buildMappedIndex({ automations: [], projects: projectRefs, overrides });
+    for (const [containerKey, items] of mapped.byContainer) {
+      for (const item of items) {
+        if (!needsYou(item) || mapped.homeById.get(item.id) !== containerKey) continue;
+        if (inFocus(containerIdForKey(containerKey, placement), item.status)) count += 1;
+      }
+    }
+
     const automationRuns = automationAttentionInFocus({
       automations,
-      projects: [...projectById].map(([projectKey, project]) => ({
-        projectKey,
-        displayName: project.title,
-        workspaceRoot: project.workspaceRoot,
-      })),
-      overrides: { homes: mappedHomes, references: mappedReferences, reach: mappedReach },
+      projects: projectRefs,
+      overrides,
       projectSectionOverrides,
       focused,
     });

@@ -29,7 +29,9 @@ export interface AskUp {
   readonly at: string;
   /** The level whose agent asked. */
   readonly from: LevelKey;
-  /** The level whose agent answered. */
+  /** Where the thing it needed sits. */
+  readonly where: LevelKey;
+  /** The level whose agent answered: the lowest one covering both (`askLevel`). */
   readonly to: LevelKey;
   /** The thread that needed it; `threadId` opens it at `/shared/$threadId`. */
   readonly task: { readonly title: string; readonly threadId?: string; readonly done: boolean };
@@ -37,14 +39,15 @@ export interface AskUp {
   readonly outcome: AskOutcome;
 }
 
-/** Newest first. */
+/** Newest first. Things and threads match the Plugins, Home and team fixtures. */
 export const ASK_UPS: readonly AskUp[] = [
   {
     id: "ask-board-deck",
     at: "Today 10:12",
     from: "section:work-northwind",
+    where: TOP_LEVEL,
     to: TOP_LEVEL,
-    task: { title: "Q4 roadmap with the team", done: false },
+    task: { title: "Q4 roadmap with the team", threadId: "chat-q4-roadmap-team", done: false },
     asked: "The board deck came up. What runway and Q4 target does it assume?",
     outcome: {
       kind: "answered",
@@ -57,22 +60,53 @@ export const ASK_UPS: readonly AskUp[] = [
     id: "ask-sentry",
     at: "Today 09:40",
     from: "team-project:merchant-portal",
+    where: "section:work-northwind",
     to: "section:work-northwind",
     task: { title: "Fix refund webhook retries", threadId: "mp-refund-webhooks", done: false },
     asked: "Read the Sentry events for the refund webhook.",
-    outcome: { kind: "lent", lent: "Sentry · Northwind (read)" },
+    outcome: { kind: "lent", lent: "Sentry · Northwind Sentry (read)" },
+  },
+  {
+    id: "ask-todoist",
+    at: "Today 08:15",
+    from: "section:personal",
+    where: TOP_LEVEL,
+    to: TOP_LEVEL,
+    task: { title: "File the tax return", threadId: "task-tax-return", done: false },
+    asked: "Add the tax return and its 30 Nov deadline to my task list.",
+    outcome: { kind: "lent", lent: "Todoist · Personal tasks (add only)" },
+  },
+  {
+    id: "ask-receipts",
+    at: "Yesterday 17:30",
+    from: "section:work",
+    where: "section:personal",
+    to: TOP_LEVEL,
+    task: {
+      title: "Submit September expense report",
+      threadId: "task-expense-report",
+      done: false,
+    },
+    asked: "Find receipts for the 4 September card charges that still lack one.",
+    outcome: {
+      kind: "answered",
+      handedBack: "4 receipt PDFs matching the charges",
+      kept: "Gmail · Personal account",
+      why: "Work doesn't see Personal. Only the matching receipts cross.",
+    },
   },
   {
     id: "ask-porto",
     at: "Yesterday",
     from: "section:personal",
+    where: "section:work-northwind",
     to: TOP_LEVEL,
     task: { title: "Porto long weekend", done: false },
     asked: "Which October weekends are free of work travel?",
     outcome: {
       kind: "answered",
       handedBack: "Free weekends: 17–19 and 24–26 Oct",
-      kept: "Work calendar",
+      kept: "Google Calendar · Work calendar",
       why: "Personal doesn't see Work. Only the free dates cross.",
     },
   },
@@ -80,10 +114,11 @@ export const ASK_UPS: readonly AskUp[] = [
     id: "ask-release-page",
     at: "Mon",
     from: "team-project:terminal-app",
-    to: "section:work",
+    where: "section:work-northwind",
+    to: "section:work-northwind",
     task: { title: "Update the release checklist", done: true },
-    asked: "Read the release process page in Confluence.",
-    outcome: { kind: "lent", lent: "Confluence · Work space (read)" },
+    asked: "Read the release process page in the Northwind wiki.",
+    outcome: { kind: "lent", lent: "Confluence · Northwind wiki (read)" },
   },
 ];
 

@@ -74,7 +74,7 @@ export function AutomationAgentButton(props: { automation: Automation }) {
               type="button"
               onClick={() => open()}
               aria-label={label}
-              className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-1.5 pl-0.5 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-1.5 pl-0.5 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             />
           }
         >

@@ -1,14 +1,23 @@
 /**
- * The Assistant: one coordinator chat that starts fresh each day (first open
- * after 4:00, or after a long idle stretch) and hands real work straight to the
- * agent that owns it. UI prototype on placeholder fixtures. The viewed day, the
- * new-day preview and the Customize tab live in the URL; the rest is local.
+ * The Assistant: the top level's agent. One coordinator chat that starts fresh
+ * each day (first open after 4:00, or after a long idle stretch) and hands real
+ * work straight to the agent that owns it. The header shows what sits at the
+ * top level and the asks that came up to it from agents below (lent, or
+ * answered without handing the thing over). UI prototype on placeholder
+ * fixtures. The viewed day, the new-day preview and the Customize tab live in
+ * the URL; the rest is local.
  */
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { EllipsisIcon, PhoneIcon, SmileIcon } from "lucide-react";
+import { EllipsisIcon, HandshakeIcon, PhoneIcon, SmileIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { isElectron } from "../../env";
+import { asksFor } from "../levels/askUp";
+import { LevelCoordinates } from "../levels/LevelCoordinates";
+import { LevelOptionsProvider } from "../levels/LevelOptionsProvider";
+import { TOP_LEVEL } from "../levels/levels";
+import { RecentAsks } from "../levels/RecentAsks";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Button } from "../ui/button";
 import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SidebarInset } from "../ui/sidebar";
@@ -66,6 +75,38 @@ function CallButton(props: { name: string }) {
       </TooltipTrigger>
       <TooltipPopup side="bottom">Call {props.name}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+/** Asks that came up to the top level from agents below, and what each got. */
+function AsksFromBelow(props: { name: string }) {
+  if (asksFor(TOP_LEVEL).length === 0) return null;
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={<Button size="icon-sm" variant="ghost" aria-label="Asks from below" />}
+            />
+          }
+        >
+          <HandshakeIcon className="size-4" />
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">Asks from below</TooltipPopup>
+      </Tooltip>
+      <PopoverPopup align="end" width="lg">
+        <div className="flex flex-col gap-3 text-sm">
+          <p className="text-muted-foreground text-pretty">
+            Agents below ask {props.name} for what sits at the top level or in another branch.{" "}
+            {props.name} lends it for that task, or does the work and hands back only what's needed.
+          </p>
+          <LevelOptionsProvider>
+            <RecentAsks level={TOP_LEVEL} />
+          </LevelOptionsProvider>
+        </div>
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -160,6 +201,9 @@ export function AssistantPage() {
       <WorkspaceBreadcrumbText>{name}</WorkspaceBreadcrumbText>
     </span>
   );
+  const coordinates = (
+    <LevelCoordinates level={TOP_LEVEL} levelLabel="Top level" agentName={name} />
+  );
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
@@ -168,7 +212,10 @@ export function AssistantPage() {
           <WorkspaceBreadcrumb ariaLabel="Assistant breadcrumb" className="flex-1">
             <WorkspaceBreadcrumbItem current={isCurrent}>
               {isCurrent ? (
-                nameLabel
+                <span className="flex min-w-0 items-center gap-2">
+                  {nameLabel}
+                  {coordinates}
+                </span>
               ) : (
                 <button
                   type="button"
@@ -190,6 +237,7 @@ export function AssistantPage() {
           </WorkspaceBreadcrumb>
           <div className="flex shrink-0 items-center gap-1">
             <OnlyYouChip agentName={name} />
+            <AsksFromBelow name={name} />
             <CallButton name={name} />
             <NotificationMenu agentKey="assistant" agentName={name} />
             <ChatHistoryMenu

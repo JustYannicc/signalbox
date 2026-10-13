@@ -419,6 +419,21 @@ export const SPACES_ITEMS: readonly SpacesItemFixture[] = [
     file: "terminal-team/2026-09-30 Firmware 3.3 rollout.md",
   },
   {
+    id: "slack-release-train",
+    name: "Release train: terminal-app 4.2 and portal payouts",
+    type: "message",
+    source: "slack",
+    space: "work-northwind",
+    location: "#northwind-eng",
+    owner: "Flynn Moretti",
+    updatedAt: ago(3 * HOUR),
+    usedInChats: 2,
+    pinned: true,
+    excerpt:
+      "Cut is Thursday 14:00. terminal-app ships 4.2 with the A920 printer fix, merchant-portal ships the payout copy. Samir owns the portal checklist, Yannic the terminal one.",
+    file: "northwind-eng/2026-10-13 Release train.md",
+  },
+  {
     id: "slack-invoice-export",
     name: "Invoice export for September",
     type: "message",

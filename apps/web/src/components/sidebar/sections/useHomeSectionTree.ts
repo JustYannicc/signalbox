@@ -2,30 +2,35 @@
  * Builds the Home tree: top-level items, then sections › (team) projects ›
  * items, as you arranged them (moves, renames, archive), with a calm rollup of
  * what needs you per node, automations, accounts and mapped places included (see
- * `mappedItems`). Also derives the shortcut order (rendered rows
- * only), Move-to destinations, and Focus: sections outside the focused level
- * drop out unless the user is peeking. The chip only names them; what runs
- * in there stays out of sight.
+ * `mappedItems`), and a count of everything below it. Also derives the
+ * shortcut order (rendered rows only), Move-to destinations, and Focus:
+ * sections outside the focused level drop out unless the user is peeking. The
+ * chip only names them; what runs in there stays out of sight, except items
+ * an escalation rule lets through (`focus/breakthrough`).
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useMemo } from "react";
 
 import { useAutomations } from "../../homeAutomations/runDecisions";
 import { SKILLS, useSkillLevels } from "../../levels/leveledThings";
-import { registerProjectRoots, registerProjectSections } from "../../levels/levels";
+import { registerProjectRoots, registerProjectSections, TOP_LEVEL } from "../../levels/levels";
 import { TEAM_PROJECTS } from "../../multiplayer/multiplayerFixtures";
 import type { TeamProject } from "../../multiplayer/multiplayerModel";
 import { useRoomArchiveStore } from "../../rooms/rooms";
 import { useUiStateStore } from "../../../uiStateStore";
+import { breakthroughGroups, type HiddenContainer } from "../focus/breakthrough";
 import { isSectionInFocus } from "../focus/focusLevels";
 import { useFocusedLevel, useFocusStore } from "../focus/focusStore";
 import { homeThreadKey, type HomeProjectEntry } from "../useHomeSidebarData";
 import {
   buildContainerIndex,
   contentsOf,
+  mergeSummaries,
   rollupForContents,
+  summarizeContents,
   teamProjectsFor,
   type ContainerContents,
+  type SubtreeSummary,
 } from "./containerContents";
 import { mergeRollups, rollupOf, statusForThread, type StatusRollup } from "./homeStatus";
 import { buildMappedIndex, useMappedStore } from "./mappedItems";
@@ -51,6 +56,7 @@ export interface HomeProjectView {
   /** Fixture items moved into the project. */
   readonly contents: ContainerContents;
   readonly rollup: StatusRollup;
+  readonly summary: SubtreeSummary;
 }
 
 export interface HomeTeamProjectView {
@@ -58,6 +64,7 @@ export interface HomeTeamProjectView {
   readonly agentId: string;
   readonly contents: ContainerContents;
   readonly rollup: StatusRollup;
+  readonly summary: SubtreeSummary;
 }
 
 export interface HomeSectionNode {
@@ -69,6 +76,8 @@ export interface HomeSectionNode {
   readonly contents: ContainerContents;
   /** What needs you anywhere below this node. */
   readonly rollup: StatusRollup;
+  /** Everything below this node, in sight. */
+  readonly summary: SubtreeSummary;
   /** Shown only because the user is peeking past Focus. */
   readonly peeked: boolean;
 }
@@ -151,6 +160,13 @@ export function useHomeSectionTree(input: {
       ].toSorted(byRecency);
       const fixtures = { ...contents, threads: [] };
       const withFixtures: HomeProjectView = {
+        summary: summarizeContents(
+          fixtures,
+          `project:${key}`,
+          mapped.homeById,
+          lastVisited,
+          threads,
+        ),
         entry,
         agentId: agentIds.get(key) ?? `project-${key}`,
         threads,
@@ -184,12 +200,14 @@ export function useHomeSectionTree(input: {
         .map(buildNode);
       const projects = projectsBySection.get(section.id) ?? [];
       const teamProjects = teamProjectsFor(section.id, overrides, archived).map((project) => {
-        const contents = contentsOf(index, `team-project:${project.id}`);
+        const projectKey = `team-project:${project.id}`;
+        const contents = contentsOf(index, projectKey);
         return {
           project,
-          agentId: agentIds.get(`team-project:${project.id}`) ?? `project-${project.id}`,
+          agentId: agentIds.get(projectKey) ?? `project-${project.id}`,
           contents,
           rollup: rollupForContents(contents, lastVisited),
+          summary: summarizeContents(contents, projectKey, mapped.homeById, lastVisited),
         };
       });
       const contents = contentsOf(index, `section:${section.id}`);
@@ -201,6 +219,12 @@ export function useHomeSectionTree(input: {
         ...teamProjects.map((project) => project.rollup),
         rollupForContents(contents, lastVisited),
       ]);
+      const summary = mergeSummaries([
+        ...childSections.map((child) => child.summary),
+        ...projects.map((project) => project.summary),
+        ...teamProjects.map((project) => project.summary),
+        summarizeContents(contents, `section:${section.id}`, mapped.homeById, lastVisited),
+      ]);
       return {
         section,
         childSections,
@@ -208,6 +232,7 @@ export function useHomeSectionTree(input: {
         teamProjects,
         contents,
         rollup,
+        summary,
         peeked: isHiddenSection(section.id),
       };
     };
@@ -276,6 +301,55 @@ export function useHomeSectionTree(input: {
         ? { hiddenLabel: hiddenSections.map((section) => section.name).join(" & ") }
         : null;
 
+    // What escalation rules let through the hidden sections; peeking shows them all anyway.
+    const hiddenContainers: HiddenContainer[] = [];
+    const collectHidden = (section: HomeSection) => {
+      const sectionKey = `section:${section.id}`;
+      if (sectionKey in archived) return;
+      const shared = section.kind === "team";
+      const contents = contentsOf(index, sectionKey);
+      hiddenContainers.push({
+        key: sectionKey,
+        label: section.name,
+        place: { containerKey: sectionKey, containerId: section.id, sharedContainer: shared },
+        contents,
+        threads: contents.threads,
+        projectName: null,
+      });
+      for (const project of teamProjectsFor(section.id, overrides, archived)) {
+        const key = `team-project:${project.id}`;
+        const projectContents = contentsOf(index, key);
+        hiddenContainers.push({
+          key,
+          label: names[key] ?? project.name,
+          place: { containerKey: key, containerId: project.id, sharedContainer: true },
+          contents: projectContents,
+          threads: projectContents.threads,
+          projectName: null,
+        });
+      }
+      for (const project of projectsBySection.get(section.id) ?? []) {
+        const key = `project:${project.entry.group.projectKey}`;
+        const name = names[key] ?? project.entry.group.displayName;
+        hiddenContainers.push({
+          key,
+          label: name,
+          place: { containerKey: key, containerId: section.id, sharedContainer: shared },
+          contents: project.contents,
+          threads: project.threads,
+          projectName: name,
+        });
+      }
+      childSectionsOf(section.id).forEach(collectHidden);
+    };
+    if (!peeking && focused !== TOP_LEVEL) hiddenSections.forEach(collectHidden);
+    const breakthrough = breakthroughGroups({
+      containers: hiddenContainers,
+      focused,
+      lastVisited,
+      homeById: mapped.homeById,
+    });
+
     return {
       roots,
       rootContents,
@@ -284,6 +358,7 @@ export function useHomeSectionTree(input: {
       destinations,
       paused,
       peeking,
+      breakthrough,
       index,
     };
   }, [

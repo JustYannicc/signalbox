@@ -6,7 +6,45 @@
 import { CODEX, SONNET, agent, person } from "./fixtureAuthors";
 import type { TeamMessage } from "./multiplayerModel";
 
+// The Northwind team's own agent: this chat sits at Work › Northwind team.
+const NORTHWIND_AGENT = { ...agent("yannic", SONNET), name: "Northwind agent" };
+
 export const LOOSE_ITEM_MESSAGES: Readonly<Record<string, readonly TeamMessage[]>> = {
+  // Shared with the team. The board deck sits at the top level, so the Northwind
+  // agent asks Appa; Appa answers with only the numbers (`levels/askUp.ts`).
+  "chat-q4-roadmap-team": [
+    {
+      id: "m1",
+      author: person("yannic"),
+      body: "draft the q4 roadmap for terminal-app and merchant-portal, in line with what I told the board last week",
+      at: "10:09",
+    },
+    {
+      id: "m2",
+      author: NORTHWIND_AGENT,
+      at: "10:13",
+      work: [
+        {
+          label: "Asked Appa (top level)",
+          itemType: "dynamic_tool",
+          detail: "Board deck · Q4: what runway and Q4 target does it assume?",
+        },
+        {
+          label: "Answered from above",
+          itemType: "dynamic_tool",
+          detail: "Runway and the Q4 revenue target. The deck itself stays at the top level.",
+        },
+        { label: "Jira", itemType: "dynamic_tool", detail: "project in (TERM, MP) · open epics" },
+      ],
+      body: "The board presentation sits at your top level, so I asked Appa instead of opening it. Appa answered with what the roadmap needs and kept the deck (it isn't for this chat): **18 months of runway** and a **Q4 revenue target of CHF 3.1M**.\n\nDraft:\n\n1. **Firmware 3.3 on the full fleet by 30 Nov** (terminal-app)\n2. **Self-serve onboarding** so new merchants go live without a call (merchant-portal)\n3. **Refund webhooks at 99% first-attempt success** (merchant-portal)\n\nNo new hires assumed. 2 is what moves revenue; 1 and 3 keep support load flat while merchants grow.",
+    },
+    {
+      id: "m3",
+      author: person("flo"),
+      body: "3 is mostly done once the retry fix ships, can we fold it into 2 and put the payout export there instead?",
+      at: "10:21",
+    },
+  ],
   "chat-okr-draft": [
     {
       id: "m1",

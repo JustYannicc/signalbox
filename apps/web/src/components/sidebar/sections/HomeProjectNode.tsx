@@ -54,6 +54,7 @@ export const HomeProjectNode = memo(function HomeProjectNode(props: {
       agentStatus={null}
       inTeam={props.team !== null}
       rollup={view.rollup}
+      summary={view.summary}
       movable={{ kind: "project", key: group.projectKey, label: name }}
       destination={{ key: nodeKey, label: name, kind: "project" }}
       actions={

@@ -22,7 +22,7 @@ function ExecutorNote(props: { onOpen: () => void }) {
     <button
       type="button"
       onClick={props.onOpen}
-      className="mt-auto flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring"
+      className="mt-auto flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
     >
       <span
         aria-hidden

@@ -122,7 +122,7 @@ function SkillList() {
           visibleSkills.map((skill) => {
             const restriction = harnessRestriction(skill.harnesses);
             const levels = levelsOf(skill);
-            const reach = reachOverrides[`skill:${skill.id}`] ?? "here";
+            const reach = reachOverrides[`skill:${skill.id}`] ?? skill.reach ?? "here";
             return (
               <div
                 key={skill.id}
@@ -133,7 +133,7 @@ function SkillList() {
                     <Link
                       to="/plugins"
                       search={{ section: "skills", skill: skill.id }}
-                      className="truncate rounded-sm font-mono text-sm text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                      className="truncate rounded-sm font-mono text-sm text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                     >
                       {skill.name}
                     </Link>

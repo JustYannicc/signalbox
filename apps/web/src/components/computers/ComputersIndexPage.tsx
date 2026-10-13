@@ -1,5 +1,6 @@
 /**
- * `/computers`: every real OS an agent acquired, live first. Placeholder data.
+ * `/computers`: every real OS an agent acquired, live first, as far as Focus
+ * keeps their levels in sight. Placeholder data.
  */
 import { Link } from "@tanstack/react-router";
 
@@ -9,10 +10,12 @@ import { SidebarInset } from "../ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { useFocusedLevel } from "../sidebar/focus/focusStore";
 import { COMPUTERS } from "./computerFixtures";
 import { ComputerOsIcon, ComputerStateBadge } from "./computerPrimitives";
 import {
   OS_LABEL,
+  computersInSight,
   formatUsd,
   provenanceText,
   totalCost,
@@ -32,7 +35,7 @@ function ComputerRow({ computer }: { computer: Computer }) {
       <Link
         to="/computers/$computerId"
         params={{ computerId: computer.id }}
-        className="flex items-center gap-4 rounded-lg px-3 py-3 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex items-center gap-4 rounded-lg px-3 py-3 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
           <ComputerOsIcon os={computer.os} className="size-4" />
@@ -65,10 +68,10 @@ const GROUPS: ReadonlyArray<{ state: ComputerState; heading: string }> = [
 ];
 
 export function ComputersIndexPage() {
-  const liveRate = COMPUTERS.filter((computer) => computer.state === "live").reduce(
-    (sum, computer) => sum + computer.computeRateUsdPerHour,
-    0,
-  );
+  const inSight = computersInSight(COMPUTERS, useFocusedLevel());
+  const liveRate = inSight
+    .filter((computer) => computer.state === "live")
+    .reduce((sum, computer) => sum + computer.computeRateUsdPerHour, 0);
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
@@ -90,7 +93,7 @@ export function ComputersIndexPage() {
               workspace, and the computer is released when the work is done.
             </p>
             {GROUPS.map(({ state, heading }) => {
-              const computers = COMPUTERS.filter((computer) => computer.state === state);
+              const computers = inSight.filter((computer) => computer.state === state);
               if (computers.length === 0) return null;
               return (
                 <section

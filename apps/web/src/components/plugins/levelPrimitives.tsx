@@ -129,9 +129,11 @@ export function ThingLevels(props: {
   levels: readonly LevelKey[];
   area: PermissionArea;
   addedBy: AddedBy;
+  /** The fixture's reach, until you change it. */
+  reach?: Reach | undefined;
 }) {
   const policy = policyFor(props.levels[0] ?? TOP_LEVEL, LEVEL_POLICIES);
-  const reach = useThingReach(props.thingKey);
+  const reach = useThingReach(props.thingKey, props.reach);
   if (props.addedBy === "admins" && isRestricted(policy, props.area)) {
     return <LevelBadges levels={props.levels} reach={reach} />;
   }

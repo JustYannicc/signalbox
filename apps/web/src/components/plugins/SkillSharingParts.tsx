@@ -149,7 +149,7 @@ export function AdvancedSource(props: { publication: SkillPublication }) {
   const skillName = publication.repoPath.split("/")[0] ?? publication.skillId;
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 rounded-sm px-3 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:px-4">
+      <CollapsibleTrigger className="flex items-center gap-1.5 rounded-sm px-3 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-4">
         <ChevronRightIcon
           aria-hidden
           className={cn("size-3 transition-transform duration-150", open && "rotate-90")}

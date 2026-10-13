@@ -1,21 +1,26 @@
 /**
  * Home search covers every Home item: real threads (title, PR, and message
- * matches, like the Pipeline), loose chats and tasks, team threads, rooms, and
- * section and project agents. Results lead with their type icon.
+ * matches, like the Pipeline), loose chats and tasks, team threads, rooms,
+ * automations, places and accounts, and section and project agents. It reads
+ * the tree's own index, so archived things stay out and every result names
+ * the folder it lives in. Search is something you ask for, so it also finds
+ * what Focus hides (like peeking). Results lead with their type icon.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { useNavigate } from "@tanstack/react-router";
+import { linkOptions, useNavigate } from "@tanstack/react-router";
+import { WorkflowIcon } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 
 import { SupervisorAvatar } from "../../assistant/AssistantGlyphs";
-import { TEAM_THREADS } from "../../multiplayer/multiplayerFixtures";
-import { ALL_ROOMS } from "../../rooms/rooms";
+import { SourceMark } from "../../spaces/SpacesGlyphs";
+import { mappingHealth } from "../../spaces/spacesMappings";
 import { searchSidebarThreads } from "../../Sidebar.logic";
 import { SidebarMenuButton, SidebarMenuItem } from "../../ui/sidebar";
 import { homeThreadKey, type HomeProjectEntry } from "../useHomeSidebarData";
+import type { MappedItem } from "./mappedItems";
 import { useOpenHomeAgent } from "./openHomeAgent";
-import { allHomeSections, allLooseItems } from "./sectionModel";
-import { useHomeSectionStore } from "./sectionStore";
+import { allHomeSections } from "./sectionModel";
+import { ROOT_CONTAINER_KEY } from "./sectionStore";
 import { classifyThread, useThreadKindStore } from "./threadKind";
 import { ITEM_TYPE_ICON, type HomeItemType } from "./ThreadKindIcon";
 import type { HomeSectionTree } from "./useHomeSectionTree";
@@ -34,6 +39,36 @@ function typeIcon(type: HomeItemType) {
   return <Icon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
+function mappedIcon(item: MappedItem) {
+  switch (item.kind) {
+    case "automation":
+      return <WorkflowIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
+    case "account":
+      return <SourceMark connector={item.source.connector} tone="sidebar" />;
+    case "place":
+      return <SourceMark connector={mappingHealth(item.mapping).connector} tone="sidebar" />;
+    case "skill":
+      return null;
+  }
+}
+
+/** Where a strip item opens, from its home folder (same pages as its row). */
+function mappedTarget(item: MappedItem, home: string) {
+  switch (item.kind) {
+    case "automation":
+      return linkOptions({
+        to: "/home/automations/$automationId",
+        params: { automationId: item.automation.id },
+      });
+    case "account":
+      return linkOptions({ to: "/spaces", search: { account: item.source.id, at: home } });
+    case "place":
+      return linkOptions({ to: "/spaces", search: { mapping: item.mapping.id, at: home } });
+    case "skill":
+      return linkOptions({ to: "/plugins", search: { section: "skills", skill: item.skill.id } });
+  }
+}
+
 const matches = (text: string, query: string) => text.toLowerCase().includes(query);
 
 export function useHomeSearch(input: {
@@ -47,7 +82,6 @@ export function useHomeSearch(input: {
   const { query, projectEntries, projectNameByThreadKey, serverMatchKeys, tree, openThread } =
     input;
   const kindOverrides = useThreadKindStore((state) => state.overrides);
-  const looseItems = useHomeSectionStore(() => allLooseItems());
   const { open: openShared } = useOpenSharedThread();
   const openAgent = useOpenHomeAgent();
   const navigate = useNavigate();
@@ -61,10 +95,66 @@ export function useHomeSearch(input: {
       serverMatchKeys,
     );
     const kindOf = (key: string, fallback: "chat" | "task") => kindOverrides[key] ?? fallback;
+    // The folder's own name ("terminal-app"), or null at the top level.
+    const labelByKey = new Map(
+      tree.destinations.map((destination) => [
+        destination.key,
+        destination.label.split(" › ").at(-1) ?? destination.label,
+      ]),
+    );
+    const folder = (key: string) =>
+      key === ROOT_CONTAINER_KEY ? null : (labelByKey.get(key) ?? null);
     const agents = [
       ...allHomeSections().map((section) => ({ name: section.name, agentId: section.agentId })),
       ...collectProjectAgents(tree),
     ].filter((agent) => matches(`${agent.name} agent`, needle));
+
+    const items: HomeSearchResult[] = [];
+    const strip: HomeSearchResult[] = [];
+    for (const [key, contents] of tree.index.byContainer) {
+      for (const item of contents.loose) {
+        if (!matches(item.title, needle)) continue;
+        items.push({
+          key: item.id,
+          title: item.title,
+          context: folder(key),
+          icon: typeIcon(kindOf(item.id, item.type)),
+          open: () => openShared(item.id),
+        });
+      }
+      for (const thread of contents.teamThreads) {
+        if (!matches(thread.title, needle)) continue;
+        items.push({
+          key: thread.id,
+          title: thread.title,
+          context: folder(key),
+          icon: typeIcon(kindOf(thread.id, thread.kind)),
+          open: () => openShared(thread.id),
+        });
+      }
+      for (const room of contents.rooms) {
+        if (!matches(room.title, needle)) continue;
+        items.push({
+          key: room.id,
+          title: room.title,
+          context: folder(key) ?? "Room",
+          icon: typeIcon("room"),
+          open: () => void navigate({ to: "/rooms/$roomId", params: { roomId: room.id } }),
+        });
+      }
+      for (const item of contents.mapped) {
+        // Once, from its home: references and skills' extra levels would repeat it.
+        const home = tree.mapped.homeById.get(item.id) ?? null;
+        if (item.kind === "skill" || home !== key || !matches(item.title, needle)) continue;
+        strip.push({
+          key: item.id,
+          title: item.title,
+          context: folder(home),
+          icon: mappedIcon(item),
+          open: () => void navigate(mappedTarget(item, home)),
+        });
+      }
+    }
 
     return [
       ...threads.map((thread): HomeSearchResult => {
@@ -81,40 +171,18 @@ export function useHomeSearch(input: {
           open: () => openThread(thread),
         };
       }),
-      ...looseItems
-        .filter((item) => matches(item.title, needle))
-        .map((item) => ({
-          key: item.id,
-          title: item.title,
-          context: null,
-          icon: typeIcon(kindOf(item.id, item.type)),
-          open: () => openShared(item.id),
-        })),
-      ...TEAM_THREADS.filter((thread) => matches(thread.title, needle)).map((thread) => ({
-        key: thread.id,
-        title: thread.title,
-        context: thread.projectId,
-        icon: typeIcon(kindOf(thread.id, thread.kind)),
-        open: () => openShared(thread.id),
-      })),
-      ...ALL_ROOMS.filter((room) => matches(room.title, needle)).map((room) => ({
-        key: room.id,
-        title: room.title,
-        context: "Room",
-        icon: typeIcon("room"),
-        open: () => void navigate({ to: "/rooms/$roomId", params: { roomId: room.id } }),
-      })),
+      ...items,
+      ...strip,
       ...agents.map((agent) => ({
         key: `agent:${agent.agentId}`,
         title: `${agent.name} agent`,
-        context: "Your agent",
+        context: "Agent",
         icon: <SupervisorAvatar agentId={agent.agentId} size={16} />,
         open: () => openAgent(agent.agentId),
       })),
     ];
   }, [
     kindOverrides,
-    looseItems,
     navigate,
     openAgent,
     openShared,

@@ -1,8 +1,8 @@
 /**
  * Body of Settings > Notifications: the default for when supervisor agents may
  * ping you, the rule for "important", and where pings land: each client
- * device sits at a Home level and gets that level's pings, computers always
- * quiet, phones only urgent things while you're away. Render everything here
+ * device sits at a Home level and gets that level's pings, filtered by its
+ * own setting (quiet badge, urgent only, off). Render everything here
  * inside a `LevelOptionsProvider`. `NotificationOverridesSection` lists the
  * rules agents' bells set per level.
  */
@@ -10,6 +10,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowUpRightIcon } from "lucide-react";
 
 import { useClientDevices } from "../devices/deviceLevelsStore";
+import { DeviceNotifySelect } from "../devices/DeviceNotifySelect";
 import { deliveryScopeLabel } from "../levels/delivery";
 import {
   useLevelAgentName,
@@ -19,7 +20,6 @@ import {
 import { SettingResetButton, SettingsRow, SettingsSection } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import {
   DEFAULT_NOTIFY_DEFAULTS,
@@ -101,13 +101,13 @@ export function NotificationDefaultsForm(props: {
         ) : null}
       </SettingsSection>
 
-      <WhereItLands phone={value.phone} onPhoneChange={(phone) => set({ phone })} />
+      <WhereItLands />
     </>
   );
 }
 
 /** Every client device by its level: what it gets pings about, and how. */
-function WhereItLands(props: { phone: boolean; onPhoneChange: (phone: boolean) => void }) {
+function WhereItLands() {
   const devices = useClientDevices();
   const levelLabel = useLevelLabel();
   return (
@@ -120,32 +120,14 @@ function WhereItLands(props: { phone: boolean; onPhoneChange: (phone: boolean) =
         </Button>
       }
     >
-      {devices.map((device) => {
-        const scope = `Pings about ${deliveryScopeLabel(device.level, levelLabel(device.level))}.`;
-        if (device.kind === "laptop") {
-          return (
-            <SettingsRow
-              key={device.id}
-              title={`${device.name} · ${levelLabel(device.level)}`}
-              description={`Always quiet: a badge and a sidebar marker, no sound. ${scope}`}
-            />
-          );
-        }
-        return (
-          <SettingsRow
-            key={device.id}
-            title={`${device.name} · ${levelLabel(device.level)}`}
-            description={`${props.phone ? "Urgent only, while you're away." : "Off. Everything waits for you."} ${scope}`}
-            control={
-              <Switch
-                checked={props.phone}
-                onCheckedChange={props.onPhoneChange}
-                aria-label={`Urgent things go to ${device.name} while you're away`}
-              />
-            }
-          />
-        );
-      })}
+      {devices.map((device) => (
+        <SettingsRow
+          key={device.id}
+          title={`${device.name} · ${levelLabel(device.level)}`}
+          description={`Pings about ${deliveryScopeLabel(device.level, levelLabel(device.level))}.`}
+          control={<DeviceNotifySelect device={device} />}
+        />
+      ))}
     </SettingsSection>
   );
 }

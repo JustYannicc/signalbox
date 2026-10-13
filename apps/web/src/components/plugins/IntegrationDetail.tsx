@@ -1,10 +1,11 @@
 /**
  * The inline panel under an integration row: its tools, scopes, where it is
- * routed, and the account actions. Actions only toast in the prototype.
+ * routed, asks for it from other levels, and the account actions. Actions only toast in the prototype.
  */
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { AccountNameEditor } from "./ConnectionAccounts";
+import { ConnectionAsks } from "./ConnectionAsks";
 import { TOP_LEVEL, type LevelKey } from "../levels/levels";
 import { ManagedNote, ThingLevels } from "./levelPrimitives";
 import { LEVEL_POLICIES } from "./levelPolicyFixtures";
@@ -82,6 +83,7 @@ export function IntegrationDetail(props: {
                 levels={props.single.levels}
                 area={area}
                 addedBy={props.single.addedBy}
+                reach={props.single.reach}
               />
             </dd>
           </>
@@ -96,6 +98,7 @@ export function IntegrationDetail(props: {
                 levels={props.directLevels}
                 area={area}
                 addedBy="you"
+                reach={integration.reach}
               />
             </dd>
           </>
@@ -146,6 +149,8 @@ export function IntegrationDetail(props: {
           ) : null}
         </ul>
       </div>
+
+      <ConnectionAsks integration={integration} />
 
       <div className="flex flex-wrap items-center gap-2">
         {integration.via === "executor" ? (

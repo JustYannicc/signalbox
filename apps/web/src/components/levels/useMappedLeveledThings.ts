@@ -10,23 +10,20 @@ import { useMemo } from "react";
 
 import { useAutomations } from "../homeAutomations/runDecisions";
 import { buildMappedIndex, useMappedStore } from "../sidebar/sections/mappedItems";
-import { useProjects } from "../../state/entities";
 import type { LeveledThing } from "./leveledThings";
+import { useHomeProjectRefs } from "./useHomeProjectRefs";
 
 export function useMappedLeveledThings(): readonly LeveledThing[] {
   const automations = useAutomations();
-  const projects = useProjects();
+  // The Home tree's project keys, so homes resolve to the same `project:<key>` levels.
+  const projects = useHomeProjectRefs();
   const homes = useMappedStore((state) => state.homes);
   const references = useMappedStore((state) => state.references);
   const reach = useMappedStore((state) => state.reach);
   return useMemo(() => {
     const index = buildMappedIndex({
       automations,
-      projects: projects.map((project) => ({
-        projectKey: `${project.environmentId}:${project.id}`,
-        displayName: project.title,
-        workspaceRoot: project.workspaceRoot,
-      })),
+      projects,
       overrides: { homes, references, reach },
     });
     const seen = new Set<string>();

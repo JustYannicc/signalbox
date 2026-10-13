@@ -8,19 +8,20 @@ import { schedule } from "@signalbox/automations/triggers";
 
 export const trigger = schedule("0 8 1 * *", { timezone: "Europe/Zurich" });
 
-// Runs as Northwind's Expense agent. It has no access to Yannic's personal email,
-// so it asks Yannic's own agent and only ever receives the receipts it returns.
+// Lives in Work › Northwind team, so the Northwind agent runs it (no agent of its own). Yannic's personal
+// email sits in Personal, outside Work, so it asks up to Yannic's own agent, which
+// does the search itself and hands back only the matching receipts.
 export async function monthlyExpenses({ month }: { month: string }) {
   "use workflow";
 
   const charges = await agent("assistant", {
-    name: "Expense agent",
-    owner: "northwind",
+    name: "Northwind agent",
+    level: "Work",
     prompt: \`List \${month}'s charges on Yannic's business card that still need a receipt.\`,
   });
 
   const receipts = await handoff({
-    from: "Expense agent",
+    from: "Northwind agent",
     to: ASSISTANT,
     request: { receiptsFor: charges.missingReceipts },
     // Everything inside run() happens on Yannic's side, with Yannic's access.
@@ -72,7 +73,7 @@ const nodes: WorkflowNode[] = [
     config: {
       kind: "agent",
       provider: "assistant",
-      providerLabel: "Expense agent",
+      providerLabel: "Northwind agent",
       model: "Claude Sonnet 5",
       project: "Northwind Finance",
       prompt: "List last month's charges on Yannic's business card that still need a receipt.",
@@ -86,13 +87,13 @@ const nodes: WorkflowNode[] = [
     owner: NORTHWIND,
     config: {
       kind: "handoff",
-      from: "Expense agent",
+      from: "Northwind agent",
       to: ASSISTANT_NAME,
       request: "Receipts for the listed charges: merchant, date, and amount for each.",
       shares: ["The charges that need a receipt (merchant, date, amount)"],
       withheld: ["Other card transactions", "Northwind documents and mail"],
       scopeNote:
-        "The Expense agent represents Northwind. It sends only the list of charges it needs receipts for.",
+        "The Northwind agent represents Northwind team, which can't see Personal. It sends only the list of charges it needs receipts for.",
     },
   },
   {
@@ -133,7 +134,7 @@ const nodes: WorkflowNode[] = [
     config: {
       kind: "handoff",
       from: ASSISTANT_NAME,
-      to: "Expense agent",
+      to: "Northwind agent",
       request: "Only the receipts that match a listed charge.",
       shares: ["Matching receipts as PDF files", "Which charge each receipt belongs to"],
       withheld: [
@@ -142,7 +143,7 @@ const nodes: WorkflowNode[] = [
         "Emails that did not match",
         "Your search queries",
       ],
-      scopeNote: `${ASSISTANT_NAME} works for you and searches with your access. The Expense agent never sees your inbox. It only receives the files ${ASSISTANT_NAME} hands over.`,
+      scopeNote: `${ASSISTANT_NAME} works for you and searches with your access. The Northwind agent never sees your inbox. It only receives the files ${ASSISTANT_NAME} hands over.`,
     },
   },
   {
@@ -205,7 +206,7 @@ function expensesRun(monthsBack: number, charges: number, found: number) {
 export const MONTHLY_EXPENSES: Automation = {
   id: "monthly-expenses",
   name: "Monthly expenses",
-  description: `Northwind's Expense agent gets your receipts from ${ASSISTANT_NAME} without seeing your inbox.`,
+  description: `The Northwind agent gets your receipts from ${ASSISTANT_NAME} without seeing your personal inbox.`,
   cadence: "Monthly on the 1st",
   enabled: true,
   nextRunAt: lastMonthlyAt(1, 8, -1).toISOString(),

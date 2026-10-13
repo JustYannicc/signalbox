@@ -51,7 +51,7 @@ export function AccountNameEditor(props: {
     <button
       type="button"
       onClick={() => setDraft(props.name)}
-      className="group/name -mx-1 flex min-w-0 items-center gap-1.5 rounded-sm px-1 text-left text-sm text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+      className="group/name -mx-1 flex min-w-0 items-center gap-1.5 rounded-sm px-1 text-left text-sm text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       aria-label={`Rename ${connectionDisplayName(props.integration, props.name)}`}
     >
       <span className="truncate">{props.name}</span>
@@ -92,6 +92,7 @@ export function AccountRow(props: {
         levels={account.levels}
         area={isApiKind(integration.kind) ? "apis" : "connections"}
         addedBy={account.addedBy}
+        reach={account.reach}
       />
       {broken ? (
         <>

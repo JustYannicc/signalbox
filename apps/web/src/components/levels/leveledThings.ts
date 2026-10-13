@@ -168,6 +168,7 @@ function accountThing(
     glyph: integration.glyph,
     levels: overrides[key] ?? account.levels,
     addedBy: account.addedBy,
+    ...(account.reach ? { reach: account.reach } : {}),
   };
 }
 
@@ -189,6 +190,7 @@ export function leveledThings(
             glyph: integration.glyph,
             levels: overrides[`integration:${integration.id}`] ?? integration.levels ?? [],
             addedBy: "you" as const,
+            ...(integration.reach ? { reach: integration.reach } : {}),
           },
         ],
   );
@@ -213,6 +215,7 @@ export function leveledThings(
       skill.source === "personal" || (skill.source === "team" && skill.origin === "you")
         ? "you"
         : "admins",
+    ...(skill.reach ? { reach: skill.reach } : {}),
   }));
   const plugins = sources.plugins.map((plugin): LeveledThing => ({
     key: `plugin:${plugin.id}`,
@@ -225,7 +228,8 @@ export function leveledThings(
   }));
   return [...connections, ...models, ...skills, ...plugins].map((thing) => ({
     ...thing,
-    reach: reachOverrides[thing.key] ?? defaultReach(thing.kind),
+    // Your change, else the fixture's own reach, else the default for its kind.
+    reach: reachOverrides[thing.key] ?? thing.reach ?? defaultReach(thing.kind),
   }));
 }
 

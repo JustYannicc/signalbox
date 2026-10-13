@@ -1,12 +1,15 @@
 /**
- * Overview: is Executor up, and what needs attention.
+ * Overview: is Executor up, and what needs attention. Attention follows Focus:
+ * a broken connection at a level out of sight stays out of mind.
  */
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { SettingsSection } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
-import { needsAttention, type PluginsSection } from "./pluginsModel";
+import { isInSight } from "../sidebar/focus/focusLevels";
+import { useFocusedLevel } from "../sidebar/focus/focusStore";
+import { integrationLevels, needsAttention, type PluginsSection } from "./pluginsModel";
 import { EXECUTOR_STATUS, HARNESS_PLUGINS, INTEGRATIONS, SKILLS } from "./pluginsFixtures";
 import { comingSoon, IntegrationMark, StatusDot } from "./pluginsPrimitives";
 
@@ -60,8 +63,15 @@ function ExecutorStatusGroup() {
 }
 
 function NeedsAttentionGroup() {
-  const brokenIntegrations = INTEGRATIONS.filter(needsAttention);
-  const outdatedPlugins = HARNESS_PLUGINS.filter((plugin) => plugin.updateAvailable);
+  const focused = useFocusedLevel();
+  const brokenIntegrations = INTEGRATIONS.filter(
+    (integration) =>
+      needsAttention(integration) &&
+      isInSight({ levels: integrationLevels(integration), status: "failed" }, focused),
+  );
+  const outdatedPlugins = HARNESS_PLUGINS.filter(
+    (plugin) => plugin.updateAvailable && isInSight({ levels: plugin.levels }, focused),
+  );
 
   return (
     <SettingsSection title="Needs attention">

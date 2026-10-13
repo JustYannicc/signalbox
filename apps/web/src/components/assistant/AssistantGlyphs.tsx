@@ -62,7 +62,10 @@ export function NodeName(props: { node: TraceNodeFixture }) {
   return <>{props.node.kind === "assistant" ? identity.name : props.node.name}</>;
 }
 
-/** "section:work/northwind" → "section-northwind", matching the `/agent/$agentId` ids. */
+/**
+ * "section:work/northwind" → "section-northwind": the trace fixtures' node ids
+ * mapped onto the `/agent/$agentId` slugs Home gives each level's agent.
+ */
 export function agentIdForNode(node: TraceNodeFixture): string {
   const key = node.id.split(/[:/]/).at(-1) ?? node.id;
   return `${node.kind}-${key}`;
@@ -93,7 +96,7 @@ export function SupervisorAvatar(props: {
 export function NodeGlyph(props: { node: TraceNodeFixture; className?: string | undefined }) {
   const { node } = props;
   if (node.kind === "assistant") return <AssistantIcon className={props.className} />;
-  if (node.kind === "section" || node.kind === "project" || node.kind === "workflow") {
+  if (node.kind === "section" || node.kind === "project") {
     return (
       <SupervisorAvatar agentId={agentIdForNode(node)} size={16} className={props.className} />
     );

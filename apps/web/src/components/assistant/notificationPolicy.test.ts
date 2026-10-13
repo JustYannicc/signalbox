@@ -3,7 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildLevelOptions } from "../levels/levelOptions";
 import { TOP_LEVEL } from "../levels/levels";
 import { HOME_SECTIONS } from "../sidebar/sections/sectionModel";
-import { agentLevel, migrateNotifyOverrides, resolveNotifyPolicy } from "./notificationPolicy";
+import {
+  agentLevel,
+  demoNotifyOverrides,
+  migrateNotifyOverrides,
+  resolveNotifyPolicy,
+} from "./notificationPolicy";
 
 const PERSONAL = "section:personal";
 const WORK = "section:work";
@@ -69,5 +74,26 @@ describe("migrateNotifyOverrides", () => {
     expect(migrateNotifyOverrides({ [WORK]: "all", "section-work": "none" }, levelOf)).toEqual({
       [WORK]: "all",
     });
+  });
+});
+
+describe("demoNotifyOverrides", () => {
+  const optionsWith = (names: readonly string[]) =>
+    buildLevelOptions({
+      sections: HOME_SECTIONS,
+      projects: names.map((name) => ({
+        projectKey: `env:${name}`,
+        displayName: name,
+        workspaceRoot: `/code/${name}`,
+      })),
+      placement: { projectSectionOverrides: {}, names: {} },
+    });
+
+  it("mutes Personal and keeps signalbox pinging, never a Northwind project", () => {
+    expect(demoNotifyOverrides(optionsWith(["dotfiles", "northwind-tools", "signalbox"]))).toEqual({
+      [PERSONAL]: "none",
+      "project:env:signalbox": "important",
+    });
+    expect(demoNotifyOverrides(optionsWith([]))).toEqual({ [PERSONAL]: "none" });
   });
 });

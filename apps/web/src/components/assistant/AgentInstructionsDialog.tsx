@@ -8,7 +8,8 @@ import { Link } from "@tanstack/react-router";
 import { ArrowUpRightIcon, ScrollTextIcon } from "lucide-react";
 import { useState } from "react";
 
-import { LevelOptionsProvider, useLevelOptionsContext } from "../levels/LevelOptionsProvider";
+import { LevelOptionsProvider } from "../levels/LevelOptionsProvider";
+import type { LevelOption } from "../levels/levelOptions";
 import type { LevelKey } from "../levels/levels";
 import {
   InstructionsBlocks,
@@ -31,7 +32,6 @@ import {
   DialogTrigger,
 } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { AgentFixture } from "./agentFixtures";
 
 function LevelInstructionsEditor(props: { level: LevelKey }) {
   const draft = useInstructionDraft(props.level);
@@ -74,8 +74,8 @@ function LevelInstructionsEditor(props: { level: LevelKey }) {
   );
 }
 
-function DialogBody(props: { agent: AgentFixture; agentName: string }) {
-  const level = useLevelOptionsContext().find((option) => option.agentId === props.agent.id);
+function DialogBody(props: { level: LevelOption | null; agentName: string }) {
+  const { level } = props;
   return (
     <>
       <DialogHeader>
@@ -91,7 +91,7 @@ function DialogBody(props: { agent: AgentFixture; agentName: string }) {
   );
 }
 
-export function AgentInstructionsDialog(props: { agent: AgentFixture; agentName: string }) {
+export function AgentInstructionsDialog(props: { level: LevelOption | null; agentName: string }) {
   return (
     <Dialog>
       <Tooltip>
@@ -107,8 +107,9 @@ export function AgentInstructionsDialog(props: { agent: AgentFixture; agentName:
         <TooltipPopup side="bottom">Instructions</TooltipPopup>
       </Tooltip>
       <DialogPopup className="max-w-2xl">
+        {/* The editor and preview name levels and agents from the provider. */}
         <LevelOptionsProvider>
-          <DialogBody agent={props.agent} agentName={props.agentName} />
+          <DialogBody level={props.level} agentName={props.agentName} />
         </LevelOptionsProvider>
       </DialogPopup>
     </Dialog>

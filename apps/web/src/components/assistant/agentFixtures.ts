@@ -1,17 +1,22 @@
 /**
- * PLACEHOLDER DATA for section and project agent pages. Each level has one
- * agent: it represents that level and coordinates the threads, tasks and
- * automations there (it isn't the agent that does everything). Agents of team
- * levels are shared with the team; agents of personal levels are just yours
- * (`levels/levelSharing`). Private chats stay private either way. The
- * assistant hands work straight to the agent that owns it; parent section
- * agents watch their containers instead of relaying. When an agent needs
- * something above its level it asks up (`levels/askUp`). Each agent keeps one
- * running chat that closes once all of its work is done; earlier chats stay in
- * History. Unknown ids resolve to a generic, empty agent.
+ * PLACEHOLDER DATA for section and project agent pages, keyed by the level
+ * each agent represents (`home`: a level key, or a real project matched by
+ * name like the automation and place fixtures). Each level has one agent: it
+ * coordinates the threads, tasks and automations there, spinning up a task or
+ * chat for real work instead of doing everything itself. Agents of team levels
+ * are shared with the team; agents of personal levels are just yours
+ * (`levels/levelSharing`). Private chats stay private either way. When an
+ * agent needs something above its level it asks up (`levels/askUp`): the
+ * agent above lends it for the task, or does that piece and hands back only
+ * what's needed. Each agent keeps one running chat that closes once all of its
+ * work is done; earlier chats stay in History. Levels without a fixture get an
+ * empty agent.
  */
 import * as Schema from "effect/Schema";
 
+import type { LevelOption } from "../levels/levelOptions";
+import { resolveTarget, type ProjectRef } from "../sidebar/sections/mappedItems";
+import { T3CODE_PROJECT, type HomeTarget } from "../spaces/spacesMappings";
 import { notificationTurn, type ChatFixture, type TurnFixture } from "./assistantFixtures";
 import { ASSISTANT_NAME } from "./assistantIdentity";
 
@@ -24,14 +29,12 @@ export interface AgentChatFixture extends ChatFixture {
 }
 
 export interface AgentFixture {
-  readonly id: string;
-  readonly kind: "section" | "project";
-  /** What the agent can see into, e.g. "Work › Northwind team"; defaults to `name`. */
-  readonly area?: string;
+  /** The level this agent represents. */
+  readonly home: HomeTarget;
   /** Trace node the agent speaks as. */
   readonly nodeId: string;
+  /** Used only when the level can't be found in Home. */
   readonly name: string;
-  readonly scope: string;
   readonly current: AgentChatFixture;
   readonly previous: readonly AgentChatFixture[];
 }
@@ -64,12 +67,10 @@ const chat = (
 
 export const AGENTS: readonly AgentFixture[] = [
   {
-    id: "section-work",
-    kind: "section",
+    home: "section:work",
     nodeId: "section:work",
     name: "Work",
-    scope: "Work › Northwind team",
-    current: chat("work-2", "Since Mon 28 Sep", "2 open", [
+    current: chat("work-2", "Since Mon 28 Sep", "3 open", [
       turn(
         "w1",
         "assistant",
@@ -90,12 +91,18 @@ export const AGENTS: readonly AgentFixture[] = [
         nodeId: "thread:printer-fix",
         detail: "The failure is already carried over in your assistant chat.",
       }),
+      turn(
+        "w2a",
+        "assistant",
+        "Yesterday 17:30",
+        `“Submit September expense report” needs receipts that only sit in your personal Gmail, outside Work. I asked ${ASSISTANT_NAME}: it kept the inbox and sent back just the 4 receipt PDFs that match the card charges. They're attached to the task.`,
+      ),
       turn("w3", "user", "11:40", "anything in work that needs me today?"),
       turn(
         "w4",
         "assistant",
         "11:40",
-        "Only the printer fix: CI failed on the Neptune print tests. The signing question is on Flynn, not you.",
+        "Two things. The expense report waits on your OK to submit, and the printer fix failed CI on the Neptune print tests. The signing question is on Flynn, not you.",
       ),
     ]),
     previous: [
@@ -111,13 +118,10 @@ export const AGENTS: readonly AgentFixture[] = [
     ],
   },
   {
-    id: "section-northwind",
-    kind: "section",
+    home: "section:work-northwind",
     nodeId: "section:work/northwind",
     name: "Northwind team",
-    area: "Work › Northwind team",
-    scope: "terminal-app, merchant-portal",
-    current: chat("northwind-2", "Since Mon 28 Sep", "2 open", [
+    current: chat("northwind-2", "Since Mon 28 Sep", "4 open", [
       turn(
         "wa1",
         "assistant",
@@ -126,11 +130,23 @@ export const AGENTS: readonly AgentFixture[] = [
         { delegationId: "d-neptune-questions" },
       ),
       turn(
+        "wa1b",
+        "assistant",
+        "Mon 15:02",
+        "The terminal-app agent asked for the Northwind wiki to update the release checklist. Lent it read access for that task; the loan ended when the checklist was done.",
+      ),
+      turn(
         "wa2",
         "assistant",
         "Tue 16:21",
         "Watching: the A920 printer fix is a Task in terminal-app.",
         { delegationId: "d-printer-fix" },
+      ),
+      turn(
+        "wa2b",
+        "assistant",
+        "09:40",
+        "The merchant-portal agent needs the refund webhook's Sentry events for “Fix refund webhook retries”. Sentry sits with the team, so I lent read access to Northwind Sentry until that task ends.",
       ),
       turn(
         "wa3",
@@ -142,12 +158,36 @@ export const AGENTS: readonly AgentFixture[] = [
     previous: [],
   },
   {
-    id: "section-personal",
-    kind: "section",
+    home: "team-project:merchant-portal",
+    nodeId: "project:merchant-portal",
+    name: "merchant-portal",
+    current: chat("merchant-1", "Since Wed 30 Sep", "2 open", [
+      turn(
+        "mp1",
+        "assistant",
+        "Wed 10:05",
+        "Started a Task for Samir: review the payout dashboard copy. It waits on Samir's read-through.",
+      ),
+      turn(
+        "mp2",
+        "assistant",
+        "09:38",
+        "Started a Task with Codex: fix refund webhook retries. Flynn and Samir are in it.",
+      ),
+      turn(
+        "mp3",
+        "assistant",
+        "09:40",
+        "The task needs the refund webhook's Sentry events, and Sentry sits with the Northwind team, not here. Asked the Northwind agent: it lent read access until the task ends.",
+      ),
+    ]),
+    previous: [],
+  },
+  {
+    home: "section:personal",
     nodeId: "section:personal",
     name: "Personal",
-    scope: "Personal › t3code",
-    current: chat("personal-2", "Since Tue 29 Sep", "2 open", [
+    current: chat("personal-2", "Since Tue 29 Sep", "3 open", [
       turn(
         "p1",
         "handoff",
@@ -165,6 +205,12 @@ export const AGENTS: readonly AgentFixture[] = [
         "Watching: the sidebar branch in t3code runs its checks before pushing.",
         { delegationId: "d-sidebar-review" },
       ),
+      turn(
+        "p4",
+        "assistant",
+        "08:15",
+        `“File the tax return” should land in your task list with its deadline. Todoist sits with ${ASSISTANT_NAME}, so I asked; it lent add-only access until the task is done.`,
+      ),
     ]),
     previous: [
       chat("personal-1", "25 – 27 Sep", "1 hand-off, done", [
@@ -178,16 +224,19 @@ export const AGENTS: readonly AgentFixture[] = [
         turn("pp2", "assistant", "Fri 19:13", "Started a chat for it.", {
           delegationId: "d-porto",
         }),
+        turn(
+          "pp3",
+          "assistant",
+          "Fri 19:20",
+          `Needed weekends without work travel. Personal can't see the Work calendar, so I asked ${ASSISTANT_NAME}: it sent back only the free weekends (17–19 and 24–26 Oct), nothing else from Work.`,
+        ),
       ]),
     ],
   },
   {
-    id: "project-t3code",
-    kind: "project",
+    home: T3CODE_PROJECT,
     nodeId: "project:t3code",
     name: "t3code",
-    area: "Personal › t3code",
-    scope: "threads in t3code",
     current: chat("t3code-1", "Since 11:02", "1 open", [
       turn(
         "t1",
@@ -210,12 +259,9 @@ export const AGENTS: readonly AgentFixture[] = [
     previous: [],
   },
   {
-    id: "project-terminal-app",
-    kind: "project",
+    home: "team-project:terminal-app",
     nodeId: "project:terminal-app",
     name: "terminal-app",
-    area: "Work › Northwind team › terminal-app",
-    scope: "threads in terminal-app",
     current: chat("terminal-1", "Since Mon 28 Sep", "2 open", [
       turn(
         "ta1",
@@ -234,6 +280,12 @@ export const AGENTS: readonly AgentFixture[] = [
         },
       ),
       turn(
+        "ta2b",
+        "assistant",
+        "Mon 15:00",
+        "Started a Task: update the release checklist. The release process page is in the Northwind wiki, which sits with the team, so I asked the Northwind agent. It lent read access; that ended with the task.",
+      ),
+      turn(
         "ta3",
         "handoff",
         "Tue 16:20",
@@ -248,23 +300,33 @@ export const AGENTS: readonly AgentFixture[] = [
   },
 ];
 
+/** Whether a fixture's home is `level`; a project matched by name never falls back to a section. */
+function isHome(fixture: AgentFixture, level: string, projects: readonly ProjectRef[]): boolean {
+  const resolved = resolveTarget(fixture.home, projects);
+  return typeof fixture.home === "string" || resolved !== fixture.home.fallback
+    ? resolved === level
+    : false;
+}
+
 const titleCase = (key: string) =>
   key.replace(/[-_]+/g, " ").replace(/^\w/, (first) => first.toUpperCase());
 
-/** A known agent, or a generic empty one named after the id ("project-foo" → "Foo"). */
-export function resolveAgent(agentId: string): AgentFixture {
-  const known = AGENTS.find((agent) => agent.id === agentId);
+/**
+ * The agent of `level` (the route's agent, found in Home), or a generic empty
+ * one named after the level, or after the id when it isn't in Home.
+ */
+export function agentForLevel(
+  agentId: string,
+  level: LevelOption | null,
+  projects: readonly ProjectRef[],
+): AgentFixture {
+  const known = level ? AGENTS.find((agent) => isHome(agent, level.key, projects)) : undefined;
   if (known) return known;
-  const kind = agentId.startsWith("project-") ? "project" : "section";
   const key = agentId.replace(/^(project|section)-/, "") || agentId;
-  const name = kind === "section" ? titleCase(key) : key;
-  const scope = kind === "project" ? `threads in ${name}` : name;
   return {
-    id: agentId,
-    kind,
-    nodeId: `${kind}:${key}`,
-    name,
-    scope,
+    home: level?.key ?? agentId,
+    nodeId: level?.key ?? agentId,
+    name: level?.name ?? (agentId.startsWith("section-") ? titleCase(key) : key),
     current: chat(`${agentId}-empty`, "Current", "Nothing open", []),
     previous: [],
   };

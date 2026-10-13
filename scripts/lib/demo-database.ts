@@ -23,7 +23,33 @@ const PROJECT_SCRIPTS = JSON.stringify([
 ]);
 
 // Everything the seeder owns. Auth tables and the environment id survive a refresh.
+// The server reads threads from orchestration v2, importing the v1 rows below at
+// boot; stale v2 rows (import markers above all) would keep old transcripts.
 const SEEDED_TABLES = [
+  "orchestration_v2_legacy_imports",
+  "orchestration_v2_turn_item_positions",
+  "orchestration_v2_effect_outbox",
+  "orchestration_v2_command_receipts",
+  "orchestration_v2_events",
+  "orchestration_v2_thread_launch_workflows",
+  "orchestration_v2_projection_context_transfers",
+  "orchestration_v2_projection_context_handoffs",
+  "orchestration_v2_projection_checkpoints",
+  "orchestration_v2_projection_checkpoint_scopes",
+  "orchestration_v2_projection_turn_items",
+  "orchestration_v2_projection_plans",
+  "orchestration_v2_projection_messages",
+  "orchestration_v2_projection_runtime_requests",
+  "orchestration_v2_projection_provider_turns",
+  "orchestration_v2_projection_provider_threads",
+  "orchestration_v2_projection_provider_session_bindings",
+  "orchestration_v2_projection_provider_sessions",
+  "orchestration_v2_projection_subagents",
+  "orchestration_v2_projection_nodes",
+  "orchestration_v2_projection_run_attempts",
+  "orchestration_v2_projection_runs",
+  "orchestration_v2_projection_threads",
+  "mcp_app_model_context",
   "orchestration_events",
   "orchestration_command_receipts",
   "checkpoint_diff_blobs",
@@ -41,7 +67,7 @@ const SEEDED_TABLES = [
 ] as const;
 
 export const demoPaths = (home: string) => ({
-  dbPath: NodePath.join(home, "userdata", "state.sqlite"),
+  dbPath: NodePath.join(home, "userdata", "statev2.sqlite"),
   runtimeStatePath: NodePath.join(home, "userdata", "server-runtime.json"),
   repoRoot: (project: DemoProject) => NodePath.join(home, "demo-repos", project.directory),
   worktree: (thread: DemoThread) =>
@@ -315,6 +341,103 @@ function seedThread(
     );
 }
 
+/**
+ * A delegated thread (`delegatedBy`) as orchestration v2 records it: the boot
+ * import gives every v1 thread a root lineage, so this writes the thread's v2
+ * shell with its lineage and a v2 `thread.created` event, which makes the import
+ * skip it. The import marker leaves `transcript_imported_at` empty, so the
+ * transcript still loads from the v1 messages. No runs or subagent rows: a
+ * finished run without a delivered result would be redelivered to the parent.
+ * Shapes follow `Orchestrator.ts` (delegate_task) and `LegacyV1ThreadImporter.ts`.
+ */
+function seedLineage(database: NodeSqlite.DatabaseSync, now: number, thread: DemoThread) {
+  const byId = new Map(DEMO_THREADS.map((candidate) => [candidate.id, candidate] as const));
+  let root = thread;
+  while (root.delegatedBy) {
+    const parent = byId.get(root.delegatedBy);
+    if (!parent) throw new Error(`${root.id} is delegated by unknown ${root.delegatedBy}.`);
+    root = parent;
+  }
+  const createdAt = at(now, demoTurnWindows(thread)[0]!.startMinutes + 2);
+  const updatedAt = at(now, thread.minutesAgo);
+  const payload = JSON.stringify({
+    createdBy: "agent",
+    creationSource: "mcp",
+    id: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
+    providerInstanceId: thread.provider,
+    modelSelection: { instanceId: thread.provider, model: DEMO_MODEL_BY_PROVIDER[thread.provider] },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: thread.branch ?? null,
+    worktreePath: null,
+    linkedPullRequest: null,
+    pullRequests: [],
+    branchPullRequest: null,
+    activeProviderThreadId: null,
+    historyOrigin: "v1_import",
+    lineage: {
+      parentThreadId: thread.delegatedBy,
+      relationshipToParent: "subagent",
+      rootThreadId: root.id,
+    },
+    forkedFrom: null,
+    createdAt,
+    updatedAt,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    unsettledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
+    pinnedAt: null,
+    autoSettleDisabledAt: null,
+    pinOrderKey: null,
+    activeOrderKey: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  });
+  database
+    .prepare(
+      `INSERT INTO orchestration_events (event_id, aggregate_kind, stream_id, stream_version,
+        event_type, occurred_at, command_id, causation_event_id, correlation_id, actor_kind,
+        payload_json, metadata_json, application_event_version)
+       VALUES (?, 'thread', ?, 0, 'thread.created', ?, NULL, NULL, NULL, 'server', ?, ?, 2)`,
+    )
+    .run(
+      `demo:thread:${thread.id}:created`,
+      thread.id,
+      createdAt,
+      payload,
+      JSON.stringify({ providerInstanceId: thread.provider }),
+    );
+  database
+    .prepare(
+      `INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title,
+        default_provider, provider_instance_id, runtime_mode, interaction_mode,
+        active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json)
+       VALUES (?, ?, ?, ?, ?, 'full-access', 'default', NULL, ?, ?, NULL, NULL, ?)`,
+    )
+    .run(
+      thread.id,
+      thread.projectId,
+      thread.title,
+      thread.provider,
+      thread.provider,
+      createdAt,
+      updatedAt,
+      payload,
+    );
+  database
+    .prepare(
+      `INSERT INTO orchestration_v2_legacy_imports (thread_id, source_updated_at,
+        shell_imported_at, transcript_imported_at, imported_message_count, last_error)
+       VALUES (?, ?, ?, NULL, 0, NULL)`,
+    )
+    .run(thread.id, updatedAt, new Date(now).toISOString());
+}
+
 export function seedDatabase(
   home: string,
   now: number,
@@ -347,6 +470,7 @@ export function seedDatabase(
     });
     for (const thread of DEMO_THREADS) {
       seedThread(database, home, now, thread, checkpoints.get(thread.id) ?? []);
+      if (thread.delegatedBy) seedLineage(database, now, thread);
     }
     database.exec("COMMIT");
   } catch (error) {

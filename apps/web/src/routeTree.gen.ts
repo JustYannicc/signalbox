@@ -20,6 +20,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PluginsRouteImport } from './routes/plugins'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as DevicesRouteImport } from './routes/devices'
+import { Route as CostsRouteImport } from './routes/costs'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as CaptureRouteImport } from './routes/capture'
@@ -111,6 +112,11 @@ const PairRoute = PairRouteImport.update({
 const DevicesRoute = DevicesRouteImport.update({
   id: '/devices',
   path: '/devices',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CostsRoute = CostsRouteImport.update({
+  id: '/costs',
+  path: '/costs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConnectAgentRoute = ConnectAgentRouteImport.update({
@@ -308,6 +314,7 @@ export interface FileRoutesByFullPath {
   '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/costs': typeof CostsRoute
   '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
   '/plugins': typeof PluginsRoute
@@ -356,6 +363,7 @@ export interface FileRoutesByTo {
   '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/costs': typeof CostsRoute
   '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
   '/plugins': typeof PluginsRoute
@@ -407,6 +415,7 @@ export interface FileRoutesById {
   '/capture': typeof CaptureRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/costs': typeof CostsRoute
   '/devices': typeof DevicesRoute
   '/pair': typeof PairRoute
   '/plugins': typeof PluginsRoute
@@ -459,6 +468,7 @@ export interface FileRouteTypes {
     | '/capture'
     | '/connect'
     | '/connect-agent'
+    | '/costs'
     | '/devices'
     | '/pair'
     | '/plugins'
@@ -507,6 +517,7 @@ export interface FileRouteTypes {
     | '/capture'
     | '/connect'
     | '/connect-agent'
+    | '/costs'
     | '/devices'
     | '/pair'
     | '/plugins'
@@ -557,6 +568,7 @@ export interface FileRouteTypes {
     | '/capture'
     | '/connect'
     | '/connect-agent'
+    | '/costs'
     | '/devices'
     | '/pair'
     | '/plugins'
@@ -608,6 +620,7 @@ export interface RootRouteChildren {
   CaptureRoute: typeof CaptureRoute
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
+  CostsRoute: typeof CostsRoute
   DevicesRoute: typeof DevicesRoute
   PairRoute: typeof PairRoute
   PluginsRoute: typeof PluginsRoute
@@ -708,6 +721,13 @@ declare module '@tanstack/react-router' {
       path: '/devices'
       fullPath: '/devices'
       preLoaderRoute: typeof DevicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/costs': {
+      id: '/costs'
+      path: '/costs'
+      fullPath: '/costs'
+      preLoaderRoute: typeof CostsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect-agent': {
@@ -1041,6 +1061,7 @@ const rootRouteChildren: RootRouteChildren = {
   CaptureRoute: CaptureRoute,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
+  CostsRoute: CostsRoute,
   DevicesRoute: DevicesRoute,
   PairRoute: PairRoute,
   PluginsRoute: PluginsRoute,

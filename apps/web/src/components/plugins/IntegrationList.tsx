@@ -62,15 +62,15 @@ function scopeToLevel(
   overrides: Overrides,
   reachOverrides: ReachOverrides,
 ) {
-  const reachOf = (key: string) => reachOverrides[key] ?? "here";
-  const usable = (key: string, levels: readonly LevelKey[]) =>
-    filter === "all" || canUseAny(filter, levels, undefined, reachOf(key));
+  const reachOf = (key: string, fixture: Reach = "here") => reachOverrides[key] ?? fixture;
+  const usable = (key: string, levels: readonly LevelKey[], fixture?: Reach) =>
+    filter === "all" || canUseAny(filter, levels, undefined, reachOf(key, fixture));
   return integrations.flatMap((integration): ScopedIntegration[] => {
     if (integration.accounts.length === 0) {
       const key = `integration:${integration.id}`;
       const levels = overrides[key] ?? integration.levels ?? [];
-      return usable(key, levels)
-        ? [{ integration, accounts: [], levels, reach: reachOf(key) }]
+      return usable(key, levels, integration.reach)
+        ? [{ integration, accounts: [], levels, reach: reachOf(key, integration.reach) }]
         : [];
     }
     const accounts = integration.accounts
@@ -78,8 +78,10 @@ function scopeToLevel(
         ...account,
         levels: overrides[`account:${account.id}`] ?? account.levels,
       }))
-      .filter((account) => usable(`account:${account.id}`, account.levels));
-    const reach = accounts.some((account) => reachOf(`account:${account.id}`) === "below")
+      .filter((account) => usable(`account:${account.id}`, account.levels, account.reach));
+    const reach = accounts.some(
+      (account) => reachOf(`account:${account.id}`, account.reach) === "below",
+    )
       ? "below"
       : "here";
     return accounts.length > 0 ? [{ integration, accounts, levels: [], reach }] : [];
@@ -129,7 +131,7 @@ function IntegrationRow(props: { scoped: ScopedIntegration; state: RowState }) {
           type="button"
           aria-expanded={expanded}
           onClick={() => state.onToggleExpanded(integration.id)}
-          className="-mx-1 flex min-w-0 flex-1 items-center gap-3 rounded-md px-1 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="-mx-1 flex min-w-0 flex-1 items-center gap-3 rounded-md px-1 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         >
           <ChevronRightIcon
             aria-hidden

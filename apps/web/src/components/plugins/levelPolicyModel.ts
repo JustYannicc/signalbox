@@ -6,7 +6,7 @@
  * Accounts; levels only reference them.
  */
 import type { AccountGroup } from "../accounts/accountPoolsModel";
-import { levelChain, type LevelKey } from "../levels/levels";
+import { nearestOnChain, type LevelKey } from "../levels/levels";
 import type { LeveledThing } from "../levels/leveledThings";
 
 export type PermissionArea =
@@ -55,11 +55,11 @@ export function policyFor(
   level: LevelKey,
   policies: readonly LevelPolicy[],
 ): LevelPolicy | undefined {
-  for (const key of levelChain(level)) {
-    const policy = policies.find((entry) => entry.level === key);
-    if (policy) return policy;
-  }
-  return undefined;
+  const nearest = nearestOnChain(
+    level,
+    policies.map((policy) => policy.level),
+  );
+  return policies.find((policy) => policy.level === nearest);
 }
 
 export function yourRole(policy: LevelPolicy | undefined) {

@@ -17,7 +17,7 @@ export function MarkdownEditor(props: {
         value={props.value}
         spellCheck={false}
         onChange={(event) => props.onChange(event.currentTarget.value)}
-        className={`${DOC_CLASS} resize-none outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/24`}
+        className={`${DOC_CLASS} resize-none outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/24`}
       />
     </div>
   );

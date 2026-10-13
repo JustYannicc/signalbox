@@ -3,13 +3,14 @@ import { useNavigate } from "@tanstack/react-router";
 import { Button } from "../ui/button";
 
 const TABS = [
+  { to: "/costs", label: "Costs", id: "costs" },
   { to: "/accounts", label: "Accounts", id: "accounts" },
   { to: "/usage", label: "Tokens", id: "tokens" },
 ] as const;
 
 /**
- * Usage is one page with two views: pooled subscription accounts and token
- * spend. Rendered as the page title on both, so either view is one click away.
+ * Usage is one page with three views: spend rolled up the Home tree, pooled
+ * subscription accounts, and token spend by provider. Rendered as the page title on each, so every view is one click away.
  * Navigates with `useNavigate` rather than `Link` so the usage page's tests,
  * which mock only the router hooks, keep rendering it.
  */

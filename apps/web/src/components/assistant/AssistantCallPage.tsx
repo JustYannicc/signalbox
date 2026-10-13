@@ -43,7 +43,7 @@ function CallControl(props: {
         aria-pressed={props.pressed}
         onClick={props.onClick}
         className={cn(
-          "flex size-14 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&_svg]:size-6",
+          "flex size-14 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-ring [&_svg]:size-6",
           props.tone === "end"
             ? "bg-destructive text-white hover:bg-destructive/90"
             : props.pressed
@@ -85,7 +85,7 @@ export function AssistantCallPage() {
           </WorkspaceBreadcrumb>
         </WorkspacePageHeader>
 
-        <main className="flex min-h-0 flex-1 flex-col items-center justify-between gap-8 overflow-y-auto px-6 pt-10 pb-10">
+        <main className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col items-center justify-between gap-8 overflow-y-auto px-6 pt-10 pb-10">
           <div className="flex flex-col items-center gap-3 text-center">
             <AssistantIcon size={120} expression="listening" />
             <h1 className="text-3xl font-semibold tracking-tight">{name}</h1>

@@ -11,6 +11,7 @@ export function isSidebarUtilityPage(pathname: string) {
     pathname.startsWith("/projects/") ||
     pathname === "/usage" ||
     pathname === "/accounts" ||
+    pathname === "/costs" ||
     pathname === "/pull-requests" ||
     // Fork: rail view pages and the pages Home folders open (places, automations).
     // Leaving them returns to the last thread, not to them.

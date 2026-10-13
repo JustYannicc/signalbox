@@ -132,6 +132,7 @@ import {
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { formatComposerMention } from "../composerMentionRenderer";
 import { levelForWorkspace } from "../levels/levels";
+import { useThreadLevel } from "../levels/threadLevel";
 import { useMentionDirectory } from "../multiplayer/mentionDirectory";
 import { defaultSectionIdForProject } from "../sidebar/sections/sectionModel";
 import { ComposerStashMenu } from "./ComposerStashMenu";
@@ -2693,13 +2694,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
   );
 
-  // `@` also reaches teammates, your assistant and your agents, ahead of files.
+  // `@` also reaches teammates, your assistant and your agents, ahead of files:
+  // the agents on the thread's level chain (a subagent's is its parent's).
+  // Drafts have no server thread yet, so they go by the project folder.
+  const threadLevel = useThreadLevel(draftId ? null : routeThreadRef);
   const { source: peopleMentions } = useMentionDirectory({
-    // The project's own agent first when the Home tree knows this folder.
-    containerId: gitCwd
-      ? (levelForWorkspace(gitCwd) ??
-        defaultSectionIdForProject({ displayName: "", workspaceRoot: gitCwd }))
-      : null,
+    containerId:
+      threadLevel?.level ??
+      (gitCwd
+        ? (levelForWorkspace(gitCwd) ??
+          defaultSectionIdForProject({ displayName: "", workspaceRoot: gitCwd }))
+        : null),
     includeAgents: true,
   });
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {

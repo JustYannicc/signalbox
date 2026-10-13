@@ -1,6 +1,6 @@
 /**
- * A placeholder team project (e.g. merchant-portal): your agent for it, its
- * threads and rooms, and while folded how many of them need you.
+ * A placeholder team project (e.g. merchant-portal): its agent (shared with
+ * the team), its threads and rooms, and while folded how many of them need you.
  */
 import { homeThreadKey } from "../useHomeSidebarData";
 import { renderHomeThreadRow, type HomeThreadRowContext } from "../HomeThreadRow";
@@ -32,6 +32,7 @@ export function TeamProjectNode(props: {
       agentStatus={null}
       inTeam
       rollup={props.view.rollup}
+      summary={props.view.summary}
       movable={{ kind: "project", key: nodeKey, label: name }}
       destination={{ key: nodeKey, label: name, kind: "project" }}
       actions={

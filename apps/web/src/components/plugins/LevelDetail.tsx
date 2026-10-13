@@ -1,7 +1,8 @@
 /**
  * One level: the agent that represents it, what sits here by type, what it
  * inherits from levels above (things set to reach below, listed apart from
- * what sits here), which model pool it routes through, who may change what,
+ * what sits here), which model pool it routes through, what it and everything
+ * inside it spent (Usage › Costs), who may change what,
  * and (for team and project levels) what newcomers get. Open by default; you
  * only see actions you can take, and restricted areas carry a single
  * "Managed by … admins" note.
@@ -21,6 +22,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { LevelCostLine } from "../usage/LevelCostLine";
 import { LevelNewcomers, presetsAt } from "./LevelNewcomers";
 import { LevelBadges, ManagedNote } from "./levelPrimitives";
 import { LEVEL_POLICIES } from "./levelPolicyFixtures";
@@ -257,6 +259,7 @@ export function LevelDetail(props: {
                 ? `; has to ask ${access.asks.map((ask) => agentName(ask.level)).join(" or ")} for the rest.`
                 : "."}
             </p>
+            <LevelCostLine level={level.key} />
           </div>
           {tab === "here" ? <AddMenu level={level} policy={policy} /> : null}
         </div>

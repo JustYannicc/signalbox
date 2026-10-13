@@ -47,6 +47,7 @@ export function HomeSectionNode(props: {
       agentStatus={section.agentStatus}
       inTeam={team !== undefined}
       rollup={props.node.rollup}
+      summary={props.node.summary}
       cluster={team ? <TeamCluster team={team} /> : null}
       dimmed={props.node.peeked}
       movable={{ kind: "section", id: section.id, label: section.name }}

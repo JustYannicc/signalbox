@@ -249,6 +249,16 @@ export const LOOSE_ITEMS: readonly LooseItem[] = [
     status: "input",
   },
   {
+    // Shared with the team: you mention the board deck here, and Appa answers
+    // with runway and the Q4 target instead of lending the deck (`levels/askUp.ts`).
+    id: "chat-q4-roadmap-team",
+    title: "Q4 roadmap with the team",
+    type: "chat",
+    sectionId: "work-northwind",
+    lastActiveAt: daysAgo(0.05),
+    scope: "shared",
+  },
+  {
     id: "chat-terminal-rollout",
     title: "Which terminals get the rollout first?",
     type: "chat",
