@@ -1,5 +1,5 @@
 import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
-import { CommandId, MessageId, ProjectId } from "@t3tools/contracts";
+import { CommandId, MessageId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -201,12 +201,14 @@ describe("ThreadRunner", () => {
           const token = work.modelToken ?? "";
           expect(token).toMatch(/^sbm1\./);
 
-          // The grant names the same trace the Runner was handed with the turn.
+          // The grant names the same trace the Runner was handed with the turn, and
+          // sends it to the owner's pool: a thread from before pools uses Personal.
           expect(turn.traceId).toMatch(/^[0-9a-f]{32}$/);
           expect(yield* runner.authorizeModel(token, "anthropic")).toEqual({
             _tag: "granted",
             runId: turn.runId,
             traceId: turn.traceId,
+            pool: { objectName: `${owner.userId}:personal`, userId: owner.userId },
           });
           // Claude's turn, so not Codex's API; and nothing but the exact token.
           expect((yield* runner.authorizeModel(token, "openai"))._tag).toBe("denied");
@@ -255,6 +257,40 @@ describe("ThreadRunner", () => {
         }),
       );
     }),
+  );
+
+  it.effect("hands the Runner a pool turn as its harness, and the gateway its pool", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* engine.launch(
+          owner,
+          {
+            commandId: CommandId.make("launch-pool"),
+            threadId,
+            projectId: ProjectId.make("scratch"),
+            title: "On a pool",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex_hub_work"),
+              model: "gpt-6-luna",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            workspaceStrategy: { type: "root" },
+            initialMessage: { messageId: MessageId.make("message-1"), text: "Hi", attachments: [] },
+          },
+          personal,
+        );
+        yield* connect(runner);
+        const work = yield* runner.work;
+        expect(work.turn?.modelSelection.instanceId).toBe("codex");
+        expect(work.turn?.providerThread.providerInstanceId).toBe("codex");
+        const granted = yield* runner.authorizeModel(work.modelToken ?? "", "openai");
+        expect(granted).toMatchObject({
+          _tag: "granted",
+          pool: { objectName: `${owner.userId}:work`, userId: owner.userId },
+        });
+      }),
+    ),
   );
 
   it.effect("fails the run when no machine connects, and lets the next message try again", () =>
