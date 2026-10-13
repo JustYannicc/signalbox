@@ -138,16 +138,16 @@ Accounts live in pools, not in each provider: add them on **Usage → Limits** (
 themselves still run on the environment's machine, so install the ones you use there, even when you
 connect from a phone or another computer.
 
-| Provider    | Install                                                                                     |
-| ----------- | ------------------------------------------------------------------------------------------- |
-| Codex       | Signalbox installs it.                                                                      |
-| Claude      | Install [Claude Code](https://claude.com/product/claude-code).                              |
-| Cursor      | Nothing to install: it runs inside Signalbox.                                               |
-| Grok Build  | Install [Grok Build CLI](https://x.ai/cli).                                                 |
-| OpenCode    | Install [OpenCode](https://opencode.ai), then turn it on for a pool.                        |
-| Antigravity | Install its runtime from Signalbox's provider settings.                                     |
-| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.      |
-| Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server and run `muse login`. |
+| Provider    | Install                                                                                                                          |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Codex       | Signalbox installs it.                                                                                                           |
+| Claude      | Install [Claude Code](https://claude.com/product/claude-code).                                                                   |
+| Cursor      | Nothing to install: it runs inside Signalbox.                                                                                    |
+| Grok Build  | Install [Grok Build CLI](https://x.ai/cli).                                                                                      |
+| OpenCode    | Install [OpenCode](https://opencode.ai), then turn it on for a pool.                                                             |
+| Antigravity | Install its runtime from Signalbox's provider settings.                                                                          |
+| Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                               |
+| Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers. |
 
 Provider CLIs must be on the server's `PATH`. If Signalbox cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.

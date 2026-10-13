@@ -272,7 +272,11 @@ export const makeHubCodexProvider = Effect.fn("makeHubCodexProvider")(function* 
       ),
       Effect.scoped,
     );
-  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+  }).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+  );
 
   const snapshot = yield* makeManagedServerProvider({
     resolveMaintenance: () => Effect.succeed({ provider: DRIVER, packageName: null, update: null }),
@@ -358,6 +362,8 @@ export const makeHubCodexProvider = Effect.fn("makeHubCodexProvider")(function* 
         protect("generateBranchName", nativeGeneration.generateBranchName(value)),
       generateThreadTitle: (value) =>
         protect("generateThreadTitle", nativeGeneration.generateThreadTitle(value)),
+      generateReviewGuide: (value) =>
+        protect("generateReviewGuide", nativeGeneration.generateReviewGuide(value)),
     },
     auth: controller,
     snapshotForCwd: (cwd: string) =>

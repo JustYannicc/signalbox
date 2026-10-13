@@ -114,12 +114,13 @@ const USER_DOC_RULES = [...DOC_RULES, HOME_RULE];
 const TEST_CASE_NAME_RULES = [...NAME_RULES, ...COMMAND_RULES, HOME_RULE, SHORT_NAME_RULE];
 
 /**
- * External contracts: string-valued properties that name T3 Code to a service
- * we don't control. Codex and Muse derive their client identity from `clientInfo`, and
- * OpenAI's ChatGPT consent flow registers the agent by `agent_name_hint`.
+ * External contracts: string-valued properties (or the constants they read) that name
+ * T3 Code to a service we don't control. Codex and Muse derive their client identity from
+ * `clientInfo`, and OpenAI's ChatGPT consent flow registers the agent by `agent_name_hint`.
  */
 export const EXTERNAL_CONTRACT_PROPERTIES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "apps/server/src/provider/CodexProvider.ts": ["name", "title"],
+  // clientInfo reads CODEX_CLIENT_NAME; the replay fixtures record it verbatim.
+  "apps/server/src/provider/CodexProvider.ts": ["name", "title", "CODEX_CLIENT_NAME"],
   "apps/server/src/provider/CodexChatGptAuth.ts": ["agent_name_hint"],
   // Muse's SDK handshake; the replay fixtures record it verbatim.
   "packages/provider-muse/src/server/sdk.ts": ["title"],
@@ -201,7 +202,7 @@ function isExternalContract(node: ts.Node, properties: ReadonlyArray<string>): b
   const parent = node.parent;
   return (
     properties.length > 0 &&
-    ts.isPropertyAssignment(parent) &&
+    (ts.isPropertyAssignment(parent) || ts.isVariableDeclaration(parent)) &&
     parent.initializer === node &&
     (ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name)) &&
     properties.includes(parent.name.text)

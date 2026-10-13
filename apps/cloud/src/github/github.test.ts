@@ -12,6 +12,7 @@ import {
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
+  SourceControlProviderKind,
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -140,7 +141,7 @@ describe("GitHub-backed drives", () => {
         auth: { status: "authenticated", account: Option.some("octo") },
       });
       const missing = yield* rpc[WS_METHODS.sourceControlLookupRepository]({
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         repository: "owner/elsewhere",
       }).pipe(Effect.flip);
       expect(missing.message).toContain(
