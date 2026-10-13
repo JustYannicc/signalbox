@@ -282,6 +282,16 @@ export const setAccountDisabled = (endpoint: PoolEndpoint, name: string, disable
     Effect.flatMap(expectOk(endpoint, disabled ? "pause" : "resume")),
   );
 
+/** Saves a credential file into the CLIProxyAPI under `name`, as another hub stored it. */
+export const uploadAccount = (
+  endpoint: PoolEndpoint,
+  name: string,
+  credential: Readonly<Record<string, unknown>>,
+) =>
+  management(endpoint, "POST", `auth-files?name=${encodeURIComponent(name)}`, credential).pipe(
+    Effect.flatMap(expectOk(endpoint, "save")),
+  );
+
 export const removeAccount = (endpoint: PoolEndpoint, name: string) =>
   management(endpoint, "DELETE", `auth-files?name=${encodeURIComponent(name)}`).pipe(
     Effect.flatMap(expectOk(endpoint, "remove")),

@@ -13,6 +13,8 @@ import {
 } from "./PoolDirectory.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolEngine from "./PoolEngine.ts";
+import type { PoolLinkTarget } from "./poolLink.ts";
+import * as PoolLinks from "./PoolLinks.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
 
@@ -53,6 +55,7 @@ const ensureAlarm = async (storage: DurableObjectStorage, at: number) => {
 const makeRuntime = (ctx: DurableObjectState) =>
   ManagedRuntime.make(
     PoolEngine.layer.pipe(
+      Layer.provideMerge(PoolLinks.layer),
       Layer.provideMerge(
         ctx.container
           ? PoolContainer.layerCloudflare({
@@ -74,10 +77,10 @@ const makeRuntime = (ctx: DurableObjectState) =>
 
 export class PoolObject
   extends DurableObject<PoolObjectEnv>
-  implements PoolObjectApi, PoolModelApi
+  implements PoolObjectApi, PoolModelApi, PoolLinkTarget
 {
   private readonly runtime: ReturnType<typeof makeRuntime>;
-  private readonly api: PoolObjectApi & PoolModelApi;
+  private readonly api: PoolObjectApi & PoolModelApi & PoolLinkTarget;
 
   constructor(ctx: DurableObjectState, env: PoolObjectEnv) {
     super(ctx, env);
@@ -146,6 +149,15 @@ export class PoolObject
 
   updateAccount(...args: Parameters<PoolObjectApi["updateAccount"]>) {
     return this.api.updateAccount(...args);
+  }
+
+  openLink(...args: Parameters<PoolObjectApi["openLink"]>) {
+    return this.api.openLink(...args);
+  }
+
+  /** A request on one of the pool's links (`poolLink.ts`), from the Worker. */
+  linkFetch(...args: Parameters<PoolLinkTarget["linkFetch"]>) {
+    return this.api.linkFetch(...args);
   }
 
   forwardModel(...args: Parameters<PoolModelApi["forwardModel"]>) {

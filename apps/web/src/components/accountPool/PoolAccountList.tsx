@@ -97,30 +97,33 @@ export function PoolAccountList({
   }
   return (
     <div className="flex flex-col gap-8">
-      {groups.map((group) => (
-        <UsageLimitsAccountList
-          key={group.key}
-          title={group.title}
-          pools={only(pools, group.include)}
-          now={now}
-          advice={
-            group.own
-              ? advice.find((entry) => entry.poolId === group.own?.pool.id)?.providers
-              : undefined
-          }
-          actions={
-            group.own ? (
-              <span className="flex items-center gap-1.5">
-                <AddHubAccountMenu
-                  environmentId={group.own.environmentId}
-                  poolId={group.own.pool.id}
-                />
-                <PoolActionsMenu environmentId={group.own.environmentId} pool={group.own.pool} />
-              </span>
-            ) : undefined
-          }
-        />
-      ))}
+      {groups.map((group) => {
+        const own = group.own;
+        // A pool in Signalbox Cloud is managed there: nothing to add to it here.
+        const inCloud = own?.pool.backing.mode === "cloud";
+        return (
+          <UsageLimitsAccountList
+            key={group.key}
+            title={group.title}
+            pools={only(pools, group.include)}
+            now={now}
+            emptyText={inCloud ? "Its accounts are in Signalbox Cloud." : undefined}
+            advice={
+              own ? advice.find((entry) => entry.poolId === own.pool.id)?.providers : undefined
+            }
+            actions={
+              own ? (
+                <span className="flex items-center gap-1.5">
+                  {inCloud ? null : (
+                    <AddHubAccountMenu environmentId={own.environmentId} poolId={own.pool.id} />
+                  )}
+                  <PoolActionsMenu environmentId={own.environmentId} pool={own.pool} />
+                </span>
+              ) : undefined
+            }
+          />
+        );
+      })}
       {outside.length > 0 ? (
         <UsageLimitsAccountList title="Not in a pool" pools={outside} now={now} />
       ) : null}

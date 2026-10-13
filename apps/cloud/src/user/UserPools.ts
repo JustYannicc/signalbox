@@ -4,6 +4,8 @@ import {
   AccountHubRpcError,
   type AccountPoolCreateInput,
   type AccountPoolDeleteInput,
+  type AccountPoolReceiveInput,
+  type AccountPoolReceiveResult,
   type AccountPoolRenameInput,
   type AccountPoolSetBackingInput,
   PERSONAL_POOL_ID,
@@ -24,6 +26,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import type { PoolActor, PoolRejectedError } from "../pool/PoolEngine.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import { encodeLinkToken } from "../pool/poolLink.ts";
 import {
   type PoolEntry,
   type UserPool,
@@ -78,6 +81,14 @@ export class UserPools extends Context.Service<
       actor: PoolActor,
       input: UsageLimitSourceUpdateAccountInput,
     ) => Effect.Effect<void, UsageLimitSourceError>;
+    /**
+     * A pool ready to take a pool another server moves here, and the link that
+     * server sends its accounts over and keeps. A personal pool joins Personal.
+     */
+    readonly receive: (
+      actor: PoolActor,
+      input: AccountPoolReceiveInput,
+    ) => Effect.Effect<AccountPoolReceiveResult, AccountHubRpcError>;
     /** The pool behind one of its provider instances. */
     readonly poolOfInstance: (
       actor: PoolActor,
@@ -240,13 +251,12 @@ const make = Effect.gen(function* () {
   const call = <A>(effect: Effect.Effect<A, PoolDirectory.PoolObjectError | PoolRejectedError>) =>
     effect.pipe(Effect.catchTags({ PoolRejectedError: poolFailure, PoolObjectError: poolFailure }));
 
-  const create: UserPools["Service"]["create"] = (actor, input) =>
+  const createPool = (actor: PoolActor, name: string) =>
     Effect.gen(function* () {
-      yield* pools(actor);
       const id = yield* newPoolId;
       const objectName = PoolDirectory.poolObjectName(actor.userId, id);
       const info = yield* call(
-        directory.forPool(objectName).create(actor, { name: input.name.trim(), personal: false }),
+        directory.forPool(objectName).create(actor, { name: name.trim(), personal: false }),
       );
       const pool: UserPool = {
         id,
@@ -256,6 +266,13 @@ const make = Effect.gen(function* () {
         backing: info.backing,
       };
       yield* insert(pool).pipe(Effect.catchTags({ SqlError: storageFailed }));
+      return pool;
+    });
+
+  const create: UserPools["Service"]["create"] = (actor, input) =>
+    Effect.gen(function* () {
+      yield* pools(actor);
+      const pool = yield* createPool(actor, input.name);
       yield* refresh(actor);
       return accountPool(pool);
     });
@@ -297,6 +314,27 @@ const make = Effect.gen(function* () {
       return accountPool({ ...pool, backing: info.backing });
     });
 
+  const receive: UserPools["Service"]["receive"] = (actor, input) =>
+    Effect.gen(function* () {
+      const all = yield* pools(actor);
+      const personal = input.personal ? all.find((pool) => pool.personal) : undefined;
+      const pool = personal ?? (yield* createPool(actor, input.name));
+      const secret = yield* call(directory.forPool(pool.objectName).openLink(actor)).pipe(
+        // A pool made only to take this move goes again when it can't.
+        Effect.onError(() =>
+          personal === undefined
+            ? remove(actor, { poolId: pool.id }).pipe(Effect.ignore)
+            : Effect.void,
+        ),
+      );
+      // Not refreshed here: the pool lists once the client refreshes after the move.
+      return {
+        poolId: pool.id,
+        personal: pool.personal,
+        token: encodeLinkToken(pool.objectName, secret),
+      };
+    });
+
   const updateAccount: UserPools["Service"]["updateAccount"] = (actor, input) =>
     Effect.gen(function* () {
       const poolId = poolIdForSourceId(input.sourceId);
@@ -319,6 +357,7 @@ const make = Effect.gen(function* () {
     delete: remove,
     setBacking,
     updateAccount,
+    receive,
     poolOfInstance: (actor, instanceId) =>
       Effect.map(pools(actor), (all) => poolOfInstance(all, instanceId)),
   });

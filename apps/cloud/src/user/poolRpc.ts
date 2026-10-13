@@ -20,7 +20,8 @@ import * as UserPools from "./UserPools.ts";
  * The account pool RPCs the cloud serves, all from the user's own object: the
  * pool list and its member-safe overviews, creating, renaming and deleting
  * pools, connecting a pool to an admin's own CLIProxyAPI, signing accounts
- * in, and pausing or removing them. The pools also reach the server config:
+ * in, pausing or removing them, and receiving a pool another server moves
+ * here (`pool/poolLink.ts`). The pools also reach the server config:
  * each pool's provider instances, and one usage limit source per pool.
  */
 
@@ -35,6 +36,8 @@ export const POOL_METHODS = [
   WS_METHODS.accountPoolAddApiKey,
   WS_METHODS.accountPoolMoveNativeLogins,
   WS_METHODS.accountPoolSetOpenCode,
+  WS_METHODS.accountPoolReceive,
+  WS_METHODS.accountPoolMoveToCloud,
   WS_METHODS.usageLimitSourceUpdateAccount,
   WS_METHODS.serverRefreshProviders,
   WS_METHODS.providerAuthSubscribe,
@@ -55,6 +58,8 @@ export const POOL_REQUIRED_SCOPES = {
   [WS_METHODS.accountPoolAddApiKey]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolMoveNativeLogins]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolSetOpenCode]: AuthProvidersManageScope,
+  [WS_METHODS.accountPoolReceive]: AuthProvidersManageScope,
+  [WS_METHODS.accountPoolMoveToCloud]: AuthProvidersManageScope,
   [WS_METHODS.usageLimitSourceUpdateAccount]: AuthProvidersManageScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.providerAuthSubscribe]: AuthProvidersManageScope,
@@ -185,6 +190,10 @@ export const makePoolHandlers = (input: {
       [WS_METHODS.accountPoolAddApiKey]: () => notYet("take API keys"),
       [WS_METHODS.accountPoolMoveNativeLogins]: () => notYet("take logins from this machine"),
       [WS_METHODS.accountPoolSetOpenCode]: () => notYet("run OpenCode"),
+      [WS_METHODS.accountPoolReceive]: (request: Parameters<typeof pools.receive>[1]) =>
+        pools.receive(actor, request),
+      [WS_METHODS.accountPoolMoveToCloud]: () =>
+        Effect.fail(new AccountHubRpcError({ detail: "This pool is already in Signalbox Cloud." })),
       [WS_METHODS.usageLimitSourceUpdateAccount]: (
         request: Parameters<typeof pools.updateAccount>[1],
       ) => pools.updateAccount(actor, request),

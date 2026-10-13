@@ -4,6 +4,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
+import { isPoolLinkPath, routePoolLink } from "./pool/poolLink.ts";
 import type { PoolObjectEnv } from "./pool/PoolObject.ts";
 import { labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
 import { routePreview } from "./thread/preview/previewRoute.ts";
@@ -72,6 +73,7 @@ export default {
     if (isSessionApiPath(pathname)) {
       return forwardSessionRequest(env.THREADS, request, { localWorkerd });
     }
+    if (isPoolLinkPath(pathname)) return routePoolLink(env.POOLS, request, { localWorkerd });
     if (isDriveApiPath(pathname)) {
       return env.DRIVES === undefined || env.DRIVE_PACKS === undefined
         ? new Response("This cloud stores no drives.", { status: 404 })

@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts/accountHub";
 
 import { useServerConfigs } from "./entities";
-import { useEnvironment } from "./environments";
+import { useConnectedEnvironmentIds, useEnvironment } from "./environments";
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
 
@@ -56,6 +56,13 @@ export function usePoolViews(environmentId: EnvironmentId | null | undefined) {
       : null,
   );
   return query.data ?? NO_VIEWS;
+}
+
+/** The Signalbox Cloud this client is connected to, if any: where a pool can move. */
+export function useSignalboxCloudEnvironmentId(): EnvironmentId | null {
+  const configs = useServerConfigs();
+  const connected = useConnectedEnvironmentIds();
+  return connected.find((id) => configs.get(id)?.environment.capabilities.signalboxCloud) ?? null;
 }
 
 /**

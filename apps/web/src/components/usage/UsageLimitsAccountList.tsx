@@ -95,6 +95,7 @@ export function UsageLimitsAccountList({
   now,
   actions,
   title = "Accounts",
+  emptyText = "No accounts yet.",
   advice,
 }: {
   readonly pools: readonly LimitPool[];
@@ -103,6 +104,8 @@ export function UsageLimitsAccountList({
   readonly actions?: ReactNode;
   /** The account pool's name when the list shows one pool. */
   readonly title?: string;
+  /** What an empty list says. */
+  readonly emptyText?: string | undefined;
   /** The pool's advice, shown under each provider it covers. */
   readonly advice?: AccountPoolAdvice["providers"] | undefined;
 }) {
@@ -122,9 +125,7 @@ export function UsageLimitsAccountList({
         </h2>
         {actions}
       </div>
-      {pools.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No accounts yet.</p>
-      ) : null}
+      {pools.length === 0 ? <p className="text-xs text-muted-foreground">{emptyText}</p> : null}
       {pools.map((pool) => {
         const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
         const providerAdvice = advice?.find((entry) => entry.driver === pool.driver);

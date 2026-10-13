@@ -23,7 +23,11 @@ import {
   type AccountPoolRenameInput,
   type AccountPoolSetBackingInput,
   type AccountHubImportResult,
+  type AccountPoolMoveToCloudInput,
+  type AccountPoolMoveToCloudResult,
   AccountPoolId,
+  isCloudPoolAccountType,
+  POOL_LINK_MOVE_LIMIT,
   PERSONAL_POOL_ID,
   hubInstancePoolId,
   poolSourceId,
@@ -58,6 +62,7 @@ import { HttpClient } from "effect/http";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as AccountHub from "./AccountHub.ts";
 import { AccountHubError, isAccountHubError } from "./accountHubManagement.ts";
+import { listApiKeys } from "./hubApiKeys.ts";
 import {
   configuredModels,
   hubModels,
@@ -66,6 +71,7 @@ import {
   sameModels,
 } from "./hubOpenCode.ts";
 import * as PoolCredentials from "./poolCredentials.ts";
+import * as PoolLinkClient from "./poolLinkClient.ts";
 
 type Hub = AccountHub.AccountHub["Service"];
 
@@ -92,6 +98,9 @@ const placementFor = (id: string): AccountHub.AccountHubPlacement => ({
 });
 
 const isHubInstanceOf = (config: unknown, poolId: string) => hubInstancePoolId(config) === poolId;
+
+/** The pool providers that run through a cloud pool; the others go when a pool moves there. */
+const RUNS_IN_CLOUD: ReadonlyArray<PoolInstanceKind> = ["claude", "codex", "opencode"];
 
 const notFound = () => new AccountHubError({ detail: "That pool no longer exists." });
 
@@ -436,6 +445,102 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Moves a pool's accounts into the cloud pool `input.token` links to, then
+   * runs the pool through that link: same pool, same name and providers, so
+   * its threads and defaults keep it. Nothing moves unless the cloud takes
+   * every account. Once it holds them, the link is saved before anything is
+   * dropped here, so a failure after that point is a warning, never a loss.
+   */
+  const moveToCloud = (
+    input: AccountPoolMoveToCloudInput,
+  ): Effect.Effect<AccountPoolMoveToCloudResult, AccountHubError> =>
+    gate
+      .withPermit(
+        Effect.gen(function* () {
+          const pool = yield* entry(input.poolId);
+          if ((yield* pool.hub.connection).mode === "cloud") {
+            return yield* new AccountHubError({
+              detail: "This pool is already in Signalbox Cloud.",
+            });
+          }
+          const link = PoolLinkClient.poolLink(input.cloudUrl, input.token);
+          yield* PoolLinkClient.readLink(link);
+          const endpoint = yield* pool.hub.ensureRunning;
+          const [accounts, apiKeys] = yield* Effect.all(
+            [pool.hub.accounts, listApiKeys(endpoint)],
+            { concurrency: 2 },
+          );
+          const stuck = [
+            ...accounts
+              .filter((account) => !isCloudPoolAccountType(account.type))
+              .map((account) => account.email ?? account.name),
+            ...apiKeys.map((key) => key.label),
+          ];
+          if (stuck.length > 0) {
+            return yield* new AccountHubError({
+              detail: `Signalbox Cloud pools can't hold these yet: ${stuck.join(", ")}. Remove them from the pool to move it.`,
+            });
+          }
+          if (accounts.length > POOL_LINK_MOVE_LIMIT) {
+            return yield* new AccountHubError({
+              detail: `A move takes at most ${POOL_LINK_MOVE_LIMIT} accounts, and this pool has ${accounts.length}.`,
+            });
+          }
+          const files = yield* Effect.forEach(
+            accounts,
+            (account) =>
+              pool.hub
+                .readCredential(account.name)
+                .pipe(Effect.map((content) => ({ name: account.name, content }))),
+            { concurrency: 4 },
+          );
+          const sent = yield* PoolLinkClient.moveAccountsIn(link, files);
+          const notDropped = yield* pool.hub.connectCloud(link, [
+            ...sent.imported,
+            ...sent.skipped,
+          ]);
+          const warnings = notDropped.map(
+            (name) =>
+              `${name} is in Signalbox Cloud but still in this pool's old hub. Remove it there, so only the cloud refreshes it.`,
+          );
+          // Providers the cloud can't run go; the rest rebuild against the link.
+          yield* settings.getSettings.pipe(
+            Effect.flatMap((current) =>
+              Effect.flatMap(Clock.currentTimeMillis, (revision) =>
+                settings.updateSettings({
+                  providerInstances: Object.fromEntries(
+                    Object.entries(current.providerInstances).flatMap(([id, instance]) => {
+                      if (!isHubInstanceOf(instance.config, pool.id)) return [[id, instance]];
+                      const runs = RUNS_IN_CLOUD.some(
+                        (kind) => poolInstanceEntry(kind, pool)[0] === id,
+                      );
+                      const config = instance.config;
+                      return runs && typeof config === "object" && config !== null
+                        ? [[id, { ...instance, config: { ...config, hubRevision: revision } }]]
+                        : [];
+                    }),
+                  ),
+                }),
+              ),
+            ),
+            Effect.catch(() =>
+              Effect.sync(() =>
+                warnings.push(
+                  "Its providers here could not restart on the cloud. Restart the server to pick them up.",
+                ),
+              ),
+            ),
+          );
+          yield* PubSub.publish(changed, undefined);
+          return { moved: files.length, warnings };
+        }),
+      )
+      .pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.mapError(fail("Could not move the pool to Signalbox Cloud.")),
+      );
+
   // OpenCode lists only the models its config names. When a pool's hub serves different
   // models than an OpenCode instance was built with, rebuild that instance.
   const syncOpenCodeModels = gate
@@ -450,8 +555,11 @@ const make = Effect.gen(function* () {
                 instance.driver === "opencode" && isHubInstanceOf(instance.config, pool.id),
             )
             .map(([id]) => id);
+          // A cloud pool's models change only with its accounts in the cloud; asking would
+          // wake its container on every change here.
+          if (ids.length === 0 || (yield* pool.hub.connection).mode === "cloud") continue;
           const endpoint = yield* pool.hub.endpoint;
-          if (ids.length === 0 || Option.isNone(endpoint)) continue;
+          if (Option.isNone(endpoint)) continue;
           const served = yield* hubModels(endpoint.value).pipe(Effect.option);
           if (Option.isNone(served)) continue;
           for (const id of ids) {
@@ -527,6 +635,7 @@ const make = Effect.gen(function* () {
     addApiKey,
     moveNativeLogins,
     setOpenCode,
+    moveToCloud,
   });
 });
 
@@ -569,6 +678,10 @@ export class AccountPools extends Context.Service<
     readonly importAccounts: (
       input: AccountPoolImportInput,
     ) => Effect.Effect<AccountHubImportResult, AccountHubError>;
+    /** Moves a pool into Signalbox Cloud and runs it from there. */
+    readonly moveToCloud: (
+      input: AccountPoolMoveToCloudInput,
+    ) => Effect.Effect<AccountPoolMoveToCloudResult, AccountHubError>;
   }
 >()("t3/accountHub/AccountPools") {}
 

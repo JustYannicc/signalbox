@@ -30,10 +30,15 @@ export const hubReauthMethodId = (accountId: string) => `${HUB_REAUTH_METHOD_PRE
 const HubUrl = TrimmedNonEmptyString.check(Schema.isMaxLength(2048));
 const HubKey = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
 
-/** Which hub pooled accounts go through. Keys never leave the server. */
+/**
+ * Which hub pooled accounts go through. Keys never leave the server. `cloud`:
+ * the pool moved to Signalbox Cloud, which holds its accounts now; this server
+ * runs the pool's threads through it.
+ */
 export const AccountHubConnection = Schema.Union([
   Schema.Struct({ mode: Schema.Literal("managed") }),
   Schema.Struct({ mode: Schema.Literal("external"), url: HubUrl }),
+  Schema.Struct({ mode: Schema.Literal("cloud") }),
 ]);
 export type AccountHubConnection = typeof AccountHubConnection.Type;
 
@@ -230,6 +235,91 @@ export const AccountPoolMoveNativeLoginsResult = Schema.Struct({
   failed: Schema.Array(Schema.Struct({ instanceId: ProviderInstanceId, reason: Schema.String })),
 });
 export type AccountPoolMoveNativeLoginsResult = typeof AccountPoolMoveNativeLoginsResult.Type;
+
+/**
+ * Moving a pool to Signalbox Cloud. The client asks the cloud to receive it
+ * (`accountPool.receive`), which answers with a pool link: a token naming the
+ * cloud pool. The client hands that to the server holding the pool
+ * (`accountPool.moveToCloud`), which sends its accounts over the link, drops
+ * its own copies, and keeps the link to run the pool's threads.
+ */
+export const AccountPoolReceiveInput = Schema.Struct({
+  name: PoolName,
+  /** A personal pool joins the cloud's own personal pool. */
+  personal: Schema.Boolean,
+});
+export type AccountPoolReceiveInput = typeof AccountPoolReceiveInput.Type;
+
+export const AccountPoolReceiveResult = Schema.Struct({
+  /** The cloud pool, so a move that fails can delete it again. */
+  poolId: AccountPoolId,
+  personal: Schema.Boolean,
+  token: HubKey,
+});
+export type AccountPoolReceiveResult = typeof AccountPoolReceiveResult.Type;
+
+export const AccountPoolMoveToCloudInput = Schema.Struct({
+  poolId: AccountPoolId,
+  /** Where the cloud answers, e.g. `https://app.signalbox.sh`. */
+  cloudUrl: HubUrl,
+  token: HubKey,
+});
+export type AccountPoolMoveToCloudInput = typeof AccountPoolMoveToCloudInput.Type;
+
+export const AccountPoolMoveToCloudResult = Schema.Struct({
+  moved: Schema.Number,
+  /** What went wrong after the accounts were safe in the cloud, e.g. a copy left behind. */
+  warnings: Schema.Array(Schema.String),
+});
+export type AccountPoolMoveToCloudResult = typeof AccountPoolMoveToCloudResult.Type;
+
+/**
+ * The pool link's HTTP API on the cloud, under `POOL_LINK_PATH` with the link
+ * token as bearer: `GET` reads the pool, `POST /accounts` moves accounts in
+ * (only right after the link was made), and `/v1/*` is the pool's model API.
+ */
+export const POOL_LINK_PATH = "/api/pool-link";
+
+export const PoolLinkAccount = Schema.Struct({
+  name: Schema.String,
+  type: Schema.String,
+  disabled: Schema.Boolean,
+  signedOut: Schema.Boolean,
+});
+export type PoolLinkAccount = typeof PoolLinkAccount.Type;
+
+export const PoolLinkInfo = Schema.Struct({
+  name: Schema.String,
+  accounts: Schema.Array(PoolLinkAccount),
+});
+export type PoolLinkInfo = typeof PoolLinkInfo.Type;
+
+/** The most accounts one move takes. */
+export const POOL_LINK_MOVE_LIMIT = 200;
+
+export const PoolLinkMoveRequest = Schema.Struct({
+  accounts: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      /** The credential file, exactly as the hub stores it. */
+      content: Schema.String,
+    }),
+  ).check(Schema.isMaxLength(POOL_LINK_MOVE_LIMIT)),
+});
+export type PoolLinkMoveRequest = typeof PoolLinkMoveRequest.Type;
+
+export const PoolLinkMoveResult = Schema.Struct({
+  imported: Schema.Array(Schema.String),
+  /** Already in the cloud pool: that copy wins, the sender's is dropped. */
+  skipped: Schema.Array(Schema.String),
+});
+export type PoolLinkMoveResult = typeof PoolLinkMoveResult.Type;
+
+/** The account types a cloud pool can take. */
+const CLOUD_POOL_ACCOUNT_TYPES = ["claude", "codex"] as const;
+export type CloudPoolAccountType = (typeof CLOUD_POOL_ACCOUNT_TYPES)[number];
+export const isCloudPoolAccountType = (type: unknown): type is CloudPoolAccountType =>
+  (CLOUD_POOL_ACCOUNT_TYPES as ReadonlyArray<unknown>).includes(type);
 
 export const AccountPoolSetOpenCodeInput = Schema.Struct({
   poolId: AccountPoolId,

@@ -10,7 +10,9 @@ import { NewPoolButton, PoolActionsMenu } from "./PoolActions";
 function backingText(pool: AccountPool) {
   return pool.backing.mode === "managed"
     ? "Signalbox keeps its logins"
-    : `Logins in your CLIProxyAPI at ${new URL(pool.backing.url).host}`;
+    : pool.backing.mode === "cloud"
+      ? "In Signalbox Cloud"
+      : `Logins in your CLIProxyAPI at ${new URL(pool.backing.url).host}`;
 }
 
 /** Settings → Pools: every pool of the environment, and where each keeps its logins. */

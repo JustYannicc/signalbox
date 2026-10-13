@@ -60,7 +60,7 @@ export const normalizeHubUrl = (url: string) => url.trim().replace(/\/+$/u, "");
 
 export type ManagementEndpoint = Pick<AccountHubEndpoint, "baseUrl" | "managementKey">;
 
-const hostOf = (endpoint: ManagementEndpoint) =>
+export const hostOf = (endpoint: Pick<ManagementEndpoint, "baseUrl">) =>
   URL.canParse(endpoint.baseUrl) ? new URL(endpoint.baseUrl).host : endpoint.baseUrl;
 
 // Node puts the useful bit (CERT_HAS_EXPIRED, ECONNREFUSED, ...) a few causes deep.
@@ -73,7 +73,7 @@ const networkCode = (cause: unknown): string | null => {
   return null;
 };
 
-const unreachable = (endpoint: ManagementEndpoint, cause: unknown) => {
+export const unreachable = (endpoint: Pick<ManagementEndpoint, "baseUrl">, cause: unknown) => {
   const code = networkCode(cause);
   const host = hostOf(endpoint);
   return new AccountHubError({

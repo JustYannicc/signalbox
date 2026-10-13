@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { LoginStart, LoginStatus, PoolLoginProvider } from "./cliProxyApi.ts";
+import type { PoolLinkTarget } from "./poolLink.ts";
 import {
   type AccountAction,
   type PoolAccounts,
@@ -65,6 +66,8 @@ export interface PoolObjectApi {
     name: string,
     action: AccountAction,
   ) => Promise<PoolReply<null>>;
+  /** A link for a server moving its own pool here (`PoolLinks.ts`); answers its secret. */
+  readonly openLink: (actor: PoolActor) => Promise<PoolReply<string>>;
 }
 
 /** Where a turn's model requests go: a pool's object, for the user the turn runs for. */
@@ -128,6 +131,7 @@ const METHODS = Object.keys({
   completeLogin: true,
   cancelLogin: true,
   updateAccount: true,
+  openLink: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** What to tell the user when a pool call fails: the pool's own refusal, or a logged outage. */
@@ -166,7 +170,7 @@ export interface PoolObjectNamespace {
   readonly jurisdiction: (name: typeof POOL_OBJECT_JURISDICTION) => {
     readonly idFromName: (name: string) => DurableObjectId;
   };
-  readonly get: (id: DurableObjectId) => PoolObjectApi & PoolModelApi & Fetcher;
+  readonly get: (id: DurableObjectId) => PoolObjectApi & PoolModelApi & PoolLinkTarget & Fetcher;
 }
 
 /** Local workerd has no jurisdictions, so `wrangler dev` uses the plain namespace. */

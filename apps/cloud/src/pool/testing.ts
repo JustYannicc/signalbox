@@ -6,6 +6,7 @@ import * as Platform from "../platform.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolDirectory from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";
+import * as PoolLinks from "./PoolLinks.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
 
@@ -89,6 +90,13 @@ export const makeFakeCliProxyApi = () => {
         account.disabled = body.disabled;
         return json({ status: "ok" });
       }
+      case "POST auth-files": {
+        const name = url.searchParams.get("name") ?? "";
+        const body = (await request.json()) as { readonly type: string; readonly email?: string };
+        if (body.email === "refused@example.test") return json({}, 500);
+        accounts.set(name, { type: body.type, email: body.email ?? name, disabled: false });
+        return json({ status: "ok" });
+      }
       case "DELETE auth-files":
         return json({}, accounts.delete(url.searchParams.get("name") ?? "") ? 200 : 404);
       default:
@@ -110,6 +118,7 @@ export const makeMemoryPoolObject = (
   const container = PoolContainer.makeFake((request) => cliProxyApi.serve(request));
   const runtime = ManagedRuntime.make(
     PoolEngine.layer.pipe(
+      Layer.provideMerge(PoolLinks.layer),
       Layer.provideMerge(container.layer),
       Layer.provideMerge(
         Layer.mergeAll(

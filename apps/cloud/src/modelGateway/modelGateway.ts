@@ -64,7 +64,11 @@ const ANTHROPIC_ERROR_TYPES: Readonly<Record<number, string>> = {
 };
 
 /** An error in the shape the provider's own API uses, so the harness shows the message. */
-function errorResponse(provider: ModelGatewayProvider | null, status: number, message: string) {
+export function errorResponse(
+  provider: ModelGatewayProvider | null,
+  status: number,
+  message: string,
+) {
   const body =
     provider === "openai"
       ? {
@@ -81,7 +85,7 @@ function errorResponse(provider: ModelGatewayProvider | null, status: number, me
   return Response.json(body, { status });
 }
 
-function bearerOrKey(headers: Headers): string | null {
+export function bearerOrKey(headers: Headers): string | null {
   const key = headers.get("x-api-key");
   if (key !== null && key !== "") return key;
   const authorization = headers.get("authorization");
@@ -89,7 +93,8 @@ function bearerOrKey(headers: Headers): string | null {
   return match?.[1] ?? null;
 }
 
-function withoutCaller(source: Headers) {
+/** The request headers worth forwarding upstream: no credential, nothing about this hop. */
+export function withoutCaller(source: Headers) {
   const headers = new Headers();
   for (const [name, value] of source) {
     const dropped =

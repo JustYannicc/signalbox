@@ -119,7 +119,11 @@ export function buildPoolOverviews(input: {
           providerInstanceId: provider.instanceId,
           driver: provider.driver,
           displayName: provider.displayName ?? provider.driver,
-          available: own.some((account) => hasQuota(account, input.now)),
+          // The cloud reports a moved pool's limits, not this server: signed in is all it knows.
+          available:
+            pool.backing.mode === "cloud"
+              ? provider.auth.status === "authenticated"
+              : own.some((account) => hasQuota(account, input.now)),
           usage: pooledUsage(own, input.now),
         };
       });

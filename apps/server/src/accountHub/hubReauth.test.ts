@@ -20,6 +20,7 @@ function fakeHub(after: ReadonlyArray<AccountHubAccount>) {
   const removed: string[] = [];
   const hub = {
     ensureRunning: Effect.void,
+    connection: Effect.succeed({ mode: "managed" }),
     accounts: Effect.sync(() => (finished ? after : [dead])),
     removeCredential: (name: string) => Effect.sync(() => void removed.push(name)),
     startOAuthLogin: () =>
