@@ -126,7 +126,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       ),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
       Layer.provideMerge(
-        GitHub.layer(GitHub.gitHubAppConfig(env), GitHub.gitHubEndpoints(env)).pipe(
+        GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
           Layer.provide(FetchHttpClient.layer),
         ),
       ),
@@ -226,12 +226,16 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.rebuildThreadIndex();
   }
 
-  beginGitHubConnect(redirectUri: string) {
-    return this.api.beginGitHubConnect(redirectUri);
+  beginGitHubConnect(input: Parameters<UserObjectApi["beginGitHubConnect"]>[0]) {
+    return this.api.beginGitHubConnect(input);
   }
 
-  completeGitHubConnect(input: Parameters<UserObjectApi["completeGitHubConnect"]>[0]) {
-    return this.api.completeGitHubConnect(input);
+  completeGitHubConnect(grantId: string) {
+    return this.api.completeGitHubConnect(grantId);
+  }
+
+  abortGitHubConnect(grantId: string) {
+    return this.api.abortGitHubConnect(grantId);
   }
 
   disconnectGitHub() {

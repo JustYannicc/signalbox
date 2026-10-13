@@ -350,37 +350,33 @@ shared like any drive. Its drive keeps GitHub as its home
   user's object builds the push from the drive's packs and sends it over git's
   smart HTTP, with no machine running. Only the thread's branch is pushed
   (`signalbox/<id>`), so auto-saves never reach GitHub.
-- **No GitHub credential reaches a machine.** Users connect GitHub with
-  Signalbox's GitHub App, and its user tokens live only in their own object.
-  A machine fetches through `/api/drive/remote`, which takes fetches only,
-  with a remote token that is good only while its turn runs. The cloud adds
-  the user's token on the way to GitHub. The Runner passes the remote token
-  to that one `git fetch` in its environment, and never writes it to disk.
+- **No GitHub credential reaches a machine.** Users connect GitHub through
+  WorkOS Pipes, which keeps and refreshes their OAuth tokens. Their own object
+  only records that they connected, and as whom, and asks Pipes for a token
+  each time the cloud acts as them. A machine fetches through
+  `/api/drive/remote`, which takes fetches only, with a remote token that is
+  good only while its turn runs. The cloud adds the user's token on the way to
+  GitHub. The Runner passes the remote token to that one `git fetch` in its
+  environment, and never writes it to disk.
+- **A connection counts once the browser that started it comes back.** A
+  Pipes authorize link connects whoever opens it to the user who made it, so
+  `/api/github/callback` checks a one-time grant cookie and aborts (deleting
+  the WorkOS connection) when the return lands anywhere else
+  (`github/GitHubConnection.ts`).
 
-The Worker needs a GitHub App:
+The Worker needs only `T3CODE_WORKOS_API_KEY`, plus a GitHub integration in
+that WorkOS environment's Pipes:
 
-| Name                       | Kind   | What                                   |
-| -------------------------- | ------ | -------------------------------------- |
-| `GITHUB_APP_CLIENT_ID`     | var    | The App's client id                    |
-| `GITHUB_APP_CLIENT_SECRET` | secret | One of the App's client secrets        |
-| `GITHUB_APP_SLUG`          | var    | Its URL name, `github.com/apps/<slug>` |
+- **Provider:** GitHub (slug `github`), user-owned, enabled.
+- **Scopes:** `repo`, `workflow`, `read:org`, `read:user`, `user:email`.
+- **Credentials:** a GitHub OAuth App whose callback URL is the redirect URI
+  WorkOS shows for the integration, with expiring user tokens on (Pipes
+  refreshes them). The hosted service's App is "Signalbox" under
+  `JustYannicc`.
 
-Register it under the GitHub account or organization that offers it:
-
-- **Callback URL:** `https://app.signalbox.run/api/github/callback`. Add
-  `http://localhost:8787/api/github/callback` to a separate App for local
-  development.
-- **Expire user authorization tokens:** on.
-- **Request user authorization (OAuth) during installation:** off.
-- **Webhook:** off.
-- **Repository permissions:** Contents read and write, Pull requests read and
-  write, Metadata read-only.
-- **Where can this App be installed:** any account.
-
-The deploy workflow passes the two variables and the secret from the GitHub
-environment, so setting them turns GitHub-backed drives on. Previews have
-their own origin, which the App's callback list does not include, so connect
-GitHub on production or locally.
+Production, previews and local development share it, because the callback is
+WorkOS's, not the cloud's. Organizations that restrict OAuth Apps have to
+approve Signalbox before their repositories show up.
 
 ### Exact resume
 

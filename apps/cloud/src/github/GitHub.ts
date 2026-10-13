@@ -1,34 +1,29 @@
+import * as WorkOSPipes from "@signalbox/account/WorkOSPipes";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
 
-import {
-  type GitHubApi,
-  type GitHubAppClient,
-  type GitHubEndpoints,
-  makeGitHubApi,
-} from "./GitHubApi.ts";
+import { type GitHubApi, type GitHubEndpoints, makeGitHubApi } from "./GitHubApi.ts";
 
 /**
- * Signalbox's GitHub App, as this cloud is configured with it (#135). The
- * hosted service brings its own App, so connecting GitHub is one click;
- * a self-hosted cloud registers one and sets:
+ * GitHub as this cloud reaches it. Users connect their GitHub account through
+ * WorkOS Pipes, which holds and refreshes the OAuth tokens; the cloud asks it
+ * for a token whenever it acts as the user. The GitHub OAuth app lives in the
+ * WorkOS dashboard (Pipes › GitHub), so the cloud needs only its WorkOS API key:
  *
- * - `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`: the App's OAuth client.
- * - `GITHUB_APP_SLUG`: its public name, for the "install on more accounts" link.
+ * - `T3CODE_WORKOS_API_KEY` (and optionally `T3CODE_WORKOS_API_BASE_URL`).
  *
- * Without them, GitHub features are off and say so.
+ * Without it, GitHub features are off and say so.
  */
 
-export interface GitHubAppConfig extends GitHubAppClient {
-  readonly slug: string;
-}
+/** The Pipes integration's slug in WorkOS. */
+export const GITHUB_PIPES_PROVIDER = "github";
 
 export interface GitHubEnv {
-  readonly GITHUB_APP_CLIENT_ID?: string;
-  readonly GITHUB_APP_CLIENT_SECRET?: string;
-  readonly GITHUB_APP_SLUG?: string;
+  readonly T3CODE_WORKOS_API_KEY?: string;
+  readonly T3CODE_WORKOS_API_BASE_URL?: string;
   /** Local development only (with `LOCAL_WORKERD`): a stand-in for github.com and its API. */
   readonly GITHUB_WEB_URL?: string;
   readonly GITHUB_API_URL?: string;
@@ -41,25 +36,51 @@ export const gitHubEndpoints = (env: GitHubEnv): GitHubEndpoints | undefined =>
     ? { web: env.GITHUB_WEB_URL, api: env.GITHUB_API_URL }
     : undefined;
 
-export const gitHubAppConfig = (env: GitHubEnv): GitHubAppConfig | null =>
-  env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET && env.GITHUB_APP_SLUG
+export const gitHubPipesConfig = (env: GitHubEnv): WorkOSPipes.PipesConfig | null =>
+  env.T3CODE_WORKOS_API_KEY
     ? {
-        clientId: env.GITHUB_APP_CLIENT_ID,
-        clientSecret: env.GITHUB_APP_CLIENT_SECRET,
-        slug: env.GITHUB_APP_SLUG,
+        apiKey: Redacted.make(env.T3CODE_WORKOS_API_KEY),
+        apiBaseUrl: env.T3CODE_WORKOS_API_BASE_URL || "https://api.workos.com",
       }
     : null;
 
+/** A user's GitHub connection in WorkOS Pipes, by their WorkOS user id. */
+export interface GitHubPipes {
+  /** Where to send the user's browser to connect GitHub; WorkOS comes back to `returnTo`. */
+  readonly authorizeUrl: (input: {
+    readonly userId: string;
+    readonly returnTo: string;
+  }) => Effect.Effect<string, WorkOSPipes.WorkOSPipesError>;
+  readonly accessToken: (
+    userId: string,
+  ) => Effect.Effect<WorkOSPipes.PipesToken, WorkOSPipes.WorkOSPipesError>;
+  readonly disconnect: (userId: string) => Effect.Effect<void, WorkOSPipes.WorkOSPipesError>;
+}
+
 export class GitHub extends Context.Service<
   GitHub,
-  { readonly app: GitHubAppConfig | null; readonly api: GitHubApi }
+  { readonly pipes: GitHubPipes | null; readonly api: GitHubApi }
 >()("@signalbox/cloud/github/GitHub") {}
 
+const makePipes = (config: WorkOSPipes.PipesConfig, client: HttpClient.HttpClient): GitHubPipes => {
+  const provider = GITHUB_PIPES_PROVIDER;
+  const run = Effect.provideService(HttpClient.HttpClient, client);
+  return {
+    authorizeUrl: ({ userId, returnTo }) =>
+      run(WorkOSPipes.authorizeUrl(config, { provider, userId, returnTo })),
+    accessToken: (userId) => run(WorkOSPipes.accessToken(config, { provider, userId })),
+    disconnect: (userId) => run(WorkOSPipes.disconnect(config, { provider, userId })),
+  };
+};
+
 /** Needs an `HttpClient` (`FetchHttpClient.layer` will do). */
-export const layer = (app: GitHubAppConfig | null, endpoints?: GitHubEndpoints) =>
+export const layer = (pipes: WorkOSPipes.PipesConfig | null, endpoints?: GitHubEndpoints) =>
   Layer.effect(
     GitHub,
     Effect.map(HttpClient.HttpClient, (client) =>
-      GitHub.of({ app, api: makeGitHubApi(client, endpoints) }),
+      GitHub.of({
+        pipes: pipes === null ? null : makePipes(pipes, client),
+        api: makeGitHubApi(client, endpoints),
+      }),
     ),
   );

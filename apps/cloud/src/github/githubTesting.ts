@@ -3,20 +3,21 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as GitHub from "./GitHub.ts";
 
 /**
- * GitHub for tests: the App's OAuth endpoints, the REST and GraphQL calls the
- * cloud makes, and git's receive-pack, which runs against `bare`, a real
- * repository standing in for `repository` on GitHub.
+ * GitHub for tests: WorkOS Pipes' GitHub endpoints, the REST and GraphQL
+ * calls the cloud makes, and git's receive-pack, which runs against `bare`, a
+ * real repository standing in for `repository` on GitHub.
  */
 
-const FAKE_GITHUB_APP: GitHub.GitHubAppConfig = {
-  clientId: "Iv1.test",
-  clientSecret: "secret",
-  slug: "signalbox-test",
+const WORKOS = "https://api.workos.test";
+const FAKE_PIPES = {
+  apiKey: Redacted.make("sk_test"),
+  apiBaseUrl: WORKOS,
 };
 const ENDPOINTS = { web: "https://github.test", api: "https://api.github.test" };
 
@@ -47,9 +48,11 @@ export const makeFakeGitHub = (options: {
     merged: boolean;
   }> = [];
   const calls: Array<string> = [];
-  let refreshes = 0;
-  /** Set to make GitHub turn every refresh down, as after the user revokes the App. */
-  const settings = { refuseRefresh: false, refreshOutage: false };
+  /** Pipes' connected accounts, by WorkOS user id, and the `return_to` of each user's last authorize. */
+  const connected = new Map<string, { readonly state: "connected" | "needs_reauthorization" }>();
+  const returnTo = new Map<string, string>();
+  /** Set to make WorkOS fail every request, as in an outage. */
+  const settings = { workosOutage: false };
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -68,28 +71,42 @@ export const makeFakeGitHub = (options: {
     head: { ref: pull.head },
   });
 
+  const pipes = (method: string, path: string, text: string): Response => {
+    if (settings.workosOutage) return json({ message: "Service unavailable" }, 503);
+    if (method === "POST" && path === "/data-integrations/github/authorize") {
+      const input = JSON.parse(text) as { user_id: string; return_to: string };
+      returnTo.set(input.user_id, input.return_to);
+      return json({ url: `${WORKOS}/data-integrations/abc/authorize-redirect` });
+    }
+    if (method === "POST" && path === "/data-integrations/github/token") {
+      const input = JSON.parse(text) as { user_id: string };
+      const account = connected.get(input.user_id);
+      if (account === undefined) return json({ active: false, error: "not_installed" });
+      if (account.state !== "connected") return json({ active: false, error: account.state });
+      return json({
+        active: true,
+        access_token: {
+          object: "access_token",
+          access_token: `gho_${input.user_id}`,
+          expires_at: null,
+          scopes: ["repo"],
+          missing_scopes: [],
+        },
+      });
+    }
+    const deleting = /^\/user_management\/users\/([^/]+)\/connected_accounts\/github$/.exec(path);
+    if (method === "DELETE" && deleting !== null) {
+      const existed = connected.delete(decodeURIComponent(deleting[1]!));
+      return existed ? new Response(null, { status: 204 }) : json({ message: "Not Found" }, 404);
+    }
+    return json({ message: "Not Found" }, 404);
+  };
+
   const answer = (method: string, url: URL, body: Uint8Array): Response => {
     const path = url.pathname;
     const text = new TextDecoder().decode(body);
+    if (url.origin === WORKOS) return pipes(method, path, text);
     if (url.origin === ENDPOINTS.web) {
-      if (method === "POST" && path === "/login/oauth/access_token") {
-        const params = new URLSearchParams(text);
-        if (params.get("grant_type") === "refresh_token") {
-          if (settings.refreshOutage) return json({ message: "Service unavailable" }, 503);
-          if (settings.refuseRefresh) {
-            return json({ error: "bad_refresh_token", error_description: "Revoked." });
-          }
-          refreshes++;
-        }
-        return params.get("code") === "bad"
-          ? json({ error: "bad_verification_code", error_description: "The code is wrong." })
-          : json({
-              access_token: `ghu_${refreshes}`,
-              expires_in: 28_800,
-              refresh_token: `ghr_${refreshes}`,
-              refresh_token_expires_in: 15_897_600,
-            });
-      }
       if (method === "POST" && path === `/${options.repository}.git/git-receive-pack`) {
         return new Response(git(["receive-pack", "--stateless-rpc", "."], body), {
           headers: { "content-type": "application/x-git-receive-pack-result" },
@@ -98,17 +115,17 @@ export const makeFakeGitHub = (options: {
       return new Response("not found", { status: 404 });
     }
     if (method === "GET" && path === "/user") return json({ login: "octo", id: 1 });
-    if (method === "GET" && path === `/repos/${options.repository}`) {
-      return json({
-        id: 42,
-        full_name: options.repository,
-        name: options.repository.split("/")[1],
-        default_branch: options.defaultBranch,
-        html_url: `${ENDPOINTS.web}/${options.repository}`,
-        clone_url: `${ENDPOINTS.web}/${options.repository}.git`,
-        ssh_url: `git@github.test:${options.repository}.git`,
-      });
-    }
+    const repositoryJson = {
+      id: 42,
+      full_name: options.repository,
+      name: options.repository.split("/")[1],
+      default_branch: options.defaultBranch,
+      html_url: `${ENDPOINTS.web}/${options.repository}`,
+      clone_url: `${ENDPOINTS.web}/${options.repository}.git`,
+      ssh_url: `git@github.test:${options.repository}.git`,
+    };
+    if (method === "GET" && path === "/user/repos") return json([repositoryJson]);
+    if (method === "GET" && path === `/repos/${options.repository}`) return json(repositoryJson);
     if (method === "POST" && path === "/graphql") {
       const oid = head(options.defaultBranch);
       return json({
@@ -141,31 +158,35 @@ export const makeFakeGitHub = (options: {
       pulls.push(pull);
       return json(pullJson(pull), 201);
     }
-    if (method === "DELETE" && path.startsWith("/applications/")) {
-      return new Response(null, { status: 204 });
-    }
     return json({ message: "Not Found" }, 404);
   };
 
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
       const url = new URL(request.url);
-      calls.push(
-        `${request.method} ${url.origin === ENDPOINTS.web ? "web" : "api"}${url.pathname}`,
-      );
+      const host = url.origin === WORKOS ? "workos" : url.origin === ENDPOINTS.web ? "web" : "api";
+      calls.push(`${request.method} ${host}${url.pathname}`);
       const body = request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array();
       return HttpClientResponse.fromWeb(request, answer(request.method, url, body));
     }),
   );
 
   return {
-    layer: GitHub.layer(FAKE_GITHUB_APP, ENDPOINTS).pipe(
+    layer: GitHub.layer(FAKE_PIPES, ENDPOINTS).pipe(
       Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
     ),
     pulls,
     calls,
     settings,
     head,
+    /** The user finishes GitHub's consent page: Pipes holds their connection, then sends them back. */
+    authorize: (userId: string) => {
+      connected.set(userId, { state: "connected" });
+      return returnTo.get(userId) ?? null;
+    },
+    /** The user revokes Signalbox on GitHub; Pipes notices on the next refresh. */
+    revoke: (userId: string) => connected.set(userId, { state: "needs_reauthorization" }),
+    isConnected: (userId: string) => connected.has(userId),
     /** Merges a pull request the way GitHub's merge button fast-forwards. */
     merge: (number: number) => {
       const pull = pulls.find((candidate) => candidate.number === number)!;

@@ -59,8 +59,8 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
   const discover = Effect.gen(function* () {
     const account = yield* connection.account;
     const hint =
-      github.app === null
-        ? "This cloud has no GitHub App configured."
+      github.pipes === null
+        ? "This cloud can't connect GitHub: it has no WorkOS API key."
         : "Connect GitHub to import its repositories.";
     return {
       versionControlSystems: [],
@@ -68,7 +68,7 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
         {
           kind: GITHUB,
           label: "GitHub",
-          status: github.app === null ? "missing" : "available",
+          status: github.pipes === null ? "missing" : "available",
           version: Option.none(),
           installHint: hint,
           detail: Option.none(),
@@ -83,13 +83,9 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
     } satisfies SourceControlDiscoveryResult;
   }).pipe(Effect.orDie);
 
-  /** The repository as the user's connection sees it, or why it can't be used. */
-  const find = (operation: string, input: string) =>
+  /** A token acting as the user, or why there is none. */
+  const userToken = (operation: string) =>
     Effect.gen(function* () {
-      const name = parseRepository(input);
-      if (name === null) {
-        return yield* repositoryError(operation, "Only GitHub repositories can be added here.");
-      }
       const token = yield* connection.accessToken.pipe(
         Effect.mapError(() => repositoryError(operation, "GitHub is unreachable right now.")),
       );
@@ -99,21 +95,42 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
           "Connect GitHub first: Settings › Source Control.",
         );
       }
+      return token;
+    });
+
+  /** The repository as the user's connection sees it, or why it can't be used. */
+  const find = (operation: string, input: string) =>
+    Effect.gen(function* () {
+      const name = parseRepository(input);
+      if (name === null) {
+        return yield* repositoryError(operation, "Only GitHub repositories can be added here.");
+      }
+      const token = yield* userToken(operation);
       const repository = yield* github.api
         .repository(token, name)
         .pipe(Effect.mapError((error) => repositoryError(operation, error.message)));
       if (repository === null) {
         return yield* repositoryError(
           operation,
-          github.app === null
-            ? `Signalbox can't see ${name}.`
-            : `Signalbox can't see ${name}. Install its GitHub app there: ${github.api.installUrl(github.app.slug)}`,
+          `Signalbox can't see ${name}. If it belongs to an organization, grant Signalbox access to it on GitHub (Settings › Applications › Authorized OAuth Apps).`,
         );
       }
       return repository;
     });
 
   const lookup = (repository: string) => Effect.map(find("lookupRepository", repository), toInfo);
+
+  /** The repositories the user can pick from, most recently pushed first. */
+  const list = (provider: SourceControlProviderKind) =>
+    Effect.gen(function* () {
+      const operation = "listRepositories";
+      if (provider !== GITHUB)
+        return yield* repositoryError(operation, "Only GitHub is connected here.");
+      const repositories = yield* github.api
+        .repositories(yield* userToken(operation))
+        .pipe(Effect.mapError((error) => repositoryError(operation, error.message)));
+      return { repositories: repositories.map(toInfo) };
+    });
 
   /** The user as a drive member. */
   const me = Effect.gen(function* () {
@@ -174,7 +191,7 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
       };
     });
 
-  return { discover, lookup, importRepository };
+  return { discover, lookup, list, importRepository };
 });
 
 export type GitHubImport = Effect.Success<ReturnType<typeof makeGitHubImport>>;

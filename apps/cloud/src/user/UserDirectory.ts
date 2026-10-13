@@ -88,13 +88,14 @@ export interface UserObjectApi {
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
   /** Drops the thread index and rebuilds it from the user's thread objects. */
   readonly rebuildThreadIndex: () => Promise<number>;
-  /** Starts connecting GitHub (`github/GitHubConnection.ts`); GitHub comes back to `redirectUri`. */
-  readonly beginGitHubConnect: (redirectUri: string) => Promise<ConnectStart>;
-  readonly completeGitHubConnect: (input: {
+  /** Starts connecting GitHub (`github/GitHubConnection.ts`); WorkOS comes back to `returnTo`. */
+  readonly beginGitHubConnect: (input: {
     readonly grantId: string;
-    readonly code: string;
-    readonly redirectUri: string;
-  }) => Promise<ConnectResult>;
+    readonly returnTo: string;
+  }) => Promise<ConnectStart>;
+  readonly completeGitHubConnect: (grantId: string) => Promise<ConnectResult>;
+  /** Ends a connect attempt that came back in another browser, and what it connected. */
+  readonly abortGitHubConnect: (grantId: string) => Promise<void>;
   readonly disconnectGitHub: () => Promise<void>;
   /** A token acting as the user on GitHub now, or null when not connected. Never leaves the cloud. */
   readonly githubAccessToken: () => Promise<string | null>;
@@ -152,6 +153,7 @@ const METHODS = Object.keys({
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,
+  abortGitHubConnect: true,
   disconnectGitHub: true,
   githubAccessToken: true,
   contextIds: true,

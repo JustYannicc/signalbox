@@ -1,13 +1,11 @@
 import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Schema from "effect/Schema";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 /**
- * The GitHub calls Signalbox Cloud makes: the web flow of Signalbox's GitHub
- * App (#135), a few REST and GraphQL reads, opening pull requests, and git's
+ * The GitHub calls Signalbox Cloud makes: a few REST and GraphQL reads, opening pull requests, and git's
  * smart HTTP. Every call takes the user's token it acts with; nothing here
  * keeps one. Only the fields used are decoded.
  */
@@ -30,30 +28,6 @@ const GITHUB_ENDPOINTS: GitHubEndpoints = {
   web: "https://github.com",
   api: "https://api.github.com",
 };
-
-/** The App's OAuth client, which only the cloud holds. */
-export interface GitHubAppClient {
-  readonly clientId: string;
-  readonly clientSecret: string;
-}
-
-/** A user's tokens from the App's web flow. Expiry is absent when the App issues tokens that never expire. */
-export interface GitHubTokens {
-  readonly accessToken: string;
-  /** Epoch ms. */
-  readonly accessExpiresAt: number | null;
-  readonly refreshToken: string | null;
-  readonly refreshExpiresAt: number | null;
-}
-
-const TokenBody = Schema.Struct({
-  access_token: Schema.optional(Schema.String),
-  expires_in: Schema.optional(Schema.Number),
-  refresh_token: Schema.optional(Schema.String),
-  refresh_token_expires_in: Schema.optional(Schema.Number),
-  error: Schema.optional(Schema.String),
-  error_description: Schema.optional(Schema.String),
-});
 
 const Viewer = Schema.Struct({ login: Schema.String, id: Schema.Number });
 
@@ -198,68 +172,24 @@ export const makeGitHubApi = (
       );
     });
 
-  const tokenRequest = (operation: string, app: GitHubAppClient, params: Record<string, string>) =>
-    Effect.gen(function* () {
-      const startedAt = yield* Clock.currentTimeMillis;
-      const response = yield* send(
-        operation,
-        HttpClientRequest.post(`${web}/login/oauth/access_token`).pipe(
-          HttpClientRequest.acceptJson,
-          HttpClientRequest.bodyUrlParams({
-            client_id: app.clientId,
-            client_secret: app.clientSecret,
-            ...params,
-          }),
-        ),
-      );
-      const body = yield* decodeOrFail(operation, TokenBody, response);
-      if (body === null || body.access_token === undefined) {
-        return yield* new GitHubError({
-          operation,
-          status: response.status,
-          message: body?.error_description ?? body?.error ?? "GitHub did not grant a token.",
-        });
-      }
-      return {
-        accessToken: body.access_token,
-        accessExpiresAt: body.expires_in === undefined ? null : startedAt + body.expires_in * 1000,
-        refreshToken: body.refresh_token ?? null,
-        refreshExpiresAt:
-          body.refresh_token_expires_in === undefined
-            ? null
-            : startedAt + body.refresh_token_expires_in * 1000,
-      } satisfies GitHubTokens;
-    }).pipe(Effect.scoped);
-
   return {
-    /** Where to send a user to authorize the App, coming back to `redirectUri` with `state`. */
-    authorizeUrl: (app: GitHubAppClient, input: { redirectUri: string; state: string }) => {
-      const url = new URL(`${web}/login/oauth/authorize`);
-      url.searchParams.set("client_id", app.clientId);
-      url.searchParams.set("redirect_uri", input.redirectUri);
-      url.searchParams.set("state", input.state);
-      return url.toString();
-    },
-    exchangeCode: (app: GitHubAppClient, input: { code: string; redirectUri: string }) =>
-      tokenRequest("exchangeCode", app, { code: input.code, redirect_uri: input.redirectUri }),
-    refresh: (app: GitHubAppClient, refreshToken: string) =>
-      tokenRequest("refresh", app, {
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      }),
-    /** Revokes the user's authorization of the App, every token included. */
-    revoke: (app: GitHubAppClient, accessToken: string) =>
-      send(
-        "revoke",
-        HttpClientRequest.delete(`${api}/applications/${app.clientId}/grant`).pipe(
-          HttpClientRequest.basicAuth(app.clientId, app.clientSecret),
-          HttpClientRequest.setHeader("accept", "application/vnd.github+json"),
-          HttpClientRequest.bodyJsonUnsafe({ access_token: accessToken }),
-        ),
-      ).pipe(Effect.asVoid, Effect.scoped),
     viewer: (token: string) => json("viewer", Viewer, HttpClientRequest.get(`${api}/user`), token),
     repository: (token: string, repository: string) =>
       json("repository", Repository, HttpClientRequest.get(`${api}/repos/${repository}`), token),
+    /** The repositories the user can push to, most recently pushed first: one page, enough to pick from. */
+    repositories: (token: string) =>
+      json(
+        "repositories",
+        Schema.Array(Repository),
+        HttpClientRequest.get(`${api}/user/repos`).pipe(
+          HttpClientRequest.setUrlParams({
+            sort: "pushed",
+            per_page: "100",
+            affiliation: "owner,collaborator,organization_member",
+          }),
+        ),
+        token,
+      ).pipe(Effect.map((repositories) => repositories ?? [])),
     /** The default branch and its head, as git would fetch `HEAD`. */
     defaultHead: (token: string, repository: string) => {
       const [owner, name] = repository.split("/");
@@ -355,8 +285,6 @@ export const makeGitHubApi = (
         ),
         Effect.scoped,
       ),
-    /** Where a user installs the App on more accounts and repositories. */
-    installUrl: (slug: string) => `${web}/apps/${slug}/installations/new`,
     /** Where git's smart HTTP for `repository` lives, for the drive's fetch proxy. */
     gitUrl: (repository: string, path: string) => `${web}/${repository}.git/${path}`,
   };

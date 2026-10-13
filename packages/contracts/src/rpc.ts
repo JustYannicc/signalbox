@@ -50,6 +50,7 @@ import { SIGNALBOX_ANALYTICS_RPCS } from "./signalboxAnalytics.ts"; // signalbox
 import { SIGNALBOX_CONTEXTS_RPCS } from "./signalboxContexts.ts"; // signalbox: contexts
 import { SIGNALBOX_DRIVES_RPCS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: previews
+import { SIGNALBOX_REPOSITORIES_RPCS } from "./signalboxRepositories.ts"; // signalbox: repositories
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -2031,6 +2032,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_CONTEXTS_RPCS,
   ...SIGNALBOX_DRIVES_RPCS,
   ...SIGNALBOX_PREVIEWS_RPCS,
+  ...SIGNALBOX_REPOSITORIES_RPCS,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(
