@@ -48,6 +48,7 @@ import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
+import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as UserSections from "./user/UserSections.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
@@ -169,6 +170,7 @@ const makeUserRuntime = (
       DriveShortcuts.layer,
       DriveFiles.layer,
       GitHubConnection.layer,
+      ConnectionLinks.layer,
       PoolSignIns.layer,
     ).pipe(
       Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),

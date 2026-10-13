@@ -12,6 +12,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import type { ConnectionLink, CreatedLink } from "../connections/ConnectionLinks.ts";
+import type {
+  LinkedConnections,
+  LinkedProvider,
+  LinkedToken,
+} from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
 import { jsonCodec } from "../thread/threadWire.ts";
 import type { DriveAccessEntry } from "./UserDriveIndex.ts";
@@ -97,8 +103,18 @@ export interface UserObjectApi {
   /** Ends a connect attempt that came back in another browser, and what it connected. */
   readonly abortGitHubConnect: (grantId: string) => Promise<void>;
   readonly disconnectGitHub: () => Promise<void>;
-  /** A token acting as the user on GitHub now, or null when not connected. Never leaves the cloud. */
+  /** A token acting as the user on GitHub now, or null when not connected. */
   readonly githubAccessToken: () => Promise<string | null>;
+  /** A new link for a tool outside Signalbox (`connections/ConnectionLinks.ts`). */
+  readonly createConnectionLink: (label: string) => Promise<CreatedLink>;
+  readonly connectionLinks: () => Promise<ReadonlyArray<ConnectionLink>>;
+  readonly revokeConnectionLink: (id: string) => Promise<void>;
+  /** What a link may see (`connections/connectionRoutes.ts`). */
+  readonly linkedConnections: (secret: string) => Promise<LinkedConnections>;
+  readonly linkedToken: (input: {
+    readonly secret: string;
+    readonly provider: LinkedProvider;
+  }) => Promise<LinkedToken>;
   /** The user's current contexts, which every thread call acts within. */
   readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
@@ -156,6 +172,11 @@ const METHODS = Object.keys({
   abortGitHubConnect: true,
   disconnectGitHub: true,
   githubAccessToken: true,
+  createConnectionLink: true,
+  connectionLinks: true,
+  revokeConnectionLink: true,
+  linkedConnections: true,
+  linkedToken: true,
   contextIds: true,
   recordDriveAccess: true,
   driveAccess: true,
