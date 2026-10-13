@@ -1,11 +1,13 @@
 /**
- * PLACEHOLDER: approve/edit/reject on a waiting run, kept in memory only.
+ * PLACEHOLDER: approve/edit/reject on a waiting run, kept in prototype storage.
  * A decided run stops waiting everywhere it shows (sidebar, digest, run chat,
  * canvas) because every surface reads automations through `useAutomations()`.
  */
 import { useMemo } from "react";
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import { AUTOMATIONS } from "./automationFixtures";
 import type { Automation, AutomationRun, NodeRunResult } from "./automationModel";
 import { automationAttention } from "./automationStatus";
@@ -17,11 +19,16 @@ interface RunDecisionState {
   decide: (runId: string, decision: RunDecision) => void;
 }
 
-export const useRunDecisionStore = create<RunDecisionState>()((set) => ({
-  decisions: {},
-  decide: (runId, decision) =>
-    set((state) => ({ decisions: { ...state.decisions, [runId]: decision } })),
-}));
+export const useRunDecisionStore = create<RunDecisionState>()(
+  persist(
+    (set) => ({
+      decisions: {},
+      decide: (runId, decision) =>
+        set((state) => ({ decisions: { ...state.decisions, [runId]: decision } })),
+    }),
+    { name: "t3code:automations:run-decisions:v1", version: 1, storage: prototypeStorage() },
+  ),
+);
 
 const DECISION_PREFIX: Record<RunDecision, string> = {
   approved: "Approved",

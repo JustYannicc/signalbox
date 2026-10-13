@@ -1,12 +1,20 @@
 /**
  * A section or project agent's persistent thread: work handed in from above,
- * what it passed on, and chats with the user. The chat resets once all of its
- * work is done; earlier chats live in History (`?chat=`). UI prototype.
+ * what it passed on, and chats with the user. The agent represents its level
+ * and coordinates what lives there (threads, automations, places); it's
+ * shared with the team in team levels and just yours otherwise. The chat
+ * resets once all of its work is done; earlier chats live in History
+ * (`?chat=`). UI prototype.
  */
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { isElectron } from "../../env";
+import { AgentAccess } from "../levels/AgentAccess";
+import { AgentSharingChip } from "../levels/AgentSharingChip";
+import { LevelCoordinates } from "../levels/LevelCoordinates";
+import { useLevelOptions } from "../levels/LevelOptionsProvider";
+import { useMappedLeveledThings } from "../levels/useMappedLeveledThings";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
 import {
@@ -22,7 +30,7 @@ import { SupervisorAvatar } from "./AssistantGlyphs";
 import { AssistantComposer } from "./AssistantComposer";
 import { useAssistantIdentity } from "./assistantIdentity";
 import { sendMockMessage } from "./mockChatStore";
-import { ChatHistoryMenu, OnlyYouChip } from "./ChatHeaderControls";
+import { ChatHistoryMenu } from "./ChatHeaderControls";
 import { ChatWithTrace, ClosedChatNotice } from "./ChatWithTrace";
 import { NotificationMenu } from "./NotificationMenu";
 import {
@@ -40,10 +48,16 @@ export function AgentPage(props: {
   const navigate = useNavigate({ from: "/agent/$agentId" });
   const { name: assistantName } = useAssistantIdentity();
   const [traceOpen, setTraceOpen] = useState(false);
+  const mappedThings = useMappedLeveledThings();
   const agent = resolveAgent(props.agentId);
   const previous = agent.previous.find((chat) => chat.id === props.chatId);
   const chat = previous ?? agent.current;
   const agentName = `${agent.name} agent`;
+  const levelOptions = useLevelOptions();
+  const level = useMemo(
+    () => levelOptions.find((option) => option.agentId === agent.id) ?? null,
+    [agent.id, levelOptions],
+  );
 
   const selectChat = useCallback(
     (chatId: string | null) => void navigate({ search: chatId ? { chat: chatId } : {} }),
@@ -59,9 +73,17 @@ export function AgentPage(props: {
               <span className="flex min-w-0 items-center gap-2">
                 <SupervisorAvatar agentId={agent.id} size={20} />
                 <WorkspaceBreadcrumbText>{agentName}</WorkspaceBreadcrumbText>
-                <WorkspaceBreadcrumbText className="font-normal text-muted-foreground max-sm:hidden">
-                  · {agent.scope}
-                </WorkspaceBreadcrumbText>
+                {level ? (
+                  <LevelCoordinates
+                    level={level.key}
+                    levelLabel={level.label}
+                    agentName={agentName}
+                  />
+                ) : (
+                  <WorkspaceBreadcrumbText className="font-normal text-muted-foreground max-sm:hidden">
+                    · {agent.scope}
+                  </WorkspaceBreadcrumbText>
+                )}
               </span>
             </WorkspaceBreadcrumbItem>
             {previous ? (
@@ -74,7 +96,8 @@ export function AgentPage(props: {
             ) : null}
           </WorkspaceBreadcrumb>
           <div className="flex shrink-0 items-center gap-1">
-            <OnlyYouChip agentName={agentName} />
+            <AgentSharingChip level={level?.key ?? null} agentName={agentName} />
+            <AgentAccess agentId={agent.id} mappedThings={mappedThings} />
             <AgentInstructionsDialog agent={agent} agentName={agentName} />
             <NotificationMenu agentKey={agent.id} agentName={agentName} />
             <ChatHistoryMenu
@@ -108,9 +131,7 @@ export function AgentPage(props: {
               <SupervisorAvatar agentId={agent.id} size={56} />
               <h1 className="text-base font-semibold">Nothing open for {agent.name}</h1>
               <p className="max-w-sm text-sm text-muted-foreground text-pretty">
-                {agent.kind === "workflow"
-                  ? "Runs that need you show up here. Everything else stays quiet."
-                  : `Work ${assistantName} hands to ${agent.name} shows up here. You can also message this agent directly.`}
+                {`Work ${assistantName} hands to ${agent.name} shows up here. Message it to start a task at its level.`}
               </p>
             </div>
           }

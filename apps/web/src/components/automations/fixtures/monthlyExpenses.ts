@@ -206,17 +206,12 @@ export const MONTHLY_EXPENSES: Automation = {
   id: "monthly-expenses",
   name: "Monthly expenses",
   description: `Northwind's Expense agent gets your receipts from ${ASSISTANT_NAME} without seeing your inbox.`,
-  agentName: "Receipts handoff agent",
-  section: "work",
   cadence: "Monthly on the 1st",
   enabled: true,
   nextRunAt: lastMonthlyAt(1, 8, -1).toISOString(),
   source: { path: "automations/monthly-expenses.ts", code: SOURCE },
   nodes,
-  lanes: [
-    { owner: NORTHWIND, y: -10, height: 160 },
-    { owner: YANNIC, y: 170, height: 160 },
-  ],
+  lanes: [{ owner: NORTHWIND }, { owner: YANNIC }],
   edges: [
     { from: "trigger", to: "charges" },
     { from: "charges", to: "ask" },

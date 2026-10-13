@@ -10,8 +10,9 @@ import {
   TEAM_PROJECTS,
   TEAM_THREADS,
 } from "../multiplayer/multiplayerFixtures";
-import { focusModeInfo, useFocusStore } from "../sidebar/focus/focusStore";
-import { HOME_SECTIONS, rootSectionIdOf } from "../sidebar/sections/sectionModel";
+import { isSectionInFocus } from "../sidebar/focus/focusLevels";
+import { useFocusedLevel } from "../sidebar/focus/focusStore";
+import { HOME_SECTIONS } from "../sidebar/sections/sectionModel";
 import { useProjectInFocus } from "../sidebar/useProjectInFocus";
 import {
   assistantToken,
@@ -67,15 +68,15 @@ export function useCaptureSuggestions(
   const threads = useThreadShells();
   const assistant = useAssistantIdentity();
   const isProjectInFocus = useProjectInFocus();
-  const focusMode = useFocusStore((state) => state.mode);
+  const focused = useFocusedLevel();
   const projects = useMemo(
     () => allProjects.filter(isProjectInFocus),
     [allProjects, isProjectInFocus],
   );
-  const sections = useMemo(() => {
-    const hidden = focusModeInfo(focusMode).hiddenRootSectionIds;
-    return HOME_SECTIONS.filter((section) => !hidden.includes(rootSectionIdOf(section.id)));
-  }, [focusMode]);
+  const sections = useMemo(
+    () => HOME_SECTIONS.filter((section) => isSectionInFocus(section.id, focused)),
+    [focused],
+  );
 
   const hashCandidates = useMemo<CaptureToken[]>(() => {
     const realProjects = projects.map((project) => ({

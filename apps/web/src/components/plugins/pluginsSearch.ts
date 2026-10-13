@@ -5,24 +5,27 @@
  */
 import * as Option from "effect/Option";
 
-import type { GroupTab } from "./GroupDetail";
-import { INSTRUCTION_ROLES, INSTRUCTION_SCOPES } from "./instructionsModel";
-import type { InstructionRole, InstructionScope } from "./instructionsModel";
+import type { LevelTab } from "./LevelDetail";
+import { INSTRUCTION_AUDIENCES } from "./instructionsModel";
+import type { InstructionAudience } from "./instructionsModel";
 import type { MarketplaceKindFilter } from "./MarketplaceSection";
 import { decodePluginsSection, type PluginsSection } from "./pluginsModel";
 
 export interface PluginsSearch {
   section?: PluginsSection;
-  /** Groups: the open group, its tab, and (newcomers tab) the selected preset. */
+  /**
+   * Levels: the open level's key (e.g. "section:work-northwind"), its tab, and
+   * (newcomers tab) the selected preset. Named `group` for older links.
+   */
   group?: string;
-  tab?: Extract<GroupTab, "newcomers">;
+  tab?: Extract<LevelTab, "newcomers">;
   /** Skills: the open skill. */
   skill?: string;
   /** Connections, plugins, marketplace, newcomers: the row to expand and highlight. */
   item?: string;
-  /** Instructions: which file is open. */
-  role?: InstructionRole;
-  scope?: InstructionScope;
+  /** Instructions: the level whose AGENTS.md is open, and for whom. */
+  level?: string;
+  audience?: InstructionAudience;
   /** Marketplace: workflows or skills only. */
   kind?: Exclude<MarketplaceKindFilter, "all">;
 }
@@ -43,7 +46,7 @@ export function parsePluginsSearch(raw: Record<string, unknown>): PluginsSearch 
     value === undefined ? {} : { [key]: value };
 
   switch (section) {
-    case "groups": {
+    case "levels": {
       const group = text(raw.group);
       const tab = group && raw.tab === "newcomers" ? "newcomers" : undefined;
       return {
@@ -58,8 +61,8 @@ export function parsePluginsSearch(raw: Record<string, unknown>): PluginsSearch 
     case "instructions":
       return {
         section,
-        ...keep("role", oneOf(INSTRUCTION_ROLES, raw.role)),
-        ...keep("scope", oneOf(INSTRUCTION_SCOPES, raw.scope)),
+        ...keep("level", text(raw.level)),
+        ...keep("audience", oneOf(INSTRUCTION_AUDIENCES, raw.audience)),
       };
     case "marketplace":
       return {

@@ -75,7 +75,10 @@ export function ChatHistoryMenu(props: {
   );
 }
 
-/** Supervisors are personal: only their owner sees them, and they see what the owner sees. */
+/**
+ * For agents that are just yours: the assistant and agents of personal levels.
+ * Agents of team levels are shared with the team (`levels/AgentSharingChip`).
+ */
 export function OnlyYouChip(props: { agentName: string }) {
   return (
     <Tooltip>

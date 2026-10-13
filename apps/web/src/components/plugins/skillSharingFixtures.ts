@@ -8,7 +8,7 @@ export const SKILL_PUBLICATIONS: readonly SkillPublication[] = [
   {
     skillId: "northwind-expenses",
     owner: "Flynn",
-    groupId: "northwind",
+    level: "section:work-northwind",
     autoUpdate: true,
     yourVersion: 3,
     versions: [
@@ -31,7 +31,7 @@ export const SKILL_PUBLICATIONS: readonly SkillPublication[] = [
   {
     skillId: "customer-email-triage",
     owner: "you",
-    groupId: "northwind",
+    level: "section:work-northwind",
     autoUpdate: true,
     yourVersion: 3,
     versions: [
@@ -54,7 +54,7 @@ export const SKILL_PUBLICATIONS: readonly SkillPublication[] = [
   {
     skillId: "northwind-terminal",
     owner: "Northwind admins",
-    groupId: "northwind",
+    level: "section:work-northwind",
     autoUpdate: false,
     yourVersion: 4,
     versions: [

@@ -96,7 +96,6 @@ export const NO_FORCE_PUSH: Automation = {
   id: "no-force-push",
   name: "No force-push to main",
   description: "Stops any agent from force-pushing to main, whatever harness it runs in.",
-  agentName: "Git guard agent",
   allowedToday: 1_843,
   cadence: "Before every shell command",
   enabled: true,

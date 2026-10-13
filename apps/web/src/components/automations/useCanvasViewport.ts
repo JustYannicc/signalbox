@@ -2,7 +2,9 @@
  * Pan and zoom for the workflow canvas. Drag the background or scroll to pan,
  * pinch or Cmd/Ctrl+scroll to zoom around the pointer. Until the user moves
  * the view it keeps refitting the graph as the canvas resizes, so opening the
- * details panel never strands nodes off-screen.
+ * details panel never strands nodes off-screen. Tall graphs in a short pane
+ * fit the width and start at the top, so the trigger is where you begin
+ * reading and you scroll down the run.
  */
 import {
   useCallback,
@@ -14,7 +16,7 @@ import {
   type RefObject,
 } from "react";
 
-import { NODE_HEIGHT, NODE_WIDTH, type WorkflowNode } from "./automationModel";
+import type { WorkflowLayout } from "./workflowLayout";
 
 export interface Viewport {
   x: number;
@@ -30,25 +32,31 @@ const DRAG_THRESHOLD = 3;
 
 const clampZoom = (zoom: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 
-function fitViewport(nodes: readonly WorkflowNode[], width: number, height: number): Viewport {
-  if (nodes.length === 0 || width === 0 || height === 0) return { x: 0, y: 0, zoom: 1 };
-  const minX = Math.min(...nodes.map((node) => node.x));
-  const minY = Math.min(...nodes.map((node) => node.y));
-  const boundsWidth = Math.max(...nodes.map((node) => node.x)) + NODE_WIDTH - minX;
-  const boundsHeight = Math.max(...nodes.map((node) => node.y)) + NODE_HEIGHT - minY;
-  const zoom = clampZoom(
-    Math.min((width - FIT_PADDING * 2) / boundsWidth, (height - FIT_PADDING * 2) / boundsHeight, 1),
-  );
+/** Below this, a fit that shows everything is too small to read; fit the width instead. */
+const READABLE_ZOOM = 0.7;
+
+function fitViewport(bounds: WorkflowLayout["bounds"], width: number, height: number): Viewport {
+  const boundsWidth = bounds.maxX - bounds.minX;
+  const boundsHeight = bounds.maxY - bounds.minY;
+  if (boundsWidth <= 0 || width === 0 || height === 0) return { x: 0, y: 0, zoom: 1 };
+  const byWidth = (width - FIT_PADDING * 2) / boundsWidth;
+  const byHeight = (height - FIT_PADDING * 2) / boundsHeight;
+  const whole = clampZoom(Math.min(byWidth, byHeight, 1));
+  const zoom = whole >= READABLE_ZOOM ? whole : clampZoom(Math.min(byWidth, READABLE_ZOOM));
+  const top =
+    boundsHeight * zoom <= height - FIT_PADDING * 2
+      ? (height - boundsHeight * zoom) / 2
+      : FIT_PADDING;
   return {
-    x: (width - boundsWidth * zoom) / 2 - minX * zoom,
-    y: (height - boundsHeight * zoom) / 2 - minY * zoom,
+    x: (width - boundsWidth * zoom) / 2 - bounds.minX * zoom,
+    y: top - bounds.minY * zoom,
     zoom,
   };
 }
 
 export function useCanvasViewport(
   containerRef: RefObject<HTMLDivElement | null>,
-  nodes: readonly WorkflowNode[],
+  bounds: WorkflowLayout["bounds"],
   onBackgroundClick: () => void,
 ) {
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
@@ -65,8 +73,8 @@ export function useCanvasViewport(
     const container = containerRef.current;
     if (!container) return;
     userMovedRef.current = false;
-    setViewport(fitViewport(nodes, container.clientWidth, container.clientHeight));
-  }, [containerRef, nodes]);
+    setViewport(fitViewport(bounds, container.clientWidth, container.clientHeight));
+  }, [containerRef, bounds]);
 
   useLayoutEffect(() => {
     fit();

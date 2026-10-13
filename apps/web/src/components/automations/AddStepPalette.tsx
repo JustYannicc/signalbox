@@ -1,7 +1,7 @@
 /**
  * "Ask agent to add…": every step and trigger primitive, grouped and
- * searchable, as prompt starters. Picking one opens the workflow agent with
- * the request; the agent changes the source and the graph follows. Nothing is
+ * searchable, as prompt starters. Picking one opens the agent of the level the
+ * automation lives in with the request; the agent changes the source and the graph follows. Nothing is
  * inserted here.
  */
 import { Link } from "@tanstack/react-router";
@@ -20,13 +20,13 @@ import {
   type HookPrimitive,
   type StepPrimitive,
 } from "./primitiveCatalog";
-import { useOpenWorkflowAgent } from "./WorkflowAgent";
+import { useOpenAutomationAgent } from "./AutomationAgent";
 
-/** Opens the workflow agent with the request prefilled in its composer. */
+/** Opens the level agent with the request prefilled in its composer. */
 function useAskAgentToAdd(automation: Automation) {
-  const openAgent = useOpenWorkflowAgent();
+  const openAgent = useOpenAutomationAgent();
   return (label: string) =>
-    openAgent(automation, `Add a "${label}" step to ${automation.name}. Ask me what it should do.`);
+    openAgent(`Add a "${label}" step to ${automation.name}. Ask me what it should do.`);
 }
 
 function PrimitiveRow(props: {
@@ -128,7 +128,6 @@ export function AddStepPalette(props: { automation: Automation }) {
           <div className="border-t px-3 py-2 text-xs text-muted-foreground">
             <Link
               to="/automations"
-              search={{ view: "primitives" }}
               className="underline-offset-2 hover:text-foreground hover:underline"
             >
               Everything a workflow can hook into

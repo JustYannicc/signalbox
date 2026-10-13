@@ -1,13 +1,13 @@
 /**
  * Messages sent from this device in team chats and rooms. PLACEHOLDER: they
  * append locally (with a canned agent turn in chats, see `agentReply.ts`) so
- * the page reads like a conversation; nothing leaves the device. Live agent
- * turns are persisted settled, so a reload never shows one stuck mid-work.
+ * the page reads like a conversation; nothing leaves the tab, and a reload
+ * clears them.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import type { RoomMessage } from "../rooms/roomModel";
 import { shortId, type SystemEvent, type TeamMessage } from "./multiplayerModel";
 
@@ -65,10 +65,8 @@ export const useLocalMessagesStore = create<LocalMessagesState>()(
     {
       name: "t3code:multiplayer:local-messages:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
-      // A reload loses the settle timer, so storage only ever holds finished turns.
+      storage: prototypeStorage(),
+      // Storage only holds finished turns: the settle timer never outlives the tab.
       partialize: (state) => ({ team: settleAll(state.team), rooms: state.rooms }),
     },
   ),

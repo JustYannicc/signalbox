@@ -127,7 +127,10 @@ export type WorkflowNodeKind = WorkflowNodeConfig["kind"];
 export interface WorkflowNode {
   id: string;
   title: string;
-  /** Canvas coordinates of the card's top-left corner. */
+  /**
+   * Authoring position: `x` runs along the flow and `y` across it. The canvas
+   * turns each distinct `x` into a row and `y` into a column (see `verticalLayout`).
+   */
   x: number;
   y: number;
   config: WorkflowNodeConfig;
@@ -139,7 +142,7 @@ export interface WorkflowEdge {
   to: string;
   /** Set on edges leaving a branching node; matches a `NodeOutput` key. */
   branch?: string;
-  /** Goes back to an earlier step, drawn under the graph. */
+  /** Goes back to an earlier step, drawn up a gutter beside the graph. */
   loop?: boolean;
   /** Only carries traffic when a loop retries (a failing judge, the loop itself). */
   retry?: boolean;
@@ -148,11 +151,9 @@ export interface WorkflowEdge {
   boundary?: boolean;
 }
 
-/** A horizontal band grouping the nodes one owner runs. */
+/** A column drawn around the nodes one owner runs, matched by owner label. */
 export interface WorkflowLane {
   owner: NodeOwner;
-  y: number;
-  height: number;
 }
 
 export interface NodeRunResult {
@@ -189,10 +190,6 @@ export interface Automation {
   id: string;
   name: string;
   description: string;
-  /** The unnamed supervisor agent responsible for this workflow, e.g. "Sentry fixer agent". */
-  agentName: string;
-  /** The root section it belongs to, so Focus can hide it. System automations have none. */
-  section?: "work" | "personal";
   /** Inline hooks: passes don't become runs, they only count. */
   allowedToday?: number;
   /** Human cadence, e.g. "Daily at 3:00 AM". */
@@ -215,7 +212,7 @@ export function isTriggerNode(config: WorkflowNodeConfig) {
   return config.kind === "trigger" || config.kind === "clientSignal";
 }
 
-/** The named outputs of a branching node, top to bottom; null for single-output nodes. */
+/** The named outputs of a branching node, in order; null for single-output nodes. */
 export function nodeOutputs(config: WorkflowNodeConfig): readonly NodeOutput[] | null {
   switch (config.kind) {
     case "condition":
@@ -235,23 +232,12 @@ export function nodeOutputs(config: WorkflowNodeConfig): readonly NodeOutput[] |
   }
 }
 
-/** Vertical position of an output handle as a fraction of the card height. */
-export function outputFraction(config: WorkflowNodeConfig, branch: string | undefined) {
-  const outputs = nodeOutputs(config);
-  const index = outputs && branch ? outputs.findIndex((output) => output.key === branch) : -1;
-  return outputs && index >= 0 ? (index + 1) / (outputs.length + 1) : 1 / 2;
-}
-
 /** The review-loop cap from the workflow's gate, or null when it has none. */
 export function maxIterations(nodes: readonly WorkflowNode[]) {
   for (const node of nodes) {
     if (node.config.kind === "gate") return node.config.maxIterations;
   }
   return null;
-}
-
-export function workflowAgentId(automation: Automation) {
-  return `workflow-${automation.id}`;
 }
 
 /** Card geometry shared by the canvas, edges, and fit-to-view math. */

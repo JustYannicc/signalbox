@@ -14,33 +14,6 @@ import {
 } from "./spacesFixtures";
 import type { Space } from "./spacesSpace";
 
-export const SPACES_KINDS = ["documents", "files", "messages", "issues", "links"] as const;
-export type SpacesKind = (typeof SPACES_KINDS)[number];
-
-export const SPACES_KIND_LABEL: Record<SpacesKind, string> = {
-  documents: "Documents",
-  files: "Files",
-  messages: "Messages",
-  issues: "Issues & to-dos",
-  links: "Links",
-};
-
-const KIND_BY_TYPE: Record<SpacesItemType, SpacesKind> = {
-  doc: "documents",
-  sheet: "documents",
-  slides: "documents",
-  page: "documents",
-  note: "documents",
-  pdf: "files",
-  image: "files",
-  album: "files",
-  issue: "issues",
-  task: "issues",
-  message: "messages",
-  email: "messages",
-  link: "links",
-};
-
 export const SPACES_TYPE_LABEL: Record<SpacesItemType, string> = {
   doc: "Document",
   sheet: "Spreadsheet",
@@ -57,10 +30,19 @@ export const SPACES_TYPE_LABEL: Record<SpacesItemType, string> = {
   link: "Link",
 };
 
-/** The open space itself is not in the URL; see `spacesSpace.ts`. */
+/**
+ * Which place /spaces shows, all in the URL: an account's own items at its
+ * level, one mapped place, or (neither) everything in sight.
+ */
 export interface SpacesSearch {
-  readonly kind?: SpacesKind;
-  readonly source?: string;
+  /** A connected account (`SPACES_SOURCES`), opened from the level it is connected at. */
+  readonly account?: string;
+  /** With `account`: every item in the account, not just the ones no mapped place covers. */
+  readonly all?: true;
+  /** A mapped place (`spacesMappings`), opened from its Home folder. */
+  readonly mapping?: string;
+  /** The Home container the place was opened from, for the breadcrumb and the active row. */
+  readonly at?: string;
   /** The item open in the preview panel, or the selected file in Just Files. */
   readonly item?: string;
   /** A native note open in the editor; replaces the library while set. */
@@ -69,19 +51,25 @@ export interface SpacesSearch {
   readonly lens?: "files";
 }
 
-const isSpacesKind = Schema.is(Schema.Literals(SPACES_KINDS));
 const isSearchToken = Schema.is(Schema.NonEmptyString);
 
 /** Unknown or malformed params drop out instead of failing the route. */
 export function validateSpacesSearch(raw: Record<string, unknown>): SpacesSearch {
-  const token = (value: unknown) =>
-    isSearchToken(value) && value.length <= 100 ? value : undefined;
-  const source = token(raw.source);
+  const token = (value: unknown, max = 100) =>
+    isSearchToken(value) && value.length <= max ? value : undefined;
+  const account = token(raw.account);
+  const mapping = token(raw.mapping);
+  // Container keys carry real project keys, which run longer than fixture ids.
+  const at = token(raw.at, 300);
   const item = token(raw.item);
   const note = token(raw.note);
   return {
-    ...(isSpacesKind(raw.kind) ? { kind: raw.kind } : {}),
-    ...(source === undefined ? {} : { source }),
+    ...(account === undefined ? {} : { account }),
+    ...(account !== undefined && (raw.all === true || raw.all === "true")
+      ? { all: true as const }
+      : {}),
+    ...(mapping === undefined ? {} : { mapping }),
+    ...(at === undefined ? {} : { at }),
     ...(item === undefined ? {} : { item }),
     ...(note === undefined ? {} : { note }),
     ...(raw.lens === "files" ? { lens: "files" as const } : {}),
@@ -113,24 +101,11 @@ export function openItemSearch(previous: SpacesSearch, item: SpacesItemFixture):
     : patchSpacesSearch(previous, { item: item.id, note: undefined });
 }
 
-export function itemKind(item: SpacesItemFixture): SpacesKind {
-  return KIND_BY_TYPE[item.type];
-}
-
 /** Synced items only, newest first. `useSpaceItems` adds the native notes. */
 export function spaceItems(space: Space): readonly SpacesItemFixture[] {
   return SPACES_ITEMS.filter((item) => space.sectionIds.has(item.space)).toSorted((a, b) =>
     b.updatedAt.localeCompare(a.updatedAt),
   );
-}
-
-export function countBy<T>(
-  items: readonly SpacesItemFixture[],
-  key: (item: SpacesItemFixture) => T,
-) {
-  const counts = new Map<T, number>();
-  for (const item of items) counts.set(key(item), (counts.get(key(item)) ?? 0) + 1);
-  return counts;
 }
 
 export function matchesQuery(item: SpacesItemFixture, query: string): boolean {

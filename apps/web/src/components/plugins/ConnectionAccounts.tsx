@@ -7,8 +7,13 @@ import { useState } from "react";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { GroupBadges } from "./groupPrimitives";
-import { connectionDisplayName, type ConnectionAccount, type Integration } from "./pluginsModel";
+import { ThingLevels } from "./levelPrimitives";
+import {
+  connectionDisplayName,
+  isApiKind,
+  type ConnectionAccount,
+  type Integration,
+} from "./pluginsModel";
 import { AuthStateBadge, comingSoon, StatusDot } from "./pluginsPrimitives";
 
 /** Click to rename; Enter or blur saves, Escape cancels. Empty names fall back to the old one. */
@@ -81,7 +86,13 @@ export function AccountRow(props: {
           {account.identity} · models see “{connectionDisplayName(integration, props.name)}”
         </span>
       </div>
-      <GroupBadges groups={account.groups} />
+      <ThingLevels
+        thingKey={`account:${account.id}`}
+        itemName={connectionDisplayName(integration, props.name)}
+        levels={account.levels}
+        area={isApiKind(integration.kind) ? "apis" : "connections"}
+        addedBy={account.addedBy}
+      />
       {broken ? (
         <>
           <AuthStateBadge auth={account.auth} />

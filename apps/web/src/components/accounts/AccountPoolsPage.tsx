@@ -1,15 +1,15 @@
 /**
- * Usage › Accounts: pooled capacity per harness, advice from your pace, and
- * the pools you own or connected to (shared Drive-style). UI prototype on
- * placeholder data (see accountPoolsFixtures.ts); groups come from Plugins.
+ * Usage › Accounts: pooled capacity per harness, advice from your pace, which
+ * pool each Home folder routes through, and the pools you own or connected to
+ * (shared Drive-style). UI prototype on placeholder data (see accountPoolsFixtures.ts).
  */
 import { formatDuration } from "@t3tools/shared/usageLimits";
 import { PlusIcon } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
+import { LevelOptionsProvider } from "../levels/LevelOptionsProvider";
 import { CURRENT_PERSON_ID } from "../multiplayer/multiplayerFixtures";
-import { ACCOUNT_GROUPS_FROM_PLUGINS } from "../plugins/groupsFixtures";
 import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { ScrollArea } from "../ui/scroll-area";
@@ -27,24 +27,25 @@ import {
 import { POOL_HARNESSES, notifyAccountsComingSoon, poolCapacity } from "./accountPoolsModel";
 import { PoolBlock } from "./PoolBlock";
 import { PoolCapacityOverview } from "./PoolCapacityOverview";
+import { PoolRoutes } from "./PoolRoutes";
 import { adviseFromUsage } from "./usageAdvice";
 import { UsageAdviceList } from "./UsageAdviceList";
 import { UsageTabs } from "./UsageTabs";
-
-const GROUPS_BY_ID = new Map(ACCOUNT_GROUPS_FROM_PLUGINS.map((group) => [group.id, group]));
 
 export function AccountPoolsPage() {
   // Countdowns are read once per visit; a live ticking clock would repaint every row.
   const [now] = useState(() => Date.now());
   const [connected, setConnected] = useState<ReadonlySet<string>>(INITIALLY_CONNECTED);
+  const usablePools = useMemo(
+    () => ACCOUNT_POOLS.filter((pool) => isUsable(pool, connected)),
+    [connected],
+  );
   const capacities = useMemo(() => {
-    const usable = ACCOUNT_POOLS.filter((pool) => isUsable(pool, connected)).flatMap(
-      (pool) => pool.accounts,
-    );
+    const usable = usablePools.flatMap((pool) => pool.accounts);
     return POOL_HARNESSES.map((harness) => poolCapacity(harness, usable)).filter(
       (capacity) => capacity.accounts.length > 0,
     );
-  }, [connected]);
+  }, [usablePools]);
   const advice = capacities.map((capacity) =>
     adviseFromUsage(capacity, USAGE_PACE[capacity.harness], now),
   );
@@ -94,32 +95,33 @@ export function AccountPoolsPage() {
           <WorkspacePageContainer width="expanded" className="gap-8">
             <PoolCapacityOverview capacities={capacities} now={now} />
             <UsageAdviceList advice={advice} />
-            <PoolList title="Your pools" id="pools-yours">
-              {yours.map((pool) => (
-                <PoolBlock
-                  key={pool.id}
-                  pool={pool}
-                  owned
-                  connected
-                  onConnectedChange={() => undefined}
-                  groupsById={GROUPS_BY_ID}
-                  now={now}
-                />
-              ))}
-            </PoolList>
-            <PoolList title="Shared with you" id="pools-shared">
-              {shared.map((pool) => (
-                <PoolBlock
-                  key={pool.id}
-                  pool={pool}
-                  owned={false}
-                  connected={connected.has(pool.id)}
-                  onConnectedChange={(next) => setPoolConnected(pool.id, next)}
-                  groupsById={GROUPS_BY_ID}
-                  now={now}
-                />
-              ))}
-            </PoolList>
+            <LevelOptionsProvider>
+              <PoolRoutes pools={usablePools} />
+              <PoolList title="Your pools" id="pools-yours">
+                {yours.map((pool) => (
+                  <PoolBlock
+                    key={pool.id}
+                    pool={pool}
+                    owned
+                    connected
+                    onConnectedChange={() => undefined}
+                    now={now}
+                  />
+                ))}
+              </PoolList>
+              <PoolList title="Shared with you" id="pools-shared">
+                {shared.map((pool) => (
+                  <PoolBlock
+                    key={pool.id}
+                    pool={pool}
+                    owned={false}
+                    connected={connected.has(pool.id)}
+                    onConnectedChange={(next) => setPoolConnected(pool.id, next)}
+                    now={now}
+                  />
+                ))}
+              </PoolList>
+            </LevelOptionsProvider>
           </WorkspacePageContainer>
         </ScrollArea>
       </div>

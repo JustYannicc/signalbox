@@ -118,8 +118,6 @@ export const INTEGRATION_HEALTH: Automation = {
   id: "integration-health",
   name: "Repair failing integrations",
   description: "When an MCP server or API behind Executor fails, a chat tries to fix it first.",
-  agentName: "Integration health agent",
-  section: "personal",
   cadence: "On connection failing",
   enabled: true,
   nextRunAt: null,

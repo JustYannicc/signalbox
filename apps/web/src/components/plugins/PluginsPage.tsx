@@ -3,9 +3,10 @@
  * UI prototype on placeholder data (see pluginsFixtures.ts).
  */
 import { Link, useNavigate } from "@tanstack/react-router";
-import { DownloadIcon, PlusIcon } from "lucide-react";
+import { DownloadIcon } from "lucide-react";
 
 import { isElectron } from "../../env";
+import { LevelOptionsProvider, useLevelLabel } from "../levels/LevelOptionsProvider";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
@@ -16,16 +17,14 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
-import { groupById } from "./groupPrimitives";
-import { GroupsSection } from "./GroupsSection";
 import { HarnessPluginsSection } from "./HarnessPluginsSection";
 import { InstructionsSection } from "./InstructionsSection";
 import { IntegrationList } from "./IntegrationList";
+import { LevelsSection } from "./LevelsSection";
 import { MarketplaceSection } from "./MarketplaceSection";
 import { PluginsOverview } from "./PluginsOverview";
 import { SKILLS } from "./pluginsFixtures";
 import { PLUGINS_SECTION_LABEL } from "./pluginsModel";
-import { comingSoon } from "./pluginsPrimitives";
 import type { PluginsSearch } from "./pluginsSearch";
 import { SkillsSection } from "./SkillsSection";
 
@@ -37,8 +36,8 @@ function PluginsSectionContent(props: { search: PluginsSearch }) {
       return <PluginsOverview />;
     case "marketplace":
       return <MarketplaceSection key={search.item} kind={search.kind} item={search.item} />;
-    case "groups":
-      return <GroupsSection groupId={search.group} tab={search.tab} item={search.item} />;
+    case "levels":
+      return <LevelsSection levelKey={search.group} tab={search.tab} item={search.item} />;
     case "connections":
       // Keyed so a deep link to another row re-expands it.
       return <IntegrationList key={search.item} item={search.item} />;
@@ -49,8 +48,8 @@ function PluginsSectionContent(props: { search: PluginsSearch }) {
     case "instructions":
       return (
         <InstructionsSection
-          role={search.role ?? "thread"}
-          scope={search.scope ?? "personal"}
+          level={search.level}
+          audience={search.audience ?? "threads"}
           onNavigate={(next) =>
             void navigate({
               to: "/plugins",
@@ -77,22 +76,23 @@ function SectionAction(props: { search: PluginsSearch }) {
       </Button>
     );
   }
-  if (props.search.section === "groups" && !props.search.group) {
-    return (
-      <Button size="sm" variant="outline" onClick={() => comingSoon("New group")}>
-        <PlusIcon aria-hidden />
-        New group
-      </Button>
-    );
-  }
   return null;
 }
 
 export function PluginsPage(props: { search: PluginsSearch }) {
+  return (
+    <LevelOptionsProvider>
+      <PluginsPageContent search={props.search} />
+    </LevelOptionsProvider>
+  );
+}
+
+function PluginsPageContent(props: { search: PluginsSearch }) {
   const { search } = props;
   const section = search.section ?? "overview";
+  const levelLabel = useLevelLabel();
   const detailName = search.group
-    ? groupById(search.group)?.name
+    ? levelLabel(search.group)
     : search.skill
       ? SKILLS.find((skill) => skill.id === search.skill)?.name
       : undefined;

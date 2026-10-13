@@ -23,38 +23,44 @@ import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./http.ts";
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
 class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
 
-const configLayer = Layer.effect(
-  ServerConfig.ServerConfig,
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    return {
-      ...config,
-      mode: "web",
-      devUrl: new URL("http://127.0.0.1:5173"),
-      devAuthToken: Redacted.make(DEV_TOKEN),
-    } satisfies ServerConfig.ServerConfig["Service"];
-  }),
-).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-http-test-" })));
+const makeConfigLayer = (devAutoAuth = false) =>
+  Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      return {
+        ...config,
+        mode: "web",
+        devUrl: new URL("http://127.0.0.1:5173"),
+        devAuthToken: Redacted.make(DEV_TOKEN),
+        devAutoAuth,
+      } satisfies ServerConfig.ServerConfig["Service"];
+    }),
+  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-http-test-" })));
 
-const environmentAuthLayer = EnvironmentAuth.layer.pipe(
-  Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(ServerSecretStore.layer),
-  Layer.provide(ServerEnvironment.identityLayer),
-  Layer.provide(configLayer),
-);
-const routesLayer = HttpApiBuilder.layer(AuthTestApi).pipe(
-  Layer.provide(authHttpApiLayer),
-  Layer.provide(environmentAuthenticatedAuthLayer),
-  Layer.provideMerge(environmentAuthLayer),
-  Layer.provide(configLayer),
-  Layer.provideMerge(
-    HttpPlatform.layer.pipe(
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provideMerge(Etag.layerWeak),
+const makeRoutesLayer = (devAutoAuth = false) => {
+  const configLayer = makeConfigLayer(devAutoAuth);
+  const environmentAuthLayer = EnvironmentAuth.layer.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ServerEnvironment.identityLayer),
+    Layer.provide(configLayer),
+  );
+  return HttpApiBuilder.layer(AuthTestApi).pipe(
+    Layer.provide(authHttpApiLayer),
+    Layer.provide(environmentAuthenticatedAuthLayer),
+    Layer.provideMerge(environmentAuthLayer),
+    Layer.provide(configLayer),
+    Layer.provideMerge(
+      HttpPlatform.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Etag.layerWeak),
+      ),
     ),
-  ),
-  Layer.provide(NodeServices.layer),
-);
+    Layer.provide(NodeServices.layer),
+  );
+};
+const routesLayer = makeRoutesLayer();
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const postJson = (path: string, body: unknown, headers?: Readonly<Record<string, string>>) =>
@@ -64,19 +70,23 @@ const postJson = (path: string, body: unknown, headers?: Readonly<Record<string,
     body: encodeJson(body),
   });
 
+const makeRequestContext = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+    get: () => Effect.succeedNone,
+    set: () => Effect.void,
+    create: () => Effect.void,
+    getOrCreateRandom: () => Effect.die("Not used by these routes."),
+    remove: () => Effect.void,
+  });
+  return Context.make(Crypto.Crypto, crypto).pipe(
+    Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+  );
+});
+
 it.effect("sets the selected browser session cookies through the HTTP route", () =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
-      get: () => Effect.succeedNone,
-      set: () => Effect.void,
-      create: () => Effect.void,
-      getOrCreateRandom: () => Effect.die("Not used by these routes."),
-      remove: () => Effect.void,
-    });
-    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
-      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
-    );
+    const requestContext = yield* makeRequestContext;
     return yield* Effect.acquireUseRelease(
       Effect.sync(
         () =>
@@ -131,6 +141,61 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("dev auto-auth hands cookie-less browsers the reusable dev session", () =>
+  Effect.gen(function* () {
+    const requestContext = yield* makeRequestContext;
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(
+        () =>
+          [
+            HttpRouter.toWebHandler(makeRoutesLayer(true), { disableLogger: true }),
+            HttpRouter.toWebHandler(routesLayer, { disableLogger: true }),
+          ] as const,
+      ),
+      ([autoAuth, pairingOnly]) =>
+        Effect.tryPromise(async () => {
+          const session = await autoAuth.handler(
+            new Request("http://127.0.0.1/api/auth/session"),
+            requestContext,
+          );
+          expect(session.status).toBe(200);
+          expect(await session.json()).toMatchObject({ authenticated: true });
+          const devCookie = session.headers
+            .getSetCookie()
+            .find((cookie) => cookie.startsWith("t3_dev_session_"));
+          expect(devCookie).toContain(`=${DEV_TOKEN};`);
+
+          const followUp = await autoAuth.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: devCookie?.split(";", 1)[0] ?? "" },
+            }),
+            requestContext,
+          );
+          expect(await followUp.json()).toMatchObject({ authenticated: true });
+          expect(followUp.headers.getSetCookie()).toHaveLength(0);
+
+          const bearer = await autoAuth.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { authorization: "Bearer not-a-real-token" },
+            }),
+            requestContext,
+          );
+          expect(await bearer.json()).toMatchObject({ authenticated: false });
+          expect(bearer.headers.getSetCookie()).toHaveLength(0);
+
+          const withoutOptIn = await pairingOnly.handler(
+            new Request("http://127.0.0.1/api/auth/session"),
+            requestContext,
+          );
+          expect(await withoutOptIn.json()).toMatchObject({ authenticated: false });
+          expect(withoutOptIn.headers.getSetCookie()).toHaveLength(0);
+        }),
+      ([autoAuth, pairingOnly]) =>
+        Effect.promise(() => Promise.all([autoAuth.dispose(), pairingOnly.dispose()])),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );

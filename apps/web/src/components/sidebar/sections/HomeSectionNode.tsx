@@ -12,6 +12,7 @@ import { isContentsEmpty } from "./containerContents";
 import { ContainerItems } from "./HomeItems";
 import { HomeProjectNode } from "./HomeProjectNode";
 import { HomeTreeNode } from "./HomeTreeNode";
+import { MappedStrip } from "./MappedStrip";
 import { NodeAddButton, NodeMoreMenu, TeamCluster } from "./NodeMenus";
 import { ROOT_CONTAINER_KEY, archiveInHome } from "./sectionStore";
 import { TeamProjectNode } from "./TeamProjectNode";
@@ -70,6 +71,7 @@ export function HomeSectionNode(props: {
         </>
       }
     >
+      <MappedStrip items={contents.mapped} containerKey={nodeKey} />
       {childSections.map((child) => (
         <HomeSectionNode
           key={child.section.id}

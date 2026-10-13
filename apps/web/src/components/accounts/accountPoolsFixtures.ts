@@ -6,6 +6,7 @@
  */
 import { CURRENT_PERSON_ID } from "../multiplayer/multiplayerFixtures";
 import { FLEET_ACCOUNTS, FLEET_UPDATED_AT } from "../devices/fleet";
+import { TOP_LEVEL } from "../levels/levels";
 import type { AccountPool, PoolAccount, PoolHarness } from "./accountPoolsModel";
 
 export const QUOTAS_UPDATED_AT = FLEET_UPDATED_AT;
@@ -19,7 +20,7 @@ const SAMIR_CLAUDE: PoolAccount = {
   harness: "claude",
   name: "samir@home.example",
   plan: "Max 20×",
-  groupIds: ["personal"],
+  levels: [TOP_LEVEL],
   state: "active",
   windows: [
     {
@@ -78,6 +79,15 @@ export const ACCOUNT_POOLS: readonly AccountPool[] = [
     grants: [{ kind: "group", groupId: "northwind", role: "use" }],
   },
   {
+    id: "merchant-portal-codex",
+    name: "merchant-portal Codex",
+    harness: "codex",
+    ownerId: "flo",
+    orgName: "Northwind",
+    accounts: byIds("codex-merchant-portal"),
+    grants: [{ kind: "group", groupId: "northwind", role: "use" }],
+  },
+  {
     id: "samir-claude",
     name: "Samir's Claude",
     harness: "claude",
@@ -91,16 +101,20 @@ export const ACCOUNT_POOLS: readonly AccountPool[] = [
 export const INITIALLY_CONNECTED: ReadonlySet<string> = new Set([
   "northwind-codex",
   "northwind-claude",
+  "merchant-portal-codex",
 ]);
 
 export function isUsable(pool: AccountPool, connected: ReadonlySet<string>): boolean {
   return pool.ownerId === CURRENT_PERSON_ID || connected.has(pool.id);
 }
 
-/** Every account you can route to today: your pools plus connected shared ones. */
-export const POOL_ACCOUNTS: readonly PoolAccount[] = ACCOUNT_POOLS.filter((pool) =>
+/** Every pool you can route to today: yours plus connected shared ones. */
+export const USABLE_POOLS: readonly AccountPool[] = ACCOUNT_POOLS.filter((pool) =>
   isUsable(pool, INITIALLY_CONNECTED),
-).flatMap((pool) => pool.accounts);
+);
+
+/** Every account in `USABLE_POOLS`. */
+export const POOL_ACCOUNTS: readonly PoolAccount[] = USABLE_POOLS.flatMap((pool) => pool.accounts);
 
 /** Weekly allowance burned per day at your recent pace, in account-weeks. */
 export const USAGE_PACE: Record<PoolHarness, number> = {

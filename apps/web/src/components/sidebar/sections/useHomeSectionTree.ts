@@ -1,18 +1,24 @@
 /**
  * Builds the Home tree: top-level items, then sections › (team) projects ›
  * items, as you arranged them (moves, renames, archive), with a calm rollup of
- * what needs you per node. Also derives the shortcut order (rendered rows
- * only), Move-to destinations, and Focus: hidden root sections drop out unless
- * the user is peeking, and their running work is summed for the chip.
+ * what needs you per node, automations, accounts and mapped places included (see
+ * `mappedItems`). Also derives the shortcut order (rendered rows
+ * only), Move-to destinations, and Focus: sections outside the focused level
+ * drop out unless the user is peeking. The chip only names them; what runs
+ * in there stays out of sight.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useMemo } from "react";
 
+import { useAutomations } from "../../automations/runDecisions";
+import { SKILLS, useSkillLevels } from "../../levels/leveledThings";
+import { registerProjectRoots, registerProjectSections } from "../../levels/levels";
 import { TEAM_PROJECTS } from "../../multiplayer/multiplayerFixtures";
 import type { TeamProject } from "../../multiplayer/multiplayerModel";
 import { useRoomArchiveStore } from "../../rooms/rooms";
 import { useUiStateStore } from "../../../uiStateStore";
-import { focusModeInfo, useFocusStore } from "../focus/focusStore";
+import { isSectionInFocus } from "../focus/focusLevels";
+import { useFocusedLevel, useFocusStore } from "../focus/focusStore";
 import { homeThreadKey, type HomeProjectEntry } from "../useHomeSidebarData";
 import {
   buildContainerIndex,
@@ -22,15 +28,14 @@ import {
   type ContainerContents,
 } from "./containerContents";
 import { mergeRollups, rollupOf, statusForThread, type StatusRollup } from "./homeStatus";
+import { buildMappedIndex, useMappedStore } from "./mappedItems";
 import {
-  HOME_SECTIONS,
   allHomeSections,
   allLooseItems,
   assignProjectAgentIds,
   childSectionsOf,
   defaultSectionIdForProject,
   findHomeSection,
-  rootSectionIdOf,
   sectionPathLabel,
   type HomeSection,
 } from "./sectionModel";
@@ -76,11 +81,6 @@ export interface MoveDestination {
 
 export interface FocusPausedSummary {
   readonly hiddenLabel: string;
-  readonly runningCount: number;
-}
-
-export function isThreadRunning(thread: EnvironmentThreadShell): boolean {
-  return thread.session?.status === "running" || thread.session?.status === "starting";
 }
 
 const byRecency = (left: EnvironmentThreadShell, right: EnvironmentThreadShell) =>
@@ -94,7 +94,7 @@ export function useHomeSectionTree(input: {
   const { projectEntries, activeThreadKey } = input;
   const archivedRooms = useRoomArchiveStore((state) => state.archived);
   const lastVisited = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const mode = useFocusStore((state) => state.mode);
+  const focused = useFocusedLevel();
   const peeking = useFocusStore((state) => state.peeking);
   const archived = useHomeSectionStore((state) => state.archived);
   // Cached by `allLooseItems`, so this only changes when loose items do.
@@ -106,15 +106,26 @@ export function useHomeSectionTree(input: {
   // Cached by `allHomeSections`, so this only changes when sections do.
   const sections = useHomeSectionStore(() => allHomeSections());
   const names = useHomeSectionStore((state) => state.names);
+  const automations = useAutomations();
+  const mappedHomes = useMappedStore((state) => state.homes);
+  const mappedReferences = useMappedStore((state) => state.references);
+  const mappedReach = useMappedStore((state) => state.reach);
+  const skillLevels = useSkillLevels();
 
   return useMemo(() => {
-    const hiddenRootIds = new Set(focusModeInfo(mode).hiddenRootSectionIds);
+    const mapped = buildMappedIndex({
+      automations,
+      projects: projectEntries.map((entry) => entry.group),
+      overrides: { homes: mappedHomes, references: mappedReferences, reach: mappedReach },
+      skills: { list: SKILLS, levels: skillLevels },
+    });
     const index = buildContainerIndex({
       projectEntries,
       looseItems,
       archived,
       archivedRooms,
       itemContainers,
+      mapped,
     });
     const agentIds = assignProjectAgentIds([
       ...teamProjectKeys(),
@@ -158,10 +169,17 @@ export function useHomeSectionTree(input: {
       else projectsBySection.set(sectionId, [withFixtures]);
     }
 
-    const isHiddenSection = (sectionId: string) => hiddenRootIds.has(rootSectionIdOf(sectionId));
+    // Access follows the tree: a project's agent sits under the section shown here.
+    registerProjectSections(sectionIdByProjectKey);
+    registerProjectRoots(
+      new Map(projectEntries.map((entry) => [entry.group.workspaceRoot, entry.group.projectKey])),
+    );
+
+    const isHiddenSection = (sectionId: string) => !isSectionInFocus(sectionId, focused);
 
     const buildNode = (section: HomeSection): HomeSectionNode => {
       const childSections = childSectionsOf(section.id)
+        .filter((child) => peeking || !isHiddenSection(child.id))
         .filter((child) => !(`section:${child.id}` in archived))
         .map(buildNode);
       const projects = projectsBySection.get(section.id) ?? [];
@@ -194,7 +212,7 @@ export function useHomeSectionTree(input: {
       };
     };
     const roots = childSectionsOf(null)
-      .filter((section) => peeking || !hiddenRootIds.has(section.id))
+      .filter((section) => peeking || !isHiddenSection(section.id))
       .filter((section) => !(`section:${section.id}` in archived))
       .map(buildNode);
     const rootContents = contentsOf(index, ROOT_CONTAINER_KEY);
@@ -247,34 +265,41 @@ export function useHomeSectionTree(input: {
       ),
     ];
 
-    let paused: FocusPausedSummary | null = null;
-    if (hiddenRootIds.size > 0) {
-      const hiddenSections = [...hiddenRootIds].flatMap((id) => findHomeSection(id) ?? []);
-      const hiddenThreads = projectEntries
-        .filter((entry) => {
-          const sectionId = sectionIdByProjectKey.get(entry.group.projectKey);
-          return sectionId !== undefined && isHiddenSection(sectionId);
-        })
-        .flatMap((entry) => entry.threads);
-      const busyAgents = HOME_SECTIONS.filter(
-        (section) => section.agentStatus === "working" && isHiddenSection(section.id),
-      ).length;
-      paused = {
-        hiddenLabel: hiddenSections.map((section) => section.name).join(" & "),
-        runningCount: hiddenThreads.filter(isThreadRunning).length + busyAgents,
-      };
-    }
+    // Name only the topmost hidden sections; their contents leak nothing.
+    const hiddenSections = sections.filter(
+      (section) =>
+        isHiddenSection(section.id) &&
+        (section.parentId === null || !isHiddenSection(section.parentId)),
+    );
+    const paused: FocusPausedSummary | null =
+      hiddenSections.length > 0
+        ? { hiddenLabel: hiddenSections.map((section) => section.name).join(" & ") }
+        : null;
 
-    return { roots, rootContents, orderedThreads, destinations, paused, peeking, index };
+    return {
+      roots,
+      rootContents,
+      mapped,
+      orderedThreads,
+      destinations,
+      paused,
+      peeking,
+      index,
+    };
   }, [
     activeThreadKey,
+    automations,
+    mappedHomes,
+    mappedReferences,
+    mappedReach,
+    skillLevels,
     archived,
     archivedRooms,
     collapsedNodeKeys,
     itemContainers,
     lastVisited,
     looseItems,
-    mode,
+    focused,
     names,
     overrides,
     peeking,

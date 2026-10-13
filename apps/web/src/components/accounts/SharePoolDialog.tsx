@@ -8,7 +8,7 @@ import { ChevronDownIcon, PlusIcon, UsersIcon } from "lucide-react";
 import { AddPeopleField } from "../multiplayer/ShareDialogControls";
 import { PersonAvatar } from "../multiplayer/PersonAvatar";
 import { TEAM_PEOPLE } from "../multiplayer/multiplayerFixtures";
-import { ACCOUNT_GROUPS_FROM_PLUGINS } from "../plugins/groupsFixtures";
+import { ACCOUNT_GROUPS_FROM_PLUGINS } from "../plugins/levelPolicyFixtures";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -46,7 +46,7 @@ export const grantKey = (grant: PoolGrant) =>
 export function grantLabel(grant: PoolGrant): string {
   return grant.kind === "person"
     ? (PERSON_BY_ID.get(grant.personId)?.name ?? grant.personId)
-    : `${GROUP_BY_ID.get(grant.groupId)?.label ?? grant.groupId} group`;
+    : (GROUP_BY_ID.get(grant.groupId)?.label ?? grant.groupId);
 }
 
 export function SharePoolDialog({

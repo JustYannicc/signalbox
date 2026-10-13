@@ -12,7 +12,8 @@ export function isSidebarUtilityPage(pathname: string) {
     pathname === "/usage" ||
     pathname === "/accounts" ||
     pathname === "/pull-requests" ||
-    // Fork: rail view pages. Leaving them returns to the last thread, not to them.
+    // Fork: rail view pages and the pages Home folders open (places, automations).
+    // Leaving them returns to the last thread, not to them.
     pathname === "/spaces" ||
     pathname === "/plugins" ||
     pathname === "/automations" ||

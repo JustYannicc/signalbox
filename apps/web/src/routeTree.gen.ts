@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UsageRouteImport } from './routes/usage'
+import { Route as TodayRouteImport } from './routes/today'
 import { Route as TeamRouteImport } from './routes/team'
 import { Route as SpacesRouteImport } from './routes/spaces'
 import { Route as SetupRouteImport } from './routes/setup'
@@ -59,6 +60,11 @@ const WelcomeRoute = WelcomeRouteImport.update({
 const UsageRoute = UsageRouteImport.update({
   id: '/usage',
   path: '/usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TodayRoute = TodayRouteImport.update({
+  id: '/today',
+  path: '/today',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TeamRoute = TeamRouteImport.update({
@@ -270,6 +276,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute
   '/spaces': typeof SpacesRoute
   '/team': typeof TeamRoute
+  '/today': typeof TodayRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
@@ -311,6 +318,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/spaces': typeof SpacesRoute
   '/team': typeof TeamRoute
+  '/today': typeof TodayRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
@@ -355,6 +363,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute
   '/spaces': typeof SpacesRoute
   '/team': typeof TeamRoute
+  '/today': typeof TodayRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
@@ -400,6 +409,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/spaces'
     | '/team'
+    | '/today'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
@@ -441,6 +451,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/spaces'
     | '/team'
+    | '/today'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
@@ -484,6 +495,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/spaces'
     | '/team'
+    | '/today'
     | '/usage'
     | '/welcome'
     | '/_chat/pull-requests'
@@ -528,6 +540,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   SpacesRoute: typeof SpacesRoute
   TeamRoute: typeof TeamRoute
+  TodayRoute: typeof TodayRoute
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
   AgentAgentIdRoute: typeof AgentAgentIdRoute
@@ -556,6 +569,13 @@ declare module '@tanstack/react-router' {
       path: '/usage'
       fullPath: '/usage'
       preLoaderRoute: typeof UsageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/today': {
+      id: '/today'
+      path: '/today'
+      fullPath: '/today'
+      preLoaderRoute: typeof TodayRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/team': {
@@ -900,6 +920,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   SpacesRoute: SpacesRoute,
   TeamRoute: TeamRoute,
+  TodayRoute: TodayRoute,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
   AgentAgentIdRoute: AgentAgentIdRoute,

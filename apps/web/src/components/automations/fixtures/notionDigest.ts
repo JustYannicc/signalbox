@@ -125,8 +125,6 @@ export const NOTION_DIGEST: Automation = {
   id: "notion-digest",
   name: "Weekly Notion HQ digest",
   description: "Summarizes the week's HQ updates into a Notion page.",
-  agentName: "Digest agent",
-  section: "work",
   cadence: "Weekly on Monday",
   enabled: false,
   nextRunAt: null,

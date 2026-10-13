@@ -89,8 +89,6 @@ export const SENTRY_FEEDBACK: Automation = {
   id: "sentry-feedback-fix",
   name: "Turn Sentry feedback into fix PRs",
   description: "Starts a Codex task for each user feedback report and opens a PR with the fix.",
-  agentName: "Sentry fixer agent",
-  section: "personal",
   cadence: "On Sentry user feedback",
   enabled: true,
   nextRunAt: null,

@@ -245,7 +245,7 @@ function readme(space: Space): string {
       .join(", ");
   return `# ${space.name}
 
-Everything in ${space.id === "all" ? "every section in sight" : space.label}, as files.
+Everything in ${space.id === "everything" ? "every section in sight" : space.label}, as files.
 
 - \`*.md\` documents, notes, issues and messages
 - \`*.json\` records such as photos, tasks and links (shapes in \`_types.ts\`)

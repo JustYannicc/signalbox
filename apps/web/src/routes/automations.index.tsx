@@ -1,19 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { AutomationsOverviewPage } from "../components/automations/AutomationsOverviewPage";
+import { PrimitivesReferencePage } from "../components/automations/PrimitivesReference";
 
-export interface AutomationsIndexSearch {
-  /** `primitives` shows the reference of every hook and step instead of the list. */
-  view?: "primitives";
-}
-
-function AutomationsIndexRoute() {
-  const { view } = Route.useSearch();
-  return <AutomationsOverviewPage view={view ?? "automations"} />;
-}
-
+// Automations live in Home folders; `/automations` is only the reference of
+// every hook and step a workflow can use.
 export const Route = createFileRoute("/automations/")({
-  validateSearch: (raw: Record<string, unknown>): AutomationsIndexSearch =>
-    raw.view === "primitives" ? { view: "primitives" } : {},
-  component: AutomationsIndexRoute,
+  component: PrimitivesReferencePage,
 });

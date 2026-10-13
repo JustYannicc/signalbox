@@ -228,8 +228,6 @@ export const SHIP_CHANGE: Automation = {
   name: "Ship a change (review loop)",
   description:
     "Every finished Task gets reviewed by a different harness and sent back until it's actually good.",
-  agentName: "Review loop agent",
-  section: "personal",
   cadence: "On Task marked done or PR opened",
   enabled: true,
   nextRunAt: null,

@@ -5,9 +5,9 @@
  * Home items, private forks and unique drafts to a thread the page can show.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import type { HomeItemStatus } from "../sidebar/sections/homeStatus";
 import { findLooseItem } from "../sidebar/sections/sectionModel";
 import { defaultScopeFor } from "./containerScope";
@@ -148,9 +148,7 @@ export const useThreadVisibilityStore = create<VisibilityState>()(
     {
       name: "t3code:multiplayer:visibility:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({ overrides: state.overrides }),
     },
   ),

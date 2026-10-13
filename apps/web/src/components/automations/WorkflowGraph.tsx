@@ -1,59 +1,22 @@
 /**
- * The workflow's nodes and bezier connectors in canvas coordinates, over
- * optional owner lanes. The canvas transforms this layer for pan and zoom, and
- * it is memoized so dragging the view never re-renders the cards.
+ * Draws a laid-out workflow top to bottom: owner lanes as columns, then the
+ * connectors with their labels, then the cards. The canvas transforms this
+ * layer for pan and zoom, and it is memoized so dragging the view never
+ * re-renders the cards. Geometry comes from `verticalLayout`.
  */
 import { RepeatIcon, ShieldCheckIcon } from "lucide-react";
 import { createElement, memo } from "react";
 
 import { cn } from "~/lib/utils";
 import {
-  NODE_HEIGHT,
-  NODE_WIDTH,
   maxIterations,
-  nodeOutputs,
-  outputFraction,
   type AutomationRun,
   type WorkflowEdge,
-  type WorkflowLane,
-  type WorkflowNode,
+  type NodeOwner,
 } from "./automationModel";
 import { WorkflowNodeCard } from "./WorkflowNodeCard";
 import { OWNER_ICON, OWNER_TEXT_CLASS } from "./statusOwnerVisuals";
-
-function outputPoint(node: WorkflowNode, branch: WorkflowEdge["branch"]) {
-  return { x: node.x + NODE_WIDTH, y: node.y + NODE_HEIGHT * outputFraction(node.config, branch) };
-}
-
-function inputPoint(node: WorkflowNode) {
-  return { x: node.x, y: node.y + NODE_HEIGHT / 2 };
-}
-
-function edgePath(from: { x: number; y: number }, to: { x: number; y: number }) {
-  const bend = Math.max(48, (to.x - from.x) / 2);
-  return `M ${from.x} ${from.y} C ${from.x + bend} ${from.y}, ${to.x - bend} ${to.y}, ${to.x} ${to.y}`;
-}
-
-/** How far below the lower card a loop-back edge runs. */
-const LOOP_DROP = 64;
-const LOOP_BEND = 56;
-
-/** A loop-back edge: out to the right, along underneath the graph, into the target from the left. */
-function loopPath(from: { x: number; y: number }, to: { x: number; y: number }) {
-  const bottom = Math.max(from.y, to.y) + NODE_HEIGHT / 2 + LOOP_DROP;
-  const out = from.x + LOOP_BEND;
-  const back = to.x - LOOP_BEND;
-  return [
-    `M ${from.x} ${from.y}`,
-    `C ${out} ${from.y}, ${out} ${bottom}, ${from.x} ${bottom}`,
-    `L ${to.x} ${bottom}`,
-    `C ${back} ${bottom}, ${back} ${to.y}, ${to.x} ${to.y}`,
-  ].join(" ");
-}
-
-function edgeKey(edge: WorkflowEdge) {
-  return `${edge.from}-${edge.branch ?? ""}-${edge.to}`;
-}
+import type { PlacedLane, WorkflowLayout } from "./workflowLayout";
 
 type EdgeTone = "idle" | "taken" | "failed" | "waiting" | "untaken";
 
@@ -83,16 +46,12 @@ const EDGE_STROKE_CLASS: Record<EdgeTone, string> = {
   untaken: "stroke-muted-foreground/25",
 };
 
-const LANE_TONE_CLASS: Record<WorkflowLane["owner"]["scope"], string> = {
+const LANE_TONE_CLASS: Record<NodeOwner["scope"], string> = {
   company: "border-info/16 bg-info/4",
   personal: "border-primary/16 bg-primary/4",
 };
-const LANE_OVERHANG = 48;
 
-function Lanes(props: { lanes: readonly WorkflowLane[]; nodes: readonly WorkflowNode[] }) {
-  if (props.nodes.length === 0) return null;
-  const left = Math.min(...props.nodes.map((node) => node.x)) - LANE_OVERHANG;
-  const right = Math.max(...props.nodes.map((node) => node.x)) + NODE_WIDTH + LANE_OVERHANG;
+function Lanes(props: { lanes: readonly PlacedLane[] }) {
   return props.lanes.map((lane) => (
     <div
       key={lane.owner.label}
@@ -100,7 +59,7 @@ function Lanes(props: { lanes: readonly WorkflowLane[]; nodes: readonly Workflow
         "pointer-events-none absolute rounded-2xl border",
         LANE_TONE_CLASS[lane.owner.scope],
       )}
-      style={{ left, top: lane.y, width: right - left, height: lane.height }}
+      style={{ left: lane.x, top: lane.y, width: lane.width, height: lane.height }}
     >
       <span
         className={cn(
@@ -145,68 +104,76 @@ function EdgeLabel(props: {
   );
 }
 
+const EDGE_FILL_CLASS: Record<EdgeTone, string> = {
+  idle: "fill-muted-foreground/45",
+  taken: "fill-success/70",
+  failed: "fill-destructive/70",
+  waiting: "fill-warning/70",
+  untaken: "fill-muted-foreground/25",
+};
+const EDGE_TONES = Object.keys(EDGE_STROKE_CLASS) as EdgeTone[];
+
 export const WorkflowGraph = memo(function WorkflowGraph(props: {
-  nodes: readonly WorkflowNode[];
-  edges: readonly WorkflowEdge[];
-  lanes: readonly WorkflowLane[] | undefined;
+  layout: WorkflowLayout;
   run: AutomationRun | null;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
 }) {
-  const nodeById = new Map(props.nodes.map((node) => [node.id, node]));
-  const max = maxIterations(props.nodes);
+  const { layout } = props;
+  const max = maxIterations(layout.nodes);
   const loopLabel = max
     ? props.run?.iterations
       ? `iteration ${props.run.iterations.length} / max ${max}`
       : `loops back · max ${max}`
     : "loops back";
-  const edges = props.edges.flatMap((edge) => {
-    const from = nodeById.get(edge.from);
-    const to = nodeById.get(edge.to);
-    if (!from || !to) return [];
-    const start = outputPoint(from, edge.branch);
-    const end = inputPoint(to);
-    const branchLabel =
-      nodeOutputs(from.config)?.find((output) => output.key === edge.branch)?.label ?? null;
-    const tone = edgeTone(edge, props.run);
-    if (edge.loop) {
-      const bottom = Math.max(start.y, end.y) + NODE_HEIGHT / 2 + LOOP_DROP;
-      const middle = { x: (start.x + end.x) / 2, y: bottom };
-      return [
-        { edge, start, middle, branchLabel, tone, path: loopPath(start, end), label: loopLabel },
-      ];
-    }
-    // The cubic's midpoint is the plain average because its bends are symmetric.
-    const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-    const path = edgePath(start, end);
-    return [{ edge, start, middle, branchLabel, tone, path, label: edge.label ?? null }];
-  });
+  const edges = layout.edges.map((placed) => ({
+    ...placed,
+    tone: edgeTone(placed.edge, props.run),
+    label: placed.edge.loop ? loopLabel : (placed.edge.label ?? null),
+  }));
 
   return (
     <>
-      {props.lanes ? <Lanes lanes={props.lanes} nodes={props.nodes} /> : null}
+      <Lanes lanes={layout.lanes} />
       <svg
         aria-hidden
         className="pointer-events-none absolute top-0 left-0 overflow-visible"
         width={1}
         height={1}
       >
-        {edges.map(({ edge, path, tone }) => (
+        <defs>
+          {EDGE_TONES.map((tone) => (
+            <marker
+              key={tone}
+              id={`workflow-arrow-${tone}`}
+              viewBox="0 0 8 8"
+              refX="7"
+              refY="4"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto"
+            >
+              <path d="M 0 0.5 L 7.5 4 L 0 7.5 z" className={EDGE_FILL_CLASS[tone]} />
+            </marker>
+          ))}
+        </defs>
+        {edges.map(({ key, path, tone }) => (
           <path
-            key={edgeKey(edge)}
+            key={key}
             d={path}
             fill="none"
             strokeWidth={tone === "idle" || tone === "untaken" ? 1.5 : 2}
             strokeLinecap="round"
             {...(tone === "untaken" ? { strokeDasharray: "4 5" } : {})}
             className={EDGE_STROKE_CLASS[tone]}
+            markerEnd={`url(#workflow-arrow-${tone})`}
           />
         ))}
       </svg>
-      {edges.map(({ edge, middle, tone, label }) =>
+      {edges.map(({ edge, key, middle, tone, label }) =>
         label ? (
           <EdgeLabel
-            key={`${edgeKey(edge)}-mid`}
+            key={`${key}-mid`}
             label={label}
             boundary={edge.boundary ?? false}
             loop={edge.loop ?? false}
@@ -216,22 +183,21 @@ export const WorkflowGraph = memo(function WorkflowGraph(props: {
           />
         ) : null,
       )}
-      {edges.map(({ edge, start, branchLabel: label, tone }) => {
-        if (!label) return null;
-        return (
+      {edges.map(({ key, branchAt, branchLabel, tone }) =>
+        branchLabel ? (
           <span
-            key={`${edgeKey(edge)}-label`}
+            key={`${key}-branch`}
             className={cn(
-              "pointer-events-none absolute -translate-y-1/2 rounded-full border bg-background px-1.5 py-px text-3xs whitespace-nowrap",
+              "pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border bg-background px-1.5 py-px text-3xs whitespace-nowrap",
               tone === "untaken" ? "text-muted-foreground/60" : "text-muted-foreground",
             )}
-            style={{ left: start.x + 14, top: start.y }}
+            style={{ left: branchAt.x, top: branchAt.y }}
           >
-            {label}
+            {branchLabel}
           </span>
-        );
-      })}
-      {props.nodes.map((node) => (
+        ) : null,
+      )}
+      {layout.nodes.map((node) => (
         <WorkflowNodeCard
           key={node.id}
           node={node}

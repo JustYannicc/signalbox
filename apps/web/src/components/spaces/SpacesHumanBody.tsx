@@ -1,5 +1,5 @@
 /**
- * Library body: the items the page scoped by source, kind and search, as a
+ * Library body: the items the page scoped by place and search, as a
  * dense list (default) or a grid, plus the no-match state.
  */
 import { Button } from "../ui/button";
@@ -15,6 +15,8 @@ export function SpacesHumanBody(props: {
   spaceId: string;
   query: string;
   onClearQuery: () => void;
+  /** Why the place is empty when no search narrows it. */
+  emptyDescription?: string | undefined;
   selectedId: string | undefined;
   onSelect: (itemId: string) => void;
 }) {
@@ -26,7 +28,7 @@ export function SpacesHumanBody(props: {
         description={
           query
             ? "Search looks at names, locations, owners and excerpts."
-            : "Pick another filter in the sidebar, or connect a source."
+            : (props.emptyDescription ?? "Items synced or written here show up in this list.")
         }
         action={
           query ? (

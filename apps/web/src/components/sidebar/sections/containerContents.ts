@@ -2,7 +2,9 @@
  * Where every Home item sits. Tasks, chats, and rooms can live in any
  * container (top level, section, project, team project); each has a natural
  * home and moves via `itemContainers`. Real threads moved out of their project
- * travel too. Also the rollup inputs, so folders can summarize what needs you.
+ * travel too. Automations, accounts and mapped places come from `mappedItems`:
+ * each has one home, and places and accounts also show where they're referenced. Also the rollup inputs, so folders can summarize
+ * what needs you.
  */
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
@@ -14,6 +16,7 @@ import { ALL_ROOMS } from "../../rooms/rooms";
 import { homeThreadKey, type HomeProjectEntry } from "../useHomeSidebarData";
 import { rollupOf, statusForThread, type RollupInput, type StatusRollup } from "./homeStatus";
 import { signalsForTeamThread } from "./itemSignals";
+import type { MappedIndex, MappedItem } from "./mappedItems";
 import type { LooseItem } from "./sectionModel";
 import { ROOT_CONTAINER_KEY } from "./sectionStore";
 
@@ -23,9 +26,11 @@ export interface ContainerContents {
   readonly rooms: readonly Room[];
   /** Real threads moved here from their project. */
   readonly threads: readonly EnvironmentThreadShell[];
+  /** Automations, accounts and mapped places, needs-you first. */
+  readonly mapped: readonly MappedItem[];
 }
 
-const EMPTY: ContainerContents = { loose: [], teamThreads: [], rooms: [], threads: [] };
+const EMPTY: ContainerContents = { loose: [], teamThreads: [], rooms: [], threads: [], mapped: [] };
 
 type Mutable = { -readonly [K in keyof ContainerContents]: ContainerContents[K][number][] };
 
@@ -46,13 +51,14 @@ export function buildContainerIndex(input: {
   archived: Readonly<Record<string, unknown>>;
   archivedRooms: Readonly<Record<string, unknown>>;
   itemContainers: Readonly<Record<string, string>>;
+  mapped: MappedIndex;
 }): ContainerIndex {
   const { archived, itemContainers } = input;
   const byContainer = new Map<string, Mutable>();
   const bucket = (key: string) => {
     let entry = byContainer.get(key);
     if (!entry) {
-      entry = { loose: [], teamThreads: [], rooms: [], threads: [] };
+      entry = { loose: [], teamThreads: [], rooms: [], threads: [], mapped: [] };
       byContainer.set(key, entry);
     }
     return entry;
@@ -71,6 +77,7 @@ export function buildContainerIndex(input: {
     if (room.id in input.archivedRooms) continue;
     bucket(itemContainers[room.id] ?? room.containerKey).rooms.push(room);
   }
+  for (const [key, items] of input.mapped.byContainer) bucket(key).mapped.push(...items);
   const movedThreadKeys = new Set<string>();
   for (const entry of input.projectEntries) {
     const natural = `project:${entry.group.projectKey}`;
@@ -94,7 +101,8 @@ export function isContentsEmpty(contents: ContainerContents): boolean {
     contents.loose.length === 0 &&
     contents.teamThreads.length === 0 &&
     contents.rooms.length === 0 &&
-    contents.threads.length === 0
+    contents.threads.length === 0 &&
+    contents.mapped.length === 0
   );
 }
 
@@ -134,5 +142,6 @@ export function rollupForContents(
     ...contents.threads.map((thread) => ({
       status: statusForThread(thread, lastVisitedAtByKey[homeThreadKey(thread)]),
     })),
+    ...contents.mapped.map((item) => ({ status: item.status })),
   ]);
 }

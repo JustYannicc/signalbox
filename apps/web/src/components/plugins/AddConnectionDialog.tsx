@@ -1,7 +1,7 @@
 /**
  * Add connection: one-click managed OAuth for the common providers, or bring
  * your own API, GraphQL, or MCP source. Every path lands in Executor under
- * the chosen group and a name models will see.
+ * the chosen Home levels and a name models will see.
  */
 import { BracesIcon, ChevronRightIcon, NetworkIcon, ServerIcon, TerminalIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -18,9 +18,9 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { GROUPS } from "./groupsFixtures";
-import { groupNames } from "./groupPrimitives";
+import { LevelOptionsProvider } from "../levels/LevelOptionsProvider";
+import { levelLabel, type LevelKey } from "../levels/levels";
+import { LevelPicker } from "./levelPrimitives";
 import { useAddedConnections, type NewConnectionInput } from "./addedConnectionsStore";
 import type { IntegrationKind } from "./pluginsModel";
 import { IntegrationMark } from "./pluginsPrimitives";
@@ -94,19 +94,17 @@ function OptionRow(props: {
 }
 
 export function AddConnectionDialog(props: { trigger: ReactElement; children: ReactNode }) {
-  const [groupIds, setGroupIds] = useState<readonly string[]>(() =>
-    GROUPS.filter((group) => group.org === undefined).map((group) => group.id),
-  );
+  const [levels, setLevels] = useState<readonly LevelKey[]>(["section:personal"]);
   const [name, setName] = useState("");
   const [open, setOpen] = useState(false);
   const addConnection = useAddedConnections((state) => state.add);
   const navigate = useNavigate();
   // Ends on the new row in Connections, highlighted, so the add is visible where it lives.
-  const connect = (input: Omit<NewConnectionInput, "accountLabel" | "groups">) => {
-    const added = addConnection({ ...input, accountLabel: name, groups: groupIds });
+  const connect = (input: Omit<NewConnectionInput, "accountLabel" | "levels">) => {
+    const added = addConnection({ ...input, accountLabel: name, levels });
     toastManager.add({
       title: "Connected (preview)",
-      description: `${added.name}${groupIds.length > 0 ? ` in ${groupNames(groupIds)}` : ""}`,
+      description: `${added.name}${levels.length > 0 ? ` at ${levels.map((level) => levelLabel(level)).join(" + ")}` : ""}`,
       timeout: 3000,
     });
     setOpen(false);
@@ -121,24 +119,25 @@ export function AddConnectionDialog(props: { trigger: ReactElement; children: Re
         <DialogHeader>
           <DialogTitle>Add connection</DialogTitle>
           <DialogDescription>
-            Agents see it in the groups you pick, under the name you give it.
+            The agents of the levels you pick can use it, under the name you give it.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
-            <span className="text-sm text-muted-foreground">Groups</span>
-            <ToggleGroup
-              aria-label="Groups for the new connection"
-              multiple
-              value={[...groupIds]}
-              onValueChange={(next) => setGroupIds(next)}
-            >
-              {GROUPS.map((entry) => (
-                <Toggle key={entry.id} value={entry.id}>
-                  {entry.name}
-                </Toggle>
-              ))}
-            </ToggleGroup>
+            <span className="text-sm text-muted-foreground">Sits at</span>
+            <LevelOptionsProvider>
+              <LevelPicker
+                itemName="the new connection"
+                levels={levels}
+                onToggle={(level, checked) =>
+                  setLevels((current) =>
+                    checked
+                      ? [...current.filter((entry) => entry !== level), level]
+                      : current.filter((entry) => entry !== level),
+                  )
+                }
+              />
+            </LevelOptionsProvider>
             <label htmlFor="new-connection-name" className="text-sm text-muted-foreground">
               Name models see
             </label>

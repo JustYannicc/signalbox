@@ -8,10 +8,10 @@ import { FileCodeIcon, GitBranchIcon, MessageCircleIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import type { Automation } from "./automationModel";
-import { useOpenWorkflowAgent } from "./WorkflowAgent";
+import { useOpenAutomationAgent } from "./AutomationAgent";
 
 export function WorkflowSourceView(props: { automation: Automation }) {
-  const openAgent = useOpenWorkflowAgent();
+  const openAgent = useOpenAutomationAgent();
   const { source } = props.automation;
   const lines = source.code.replace(/\n$/, "").split("\n");
   // Digits plus the gutter padding, so every line number right-aligns.
@@ -29,7 +29,11 @@ export function WorkflowSourceView(props: { automation: Automation }) {
           Graph derived from source
         </span>
         <div className="ms-auto">
-          <Button size="xs" variant="outline" onClick={() => openAgent(props.automation)}>
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => openAgent(`Change the “${props.automation.name}” automation: `)}
+          >
             <MessageCircleIcon />
             Change with agent
           </Button>

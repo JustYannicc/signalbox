@@ -37,6 +37,8 @@ import { isSettingsWorkspacePath } from "./settings/SettingsWorkspaceNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarViews } from "./sidebar/SidebarViews";
 import { QuickCaptureHost } from "./capture/QuickCaptureHost";
+import { BACK_TO_NOW_WIDTH, BackToNow } from "./toplayer/BackToNow";
+import { TOP_LAYER_PATH, useWorkspaceHidden } from "./toplayer/workspaceVisibility";
 import { useDemoUnreadSeed } from "./sidebar/useDemoUnreadSeed";
 import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
@@ -83,8 +85,15 @@ function readInitialThreadSidebarWidth(): number {
   }
 }
 
+/** Desktop only for now: the titlebar has room reserved for it there. */
+function useShowBackToNow(): boolean {
+  const onTopLayer = useLocation({ select: (location) => location.pathname === TOP_LAYER_PATH });
+  return !useIsMobile() && !onTopLayer;
+}
+
 function SidebarControl() {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
+  const showBackToNow = useShowBackToNow();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { isMobile, toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
@@ -156,6 +165,8 @@ function SidebarControl() {
           Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
+      {/* Fork: the way back up to the top layer (#180). */}
+      {showBackToNow ? <BackToNow /> : null}
     </div>
   );
 }
@@ -232,6 +243,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   // Fork: team, devices and computers live under Settings, so they show its navigation.
   const showSettingsNav = isOnSettings || isSettingsWorkspacePath(pathname);
+  // Fork: the top layer keeps the whole workspace out of sight until asked (#180).
+  const workspaceHidden = useWorkspaceHidden(pathname);
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
@@ -256,12 +269,13 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // Desktop widths add back/forward before the sidebar toggle, so titlebar
   // content that clears the toggle (brand, collapsed page headers) clears them too.
   const isMobile = useIsMobile();
+  const showBackToNow = useShowBackToNow();
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
     ...(isMobile
       ? {}
       : {
-          "--workspace-titlebar-content-left": `calc(var(--workspace-controls-left) + ${TITLEBAR_HISTORY_WIDTH} + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))`,
+          "--workspace-titlebar-content-left": `calc(var(--workspace-controls-left) + ${TITLEBAR_HISTORY_WIDTH} + var(--workspace-titlebar-control-size) + ${showBackToNow ? `${BACK_TO_NOW_WIDTH} + ` : ""}var(--workspace-titlebar-control-gap))`,
         }),
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...(isMacosDesktop && !isWindowFullscreen
@@ -315,43 +329,45 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <ProjectProjectionRetention />
-        <Sidebar
-          side="left"
-          // The rail layout collapses to its rail; the legacy sidebar slides away whole.
-          collapsible={legacySidebarEnabled ? "offcanvas" : "icon"}
-          data-app-sidebar=""
-          role="navigation"
-          aria-label={isOnSettings ? "Settings" : "Threads"}
-          resizable={{
-            maxWidth: sidebarMaximumWidth,
-            minWidth: THREAD_SIDEBAR_MIN_WIDTH,
-            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-              nextWidth <= currentWidth ||
-              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-            onResize: setSidebarWidth,
-          }}
-        >
-          {legacySidebarEnabled ? (
-            isOnSettings ? (
-              <>
-                <SidebarChromeHeader isElectron={isElectron} />
-                <SettingsSidebarNav pathname={pathname} />
-              </>
+        {workspaceHidden ? null : (
+          <Sidebar
+            side="left"
+            // The rail layout collapses to its rail; the legacy sidebar slides away whole.
+            collapsible={legacySidebarEnabled ? "offcanvas" : "icon"}
+            data-app-sidebar=""
+            role="navigation"
+            aria-label={isOnSettings ? "Settings" : "Threads"}
+            resizable={{
+              maxWidth: sidebarMaximumWidth,
+              minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+              shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                nextWidth <= currentWidth ||
+                wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+              storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+              onResize: setSidebarWidth,
+            }}
+          >
+            {legacySidebarEnabled ? (
+              isOnSettings ? (
+                <>
+                  <SidebarChromeHeader isElectron={isElectron} />
+                  <SettingsSidebarNav pathname={pathname} />
+                </>
+              ) : (
+                <LegacyThreadSidebar />
+              )
             ) : (
-              <LegacyThreadSidebar />
-            )
-          ) : (
-            <SidebarViews
-              panelOverride={
-                showSettingsNav ? <SettingsSidebarNav pathname={pathname} /> : undefined
-              }
-            />
-          )}
-          <SidebarRail onDoubleClick={resetSidebarWidth} />
-        </Sidebar>
+              <SidebarViews
+                panelOverride={
+                  showSettingsNav ? <SettingsSidebarNav pathname={pathname} /> : undefined
+                }
+              />
+            )}
+            <SidebarRail onDoubleClick={resetSidebarWidth} />
+          </Sidebar>
+        )}
         {children}
-        <SidebarControl />
+        {workspaceHidden ? null : <SidebarControl />}
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
         <QuickCaptureHost />

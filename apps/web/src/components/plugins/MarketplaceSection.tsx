@@ -18,10 +18,10 @@ import {
   type SkillListing,
   type WorkflowListing,
 } from "./marketplaceFixtures";
-import { orgGroup } from "./groupPrimitives";
+import { ORG_POLICY } from "./levelPolicyFixtures";
 import { comingSoon, DEEP_LINK_ROW_CLASS, useDeepLinkRow } from "./pluginsPrimitives";
 
-const TEAM_NAME = orgGroup()?.name ?? "Your team";
+const TEAM_NAME = ORG_POLICY?.org.name ?? "Your team";
 
 const TABS: readonly { value: MarketplaceTab; label: string }[] = [
   { value: "discover", label: "Discover" },

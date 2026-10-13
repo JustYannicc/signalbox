@@ -155,8 +155,6 @@ export const TRIAGE_SENTRY: Automation = {
   id: "triage-sentry",
   name: "Triage new Sentry issues",
   description: "Looks at new web errors every hour and drafts fixes for the clear ones.",
-  agentName: "Sentry triage agent",
-  section: "personal",
   cadence: "Hourly",
   enabled: true,
   nextRunAt: lastHourly(-1).toISOString(),

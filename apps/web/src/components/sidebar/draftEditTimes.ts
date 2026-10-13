@@ -6,10 +6,10 @@
  * list on every keystroke.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 
 const RESOLUTION_MS = 60_000;
 
@@ -21,9 +21,7 @@ export const useDraftEditTimes = create<DraftEditTimesState>()(
   persist(() => ({ editedAtByDraftKey: {} }), {
     name: "t3code:sidebar:draft-edit-times:v1",
     version: 1,
-    storage: createJSONStorage(() =>
-      resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-    ),
+    storage: prototypeStorage(),
   }),
 );
 

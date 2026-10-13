@@ -4,9 +4,9 @@
  * fork the same way. Local only: the copy's history is read from its source.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import { shortId } from "./multiplayerModel";
 
 export interface ForkRecord {
@@ -32,9 +32,7 @@ export const useForkStore = create<ForkState>()(
     {
       name: "t3code:multiplayer:forks:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({ forks: state.forks }),
     },
   ),

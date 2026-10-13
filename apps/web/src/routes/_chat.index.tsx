@@ -17,16 +17,16 @@ function ChatIndexRouteView() {
   // to land on until an environment is connected.
   if (!isReady) return null;
   if (environments.length === 0) return <HostedStaticOnboardingState />;
-  return <Navigate to="/assistant" replace />;
+  return <Navigate to="/today" replace />;
 }
 
-// Fork: "/" is the assistant. The logo, the main-app fallback, and every
-// "thread is gone" redirect land here, so they all end up with the assistant.
+// Fork: "/" is the top layer (issue #180). The logo, the main-app fallback, and
+// every "thread is gone" redirect land here, so they all end up above the work.
 // New chats start from New (mod+Enter) or `chat.new`, not from "/".
 export const Route = createFileRoute("/_chat/")({
   beforeLoad: ({ context }) => {
     if (context.authGateState.status === "hosted-static") return;
-    throw redirect({ to: "/assistant", replace: true });
+    throw redirect({ to: "/today", replace: true });
   },
   component: ChatIndexRouteView,
 });

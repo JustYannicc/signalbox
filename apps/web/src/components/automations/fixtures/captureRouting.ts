@@ -147,7 +147,6 @@ export const CAPTURE_ROUTING: Automation = {
   id: "capture-routing",
   name: "Route what you send from New",
   description: "Everything from New goes to the container or agent you tagged, else the assistant.",
-  agentName: "Capture routing agent",
   cadence: "On every capture",
   enabled: true,
   nextRunAt: null,

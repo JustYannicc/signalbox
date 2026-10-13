@@ -1,20 +1,65 @@
 /**
  * Body of Settings > Notifications: the default for when supervisor agents may
- * ping you, the rule for "important", and whether urgent things reach your
- * phone while you're away. The computer is always quiet, so it has no control.
+ * ping you, the rule for "important", and where pings land: each client
+ * device sits at a Home level and gets that level's pings, computers always
+ * quiet, phones only urgent things while you're away. Render everything here
+ * inside a `LevelOptionsProvider`. `NotificationOverridesSection` lists the
+ * rules agents' bells set per level.
  */
-import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { Link } from "@tanstack/react-router";
+import { ArrowUpRightIcon } from "lucide-react";
+
+import { useClientDevices } from "../devices/deviceLevelsStore";
+import { deliveryScopeLabel } from "../levels/delivery";
+import {
+  useLevelAgentName,
+  useLevelLabel,
+  useLevelOptionsContext,
+} from "../levels/LevelOptionsProvider";
+import { SettingResetButton, SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import {
   DEFAULT_NOTIFY_DEFAULTS,
-  NOTIFY_DEVICE_NAMES,
   NOTIFY_POLICIES,
   NOTIFY_POLICY_DETAIL,
   NOTIFY_POLICY_LABEL,
   type NotifyDefaults,
+  type NotifyPolicy,
+  useNotifyOverrides,
 } from "./notificationPolicy";
+
+function PolicySelect(props: {
+  value: NotifyPolicy;
+  onChange: (policy: NotifyPolicy) => void;
+  label: string;
+}) {
+  return (
+    <Select
+      value={props.value}
+      onValueChange={(next) => {
+        const policy = NOTIFY_POLICIES.find((candidate) => candidate === next);
+        if (policy) props.onChange(policy);
+      }}
+    >
+      <SelectTrigger size="sm" className="w-full sm:w-56" aria-label={props.label}>
+        <SelectValue>{NOTIFY_POLICY_LABEL[props.value]}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {NOTIFY_POLICIES.map((policy) => (
+          <SelectItem key={policy} hideIndicator value={policy}>
+            <span className="flex w-full items-center justify-between gap-4">
+              {NOTIFY_POLICY_LABEL[policy]}
+              <span className="text-xs text-muted-foreground">{NOTIFY_POLICY_DETAIL[policy]}</span>
+            </span>
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
 
 export function NotificationDefaultsForm(props: {
   value: NotifyDefaults;
@@ -29,31 +74,13 @@ export function NotificationDefaultsForm(props: {
       <SettingsSection title="What's worth a ping">
         <SettingsRow
           title="Default for agents"
-          description="Each agent's bell can change this."
+          description="Each agent's bell can change this for its folder and everything inside it."
           control={
-            <Select
+            <PolicySelect
               value={value.policy}
-              onValueChange={(next) => {
-                const policy = NOTIFY_POLICIES.find((candidate) => candidate === next);
-                if (policy) set({ policy });
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Default for agents">
-                <SelectValue>{NOTIFY_POLICY_LABEL[value.policy]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {NOTIFY_POLICIES.map((policy) => (
-                  <SelectItem key={policy} hideIndicator value={policy}>
-                    <span className="flex w-full items-center justify-between gap-4">
-                      {NOTIFY_POLICY_LABEL[policy]}
-                      <span className="text-xs text-muted-foreground">
-                        {NOTIFY_POLICY_DETAIL[policy]}
-                      </span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
+              onChange={(policy) => set({ policy })}
+              label="Default for agents"
+            />
           }
         />
         {value.policy === "important" ? (
@@ -74,23 +101,98 @@ export function NotificationDefaultsForm(props: {
         ) : null}
       </SettingsSection>
 
-      <SettingsSection title="Where it lands">
-        <SettingsRow
-          title={`At your computer · ${NOTIFY_DEVICE_NAMES.computer}`}
-          description="Always quiet: a badge and a sidebar marker. No sound."
-        />
-        <SettingsRow
-          title={`Away · ${NOTIFY_DEVICE_NAMES.phone}`}
-          description={value.phone ? "Urgent only." : "Off. Everything waits for you."}
-          control={
-            <Switch
-              checked={value.phone}
-              onCheckedChange={(phone) => set({ phone })}
-              aria-label="Urgent things go to your phone while you're away"
-            />
-          }
-        />
-      </SettingsSection>
+      <WhereItLands phone={value.phone} onPhoneChange={(phone) => set({ phone })} />
     </>
+  );
+}
+
+/** Every client device by its level: what it gets pings about, and how. */
+function WhereItLands(props: { phone: boolean; onPhoneChange: (phone: boolean) => void }) {
+  const devices = useClientDevices();
+  const levelLabel = useLevelLabel();
+  return (
+    <SettingsSection
+      title="Where it lands"
+      headerAction={
+        <Button size="xs" variant="ghost-muted" render={<Link to="/devices" />}>
+          Move devices
+          <ArrowUpRightIcon aria-hidden />
+        </Button>
+      }
+    >
+      {devices.map((device) => {
+        const scope = `Pings about ${deliveryScopeLabel(device.level, levelLabel(device.level))}.`;
+        if (device.kind === "laptop") {
+          return (
+            <SettingsRow
+              key={device.id}
+              title={`${device.name} · ${levelLabel(device.level)}`}
+              description={`Always quiet: a badge and a sidebar marker, no sound. ${scope}`}
+            />
+          );
+        }
+        return (
+          <SettingsRow
+            key={device.id}
+            title={`${device.name} · ${levelLabel(device.level)}`}
+            description={`${props.phone ? "Urgent only, while you're away." : "Off. Everything waits for you."} ${scope}`}
+            control={
+              <Switch
+                checked={props.phone}
+                onCheckedChange={props.onPhoneChange}
+                aria-label={`Urgent things go to ${device.name} while you're away`}
+              />
+            }
+          />
+        );
+      })}
+    </SettingsSection>
+  );
+}
+
+/** Rules set per level, in tree order; clearing one makes that level inherit again. */
+export function NotificationOverridesSection() {
+  const options = useLevelOptionsContext();
+  const agentName = useLevelAgentName();
+  const [overrides, setOverride] = useNotifyOverrides(options);
+  const rows = options.flatMap((option) => {
+    const policy = overrides[option.key];
+    return policy ? [{ option, policy }] : [];
+  });
+  return (
+    <SettingsSection title="Set per folder">
+      {rows.length === 0 ? (
+        <SettingsRow
+          title="Everything follows the default"
+          description="An agent's bell sets a rule for its folder. The nearest rule above wins."
+        />
+      ) : (
+        rows.map(({ option, policy }) => (
+          <SettingsRow
+            key={option.key}
+            title={option.label}
+            description={
+              option.kind === "project"
+                ? `Set by ${agentName(option.key)}'s bell.`
+                : `Set by ${agentName(option.key)}'s bell. Holds inside unless a folder there sets its own.`
+            }
+            resetAction={
+              <SettingResetButton
+                label={option.label}
+                tooltip="Inherit again"
+                onClick={() => setOverride(option.key, null)}
+              />
+            }
+            control={
+              <PolicySelect
+                value={policy}
+                onChange={(next) => setOverride(option.key, next)}
+                label={`Notifications for ${option.label}`}
+              />
+            }
+          />
+        ))
+      )}
+    </SettingsSection>
   );
 }

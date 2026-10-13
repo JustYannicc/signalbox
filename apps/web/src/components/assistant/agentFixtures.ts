@@ -1,15 +1,19 @@
 /**
- * PLACEHOLDER DATA for section and project agent pages. Supervisor agents are
- * personal: each user has their own, seeing their private chats plus what is
- * shared with them. The assistant hands work straight to the agent that owns
- * it; parent section agents watch their containers instead of relaying. Each
- * agent keeps one running chat that closes once all of its work is done;
- * earlier chats stay in History. Unknown ids resolve to a generic, empty agent.
+ * PLACEHOLDER DATA for section and project agent pages. Each level has one
+ * agent: it represents that level and coordinates the threads, tasks and
+ * automations there (it isn't the agent that does everything). Agents of team
+ * levels are shared with the team; agents of personal levels are just yours
+ * (`levels/levelSharing`). Private chats stay private either way. The
+ * assistant hands work straight to the agent that owns it; parent section
+ * agents watch their containers instead of relaying. When an agent needs
+ * something above its level it asks up (`levels/askUp`). Each agent keeps one
+ * running chat that closes once all of its work is done; earlier chats stay in
+ * History. Unknown ids resolve to a generic, empty agent.
  */
 import * as Schema from "effect/Schema";
 
 import { notificationTurn, type ChatFixture, type TurnFixture } from "./assistantFixtures";
-import { workflowAgent } from "./workflowAgents";
+import { ASSISTANT_NAME } from "./assistantIdentity";
 
 export interface AgentChatFixture extends ChatFixture {
   readonly id: string;
@@ -21,11 +25,9 @@ export interface AgentChatFixture extends ChatFixture {
 
 export interface AgentFixture {
   readonly id: string;
-  readonly kind: "section" | "project" | "workflow";
+  readonly kind: "section" | "project";
   /** What the agent can see into, e.g. "Work › Northwind team"; defaults to `name`. */
   readonly area?: string;
-  /** Set for workflow agents: the automation they run. */
-  readonly automationId?: string;
   /** Trace node the agent speaks as. */
   readonly nodeId: string;
   readonly name: string;
@@ -129,6 +131,12 @@ export const AGENTS: readonly AgentFixture[] = [
         "Tue 16:21",
         "Watching: the A920 printer fix is a Task in terminal-app.",
         { delegationId: "d-printer-fix" },
+      ),
+      turn(
+        "wa3",
+        "assistant",
+        "10:12",
+        `“Q4 roadmap with the team” asked about the board deck. It sits above this team, so I asked ${ASSISTANT_NAME}. ${ASSISTANT_NAME} kept the deck (it holds layoff plans, and engineers read that chat) and sent back only the runway and the Q4 target, which I passed on.`,
       ),
     ]),
     previous: [],
@@ -247,17 +255,10 @@ const titleCase = (key: string) =>
 export function resolveAgent(agentId: string): AgentFixture {
   const known = AGENTS.find((agent) => agent.id === agentId);
   if (known) return known;
-  const workflow = agentId.startsWith("workflow-") ? workflowAgent(agentId) : null;
-  if (workflow) return workflow;
-  const kind = agentId.startsWith("project-")
-    ? "project"
-    : agentId.startsWith("workflow-")
-      ? "workflow"
-      : "section";
-  const key = agentId.replace(/^(project|section|workflow)-/, "") || agentId;
+  const kind = agentId.startsWith("project-") ? "project" : "section";
+  const key = agentId.replace(/^(project|section)-/, "") || agentId;
   const name = kind === "section" ? titleCase(key) : key;
-  const scope =
-    kind === "project" ? `threads in ${name}` : kind === "workflow" ? `runs ${name}` : name;
+  const scope = kind === "project" ? `threads in ${name}` : name;
   return {
     id: agentId,
     kind,

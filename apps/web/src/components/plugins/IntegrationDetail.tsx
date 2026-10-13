@@ -5,10 +5,13 @@
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { AccountNameEditor } from "./ConnectionAccounts";
-import { GroupBadges, groupById, ManagedNote } from "./groupPrimitives";
-import { isRestricted } from "./groupsModel";
+import { TOP_LEVEL, type LevelKey } from "../levels/levels";
+import { ManagedNote, ThingLevels } from "./levelPrimitives";
+import { LEVEL_POLICIES } from "./levelPolicyFixtures";
+import { isRestricted, policyFor } from "./levelPolicyModel";
 import {
   connectionDisplayName,
+  isApiKind,
   KIND_LABEL,
   type ConnectionAccount,
   type HarnessId,
@@ -22,6 +25,8 @@ export function IntegrationDetail(props: {
   integration: Integration;
   /** The only account, when there is exactly one; several are listed as rows above. */
   single: ConnectionAccount | undefined;
+  /** Current levels of an account-less (direct) server. */
+  directLevels: readonly LevelKey[];
   singleName: string | undefined;
   onRename: (name: string) => void;
   enabled: readonly HarnessId[];
@@ -30,11 +35,12 @@ export function IntegrationDetail(props: {
   const { integration } = props;
   const hiddenTools =
     integration.toolCount - Math.min(integration.tools.length, VISIBLE_TOOL_COUNT);
-  // Company-provided connections in a restricted group: only its admins remove them.
-  const adminGroup = integration.accounts.every((account) => account.addedBy === "admins")
-    ? groupById(integration.accounts[0]?.groups[0] ?? "")
+  // Company-provided connections at a restricted level: only its admins remove them.
+  const adminPolicy = integration.accounts.every((account) => account.addedBy === "admins")
+    ? policyFor(integration.accounts[0]?.levels[0] ?? TOP_LEVEL, LEVEL_POLICIES)
     : undefined;
-  const managedBy = adminGroup && isRestricted(adminGroup, "connections") ? adminGroup : undefined;
+  const managedBy = isRestricted(adminPolicy, "connections") ? adminPolicy : undefined;
+  const area = isApiKind(integration.kind) ? "apis" : "connections";
   const route =
     integration.via === "executor"
       ? `${KIND_LABEL[integration.kind]} via Executor`
@@ -68,9 +74,29 @@ export function IntegrationDetail(props: {
                 {connectionDisplayName(integration, props.singleName)}”
               </span>
             </dd>
-            <dt className="self-center text-muted-foreground">Group</dt>
+            <dt className="self-center text-muted-foreground">Level</dt>
             <dd>
-              <GroupBadges groups={props.single.groups} />
+              <ThingLevels
+                thingKey={`account:${props.single.id}`}
+                itemName={connectionDisplayName(integration, props.singleName)}
+                levels={props.single.levels}
+                area={area}
+                addedBy={props.single.addedBy}
+              />
+            </dd>
+          </>
+        ) : null}
+        {integration.accounts.length === 0 ? (
+          <>
+            <dt className="self-center text-muted-foreground">Level</dt>
+            <dd>
+              <ThingLevels
+                thingKey={`integration:${integration.id}`}
+                itemName={integration.name}
+                levels={props.directLevels}
+                area={area}
+                addedBy="you"
+              />
             </dd>
           </>
         ) : null}
@@ -153,7 +179,7 @@ export function IntegrationDetail(props: {
         </Button>
         {managedBy ? (
           <span className="ms-auto">
-            <ManagedNote group={managedBy} />
+            <ManagedNote policy={managedBy} />
           </span>
         ) : (
           <Button

@@ -4,13 +4,12 @@
  * them (Customize edits it, Plugins › Instructions shows it). The assistant's
  * AGENTS.md lives with every other role's in Plugins › Instructions.
  *
- * PLACEHOLDER persistence: localStorage only. Until the user edits SOUL.md it
+ * PLACEHOLDER: prototype state (`usePrototypeState`). Until the user edits SOUL.md it
  * follows the assistant's current name; nothing hard-codes "Appa".
  */
-import * as Schema from "effect/Schema";
 import { useCallback } from "react";
 
-import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { usePrototypeState } from "../../lib/prototypeStorage";
 import { useAssistantIdentity } from "./assistantIdentity";
 
 export function defaultSoulMd(name: string): string {
@@ -52,7 +51,6 @@ export const DEFAULT_USER_MD = `# USER.md
 
 const SOUL_KEY = "t3code:assistant-soul-md:v2";
 const USER_KEY = "t3code:assistant-user-md:v1";
-const OptionalText = Schema.NullOr(Schema.String);
 
 /**
  * SOUL.md and its setter. Unedited, it is the default for the current name;
@@ -60,11 +58,7 @@ const OptionalText = Schema.NullOr(Schema.String);
  */
 export function useAssistantSoulState() {
   const { name } = useAssistantIdentity();
-  const [stored, setStored] = useLocalStorage<string | null, string | null>(
-    SOUL_KEY,
-    null,
-    OptionalText,
-  );
+  const [stored, setStored] = usePrototypeState<string | null>(SOUL_KEY, null);
   const fallback = defaultSoulMd(name);
   const setSoul = useCallback(
     (next: string | null) => setStored(next === null || next === fallback ? null : next),
@@ -74,5 +68,5 @@ export function useAssistantSoulState() {
 }
 
 export function useAssistantUserState() {
-  return useLocalStorage(USER_KEY, DEFAULT_USER_MD, Schema.String);
+  return usePrototypeState(USER_KEY, DEFAULT_USER_MD);
 }

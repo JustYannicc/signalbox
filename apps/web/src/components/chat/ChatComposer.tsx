@@ -128,6 +128,7 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { formatComposerMention } from "../composerMentionRenderer";
+import { levelForWorkspace } from "../levels/levels";
 import { useMentionDirectory } from "../multiplayer/mentionDirectory";
 import { defaultSectionIdForProject } from "../sidebar/sections/sectionModel";
 import { ComposerStashMenu } from "./ComposerStashMenu";
@@ -2374,8 +2375,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   // `@` also reaches teammates, your assistant and your agents, ahead of files.
   const { source: peopleMentions } = useMentionDirectory({
+    // The project's own agent first when the Home tree knows this folder.
     containerId: gitCwd
-      ? defaultSectionIdForProject({ displayName: "", workspaceRoot: gitCwd })
+      ? (levelForWorkspace(gitCwd) ??
+        defaultSectionIdForProject({ displayName: "", workspaceRoot: gitCwd }))
       : null,
     includeAgents: true,
   });

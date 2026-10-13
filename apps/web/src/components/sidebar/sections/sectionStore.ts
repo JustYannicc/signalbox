@@ -6,9 +6,9 @@
  * thread keys or fixture ids; container keys are node keys or `root`.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../../lib/storage";
+import { prototypeStorage } from "../../../lib/prototypeStorage";
 import { toastManager } from "../../ui/toast";
 
 export const ROOT_CONTAINER_KEY = "root";
@@ -152,9 +152,7 @@ export const useHomeSectionStore = create<HomeSectionState>()(
     {
       name: "t3code:sidebar:home-sections:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({
         projectSectionOverrides: state.projectSectionOverrides,
         collapsedNodeKeys: state.collapsedNodeKeys,
@@ -194,7 +192,7 @@ export function archiveInHome(
 
 /**
  * Registers a new unfiled chat or task so it shows at the top of Home › Chats
- * right away (and resolves at `/shared/<id>` via `findLooseItem`). Persisted
+ * right away (and resolves at `/shared/<id>` via `findLooseItem`). Kept
  * locally; calling again with the same id updates its title and kind.
  */
 export function addLooseItem(item: {

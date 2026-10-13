@@ -1,6 +1,6 @@
 /**
  * Skills: what agents load when a task matches, where each came from, and
- * which groups get it. Ticking the organization's group publishes a skill;
+ * which Home levels it sits at. Ticking the organization's level publishes a skill;
  * unticking it stops sharing. Open a skill for versions and harnesses.
  */
 import { Link } from "@tanstack/react-router";
@@ -10,8 +10,11 @@ import { SettingsSection } from "../settings/settingsLayout";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { GroupBadges, GroupPicker, orgGroup } from "./groupPrimitives";
-import { harnessRestriction, type GroupId, type Skill, type SkillSource } from "./pluginsModel";
+import type { LevelKey } from "../levels/levels";
+import { setThingReach, toggleThingLevel, useLevelPlacementStore } from "../levels/leveledThings";
+import { LevelBadges, LevelPicker } from "./levelPrimitives";
+import { ORG_POLICY } from "./levelPolicyFixtures";
+import { harnessRestriction, type Skill, type SkillSource } from "./pluginsModel";
 import { SKILLS } from "./pluginsFixtures";
 import { SkillDetail } from "./SkillDetail";
 import { SkillPublishDialog, StopSharingDialog } from "./SkillSharingDialogs";
@@ -39,7 +42,7 @@ const SOURCE_BADGE: Record<SkillSource, "secondary" | "info" | "outline"> = {
   team: "info",
 };
 
-/** Whose groups you may change: your own skills, not ones installed or shared to you. */
+/** Whose levels you may change: your own skills, not ones installed or shared to you. */
 function isYours(skill: Skill) {
   const publication = publicationFor(skill.id);
   return publication ? isOwnedByYou(publication) : skill.source === "personal";
@@ -55,24 +58,18 @@ function SkillList() {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const [source, setSource] = useState<SourceFilter>("all");
-  const [groupsById, setGroupsById] = useState<Record<string, readonly GroupId[]>>(() =>
-    Object.fromEntries(SKILLS.map((skill) => [skill.id, skill.groups])),
-  );
+  const overrides = useLevelPlacementStore((state) => state.levels);
+  const levelsOf = (skill: Skill) => overrides[`skill:${skill.id}`] ?? skill.levels;
+  const reachOverrides = useLevelPlacementStore((state) => state.reach);
   const [publishing, setPublishing] = useState<Skill | null>(null);
   const [stopping, setStopping] = useState<Skill | null>(null);
-  const org = orgGroup();
+  const orgLevel = ORG_POLICY?.level;
 
-  const setGroup = (skill: Skill, groupId: GroupId, checked: boolean) =>
-    setGroupsById((current) => {
-      const groups = current[skill.id] ?? [];
-      return {
-        ...current,
-        [skill.id]: checked ? [...groups, groupId] : groups.filter((id) => id !== groupId),
-      };
-    });
-  // The org group is not a checkbox like the others: it is publishing and un-publishing.
-  const toggleGroup = (skill: Skill, groupId: GroupId, checked: boolean) => {
-    if (groupId !== org?.id) setGroup(skill, groupId, checked);
+  const setLevel = (skill: Skill, level: LevelKey, checked: boolean) =>
+    toggleThingLevel(`skill:${skill.id}`, levelsOf(skill), level, checked);
+  // The org's level is not a checkbox like the others: it is publishing and un-publishing.
+  const toggleLevel = (skill: Skill, level: LevelKey, checked: boolean) => {
+    if (level !== orgLevel) setLevel(skill, level, checked);
     else if (checked) setPublishing(skill);
     else setStopping(skill);
   };
@@ -124,7 +121,8 @@ function SkillList() {
         ) : (
           visibleSkills.map((skill) => {
             const restriction = harnessRestriction(skill.harnesses);
-            const groups = groupsById[skill.id] ?? [];
+            const levels = levelsOf(skill);
+            const reach = reachOverrides[`skill:${skill.id}`] ?? "here";
             return (
               <div
                 key={skill.id}
@@ -150,13 +148,15 @@ function SkillList() {
                   </p>
                 </div>
                 {isYours(skill) ? (
-                  <GroupPicker
+                  <LevelPicker
                     itemName={skill.name}
-                    groups={groups}
-                    onToggle={(groupId, checked) => toggleGroup(skill, groupId, checked)}
+                    levels={levels}
+                    onToggle={(level, checked) => toggleLevel(skill, level, checked)}
+                    reach={reach}
+                    onReachChange={(next) => setThingReach(`skill:${skill.id}`, next)}
                   />
                 ) : (
-                  <GroupBadges groups={groups} />
+                  <LevelBadges levels={levels} reach={reach} />
                 )}
               </div>
             );
@@ -171,7 +171,7 @@ function SkillList() {
           if (!open) setPublishing(null);
         }}
         onPublished={() => {
-          if (publishing && org) setGroup(publishing, org.id, true);
+          if (publishing && orgLevel) setLevel(publishing, orgLevel, true);
         }}
       />
       <StopSharingDialog
@@ -181,7 +181,7 @@ function SkillList() {
           if (!open) setStopping(null);
         }}
         onStopped={() => {
-          if (stopping && org) setGroup(stopping, org.id, false);
+          if (stopping && orgLevel) setLevel(stopping, orgLevel, false);
         }}
       />
     </div>

@@ -154,8 +154,6 @@ export const SYNC_UPSTREAM: Automation = {
   id: "sync-upstream",
   name: "Sync T3 Code upstream nightly",
   description: "Merges pingdotgg/t3code into the fork and pushes when checks pass.",
-  agentName: "Upstream sync agent",
-  section: "personal",
   cadence: "Daily at 3:00 AM",
   enabled: true,
   nextRunAt: shiftDays(lastDailyAt(3), 1).toISOString(),

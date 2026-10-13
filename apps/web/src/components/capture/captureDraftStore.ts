@@ -1,13 +1,13 @@
 /**
  * The New bar's unsent state: text, `#`/`@` chips, and link chips survive
- * closing the bar and reloads, so the next open picks up where you left off
- * and Home › Drafts can list it. Files are live `File` objects and are not
+ * closing the bar (not a reload: prototype state), so the next open picks up
+ * where you left off and Home › Drafts can list it. Files are live `File` objects and are not
  * kept; they drop when the bar closes.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import { isAssistantToken, withToken, type CaptureLink, type CaptureToken } from "./captureTokens";
 
 export interface CaptureDraft {
@@ -70,9 +70,7 @@ export const useCaptureDraftStore = create<CaptureDraftState>()(
     {
       name: "t3code:capture-draft:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({
         text: state.text,
         tokens: state.tokens,

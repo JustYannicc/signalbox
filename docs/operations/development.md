@@ -90,6 +90,11 @@ then open its printed startup pairing URL once per browser profile on that hostn
 servers on the same hostname accept the shared cookie across ports. The cookie expires after 30
 days. Reload an old tab if its URL now serves a replacement environment.
 
+Signalbox fork: add `T3CODE_DEV_AUTO_AUTH=1` next to the token to skip that pairing step. Any
+browser without a working session then gets the reusable cookie from `/api/auth/session`, so the
+bare dev URL opens straight into the app. That hands admin access to anyone who can reach the dev
+port, including over `--share`, so only use it where that is fine.
+
 The token and startup pairing URLs are reusable administrative secrets. Never put them in a
 commit, pull request, or public output. Every server still seeds its own auth database record at
 startup and keeps its own SQLite data, signing key, and revocation state. Desktop and non-dev

@@ -15,7 +15,10 @@ export interface HomeSection {
   readonly agentId: string;
   /** `null` for a root section. Sections nest to any depth. */
   readonly parentId: string | null;
-  /** Your agent for this section; agents are always personal, even in a team. */
+  /**
+   * This section's agent: shared with the team in team sections, just yours
+   * otherwise (`levels/levelSharing`).
+   */
   readonly agentName: string;
   /** Fixture: what your agent for this section is doing. */
   readonly agentStatus: HomeItemStatus | null;

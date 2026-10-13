@@ -140,8 +140,6 @@ export const WORK_OUT_OF_SIGHT: Automation = {
   id: "work-out-of-sight",
   name: "Work out of sight",
   description: "Switches Focus to Personal when your devices say the workday is over.",
-  agentName: "Focus agent",
-  section: "personal",
   cadence: "On client signal",
   enabled: true,
   nextRunAt: null,

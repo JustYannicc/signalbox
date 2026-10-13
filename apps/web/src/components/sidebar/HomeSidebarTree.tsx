@@ -1,8 +1,10 @@
 /**
  * The Home view's list: the Focus chip, "Chats" (everything unfiled, newest
  * first, capped with "Show N more", like Codex's chat list), then
- * sections › projects › tasks, chats, and rooms, a quiet "New section", and
- * everything archived (from Home or the Pipeline). Rows navigate, archive,
+ * sections › projects › automations, accounts, places, tasks, chats, and rooms, a quiet
+ * "New section", and everything archived (from Home or the Pipeline). What sits
+ * at the top level itself (built-in automations, global guards, skills,
+ * connections) is the first strip. Rows navigate, archive,
  * move, and flip Chat/Task; the rest of thread management (Later, reorder,
  * pin) stays in the Pipeline.
  */
@@ -22,6 +24,7 @@ import { HOME_TOP_LEVEL_ID } from "./sections/containerIds";
 import { ContainerItems } from "./sections/HomeItems";
 import { HomeDestinationsContext, useHomeDropTarget } from "./sections/homeMoves";
 import { HomeSectionNode } from "./sections/HomeSectionNode";
+import { MappedIndexContext, MappedStrip } from "./sections/MappedStrip";
 import { ROOT_CONTAINER_KEY, useHomeSectionStore } from "./sections/sectionStore";
 import type { HomeSectionTree } from "./sections/useHomeSectionTree";
 import { homeThreadKey } from "./useHomeSidebarData";
@@ -64,72 +67,79 @@ export function HomeSidebarTree(props: {
 
   return (
     <HomeDestinationsContext value={tree.destinations}>
-      <div
-        {...dropProps}
-        className={cn("flex flex-col rounded-md px-2 pb-2", dropActive && "ring-1 ring-ring")}
-      >
-        {tree.paused ? (
-          <FocusPausedChip
-            hiddenLabel={tree.paused.hiddenLabel}
-            runningCount={tree.paused.runningCount}
-            peeking={tree.peeking}
-            onTogglePeek={togglePeek}
-          />
-        ) : null}
-        <HomeDrafts label={<HomeSectionLabel>Drafts</HomeSectionLabel>} />
-        {isContentsEmpty(tree.rootContents) ? null : (
-          <section aria-label="Chats" className="pt-2">
-            <h3 className="px-2.5 pb-0.5 text-2xs font-medium text-sidebar-muted-foreground/60">
-              Chats
-            </h3>
-            <ul className="flex flex-col gap-px">
-              <ContainerItems
-                contents={tree.rootContents}
-                place={TOP_LEVEL_PLACE}
-                limit={CHATS_PREVIEW_COUNT}
-                activeThreadKey={props.rowContext.activeThreadKey}
-                renderThread={(thread) =>
-                  renderHomeThreadRow(
-                    thread,
-                    props.projectNameByThreadKey.get(homeThreadKey(thread)) ?? null,
-                    props.rowContext,
-                    TOP_LEVEL_PLACE,
-                  )
-                }
-              />
-            </ul>
-          </section>
-        )}
-        <ul className="flex flex-col gap-px pt-2">
-          {tree.roots.map((node) => (
-            <HomeSectionNode
-              key={node.section.id}
-              node={node}
-              rowContext={props.rowContext}
-              projectNameByThreadKey={props.projectNameByThreadKey}
-              onNewThread={props.onNewThread}
+      <MappedIndexContext value={tree.mapped}>
+        <div
+          {...dropProps}
+          className={cn("flex flex-col rounded-md px-2 pb-2", dropActive && "ring-1 ring-ring")}
+        >
+          {tree.paused ? (
+            <FocusPausedChip
+              hiddenLabel={tree.paused.hiddenLabel}
+              peeking={tree.peeking}
+              onTogglePeek={togglePeek}
             />
-          ))}
-        </ul>
-        {props.hasProjects ? null : (
+          ) : null}
+          <HomeDrafts label={<HomeSectionLabel>Drafts</HomeSectionLabel>} />
+          {/* What sits at the top level itself (Appa's): rules for everything below, skills, connections. */}
+          {tree.rootContents.mapped.length > 0 ? (
+            <ul aria-label="Top level" className="flex flex-col gap-px pt-2">
+              <MappedStrip items={tree.rootContents.mapped} containerKey={ROOT_CONTAINER_KEY} />
+            </ul>
+          ) : null}
+          {isContentsEmpty({ ...tree.rootContents, mapped: [] }) ? null : (
+            <section aria-label="Chats" className="pt-2">
+              <h3 className="px-2.5 pb-0.5 text-2xs font-medium text-sidebar-muted-foreground/60">
+                Chats
+              </h3>
+              <ul className="flex flex-col gap-px">
+                <ContainerItems
+                  contents={tree.rootContents}
+                  place={TOP_LEVEL_PLACE}
+                  limit={CHATS_PREVIEW_COUNT}
+                  activeThreadKey={props.rowContext.activeThreadKey}
+                  renderThread={(thread) =>
+                    renderHomeThreadRow(
+                      thread,
+                      props.projectNameByThreadKey.get(homeThreadKey(thread)) ?? null,
+                      props.rowContext,
+                      TOP_LEVEL_PLACE,
+                    )
+                  }
+                />
+              </ul>
+            </section>
+          )}
+          <ul className="flex flex-col gap-px pt-2">
+            {tree.roots.map((node) => (
+              <HomeSectionNode
+                key={node.section.id}
+                node={node}
+                rowContext={props.rowContext}
+                projectNameByThreadKey={props.projectNameByThreadKey}
+                onNewThread={props.onNewThread}
+              />
+            ))}
+          </ul>
+          {props.hasProjects ? null : (
+            <button
+              type="button"
+              onClick={props.onAddProject}
+              className="flex h-8 w-full cursor-pointer items-center rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/60 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+            >
+              Add a project
+            </button>
+          )}
           <button
             type="button"
-            onClick={props.onAddProject}
-            className="flex h-8 w-full cursor-pointer items-center rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/60 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+            onClick={() => useHomeSectionStore.getState().createSection(null)}
+            className="mt-1 flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md px-1 text-left text-xs text-sidebar-muted-foreground/60 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           >
-            Add a project
+            <FolderPlusIcon className="size-3.5" />
+            New section
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => useHomeSectionStore.getState().createSection(null)}
-          className="mt-1 flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md px-1 text-left text-xs text-sidebar-muted-foreground/60 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-        >
-          <FolderPlusIcon className="size-3.5" />
-          New section
-        </button>
-        <ArchivedList archivedThreads={props.archivedThreads} />
-      </div>
+          <ArchivedList archivedThreads={props.archivedThreads} />
+        </div>
+      </MappedIndexContext>
     </HomeDestinationsContext>
   );
 }

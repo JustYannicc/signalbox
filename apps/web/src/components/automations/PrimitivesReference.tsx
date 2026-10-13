@@ -1,11 +1,18 @@
 /**
- * The Primitives view of `/automations`: every hook a workflow can start from
- * and every step it can use. Inline hooks are marked with the latency they add,
- * since they sit in the path of the thing they intercept.
+ * `/automations`: the reference of every hook a workflow can start from and
+ * every step it can use, linked from the add-step palette. Automations
+ * themselves live in Home folders. Inline hooks are marked with the latency
+ * they add, since they sit in the path of the thing they intercept.
  */
 import { createElement } from "react";
 
+import { isElectron } from "../../env";
 import { Badge } from "../ui/badge";
+import { ScrollArea } from "../ui/scroll-area";
+import { SidebarInset } from "../ui/sidebar";
+import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
+import { WorkspacePageContainer } from "../WorkspacePageContainer";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   HOOK_GROUPS,
   STEP_GROUPS,
@@ -60,7 +67,7 @@ function Groups<T extends HookPrimitive | StepPrimitive>(props: {
   ));
 }
 
-export function PrimitivesReference() {
+function PrimitivesReference() {
   return (
     <div className="flex flex-col gap-10">
       <section aria-labelledby="primitives-triggers" className="flex flex-col gap-5">
@@ -76,5 +83,26 @@ export function PrimitivesReference() {
         <Groups groups={STEP_GROUPS} />
       </section>
     </div>
+  );
+}
+
+export function PrimitivesReferencePage() {
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
+        <WorkspacePageHeader electron={isElectron}>
+          <WorkspaceBreadcrumb ariaLabel="Automations breadcrumb" className="min-w-0">
+            <WorkspaceBreadcrumbItem current>
+              <h1>Triggers and steps</h1>
+            </WorkspaceBreadcrumbItem>
+          </WorkspaceBreadcrumb>
+        </WorkspacePageHeader>
+        <ScrollArea className="min-h-0 flex-1">
+          <WorkspacePageContainer>
+            <PrimitivesReference />
+          </WorkspacePageContainer>
+        </ScrollArea>
+      </div>
+    </SidebarInset>
   );
 }

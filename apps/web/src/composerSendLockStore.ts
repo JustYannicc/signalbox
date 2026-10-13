@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "./lib/storage";
+import { prototypeStorage } from "./lib/prototypeStorage";
 
 export const SEND_LOCKED_REASON = "Sending locked · click the latch to unlock";
 
@@ -35,9 +35,7 @@ export const useComposerSendLockStore = create<ComposerSendLockState>()(
     {
       name: "t3code:composer-send-lock:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({ lockedTargetKeys: state.lockedTargetKeys }),
     },
   ),

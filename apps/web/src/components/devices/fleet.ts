@@ -8,6 +8,7 @@
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 
 import type { PoolAccount } from "../accounts/accountPoolsModel";
+import { TOP_LEVEL } from "../levels/levels";
 import type { ExecutionServer, RolloutStep } from "./devicesModel";
 
 const NOW = Date.now();
@@ -26,6 +27,11 @@ function weekly(usedPercent: number, resetsInDays: number, hours = 0): ServerPro
     windowDurationMins: WEEK_MINS,
   };
 }
+
+// Your own subscriptions sit at the top level and reach every folder; Northwind's
+// sit on its team, and merchant-portal has a client-billed one of its own.
+const NORTHWIND = "section:work-northwind";
+const MERCHANT_PORTAL = "team-project:merchant-portal";
 
 export const FLEET_UPDATED_AT = NOW - 3 * 60_000;
 
@@ -91,7 +97,7 @@ export const FLEET_ACCOUNTS: readonly PoolAccount[] = [
     harness: "codex",
     name: "yannic@personal.example",
     plan: "Pro",
-    groupIds: ["personal"],
+    levels: [TOP_LEVEL],
     state: "active",
     windows: [weekly(100, 2, 21)],
     resetCredits: { availableCount: 3, nextExpiresAt: inTime(4, 2) },
@@ -102,7 +108,7 @@ export const FLEET_ACCOUNTS: readonly PoolAccount[] = [
     harness: "codex",
     name: "yannic@northwind.example",
     plan: "Business",
-    groupIds: ["northwind"],
+    levels: [NORTHWIND],
     state: "active",
     windows: [weekly(88, 2, 21)],
     resetCredits: { availableCount: 3, nextExpiresAt: inTime(1, 6) },
@@ -113,10 +119,21 @@ export const FLEET_ACCOUNTS: readonly PoolAccount[] = [
     harness: "codex",
     name: "codex-2@northwind.example",
     plan: "Business",
-    groupIds: ["northwind"],
+    levels: [NORTHWIND],
     state: "active",
     windows: [weekly(45, 4, 3)],
     resetCredits: { availableCount: 1, nextExpiresAt: inTime(6, 0) },
+    pin: { serverId: "zrh-1" },
+  },
+  {
+    id: "codex-merchant-portal",
+    harness: "codex",
+    name: "merchant-portal@northwind.example",
+    plan: "Business",
+    levels: [MERCHANT_PORTAL],
+    state: "active",
+    windows: [weekly(12, 5, 2)],
+    resetCredits: { availableCount: 0 },
     pin: { serverId: "zrh-1" },
   },
   {
@@ -124,7 +141,7 @@ export const FLEET_ACCOUNTS: readonly PoolAccount[] = [
     harness: "codex",
     name: "builds@personal.example",
     plan: "Plus",
-    groupIds: ["personal"],
+    levels: [TOP_LEVEL],
     state: "paused",
     windows: [weekly(33, 6, 4)],
     resetCredits: { availableCount: 0 },
@@ -135,7 +152,7 @@ export const FLEET_ACCOUNTS: readonly PoolAccount[] = [
     harness: "claude",
     name: "yannic@personal.example",
     plan: "Max 20×",
-    groupIds: ["personal"],
+    levels: [TOP_LEVEL],
     state: "active",
     windows: [weekly(20, 5, 11)],
     resetCredits: { availableCount: 0 },
@@ -146,7 +163,7 @@ export const FLEET_ACCOUNTS: readonly PoolAccount[] = [
     harness: "claude",
     name: "yannic@northwind.example",
     plan: "Team",
-    groupIds: ["northwind"],
+    levels: [NORTHWIND],
     state: "needsLogin",
     windows: [weekly(59, 3, 8)],
     resetCredits: { availableCount: 0 },
@@ -157,7 +174,7 @@ export const FLEET_ACCOUNTS: readonly PoolAccount[] = [
     harness: "grok",
     name: "@justyannicc",
     plan: "SuperGrok Heavy",
-    groupIds: ["personal", "northwind"],
+    levels: [TOP_LEVEL],
     state: "active",
     windows: [weekly(4, 4, 15)],
     resetCredits: { availableCount: 0 },

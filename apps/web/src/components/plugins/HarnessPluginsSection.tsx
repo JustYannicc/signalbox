@@ -10,7 +10,8 @@ import { SettingsSection } from "../settings/settingsLayout";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { GroupBadges } from "./groupPrimitives";
+import { useThingLevels } from "../levels/leveledThings";
+import { ThingLevels } from "./levelPrimitives";
 import { HARNESSES, type HarnessPlugin } from "./pluginsModel";
 import { HARNESS_PLUGINS } from "./pluginsFixtures";
 import { comingSoon, DEEP_LINK_ROW_CLASS, HarnessGlyph, useDeepLinkRow } from "./pluginsPrimitives";
@@ -24,6 +25,7 @@ function HarnessPluginRow(props: {
   const { plugin } = props;
   const switchId = `harness-plugin-${plugin.id}`;
   const rowRef = useDeepLinkRow<HTMLDivElement>(props.targeted);
+  const levels = useThingLevels(`plugin:${plugin.id}`, plugin.levels);
   return (
     <div
       ref={rowRef}
@@ -41,7 +43,13 @@ function HarnessPluginRow(props: {
             {plugin.version}
           </span>
           <span className="text-xs text-muted-foreground">from {plugin.source}</span>
-          <GroupBadges groups={plugin.groups} />
+          <ThingLevels
+            thingKey={`plugin:${plugin.id}`}
+            itemName={plugin.name}
+            levels={levels}
+            area="plugins"
+            addedBy="admins"
+          />
         </div>
         <p className="text-xs text-muted-foreground">{plugin.description}</p>
       </div>

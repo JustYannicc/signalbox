@@ -1,46 +1,34 @@
 /**
  * One workflow step on the canvas: icon tile, type label, title, and the
- * input/output handles its edges attach to. Owned steps carry an owner pill on
- * the top edge. With a run selected it also shows how that step went.
+ * output handles its edges leave from (inputs are marked by the incoming
+ * arrowheads on the top edge). Owned steps carry an owner badge on the top-left
+ * corner; the lane column names the owner. With a run selected it also shows
+ * how that step went.
  */
-import { memo } from "react";
+import { createElement, memo } from "react";
 
 import { cn } from "~/lib/utils";
-import {
-  NODE_HEIGHT,
-  NODE_WIDTH,
-  isTriggerNode,
-  nodeOutputs,
-  outputFraction,
-  type NodeRunResult,
-  type WorkflowNode,
-} from "./automationModel";
+import { NODE_HEIGHT, NODE_WIDTH, type NodeRunResult, type WorkflowNode } from "./automationModel";
 import { RUN_STATUS_LABEL } from "./automationFormat";
 import { NodeTile, nodeTypeLabel } from "./workflowNodeVisuals";
 import { useAssistantName } from "./useAssistantName";
-import { NODE_STATUS_BADGE_CLASS, NodeStatusIcon, OwnerPill } from "./statusOwnerVisuals";
+import {
+  NODE_STATUS_BADGE_CLASS,
+  NodeStatusIcon,
+  OWNER_ICON,
+  OWNER_TEXT_CLASS,
+} from "./statusOwnerVisuals";
+import { outputAnchors } from "./workflowLayout";
 
-/** `fraction` is the handle's height on the card, the same one edges attach at. */
-function Handle(props: { side: "in" | "out"; fraction?: number }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "pointer-events-none absolute size-2.5 -translate-y-1/2 rounded-full border border-muted-foreground/50 bg-card",
-        props.side === "in" ? "-left-1.25" : "-right-1.25",
-      )}
-      style={{ top: `${(props.fraction ?? 0.5) * 100}%` }}
-    />
-  );
-}
-
+/** Output handles sit where `outputAnchors` says, the same points edges leave from. */
 function OutputHandles({ config }: { config: WorkflowNode["config"] }) {
-  // Verdicts end the workflow: the intercepted request is allowed, held, or blocked.
-  if (config.kind === "verdict") return null;
-  const outputs = nodeOutputs(config);
-  if (!outputs) return <Handle side="out" />;
-  return outputs.map((output) => (
-    <Handle key={output.key} side="out" fraction={outputFraction(config, output.key)} />
+  return outputAnchors(config).map((anchor) => (
+    <span
+      key={anchor.key ?? "out"}
+      aria-hidden
+      className="pointer-events-none absolute size-2.5 -translate-1/2 rounded-full border border-muted-foreground/50 bg-card"
+      style={{ left: anchor.at.x, top: anchor.at.y }}
+    />
   ));
 }
 
@@ -86,7 +74,17 @@ export const WorkflowNodeCard = memo(function WorkflowNodeCard(props: {
         </span>
         <span className="truncate text-sm font-medium text-foreground">{nameText(node.title)}</span>
       </span>
-      {node.owner ? <OwnerPill owner={node.owner} className="absolute -top-2 left-3" /> : null}
+      {node.owner ? (
+        <span
+          aria-hidden
+          className={cn(
+            "absolute -top-2 -left-2 flex size-5 items-center justify-center rounded-full border bg-card ring-2 ring-background",
+            OWNER_TEXT_CLASS[node.owner.scope],
+          )}
+        >
+          {createElement(OWNER_ICON[node.owner.scope], { className: "size-3" })}
+        </span>
+      ) : null}
       {status ? (
         <span
           aria-hidden
@@ -98,7 +96,6 @@ export const WorkflowNodeCard = memo(function WorkflowNodeCard(props: {
           <NodeStatusIcon status={status} className="size-3" />
         </span>
       ) : null}
-      {isTriggerNode(node.config) ? null : <Handle side="in" />}
       <OutputHandles config={node.config} />
     </button>
   );

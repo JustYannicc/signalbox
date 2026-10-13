@@ -144,7 +144,6 @@ export const DANGER_CHECK: Automation = {
   name: "Danger check on every request",
   description:
     "Screens every message before an agent sees it. Safe ones pass, risky ones wait for you, dangerous ones stop.",
-  agentName: "Safety check agent",
   allowedToday: 412,
   cadence: "Before every message",
   enabled: true,

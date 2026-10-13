@@ -5,13 +5,7 @@ import { PersonAvatar } from "../multiplayer/PersonAvatar";
 import { TEAM_PEOPLE } from "../multiplayer/multiplayerFixtures";
 import { Button } from "../ui/button";
 import { AccountRow } from "./AccountRow";
-import {
-  plural,
-  poolCapacity,
-  type AccountGroup,
-  type AccountPool,
-  type PoolGrant,
-} from "./accountPoolsModel";
+import { plural, poolCapacity, type AccountPool, type PoolGrant } from "./accountPoolsModel";
 import { PoolMark } from "./accountPoolsPrimitives";
 import { grantLabel, SharePoolDialog } from "./SharePoolDialog";
 
@@ -27,14 +21,12 @@ export function PoolBlock({
   owned,
   connected,
   onConnectedChange,
-  groupsById,
   now,
 }: {
   readonly pool: AccountPool;
   readonly owned: boolean;
   readonly connected: boolean;
   readonly onConnectedChange: (connected: boolean) => void;
-  readonly groupsById: ReadonlyMap<string, AccountGroup>;
   readonly now: number;
 }) {
   const [grants, setGrants] = useState<readonly PoolGrant[]>(pool.grants);
@@ -101,15 +93,7 @@ export function PoolBlock({
       {showAccounts ? (
         <ul className="divide-y divide-border rounded-lg border border-border">
           {pool.accounts.map((account) => (
-            <AccountRow
-              key={account.id}
-              account={account}
-              groups={account.groupIds.flatMap((id) => {
-                const group = groupsById.get(id);
-                return group ? [group] : [];
-              })}
-              now={now}
-            />
+            <AccountRow key={account.id} account={account} now={now} />
           ))}
         </ul>
       ) : null}

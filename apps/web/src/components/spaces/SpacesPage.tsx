@@ -1,16 +1,21 @@
 /**
- * Spaces: one knowledge base of everything connected sources hold plus native
- * notes, one space per Home section. UI prototype on fixtures. The open space
- * persists (see `spacesSpace.ts`); filters, the previewed item, the open note
- * and the Library / Just Files lens live in the URL so the sidebar and page
- * stay in step. Dropping files anywhere opens quick capture.
+ * The place page: one connected account at the level it is connected at (its
+ * items no mapped place covers, with a switch to see all of them), one mapped
+ * place inside it, or everything in sight when no place is set. Places open
+ * from Home folders; the breadcrumb reads like the folder path. The previewed
+ * item, the open note and the Library / Just Files lens live in the URL too. A
+ * Notes account is that level's native pages, so "New page" lands there.
+ * Dropping files anywhere opens quick capture.
  */
-import { useNavigate, useSearch } from "@tanstack/react-router";
-import { SearchIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { SearchIcon, SquarePenIcon } from "lucide-react";
+import { useCallback, useMemo, useState, type DragEvent } from "react";
 
 import { isElectron } from "../../env";
 import { openQuickCapture } from "../capture/captureModel";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { useFocusedLevel } from "../sidebar/focus/focusStore";
+import { activeMappings, useMappedStore } from "../sidebar/sections/mappedItems";
 import { sectionPathLabel } from "../sidebar/sections/sectionModel";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -26,22 +31,22 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SpacesAgentView } from "./SpacesAgentView";
 import type { SpacesItemFixture } from "./spacesFixtures";
 import { SpacesHumanBody, type SpacesLayout } from "./SpacesHumanBody";
-import {
-  countBy,
-  describeSync,
-  itemKind,
-  matchesQuery,
-  openItemSearch,
-  patchSpacesSearch,
-  spaceSources,
-  SPACES_KIND_LABEL,
-} from "./spacesModel";
+import { matchesQuery, openItemSearch, patchSpacesSearch, spaceSources } from "./spacesModel";
 import { SpacesNoteEditor } from "./SpacesNoteEditor";
 import { SpacesNoteHeaderActions } from "./SpacesNoteHeaderActions";
 import { noteTitle, useSpaceItems, useSpacesNotes } from "./spacesNotes";
 import { SpacesEmptyState, SpacesSourceProblem } from "./SpacesNotices";
+import {
+  inPlace,
+  placeLevel,
+  placeSummary,
+  placeTitle,
+  resolvePlace,
+  useLevelLabel,
+} from "./spacesPlace";
 import { SpacesPreviewPanel } from "./SpacesPreviewPanel";
-import { useCurrentSpace, useSpacesPlace } from "./spacesSpace";
+import { pullRequestsSearch, usePullRequestsSupported } from "./spacesPullRequests";
+import { everythingSpace, sectionSpace, visibleSections } from "./spacesSpace";
 import { comingSoon, SpacesLensToggle, SpacesOverflowMenu } from "./SpacesToolbar";
 
 const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
@@ -51,34 +56,32 @@ export function SpacesPage() {
   const navigate = useNavigate({ from: "/spaces" });
   const [query, setQuery] = useState("");
   const [layout, setLayout] = useState<SpacesLayout>("list");
-  const searchRef = useRef<HTMLInputElement>(null);
-  const searchFocusPending = useSpacesPlace((state) => state.searchFocusPending);
   const createNote = useSpacesNotes((state) => state.createNote);
   const openNote = useSpacesNotes((state) => (search.note ? state.notes[search.note] : undefined));
-  const { space, sections } = useCurrentSpace();
+  const homeOverrides = useMappedStore((state) => state.homes);
+  const pullRequestsSupported = usePullRequestsSupported();
+  const mode = useFocusedLevel();
 
-  // The sidebar's search button asks for the page search instead of its own.
-  useEffect(() => {
-    if (!searchFocusPending) return;
-    searchRef.current?.focus();
-    useSpacesPlace.getState().clearSearchFocus();
-  }, [searchFocusPending]);
+  const place = useMemo(() => resolvePlace(search), [search]);
+  const source = place.kind === "everything" ? undefined : place.source;
+  const sections = useMemo(() => visibleSections(mode), [mode]);
+  const space = useMemo(
+    () => (source && sectionSpace(source.space)) || everythingSpace(sections),
+    [sections, source],
+  );
+  const levelText = useLevelLabel(placeLevel(place, search.at, homeOverrides));
+  const mappings = useMemo(() => activeMappings(homeOverrides), [homeOverrides]);
 
   const filesLens = search.lens === "files";
-  const sources = useMemo(() => spaceSources(space), [space]);
   const allItems = useSpaceItems(space);
-  const sourceCounts = useMemo(() => countBy(allItems, (item) => item.source), [allItems]);
-  const activeSource = sources.find((source) => source.id === search.source);
-  const failedSources = sources.filter(
-    (source) => source.sync === "error" && (!activeSource || source.id === activeSource.id),
-  );
-  const scopedItems = allItems.filter(
-    (item) =>
-      (!activeSource || item.source === activeSource.id) &&
-      (!search.kind || itemKind(item) === search.kind),
-  );
+  const accountItems = source ? allItems.filter((item) => item.source === source.id) : allItems;
+  const scopedItems = allItems.filter((item) => inPlace(place, item, mappings));
   const matchingItems = scopedItems.filter((item) => matchesQuery(item, query));
   const previewItem = filesLens ? undefined : allItems.find((item) => item.id === search.item);
+  const failedSources = (source ? [source] : spaceSources(space)).filter(
+    (entry) => entry.sync === "error",
+  );
+  const notesAccount = place.kind === "account" && source?.connector === "notes";
 
   const openItem = useCallback(
     (item: SpacesItemFixture) =>
@@ -105,30 +108,32 @@ export function SpacesPage() {
   const backToLibrary = () =>
     void navigate({ search: (prev) => patchSpacesSearch(prev, { note: undefined }) });
   const newPage = () => {
-    const note = createNote(space.newNoteSectionId);
-    void navigate({ search: { note } });
+    if (!source) return;
+    const note = createNote(source.space);
+    void navigate({ search: (prev) => patchSpacesSearch(prev, { note, item: undefined }) });
   };
+  const toggleAll = () =>
+    void navigate({
+      search: (prev) => patchSpacesSearch(prev, { all: prev.all ? undefined : true }),
+    });
   const reconnect = () => void navigate({ to: "/plugins", search: { section: "connections" } });
 
-  const heading = activeSource
-    ? activeSource.name
-    : search.kind
-      ? SPACES_KIND_LABEL[search.kind]
-      : "All";
-  const count = `${scopedItems.length} ${scopedItems.length === 1 ? "item" : "items"}`;
-  const summary = activeSource ? `${count} · ${describeSync(activeSource)}` : count;
+  const placeName = placeTitle(place);
+  const summary = placeSummary(place, scopedItems.length, accountItems.length);
+  // Seeing the whole account only means something when places hold some of it.
+  const canToggleAll = place.kind === "account" && accountItems.length !== scopedItems.length;
 
   const renderBody = () => {
-    if (activeSource && (sourceCounts.get(activeSource.id) ?? 0) === 0) {
-      const notes = activeSource.connector === "notes";
+    if (source && accountItems.length === 0) {
+      const notes = source.connector === "notes";
       return (
         <SpacesEmptyState
-          source={activeSource}
-          title={notes ? "No pages yet" : `Nothing from ${activeSource.name} yet`}
+          source={source}
+          title={notes ? "No pages yet" : `Nothing from ${source.name} yet`}
           description={
             notes
-              ? `Pages you write in ${space.name} land here.`
-              : `${activeSource.name} is connected, but nothing is synced into ${space.name}.`
+              ? `Pages you write in ${space.label} land here.`
+              : `${source.name} is connected, but nothing is synced into ${space.label}.`
           }
           action={
             <Button variant="outline" onClick={notes ? newPage : comingSoon}>
@@ -157,6 +162,11 @@ export function SpacesPage() {
         spaceId={space.id}
         query={query}
         onClearQuery={() => setQuery("")}
+        emptyDescription={
+          place.kind === "account"
+            ? `Everything in ${placeName} sits in a mapped place.`
+            : undefined
+        }
         selectedId={previewItem?.id}
         onSelect={selectItem}
       />
@@ -177,9 +187,7 @@ export function SpacesPage() {
         }}
       >
         <WorkspacePageHeader electron={isElectron}>
-          <WorkspaceBreadcrumb ariaLabel="Spaces breadcrumb">
-            <WorkspaceBreadcrumbItem>Spaces</WorkspaceBreadcrumbItem>
-            <WorkspaceBreadcrumbSeparator />
+          <WorkspaceBreadcrumb ariaLabel="Place breadcrumb">
             {openNote ? (
               <>
                 <WorkspaceBreadcrumbItem>
@@ -191,7 +199,11 @@ export function SpacesPage() {
                 </WorkspaceBreadcrumbItem>
               </>
             ) : (
-              <WorkspaceBreadcrumbItem current>{space.label}</WorkspaceBreadcrumbItem>
+              <>
+                <WorkspaceBreadcrumbItem>{levelText}</WorkspaceBreadcrumbItem>
+                <WorkspaceBreadcrumbSeparator />
+                <WorkspaceBreadcrumbItem current>{placeName}</WorkspaceBreadcrumbItem>
+              </>
             )}
           </WorkspaceBreadcrumb>
           {openNote ? (
@@ -215,22 +227,45 @@ export function SpacesPage() {
                 <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
                   <div className="flex min-w-0 flex-col gap-1">
                     <h1 className="text-2xl font-semibold tracking-tight text-balance">
-                      {heading}
+                      {placeName}
                     </h1>
-                    <p className="text-sm text-muted-foreground">{summary}</p>
+                    <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+                      {summary}
+                      {canToggleAll || search.all ? (
+                        <Button size="micro" variant="ghost-muted" onClick={toggleAll}>
+                          {search.all
+                            ? "Only what no place covers"
+                            : `Show all ${accountItems.length}`}
+                        </Button>
+                      ) : null}
+                    </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    {notesAccount ? (
+                      <Button variant="outline" onClick={newPage}>
+                        <SquarePenIcon />
+                        New page
+                      </Button>
+                    ) : null}
+                    {source?.connector === "github" && pullRequestsSupported ? (
+                      <Button
+                        variant="outline"
+                        render={<Link to="/pull-requests" search={() => pullRequestsSearch()} />}
+                      >
+                        <PullRequestGlyph.pullRequest />
+                        Pull requests
+                      </Button>
+                    ) : null}
                     <InputGroup className="w-56 lg:w-64">
                       <InputGroupAddon>
                         <SearchIcon />
                       </InputGroupAddon>
                       <InputGroupInput
-                        ref={searchRef}
                         type="search"
                         value={query}
                         onChange={(event) => setQuery(event.currentTarget.value)}
-                        placeholder={`Search ${space.name}`}
-                        aria-label={`Search ${space.name}`}
+                        placeholder={`Search ${placeName}`}
+                        aria-label={`Search ${placeName}`}
                       />
                     </InputGroup>
                     <SpacesLensToggle
@@ -250,8 +285,8 @@ export function SpacesPage() {
                   </div>
                 </div>
 
-                {failedSources.map((source) => (
-                  <SpacesSourceProblem key={source.id} source={source} onReconnect={reconnect} />
+                {failedSources.map((entry) => (
+                  <SpacesSourceProblem key={entry.id} source={entry} onReconnect={reconnect} />
                 ))}
 
                 {renderBody()}

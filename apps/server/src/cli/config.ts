@@ -313,6 +313,10 @@ export const resolveServerConfig = (
     );
     const devAuthToken =
       mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
+    // signalbox: only meaningful on top of the reusable dev credential.
+    const devAutoAuth =
+      devAuthToken !== undefined &&
+      (yield* Config.Boolean("T3CODE_DEV_AUTO_AUTH").pipe(Config.withDefault(false)));
     const explicitBaseDir = resolveOptionPrecedence(
       normalizedFlags.baseDir,
       Option.fromUndefinedOr(env.t3Home),
@@ -447,6 +451,7 @@ export const resolveServerConfig = (
       staticDir,
       devUrl,
       ...(devAuthToken === undefined ? {} : { devAuthToken }),
+      ...(devAutoAuth ? { devAutoAuth } : {}),
       devAllowedOrigins: env.devAllowedOrigins,
       noBrowser,
       startupPresentation,

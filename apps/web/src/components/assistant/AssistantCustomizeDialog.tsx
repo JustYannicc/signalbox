@@ -144,7 +144,7 @@ function CustomizeForm(props: {
             render={
               <Link
                 to="/plugins"
-                search={{ section: "instructions", role: "assistant", scope: "personal" }}
+                search={{ section: "instructions", level: "root", audience: "agent" }}
               />
             }
           >

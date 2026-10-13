@@ -1,10 +1,10 @@
 /**
- * The workflow editor surface: a static dotted grid that pans and zooms with
- * the graph, plus zoom controls in the corner. Clicking the background clears
+ * The workflow editor surface: the graph laid out top to bottom over a dotted
+ * grid that pans and zooms with it, plus zoom controls in the corner. Clicking the background clears
  * the node selection.
  */
 import { MaximizeIcon, MinusIcon, PlusIcon } from "lucide-react";
-import { useRef, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -12,6 +12,7 @@ import { AddStepPalette } from "./AddStepPalette";
 import type { Automation, AutomationRun } from "./automationModel";
 import { useCanvasViewport } from "./useCanvasViewport";
 import { WorkflowGraph } from "./WorkflowGraph";
+import { verticalLayout } from "./workflowLayout";
 
 const GRID_SIZE = 20;
 
@@ -42,9 +43,10 @@ export function WorkflowCanvas(props: {
   onSelectNode: (nodeId: string | null) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const layout = useMemo(() => verticalLayout(props.automation), [props.automation]);
   const { viewport, fit, zoomIn, zoomOut, canvasHandlers } = useCanvasViewport(
     containerRef,
-    props.automation.nodes,
+    layout.bounds,
     () => props.onSelectNode(null),
   );
   const gridStep = GRID_SIZE * viewport.zoom;
@@ -68,9 +70,7 @@ export function WorkflowCanvas(props: {
         style={{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` }}
       >
         <WorkflowGraph
-          nodes={props.automation.nodes}
-          edges={props.automation.edges}
-          lanes={props.automation.lanes}
+          layout={layout}
           run={props.run}
           selectedNodeId={props.selectedNodeId}
           onSelectNode={props.onSelectNode}

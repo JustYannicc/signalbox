@@ -4,9 +4,9 @@
  * thread is local; fixtures carry the starting mode.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import type { ReplyMode, TeamMessage, TeamPerson } from "./multiplayerModel";
 import { peopleByIds } from "./teamThreads";
 
@@ -32,9 +32,7 @@ export const useReplyModeStore = create<ReplyModeState>()(
     {
       name: "t3code:multiplayer:reply-mode:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({ modes: state.modes }),
     },
   ),

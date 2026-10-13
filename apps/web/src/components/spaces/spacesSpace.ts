@@ -1,70 +1,31 @@
 /**
- * Which space is open. A space is a Home section (Work › Northwind team,
- * Personal) with everything nested under it, or All: every section Focus
- * leaves in sight. The last-used one persists so the rail and /pull-requests
- * keep it; All is the default.
+ * A space is the slice of synced items and notes a place page reads from: one
+ * Home section with everything nested under it, or Everything (each section
+ * Focus leaves in sight) when /spaces opens without a place. Which place is
+ * open lives in the URL; see `spacesPlace.ts`.
  */
-import { useMemo } from "react";
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
-
-import { resolveStorage } from "../../lib/storage";
-import { focusModeInfo, useFocusMode, type FocusMode } from "../sidebar/focus/focusStore";
 import {
   HOME_SECTIONS,
-  rootSectionIdOf,
   sectionPathLabel,
   type HomeSection,
 } from "../sidebar/sections/sectionModel";
-
-export const ALL_SPACE_ID = "all";
+import { isSectionInFocus } from "../sidebar/focus/focusLevels";
+import type { LevelKey } from "../levels/levels";
 
 export interface Space {
-  /** A Home section id, or `all`. */
+  /** A Home section id, or `everything`. */
   readonly id: string;
   readonly name: string;
-  /** "Work › Northwind team"; "All" for the combined space. */
+  /** "Work › Northwind team"; "Everything" for the combined space. */
   readonly label: string;
   /** Sections whose items and sources this space shows. */
   readonly sectionIds: ReadonlySet<string>;
-  /** Where "New page" lands. */
-  readonly newNoteSectionId: string;
   /** Just Files root, e.g. `/spaces/work/northwind-team` or `/spaces`. */
   readonly root: string;
 }
 
-interface SpacesPlaceState {
-  sectionId: string;
-  /** Set by the sidebar's search button; the page focuses its field and clears it. */
-  searchFocusPending: boolean;
-  setSectionId: (sectionId: string) => void;
-  requestSearchFocus: () => void;
-  clearSearchFocus: () => void;
-}
-
-export const useSpacesPlace = create<SpacesPlaceState>()(
-  persist(
-    (set) => ({
-      sectionId: ALL_SPACE_ID,
-      searchFocusPending: false,
-      setSectionId: (sectionId) => set({ sectionId }),
-      requestSearchFocus: () => set({ searchFocusPending: true }),
-      clearSearchFocus: () => set({ searchFocusPending: false }),
-    }),
-    {
-      name: "t3code:spaces:section:v1",
-      version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
-      partialize: (state) => ({ sectionId: state.sectionId }),
-    },
-  ),
-);
-
-export function visibleSections(mode: FocusMode): readonly HomeSection[] {
-  const hidden = new Set(focusModeInfo(mode).hiddenRootSectionIds);
-  return HOME_SECTIONS.filter((section) => !hidden.has(rootSectionIdOf(section.id)));
+export function visibleSections(focused: LevelKey): readonly HomeSection[] {
+  return HOME_SECTIONS.filter((section) => isSectionInFocus(section.id, focused));
 }
 
 /** The section and every section nested in it. */
@@ -83,7 +44,7 @@ function descendantIds(sectionId: string): Set<string> {
   return ids;
 }
 
-/** A single section as a space, visible or not (notes know their section). */
+/** A single section as a space, visible or not (notes and accounts know their section). */
 export function sectionSpace(sectionId: string): Space | undefined {
   const section = HOME_SECTIONS.find((entry) => entry.id === sectionId);
   if (!section) return undefined;
@@ -92,43 +53,18 @@ export function sectionSpace(sectionId: string): Space | undefined {
     name: section.name,
     label: sectionPathLabel(section.id),
     sectionIds: descendantIds(section.id),
-    newNoteSectionId: section.id,
     root: spaceRootPath(section.id),
   };
 }
 
-function allSpace(sections: readonly HomeSection[]): Space {
-  const ids = new Set(sections.map((section) => section.id));
+export function everythingSpace(sections: readonly HomeSection[]): Space {
   return {
-    id: ALL_SPACE_ID,
-    name: "All",
-    label: "All",
-    sectionIds: ids,
-    newNoteSectionId: ids.has("personal") ? "personal" : (sections[0]?.id ?? "personal"),
+    id: "everything",
+    name: "Everything",
+    label: "Everything",
+    sectionIds: new Set(sections.map((section) => section.id)),
     root: "/spaces",
   };
-}
-
-/**
- * The open space (falling back to All when Focus hides the saved one), the
- * switcher's choices, and the visible sections a note can move to.
- */
-export function useCurrentSpace(): {
-  space: Space;
-  spaces: readonly Space[];
-  sections: readonly HomeSection[];
-} {
-  const mode = useFocusMode();
-  const sectionId = useSpacesPlace((state) => state.sectionId);
-  return useMemo(() => {
-    const sections = visibleSections(mode);
-    const spaces = [
-      allSpace(sections),
-      ...sections.flatMap((section) => sectionSpace(section.id) ?? []),
-    ];
-    const space = spaces.find((entry) => entry.id === sectionId) ?? spaces[0]!;
-    return { space, spaces, sections };
-  }, [mode, sectionId]);
 }
 
 const slug = (name: string) =>

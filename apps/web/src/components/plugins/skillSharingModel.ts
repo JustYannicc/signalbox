@@ -1,9 +1,9 @@
 /**
- * Team skill sharing without git. A published skill is a folder in a group's
+ * Team skill sharing without git. A published skill is a folder in a team's
  * skills repo, listed on skills.sh; authors publish versions from the app
  * and subscribers' copies follow. The repo stays behind an "Advanced" fold.
  */
-import type { GroupId } from "./pluginsModel";
+import type { LevelKey } from "../levels/levels";
 
 export interface SkillVersion {
   readonly version: number;
@@ -28,8 +28,8 @@ export interface SkillPublication {
   readonly skillId: string;
   /** "you" when you can edit and publish new versions. */
   readonly owner: "you" | string;
-  /** Published skills reach everyone in this group; admins may narrow it later. */
-  readonly groupId: GroupId;
+  /** Published skills reach everyone at this team level; admins may narrow it later. */
+  readonly level: LevelKey;
   /** Whether your own copy follows new versions without asking. */
   readonly autoUpdate: boolean;
   readonly yourVersion: number;

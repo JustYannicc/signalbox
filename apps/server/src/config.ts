@@ -90,6 +90,8 @@ export class ServerConfig extends Context.Service<
     readonly staticDir: string | undefined;
     readonly devUrl: URL | undefined;
     readonly devAuthToken?: Redacted.Redacted<string> | undefined;
+    /** signalbox: give cookie-less browsers the reusable dev session (T3CODE_DEV_AUTO_AUTH). */
+    readonly devAutoAuth?: boolean | undefined;
     readonly devAllowedOrigins: ReadonlyArray<string>;
     readonly noBrowser: boolean;
     readonly startupPresentation: StartupPresentation;

@@ -1,6 +1,6 @@
 /**
  * Connections: every MCP server and API in one list, filtered by kind and
- * group. Integrations with several accounts list them underneath; a row
+ * by which section's agent can use them. Integrations with several accounts list them underneath; a row
  * expands in place for tools, harnesses, and account actions.
  */
 import { ChevronRightIcon } from "lucide-react";
@@ -10,17 +10,17 @@ import { cn } from "~/lib/utils";
 import { SettingsSection } from "../settings/settingsLayout";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { AccountRow, useAccountNames } from "./ConnectionAccounts";
-import { GroupBadges } from "./groupPrimitives";
-import { GROUPS } from "./groupsFixtures";
+import { canUseAny, type LevelKey, type Reach } from "../levels/levels";
+import { useLevelPlacementStore } from "../levels/leveledThings";
+import { useLevelOptionsContext } from "../levels/LevelOptionsProvider";
+import { LevelBadges } from "./levelPrimitives";
 import { IntegrationDetail } from "./IntegrationDetail";
 import {
   harnessRestriction,
-  integrationGroups,
   KIND_LABEL,
   matchesKind,
   type ConnectionAccount,
   type ConnectionKindFilter,
-  type GroupId,
   type HarnessId,
   type Integration,
 } from "./pluginsModel";
@@ -34,7 +34,8 @@ import {
   useHarnessSelection,
 } from "./pluginsPrimitives";
 
-type GroupFilter = GroupId | "all";
+/** "all", or a level whose agent must be able to use what is shown. */
+type LevelFilter = LevelKey | "all";
 
 const KIND_FILTERS: readonly { value: ConnectionKindFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -42,20 +43,46 @@ const KIND_FILTERS: readonly { value: ConnectionKindFilter; label: string }[] = 
   { value: "api", label: "API" },
 ];
 
-/** An integration with only the accounts the group filter lets through. */
+type Overrides = Readonly<Record<string, readonly LevelKey[]>>;
+type ReachOverrides = Readonly<Record<string, Reach>>;
+
+/** An integration with only the accounts the level filter lets through, at their current levels. */
 interface ScopedIntegration {
   readonly integration: Integration;
   readonly accounts: readonly ConnectionAccount[];
+  /** For account-less (direct) servers. */
+  readonly levels: readonly LevelKey[];
+  /** `below` when it, or any listed account, is available to folders inside. */
+  readonly reach: Reach;
 }
 
-function scopeToGroup(integrations: readonly Integration[], filter: GroupFilter) {
+function scopeToLevel(
+  integrations: readonly Integration[],
+  filter: LevelFilter,
+  overrides: Overrides,
+  reachOverrides: ReachOverrides,
+) {
+  const reachOf = (key: string) => reachOverrides[key] ?? "here";
+  const usable = (key: string, levels: readonly LevelKey[]) =>
+    filter === "all" || canUseAny(filter, levels, undefined, reachOf(key));
   return integrations.flatMap((integration): ScopedIntegration[] => {
-    if (filter === "all") return [{ integration, accounts: integration.accounts }];
     if (integration.accounts.length === 0) {
-      return integrationGroups(integration).includes(filter) ? [{ integration, accounts: [] }] : [];
+      const key = `integration:${integration.id}`;
+      const levels = overrides[key] ?? integration.levels ?? [];
+      return usable(key, levels)
+        ? [{ integration, accounts: [], levels, reach: reachOf(key) }]
+        : [];
     }
-    const accounts = integration.accounts.filter((account) => account.groups.includes(filter));
-    return accounts.length > 0 ? [{ integration, accounts }] : [];
+    const accounts = integration.accounts
+      .map((account) => ({
+        ...account,
+        levels: overrides[`account:${account.id}`] ?? account.levels,
+      }))
+      .filter((account) => usable(`account:${account.id}`, account.levels));
+    const reach = accounts.some((account) => reachOf(`account:${account.id}`) === "below")
+      ? "below"
+      : "here";
+    return accounts.length > 0 ? [{ integration, accounts, levels: [], reach }] : [];
   });
 }
 
@@ -90,7 +117,10 @@ function IntegrationRow(props: { scoped: ScopedIntegration; state: RowState }) {
   ]
     .filter(Boolean)
     .join(" · ");
-  const groups = [...new Set(accounts.flatMap((account) => account.groups))];
+  const levels =
+    accounts.length > 0
+      ? [...new Set(accounts.flatMap((account) => account.levels))]
+      : props.scoped.levels;
 
   return (
     <div ref={rowRef} className={cn(targeted && DEEP_LINK_ROW_CLASS)}>
@@ -114,7 +144,7 @@ function IntegrationRow(props: { scoped: ScopedIntegration; state: RowState }) {
             <span className="truncate text-xs text-muted-foreground">{subtitle}</span>
           </span>
           <span className="hidden shrink-0 sm:flex">
-            <GroupBadges groups={accounts.length > 0 ? groups : integrationGroups(integration)} />
+            <LevelBadges levels={levels} reach={props.scoped.reach} />
           </span>
           <AuthStateBadge auth={integration.auth} />
           <span className="hidden w-16 shrink-0 text-right text-xs text-muted-foreground tabular-nums sm:block">
@@ -139,6 +169,7 @@ function IntegrationRow(props: { scoped: ScopedIntegration; state: RowState }) {
         <IntegrationDetail
           integration={integration}
           single={single}
+          directLevels={props.scoped.levels}
           singleName={single ? (state.names[single.id] ?? single.label) : undefined}
           onRename={(name) => (single ? state.onRename(single.id, name) : undefined)}
           enabled={enabled}
@@ -169,7 +200,13 @@ function IntegrationGroup(props: {
 export function IntegrationList(props: { item?: string | undefined }) {
   const [expandedId, setExpandedId] = useState<string | null>(props.item ?? null);
   const [kind, setKind] = useState<ConnectionKindFilter>("all");
-  const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
+  const [levelFilter, setLevelFilter] = useState<LevelFilter>("all");
+  const overrides = useLevelPlacementStore((store) => store.levels);
+  const reachOverrides = useLevelPlacementStore((store) => store.reach);
+  // Root sections (Work, Personal): "what can Work's agent use?"
+  const rootSections = useLevelOptionsContext().filter(
+    (option) => option.kind === "section" && option.depth === 1,
+  );
   const [selection, toggleHarness] = useHarnessSelection(INTEGRATIONS);
   const [names, rename] = useAccountNames(INTEGRATIONS);
 
@@ -184,13 +221,17 @@ export function IntegrationList(props: { item?: string | undefined }) {
   };
   const added = useAddedConnections((store) => store.integrations);
   const matching = [...INTEGRATIONS, ...added].filter((item) => matchesKind(item, kind));
-  const brokered = scopeToGroup(
+  const brokered = scopeToLevel(
     matching.filter((item) => item.via === "executor"),
-    groupFilter,
+    levelFilter,
+    overrides,
+    reachOverrides,
   );
-  const direct = scopeToGroup(
+  const direct = scopeToLevel(
     matching.filter((item) => item.via === "direct"),
-    groupFilter,
+    levelFilter,
+    overrides,
+    reachOverrides,
   );
 
   return (
@@ -215,18 +256,18 @@ export function IntegrationList(props: { item?: string | undefined }) {
             ))}
           </ToggleGroup>
           <ToggleGroup
-            aria-label="Filter by group"
-            value={[groupFilter]}
+            aria-label="Filter by who can use it"
+            value={[levelFilter]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value) setGroupFilter(value);
+              if (value) setLevelFilter(value);
             }}
             className="sm:ms-auto"
           >
-            <Toggle value="all">All groups</Toggle>
-            {GROUPS.map((group) => (
-              <Toggle key={group.id} value={group.id}>
-                {group.name}
+            <Toggle value="all">Everyone</Toggle>
+            {rootSections.map((section) => (
+              <Toggle key={section.key} value={section.key}>
+                {section.name}
               </Toggle>
             ))}
           </ToggleGroup>

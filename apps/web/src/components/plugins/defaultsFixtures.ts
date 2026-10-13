@@ -1,8 +1,16 @@
 /**
- * PLACEHOLDER DATA for team and project defaults. Delete with the other
- * plugin fixtures once presets come from the server.
+ * PLACEHOLDER DATA for what newcomers get at team levels: the Northwind team
+ * and its projects, which inherit it. Delete with the other plugin fixtures
+ * once presets come from the server.
  */
+import type { LevelKey } from "../levels/levels";
 import type { DefaultItem, DefaultsPreset } from "./defaultsModel";
+
+const preset = (
+  level: LevelKey,
+  name: string,
+  rest: Pick<DefaultsPreset, "items" | "removes">,
+): DefaultsPreset => ({ id: level, level, name, ...rest });
 
 const skill = (id: string, detail: string): DefaultItem => ({
   id: `skill:${id}`,
@@ -37,11 +45,7 @@ const own = (
 });
 
 export const DEFAULTS_PRESETS: readonly DefaultsPreset[] = [
-  {
-    id: "northwind",
-    name: "Northwind team",
-    kind: "team",
-    groupId: "northwind",
+  preset("section:work-northwind", "Northwind team", {
     removes: [],
     items: [
       shared("slack", "Slack · Northwind workspace", "Sl", "Set up by admins"),
@@ -84,7 +88,7 @@ export const DEFAULTS_PRESETS: readonly DefaultsPreset[] = [
         id: "instructions:thread",
         kind: "instructions",
         name: "Northwind AGENTS.md",
-        detail: "northwind.example/agents/AGENTS.md",
+        detail: "Team rules for its agent and threads",
       },
       {
         id: "model:claude-team",
@@ -101,13 +105,8 @@ export const DEFAULTS_PRESETS: readonly DefaultsPreset[] = [
         harness: "codex",
       },
     ],
-  },
-  {
-    id: "merchant-portal",
-    name: "merchant-portal",
-    kind: "project",
-    inherits: "northwind",
-    groupId: "northwind",
+  }),
+  preset("team-project:merchant-portal", "merchant-portal", {
     removes: ["plugin:figma"],
     items: [
       shared(
@@ -128,16 +127,11 @@ export const DEFAULTS_PRESETS: readonly DefaultsPreset[] = [
         id: "instructions:portal",
         kind: "instructions",
         name: "merchant-portal AGENTS.md",
-        detail: "Project instructions",
+        detail: "Project rules on top of the team's",
       },
     ],
-  },
-  {
-    id: "terminal-app",
-    name: "terminal-app",
-    kind: "project",
-    inherits: "northwind",
-    groupId: "northwind",
+  }),
+  preset("team-project:terminal-app", "terminal-app", {
     removes: ["skill:customer-email-triage", "plugin:figma"],
     items: [
       skill("northwind-terminal", "Neptune APIs and PAX rules"),
@@ -146,34 +140,8 @@ export const DEFAULTS_PRESETS: readonly DefaultsPreset[] = [
         id: "instructions:thread-terminal",
         kind: "instructions",
         name: "terminal-app AGENTS.md",
-        detail: "Neptune only",
+        detail: "Neptune only, on top of the team's",
       },
     ],
-  },
-  {
-    id: "t3code",
-    name: "t3code",
-    kind: "project",
-    groupId: "personal",
-    removes: [],
-    items: [
-      own("github-t3", "GitHub · JustYannicc", "Gh", "Your own account"),
-      shared("linear-t3", "Linear · T3 Tools", "Li", "Set up for T3 Tools maintainers"),
-      skill("test-t3-app", "Project skill"),
-      skill("effect-v4", "Personal skill"),
-      {
-        id: "instructions:t3-thread",
-        kind: "instructions",
-        name: "t3code AGENTS.md",
-        detail: "Project instructions",
-      },
-      {
-        id: "model:claude-max",
-        kind: "models",
-        name: "Claude Max",
-        detail: "Your subscription via CLIProxyAPI",
-        harness: "claudeAgent",
-      },
-    ],
-  },
+  }),
 ];

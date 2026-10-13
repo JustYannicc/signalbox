@@ -2,7 +2,12 @@ import { LaptopIcon, SmartphoneIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { deliveryScopeLabel } from "../levels/delivery";
+import { useLevelAgentName, useLevelLabel } from "../levels/LevelOptionsProvider";
+import { TOP_LEVEL } from "../levels/levels";
+import { LevelSelectMenu } from "../levels/LevelSelectMenu";
 import { Badge } from "../ui/badge";
+import { MenuCheckboxItem, MenuSeparator } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -15,14 +20,18 @@ import {
   type DeviceNotifyLevel,
   type GatewayCapability,
 } from "./devicesModel";
+import { useDeviceLevelsStore } from "./deviceLevelsStore";
 
 const GROUP_ORDER: readonly CapabilityGroup[] = ["files", "device", "signals"];
 
 /**
  * A client is a gateway: servers reach into it for files, screenshots and
- * signals, but no turn ever executes on it.
+ * signals, but no turn ever executes on it. It sits at a Home level, which
+ * decides what it gets pinged about and which agents may use its gateways.
+ * Render inside a `LevelOptionsProvider`.
  */
 export function ClientDeviceCard({ device }: { readonly device: ClientDevice }) {
+  const levelLabel = useLevelLabel();
   const [notify, setNotify] = useState<DeviceNotifyLevel>(device.notify);
   const [enabled, setEnabled] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(device.capabilities.map((cap) => [cap.id, cap.enabled])),
@@ -58,6 +67,16 @@ export function ClientDeviceCard({ device }: { readonly device: ClientDevice }) 
 
       <div className="flex items-center justify-between gap-3">
         <span className="flex min-w-0 flex-col">
+          <span className="text-sm text-foreground">Sits at</span>
+          <span className="text-xs text-muted-foreground">
+            Pings about {deliveryScopeLabel(device.level, levelLabel(device.level))}
+          </span>
+        </span>
+        <DeviceLevelMenu device={device} />
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex min-w-0 flex-col">
           <span className="text-sm text-foreground">Notifications</span>
           <span className="text-xs text-muted-foreground">
             {device.activeNow ? "Pings go here first while you're on it" : "Used when you're away"}
@@ -88,6 +107,7 @@ export function ClientDeviceCard({ device }: { readonly device: ClientDevice }) 
       </div>
 
       <div className="flex flex-col gap-3">
+        <GatewayAccessHint device={device} />
         {GROUP_ORDER.map((group) => {
           const caps = device.capabilities.filter((cap) => cap.group === group);
           if (caps.length === 0) return null;
@@ -112,6 +132,48 @@ export function ClientDeviceCard({ device }: { readonly device: ClientDevice }) 
         })}
       </div>
     </article>
+  );
+}
+
+function DeviceLevelMenu({ device }: { readonly device: ClientDevice }) {
+  const setLevel = useDeviceLevelsStore((state) => state.setLevel);
+  const setReach = useDeviceLevelsStore((state) => state.setReach);
+  return (
+    <LevelSelectMenu
+      label={`Level for ${device.name}`}
+      value={device.level}
+      onChange={(level) => setLevel(device.id, level)}
+    >
+      <MenuSeparator />
+      <MenuCheckboxItem
+        checked={device.reach === "below"}
+        onCheckedChange={(checked) => setReach(device.id, checked ? "below" : "here")}
+      >
+        Gateways available to folders inside
+      </MenuCheckboxItem>
+    </LevelSelectMenu>
+  );
+}
+
+/** Who may use this device's gateways, by the usual level rules. */
+function GatewayAccessHint({ device }: { readonly device: ClientDevice }) {
+  const levelLabel = useLevelLabel();
+  const agentName = useLevelAgentName();
+  if (device.level === TOP_LEVEL) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        At the top level: only {agentName(TOP_LEVEL)} uses these. Folders ask it.
+      </p>
+    );
+  }
+  const who =
+    device.reach === "below"
+      ? `Agents in ${levelLabel(device.level)} and every folder inside`
+      : `${agentName(device.level)} and the agents above it`;
+  return (
+    <p className="text-xs text-muted-foreground">
+      {who} can use these. Anyone else asks the agent above.
+    </p>
   );
 }
 

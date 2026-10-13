@@ -1,61 +1,44 @@
 /**
- * "Preview as": the compiled instruction file one role on one harness
- * receives, across every scope.
+ * What one audience at a level actually reads on one harness: the files that
+ * reach it from above, then its own, each labelled with its level. Blocks a
+ * nearer level overrides (same heading) are listed instead of shown.
  */
-import { useAssistantIdentity } from "../assistant/assistantIdentity";
+import { useLevelAgentName, useLevelLabel } from "../levels/LevelOptionsProvider";
+import type { LevelKey } from "../levels/levels";
+import { Badge } from "../ui/badge";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
-  compileInstructions,
   instructionFileName,
-  INSTRUCTION_ROLES,
-  ROLE_INFO,
-  roleLabel,
-  type InstructionBlock,
-  type InstructionRole,
-  type InstructionScope,
+  sourceText,
+  type InstructionAudience,
+  type LevelInstructions,
 } from "./instructionsModel";
+import { useResolvedInstructions } from "./instructionsStore";
 import { HARNESSES, type HarnessId } from "./pluginsModel";
 import { HarnessGlyph } from "./pluginsPrimitives";
 
+function firstLine(text: string) {
+  return text.trim().split("\n", 1)[0] ?? "";
+}
+
 export function InstructionsPreview(props: {
-  role: InstructionRole;
-  onRoleChange: (role: InstructionRole) => void;
+  level: LevelKey;
+  audience: InstructionAudience;
   harness: HarnessId;
   onHarnessChange: (harness: HarnessId) => void;
-  blocksIn: (role: InstructionRole, scope: InstructionScope) => readonly InstructionBlock[];
+  /** Unsaved edits to show in place of the level's saved file. */
+  draft?: LevelInstructions | undefined;
 }) {
-  const compiled = compileInstructions(
-    (scope) => props.blocksIn(props.role, scope),
-    props.role,
-    props.harness,
-  );
-  const harnessLabel = HARNESSES.find((entry) => entry.id === props.harness)?.label ?? "";
-  const { name } = useAssistantIdentity();
-  const label = roleLabel(props.role, name);
+  const sources = useResolvedInstructions(props.level, props.audience, props.harness, props.draft);
+  const levelLabel = useLevelLabel();
+  const agentName = useLevelAgentName();
+  const harnessName = HARNESSES.find((entry) => entry.id === props.harness)?.label ?? "";
+  const reader = props.audience === "agent" ? agentName(props.level) : "a thread here";
 
   return (
-    <section className="flex min-w-0 flex-col gap-2 lg:sticky lg:top-4 lg:self-start">
+    <section className="flex min-w-0 flex-col gap-2">
       <div className="flex min-h-7 flex-wrap items-center gap-1 px-1">
-        <h3 className="me-1 text-sm text-foreground/70">Preview as</h3>
-        <Select
-          value={props.role}
-          onValueChange={(value) => {
-            const next = INSTRUCTION_ROLES.find((role) => role === value);
-            if (next) props.onRoleChange(next);
-          }}
-        >
-          <SelectTrigger size="xs" variant="ghost" aria-label="Preview as role">
-            <SelectValue>{label}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="start" alignItemWithTrigger={false}>
-            {INSTRUCTION_ROLES.map((role) => (
-              <SelectItem key={role} value={role}>
-                {roleLabel(role, name)}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-        <span className="text-xs text-muted-foreground">on</span>
+        <h3 className="me-1 text-sm text-foreground/70">What {reader} reads on</h3>
         <Select
           value={props.harness}
           onValueChange={(value) => {
@@ -63,11 +46,11 @@ export function InstructionsPreview(props: {
             if (next) props.onHarnessChange(next.id);
           }}
         >
-          <SelectTrigger size="xs" variant="ghost" aria-label="Preview as harness">
+          <SelectTrigger size="xs" variant="ghost" aria-label="Preview on harness">
             <SelectValue>
               <span className="flex items-center gap-1.5">
                 <HarnessGlyph harness={props.harness} />
-                {harnessLabel}
+                {harnessName}
               </span>
             </SelectValue>
           </SelectTrigger>
@@ -86,14 +69,41 @@ export function InstructionsPreview(props: {
           {instructionFileName(props.harness)}
         </span>
       </div>
-      <pre className="max-h-160 min-h-40 overflow-auto rounded-xl border border-border/60 bg-muted/40 p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground">
-        {compiled || `${label} on ${harnessLabel} gets no instructions.`}
-      </pre>
-      <p className="px-1 text-xs text-muted-foreground">
-        {ROLE_INFO[props.role].supervisor
-          ? "Supervisors only read your personal files."
-          : "In merchant-portal, under the Northwind group."}
-      </p>
+      {sources.length === 0 ? (
+        <p className="rounded-xl border border-border/60 bg-muted/40 p-4 text-sm text-muted-foreground">
+          Nothing reaches {reader} on {harnessName} yet.
+        </p>
+      ) : (
+        <ol className="flex flex-col gap-3">
+          {sources.map((source) => {
+            const text = sourceText(source);
+            const overridden = source.blocks.filter((entry) => entry.overriddenBy !== null);
+            return (
+              <li key={source.level} className="flex min-w-0 flex-col gap-1.5">
+                <div className="flex min-w-0 items-center gap-2 px-1">
+                  <span className="truncate text-xs font-medium text-foreground">
+                    {levelLabel(source.level)}
+                  </span>
+                  <Badge variant={source.inherited ? "outline" : "secondary"} size="sm">
+                    {source.inherited ? "Inherited" : "This level"}
+                  </Badge>
+                </div>
+                {text ? (
+                  <pre className="overflow-auto rounded-xl border border-border/60 bg-muted/40 p-3 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground">
+                    {text}
+                  </pre>
+                ) : null}
+                {overridden.map((entry) => (
+                  <p key={entry.block.id} className="px-1 text-xs text-muted-foreground">
+                    <span className="font-mono">{firstLine(entry.block.text)}</span> overridden by{" "}
+                    {levelLabel(entry.overriddenBy ?? source.level)}
+                  </p>
+                ))}
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </section>
   );
 }

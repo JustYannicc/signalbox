@@ -1,7 +1,11 @@
 /**
  * Shapes for the Devices prototype. Two device types: servers run chats,
  * clients are gateways a server can reach into. Nothing is wired yet.
+ * A client sits at a Home level: it gets pings about things there and inside
+ * (`levels/delivery.ts`), and its gateways are things at that level, so the
+ * usual access rules apply (`deviceGateways`).
  */
+import type { LevelKey, Reach } from "../levels/levels";
 import { toastManager } from "../ui/toast";
 
 export type ServerRuntime = "hetzner" | "cloudflare-do" | "home" | "celld";
@@ -74,7 +78,35 @@ export interface ClientDevice {
   readonly activeNow: boolean;
   readonly lastSeen: string;
   readonly notify: DeviceNotifyLevel;
+  /** Home level: your laptop and phone in Personal, a work computer in Work. */
+  readonly level: LevelKey;
+  /** Whether folders inside its level may use its gateways too. Absent means `here`. */
+  readonly reach?: Reach;
   readonly capabilities: readonly GatewayCapability[];
+}
+
+/** A device's enabled gateway, as a thing at the device's level (see `levels/levelAccess.ts`). */
+export interface DeviceGateway {
+  readonly id: string;
+  readonly name: string;
+  readonly deviceId: string;
+  readonly levels: readonly LevelKey[];
+  readonly reach: Reach;
+}
+
+/** Every enabled, available gateway on the devices, placed at each device's level. */
+export function deviceGateways(devices: readonly ClientDevice[]): readonly DeviceGateway[] {
+  return devices.flatMap((device) =>
+    device.capabilities
+      .filter((cap) => cap.enabled && cap.unavailable === undefined)
+      .map((cap) => ({
+        id: `${device.id}:${cap.id}`,
+        name: `${device.name} · ${cap.label}`,
+        deviceId: device.id,
+        levels: [device.level],
+        reach: device.reach ?? "here",
+      })),
+  );
 }
 
 export const CAPABILITY_GROUP_LABEL: Record<CapabilityGroup, string> = {

@@ -6,9 +6,9 @@
  * auto-archive after a week idle; Tasks never do.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../../lib/storage";
+import { prototypeStorage } from "../../../lib/prototypeStorage";
 import { formatRelativeTimeLabel } from "../../../timestampFormat";
 
 export type ThreadKind = "chat" | "task";
@@ -89,9 +89,7 @@ export const useThreadKindStore = create<ThreadKindState>()(
     {
       name: "t3code:sidebar:thread-kind:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({ overrides: state.overrides }),
     },
   ),

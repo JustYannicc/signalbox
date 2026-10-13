@@ -6,9 +6,9 @@
  */
 import { useMemo } from "react";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import type { Room } from "../rooms/roomModel";
 import { defaultScopeFor } from "./containerScope";
 import type { TeamThread, ThreadVisibility } from "./multiplayerModel";
@@ -73,9 +73,7 @@ export const useItemGrantsStore = create<GrantsState>()(
     {
       name: "t3code:multiplayer:grants:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({
         grants: state.grants,
         roles: state.roles,

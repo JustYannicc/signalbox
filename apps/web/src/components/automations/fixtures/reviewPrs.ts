@@ -124,8 +124,6 @@ export const REVIEW_PRS: Automation = {
   id: "review-prs",
   name: "Review opened pull requests",
   description: "Labels bot PRs and gives human PRs a first-pass review.",
-  agentName: "PR review agent",
-  section: "personal",
   cadence: "On pull request opened",
   enabled: true,
   nextRunAt: null,

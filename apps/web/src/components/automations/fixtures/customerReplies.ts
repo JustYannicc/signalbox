@@ -149,8 +149,6 @@ export const CUSTOMER_REPLIES: Automation = {
   id: "customer-replies",
   name: "Prepare replies to customer emails",
   description: "Drafts a reply for every customer email and waits for your approval to send.",
-  agentName: "Customer reply agent",
-  section: "work",
   cadence: "On new support email",
   enabled: true,
   nextRunAt: null,

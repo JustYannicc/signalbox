@@ -11,7 +11,10 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
-import { GroupBadges, groupById, orgGroup } from "./groupPrimitives";
+import { useLevelLabel } from "../levels/LevelOptionsProvider";
+import { useThingLevels, useThingReach } from "../levels/leveledThings";
+import { LevelBadges } from "./levelPrimitives";
+import { ORG_POLICY } from "./levelPolicyFixtures";
 import type { HarnessId, Skill } from "./pluginsModel";
 import { HarnessToggles } from "./pluginsPrimitives";
 import { SkillPublishDialog, StopSharingDialog } from "./SkillSharingDialogs";
@@ -97,8 +100,10 @@ export function SkillDetail(props: { skill: Skill }) {
   const [publishOpen, setPublishOpen] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
   const [harnesses, setHarnesses] = useState<readonly HarnessId[]>(skill.harnesses);
-  const org = orgGroup();
-  const group = publication ? groupById(publication.groupId) : undefined;
+  const org = ORG_POLICY?.org;
+  const levelLabel = useLevelLabel();
+  const levels = useThingLevels(`skill:${skill.id}`, skill.levels);
+  const reach = useThingReach(`skill:${skill.id}`);
   const canPublish = !publication && skill.source === "personal" && org !== undefined;
 
   return (
@@ -117,7 +122,7 @@ export function SkillDetail(props: { skill: Skill }) {
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-mono text-lg font-semibold text-foreground">{skill.name}</h2>
-              <GroupBadges groups={skill.groups} />
+              <LevelBadges levels={levels} reach={reach} />
               {publication ? (
                 <Badge variant="outline" size="sm">
                   v{latestVersion(publication)}
@@ -128,7 +133,7 @@ export function SkillDetail(props: { skill: Skill }) {
             {publication ? (
               <p className="text-xs text-muted-foreground">
                 {owned ? "You publish this" : `Published by ${publication.owner}`} to everyone in{" "}
-                {group?.name ?? publication.groupId}.
+                {levelLabel(publication.level)}.
               </p>
             ) : null}
           </div>

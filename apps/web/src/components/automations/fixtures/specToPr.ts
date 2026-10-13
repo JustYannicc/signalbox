@@ -198,8 +198,6 @@ export const SPEC_TO_PR: Automation = {
   name: "Spec to reviewed, QA'd PR",
   description:
     "An approved spec gets implemented, reviewed until clean, tested in a live computer, and opened as a PR.",
-  agentName: "Spec delivery agent",
-  section: "personal",
   cadence: "On spec approved",
   enabled: true,
   nextRunAt: null,

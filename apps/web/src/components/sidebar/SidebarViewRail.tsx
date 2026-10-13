@@ -1,6 +1,6 @@
 /**
  * The always-visible icon column of the thread sidebar. The top group switches
- * the panel beside it (Pull Requests lives in Spaces); the bottom group holds
+ * the panel beside it (places and pull requests live in Home folders); the bottom group holds
  * Usage, feedback, Focus, and Settings. Computers, devices, and team live
  * under Settings. The bell carries a dot while any thread waits on
  * the user, so Pipeline can announce itself without being the open view.
@@ -11,9 +11,7 @@ import {
   BlocksIcon,
   ChartNoAxesColumnIcon,
   HouseIcon,
-  LibraryIcon,
   SettingsIcon,
-  WorkflowIcon,
   type LucideIcon,
 } from "lucide-react";
 import { memo, type ReactNode } from "react";
@@ -27,8 +25,6 @@ import { useNeedsYouCount } from "./sections/useNeedsYouCount";
 
 const VIEW_ITEMS: ReadonlyArray<{ view: SidebarView; label: string; icon: LucideIcon }> = [
   { view: "home", label: "Home", icon: HouseIcon },
-  { view: "spaces", label: "Spaces", icon: LibraryIcon },
-  { view: "automations", label: "Automations", icon: WorkflowIcon },
   { view: "pipeline", label: "Pipeline", icon: BellIcon },
   { view: "plugins", label: "Plugins", icon: BlocksIcon },
 ];

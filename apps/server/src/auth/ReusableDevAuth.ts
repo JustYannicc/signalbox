@@ -10,7 +10,7 @@ export const REUSABLE_DEV_SESSION_PREFIX = "dev-auth-";
 export const REUSABLE_DEV_SESSION_EXPIRES_AT = DateTime.makeUnsafe("9999-12-31T23:59:59.999Z");
 
 export function resolveReusableDevAuth(
-  config: Pick<ServerConfig["Service"], "mode" | "devUrl" | "devAuthToken">,
+  config: Pick<ServerConfig["Service"], "mode" | "devUrl" | "devAuthToken" | "devAutoAuth">,
 ) {
   if (config.mode !== "web" || config.devUrl === undefined || config.devAuthToken === undefined) {
     return undefined;
@@ -25,6 +25,8 @@ export function resolveReusableDevAuth(
     credential: Redacted.value(token),
     sessionId: AuthSessionId.make(`${REUSABLE_DEV_SESSION_PREFIX}${tokenId}`),
     cookieName: `t3_dev_session_${tokenId}`,
+    // signalbox: hand this credential to any cookie-less browser (see the session route).
+    autoAuth: config.devAutoAuth === true,
     matches: (credential: string) =>
       NodeCrypto.timingSafeEqual(hash, NodeCrypto.createHash("sha256").update(credential).digest()),
   };

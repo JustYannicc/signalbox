@@ -1,6 +1,6 @@
 /**
  * What the Plugins sidebar lists: section rows with counts, and the search
- * index. Every search result deep-links to its row, group, skill, or preset.
+ * index. Every search result deep-links to its row, level, skill, or preset.
  */
 import {
   BookMarkedIcon,
@@ -12,15 +12,15 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { HOME_SECTIONS } from "../sidebar/sections/sectionModel";
 import { DEFAULTS_PRESETS } from "./defaultsFixtures";
-import { GROUPS } from "./groupsFixtures";
-import { INSTRUCTION_ROLES, ROLE_INFO } from "./instructionsModel";
+import { AUDIENCE_LABEL, INSTRUCTION_AUDIENCES } from "./instructionsModel";
 import { MARKETPLACE } from "./marketplaceFixtures";
 import { HARNESS_PLUGINS, INTEGRATIONS, SKILLS } from "./pluginsFixtures";
 import { connectionDisplayName, countSections, type PluginsSection } from "./pluginsModel";
 import type { PluginsSearch } from "./pluginsSearch";
 
-/** Groups are listed by name under the nav instead of having their own row. */
+/** Levels are listed by name under the nav instead of having their own row. */
 export const PLUGINS_NAV: readonly { section: PluginsSection; icon: LucideIcon }[] = [
   { section: "overview", icon: LayoutGridIcon },
   { section: "marketplace", icon: StoreIcon },
@@ -34,7 +34,7 @@ export const PLUGINS_SECTION_COUNTS = countSections({
   integrations: INTEGRATIONS,
   plugins: HARNESS_PLUGINS,
   skills: SKILLS,
-  groupCount: GROUPS.length,
+  levelCount: HOME_SECTIONS.length + 1,
   listingCount: MARKETPLACE.length,
 });
 
@@ -51,10 +51,10 @@ export interface PluginsSearchEntry {
 }
 
 export const PLUGINS_SEARCH_ENTRIES: readonly PluginsSearchEntry[] = [
-  ...GROUPS.map((group) => ({
-    key: `group:${group.id}`,
-    label: `${group.name} group`,
-    target: { section: "groups" as const, group: group.id },
+  ...HOME_SECTIONS.map((section) => ({
+    key: `level:section:${section.id}`,
+    label: `${section.name} level`,
+    target: { section: "levels" as const, group: `section:${section.id}` },
   })),
   // Accounts are searchable by the name models see, e.g. "Gmail · Work account".
   ...INTEGRATIONS.flatMap((item) =>
@@ -85,16 +85,16 @@ export const PLUGINS_SEARCH_ENTRIES: readonly PluginsSearchEntry[] = [
     key: `newcomers:${preset.id}`,
     label: `${preset.name}: what newcomers get`,
     target: {
-      section: "groups" as const,
-      group: preset.groupId,
+      section: "levels" as const,
+      group: preset.level,
       tab: "newcomers" as const,
       item: preset.id,
     },
   })),
-  ...INSTRUCTION_ROLES.filter((role) => role !== "assistant").map((role) => ({
-    key: `instructions:${role}`,
-    label: `${ROLE_INFO[role].label} instructions`,
-    target: { section: "instructions" as const, role },
+  ...INSTRUCTION_AUDIENCES.map((audience) => ({
+    key: `instructions:${audience}`,
+    label: `AGENTS.md: ${AUDIENCE_LABEL[audience]}`,
+    target: { section: "instructions" as const, audience },
   })),
   ...MARKETPLACE.filter((listing) => listing.kind === "workflow").map((listing) => ({
     key: `workflow:${listing.id}`,

@@ -1,37 +1,29 @@
 /**
- * Who `@` can reach from a composer. Chats and tasks: teammates, your
- * assistant, and your own agents for the container (section, project).
- * Teammates' assistants are reached through rooms, not here. Rooms: only the
- * other owner. The real chat composer merges these into its file menu.
+ * Who `@` can reach from a composer. Chats and tasks: teammates, then the
+ * agents on the container's level chain, nearest first (its own level's
+ * agent, each one above, and your assistant at the top): who you'd ask from
+ * there. Teammates' assistants are reached through rooms, not here. Rooms:
+ * only the other owner. The real chat composer merges these into its file menu.
  */
 import { useMemo } from "react";
 
-import { resolveAgent } from "../assistant/agentFixtures";
 import { AssistantAvatar, generateAvatar } from "../assistant/avatar";
 import type { ComposerMentionItem, ComposerMentionSource } from "../chat/useComposerMentionMenu";
-import { containerAgentId, containerSectionId } from "./containerScope";
+import { chainAgents } from "../levels/chainAgents";
+import { useLevelOptionsContext } from "../levels/LevelOptionsProvider";
+import { TOP_LEVEL } from "../levels/levels";
+import { containerLevel } from "./containerScope";
 import { MentionPill } from "./MentionPill";
 import { personHandle, resolveMention, splitHandle } from "./mentions";
 import { TEAM_PEOPLE } from "./multiplayerFixtures";
 import { useAssistantDirectory } from "./personAssistant";
 import { PersonAvatar } from "./PersonAvatar";
 import { currentPerson } from "./teamThreads";
-import { sectionAgentId } from "../sidebar/sections/sectionModel";
 
 const MAX_MATCHES = 8;
 
-function agentsFor(containerId: string | null): readonly { id: string; name: string }[] {
-  if (!containerId) return [];
-  const ids = new Set<string>();
-  const own = containerAgentId(containerId);
-  if (own) ids.add(own);
-  const sectionId = containerSectionId(containerId);
-  if (sectionId) ids.add(sectionAgentId(sectionId));
-  return [...ids].map((id) => ({ id, name: `${resolveAgent(id).name} agent` }));
-}
-
 export function useMentionDirectory(input: {
-  /** Container whose agents are yours to mention; `null` for none. */
+  /** Container whose level chain's agents to offer; `null` for just your assistant. */
   containerId: string | null;
   /** Only these people (rooms: the owners). Default: every teammate. */
   peopleIds?: readonly string[];
@@ -43,6 +35,7 @@ export function useMentionDirectory(input: {
   const resolveAssistant = useAssistantDirectory();
   const own = resolveAssistant(currentPerson);
   const { containerId, includeAgents, hasAccess } = input;
+  const levelOptions = useLevelOptionsContext();
   const peopleKey = input.peopleIds?.join(",") ?? null;
 
   return useMemo(() => {
@@ -58,25 +51,27 @@ export function useMentionDirectory(input: {
       description:
         hasAccess && !hasAccess(person.id) ? `${person.title} · no access yet` : person.title,
     }));
+    const level = containerId ? containerLevel(containerId) : TOP_LEVEL;
     const agents: ComposerMentionItem[] = includeAgents
-      ? [
-          {
-            id: "assistant:own",
-            type: "person",
-            handle: own.name,
-            leading: <AssistantAvatar config={own.config} size={24} />,
-            label: own.name,
-            description: "Your assistant",
-          },
-          ...agentsFor(containerId).map((agent) => ({
-            id: `agent:${agent.id}`,
-            type: "person" as const,
-            handle: agent.name,
-            leading: <AssistantAvatar config={generateAvatar(agent.id)} size={24} />,
-            label: agent.name,
-            description: "Your agent",
-          })),
-        ]
+      ? chainAgents(level, levelOptions).map((option) =>
+          option.agentId === null || option.agentName === null
+            ? {
+                id: "assistant:own",
+                type: "person",
+                handle: own.name,
+                leading: <AssistantAvatar config={own.config} size={24} />,
+                label: own.name,
+                description: "Your assistant · Top level",
+              }
+            : {
+                id: `agent:${option.agentId}`,
+                type: "person",
+                handle: option.agentName,
+                leading: <AssistantAvatar config={generateAvatar(option.agentId)} size={24} />,
+                label: option.agentName,
+                description: option.label,
+              },
+        )
       : [];
     const everyone = [...people, ...agents];
     const source: ComposerMentionSource = {
@@ -107,5 +102,5 @@ export function useMentionDirectory(input: {
       emptyStateText: includeAgents ? "No people or agents match." : "Nobody matches.",
     };
     return { source, ownAssistantName: own.name };
-  }, [containerId, hasAccess, includeAgents, own.config, own.name, peopleKey]);
+  }, [containerId, hasAccess, includeAgents, levelOptions, own.config, own.name, peopleKey]);
 }

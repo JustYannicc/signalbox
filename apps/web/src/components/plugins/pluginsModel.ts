@@ -6,12 +6,13 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import type { Icon } from "../Icons";
+import type { LevelKey } from "../levels/levels";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 
 export const PluginsSection = Schema.Literals([
   "overview",
   "marketplace",
-  "groups",
+  "levels",
   "connections",
   "harness-plugins",
   "skills",
@@ -23,7 +24,7 @@ export const decodePluginsSection = Schema.decodeUnknownOption(PluginsSection);
 export const PLUGINS_SECTION_LABEL: Record<PluginsSection, string> = {
   overview: "Overview",
   marketplace: "Marketplace",
-  groups: "Groups",
+  levels: "Levels",
   connections: "Connections",
   "harness-plugins": "Codex & Claude plugins",
   skills: "Skills",
@@ -69,9 +70,6 @@ export interface IntegrationTool {
   readonly description: string;
 }
 
-/** An access group id, e.g. "northwind" or "personal". See groupsModel.ts. */
-export type GroupId = string;
-
 /** Admins own org-provided items; employees can still bring their own accounts. */
 export type AddedBy = "admins" | "you";
 
@@ -83,7 +81,8 @@ export interface ConnectionAccount {
   readonly identity: string;
   readonly auth: AuthState;
   readonly authDetail?: string;
-  readonly groups: readonly GroupId[];
+  /** Home levels whose agents may use it (see components/levels). */
+  readonly levels: readonly LevelKey[];
   readonly addedBy: AddedBy;
 }
 
@@ -100,8 +99,8 @@ export interface Integration {
   /** Summary across accounts, or the server's own state when there are none. */
   readonly authDetail?: string;
   readonly accounts: readonly ConnectionAccount[];
-  /** Groups for account-less (direct) servers; account-backed ones use their accounts'. */
-  readonly groups?: readonly GroupId[];
+  /** Levels for account-less (direct) servers; account-backed ones use their accounts'. */
+  readonly levels?: readonly LevelKey[];
   readonly toolCount: number;
   readonly tools: readonly IntegrationTool[];
   readonly scopes: readonly string[];
@@ -117,10 +116,10 @@ export interface HarnessPlugin {
   readonly source: string;
   readonly enabled: boolean;
   readonly updateAvailable?: string;
-  readonly groups: readonly GroupId[];
+  readonly levels: readonly LevelKey[];
 }
 
-/** "team" skills are published inside a group without anyone touching git. */
+/** "team" skills are published to a team level without anyone touching git. */
 export type SkillSource = "personal" | "project" | "plugin" | "skills.sh" | "team";
 
 export interface Skill {
@@ -131,7 +130,7 @@ export interface Skill {
   /** The plugin or project that ships it, when not personal. */
   readonly origin?: string;
   readonly harnesses: readonly HarnessId[];
-  readonly groups: readonly GroupId[];
+  readonly levels: readonly LevelKey[];
 }
 
 export interface ExecutorStatus {
@@ -161,10 +160,10 @@ export function connectionDisplayName(integration: Integration, label: string) {
   return `${integration.name} · ${label}`;
 }
 
-/** Every group an integration reaches, through any of its accounts. */
-export function integrationGroups(integration: Integration): readonly GroupId[] {
-  if (integration.accounts.length === 0) return integration.groups ?? [];
-  return [...new Set(integration.accounts.flatMap((account) => account.groups))];
+/** Every level an integration sits at, through any of its accounts. */
+export function integrationLevels(integration: Integration): readonly LevelKey[] {
+  if (integration.accounts.length === 0) return integration.levels ?? [];
+  return [...new Set(integration.accounts.flatMap((account) => account.levels))];
 }
 
 /** The Connections page cuts by kind; MCP includes direct servers, APIs are Executor-only. */
@@ -188,13 +187,13 @@ export function countSections(input: {
   readonly integrations: readonly Integration[];
   readonly plugins: readonly HarnessPlugin[];
   readonly skills: readonly Skill[];
-  readonly groupCount: number;
+  readonly levelCount: number;
   readonly listingCount: number;
 }): Record<PluginsSection, number | null> {
   return {
     overview: null,
     marketplace: input.listingCount,
-    groups: input.groupCount,
+    levels: input.levelCount,
     connections: input.integrations.length,
     "harness-plugins": input.plugins.length,
     skills: input.skills.length,

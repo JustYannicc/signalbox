@@ -6,10 +6,10 @@
  * view. Pipeline is the existing attention-ordered sidebar, rendered unchanged
  * apart from its titlebar, which this layout owns.
  *
- * Spaces, Plugins and Automations own pages; picking one opens its page, and
- * landing on a page opens its panel. Leaving for Home or Pipeline from one of
- * those pages returns to the last thread. Pull requests count as a Spaces
- * page, so picking Spaces there stays put. Settings keeps the rail and shows
+ * Plugins owns a page; picking it opens its page, and landing on a page opens
+ * its panel. Place pages, pull requests and automations open from Home
+ * folders, so they keep Home's panel; picking Home or Pipeline from one of
+ * those pages returns to the last thread. Settings keeps the rail and shows
  * its own navigation in the panel.
  */
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -19,14 +19,12 @@ import { isElectron } from "../../env";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import ThreadSidebar from "../Sidebar";
 import { SidebarStageBackdrop, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
-import { AutomationsSidebar } from "./AutomationsSidebar";
 import { HomeSidebar } from "./HomeSidebar";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { PluginsSidebar } from "./PluginsSidebar";
 import { SidebarChromeHeader, SidebarRailContext } from "./SidebarChrome";
 import { SidebarQuickActions } from "./SidebarQuickActions";
 import { SidebarViewRail } from "./SidebarViewRail";
-import { SpacesSidebar } from "./SpacesSidebar";
 import { sidebarViewForPathname, useSidebarView, type SidebarView } from "./sidebarView";
 
 function PipelineSidebar() {
@@ -42,20 +40,10 @@ function PipelineSidebar() {
   );
 }
 
-const VIEW_PAGES = {
-  spaces: "/spaces",
-  plugins: "/plugins",
-  automations: "/automations",
-} as const satisfies Partial<Record<SidebarView, string>>;
-
 function SidebarViewPanel(props: { view: SidebarView }) {
   switch (props.view) {
     case "home":
       return <HomeSidebar />;
-    case "spaces":
-      return <SpacesSidebar />;
-    case "automations":
-      return <AutomationsSidebar />;
     case "plugins":
       return <PluginsSidebar />;
     case "pipeline":
@@ -83,8 +71,8 @@ export function SidebarViews(props: {
   const changeView = useCallback(
     (next: SidebarView) => {
       setStoredView(next);
-      if (next === "spaces" || next === "plugins" || next === "automations") {
-        if (routeView !== next) void navigate({ to: VIEW_PAGES[next] });
+      if (next === "plugins") {
+        if (routeView !== next) void navigate({ to: "/plugins" });
       } else if (routeView !== null || isSidebarUtilityPage(pathname)) {
         void navigateToMainApp();
       }

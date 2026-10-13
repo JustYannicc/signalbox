@@ -1,7 +1,7 @@
 /**
  * The two sharing confirmations for a skill: publish to everyone in the
  * organization, and stop sharing (subscribers keep a frozen copy). Both the
- * skill page and ticking the org group in the Skills list open these.
+ * skill page and ticking the organization's level in the Skills list open these.
  */
 import { useState } from "react";
 
@@ -17,7 +17,7 @@ import {
 } from "../ui/dialog";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
-import { orgGroup } from "./groupPrimitives";
+import { ORG_POLICY } from "./levelPolicyFixtures";
 import { publicationFor } from "./skillSharingFixtures";
 import { latestVersion } from "./skillSharingModel";
 
@@ -27,7 +27,7 @@ export function SkillPublishDialog(props: {
   onPublished?: () => void;
 }) {
   const [autoUpdate, setAutoUpdate] = useState(true);
-  const org = orgGroup();
+  const org = ORG_POLICY?.org;
   const publish = () => {
     toastManager.add({
       title: `Published ${props.skillName} v1 to everyone in ${org?.name}`,

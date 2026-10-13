@@ -19,7 +19,8 @@ export function useOpenNode() {
   return useCallback(
     (node: TraceNodeFixture) => {
       if (node.kind === "assistant") return void navigate({ to: "/assistant" });
-      if (node.kind === "automations") return void navigate({ to: "/automations" });
+      // Automations live in Home folders, so the bucket opens Home.
+      if (node.kind === "automations") return void navigate({ to: "/" });
       if (node.kind === "trigger") {
         const automationId = node.id.replace(/^trigger:/, "");
         return void navigate({ to: "/automations/$automationId", params: { automationId } });

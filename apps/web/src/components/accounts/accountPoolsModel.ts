@@ -1,11 +1,12 @@
 /**
- * Shapes for the Accounts prototype: pooled subscription accounts, which
- * group may use each one, and the server it exits through. Windows and banked
+ * Shapes for the Accounts prototype: pooled subscription accounts, the Home
+ * levels each one sits at, and the server it exits through. Windows and banked
  * resets use the same contract types the real Limits view reads, so this page
  * can switch to live data without new components.
  */
 import type { ServerProviderResetCredits, ServerProviderUsageWindow } from "@t3tools/contracts";
 
+import type { LevelKey } from "../levels/levels";
 import { toastManager } from "../ui/toast";
 
 /** Harnesses whose subscriptions get pooled. Keys match the usage page's provider kinds. */
@@ -19,15 +20,16 @@ export const POOL_LABEL: Record<PoolHarness, string> = {
   grok: "Grok",
 };
 
-/** The account-side view of a Plugins group (see plugins/groupsModel.ts). */
+/**
+ * A group of people a pool can be shared with: everyone at a Home level
+ * (`PoolGrant.groupId`). People axis only; which work routes through a pool
+ * comes from its accounts' levels.
+ */
 export type AccountGroup = {
   readonly id: string;
+  /** The Home level whose people the group is, e.g. "section:work-northwind". */
+  readonly level: string;
   readonly label: string;
-  /** Short routing rule, read after "Used for". */
-  readonly usedFor: string;
-  /** Only the group's admins may re-login, pause, or remove its accounts. */
-  readonly adminManaged: boolean;
-  readonly adminLabel?: string;
 };
 
 /**
@@ -44,8 +46,11 @@ export type PoolAccount = {
   readonly harness: PoolHarness;
   readonly name: string;
   readonly plan: string;
-  /** Plugins groups that may route to this account; one account can serve several. */
-  readonly groupIds: readonly string[];
+  /**
+   * Home levels it sits at. Pools reach every folder inside, and the nearest
+   * one wins (see poolRouting.ts).
+   */
+  readonly levels: readonly LevelKey[];
   readonly state: "active" | "paused" | "needsLogin";
   readonly windows: readonly ServerProviderUsageWindow[];
   readonly resetCredits: ServerProviderResetCredits;
@@ -66,8 +71,8 @@ export type PoolGrant =
 
 /**
  * A named set of accounts for one harness. Pools are owned by a person (or an
- * organization's admins) and shared like a Drive file; which work may use an
- * account is still decided by its groups.
+ * organization's admins) and shared like a Drive file; which work routes
+ * through an account is decided by its levels (see poolRouting.ts).
  */
 export type AccountPool = {
   readonly id: string;

@@ -3,6 +3,7 @@
  * read from Executor, a provider, or the server. Replace these fixtures with
  * real queries once the backend exists, and delete this file.
  */
+import type { LevelKey } from "../levels/levels";
 import type {
   ConnectionAccount,
   ExecutorStatus,
@@ -22,22 +23,26 @@ const ALL: readonly HarnessId[] = [
   "antigravity",
 ];
 
-const NORTHWIND = ["northwind"];
-const PERSONAL = ["personal"];
-const BOTH = ["northwind", "personal"];
+// Level keys are Home container keys (see components/levels/levels.ts).
+const NORTHWIND: readonly LevelKey[] = ["section:work-northwind"];
+const PERSONAL: readonly LevelKey[] = ["section:personal"];
+const BOTH: readonly LevelKey[] = ["section:work-northwind", "section:personal"];
+/** The assistant's own: only the top-level agent uses these directly. */
+const TOP: readonly LevelKey[] = ["root"];
+const TERMINAL_APP: readonly LevelKey[] = ["team-project:terminal-app"];
 
 const account = (
   id: string,
   label: string,
   identity: string,
-  groups: readonly string[],
+  levels: readonly LevelKey[],
   extra: Partial<ConnectionAccount> = {},
 ): ConnectionAccount => ({
   id,
   label,
   identity,
   auth: "connected",
-  groups,
+  levels,
   addedBy: "you",
   ...extra,
 });
@@ -331,7 +336,7 @@ export const INTEGRATIONS: readonly Integration[] = [
     kind: "openapi",
     via: "executor",
     auth: "connected",
-    accounts: [account("todoist-personal", "Personal tasks", "yannic@personal.example", PERSONAL)],
+    accounts: [account("todoist-personal", "Personal tasks", "yannic@personal.example", TOP)],
     toolCount: 12,
     tools: tools(["getTasks", "List active tasks"], ["createTask", "Add a task"]),
     scopes: ["data:read_write"],
@@ -391,7 +396,7 @@ export const INTEGRATIONS: readonly Integration[] = [
     transport: "stdio",
     auth: "none",
     accounts: [],
-    groups: BOTH,
+    levels: BOTH,
     toolCount: 21,
     tools: tools(
       ["browser_navigate", "Open a URL in the controlled browser"],
@@ -409,7 +414,7 @@ export const INTEGRATIONS: readonly Integration[] = [
     transport: "stdio",
     auth: "none",
     accounts: [],
-    groups: BOTH,
+    levels: BOTH,
     toolCount: 26,
     tools: tools(["performance_start_trace", "Record a performance trace"]),
     scopes: [],
@@ -425,7 +430,7 @@ export const INTEGRATIONS: readonly Integration[] = [
     auth: "error",
     authDetail: "Server unreachable at mcp.context7.com",
     accounts: [],
-    groups: PERSONAL,
+    levels: PERSONAL,
     toolCount: 2,
     tools: tools(["resolve-library-id", "Find a library's docs id"]),
     scopes: [],
@@ -442,8 +447,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     description: "Drives a headless browser for web tasks.",
     source: "openai-curated",
     enabled: true,
-
-    groups: BOTH,
+    levels: BOTH,
   },
   {
     id: "codex-figma",
@@ -454,8 +458,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     source: "openai-curated",
     enabled: true,
     updateAvailable: "1.3.0",
-
-    groups: NORTHWIND,
+    levels: NORTHWIND,
   },
   {
     id: "codex-plugin-creator",
@@ -465,8 +468,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     description: "Scaffolds new Codex plugins and marketplace entries.",
     source: "personal",
     enabled: false,
-
-    groups: PERSONAL,
+    levels: PERSONAL,
   },
   {
     id: "claude-code-review",
@@ -476,8 +478,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     description: "Adds /code-review with parallel standards and spec reviewers.",
     source: "claude-plugins-official",
     enabled: true,
-
-    groups: BOTH,
+    levels: BOTH,
   },
   {
     id: "claude-commit-commands",
@@ -487,8 +488,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     description: "Commit, push, and open PRs from slash commands.",
     source: "claude-plugins-official",
     enabled: true,
-
-    groups: BOTH,
+    levels: BOTH,
   },
   {
     id: "claude-frontend-design",
@@ -498,8 +498,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     description: "Design guidance and review for UI work.",
     source: "claude-plugins-official",
     enabled: false,
-
-    groups: PERSONAL,
+    levels: PERSONAL,
   },
 ];
 
@@ -510,8 +509,7 @@ export const SKILLS: readonly Skill[] = [
     description: "Diagnosis loop for hard bugs and performance regressions.",
     source: "personal",
     harnesses: ["codex", "claudeAgent", "opencode"],
-
-    groups: BOTH,
+    levels: BOTH,
   },
   {
     id: "effect-v4",
@@ -519,8 +517,7 @@ export const SKILLS: readonly Skill[] = [
     description: "Effect v4 patterns and v3 migration guidance.",
     source: "personal",
     harnesses: ["codex", "claudeAgent"],
-
-    groups: BOTH,
+    levels: BOTH,
   },
   {
     id: "impeccable",
@@ -528,8 +525,7 @@ export const SKILLS: readonly Skill[] = [
     description: "Design, critique, and polish frontend interfaces.",
     source: "personal",
     harnesses: ["codex", "claudeAgent", "cursor"],
-
-    groups: BOTH,
+    levels: BOTH,
   },
   {
     id: "test-t3-app",
@@ -538,8 +534,7 @@ export const SKILLS: readonly Skill[] = [
     source: "project",
     origin: "t3code",
     harnesses: ["codex", "claudeAgent"],
-
-    groups: PERSONAL,
+    levels: PERSONAL,
   },
   {
     id: "test-t3-mobile",
@@ -548,8 +543,7 @@ export const SKILLS: readonly Skill[] = [
     source: "project",
     origin: "t3code",
     harnesses: ["codex", "claudeAgent"],
-
-    groups: PERSONAL,
+    levels: PERSONAL,
   },
   {
     id: "writing-for-agents",
@@ -557,8 +551,7 @@ export const SKILLS: readonly Skill[] = [
     description: "Write skills, AGENTS.md, and other agent instructions.",
     source: "personal",
     harnesses: ALL,
-
-    groups: BOTH,
+    levels: BOTH,
   },
   {
     id: "babysit-pr",
@@ -567,8 +560,7 @@ export const SKILLS: readonly Skill[] = [
     source: "plugin",
     origin: "commit-commands",
     harnesses: ["claudeAgent"],
-
-    groups: NORTHWIND,
+    levels: NORTHWIND,
   },
   {
     id: "plugin-creator",
@@ -577,8 +569,7 @@ export const SKILLS: readonly Skill[] = [
     source: "plugin",
     origin: "plugin-creator",
     harnesses: ["codex"],
-
-    groups: PERSONAL,
+    levels: PERSONAL,
   },
   {
     id: "tdd",
@@ -586,8 +577,7 @@ export const SKILLS: readonly Skill[] = [
     description: "Red-green-refactor, one behavior at a time.",
     source: "personal",
     harnesses: [],
-
-    groups: PERSONAL,
+    levels: PERSONAL,
   },
   {
     id: "dataviz",
@@ -596,8 +586,7 @@ export const SKILLS: readonly Skill[] = [
     source: "plugin",
     origin: "frontend-design",
     harnesses: ["claudeAgent", "opencode"],
-
-    groups: PERSONAL,
+    levels: PERSONAL,
   },
   {
     id: "find-skills",
@@ -606,7 +595,7 @@ export const SKILLS: readonly Skill[] = [
     source: "skills.sh",
     origin: "vercel-labs/skills",
     harnesses: ALL,
-    groups: BOTH,
+    levels: BOTH,
   },
   {
     id: "remotion-best-practices",
@@ -615,7 +604,7 @@ export const SKILLS: readonly Skill[] = [
     source: "skills.sh",
     origin: "remotion-dev/skills",
     harnesses: ["claudeAgent"],
-    groups: PERSONAL,
+    levels: PERSONAL,
   },
   {
     id: "northwind-terminal",
@@ -624,7 +613,7 @@ export const SKILLS: readonly Skill[] = [
     source: "skills.sh",
     origin: "northwind/agent-skills",
     harnesses: ["codex", "claudeAgent"],
-    groups: NORTHWIND,
+    levels: TERMINAL_APP,
   },
   {
     id: "northwind-expenses",
@@ -633,7 +622,7 @@ export const SKILLS: readonly Skill[] = [
     source: "team",
     origin: "Flynn",
     harnesses: ["codex", "claudeAgent"],
-    groups: NORTHWIND,
+    levels: NORTHWIND,
   },
   {
     id: "customer-email-triage",
@@ -642,6 +631,6 @@ export const SKILLS: readonly Skill[] = [
     source: "team",
     origin: "you",
     harnesses: ["codex", "claudeAgent", "opencode"],
-    groups: NORTHWIND,
+    levels: NORTHWIND,
   },
 ];

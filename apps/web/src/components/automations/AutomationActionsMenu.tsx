@@ -1,6 +1,6 @@
 /**
- * The automation header's overflow menu. Changes go through the workflow
- * agent. System automations can't be removed; they offer Reset to default
+ * The automation header's overflow menu. Changes go through the agent of
+ * the level the automation lives in. System automations can't be removed; they offer Reset to default
  * instead, with the reason shown under the disabled Remove.
  */
 import { CopyIcon, EllipsisIcon, MessageCircleIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
@@ -9,11 +9,11 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import type { Automation } from "./automationModel";
 import { notifyAutomationsComingSoon } from "./comingSoon";
-import { useOpenWorkflowAgent } from "./WorkflowAgent";
+import { useOpenAutomationAgent } from "./AutomationAgent";
 
 export function AutomationActionsMenu(props: { automation: Automation }) {
   const { automation } = props;
-  const openAgent = useOpenWorkflowAgent();
+  const openAgent = useOpenAutomationAgent();
   return (
     <Menu>
       <MenuTrigger
@@ -24,7 +24,7 @@ export function AutomationActionsMenu(props: { automation: Automation }) {
         }
       />
       <MenuPopup side="bottom" align="end">
-        <MenuItem onClick={() => openAgent(automation)}>
+        <MenuItem onClick={() => openAgent(`Change the “${automation.name}” automation: `)}>
           <MessageCircleIcon />
           Change with agent
         </MenuItem>

@@ -13,29 +13,31 @@ import { useState } from "react";
 
 import { serverAnchor } from "../devices/devicesModel";
 import { fleetServer } from "../devices/fleet";
+import { useLevelLabel } from "../levels/LevelOptionsProvider";
+import { LEVEL_POLICIES } from "../plugins/levelPolicyFixtures";
+import { modelAccountManager } from "../plugins/levelPolicyModel";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { LimitWindows, ResetCreditDialog, resetCreditsSummary } from "../usage/UsageLimits";
-import { notifyAccountsComingSoon, type AccountGroup, type PoolAccount } from "./accountPoolsModel";
+import { notifyAccountsComingSoon, type PoolAccount } from "./accountPoolsModel";
 import { POOL_DRIVER } from "./accountPoolsPrimitives";
 
 const serverName = (id: string) => fleetServer(id)?.name ?? id;
 
 /**
- * One pooled account: who it is, the groups that may use it, the weekly
- * window, and banked resets. Status badges only appear when something is off.
+ * One pooled account: who it is, the levels it sits at (it reaches every
+ * folder inside them), the weekly window, and banked resets. Status badges
+ * only appear when something is off.
  */
 export function AccountRow({
   account,
-  groups,
   now,
 }: {
   readonly account: PoolAccount;
-  /** Resolved from the Plugins groups, in the account's order. */
-  readonly groups: readonly AccountGroup[];
   readonly now: number;
 }) {
+  const label = useLevelLabel();
   const [confirming, setConfirming] = useState(false);
   const banked = account.resetCredits.availableCount;
   const via = account.pin.reroutedViaServerId;
@@ -45,14 +47,14 @@ export function AccountRow({
         <span className="truncate text-sm text-foreground">{account.name}</span>
         <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
           {account.plan}
-          {groups.map((group) => (
+          {account.levels.map((level) => (
             <Badge
-              key={group.id}
+              key={level}
               variant="outline"
               size="sm"
-              render={<Link to="/plugins" search={{ section: "groups", group: group.id }} />}
+              render={<Link to="/plugins" search={{ section: "levels", group: level }} />}
             >
-              {group.label}
+              {label(level)}
             </Badge>
           ))}
           {account.state === "paused" ? (
@@ -96,7 +98,7 @@ export function AccountRow({
         ) : null}
       </div>
 
-      <AccountActions account={account} groups={groups} />
+      <AccountActions account={account} />
       <ResetCreditDialog
         open={confirming}
         onOpenChange={setConfirming}
@@ -109,17 +111,10 @@ export function AccountRow({
   );
 }
 
-function AccountActions({
-  account,
-  groups,
-}: {
-  readonly account: PoolAccount;
-  readonly groups: readonly AccountGroup[];
-}) {
+function AccountActions({ account }: { readonly account: PoolAccount }) {
   const navigate = useNavigate();
-  // Locked only when every group it serves is admin-managed; your own group keeps it yours.
-  const locked = groups.length > 0 && groups.every((group) => group.adminManaged);
-  const manager = groups.find((group) => group.adminManaged);
+  const manager = modelAccountManager(account.levels, LEVEL_POLICIES);
+  const locked = manager !== null;
   const paused = account.state === "paused";
   return (
     <Menu>
@@ -133,7 +128,7 @@ function AccountActions({
         {locked ? (
           <p className="flex max-w-60 items-start gap-2 px-2 py-1.5 text-xs text-muted-foreground">
             <ShieldCheckIcon className="mt-px size-3.5 shrink-0" aria-hidden />
-            Managed by {manager?.adminLabel ?? "group admins"}.
+            Managed by {manager}.
           </p>
         ) : null}
         <MenuItem

@@ -1,55 +1,49 @@
 /**
- * Monochrome marks for Spaces: one glyph per source, one per item type, and
- * the sync dot. Sources get a framed tile so they never read as item types.
- * No brand artwork: the real integrations can bring their own marks later.
+ * Marks for Spaces: one per source, one glyph per item type, and the sync dot.
+ * Sources show their service's brand mark (a monochrome glyph for Signalbox's
+ * own pages and services without one) on a framed tile, so they never read as
+ * item types.
  */
 import {
-  ApertureIcon,
-  BookOpenIcon,
   CircleDotIcon,
-  Columns3Icon,
   DropletIcon,
   FilePenLineIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
   FileTypeIcon,
-  GitBranchIcon,
-  HardDriveIcon,
-  HashIcon,
   ImageIcon,
   ImagesIcon,
-  InboxIcon,
   LinkIcon,
-  ListChecksIcon,
   MailIcon,
   MessageSquareTextIcon,
-  NotebookIcon,
   NotebookPenIcon,
   PresentationIcon,
-  SirenIcon,
   SquareCheckIcon,
-  SquareKanbanIcon,
   StickyNoteIcon,
   type LucideIcon,
 } from "lucide-react";
+import { createElement } from "react";
 
 import { cn } from "~/lib/utils";
+import { BrandMark } from "../brand/BrandMark";
+import type { BrandId } from "../brand/brandMarks";
 import type { SpacesConnector, SpacesItemType, SpacesSyncState } from "./spacesFixtures";
 
-const CONNECTOR_ICON: Record<SpacesConnector, LucideIcon> = {
+// Signalbox's own pages, and services Simple Icons has no mark for, keep a glyph.
+const CONNECTOR_MARK: Record<SpacesConnector, BrandId | LucideIcon> = {
   notes: NotebookPenIcon,
-  drive: HardDriveIcon,
-  photos: ApertureIcon,
-  notion: NotebookIcon,
-  github: GitBranchIcon,
-  gmail: InboxIcon,
+  drive: "googleDrive",
+  photos: "googlePhotos",
+  notion: "notion",
+  github: "github",
+  gmail: "gmail",
   raindrop: DropletIcon,
-  todoist: ListChecksIcon,
-  trello: Columns3Icon,
-  slack: HashIcon,
-  jira: SquareKanbanIcon,
-  confluence: BookOpenIcon,
-  sentry: SirenIcon,
+  todoist: "todoist",
+  trello: "trello",
+  slack: "slack",
+  jira: "jira",
+  confluence: "confluence",
+  sentry: "sentry",
 };
 
 const TYPE_ICON: Record<SpacesItemType, LucideIcon> = {
@@ -73,7 +67,8 @@ export function SourceMark(props: {
   size?: "sm" | "md";
   tone?: "page" | "sidebar";
 }) {
-  const Icon = CONNECTOR_ICON[props.connector];
+  const mark = CONNECTOR_MARK[props.connector];
+  const iconClass = props.size === "md" ? "size-3.5" : "size-3";
   return (
     <span
       aria-hidden
@@ -85,7 +80,11 @@ export function SourceMark(props: {
           : "border-border bg-card text-foreground",
       )}
     >
-      <Icon className={props.size === "md" ? "size-3.5" : "size-3"} strokeWidth={2.25} />
+      {typeof mark === "string" ? (
+        <BrandMark brand={mark} className={iconClass} />
+      ) : (
+        createElement(mark, { className: iconClass, strokeWidth: 2.25 })
+      )}
     </span>
   );
 }

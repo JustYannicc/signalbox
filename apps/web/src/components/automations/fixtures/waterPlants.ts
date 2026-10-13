@@ -19,8 +19,6 @@ export const WATER_PLANTS: Automation = {
   id: "water-plants",
   name: "Water plants",
   description: "A recurring task that used to live in Todoist.",
-  agentName: "Plant reminder agent",
-  section: "personal",
   cadence: "Every Sunday at 10:00 AM",
   enabled: true,
   nextRunAt: lastWeeklyAt(0, 10, -1).toISOString(),

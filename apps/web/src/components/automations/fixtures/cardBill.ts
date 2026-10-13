@@ -172,8 +172,6 @@ export const RECONCILE_CARD_BILL: Automation = {
   id: "reconcile-card-bill",
   name: "Reconcile monthly business card bill",
   description: "Matches the card statement to receipts in Drive and flags what is missing.",
-  agentName: "Card bill agent",
-  section: "work",
   cadence: "Monthly",
   enabled: true,
   nextRunAt: lastMonthlyAt(26, 9, -1).toISOString(),

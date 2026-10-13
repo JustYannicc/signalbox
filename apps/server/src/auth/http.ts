@@ -34,7 +34,9 @@ import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
+import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
@@ -233,6 +235,35 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const devAuth = resolveReusableDevAuth(yield* ServerConfig.ServerConfig);
+
+    const appendBrowserSessionCookies = Effect.fnUntraced(function* (
+      result: Effect.Success<ReturnType<typeof serverAuth.createBrowserSession>>,
+    ) {
+      const cookieName = result.cookieName ?? sessions.cookieName;
+      const selectedCookie = yield* Effect.fromResult(
+        Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
+          expires: DateTime.toDate(result.response.expiresAt),
+          httpOnly: true,
+          path: "/",
+          sameSite: "lax",
+        }),
+      ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
+      const sessionCookies = result.expireNormalCookie
+        ? yield* Effect.fromResult(
+            Cookies.expireCookie(selectedCookie, sessions.cookieName, {
+              httpOnly: true,
+              path: "/",
+              sameSite: "lax",
+            }),
+          ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
+        : selectedCookie;
+
+      yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+        Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
+      );
+      yield* appendCredentialResponseHeaders;
+    });
 
     return handlers
       .handle(
@@ -256,8 +287,26 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
               yield* appendCredentialResponseHeaders;
             }
+            // signalbox: opt-in dev auto-auth (T3CODE_DEV_AUTO_AUTH). A browser with no
+            // working session gets the reusable dev cookie, so the bare dev URL opens
+            // without pairing. Bearer/DPoP clients are left alone.
+            if (
+              !result.authenticated &&
+              devAuth?.autoAuth === true &&
+              request.headers.authorization === undefined
+            ) {
+              const exchange = yield* serverAuth.createBrowserSession(
+                devAuth.credential,
+                deriveAuthClientMetadata({ request }),
+              );
+              yield* appendBrowserSessionCookies(exchange);
+              return { ...result, ...exchange.response };
+            }
             return result;
           },
+          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+            failEnvironmentInternal("browser_session_issuance_failed", error),
+          ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
           ),
@@ -273,29 +322,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               args.payload.credential,
               deriveAuthClientMetadata({ request }),
             );
-            const cookieName = result.cookieName ?? sessions.cookieName;
-            const selectedCookie = yield* Effect.fromResult(
-              Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
-                expires: DateTime.toDate(result.response.expiresAt),
-                httpOnly: true,
-                path: "/",
-                sameSite: "lax",
-              }),
-            ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
-            const sessionCookies = result.expireNormalCookie
-              ? yield* Effect.fromResult(
-                  Cookies.expireCookie(selectedCookie, sessions.cookieName, {
-                    httpOnly: true,
-                    path: "/",
-                    sameSite: "lax",
-                  }),
-                ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
-              : selectedCookie;
-
-            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
-              Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
-            );
-            yield* appendCredentialResponseHeaders;
+            yield* appendBrowserSessionCookies(result);
             return result.response;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>

@@ -5,9 +5,9 @@
  * "Stop waiting". The per-chat reply mode stays as the background rule.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import type { TeamMessage, TeamPerson, TeamThread } from "./multiplayerModel";
 import { peopleByIds } from "./teamThreads";
 
@@ -33,9 +33,7 @@ export const useAgentWaitStore = create<AgentWaitState>()(
     {
       name: "t3code:multiplayer:agent-wait:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({ waits: state.waits }),
     },
   ),

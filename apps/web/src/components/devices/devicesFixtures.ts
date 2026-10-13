@@ -1,7 +1,9 @@
 /**
  * PLACEHOLDER DATA. The client apps on the Devices page; nothing here comes
  * from a client. Servers and account pins live in ./fleet.ts. Delete once
- * clients register for real.
+ * clients register for real. Your laptop and phone sit in Personal, the work
+ * laptop in Work; moves live in `deviceLevelsStore.ts`. Keep the MacBook the
+ * first laptop: chat notification rows name "your computer" by it.
  */
 import type { ClientDevice } from "./devicesModel";
 
@@ -15,6 +17,7 @@ export const CLIENT_DEVICES: readonly ClientDevice[] = [
     activeNow: true,
     lastSeen: "Now",
     notify: "badge",
+    level: "section:personal",
     capabilities: [
       { id: "downloads", group: "files", label: "~/Downloads", detail: "Read", enabled: true },
       { id: "desktop", group: "files", label: "~/Desktop", detail: "Read", enabled: false },
@@ -55,9 +58,13 @@ export const CLIENT_DEVICES: readonly ClientDevice[] = [
     activeNow: false,
     lastSeen: "4m ago",
     notify: "urgent",
+    level: "section:personal",
+    // Personal folders may text through it too.
+    reach: "below",
     capabilities: [
       { id: "downloads", group: "files", label: "Downloads", detail: "Read", enabled: true },
       { id: "screenshot", group: "device", label: "Screenshot", detail: "Ask", enabled: false },
+      { id: "sms", group: "device", label: "SMS gateway", detail: "Send and read", enabled: true },
       { id: "clipboard", group: "device", label: "Clipboard", detail: "Read", enabled: false },
       {
         id: "notifications",
@@ -69,6 +76,36 @@ export const CLIENT_DEVICES: readonly ClientDevice[] = [
       { id: "wifi", group: "signals", label: "Wi-Fi", detail: "Network name", enabled: true },
       { id: "nfc", group: "signals", label: "NFC", detail: "Tag taps", enabled: true },
       { id: "location", group: "signals", label: "Location", detail: "Geofences", enabled: true },
+      { id: "time", group: "signals", label: "Time", detail: "Local time zone", enabled: true },
+    ],
+  },
+  {
+    id: "work-laptop",
+    name: "Northwind ThinkPad",
+    kind: "laptop",
+    os: "Windows 12",
+    thisDevice: false,
+    activeNow: false,
+    lastSeen: "Yesterday",
+    notify: "badge",
+    level: "section:work",
+    capabilities: [
+      { id: "downloads", group: "files", label: "Downloads", detail: "Read", enabled: true },
+      {
+        id: "screenshot",
+        group: "device",
+        label: "Screenshot",
+        detail: "On request",
+        enabled: true,
+      },
+      {
+        id: "notifications",
+        group: "device",
+        label: "Notifications",
+        detail: "Send",
+        enabled: true,
+      },
+      { id: "wifi", group: "signals", label: "Wi-Fi", detail: "Network name", enabled: true },
       { id: "time", group: "signals", label: "Time", detail: "Local time zone", enabled: true },
     ],
   },

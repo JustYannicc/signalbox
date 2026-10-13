@@ -1,22 +1,18 @@
 /**
- * One AGENTS.md block: a colored gutter for who sees it, the visibility
- * picker, and the markdown itself.
+ * One AGENTS.md block: a colored gutter for which harness reads it, the
+ * harness picker, and the markdown itself.
  */
 import { Trash2Icon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import {
-  audienceLabel,
-  type InstructionAudience,
-  type InstructionBlock,
-} from "./instructionsModel";
+import { harnessLabel, type InstructionHarness, type InstructionBlock } from "./instructionsModel";
 import { HARNESSES } from "./pluginsModel";
 import { HarnessGlyph } from "./pluginsPrimitives";
 
-/** Gutter color per audience. Blocks for everyone stay neutral so harness-only ones stand out. */
-export const AUDIENCE_RAIL: Record<InstructionAudience, string> = {
+/** Gutter color per harness. Blocks for everyone stay neutral so harness-only ones stand out. */
+export const HARNESS_RAIL: Record<InstructionHarness, string> = {
   all: "bg-border",
   claudeAgent: "bg-warning",
   codex: "bg-foreground",
@@ -26,52 +22,49 @@ export const AUDIENCE_RAIL: Record<InstructionAudience, string> = {
   antigravity: "bg-primary",
 };
 
-const AUDIENCES: readonly InstructionAudience[] = [
+export const HARNESS_CHOICES: readonly InstructionHarness[] = [
   "all",
-  ...HARNESSES.map((harness) => harness.id),
+  ...HARNESSES.map((entry) => entry.id),
 ];
 
-export function AudienceSwatch(props: { audience: InstructionAudience }) {
+export function HarnessSwatch(props: { harness: InstructionHarness }) {
   return (
-    <span
-      aria-hidden
-      className={cn("size-2 shrink-0 rounded-full", AUDIENCE_RAIL[props.audience])}
-    />
+    <span aria-hidden className={cn("size-2 shrink-0 rounded-full", HARNESS_RAIL[props.harness])} />
   );
 }
 
-function AudienceSelect(props: {
-  audience: InstructionAudience;
+function HarnessSelect(props: {
+  harness: InstructionHarness;
   disabled: boolean;
-  onChange: (audience: InstructionAudience) => void;
+  onChange: (harness: InstructionHarness) => void;
 }) {
   return (
     <Select
-      value={props.audience}
+      value={props.harness}
       disabled={props.disabled}
       onValueChange={(value) => {
-        const next = AUDIENCES.find((audience) => audience === value);
+        const next = HARNESS_CHOICES.find((harness) => harness === value);
         if (next) props.onChange(next);
       }}
     >
-      <SelectTrigger size="xs" variant="ghost" aria-label="Who sees this block">
+      <SelectTrigger size="xs" variant="ghost" aria-label="Which harness reads this block">
         <SelectValue>
           <span className="flex items-center gap-1.5">
-            {props.audience === "all" ? (
-              <AudienceSwatch audience="all" />
+            {props.harness === "all" ? (
+              <HarnessSwatch harness="all" />
             ) : (
-              <HarnessGlyph harness={props.audience} />
+              <HarnessGlyph harness={props.harness} />
             )}
-            {audienceLabel(props.audience)}
+            {harnessLabel(props.harness)}
           </span>
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="start" alignItemWithTrigger={false}>
-        {AUDIENCES.map((audience) => (
-          <SelectItem key={audience} value={audience}>
+        {HARNESS_CHOICES.map((harness) => (
+          <SelectItem key={harness} value={harness}>
             <span className="flex items-center gap-2">
-              <AudienceSwatch audience={audience} />
-              {audienceLabel(audience)}
+              <HarnessSwatch harness={harness} />
+              {harnessLabel(harness)}
             </span>
           </SelectItem>
         ))}
@@ -91,17 +84,14 @@ export function InstructionBlockEditor(props: {
     <div className="group/block flex min-w-0 gap-3 rounded-md pl-1 hover:bg-accent/24 focus-within:bg-accent/40">
       <span
         aria-hidden
-        className={cn(
-          "my-2 w-0.5 shrink-0 self-stretch rounded-full",
-          AUDIENCE_RAIL[block.audience],
-        )}
+        className={cn("my-2 w-0.5 shrink-0 self-stretch rounded-full", HARNESS_RAIL[block.harness])}
       />
       <div className="flex min-w-0 flex-1 flex-col gap-1 py-1.5 pr-1.5">
         <div className="flex items-center gap-2">
-          <AudienceSelect
-            audience={block.audience}
+          <HarnessSelect
+            harness={block.harness}
             disabled={props.readOnly}
-            onChange={(audience) => props.onChange({ ...block, audience })}
+            onChange={(harness) => props.onChange({ ...block, harness })}
           />
           {props.readOnly ? null : (
             <Button
@@ -120,7 +110,7 @@ export function InstructionBlockEditor(props: {
           readOnly={props.readOnly}
           onChange={(event) => props.onChange({ ...block, text: event.currentTarget.value })}
           placeholder="Markdown for this block"
-          aria-label={`${audienceLabel(block.audience)} block`}
+          aria-label={`${harnessLabel(block.harness)} block`}
           spellCheck={false}
           rows={2}
           className="field-sizing-content w-full resize-none bg-transparent px-2 font-mono text-xs leading-5 text-foreground outline-none placeholder:text-placeholder read-only:text-muted-foreground"

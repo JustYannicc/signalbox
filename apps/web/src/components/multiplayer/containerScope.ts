@@ -4,12 +4,8 @@
  * inherit the default; an item that differs is a deviation the Home tree marks.
  * Import these through `sharing.ts`.
  */
-import {
-  HOME_SECTIONS,
-  findHomeSection,
-  projectAgentId,
-  sectionAgentId,
-} from "../sidebar/sections/sectionModel";
+import { TOP_LEVEL, type LevelKey } from "../levels/levels";
+import { HOME_SECTIONS, findHomeSection } from "../sidebar/sections/sectionModel";
 import { TEAMS, TEAM_PROJECTS } from "./multiplayerFixtures";
 import type { ThreadVisibility } from "./multiplayerModel";
 
@@ -63,15 +59,20 @@ export function containerSectionId(containerIdOrKey: string): string | null {
 }
 
 /**
- * Your agent for a container (agents are personal): the project agent for a
- * team project, else the section agent. `null` at the top level.
+ * The Home level a container is: its team project or section (a team reads as
+ * its section). Container keys pass through; `"home"` and unknowns are the top.
+ * Its agent and the ones above come from `levels/chainAgents`.
  */
-export function containerAgentId(containerIdOrKey: string): string | null {
+export function containerLevel(containerIdOrKey: string): LevelKey {
+  if (containerIdOrKey === TOP_LEVEL || containerIdOrKey.startsWith("project:")) {
+    return containerIdOrKey;
+  }
   const containerId = containerIdOrKey.replace(/^(section|team-project):/, "");
-  const project = TEAM_PROJECTS.find((candidate) => candidate.id === containerId);
-  if (project) return projectAgentId(project.name);
+  if (TEAM_PROJECTS.some((candidate) => candidate.id === containerId)) {
+    return `team-project:${containerId}`;
+  }
   const sectionId = containerSectionId(containerId);
-  return sectionId ? sectionAgentId(sectionId) : null;
+  return sectionId ? `section:${sectionId}` : TOP_LEVEL;
 }
 
 export function defaultScopeFor(containerId: string): ThreadVisibility {

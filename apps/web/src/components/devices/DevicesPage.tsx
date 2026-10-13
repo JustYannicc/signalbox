@@ -7,6 +7,7 @@ import { ArrowRightIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 
 import { isElectron } from "../../env";
 import { COMPUTERS } from "../computers/computerFixtures";
+import { LevelOptionsProvider } from "../levels/LevelOptionsProvider";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
@@ -14,7 +15,7 @@ import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadc
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { ClientDeviceCard } from "./ClientDeviceCard";
-import { CLIENT_DEVICES } from "./devicesFixtures";
+import { useClientDevices } from "./deviceLevelsStore";
 import { notifyDevicesComingSoon, plural } from "./devicesModel";
 import { FLEET_SERVERS, ROLLOUT_STEPS, ROLLOUT_VERSION } from "./fleet";
 import { RolloutDisclosure } from "./RolloutDisclosure";
@@ -23,6 +24,7 @@ import { ServersSection } from "./ServersSection";
 const LIVE_COMPUTERS = COMPUTERS.filter((computer) => computer.state === "live").length;
 
 export function DevicesPage() {
+  const clients = useClientDevices();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
@@ -81,14 +83,17 @@ export function DevicesPage() {
                   Clients
                 </h2>
                 <span className="text-xs text-muted-foreground">
-                  What a server may reach into, and where pings land
+                  Each sits in a Home folder: it gets that folder's pings, and its agents use its
+                  gateways
                 </span>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                {CLIENT_DEVICES.map((device) => (
-                  <ClientDeviceCard key={device.id} device={device} />
-                ))}
-              </div>
+              <LevelOptionsProvider>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {clients.map((device) => (
+                    <ClientDeviceCard key={device.id} device={device} />
+                  ))}
+                </div>
+              </LevelOptionsProvider>
             </section>
           </WorkspacePageContainer>
         </ScrollArea>

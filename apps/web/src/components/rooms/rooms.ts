@@ -4,9 +4,9 @@
  * assistant; a fork id to a private copy of its source room.
  */
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { resolveStorage } from "../../lib/storage";
+import { prototypeStorage } from "../../lib/prototypeStorage";
 import { CURRENT_PERSON_ID } from "../multiplayer/multiplayerFixtures";
 import { ROOMS, policiesFor } from "./roomFixtures";
 import { containerSectionId } from "../multiplayer/containerScope";
@@ -95,9 +95,7 @@ export const useRoomArchiveStore = create<RoomArchiveState>()(
     {
       name: "t3code:rooms:archived:v1",
       version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      storage: prototypeStorage(),
       partialize: (state) => ({ archived: state.archived }),
     },
   ),

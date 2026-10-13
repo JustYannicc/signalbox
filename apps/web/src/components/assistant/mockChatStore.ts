@@ -150,6 +150,8 @@ export function sendMockMessage(input: {
   text: string;
   files: ReadonlyArray<File>;
   speakerNodeId: string;
+  /** A fixed reply instead of the keyword routing, for callers that know the answer. */
+  reply?: readonly AssistantBlock[];
 }) {
   const { chatKey } = input;
   const append = (turn: TurnFixture) =>
@@ -170,7 +172,9 @@ export function sendMockMessage(input: {
       id: `local-${chatKey}-${state.version}`,
       role: "assistant",
       at: clock(),
-      blocks: cannedReply(chatKey, input.text, input.speakerNodeId),
+      blocks: input.reply
+        ? [...input.reply]
+        : cannedReply(chatKey, input.text, input.speakerNodeId),
     });
   }, REPLY_DELAY_MS);
 }

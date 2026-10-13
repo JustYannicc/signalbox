@@ -103,6 +103,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         ConfigProvider.fromEnv({
           env: {
             T3CODE_DEV_AUTH_TOKEN: "  reusable-dev-auth-token-that-is-long-enough  ",
+            T3CODE_DEV_AUTO_AUTH: "true",
           },
         }),
       );
@@ -120,6 +121,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }
       expect(Redacted.value(web.devAuthToken)).toBe("reusable-dev-auth-token-that-is-long-enough");
       expect(desktop.devAuthToken).toBeUndefined();
+      expect(web.devAutoAuth).toBe(true);
+      expect(desktop.devAutoAuth).toBeUndefined();
     }),
   );
 
