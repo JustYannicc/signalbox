@@ -11,7 +11,8 @@ export interface HostedPairingRequest {
 export type HostedAppChannel = "latest" | "nightly";
 
 /** The hosted app origin shared links point at. */
-export function configuredHostedAppUrl(): string {
+// signalbox: module-private; prompt links use SIGNALBOX_APP_URL instead.
+function configuredHostedAppUrl(): string {
   return import.meta.env.VITE_HOSTED_APP_URL?.trim() || DEFAULT_HOSTED_APP_URL;
 }
 
