@@ -29,7 +29,8 @@ export function MoveNativeLogins({
 }) {
   const instances = useEnvironmentSettings(environmentId, (settings) => settings.providerInstances);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
-  const pools = useAccountPools(environmentId);
+  // A pool in Signalbox Cloud takes accounts there, not from this machine.
+  const pools = useAccountPools(environmentId).filter((pool) => pool.backing.mode !== "cloud");
   const move = useAtomCommand(serverEnvironment.moveNativeLogins, { reportFailure: false });
   const [poolId, setPoolId] = useState<string>(PERSONAL_POOL_ID);
   const [pending, setPending] = useState(false);
