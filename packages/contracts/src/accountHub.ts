@@ -294,6 +294,9 @@ export const PoolLinkInfo = Schema.Struct({
 });
 export type PoolLinkInfo = typeof PoolLinkInfo.Type;
 
+/** The most accounts one move takes. */
+export const POOL_LINK_MOVE_LIMIT = 200;
+
 export const PoolLinkMoveRequest = Schema.Struct({
   accounts: Schema.Array(
     Schema.Struct({
@@ -301,7 +304,7 @@ export const PoolLinkMoveRequest = Schema.Struct({
       /** The credential file, exactly as the hub stores it. */
       content: Schema.String,
     }),
-  ).check(Schema.isMaxLength(200)),
+  ).check(Schema.isMaxLength(POOL_LINK_MOVE_LIMIT)),
 });
 export type PoolLinkMoveRequest = typeof PoolLinkMoveRequest.Type;
 
@@ -313,7 +316,10 @@ export const PoolLinkMoveResult = Schema.Struct({
 export type PoolLinkMoveResult = typeof PoolLinkMoveResult.Type;
 
 /** The account types a cloud pool can take. */
-export const CLOUD_POOL_ACCOUNT_TYPES: ReadonlyArray<string> = ["claude", "codex"];
+export const CLOUD_POOL_ACCOUNT_TYPES = ["claude", "codex"] as const;
+export type CloudPoolAccountType = (typeof CLOUD_POOL_ACCOUNT_TYPES)[number];
+export const isCloudPoolAccountType = (type: unknown): type is CloudPoolAccountType =>
+  (CLOUD_POOL_ACCOUNT_TYPES as ReadonlyArray<unknown>).includes(type);
 
 export const AccountPoolSetOpenCodeInput = Schema.Struct({
   poolId: AccountPoolId,

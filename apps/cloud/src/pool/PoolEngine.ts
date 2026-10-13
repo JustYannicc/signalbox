@@ -1,6 +1,7 @@
 import type { UsageLimitSourceUpdateAccountInput } from "@t3tools/contracts";
 import {
-  CLOUD_POOL_ACCOUNT_TYPES,
+  isCloudPoolAccountType,
+  type PoolLinkInfo,
   type PoolLinkMoveRequest,
   type PoolLinkMoveResult,
 } from "@t3tools/contracts/accountHub";
@@ -8,13 +9,13 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { forwardableHeaders } from "../modelGateway/modelGateway.ts";
 import * as CliProxyApi from "./cliProxyApi.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolLinks from "./PoolLinks.ts";
@@ -132,6 +133,10 @@ export class PoolEngine extends Context.Service<
       name: string,
       action: AccountAction,
     ) => Effect.Effect<void, Failure>;
+    /** A link for a server moving its own pool here (`PoolLinks.ts`). Answers its secret. */
+    readonly openLink: (actor: PoolActor) => Effect.Effect<string, Failure>;
+    /** The pool's name and accounts, as a linked server sees them. */
+    readonly linkInfo: (actor: PoolActor) => Effect.Effect<PoolLinkInfo, Failure>;
     /**
      * Saves credential files another hub held (a pool moving here). Names the
      * pool already holds are skipped; if any file fails, the ones this call
@@ -255,20 +260,14 @@ const backingOf = (row: PoolRow): PoolBacking =>
 
 const normalizeUrl = (url: string) => url.trim().replace(/\/+$/u, "");
 
-const ACCOUNT_FILE_NAME = /^[\w.@+-]+\.json$/u;
+/** The account file names a hub writes; never a hidden file. */
+const ACCOUNT_FILE_NAME = /^[\w@+-][\w.@+-]*\.json$/u;
 const decodeCredential = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-/** Headers that carry the caller's credential, or describe the hop rather than the request. */
-const isHopHeader = (name: string) =>
-  name === "authorization" ||
-  name === "x-api-key" ||
-  name === "host" ||
-  name === "cookie" ||
-  name === "content-length" ||
-  name.startsWith("cf-") ||
-  name.startsWith("x-forwarded-");
+/** How many account files a move writes or removes at once. */
+const MOVE_CONCURRENCY = 4;
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -276,7 +275,8 @@ const make = Effect.gen(function* () {
   const container = yield* PoolContainer.PoolContainer;
   const external = yield* ExternalFetch;
   const crypto = yield* Crypto.Crypto;
-  const randomKey = crypto.randomBytes(32).pipe(Effect.map(Hex.encode), Effect.orDie);
+  const links = yield* PoolLinks.PoolLinks;
+  const randomKey = PoolLinks.randomKey.pipe(Effect.provideService(Crypto.Crypto, crypto));
 
   const poolRow = sql<PoolRow>`SELECT name, personal, backing, management_key, client_key,
     store_access_key, store_secret_key, external_url, external_management_key,
@@ -501,17 +501,21 @@ const make = Effect.gen(function* () {
       yield* container.stop;
     });
 
-  const accounts: PoolEngine["Service"]["accounts"] = (actor) =>
+  /**
+   * The cached accounts, read again once stale. Reading never wakes a sleeping
+   * container or keeps one awake: an asleep pool's accounts are what it last had.
+   */
+  const cachedOrRead = (row: PoolRow) =>
     Effect.gen(function* () {
-      const { row } = yield* access(actor, "member");
       const cached = yield* cachedAccounts;
       if ((yield* Clock.currentTimeMillis) - cached.checkedAt < ACCOUNTS_FRESH_MS) return cached;
-      // Reading never wakes a sleeping container or keeps one awake: an asleep
-      // pool's accounts are what it last had.
       if (row.backing !== "external" && !(yield* container.running)) return cached;
       const read = yield* refreshAccounts(row, undefined, { passive: true }).pipe(Effect.result);
       return read._tag === "Success" ? yield* cachedAccounts : cached;
     });
+
+  const accounts: PoolEngine["Service"]["accounts"] = (actor) =>
+    Effect.flatMap(access(actor, "member"), ({ row }) => cachedOrRead(row));
 
   const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider) =>
     Effect.gen(function* () {
@@ -571,42 +575,66 @@ const make = Effect.gen(function* () {
       yield* refreshAccounts(row).pipe(Effect.ignore);
     });
 
+  const openLink: PoolEngine["Service"]["openLink"] = (actor) =>
+    Effect.gen(function* () {
+      yield* access(actor, "admin");
+      const secret = yield* links.open(actor.userId);
+      yield* audit(actor, "open-link");
+      return secret;
+    });
+
+  const linkInfo: PoolEngine["Service"]["linkInfo"] = (actor) =>
+    Effect.gen(function* () {
+      const { row } = yield* access(actor, "member");
+      const { accounts: held } = yield* cachedOrRead(row);
+      return {
+        name: row.name,
+        accounts: held.map(({ name, type, disabled, signedOut }) => ({
+          name,
+          type,
+          disabled,
+          signedOut,
+        })),
+      };
+    });
+
   const importAccounts: PoolEngine["Service"]["importAccounts"] = (actor, files) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
-      const credentials: Array<{ name: string; credential: Record<string, unknown> }> = [];
+      // One entry per name: the last one sent wins.
+      const credentials = new Map<string, Record<string, unknown>>();
       for (const file of files) {
         const credential = decodeCredential(file.content);
         if (!ACCOUNT_FILE_NAME.test(file.name) || credential._tag === "None") {
           return yield* reject(`${file.name} is not an account file.`);
         }
-        const type = credential.value.type;
-        if (typeof type !== "string" || !CLOUD_POOL_ACCOUNT_TYPES.includes(type)) {
+        if (!isCloudPoolAccountType(credential.value.type)) {
           return yield* reject(`${file.name} is an account Signalbox Cloud pools can't hold yet.`);
         }
-        credentials.push({ name: file.name, credential: credential.value });
+        credentials.set(file.name, credential.value);
       }
       const endpoint = endpointOf(row);
       const held = new Set((yield* refreshAccounts(row)).map((account) => account.name));
+      const skipped = [...credentials.keys()].filter((name) => held.has(name));
+      const toSave = [...credentials].filter(([name]) => !held.has(name));
       const imported: string[] = [];
-      const skipped: string[] = [];
-      const saved = yield* Effect.gen(function* () {
-        for (const { name, credential } of credentials) {
-          if (held.has(name)) {
-            skipped.push(name);
-            continue;
-          }
-          yield* CliProxyApi.uploadAccount(endpoint, name, credential);
-          imported.push(name);
-        }
-      }).pipe(Effect.result);
-      if (saved._tag === "Failure") {
-        yield* Effect.forEach(imported, (name) =>
-          CliProxyApi.removeAccount(endpoint, name).pipe(Effect.ignore),
-        );
-        yield* refreshAccounts(row).pipe(Effect.ignore);
-        return yield* saved.failure;
-      }
+      yield* Effect.forEach(
+        toSave,
+        ([name, credential]) =>
+          CliProxyApi.uploadAccount(endpoint, name, credential).pipe(
+            Effect.tap(() => Effect.sync(() => imported.push(name))),
+          ),
+        { concurrency: MOVE_CONCURRENCY, discard: true },
+      ).pipe(
+        // All or nothing: what this call saved goes again.
+        Effect.onError(() =>
+          Effect.forEach(
+            imported,
+            (name) => CliProxyApi.removeAccount(endpoint, name).pipe(Effect.ignore),
+            { concurrency: MOVE_CONCURRENCY, discard: true },
+          ).pipe(Effect.andThen(refreshAccounts(row).pipe(Effect.ignore))),
+        ),
+      );
       const added = new Set(imported);
       yield* refreshAccounts(row, (name) => (added.has(name) ? actor.userId : null)).pipe(
         Effect.ignore,
@@ -619,10 +647,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const { row } = yield* access(actor, "member");
       const endpoint = endpointOf(row);
-      const headers = new Headers();
-      for (const [name, value] of request.headers) {
-        if (!isHopHeader(name)) headers.append(name, value);
-      }
+      const headers = forwardableHeaders(request.headers);
       headers.set("authorization", `Bearer ${endpoint.clientKey}`);
       const search = new URL(request.url).search;
       return yield* Effect.tryPromise({
@@ -662,6 +687,8 @@ const make = Effect.gen(function* () {
     completeLogin,
     cancelLogin,
     updateAccount,
+    openLink,
+    linkInfo,
     importAccounts,
     modelRequest,
     storeRequest,

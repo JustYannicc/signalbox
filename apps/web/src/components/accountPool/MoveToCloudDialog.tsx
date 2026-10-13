@@ -65,15 +65,22 @@ export function MoveToCloudDialog({
       input: { poolId: pool.id, cloudUrl, token: received.value.token },
     });
     if (moved._tag !== "Success") {
-      // Nothing moved, so the pool the cloud started for it goes again.
-      if (!received.value.personal) {
-        await removeCloudPool({
-          environmentId: cloudEnvironmentId,
-          input: { poolId: received.value.poolId },
-        });
-      }
+      // The accounts are still here, so the pool the cloud started for them goes again.
+      const leftover =
+        !received.value.personal &&
+        (
+          await removeCloudPool({
+            environmentId: cloudEnvironmentId,
+            input: { poolId: received.value.poolId },
+          })
+        )._tag !== "Success";
       setPending(false);
-      setError(failureText(moved, "Could not move the pool. Try again."));
+      const reason = failureText(moved, "Could not move the pool. Try again.");
+      setError(
+        leftover
+          ? `${reason} An empty ${pool.name} pool is left in Signalbox Cloud; delete it there.`
+          : reason,
+      );
       return;
     }
     await refreshCloud({ environmentId: cloudEnvironmentId, input: {} });

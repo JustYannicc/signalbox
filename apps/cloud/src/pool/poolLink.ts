@@ -1,11 +1,11 @@
-import {
-  POOL_LINK_PATH,
-  type PoolLinkInfo,
-  PoolLinkMoveRequest,
-} from "@t3tools/contracts/accountHub";
+import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
+import { POOL_LINK_PATH, PoolLinkMoveRequest } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { bearerOrKey, errorResponse } from "../modelGateway/modelGateway.ts";
 import type { PoolBackendError } from "./cliProxyApi.ts";
 import { poolObjectStub, type PoolObjectNamespace } from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";
@@ -23,47 +23,30 @@ import * as PoolLinks from "./PoolLinks.ts";
 
 const TOKEN_PREFIX = "sbpl_";
 
-const toBase64Url = (text: string) =>
-  btoa(String.fromCharCode(...new TextEncoder().encode(text)))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
-
-const fromBase64Url = (encoded: string) => {
-  try {
-    const binary = atob(encoded.replaceAll("-", "+").replaceAll("_", "/"));
-    return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
-  } catch {
-    return null;
-  }
-};
-
 /** The token a server keeps: the pool's object name, then the link's secret. */
 export const encodeLinkToken = (objectName: string, secret: string) =>
-  `${TOKEN_PREFIX}${toBase64Url(objectName)}.${secret}`;
+  `${TOKEN_PREFIX}${Base64Url.encode(objectName)}.${secret}`;
 
 export const decodeLinkToken = (token: string) => {
   if (!token.startsWith(TOKEN_PREFIX)) return null;
   const [encoded, secret, ...rest] = token.slice(TOKEN_PREFIX.length).split(".");
   if (encoded === undefined || !secret || rest.length > 0) return null;
-  const objectName = fromBase64Url(encoded);
+  const decoded = Base64Url.decode(encoded);
+  if (!Result.isSuccess(decoded)) return null;
+  const objectName = new TextDecoder().decode(decoded.success);
   return objectName ? { objectName, secret } : null;
 };
 
 export const isPoolLinkPath = (pathname: string) =>
   pathname === POOL_LINK_PATH || pathname.startsWith(`${POOL_LINK_PATH}/`);
 
-/** The bearer token, or the API key Claude Code sends when given one. */
-const tokenOf = (headers: Headers) => {
-  const key = headers.get("x-api-key");
-  if (key) return key;
-  const match = /^Bearer\s+(.+)$/iu.exec(headers.get("authorization") ?? "");
-  return match?.[1]?.trim() ?? null;
-};
+/** Which provider API a link path speaks, so errors come back in its shape. */
+const providerOf = (pathname: string): ModelGatewayProvider =>
+  pathname.includes("/v1/responses") ? "openai" : "anthropic";
 
-/** Errors in the shape both provider APIs' clients print. */
-const failure = (status: number, message: string) =>
-  Response.json({ type: "error", error: { type: "pool_link_error", message } }, { status });
+/** An error both provider APIs' clients print, and the server's link client reads. */
+const failure = (request: Request, status: number, message: string) =>
+  errorResponse(providerOf(new URL(request.url).pathname), status, message);
 
 /** What a pool object answers on its links (`linkFetch`). */
 export interface PoolLinkTarget {
@@ -76,9 +59,11 @@ export const routePoolLink = (
   request: Request,
   options: { readonly localWorkerd: boolean },
 ): Promise<Response> => {
-  const token = tokenOf(request.headers);
+  const token = bearerOrKey(request.headers);
   const decoded = token === null ? null : decodeLinkToken(token);
-  if (decoded === null) return Promise.resolve(failure(401, "Missing or malformed pool link."));
+  if (decoded === null) {
+    return Promise.resolve(failure(request, 401, "Missing or malformed pool link."));
+  }
   return poolObjectStub(namespace, decoded.objectName, options).linkFetch(decoded.secret, request);
 };
 
@@ -90,47 +75,45 @@ export const handleLinkRequest = (secret: string, request: Request) =>
     const engine = yield* PoolEngine.PoolEngine;
     const links = yield* PoolLinks.PoolLinks;
     const link = yield* links.resolve(secret);
-    if (link === null) return failure(401, "This pool link no longer works.");
+    if (link === null) return failure(request, 401, "This pool link no longer works.");
+    const actor = { userId: link.userId };
     const path = new URL(request.url).pathname.slice(POOL_LINK_PATH.length);
     if (path.startsWith("/v1/")) {
-      return yield* engine.modelRequest(link.actor, request, path.slice("/v1".length));
+      return yield* engine.modelRequest(actor, request, path.slice("/v1".length));
     }
     if (path === "" && request.method === "GET") {
-      const info = yield* engine.info(link.actor);
-      const { accounts } = yield* engine.accounts(link.actor);
-      return Response.json({
-        name: info.name,
-        accounts: accounts.map(({ name, type, disabled, signedOut }) => ({
-          name,
-          type,
-          disabled,
-          signedOut,
-        })),
-      } satisfies PoolLinkInfo);
+      return Response.json(yield* engine.linkInfo(actor));
     }
     if (path === "/accounts" && request.method === "POST") {
       if (!link.moveOpen) {
-        return failure(403, "This pool link no longer takes accounts. Start the move again.");
+        return failure(
+          request,
+          403,
+          "This pool link no longer takes accounts. Start the move again.",
+        );
       }
       const body = yield* Effect.tryPromise(() => request.json()).pipe(
         Effect.flatMap(decodeMoveRequest),
         Effect.option,
       );
-      if (body._tag === "None") return failure(400, "That is not a list of accounts.");
-      return Response.json(yield* engine.importAccounts(link.actor, body.value.accounts));
+      if (body._tag === "None") return failure(request, 400, "That is not a list of accounts.");
+      const moved = yield* engine.importAccounts(actor, body.value.accounts);
+      // The move landed: the link now lasts as long as the grant behind it.
+      yield* links.claim(secret);
+      return Response.json(moved);
     }
-    return failure(404, `A pool link does not serve ${request.method} ${path || "/"}.`);
+    return failure(request, 404, `A pool link does not serve ${request.method} ${path || "/"}.`);
   }).pipe(
     Effect.catchTags({
       PoolRejectedError: (error: PoolEngine.PoolRejectedError) =>
-        Effect.succeed(failure(403, error.reason)),
+        Effect.succeed(failure(request, 403, error.reason)),
       PoolBackendError: (error: PoolBackendError) =>
         Effect.logWarning("pool link request failed", error.detail, error.cause).pipe(
-          Effect.as(failure(502, error.detail)),
+          Effect.as(failure(request, 502, error.detail)),
         ),
       SqlError: (cause) =>
         Effect.logError("pool link storage failed", { cause }).pipe(
-          Effect.as(failure(500, "The pool could not be read. Try again.")),
+          Effect.as(failure(request, 500, "The pool could not be read. Try again.")),
         ),
     }),
   );

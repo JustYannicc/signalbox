@@ -36,7 +36,10 @@ export const reauthMethods = (
   hub: AccountHub.AccountHub["Service"],
   types: ReadonlyArray<string>,
 ): Effect.Effect<ReadonlyArray<ProviderAuthMethod>> =>
-  hub.accounts.pipe(
+  // A pool in Signalbox Cloud signs its accounts in again there.
+  Effect.flatMap(hub.connection, (connection) =>
+    connection.mode === "cloud" ? Effect.succeed([]) : hub.accounts,
+  ).pipe(
     Effect.map((accounts) =>
       accounts
         .filter((account) => account.signedOut && !account.disabled && types.includes(account.type))

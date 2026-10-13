@@ -56,7 +56,11 @@ const DROPPED_REQUEST_HEADERS = new Set([
 const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfer-encoding"];
 
 /** An error in the shape the provider's own API uses, so the harness shows the message. */
-function errorResponse(provider: ModelGatewayProvider | null, status: number, message: string) {
+export function errorResponse(
+  provider: ModelGatewayProvider | null,
+  status: number,
+  message: string,
+) {
   const body =
     provider === "openai"
       ? {
@@ -73,7 +77,7 @@ function errorResponse(provider: ModelGatewayProvider | null, status: number, me
   return Response.json(body, { status });
 }
 
-function bearerOrKey(headers: Headers): string | null {
+export function bearerOrKey(headers: Headers): string | null {
   const key = headers.get("x-api-key");
   if (key !== null && key !== "") return key;
   const authorization = headers.get("authorization");
@@ -81,7 +85,8 @@ function bearerOrKey(headers: Headers): string | null {
   return match?.[1] ?? null;
 }
 
-function withUpstreamKey(provider: ModelGatewayProvider, source: Headers, apiKey: string) {
+/** The request headers worth forwarding upstream: no credential, nothing about this hop. */
+export function forwardableHeaders(source: Headers) {
   const headers = new Headers();
   for (const [name, value] of source) {
     const dropped =
@@ -90,6 +95,11 @@ function withUpstreamKey(provider: ModelGatewayProvider, source: Headers, apiKey
       name.startsWith("x-forwarded-");
     if (!dropped) headers.append(name, value);
   }
+  return headers;
+}
+
+function withUpstreamKey(provider: ModelGatewayProvider, source: Headers, apiKey: string) {
+  const headers = forwardableHeaders(source);
   if (provider === "anthropic") headers.set("x-api-key", apiKey);
   else headers.set("authorization", `Bearer ${apiKey}`);
   return headers;

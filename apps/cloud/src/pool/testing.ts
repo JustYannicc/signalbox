@@ -115,7 +115,8 @@ export const makeMemoryPoolObject = (
   const cliProxyApi = makeFakeCliProxyApi();
   const container = PoolContainer.makeFake((request) => cliProxyApi.serve(request));
   const runtime = ManagedRuntime.make(
-    Layer.mergeAll(PoolEngine.layer, PoolLinks.layer).pipe(
+    PoolEngine.layer.pipe(
+      Layer.provideMerge(PoolLinks.layer),
       Layer.provideMerge(container.layer),
       Layer.provideMerge(
         Layer.mergeAll(

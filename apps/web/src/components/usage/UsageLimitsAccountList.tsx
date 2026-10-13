@@ -105,7 +105,7 @@ export function UsageLimitsAccountList({
   /** The account pool's name when the list shows one pool. */
   readonly title?: string;
   /** What an empty list says. */
-  readonly emptyText?: string;
+  readonly emptyText?: string | undefined;
   /** The pool's advice, shown under each provider it covers. */
   readonly advice?: AccountPoolAdvice["providers"] | undefined;
 }) {

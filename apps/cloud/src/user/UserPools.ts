@@ -277,20 +277,6 @@ const make = Effect.gen(function* () {
       return accountPool(pool);
     });
 
-  const receive: UserPools["Service"]["receive"] = (actor, input) =>
-    Effect.gen(function* () {
-      const all = yield* pools(actor);
-      const personal = input.personal ? all.find((pool) => pool.personal) : undefined;
-      const pool = personal ?? (yield* createPool(actor, input.name));
-      const secret = yield* call(directory.forPool(pool.objectName).openLink(actor));
-      if (personal === undefined) yield* refresh(actor);
-      return {
-        poolId: pool.id,
-        personal: pool.personal,
-        token: encodeLinkToken(pool.objectName, secret),
-      };
-    });
-
   const rename: UserPools["Service"]["rename"] = (actor, input) =>
     Effect.gen(function* () {
       const pool = yield* requirePool(actor, input.poolId);
@@ -326,6 +312,27 @@ const make = Effect.gen(function* () {
       );
       yield* refresh(actor);
       return accountPool({ ...pool, backing: info.backing });
+    });
+
+  const receive: UserPools["Service"]["receive"] = (actor, input) =>
+    Effect.gen(function* () {
+      const all = yield* pools(actor);
+      const personal = input.personal ? all.find((pool) => pool.personal) : undefined;
+      const pool = personal ?? (yield* createPool(actor, input.name));
+      const secret = yield* call(directory.forPool(pool.objectName).openLink(actor)).pipe(
+        // A pool made only to take this move goes again when it can't.
+        Effect.onError(() =>
+          personal === undefined
+            ? remove(actor, { poolId: pool.id }).pipe(Effect.ignore)
+            : Effect.void,
+        ),
+      );
+      // Not refreshed here: the pool lists once the client refreshes after the move.
+      return {
+        poolId: pool.id,
+        personal: pool.personal,
+        token: encodeLinkToken(pool.objectName, secret),
+      };
     });
 
   const updateAccount: UserPools["Service"]["updateAccount"] = (actor, input) =>

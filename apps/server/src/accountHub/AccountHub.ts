@@ -133,12 +133,15 @@ export class AccountHub extends Context.Service<
       input: AccountHubSetConnectionInput,
     ) => Effect.Effect<AccountHubConnection, AccountHubError>;
     /**
-     * Runs the pool through the Signalbox Cloud pool `link` names from now on
-     * (its accounts moved there), and stops this hub. Checked before saved.
+     * Runs the pool through the Signalbox Cloud pool `link` names from now on,
+     * once the caller checked the link and moved `moved` there. Saves the link
+     * first, then stops this hub and drops those accounts from wherever it kept
+     * them, so only the cloud refreshes them. Answers the ones it could not drop.
      */
     readonly connectCloud: (
       link: PoolLinkClient.PoolLink,
-    ) => Effect.Effect<AccountHubConnection, AccountHubError>;
+      moved: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<string>, AccountHubError>;
     /** Copies (or moves) every account of another CLIProxyAPI into this hub. */
     readonly importAccounts: (
       input: AccountHubImportInput,
@@ -180,6 +183,24 @@ export const PERSONAL_HUB: AccountHubPlacement = {
   secretPrefix: "account-hub",
   sourceId: ACCOUNT_HUB_SOURCE_ID,
 };
+/** A backing this server does not run: the user's own CLIProxyAPI, or a Signalbox Cloud pool. */
+type Remote =
+  | { readonly _tag: "external"; readonly hub: AccountHubEndpoint }
+  | { readonly _tag: "cloud"; readonly link: PoolLinkClient.PoolLink };
+
+/** A cloud pool's harnesses call its link as their provider API, with the link token as key. */
+const remoteEndpoint = (current: Remote): AccountHubEndpoint =>
+  current._tag === "external"
+    ? current.hub
+    : {
+        baseUrl: PoolLinkClient.linkBaseUrl(current.link),
+        managementKey: "",
+        clientKey: current.link.token,
+      };
+
+/** How long a cloud pool's account list is reused before asking the cloud again. */
+const CLOUD_ACCOUNTS_FRESH_MS = 30_000;
+
 const StoredConnection = Schema.Struct({
   mode: Schema.Literals(["external", "cloud"]),
   url: Schema.String,
@@ -287,18 +308,23 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
   const status = yield* SubscriptionRef.make<AccountHubStatus>({ phase: "off" });
   // A hub the user runs replaces the managed one entirely: nothing is spawned.
   const connectionPath = path.join(hubDirectory, "connection.json");
-  const external = yield* Ref.make<Option.Option<AccountHubEndpoint>>(Option.none());
-  // The pool moved to Signalbox Cloud: its threads run through the cloud pool's link.
-  const cloud = yield* Ref.make<Option.Option<PoolLinkClient.PoolLink>>(Option.none());
-  const cloudEndpoint = (link: PoolLinkClient.PoolLink): AccountHubEndpoint => ({
-    baseUrl: PoolLinkClient.linkBaseUrl(link),
-    managementKey: "",
-    clientKey: link.token,
-  });
-  // Where the pool's threads go instead of a hub: the user's own, or the cloud's.
-  const elsewhere = Effect.zipWith(Ref.get(external), Ref.get(cloud), (hub, link) =>
-    Option.isSome(hub) ? hub : Option.map(link, cloudEndpoint),
+  // Where the pool's threads go instead of a hub this server runs: a CLIProxyAPI the user
+  // runs, or the Signalbox Cloud pool it moved to (through that pool's link).
+  const remote = yield* Ref.make<Option.Option<Remote>>(Option.none());
+  const external = Ref.get(remote).pipe(
+    Effect.map(Option.flatMap((r) => (r._tag === "external" ? Option.some(r.hub) : Option.none()))),
   );
+  const cloud = Ref.get(remote).pipe(
+    Effect.map(Option.flatMap((r) => (r._tag === "cloud" ? Option.some(r.link) : Option.none()))),
+  );
+  const elsewhere = Ref.get(remote).pipe(Effect.map(Option.map(remoteEndpoint)));
+  // The cloud pool's accounts, read at most this often (the cloud's own cache is as fresh).
+  const cloudAccounts = yield* Ref.make<
+    Option.Option<{
+      readonly at: number;
+      readonly accounts: ReadonlyArray<Management.AccountHubAccount>;
+    }>
+  >(Option.none());
   const running = yield* Ref.make<
     Option.Option<{ readonly endpoint: AccountHubEndpoint; readonly scope: Scope.Closeable }>
   >(Option.none());
@@ -518,7 +544,7 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
     Effect.flatMap((hub) => (Option.isSome(hub) ? Effect.succeed(hub.value) : ensureManaged)),
   );
   // The cloud keeps a moved pool's accounts, so nothing here manages them.
-  const managedHere = Ref.get(cloud).pipe(
+  const managedHere = cloud.pipe(
     Effect.flatMap((link) =>
       Option.isSome(link)
         ? Effect.fail(
@@ -539,50 +565,42 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
     ),
   );
 
-  const savedConnection = fs
-    .readFileString(connectionPath)
-    .pipe(Effect.flatMap(decodeStoredConnection), Effect.option);
-  const savedCloud = yield* Effect.gen(function* () {
-    const saved = yield* savedConnection;
-    if (Option.isNone(saved) || saved.value.mode !== "cloud") return Option.none();
-    const token = yield* secrets.get(CLOUD_TOKEN_SECRET);
-    return Option.map(token, (value): PoolLinkClient.PoolLink => ({
-      url: saved.value.url,
-      token: new TextDecoder().decode(value),
-    }));
-  }).pipe(Effect.orElseSucceed(() => Option.none<PoolLinkClient.PoolLink>()));
-  yield* Ref.set(cloud, savedCloud);
-  if (Option.isSome(savedCloud)) {
-    yield* SubscriptionRef.set(status, { phase: "running", version: "cloud" });
-  }
-  const savedExternal = yield* Effect.gen(function* () {
-    const saved = yield* fs
+  const saved = yield* Effect.gen(function* () {
+    const stored = yield* fs
       .readFileString(connectionPath)
       .pipe(Effect.flatMap(decodeStoredConnection));
-    if (saved.mode !== "external") return Option.none();
+    const decoder = new TextDecoder();
+    if (stored.mode === "cloud") {
+      const token = yield* secrets.get(CLOUD_TOKEN_SECRET);
+      return Option.map(token, (value): Remote => ({
+        _tag: "cloud",
+        link: { url: stored.url, token: decoder.decode(value) },
+      }));
+    }
     const managementKey = yield* secrets.get(EXTERNAL_MANAGEMENT_KEY_SECRET);
     const clientKey = yield* secrets.get(EXTERNAL_CLIENT_KEY_SECRET);
     if (Option.isNone(managementKey) || Option.isNone(clientKey)) return Option.none();
-    const decoder = new TextDecoder();
-    return Option.some<AccountHubEndpoint>({
-      baseUrl: normalizeHubUrl(saved.url),
-      managementKey: decoder.decode(managementKey.value),
-      clientKey: decoder.decode(clientKey.value),
+    return Option.some<Remote>({
+      _tag: "external",
+      hub: {
+        baseUrl: normalizeHubUrl(stored.url),
+        managementKey: decoder.decode(managementKey.value),
+        clientKey: decoder.decode(clientKey.value),
+      },
     });
-  }).pipe(Effect.orElseSucceed(() => Option.none<AccountHubEndpoint>()));
-  yield* Ref.set(external, savedExternal);
-  if (Option.isSome(savedExternal)) {
-    yield* SubscriptionRef.set(status, { phase: "running", version: "external" });
+  }).pipe(Effect.orElseSucceed(() => Option.none<Remote>()));
+  yield* Ref.set(remote, saved);
+  if (Option.isSome(saved)) {
+    yield* SubscriptionRef.set(status, { phase: "running", version: saved.value._tag });
   }
 
   // Accounts already exist: bring the hub back with the server, in the background.
-  const hasAccounts =
-    Option.isSome(savedExternal) || Option.isSome(savedCloud)
-      ? false
-      : yield* fs.readDirectory(authDir).pipe(
-          Effect.map((entries) => entries.some((entry) => entry.endsWith(".json"))),
-          Effect.orElseSucceed(() => false),
-        );
+  const hasAccounts = Option.isSome(saved)
+    ? false
+    : yield* fs.readDirectory(authDir).pipe(
+        Effect.map((entries) => entries.some((entry) => entry.endsWith(".json"))),
+        Effect.orElseSucceed(() => false),
+      );
   if (hasAccounts) {
     yield* ensureRunning.pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(serviceScope));
   }
@@ -619,7 +637,7 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
         return yield* new AccountHubError({ detail: "Invalid account file name." });
       }
       const hub = yield* managedHere;
-      if (Option.isSome(yield* Ref.get(external))) {
+      if (Option.isSome(yield* external)) {
         yield* withHttp(Management.uploadCredential(hub, name, yield* encodeJson(credential)));
         return;
       }
@@ -648,7 +666,7 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
   ) {
     const hub = yield* managedHere;
     // A hub on another machine cannot catch a redirect to this machine's localhost.
-    const localCallback = options.localCallback && Option.isNone(yield* Ref.get(external));
+    const localCallback = options.localCallback && Option.isNone(yield* external);
     const login = yield* withHttp(Management.startOAuthLogin(hub, provider, localCallback));
     return {
       url: login.url,
@@ -670,39 +688,56 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
     ),
   );
 
-  const connection = Effect.zipWith(
-    Ref.get(external),
-    Ref.get(cloud),
-    (hub, link): AccountHubConnection =>
-      Option.isSome(link)
-        ? { mode: "cloud" }
-        : Option.isSome(hub)
-          ? { mode: "external", url: hub.value.baseUrl }
-          : { mode: "managed" },
+  const connection = Ref.get(remote).pipe(
+    Effect.map((current): AccountHubConnection =>
+      Option.isNone(current)
+        ? { mode: "managed" }
+        : current.value._tag === "cloud"
+          ? { mode: "cloud" }
+          : { mode: "external", url: current.value.hub.baseUrl },
+    ),
   );
-  const forgetCloud = Effect.gen(function* () {
-    yield* secrets.remove(CLOUD_TOKEN_SECRET);
-    yield* Ref.set(cloud, Option.none());
-  });
+  const switchTo = (next: Option.Option<Remote>) =>
+    Effect.gen(function* () {
+      yield* Ref.set(remote, next);
+      yield* Ref.set(cloudAccounts, Option.none());
+      yield* SubscriptionRef.set(
+        status,
+        Option.isSome(next) ? { phase: "running", version: next.value._tag } : { phase: "off" },
+      );
+      yield* markAccountsChanged;
+    });
 
   const connectCloud = Effect.fn("AccountHub.connectCloud")(
-    function* (link: PoolLinkClient.PoolLink) {
-      yield* withHttp(PoolLinkClient.readLink(link));
+    function* (link: PoolLinkClient.PoolLink, moved: ReadonlyArray<string>) {
+      const previous = yield* external;
+      // The link is saved before anything is dropped, so the moved accounts are always
+      // reachable from here: through the old backing until this, through the cloud after.
       yield* secrets.set(CLOUD_TOKEN_SECRET, new TextEncoder().encode(link.token));
       yield* fs.makeDirectory(hubDirectory, { recursive: true });
-      yield* fs.writeFileString(
-        connectionPath,
-        yield* encodeStoredConnection({ mode: "cloud", url: normalizeHubUrl(link.url) }),
-        { mode: 0o600 },
-      );
-      yield* secrets.remove(EXTERNAL_MANAGEMENT_KEY_SECRET);
-      yield* secrets.remove(EXTERNAL_CLIENT_KEY_SECRET);
+      yield* fs
+        .writeFileString(
+          connectionPath,
+          yield* encodeStoredConnection({ mode: "cloud", url: link.url }),
+          { mode: 0o600 },
+        )
+        .pipe(Effect.onError(() => secrets.remove(CLOUD_TOKEN_SECRET).pipe(Effect.ignore)));
       yield* stopManaged;
-      yield* Ref.set(external, Option.none());
-      yield* Ref.set(cloud, Option.some({ ...link, url: normalizeHubUrl(link.url) }));
-      yield* SubscriptionRef.set(status, { phase: "running", version: "cloud" });
-      yield* markAccountsChanged;
-      return yield* connection;
+      yield* switchTo(Option.some({ _tag: "cloud", link }));
+      const notDropped: string[] = [];
+      const drop = (name: string): Effect.Effect<void, AccountHubError | PlatformError> =>
+        Option.isSome(previous)
+          ? withHttp(Management.deleteCredential(previous.value, name))
+          : fs.remove(path.join(authDir, name), { force: true });
+      yield* Effect.forEach(
+        moved,
+        (name) =>
+          drop(name).pipe(Effect.catchCause(() => Effect.sync(() => void notDropped.push(name)))),
+        { concurrency: 4, discard: true },
+      );
+      yield* secrets.remove(EXTERNAL_MANAGEMENT_KEY_SECRET).pipe(Effect.ignore);
+      yield* secrets.remove(EXTERNAL_CLIENT_KEY_SECRET).pipe(Effect.ignore);
+      return notDropped;
     },
     Effect.mapError((cause) =>
       isAccountHubError(cause)
@@ -715,13 +750,11 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
     function* (input: AccountHubSetConnectionInput) {
       if (input.mode === "managed") {
         // Leaving the cloud: the accounts stay there, and this pool starts empty again.
-        yield* forgetCloud;
         yield* fs.remove(connectionPath, { force: true });
+        yield* secrets.remove(CLOUD_TOKEN_SECRET);
         yield* secrets.remove(EXTERNAL_MANAGEMENT_KEY_SECRET);
         yield* secrets.remove(EXTERNAL_CLIENT_KEY_SECRET);
-        yield* Ref.set(external, Option.none());
-        yield* SubscriptionRef.set(status, { phase: "off" });
-        yield* markAccountsChanged;
+        yield* switchTo(Option.none());
         return yield* connection;
       }
       const hub: AccountHubEndpoint = {
@@ -758,10 +791,8 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
         { mode: 0o600 },
       );
       yield* stopManaged;
-      yield* forgetCloud;
-      yield* Ref.set(external, Option.some(hub));
-      yield* SubscriptionRef.set(status, { phase: "running", version: "external" });
-      yield* markAccountsChanged;
+      yield* secrets.remove(CLOUD_TOKEN_SECRET);
+      yield* switchTo(Option.some({ _tag: "external", hub }));
       return yield* connection;
     },
     Effect.mapError((cause) =>
@@ -845,14 +876,21 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
         Effect.andThen(markAccountsChanged),
       ),
     accounts: Effect.gen(function* () {
-      const link = yield* Ref.get(cloud);
+      const link = yield* cloud;
       if (Option.isSome(link)) {
+        const now = yield* Clock.currentTimeMillis;
+        const known = yield* Ref.get(cloudAccounts);
+        if (Option.isSome(known) && now - known.value.at < CLOUD_ACCOUNTS_FRESH_MS) {
+          return known.value.accounts;
+        }
         const info = yield* withHttp(PoolLinkClient.readLink(link.value));
-        return info.accounts.map((account): Management.AccountHubAccount => ({
+        const accounts = info.accounts.map((account): Management.AccountHubAccount => ({
           ...account,
           email: null,
           workspaceId: null,
         }));
+        yield* Ref.set(cloudAccounts, Option.some({ at: now, accounts }));
+        return accounts;
       }
       const current = yield* endpoint;
       return Option.isNone(current)
@@ -864,7 +902,7 @@ export const makeAccountHub = Effect.fn("makeAccountHub")(function* (
     accountChanges: Stream.fromPubSub(accountChanged),
     markAccountsChanged,
     // A cloud pool's limits are the cloud's to report.
-    usageLimitSource: Effect.zipWith(endpoint, Ref.get(cloud), (hub, link) =>
+    usageLimitSource: Effect.zipWith(endpoint, cloud, (hub, link) =>
       Option.isSome(link) ? Option.none() : hub,
     ).pipe(
       Effect.map(

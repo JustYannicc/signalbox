@@ -53,7 +53,8 @@ const ensureAlarm = async (storage: DurableObjectStorage, at: number) => {
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (ctx: DurableObjectState) =>
   ManagedRuntime.make(
-    Layer.mergeAll(PoolEngine.layer, PoolLinks.layer).pipe(
+    PoolEngine.layer.pipe(
+      Layer.provideMerge(PoolLinks.layer),
       Layer.provideMerge(
         ctx.container
           ? PoolContainer.layerCloudflare({

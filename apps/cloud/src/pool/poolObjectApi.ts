@@ -22,11 +22,7 @@ export const makePoolObjectApi = (
   const reply = <A>(
     f: (
       engine: PoolEngine.PoolEngine["Service"],
-    ) => Effect.Effect<
-      A,
-      PoolEngine.PoolRejectedError | PoolBackendError | SqlError,
-      PoolLinks.PoolLinks
-    >,
+    ) => Effect.Effect<A, PoolEngine.PoolRejectedError | PoolBackendError | SqlError>,
   ): Promise<PoolReply<A>> =>
     run(
       PoolEngine.PoolEngine.use(f).pipe(
@@ -59,18 +55,7 @@ export const makePoolObjectApi = (
     cancelLogin: (actor, state) => reply((engine) => done(engine.cancelLogin(actor, state))),
     updateAccount: (actor, name, action) =>
       reply((engine) => done(engine.updateAccount(actor, name, action))),
-    openLink: (actor) =>
-      reply((engine) =>
-        Effect.gen(function* () {
-          const info = yield* engine.info(actor);
-          if (info.role !== "admin") {
-            return yield* new PoolEngine.PoolRejectedError({
-              reason: "Only the pool's admins can move a pool into it.",
-            });
-          }
-          return yield* PoolLinks.PoolLinks.use((links) => links.open(actor));
-        }),
-      ),
+    openLink: (actor) => reply((engine) => engine.openLink(actor)),
     linkFetch: (secret, request) => run(handleLinkRequest(secret, request)),
   };
 };

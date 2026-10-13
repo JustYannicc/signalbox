@@ -15,16 +15,21 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import { AccountHubError, normalizeHubUrl } from "./accountHubManagement.ts";
+import { AccountHubError, hostOf, normalizeHubUrl, unreachable } from "./accountHubManagement.ts";
 
 export interface PoolLink {
-  /** The cloud's origin, e.g. `https://app.signalbox.sh`. */
+  /** The cloud's origin, e.g. `https://app.signalbox.sh`, normalized by `poolLink`. */
   readonly url: string;
   readonly token: string;
 }
 
+export const poolLink = (url: string, token: string): PoolLink => ({
+  url: normalizeHubUrl(url),
+  token,
+});
+
 /** Where the link answers; its `/v1` is the pool's model API. */
-export const linkBaseUrl = (link: PoolLink) => `${normalizeHubUrl(link.url)}${POOL_LINK_PATH}`;
+export const linkBaseUrl = (link: PoolLink) => `${link.url}${POOL_LINK_PATH}`;
 
 const LinkError = Schema.Struct({ error: Schema.Struct({ message: Schema.String }) });
 
@@ -35,12 +40,18 @@ const call = <A>(
 ) =>
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient;
-    const host = URL.canParse(link.url) ? new URL(link.url).host : link.url;
+    const endpoint = { baseUrl: link.url };
     const response = yield* http.execute(HttpClientRequest.bearerToken(request, link.token)).pipe(
-      Effect.timeout("30 seconds"),
-      Effect.mapError(
-        (cause) => new AccountHubError({ detail: `Could not reach ${host}.`, cause }),
-      ),
+      Effect.mapError((cause) => unreachable(endpoint, cause)),
+      Effect.timeoutOrElse({
+        duration: "30 seconds",
+        orElse: () =>
+          Effect.fail(
+            new AccountHubError({
+              detail: `${hostOf(endpoint)} did not answer within 30 seconds.`,
+            }),
+          ),
+      }),
     );
     if (response.status >= 300) {
       const body = yield* HttpClientResponse.schemaBodyJson(LinkError)(response).pipe(
@@ -50,12 +61,13 @@ const call = <A>(
         detail:
           body._tag === "Some"
             ? body.value.error.message
-            : `${host} answered ${response.status} to the pool link.`,
+            : `${hostOf(endpoint)} answered ${response.status} to the pool link.`,
       });
     }
     return yield* HttpClientResponse.schemaBodyJson(success)(response).pipe(
       Effect.mapError(
-        (cause) => new AccountHubError({ detail: `${host} sent an unexpected answer.`, cause }),
+        (cause) =>
+          new AccountHubError({ detail: `${hostOf(endpoint)} sent an unexpected answer.`, cause }),
       ),
     );
   });

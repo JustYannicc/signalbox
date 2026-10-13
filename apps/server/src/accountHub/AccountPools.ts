@@ -26,7 +26,8 @@ import {
   type AccountPoolMoveToCloudInput,
   type AccountPoolMoveToCloudResult,
   AccountPoolId,
-  CLOUD_POOL_ACCOUNT_TYPES,
+  isCloudPoolAccountType,
+  POOL_LINK_MOVE_LIMIT,
   PERSONAL_POOL_ID,
   hubInstancePoolId,
   poolSourceId,
@@ -60,7 +61,7 @@ import { HttpClient } from "effect/http";
 
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as AccountHub from "./AccountHub.ts";
-import { AccountHubError, isAccountHubError, normalizeHubUrl } from "./accountHubManagement.ts";
+import { AccountHubError, isAccountHubError } from "./accountHubManagement.ts";
 import { listApiKeys } from "./hubApiKeys.ts";
 import {
   configuredModels,
@@ -97,6 +98,9 @@ const placementFor = (id: string): AccountHub.AccountHubPlacement => ({
 });
 
 const isHubInstanceOf = (config: unknown, poolId: string) => hubInstancePoolId(config) === poolId;
+
+/** The pool providers that run through a cloud pool; the others go when a pool moves there. */
+const RUNS_IN_CLOUD: ReadonlyArray<PoolInstanceKind> = ["claude", "codex", "opencode"];
 
 const notFound = () => new AccountHubError({ detail: "That pool no longer exists." });
 
@@ -441,15 +445,12 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // Claude, Codex and OpenCode run through a cloud pool; nothing else does yet.
-  const RUNS_IN_CLOUD: ReadonlyArray<PoolInstanceKind> = ["claude", "codex", "opencode"];
-
   /**
    * Moves a pool's accounts into the cloud pool `input.token` links to, then
    * runs the pool through that link: same pool, same name and providers, so
    * its threads and defaults keep it. Nothing moves unless the cloud takes
-   * every account, and each one is dropped here once the cloud holds it, so
-   * only the cloud refreshes it.
+   * every account. Once it holds them, the link is saved before anything is
+   * dropped here, so a failure after that point is a warning, never a loss.
    */
   const moveToCloud = (
     input: AccountPoolMoveToCloudInput,
@@ -463,14 +464,16 @@ const make = Effect.gen(function* () {
               detail: "This pool is already in Signalbox Cloud.",
             });
           }
-          const link = { url: normalizeHubUrl(input.cloudUrl), token: input.token };
+          const link = PoolLinkClient.poolLink(input.cloudUrl, input.token);
           yield* PoolLinkClient.readLink(link);
           const endpoint = yield* pool.hub.ensureRunning;
-          const accounts = yield* pool.hub.accounts;
-          const apiKeys = yield* listApiKeys(endpoint);
+          const [accounts, apiKeys] = yield* Effect.all(
+            [pool.hub.accounts, listApiKeys(endpoint)],
+            { concurrency: 2 },
+          );
           const stuck = [
             ...accounts
-              .filter((account) => !CLOUD_POOL_ACCOUNT_TYPES.includes(account.type))
+              .filter((account) => !isCloudPoolAccountType(account.type))
               .map((account) => account.email ?? account.name),
             ...apiKeys.map((key) => key.label),
           ];
@@ -479,43 +482,56 @@ const make = Effect.gen(function* () {
               detail: `Signalbox Cloud pools can't hold these yet: ${stuck.join(", ")}. Remove them from the pool to move it.`,
             });
           }
-          const files = yield* Effect.forEach(accounts, (account) =>
-            pool.hub
-              .readCredential(account.name)
-              .pipe(Effect.map((content) => ({ name: account.name, content }))),
+          if (accounts.length > POOL_LINK_MOVE_LIMIT) {
+            return yield* new AccountHubError({
+              detail: `A move takes at most ${POOL_LINK_MOVE_LIMIT} accounts, and this pool has ${accounts.length}.`,
+            });
+          }
+          const files = yield* Effect.forEach(
+            accounts,
+            (account) =>
+              pool.hub
+                .readCredential(account.name)
+                .pipe(Effect.map((content) => ({ name: account.name, content }))),
+            { concurrency: 4 },
           );
           const sent = yield* PoolLinkClient.moveAccountsIn(link, files);
-          const warnings: string[] = [];
-          for (const name of [...sent.imported, ...sent.skipped]) {
-            yield* pool.hub
-              .removeCredential(name)
-              .pipe(
-                Effect.catch(() =>
-                  Effect.sync(() =>
-                    warnings.push(
-                      `${name} is in Signalbox Cloud but still in this pool's old hub. Remove it there, so only the cloud refreshes it.`,
-                    ),
-                  ),
-                ),
-              );
-          }
-          yield* pool.hub.connectCloud(link);
+          const notDropped = yield* pool.hub.connectCloud(link, [
+            ...sent.imported,
+            ...sent.skipped,
+          ]);
+          const warnings = notDropped.map(
+            (name) =>
+              `${name} is in Signalbox Cloud but still in this pool's old hub. Remove it there, so only the cloud refreshes it.`,
+          );
           // Providers the cloud can't run go; the rest rebuild against the link.
-          const current = yield* settings.getSettings;
-          const revision = yield* Clock.currentTimeMillis;
-          const kept = Object.entries(current.providerInstances).flatMap(([id, instance]) => {
-            if (!isHubInstanceOf(instance.config, pool.id)) return [[id, instance] as const];
-            const runs = RUNS_IN_CLOUD.some((kind) => poolInstanceEntry(kind, pool)[0] === id);
-            return runs && instance.config !== null && typeof instance.config === "object"
-              ? [
-                  [
-                    id,
-                    { ...instance, config: { ...instance.config, hubRevision: revision } },
-                  ] as const,
-                ]
-              : [];
-          });
-          yield* settings.updateSettings({ providerInstances: Object.fromEntries(kept) });
+          yield* settings.getSettings.pipe(
+            Effect.flatMap((current) =>
+              Effect.flatMap(Clock.currentTimeMillis, (revision) =>
+                settings.updateSettings({
+                  providerInstances: Object.fromEntries(
+                    Object.entries(current.providerInstances).flatMap(([id, instance]) => {
+                      if (!isHubInstanceOf(instance.config, pool.id)) return [[id, instance]];
+                      const runs = RUNS_IN_CLOUD.some(
+                        (kind) => poolInstanceEntry(kind, pool)[0] === id,
+                      );
+                      const config = instance.config;
+                      return runs && typeof config === "object" && config !== null
+                        ? [[id, { ...instance, config: { ...config, hubRevision: revision } }]]
+                        : [];
+                    }),
+                  ),
+                }),
+              ),
+            ),
+            Effect.catch(() =>
+              Effect.sync(() =>
+                warnings.push(
+                  "Its providers here could not restart on the cloud. Restart the server to pick them up.",
+                ),
+              ),
+            ),
+          );
           yield* PubSub.publish(changed, undefined);
           return { moved: files.length, warnings };
         }),
@@ -539,8 +555,11 @@ const make = Effect.gen(function* () {
                 instance.driver === "opencode" && isHubInstanceOf(instance.config, pool.id),
             )
             .map(([id]) => id);
+          // A cloud pool's models change only with its accounts in the cloud; asking would
+          // wake its container on every change here.
+          if (ids.length === 0 || (yield* pool.hub.connection).mode === "cloud") continue;
           const endpoint = yield* pool.hub.endpoint;
-          if (ids.length === 0 || Option.isNone(endpoint)) continue;
+          if (Option.isNone(endpoint)) continue;
           const served = yield* hubModels(endpoint.value).pipe(Effect.option);
           if (Option.isNone(served)) continue;
           for (const id of ids) {

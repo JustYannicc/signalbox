@@ -190,8 +190,14 @@ describe("pool link", () => {
         status: 401,
         body: {
           type: "error",
-          error: { type: "pool_link_error", message: "This pool link no longer works." },
+          error: { type: "authentication_error", message: "This pool link no longer works." },
         },
+      });
+      // Codex speaks OpenAI's API, so its errors come back in that shape.
+      const codex = yield* onLink(forged, "/v1/responses", { method: "POST", body: "{}" });
+      expect(codex.body.error).toMatchObject({
+        message: "This pool link no longer works.",
+        code: "invalid_api_key",
       });
       expect(decodeLinkToken("sk-not-a-link")).toBeNull();
     }).pipe(Effect.scoped),
@@ -199,13 +205,16 @@ describe("pool link", () => {
 });
 
 describe("PoolLinks", () => {
-  it.effect("takes accounts only right after the link is made", () =>
+  it.effect("takes accounts only right after it is made, and lapses unless a move landed", () =>
     Effect.gen(function* () {
       const links = yield* PoolLinks.PoolLinks;
-      const secret = yield* links.open({ userId });
-      expect(yield* links.resolve(secret)).toEqual({ actor: { userId }, moveOpen: true });
+      const moved = yield* links.open(userId);
+      const abandoned = yield* links.open(userId);
+      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: true });
+      yield* links.claim(moved);
       yield* TestClock.adjust(PoolLinks.MOVE_WINDOW_MS);
-      expect(yield* links.resolve(secret)).toEqual({ actor: { userId }, moveOpen: false });
+      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: false });
+      expect(yield* links.resolve(abandoned)).toBeNull();
       expect(yield* links.resolve("unknown")).toBeNull();
     }).pipe(
       Effect.provide(
