@@ -9,7 +9,7 @@ import {
   INCOGNITO_BROWSER_PROFILE_ID,
   resolveBrowserProfiles,
   type BrowserProfile,
-  type PreviewReportProfilesInput,
+  PreviewReportProfilesInput,
   PREVIEW_AUTOMATION_SERVER_OPERATIONS,
   PreviewViewportSetting as PreviewViewportSettingSchema,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -44,6 +44,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -54,10 +55,13 @@ import { constVoid } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
@@ -246,8 +250,9 @@ export class ServerBrowser extends Context.Service<
     /** Deletes a human profile's server-side storage, closing its open tabs first. */
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
     /**
-     * Records a client's browser profiles for agents' preview_open. In memory:
-     * clients report again on connect and whenever the list changes.
+     * Records a client's browser profiles for agents' preview_open. The latest
+     * report survives a restart; clients report again on connect and whenever
+     * the list changes.
      */
     readonly reportProfiles: (input: PreviewReportProfilesInput) => Effect.Effect<void>;
   }
@@ -1280,15 +1285,51 @@ const make = Effect.gen(function* () {
     readonly defaultProfileId: string;
   } | null = null;
 
+  const applyReportedProfiles = (input: PreviewReportProfilesInput) => {
+    const profiles = resolveBrowserProfiles(input.profiles);
+    reportedProfiles = {
+      profiles,
+      defaultProfileId:
+        findBrowserProfile(profiles, input.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+    };
+  };
+
+  // Kept beside the profiles' storage, so an agent tab opened after a restart,
+  // before any client reports again, still lands in the profile with the logins.
+  const reportedProfilesFile = NodePath.join(
+    config.stateDir,
+    "server-browser",
+    "reported-profiles.json",
+  );
+  const reportedProfilesJson = Schema.fromJsonString(PreviewReportProfilesInput);
+  const fileServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  /** Serializes saves so the file ends with the latest report; skips repeats. */
+  const saveLock = yield* Semaphore.make(1);
+  let savedProfilesJson: string | null = null;
+  yield* Effect.tryPromise(() => NodeFSP.readFile(reportedProfilesFile, "utf8")).pipe(
+    Effect.tap((json) => Effect.sync(() => (savedProfilesJson = json))),
+    Effect.flatMap(Schema.decodeUnknownEffect(reportedProfilesJson)),
+    Effect.tap((input) => Effect.sync(() => applyReportedProfiles(input))),
+    Effect.ignore,
+  );
+
   const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = (input) =>
-    Effect.sync(() => {
-      const profiles = resolveBrowserProfiles(input.profiles);
-      reportedProfiles = {
-        profiles,
-        defaultProfileId:
-          findBrowserProfile(profiles, input.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
-      };
-    });
+    Effect.sync(() => applyReportedProfiles(input)).pipe(
+      Effect.andThen(Schema.encodeEffect(reportedProfilesJson)(input)),
+      Effect.flatMap((json) =>
+        saveLock.withPermits(1)(
+          json === savedProfilesJson
+            ? Effect.void
+            : writeFileStringAtomically({ filePath: reportedProfilesFile, contents: json }).pipe(
+                Effect.tap(() => Effect.sync(() => (savedProfilesJson = json))),
+              ),
+        ),
+      ),
+      Effect.provide(fileServices),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("could not save the reported browser profiles", { cause }),
+      ),
+    );
 
   const profileStatus = () => {
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;

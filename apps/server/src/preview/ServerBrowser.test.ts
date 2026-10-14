@@ -190,57 +190,61 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, providerSessionId },
 });
-const dependencies = Layer.mergeAll(
-  Broker.layer,
-  Manager.layer,
-  Layer.succeed(ServerEnvironment.ServerEnvironment, {
-    getEnvironmentId: Effect.succeed(scope.environmentId),
-    getDescriptor: Effect.die("unused descriptor"),
-  }),
-  Layer.succeed(PreviewBrowser.PreviewBrowser, {
-    executable: Effect.die("mock Chromium does not need an executable"),
-    installed: Effect.die("mock Chromium does not need an executable"),
-  }),
-  Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
-    // Only tabs a test marks render on the desktop; the rest stay headless.
-    available: true,
-    awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
-    detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          const onDetach = (key: { threadId: string; tabId: string }) =>
-            Queue.offerUnsafe(queue, key);
-          desktopDetaches.on("detach", onDetach);
-          return onDetach;
-        }),
-        (onDetach) => Effect.sync(() => desktopDetaches.off("detach", onDetach)),
+const dependenciesAt = (home: string | { readonly prefix: string }) =>
+  Layer.mergeAll(
+    Broker.layer,
+    Manager.layer,
+    Layer.succeed(ServerEnvironment.ServerEnvironment, {
+      getEnvironmentId: Effect.succeed(scope.environmentId),
+      getDescriptor: Effect.die("unused descriptor"),
+    }),
+    Layer.succeed(PreviewBrowser.PreviewBrowser, {
+      executable: Effect.die("mock Chromium does not need an executable"),
+      installed: Effect.die("mock Chromium does not need an executable"),
+    }),
+    Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
+      // Only tabs a test marks render on the desktop; the rest stay headless.
+      available: true,
+      awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+      detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const onDetach = (key: { threadId: string; tabId: string }) =>
+              Queue.offerUnsafe(queue, key);
+            desktopDetaches.on("detach", onDetach);
+            return onDetach;
+          }),
+          (onDetach) => Effect.sync(() => desktopDetaches.off("detach", onDetach)),
+        ),
       ),
-    ),
-    attached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          const onAttach = (key: { threadId: string; tabId: string }) =>
-            Queue.offerUnsafe(queue, key);
-          desktopDetaches.on("attach", onAttach);
-          return onAttach;
-        }),
-        (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
+      attached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const onAttach = (key: { threadId: string; tabId: string }) =>
+              Queue.offerUnsafe(queue, key);
+            desktopDetaches.on("attach", onAttach);
+            return onAttach;
+          }),
+          (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
+        ),
       ),
-    ),
-    isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
-    isVisible: (key) => desktopVisibleTabs.has(key.tabId),
-    visibilityChanged: Stream.empty,
-    endpoint: (key) =>
-      Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
-        Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
-      ),
-    pointer: () => Effect.void,
-  }),
-).pipe(
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
-  Layer.provideMerge(NodeServices.layer),
-);
-const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
+      isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+      isVisible: (key) => desktopVisibleTabs.has(key.tabId),
+      visibilityChanged: Stream.empty,
+      endpoint: (key) =>
+        Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
+          Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
+        ),
+      pointer: () => Effect.void,
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), home)),
+    Layer.provideMerge(NodeServices.layer),
+  );
+/** The service as one server process with its own home, or a fresh temporary one. */
+const layerAt = (home: string | { readonly prefix: string }) =>
+  ServerBrowser.layer.pipe(Layer.provideMerge(dependenciesAt(home)));
+const layer = layerAt({ prefix: "t3-server-browser-" });
 const ready = Effect.gen(function* () {
   const browser = yield* ServerBrowser.ServerBrowser;
   const broker = yield* Broker.PreviewAutomationBroker;
@@ -1616,6 +1620,25 @@ it.live("an agent tab keeps throwaway storage when no client reported profiles",
       expect(contextRequests).toEqual([{ profileId: "default", isolated: true }]);
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.live("an agent tab keeps the profile clients last reported after a server restart", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-browser-restart-" });
+    yield* Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      yield* browser.reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerAt(home)));
+    // The restarted server opens an agent tab before any client reports again.
+    yield* Effect.gen(function* () {
+      yield* ready;
+      expect(contextRequests).toEqual([{ profileId: "profile-work", isolated: false }]);
+    }).pipe(Effect.scoped, Effect.provide(layerAt(home)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.live("a desktop page that comes back reconnects without waiting for a viewer", () =>
