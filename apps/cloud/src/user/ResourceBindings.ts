@@ -54,7 +54,8 @@ export class ResourceBindings extends Context.Service<
  */
 export const createTables = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  // `level_id` is empty for the top level.
+  // `level_id` is empty for the top level. 'personal' is `PERSONAL_POOL_ID`, written
+  // out so the migration guard can read it (and a merged migration never changes).
   yield* sql`CREATE TABLE resource_bindings (
     level_kind TEXT NOT NULL,
     level_id TEXT NOT NULL,
@@ -65,7 +66,7 @@ export const createTables = Effect.gen(function* () {
     PRIMARY KEY (level_kind, level_id, kind, resource_id)
   )`;
   yield* sql`INSERT INTO resource_bindings (level_kind, level_id, kind, resource_id, reach, created_at)
-    VALUES ('top', '', 'pool', ${PERSONAL_POOL_ID}, 'below', 0)`;
+    VALUES ('top', '', 'pool', 'personal', 'below', 0)`;
 });
 
 export const BindingRow = Schema.Struct({
