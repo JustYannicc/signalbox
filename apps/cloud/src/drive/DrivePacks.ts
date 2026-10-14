@@ -76,6 +76,16 @@ const attempt = <A>(operation: string, run: () => Promise<A>) =>
 
 export const layerBucket = (bucket: PackBucket, prefixValue?: string) => {
   const prefix = drivePackPrefix(prefixValue);
+  // Previews deployed before PR prefixes wrote unprefixed keys; they still read
+  // those until the legacy cleanup (docs/operations/cloud.md). Writes stay prefixed.
+  const read = async (
+    driveId: string,
+    name: string,
+    file: PackFile,
+    options?: { readonly range: { readonly offset: number; readonly length: number } },
+  ) =>
+    (await bucket.get(drivePackKey(driveId, name, file, prefix), options)) ??
+    (prefix === "" ? null : await bucket.get(drivePackKey(driveId, name, file), options));
   return Layer.succeed(
     DrivePacks,
     DrivePacks.of({
@@ -87,14 +97,12 @@ export const layerBucket = (bucket: PackBucket, prefixValue?: string) => {
         }),
       get: (driveId, name, file) =>
         attempt("get", async () => {
-          const object = await bucket.get(drivePackKey(driveId, name, file, prefix));
+          const object = await read(driveId, name, file);
           return object === null ? null : { body: object.body, size: object.size };
         }),
       range: (driveId, name, offset, length) =>
         attempt("range", async () => {
-          const object = await bucket.get(drivePackKey(driveId, name, "pack", prefix), {
-            range: { offset, length },
-          });
+          const object = await read(driveId, name, "pack", { range: { offset, length } });
           if (object === null) throw new Error(`Pack ${name} is missing.`);
           return new Uint8Array(await object.arrayBuffer());
         }),

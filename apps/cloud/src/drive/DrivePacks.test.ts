@@ -28,6 +28,33 @@ describe("DrivePacks", () => {
     );
   });
 
+  it.effect("reads a preview's unprefixed packs from before PR prefixes", () => {
+    const bucket = DrivePacks.makeMemoryBucket();
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        bucket.put(DrivePacks.drivePackKey("drive-1", "old", "pack"), new Uint8Array([7, 8, 9])),
+      );
+      const packs = yield* DrivePacks.DrivePacks;
+      expect(yield* packs.range("drive-1", "old", 1, 2)).toEqual(new Uint8Array([8, 9]));
+      expect((yield* packs.get("drive-1", "old", "pack"))?.size).toBe(3);
+      expect(yield* packs.get("drive-1", "old", "idx")).toBeNull();
+
+      // A prefixed copy wins, and new writes never land on the legacy key.
+      yield* packs.put({
+        driveId: "drive-1",
+        name: "old",
+        idx: new Uint8Array([1]),
+        pack: new Uint8Array([4, 5]),
+      });
+      expect(yield* packs.range("drive-1", "old", 0, 2)).toEqual(new Uint8Array([4, 5]));
+      expect(bucket.keys()).toEqual([
+        "drive-1/packs/pack-old.pack",
+        "pr-212/drive-1/packs/pack-old.pack",
+        "pr-212/drive-1/packs/pack-old.idx",
+      ]);
+    }).pipe(Effect.provide(DrivePacks.layerBucket(bucket, "pr-212/")));
+  });
+
   it("rejects prefixes outside the PR namespace", () => {
     expect(() => DrivePacks.drivePackPrefix("drive-1/")).toThrow(
       "DRIVE_PACKS_PREFIX must be empty or a PR prefix such as pr-123/.",
