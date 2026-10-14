@@ -22,7 +22,6 @@ import {
   scopedSettingsAreMixed,
   scopedSettingsSource,
   selectScopedSettingsEnvironments,
-  serverSettingsWritable,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
 
@@ -33,7 +32,6 @@ function environment(
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
     projectOverrides?: boolean;
-    serverSettingsWrite?: false;
   } = {},
 ) {
   return {
@@ -48,10 +46,7 @@ function environment(
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
             environment: {
-              capabilities: {
-                projectSettingsOverrides: options.projectOverrides !== false,
-                ...(options.serverSettingsWrite === false ? { serverSettingsWrite: false } : {}),
-              },
+              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
             },
           },
   };
@@ -662,37 +657,4 @@ it("routes legacy model preference keys exclusively to the selected environment"
   expect(plan.serverWrites).toEqual([
     { environmentId: server.environmentId, label: server.label, patch },
   ]);
-});
-
-describe("environments that don't save server settings", () => {
-  const cloud = environment("Cloud", { serverSettingsWrite: false });
-
-  it("writes server keys only where they save", () => {
-    const scope = resolveSettingsScope({}, [], [laptop, cloud]);
-    expect(
-      planScopedSettingsPatch(scope, [laptop, cloud], { enableProviderUpdateChecks: false })
-        .serverWrites,
-    ).toEqual([
-      {
-        environmentId: laptop.environmentId,
-        label: laptop.label,
-        patch: { enableProviderUpdateChecks: false },
-      },
-    ]);
-    const only = resolveSettingsScope({}, [], [cloud]);
-    expect(
-      planScopedSettingsPatch(only, [cloud], { enableProviderUpdateChecks: false }),
-    ).toMatchObject({
-      serverWrites: [],
-      unavailableReason: "The selected environments don't save this setting.",
-    });
-  });
-
-  it("hides server rows only when no selected environment saves them", () => {
-    expect(serverSettingsWritable([laptop, cloud])).toBe(true);
-    expect(serverSettingsWritable([cloud])).toBe(false);
-    // Unknown until configs load or something connects.
-    expect(serverSettingsWritable([loading])).toBe(true);
-    expect(serverSettingsWritable([])).toBe(true);
-  });
 });
