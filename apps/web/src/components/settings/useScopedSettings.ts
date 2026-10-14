@@ -21,9 +21,12 @@ import {
   useClientSettings,
   useMigrateModelPreferences,
 } from "../../hooks/useSettings";
+import { useEnvironmentSupports } from "../../state/environmentCapabilities";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
+import { acceptsServerSettings, serverSettingsWritable } from "./signalboxServerSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
@@ -117,7 +120,8 @@ export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
   return useCallback(
-    (patch: ScopedSettingsPatch) => run(planScopedSettingsPatch(scope, environments, patch)),
+    (patch: ScopedSettingsPatch) =>
+      run(planScopedSettingsPatch(scope, environments.filter(acceptsServerSettings), patch)),
     [environments, run, scope],
   );
 }
@@ -146,7 +150,13 @@ export function useClearProjectOverrides() {
   return useCallback(
     (entries: readonly ProjectOverrideEntry[], keys: readonly ProjectScopedServerSettingKey[]) => {
       if (context === null) return;
-      run(planProjectOverridesClear(context.environments, entries, keys));
+      run(
+        planProjectOverridesClear(
+          context.environments.filter(acceptsServerSettings),
+          entries,
+          keys,
+        ),
+      ); // signalbox: skip environments that never save server settings
     },
     [context, run],
   );
@@ -159,4 +169,17 @@ export function useScopedSettingsWriteAllowed() {
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every((target) => writable.has(target.environmentId))
   );
+}
+
+/**
+ * signalbox: whether server-scoped settings can be saved where they would be
+ * written: the selected environments, or the primary one outside a settings
+ * scope. Gate server-scoped rows and sections on it so environments that don't
+ * serve `server.updateSettings` (Signalbox Cloud) never show them.
+ */
+export function useServerSettingsWritable(): boolean {
+  const context = useOptionalSettingsScope();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primaryWritable = useEnvironmentSupports(primaryEnvironmentId, "serverSettingsWrite");
+  return context ? serverSettingsWritable(context.connectedEnvironments) : primaryWritable;
 }

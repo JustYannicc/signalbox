@@ -145,6 +145,10 @@ interface RightPanelTabsProps {
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
+  /** signalbox: false when the environment serves no terminals, which hides the surface. */
+  terminalSupported?: boolean;
+  /** signalbox: false when the environment serves no devices, which hides the surface. */
+  devicesSupported?: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
@@ -191,6 +195,16 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
 ].join(",");
+
+/** signalbox: surfaces the environment can't serve are hidden, not shown disabled. */
+function isSurfaceSupported(
+  label: string,
+  props: { readonly terminalSupported?: boolean; readonly devicesSupported?: boolean },
+) {
+  if (label === "Terminal") return props.terminalSupported !== false;
+  if (label === "Device") return props.devicesSupported !== false;
+  return true;
+}
 
 /** One-line unavailability hints for the empty-state rows. */
 const SURFACE_UNAVAILABLE_HINTS = {
@@ -343,6 +357,10 @@ function RightPanelEmptyState(props: {
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
+  /** signalbox: false when the environment serves no terminals, which hides the surface. */
+  terminalSupported?: boolean;
+  /** signalbox: false when the environment serves no devices, which hides the surface. */
+  devicesSupported?: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
@@ -352,7 +370,7 @@ function RightPanelEmptyState(props: {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
 
-  const actions = [
+  const allActions = [
     {
       label: "Browser",
       icon: Globe2,
@@ -411,6 +429,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddDevice,
     },
   ] as const;
+  const actions = allActions.filter((action) => isSurfaceSupported(action.label, props));
 
   type SurfaceAction = (typeof actions)[number];
 
@@ -934,7 +953,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   }, []);
 
-  const addSurfaceActions = [
+  const allAddSurfaceActions = [
     {
       label: "Browser",
       icon: Globe2,
@@ -992,6 +1011,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddDevice,
     },
   ] as const;
+  const addSurfaceActions = allAddSurfaceActions.filter((action) =>
+    isSurfaceSupported(action.label, props),
+  );
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
@@ -1485,6 +1507,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
+            {...(props.terminalSupported !== undefined
+              ? { terminalSupported: props.terminalSupported }
+              : {})}
+            {...(props.devicesSupported !== undefined
+              ? { devicesSupported: props.devicesSupported }
+              : {})}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}

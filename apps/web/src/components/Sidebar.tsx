@@ -187,6 +187,8 @@ import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
+import { labelCopyPathItems } from "./workspacePathLocation.logic";
+import { readWorkspacePathLocation } from "./workspacePathLocation";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -4597,11 +4599,17 @@ export default function Sidebar() {
           projectByKey.get(`${session.environmentId}:${session.projectId}`)?.workspaceRoot;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildDraftActionMenuItems({
-              hasPath: Boolean(workspacePath),
-              hasBranch: Boolean(session.branch),
-              hasProject: projectGroup != null,
-            }),
+            labelCopyPathItems(
+              buildDraftActionMenuItems({
+                hasPath: Boolean(workspacePath),
+                hasBranch: Boolean(session.branch),
+                hasProject: projectGroup != null,
+              }),
+              readWorkspacePathLocation(
+                session.environmentId,
+                environmentLabelById.get(session.environmentId),
+              ),
+            ),
             position,
           ),
         );
@@ -4630,7 +4638,13 @@ export default function Sidebar() {
         }
       })();
     },
-    [copyBranchToClipboard, copyPathToClipboard, openProjectSettings, projectByKey],
+    [
+      copyBranchToClipboard,
+      copyPathToClipboard,
+      environmentLabelById,
+      openProjectSettings,
+      projectByKey,
+    ],
   );
 
   const handleThreadContextMenu = useCallback(
@@ -4682,34 +4696,40 @@ export default function Sidebar() {
           ) ?? null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildThreadActionMenuItems({
-              canOperate: readEnvironmentScope(
+            labelCopyPathItems(
+              buildThreadActionMenuItems({
+                canOperate: readEnvironmentScope(
+                  threadRef.environmentId,
+                  AuthOrchestrationOperateScope,
+                ),
+                branch: thread.branch ?? null,
+                projectFilter: threadProjectGroup
+                  ? {
+                      label: threadProjectGroup.displayName,
+                      isActive: projectScopeKey === threadProjectGroup.projectKey,
+                    }
+                  : null,
+                isPinned,
+                isSettled,
+                autoSettleEnabled: thread.autoSettleDisabledAt == null,
+                isSnoozed,
+                canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+                isRegeneratingTitle,
+                isRunning: !threadRuntimeCanArchive(thread.runtime),
+                supports: {
+                  settlement: supportsSettlement,
+                  autoSettleOptOut: supportsAutoSettleOptOut,
+                  snooze: supportsSnooze,
+                  pinning: supportsPinning,
+                  titleRegeneration: supportsTitleRegeneration,
+                },
+                snoozePresets,
+              }),
+              readWorkspacePathLocation(
                 threadRef.environmentId,
-                AuthOrchestrationOperateScope,
+                environmentLabelById.get(threadRef.environmentId),
               ),
-              branch: thread.branch ?? null,
-              projectFilter: threadProjectGroup
-                ? {
-                    label: threadProjectGroup.displayName,
-                    isActive: projectScopeKey === threadProjectGroup.projectKey,
-                  }
-                : null,
-              isPinned,
-              isSettled,
-              autoSettleEnabled: thread.autoSettleDisabledAt == null,
-              isSnoozed,
-              canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
-              isRegeneratingTitle,
-              isRunning: !threadRuntimeCanArchive(thread.runtime),
-              supports: {
-                settlement: supportsSettlement,
-                autoSettleOptOut: supportsAutoSettleOptOut,
-                snooze: supportsSnooze,
-                pinning: supportsPinning,
-                titleRegeneration: supportsTitleRegeneration,
-              },
-              snoozePresets,
-            }),
+            ),
             position,
           ),
         );
@@ -4917,6 +4937,7 @@ export default function Sidebar() {
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
+      environmentLabelById,
       handleMultiSelectContextMenu,
       markThreadUnread,
       openProjectSettings,

@@ -165,6 +165,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     : null;
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
+  // signalbox: while an environment is still connecting there is none to go and add.
+  const waitsForEnvironment = !catalogState.hasReadyEnvironment && projectEmptyState.loading;
   const serverConfigs = useServerConfigs();
   // Scratch projects are reached through the No project row, never as rows
   // of their own.
@@ -388,15 +390,19 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               </Text>
               {Platform.OS === "android" ? (
                 <>
-                  <MaterialButton
-                    label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
-                    tone="primary"
-                    onPress={() =>
-                      catalogState.hasReadyEnvironment
-                        ? navigation.dispatch(StackActions.push("AddProject"))
-                        : navigation.navigate("ConnectionsNew")
-                    }
-                  />
+                  {!waitsForEnvironment ? ( // signalbox
+                    <MaterialButton
+                      label={
+                        catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"
+                      }
+                      tone="primary"
+                      onPress={() =>
+                        catalogState.hasReadyEnvironment
+                          ? navigation.dispatch(StackActions.push("AddProject"))
+                          : navigation.navigate("ConnectionsNew")
+                      }
+                    />
+                  ) : null}
                   {canStartScratch ? (
                     <MaterialButton
                       label="Start without a project"
@@ -405,7 +411,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     />
                   ) : null}
                 </>
-              ) : !catalogState.hasReadyEnvironment ? (
+              ) : waitsForEnvironment ? null : !catalogState.hasReadyEnvironment ? ( // signalbox
                 <Pressable
                   className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                   onPress={() => navigation.navigate("ConnectionsNew")}

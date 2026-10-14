@@ -77,6 +77,7 @@ import {
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
+import { useTargetsSupporting } from "./signalboxSettingsTargets"; // signalbox
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
 import { scheduledTaskEditorSessionAtom } from "./scheduled-task-editor-state";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -278,8 +279,11 @@ export function SettingsScheduledTasksRouteScreen() {
       };
     }, []),
   );
-  const { availableTargets, selectedTargets, selectedProjectKey, projectGroups } =
-    useSettingsEnvironmentFilter();
+  const filter = useSettingsEnvironmentFilter();
+  const { selectedProjectKey, projectGroups } = filter;
+  // signalbox: only environments that run scheduled tasks.
+  const availableTargets = useTargetsSupporting(filter.availableTargets, "scheduledTasks");
+  const selectedTargets = useTargetsSupporting(filter.selectedTargets, "scheduledTasks");
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
   const visibleEnvironments = settingsTargetsForProject(
     selectedTargets,
@@ -375,7 +379,10 @@ export function SettingsScheduledTasksRouteScreen() {
 
 export function SettingsScheduledTaskNewRouteScreen() {
   const { resetEditor } = useScheduledTaskEditor();
-  const { availableTargets } = useSettingsEnvironmentFilter();
+  const availableTargets = useTargetsSupporting(
+    useSettingsEnvironmentFilter().availableTargets,
+    "scheduledTasks",
+  ); // signalbox
   const initialized = useRef(false);
   useLayoutEffect(() => {
     if (initialized.current || availableTargets.length === 0) return;
@@ -399,7 +406,10 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
     hasChanges,
     draftForEnvironment,
   } = useScheduledTaskEditor();
-  const { availableTargets } = useSettingsEnvironmentFilter();
+  const availableTargets = useTargetsSupporting(
+    useSettingsEnvironmentFilter().availableTargets,
+    "scheduledTasks",
+  ); // signalbox
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);

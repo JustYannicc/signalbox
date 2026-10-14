@@ -136,6 +136,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 
 function NewTaskWorkspaceIcon(props: {
@@ -201,6 +202,7 @@ export function NewTaskDraftScreen(props: {
 }) {
   const projects = useProjects();
   const flow = useNewTaskFlow();
+  const supportsWorktrees = useEnvironmentSupports(flow.selectedEnvironmentId, "worktrees"); // signalbox
   const navigation = useNavigation();
   const {
     consumeShare,
@@ -1618,22 +1620,27 @@ export function NewTaskDraftScreen(props: {
 
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
-      <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
-        accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || voiceInput.isBusy}
-        renderIcon={(size) => (
-          <NewTaskWorkspaceIcon
-            workspaceMode={flow.workspaceMode}
-            worktreePath={flow.selectedWorktreePath}
-            size={size}
-          />
-        )}
-        label={workspaceLabel}
-        maxWidth={flow.workspaceMode === "local" ? 220 : 148}
-        onPress={() => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")}
-        showChevron={false}
-      />
+      {/* signalbox: only the current checkout where the environment has no worktrees. */}
+      {supportsWorktrees ? (
+        <ComposerInlineControl
+          accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
+          accessibilityLabel={workspaceLabel}
+          disabled={isComposerInteractionLocked || voiceInput.isBusy}
+          renderIcon={(size) => (
+            <NewTaskWorkspaceIcon
+              workspaceMode={flow.workspaceMode}
+              worktreePath={flow.selectedWorktreePath}
+              size={size}
+            />
+          )}
+          label={workspaceLabel}
+          maxWidth={flow.workspaceMode === "local" ? 220 : 148}
+          onPress={() =>
+            flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")
+          }
+          showChevron={false}
+        />
+      ) : null}
 
       <ComposerInlineControl
         accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}

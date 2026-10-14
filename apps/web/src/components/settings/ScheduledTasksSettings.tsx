@@ -65,6 +65,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   matchesScheduledTaskScope,
+  runsScheduledTasks,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
   taskToDraft,
@@ -247,7 +248,12 @@ export function ScheduledTasksSettings(target: {
   const openForEdit = useCallback((environmentId: EnvironmentId, task: ScheduledTask) => {
     setEditor({ environmentId, task });
   }, []);
-  const defaultEnvironment = environment ?? connectedEnvironments[0];
+  // signalbox: environments that don't run scheduled tasks get no section.
+  const taskEnvironments = environments.filter(runsScheduledTasks);
+  const defaultEnvironment =
+    environment && runsScheduledTasks(environment)
+      ? environment
+      : connectedEnvironments.find(runsScheduledTasks);
   const canCreate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
   );
@@ -257,18 +263,20 @@ export function ScheduledTasksSettings(target: {
         title="Scheduled tasks"
         variant="plain"
         headerAction={
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            disabled={!defaultEnvironment || !canCreate}
-            onClick={() =>
-              defaultEnvironment &&
-              setEditor({ environmentId: defaultEnvironment.environmentId, task: null })
-            }
-          >
-            <PlusIcon className="size-3" />
-            New task
-          </Button>
+          environments.length > 0 && taskEnvironments.length === 0 ? null : (
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              disabled={!defaultEnvironment || !canCreate}
+              onClick={() =>
+                defaultEnvironment &&
+                setEditor({ environmentId: defaultEnvironment.environmentId, task: null })
+              }
+            >
+              <PlusIcon className="size-3" />
+              New task
+            </Button>
+          )
         }
       >
         {scope.kind === "unavailable" ? (
@@ -285,13 +293,25 @@ export function ScheduledTasksSettings(target: {
               <EmptyDescription>Connect an environment to manage scheduled tasks.</EmptyDescription>
             </EmptyHeader>
           </Empty>
+        ) : taskEnvironments.length === 0 ? (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Clock3Icon />
+              </EmptyMedia>
+              <EmptyTitle>Scheduled tasks aren't available here</EmptyTitle>
+              <EmptyDescription>
+                The selected environments don't run scheduled tasks.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
           <div className="space-y-8">
-            {environments.map((entry) => (
+            {taskEnvironments.map((entry) => (
               <ScheduledTaskEnvironmentSection
                 key={`${entry.environmentId}:${target.taskId ?? ""}`}
                 environment={entry}
-                showEnvironmentHeading={environments.length > 1}
+                showEnvironmentHeading={taskEnvironments.length > 1}
                 taskId={
                   (target.environmentId ?? defaultEnvironment?.environmentId) ===
                   entry.environmentId
@@ -778,6 +798,7 @@ function ScheduledTaskEditorDialog({
   readonly onClose: () => void;
 }) {
   const { scope, connectedEnvironments } = useSettingsScope();
+  const taskEnvironments = connectedEnvironments.filter(runsScheduledTasks); // signalbox
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
   const connected =
@@ -983,7 +1004,7 @@ function ScheduledTaskEditorDialog({
                 value={environmentId}
                 disabled={task !== null || saving}
                 onValueChange={(id) => {
-                  const next = connectedEnvironments.find((entry) => entry.environmentId === id);
+                  const next = taskEnvironments.find((entry) => entry.environmentId === id);
                   if (!next) return;
                   setEnvironmentId(next.environmentId);
                   setDraft((current) => ({
@@ -1009,7 +1030,7 @@ function ScheduledTaskEditorDialog({
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  {connectedEnvironments.map((entry) => (
+                  {taskEnvironments.map((entry) => (
                     <SelectItem key={entry.environmentId} value={entry.environmentId}>
                       <EnvironmentMachineIcon
                         kind={resolveEnvironmentMachineKind(entry.serverConfig)}

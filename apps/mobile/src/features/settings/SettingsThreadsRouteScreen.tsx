@@ -24,6 +24,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { useTargetsSupporting } from "./signalboxSettingsTargets"; // signalbox
 import {
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
@@ -61,7 +62,9 @@ const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterD
  * Mobile edits auto-settle defaults across selected capable targets.
  */
 function AutoSettleSettingsRows() {
-  const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const filter = useSettingsEnvironmentFilter();
+  const { projectGroups, selectedProjectKey } = filter;
+  const selectedTargets = useTargetsSupporting(filter.selectedTargets, "serverSettingsWrite"); // signalbox
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const projectSelected = selectedProjectKey !== null;

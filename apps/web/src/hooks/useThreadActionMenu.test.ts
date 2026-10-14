@@ -65,6 +65,7 @@ vi.mock("../state/entities", () => ({
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
+vi.mock("../components/workspacePathLocation", () => ({ readWorkspacePathLocation: () => null }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {

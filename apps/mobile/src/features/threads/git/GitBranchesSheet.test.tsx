@@ -39,6 +39,7 @@ vi.mock("../../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { refName: "main" } }),
 }));
 vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } }));
+vi.mock("../../../state/environmentCapabilities", () => ({ useEnvironmentSupports: () => true }));
 vi.mock("../../../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: { environmentId: "environment", branch: "main" } }),
 }));

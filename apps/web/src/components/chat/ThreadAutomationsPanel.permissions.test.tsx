@@ -20,6 +20,7 @@ vi.mock("../../state/server", () => ({
     runScheduledTaskNow: { permissionAtom: () => null },
   },
 }));
+vi.mock("../../state/environmentCapabilities", () => ({ useEnvironmentSupports: () => true }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) => (command === "toggle" ? state.toggle : state.run),
 }));

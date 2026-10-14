@@ -408,6 +408,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { readEnvironmentSupports, useEnvironmentSupports } from "~/state/environmentCapabilities";
 import {
   environmentServerConfigsAtom,
   primaryServerAvailableEditorsAtom,
@@ -997,9 +998,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   keybindings,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
+  const terminalSupported = useEnvironmentSupports(threadRef.environmentId, "terminal");
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useCallback(
-    () => readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope),
+    () =>
+      readEnvironmentSupports(threadRef.environmentId, "terminal") &&
+      readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope),
     [threadRef.environmentId],
   );
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
@@ -1323,7 +1327,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [onAddTerminalContext, visible],
   );
 
-  if (!project || (!terminalUiState.terminalOpen && !active) || !cwd) {
+  if (!terminalSupported || !project || (!terminalUiState.terminalOpen && !active) || !cwd) {
     return null;
   }
 
@@ -1588,12 +1592,20 @@ export default function ChatView(props: ChatViewProps) {
     forceExpandedMobileComposer = false,
   } = props;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  // signalbox: an environment that doesn't serve terminals gets no terminal
+  // controls; folding it into the scopes gates every shortcut and entry point.
+  const terminalSupported = useEnvironmentSupports(environmentId, "terminal");
+  const devicesSupported = useEnvironmentSupports(environmentId, "devices");
+  const canOperateTerminal =
+    useEnvironmentScope(environmentId, AuthTerminalOperateScope) && terminalSupported;
   const hasTerminalWriteAccess = useCallback(
-    () => readEnvironmentScope(environmentId, AuthTerminalOperateScope),
+    () =>
+      readEnvironmentSupports(environmentId, "terminal") &&
+      readEnvironmentScope(environmentId, AuthTerminalOperateScope),
     [environmentId],
   );
-  const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
+  const canReadTerminal =
+    useEnvironmentScope(environmentId, AuthTerminalReadScope) && terminalSupported;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
@@ -4803,6 +4815,7 @@ export default function ChatView(props: ChatViewProps) {
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadRef) return;
     const nextOpen = !terminalUiState.terminalOpen;
+    if (nextOpen && !readEnvironmentSupports(environmentId, "terminal")) return;
     if (
       nextOpen &&
       !readEnvironmentScope(environmentId, AuthTerminalReadScope) &&
@@ -6986,9 +6999,17 @@ export default function ChatView(props: ChatViewProps) {
     activeThread.worktreePath === null &&
     !envLocked,
   );
-  const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
-    ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
-    : derivedEnvMode;
+  // signalbox: without worktrees every thread starts in the project checkout,
+  // whatever the draft or the new-thread default asked for.
+  const worktreesSupported = useEnvironmentSupports(
+    activeThread?.environmentId ?? environmentId,
+    "worktrees",
+  );
+  const envMode: DraftThreadEnvMode = !worktreesSupported
+    ? "local"
+    : canOverrideServerThreadEnvMode
+      ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
+      : derivedEnvMode;
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
@@ -11294,7 +11315,8 @@ export default function ChatView(props: ChatViewProps) {
     threadId: activeThread.id,
     ...(draftId ? { draftId } : {}),
     activeProjectName: activeProject?.title,
-    activeProjectScripts: activeProject ? activeProjectScripts : undefined,
+    // Scripts run in a terminal.
+    activeProjectScripts: activeProject && terminalSupported ? activeProjectScripts : undefined,
     preferredScriptId: activeProject
       ? (lastInvokedScriptByProjectId[activeProject.id] ?? null)
       : null,
@@ -11335,6 +11357,7 @@ export default function ChatView(props: ChatViewProps) {
     onDeleteProjectScript: deleteProjectScript,
   };
   const panelToggleControlProps = {
+    showTerminalControl: terminalSupported,
     terminalAvailable: activeProject !== null,
     terminalOpen: terminalUiState.terminalOpen,
     terminalShortcutLabel: shortcutLabelForCommand(keybindings, "terminal.toggle"),
@@ -11553,7 +11576,9 @@ export default function ChatView(props: ChatViewProps) {
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       onCiteAssistantText: citeAssistantText,
-                      ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
+                      ...(activeProject && terminalSupported
+                        ? { onRunShellCommand: runShellCommand }
+                        : {}),
                     }
                   : {})}
                 isWorking={!paintOnlyDisplayedTimeline && isWorking}
@@ -12115,6 +12140,8 @@ export default function ChatView(props: ChatViewProps) {
           onAddDevice={addDeviceSurface}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
+          terminalSupported={terminalSupported}
+          devicesSupported={devicesSupported}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
@@ -12174,6 +12201,8 @@ export default function ChatView(props: ChatViewProps) {
             onAddDevice={addDeviceSurface}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
+            terminalSupported={terminalSupported}
+            devicesSupported={devicesSupported}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}

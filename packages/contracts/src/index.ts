@@ -68,4 +68,5 @@ export * from "./secretRequest.ts";
 export * from "./workflow.ts"; // signalbox: automations
 export * from "./automation.ts"; // signalbox: automations
 export * from "./automationRpc.ts"; // signalbox: automations
+export * from "./signalboxCapabilities.ts"; // signalbox: cloud capability gates
 export * from "./clientRpcPermissions.ts";

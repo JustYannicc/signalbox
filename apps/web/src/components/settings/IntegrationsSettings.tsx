@@ -28,6 +28,7 @@ import {
   DEFAULT_BROWSER_VIEWPORT,
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
+  environmentSupports,
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_VIEWPORT_MAX_AREA,
   PREVIEW_VIEWPORT_MAX_DIMENSION,
@@ -55,6 +56,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { previewEnvironment } from "~/state/preview";
 import { useServerConfigs } from "~/state/entities";
+import { useEnvironmentSupports } from "~/state/environmentCapabilities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AgentDeviceSetupStatus,
@@ -628,6 +630,9 @@ function DeviceIntegrationSettings() {
   const settings = useScopedSettings();
   const connected = selected?.connection.phase === "connected" && selected.serverConfig !== null;
   const environmentId = connected ? selected.environmentId : null;
+  // signalbox: the section shows the selected environment's device hosts.
+  const supportsDevices = useEnvironmentSupports(selected?.environmentId, "devices");
+  if (!supportsDevices) return null;
 
   return (
     <SettingsSection id="devices" title="Devices">
@@ -685,9 +690,13 @@ function DeviceIntegrationControls({
   ) => {
     if (!environmentId || !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setPending(kind);
+    // signalbox: environments without device hosts have nothing to configure.
+    const deviceEnvironments = environments.filter((environment) =>
+      environmentSupports(environment.serverConfig?.environment.capabilities, "devices"),
+    );
     try {
       const results = await Promise.allSettled(
-        environments.map(async (environment) => {
+        deviceEnvironments.map(async (environment) => {
           if (environment.connection.phase !== "connected" || !environment.serverConfig) {
             throw new Error("Environment disconnected");
           }
@@ -700,7 +709,7 @@ function DeviceIntegrationControls({
           });
         }),
       );
-      const failed = environments.filter((_, index) => {
+      const failed = deviceEnvironments.filter((_, index) => {
         const result = results[index];
         return result?.status !== "fulfilled" || result.value._tag === "Failure";
       });

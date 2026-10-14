@@ -9,6 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { PoolFeature } from "./accountHub.ts"; // signalbox: pools
+import { SignalboxEnvironmentCapabilityFields } from "./signalboxCapabilities.ts"; // signalbox
 
 /** Wire version for orchestration snapshots, streams, commands, and RPC payloads. */
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
@@ -229,6 +230,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   signalboxPreviews: Schema.optionalKey(Schema.Boolean),
   /** signalbox: What this environment's pools can do. Absent: everything (`accountHub.ts`). */
   poolFeatures: Schema.optionalKey(Schema.Array(PoolFeature)),
+  ...SignalboxEnvironmentCapabilityFields,
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

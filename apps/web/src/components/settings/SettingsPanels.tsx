@@ -3053,7 +3053,7 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection id="projects-and-threads" title="Projects & threads">
+      <SettingsSection id="projects-and-threads" title="Projects & threads" serverScoped>
         <SettingsRow
           serverScoped
           settingKeys={["newWorktreesStartFromOrigin"]}
@@ -3238,7 +3238,7 @@ export function GeneralSettingsPanel() {
         ) : null}
       </SettingsSection>
 
-      <SettingsSection id="text-generation" title="Text generation">
+      <SettingsSection id="text-generation" title="Text generation" serverScoped>
         <SettingsRow
           serverScoped
           settingKeys={["textGenerationModelSelection"]}

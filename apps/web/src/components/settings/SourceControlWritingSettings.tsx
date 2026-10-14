@@ -178,7 +178,7 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection id="source-control-text-generation" title="Text generation">
+    <SettingsSection id="source-control-text-generation" title="Text generation" serverScoped>
       <BranchNamingSettings />
       <SettingsRow
         serverScoped

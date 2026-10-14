@@ -45,11 +45,15 @@ import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   isSettingsOverviewVisible,
+  isSettingsPathAvailable,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
-import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import {
+  useAvailableSettingsSearchItems,
+  useUnsupportedSettingsCapabilities,
+} from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -116,8 +120,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
+  const unsupportedCapabilities = useUnsupportedSettingsCapabilities(scopeSearch);
   const navItems = SETTINGS_NAV_ITEMS.filter(
-    (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
+    (item) =>
+      (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
+      isSettingsPathAvailable(item.to, unsupportedCapabilities),
   );
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);

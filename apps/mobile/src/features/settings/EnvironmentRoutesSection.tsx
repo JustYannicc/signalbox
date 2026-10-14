@@ -23,6 +23,7 @@ import { StatusPill } from "../../components/StatusPill";
 import { environmentCatalog } from "../../connection/catalog";
 import { cn } from "../../lib/cn";
 import { environmentSession } from "../../state/session";
+import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectionTone } from "../connection/connectionTone";
 import { SettingsActionRow } from "./components/SettingsActionRow";
@@ -84,6 +85,8 @@ export function EnvironmentRoutesSection({
   // land in one frame. Kept rows would show their old offsets in their new
   // slots until the animated style catches up, and the card flashes empty.
   const [drops, setDrops] = useState(0);
+  // signalbox: a route pairs over an address the user runs; a hosted environment has none to add.
+  const canAddRoute = useEnvironmentSupports(environmentId, "remoteAccess");
   if (entry === undefined) return null;
 
   const byId = new Map(saved.map((route) => [connectionRouteId(route.target), route]));
@@ -225,7 +228,9 @@ export function EnvironmentRoutesSection({
           />
         );
       })}
-      <SettingsActionRow icon="plus" label="Add route" onPress={onAddRoute} />
+      {canAddRoute ? (
+        <SettingsActionRow icon="plus" label="Add route" onPress={onAddRoute} />
+      ) : null}
     </SettingsSection>
   );
 }

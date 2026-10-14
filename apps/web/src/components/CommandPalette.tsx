@@ -4,6 +4,7 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // signalbox: accounts
 import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
+import { resolveAddProjectAvailability } from "@t3tools/client-runtime/operations/signalboxAddProject"; // signalbox: cloud capability gates
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -56,6 +57,8 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
+  environmentSupports,
+  type SignalboxEnvironmentCapability,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -273,6 +276,9 @@ interface AddProjectEnvironmentOption {
   readonly status: string;
 }
 
+/** signalbox: the Add project environments view, whose items stay live while environments connect. */
+const ADD_PROJECT_ENVIRONMENTS_VIEW = "add-project:environments";
+
 type AddProjectCloneFlow =
   | {
       readonly step: "repository";
@@ -287,6 +293,7 @@ type AddProjectCloneFlow =
       readonly repository: SourceControlRepositoryInfo | null;
       readonly remoteUrl: string;
     };
+type ConfirmedCloneFlow = Extract<AddProjectCloneFlow, { readonly step: "confirm" }>;
 
 function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: string): ReactNode {
   if (source === "url") return <LinkIcon className={className} />;
@@ -643,7 +650,7 @@ function OpenCommandPaletteDialog(props: {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const { environments } = useEnvironments();
+  const { environments, isReady: environmentCatalogReady } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
@@ -913,6 +920,17 @@ function OpenCommandPaletteDialog(props: {
     [projectPickerEntries],
   );
 
+  // signalbox: what an environment can do (`signalboxCapabilities.ts`).
+  const environmentCan = useCallback(
+    (environmentId: EnvironmentId | null, capability: SignalboxEnvironmentCapability): boolean =>
+      environmentSupports(
+        environments.find((environment) => environment.environmentId === environmentId)
+          ?.serverConfig?.environment.capabilities,
+        capability,
+      ),
+    [environments],
+  );
+
   const addProjectEnvironmentOptions = useMemo(() => {
     const options = environments
       .filter((environment) => canCreateProjectInEnvironment(environment.connection.phase))
@@ -1012,11 +1030,15 @@ function OpenCommandPaletteDialog(props: {
       getFilesystemBrowsePath(
         query,
         browseEnvironmentPlatform,
-        browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null,
+        browseEnvironmentId !== null &&
+          !isRemoteProjectRepositoryStep &&
+          newProjectFlow === null &&
+          environmentCan(browseEnvironmentId, "localFilesystem"),
       ),
     [
       browseEnvironmentId,
       browseEnvironmentPlatform,
+      environmentCan,
       isRemoteProjectRepositoryStep,
       newProjectFlow,
       query,
@@ -1545,8 +1567,9 @@ function OpenCommandPaletteDialog(props: {
       environmentId: EnvironmentId,
       readinessBySource: AddProjectRemoteSourceReadiness,
     ): CommandPaletteView["groups"] => {
-      const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
-        {
+      const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+      if (environmentCan(environmentId, "localFilesystem")) {
+        sourceItems.push({
           kind: "action",
           value: `action:add-project:${environmentId}:local`,
           searchTerms: ["local", "folder", "directory", "browse"],
@@ -1557,8 +1580,8 @@ function OpenCommandPaletteDialog(props: {
           run: async () => {
             await startAddProjectBrowse(environmentId);
           },
-        },
-      ];
+        });
+      }
 
       if (newProjectsRootFor(environmentId) !== null) {
         sourceItems.unshift({
@@ -1575,8 +1598,9 @@ function OpenCommandPaletteDialog(props: {
         });
       }
 
+      // Without `cloneFromUrl` the hosts' own sources still take a pasted URL.
       const orderedSources: ReadonlyArray<AddProjectRemoteSource> = [
-        "url",
+        ...(environmentCan(environmentId, "cloneFromUrl") ? (["url"] as const) : []),
         ...sortAddProjectProviderSources(readinessBySource),
       ];
 
@@ -1646,6 +1670,7 @@ function OpenCommandPaletteDialog(props: {
       return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
     },
     [
+      environmentCan,
       newProjectsRootFor,
       openSourceControlSettings,
       startAddProjectBrowse,
@@ -1722,42 +1747,104 @@ function OpenCommandPaletteDialog(props: {
     (option) => option.isConnected && newProjectsRootFor(option.environmentId) !== null,
   );
 
-  const addProjectEnvironmentGroups = useMemo<CommandPaletteView["groups"]>(
-    () => [
-      {
-        value: "environments",
-        label: "Environments",
-        items: addProjectEnvironmentItems,
-      },
-    ],
-    [addProjectEnvironmentItems],
-  );
+  // signalbox: right after sign-in the environments may still be connecting.
+  // The environments view then waits, continues once one connects, and only
+  // offers connection settings when nothing is on its way.
+  const addProjectAvailability = resolveAddProjectAvailability({
+    catalogReady: environmentCatalogReady,
+    phases: environments.map((environment) => environment.connection.phase),
+  });
+  const addProjectConnectingEnvironment =
+    environments.find(
+      (environment) =>
+        environment.connection.phase === "connecting" ||
+        environment.connection.phase === "reconnecting",
+    ) ?? null;
+  const addProjectConnectingMessage =
+    addProjectConnectingEnvironment === null
+      ? "Loading environments…"
+      : addProjectConnectingEnvironment.connection.phase === "connecting"
+        ? `Connecting to ${addProjectConnectingEnvironment.label}…`
+        : `Reconnecting to ${addProjectConnectingEnvironment.label}…`;
+  const [addProjectAwaitingConnection, setAddProjectAwaitingConnection] = useState(false);
+
+  // While environments connect the view stays empty, so the palette shows the connecting status.
+  const addProjectEnvironmentGroupItems =
+    addProjectEnvironmentItems.length > 0 || addProjectAvailability === "connecting"
+      ? addProjectEnvironmentItems
+      : [
+          {
+            kind: "action" as const,
+            value: "action:add-project:connect-environment",
+            searchTerms: ["connect", "environment", "connections"],
+            title: "Connect an environment",
+            description: "Settings · Connections",
+            icon: <LinkIcon className={ITEM_ICON_CLASS} />,
+            run: async () => {
+              await navigate({ to: "/settings/connections" });
+            },
+          },
+        ];
+  const addProjectEnvironmentGroups: CommandPaletteView["groups"] =
+    addProjectEnvironmentGroupItems.length === 0
+      ? []
+      : [
+          {
+            value: ADD_PROJECT_ENVIRONMENTS_VIEW,
+            label: "Environments",
+            items: addProjectEnvironmentGroupItems,
+          },
+        ];
 
   const openAddProjectFlow = useCallback(() => {
-    // With no connected environment there is nothing to browse, so the only
-    // useful next step is connecting one.
-    if (addProjectEnvironmentOptions.length === 0) {
+    // With nothing connected or connecting there is nothing to browse, so the
+    // only useful next step is connecting one.
+    if (addProjectAvailability === "unavailable") {
       setOpen(false);
       void navigate({ to: "/settings/connections" });
       return;
     }
 
-    if (addProjectEnvironmentOptions.length > 1 || defaultAddProjectEnvironmentId === null) {
+    if (addProjectEnvironmentOptions.length !== 1 || defaultAddProjectEnvironmentId === null) {
+      setAddProjectAwaitingConnection(addProjectEnvironmentOptions.length === 0);
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
-        groups: addProjectEnvironmentGroups,
+        groups: [{ value: ADD_PROJECT_ENVIRONMENTS_VIEW, label: "Environments", items: [] }],
       });
       return;
     }
 
     void startAddProjectSourceSelection(defaultAddProjectEnvironmentId);
   }, [
-    addProjectEnvironmentGroups,
+    addProjectAvailability,
     addProjectEnvironmentOptions.length,
     defaultAddProjectEnvironmentId,
     navigate,
     pushPaletteView,
     setOpen,
+    startAddProjectSourceSelection,
+  ]);
+
+  // Continue a waiting Add project once its only environment connects; with
+  // several, the environments view lists them as they come up.
+  const isOnAddProjectEnvironmentsView =
+    currentView?.groups[0]?.value === ADD_PROJECT_ENVIRONMENTS_VIEW;
+  useEffect(() => {
+    if (!addProjectAwaitingConnection) return;
+    if (!isOnAddProjectEnvironmentsView) {
+      setAddProjectAwaitingConnection(false);
+      return;
+    }
+    if (addProjectEnvironmentOptions.length === 0) return;
+    setAddProjectAwaitingConnection(false);
+    if (addProjectEnvironmentOptions.length > 1 || defaultAddProjectEnvironmentId === null) return;
+    setViewStack((previousViews) => previousViews.slice(0, -1));
+    startAddProjectSourceSelection(defaultAddProjectEnvironmentId);
+  }, [
+    addProjectAwaitingConnection,
+    addProjectEnvironmentOptions.length,
+    defaultAddProjectEnvironmentId,
+    isOnAddProjectEnvironmentsView,
     startAddProjectSourceSelection,
   ]);
 
@@ -2321,11 +2408,13 @@ function OpenCommandPaletteDialog(props: {
           addProjectEnvironmentId,
           buildPaletteRemoteSourceReadiness(sourceControlDiscovery.data),
         )
-      : currentView?.groups[0]?.value === "themes"
-        ? changeThemeItem.groups
-        : currentView?.groups[0]?.value === "appearance"
-          ? changeAppearanceItem.groups
-          : (currentView?.groups ?? rootGroups);
+      : currentView?.groups[0]?.value === ADD_PROJECT_ENVIRONMENTS_VIEW
+        ? addProjectEnvironmentGroups
+        : currentView?.groups[0]?.value === "themes"
+          ? changeThemeItem.groups
+          : currentView?.groups[0]?.value === "appearance"
+            ? changeAppearanceItem.groups
+            : (currentView?.groups ?? rootGroups);
 
   const filteredGroups = filterCommandPaletteGroups({
     activeGroups,
@@ -2580,17 +2669,17 @@ function OpenCommandPaletteDialog(props: {
           getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
           getCloneDirectoryName(rawRepository),
         );
-        setAddProjectCloneFlow({
-          step: "confirm",
-          environmentId: addProjectCloneFlow.environmentId,
-          source: addProjectCloneFlow.source,
-          repositoryInput: rawRepository,
-          repository: null,
-          remoteUrl: normalizePastedCloneUrl(rawRepository),
-        });
-        setHighlightedItemValue(null);
-        setQuery(destinationPath);
-        setBrowseGeneration((generation) => generation + 1);
+        confirmCloneDestination(
+          {
+            step: "confirm",
+            environmentId: addProjectCloneFlow.environmentId,
+            source: addProjectCloneFlow.source,
+            repositoryInput: rawRepository,
+            repository: null,
+            remoteUrl: normalizePastedCloneUrl(rawRepository),
+          },
+          destinationPath,
+        );
         return;
       }
 
@@ -2622,21 +2711,40 @@ function OpenCommandPaletteDialog(props: {
         getDefaultCloneParentPath(addProjectCloneFlow.environmentId),
         getCloneDirectoryName(repository.nameWithOwner),
       );
-      setAddProjectCloneFlow({
-        step: "confirm",
-        environmentId: addProjectCloneFlow.environmentId,
-        source: addProjectCloneFlow.source,
-        repositoryInput: rawRepository,
-        repository,
-        remoteUrl: getDefaultCloneUrl(repository),
-      });
-      setHighlightedItemValue(null);
-      setQuery(destinationPath);
-      setBrowseGeneration((generation) => generation + 1);
+      confirmCloneDestination(
+        {
+          step: "confirm",
+          environmentId: addProjectCloneFlow.environmentId,
+          source: addProjectCloneFlow.source,
+          repositoryInput: rawRepository,
+          repository,
+          remoteUrl: getDefaultCloneUrl(repository),
+        },
+        destinationPath,
+      );
       return;
     }
 
-    const rawDestination = (destinationPathInput ?? query).trim();
+    await cloneToDestination(addProjectCloneFlow, (destinationPathInput ?? query).trim());
+  }
+
+  /** Asks where to clone, or clones right away where the user has no folders to pick from. */
+  function confirmCloneDestination(flow: ConfirmedCloneFlow, destinationPath: string): void {
+    // signalbox: without `localFilesystem` there is nothing to browse (Signalbox Cloud places imports itself).
+    if (!environmentCan(flow.environmentId, "localFilesystem")) {
+      void cloneToDestination(flow, destinationPath);
+      return;
+    }
+    setAddProjectCloneFlow(flow);
+    setHighlightedItemValue(null);
+    setQuery(destinationPath);
+    setBrowseGeneration((generation) => generation + 1);
+  }
+
+  async function cloneToDestination(
+    addProjectCloneFlow: ConfirmedCloneFlow,
+    rawDestination: string,
+  ): Promise<void> {
     if (
       !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthSourceControlWriteScope) ||
       !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthOrchestrationOperateScope)
@@ -3658,7 +3766,9 @@ function OpenCommandPaletteDialog(props: {
                   }
                 : threadSearch.isPending
                   ? { emptyStateMessage: "Searching thread messages…" }
-                  : {})}
+                  : isOnAddProjectEnvironmentsView && addProjectAvailability === "connecting"
+                    ? { emptyStateMessage: addProjectConnectingMessage }
+                    : {})}
       />
     </CommandPaletteContent>
   );
