@@ -53,6 +53,7 @@ import {
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { useThreadFolderMenu } from "../folders/use-thread-folder-menu"; // signalbox: folders
 
 /**
  * Thread List v2 renders one flat native list: rich edge-to-edge rows for
@@ -781,6 +782,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : [],
     [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
   );
+  const folderMenu = useThreadFolderMenu(thread); // signalbox: folders
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
       { id: "rename", title: "Rename", image: "square.and.pencil" },
@@ -788,8 +790,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         supported: props.titleRegenerationSupported,
         isRegenerating: thread.titleRegeneration != null,
       }),
+      ...folderMenu.items, // signalbox: folders
     ],
-    [props.titleRegenerationSupported, thread.titleRegeneration],
+    [folderMenu.items, props.titleRegenerationSupported, thread.titleRegeneration],
   );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -851,6 +854,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (folderMenu.onAction(nativeEvent.event)) return; // signalbox: folders
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -885,6 +889,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
     },
     [
+      folderMenu.onAction,
       onNewThreadOnBranch,
       thread,
       handleArchive,

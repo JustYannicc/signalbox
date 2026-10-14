@@ -544,11 +544,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     states: uploadStates,
   });
   const contextImports = useAtomValue(composerContextImportsAtom);
-  // signalbox: the picker offers only the pool the thread's project runs on.
+  // signalbox: the picker offers only the pool the thread runs on.
   const { config: poolServerConfig, need: poolNeed } = usePoolServerConfig(
     props.environmentId,
     props.selectedThread.projectId,
     props.serverConfig,
+    { threadId: props.selectedThread.id },
   );
   const sendBlockedReason =
     (queuedEdit?.saving === true ? "Saving…" : null) ??
@@ -708,6 +709,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ownerId: settingsOwnerId,
       environmentId: props.environmentId,
       projectId: props.selectedThread.projectId,
+      poolHome: { threadId: props.selectedThread.id }, // signalbox
       providerInstanceId: currentModelSelection.instanceId,
       ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
       providerGroups: threadProviderGroups,
@@ -738,6 +740,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       lockedProviderInstanceId,
       threadProviderGroups,
       props.selectedThread.projectId,
+      props.selectedThread.id,
     ],
   );
   const openSettings = useCallback(() => {

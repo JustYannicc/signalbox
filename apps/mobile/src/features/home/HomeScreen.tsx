@@ -77,6 +77,8 @@ import { useMaterialFabScroll } from "./MaterialFabScrollContext";
 import { SectionNavigationPanel } from "../sections/SectionNavigationPanel";
 import { resolveSelectedProjectScope } from "../sections/section-project-filter";
 import { withAutomationsBanner } from "../automations/AutomationsHomeBanner"; // signalbox: automations
+import { withFolderFilterOption } from "../folders/folder-filter"; // signalbox: folders
+import { useFolderFilter } from "../folders/use-folder-filter"; // signalbox: folders
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
 
@@ -421,6 +423,7 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [props.projects]);
 
   const v2ProjectScopeKey = props.selectedProjectKey;
+  const folderFilter = useFolderFilter(props.selectedProjectKey); // signalbox: folders
   const v2ScopedProjectGroup = useMemo(
     () =>
       resolveSelectedProjectScope({
@@ -609,7 +612,10 @@ export function HomeScreen(props: HomeScreenProps) {
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
       pendingOrder,
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
+      threads: props.threads.filter(
+        (thread) =>
+          thread.archivedAt === null && (folderFilter === null || folderFilter.includes(thread)), // signalbox: folders
+      ),
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
@@ -644,6 +650,7 @@ export function HomeScreen(props: HomeScreenProps) {
     props.threads,
     matchedThreadKeys,
     v2ScopedProjectGroup,
+    folderFilter,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -674,10 +681,23 @@ export function HomeScreen(props: HomeScreenProps) {
             v2ScopedProjectKeys.has(
               scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
             )) &&
+          // signalbox: folders; a draft isn't a thread yet, so it goes by its project.
+          (folderFilter === null ||
+            folderFilter.includes({
+              environmentId: pendingTask.environmentId,
+              projectId: pendingTask.projectId,
+              id: pendingTask.kind === "pending" ? pendingTask.message.threadId : null,
+            })) &&
           (v2SearchQuery.length === 0 ||
             pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
       ),
-    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
+    [
+      folderFilter,
+      props.pendingTasks,
+      props.selectedEnvironmentId,
+      v2ScopedProjectKeys,
+      v2SearchQuery,
+    ],
   );
   const threadListV2Items = useMemo(
     () =>
@@ -992,7 +1012,10 @@ export function HomeScreen(props: HomeScreenProps) {
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           environments={props.environments}
-          projects={projectScopes.map((scope) => ({ key: scope.key, label: scope.title }))}
+          projects={withFolderFilterOption(
+            projectScopes.map((scope) => ({ key: scope.key, label: scope.title })),
+            folderFilter, // signalbox: folders
+          )}
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}
@@ -1018,6 +1041,12 @@ export function HomeScreen(props: HomeScreenProps) {
       <EmptyState
         title="No results"
         detail={`No threads matching "${props.searchQuery}".`}
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
+    ) : folderFilter !== null ? ( // signalbox: folders
+      <EmptyState
+        title={`No threads in ${folderFilter.label}`}
+        detail="Choose another folder or start a new task here."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (

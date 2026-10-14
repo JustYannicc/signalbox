@@ -48,6 +48,8 @@ import {
   projectFilterOptions as buildProjectFilterOptions,
   resolveSelectedProjectScope,
 } from "../sections/section-project-filter";
+import { withFolderFilterOption } from "../folders/folder-filter"; // signalbox: folders
+import { useFolderFilter } from "../folders/use-folder-filter"; // signalbox: folders
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -234,14 +236,18 @@ function ThreadNavigationSidebarPane(
       }),
     [options.projectGroupingMode, options.selectedEnvironmentId, projects],
   );
+  const folderFilter = useFolderFilter(resolvedProjectKey); // signalbox: folders
   const projectFilterOptions = useMemo(
     () =>
-      buildProjectFilterOptions({
-        selectedProjectKey: resolvedProjectKey,
-        projectScopes,
-        projects,
-      }),
-    [projectScopes, projects, resolvedProjectKey],
+      withFolderFilterOption(
+        buildProjectFilterOptions({
+          selectedProjectKey: resolvedProjectKey,
+          projectScopes,
+          projects,
+        }),
+        folderFilter,
+      ),
+    [folderFilter, projectScopes, projects, resolvedProjectKey],
   );
   const projectTitleByProjectKey = useMemo(
     () =>
@@ -268,7 +274,7 @@ function ThreadNavigationSidebarPane(
     [projectScopes, projects, resolvedProjectKey],
   );
   // A saved project stays selected while its environment is offline or filtered out.
-  const selectedProjectKey = selectedProjectScope?.key ?? null;
+  const selectedProjectKey = selectedProjectScope?.key ?? folderFilter?.key ?? null;
   const selectedProjectRefs = useMemo(
     () =>
       selectedProjectScope === null
@@ -385,7 +391,10 @@ function ThreadNavigationSidebarPane(
     threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
     return buildThreadListV2Items({
       pendingOrder,
-      threads: threads.filter((thread) => thread.archivedAt === null),
+      threads: threads.filter(
+        (thread) =>
+          thread.archivedAt === null && (folderFilter === null || folderFilter.includes(thread)), // signalbox: folders
+      ),
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
@@ -420,6 +429,7 @@ function ThreadNavigationSidebarPane(
     snoozeEnvironmentIds,
     threads,
     selectedProjectScope,
+    folderFilter,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -450,6 +460,13 @@ function ThreadNavigationSidebarPane(
           selectedProjectRefs.has(
             scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
           )) &&
+        // signalbox: folders; a draft isn't a thread yet, so it goes by its project.
+        (folderFilter === null ||
+          folderFilter.includes({
+            environmentId: pendingTask.environmentId,
+            projectId: pendingTask.projectId,
+            id: pendingTask.kind === "pending" ? pendingTask.message.threadId : null,
+          })) &&
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
@@ -487,6 +504,7 @@ function ThreadNavigationSidebarPane(
     queuedThreadKeys,
     threadMoveAvailability,
     selectedProjectRefs,
+    folderFilter,
     settledShelfExpanded,
     shelfPreferencesLoaded,
     snoozedShelfExpanded,
@@ -918,7 +936,9 @@ function ThreadNavigationSidebarPane(
               : "No matching threads"
             : selectedProjectScope !== null
               ? `No threads in ${selectedProjectScope.title}`
-              : "No threads yet"}
+              : folderFilter !== null // signalbox: folders
+                ? `No threads in ${folderFilter.label}`
+                : "No threads yet"}
     </Text>
   );
 

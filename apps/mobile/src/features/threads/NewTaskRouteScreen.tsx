@@ -264,6 +264,33 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     }
   }
 
+  // signalbox: folders. While the thread list shows a folder, a new task starts there; back
+  // from its draft, this screen chooses another project as usual.
+  const { folderStart } = useNewTaskFlow();
+  const folderStartProject = folderStart
+    ? (projects.find(
+        (project) =>
+          project.environmentId === folderStart.environmentId &&
+          project.id === folderStart.projectId,
+      ) ?? null)
+    : null;
+  const openedFolderStartRef = useRef(false);
+  const plainNewTask = route.params === undefined || Object.keys(route.params).length === 0;
+  useEffect(() => {
+    if (openedFolderStartRef.current || !isFocused || !plainNewTask || !folderStartProject) return;
+    openedFolderStartRef.current = true;
+    // Opened from a draft to choose another project: stay here.
+    const state = navigation.getState();
+    if (state?.routes[state.index - 1]?.name === "NewTaskDraft") return;
+    navigation.dispatch(
+      StackActions.push("NewTaskDraft", {
+        environmentId: folderStartProject.environmentId,
+        projectId: folderStartProject.id,
+        title: folderStartProject.title,
+      }),
+    );
+  }, [folderStartProject, isFocused, navigation, plainNewTask]);
+
   useEffect(() => {
     const destination = incomingShare?.destination;
     if (!destination) {

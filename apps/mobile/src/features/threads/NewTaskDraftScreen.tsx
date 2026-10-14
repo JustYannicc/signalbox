@@ -139,6 +139,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
 import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
+import { useFileNewThreadInFolder } from "../folders/use-thread-folder-menu"; // signalbox: folders
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -220,8 +221,10 @@ export function NewTaskDraftScreen(props: {
   // The picker and sidebar name a project by its repository scope; a workspace
   // inside it (e.g. apps/server) is titled by its folder, which reads as
   // ambiguous on its own.
+  const folderTargetName = flow.folderTarget?.name; // signalbox: folders
   const selectedProjectLabel = useMemo(() => {
     if (!selectedProject) return null;
+    if (folderTargetName !== undefined) return folderTargetName; // signalbox: folders
     const scope = projectScopes.find((candidate) =>
       candidate.projectRefs.some(
         (ref) =>
@@ -230,7 +233,7 @@ export function NewTaskDraftScreen(props: {
       ),
     );
     return scope?.title ?? selectedProject.title;
-  }, [projectScopes, selectedProject]);
+  }, [folderTargetName, projectScopes, selectedProject]);
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
@@ -285,6 +288,7 @@ export function NewTaskDraftScreen(props: {
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  const fileInFolder = useFileNewThreadInFolder(); // signalbox: folders
   // The delete is awaited; by then the picker may point somewhere else, and
   // only the removed project's draft should leave the screen.
   const selectedProjectRef = useRef(selectedProject);
@@ -1342,6 +1346,20 @@ export function NewTaskDraftScreen(props: {
     });
     if (!message) {
       return;
+    }
+    // signalbox: folders. A thread can be filed before it exists, so its first turn already
+    // runs on the folder's pool and instructions. Offline, the queued task isn't filed.
+    const folderTarget = flow.folderTarget;
+    if (folderTarget?.file && !editingPendingTask && environmentConnected) {
+      flow.setSubmitting(true);
+      const filed = await fileInFolder({
+        environmentId: message.environmentId,
+        threadId: message.threadId,
+        folderId: folderTarget.folderId,
+        folderName: folderTarget.name,
+      });
+      flow.setSubmitting(false);
+      if (!filed) return;
     }
     if (!queuesInsteadOfStarting) {
       // Arm the lock-screen card before the async thread creation: backgrounding
