@@ -260,7 +260,11 @@ import {
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
-import { usePickerPools } from "../accountPool/ModelPoolSwitcher"; // signalbox
+import {
+  NEEDS_A_POOL,
+  NeedsPoolControl,
+  useProjectPoolEntries,
+} from "../accountPool/ProjectPoolGate"; // signalbox
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
@@ -2146,7 +2150,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Instance-aware projection of the wire provider list. One entry per
   // configured instance (default built-in + any custom `providerInstances.*`),
   // sorted default-first per driver kind for a stable picker order.
-  const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
+  const allProviderInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
     () =>
       sortProviderInstanceEntries(
         applyProviderInstanceSettings(
@@ -2157,11 +2161,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings, activeProjectId],
   );
-  const pickerPools = usePickerPools(
+  // signalbox: only the pool the project runs on; its need waits for the catalog, like the chrome.
+  const { entries: providerInstanceEntries, need: poolNeedNow } = useProjectPoolEntries(
     environmentId,
-    providerInstanceEntries,
+    activeProjectId,
+    allProviderInstanceEntries,
     settings.providerInstances,
-  ); // signalbox
+  );
+  const projectPoolNeed = providerCatalogKnown ? poolNeedNow : null;
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const {
     selectedProviderEntry,
@@ -2243,6 +2250,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const sendDisabledReason =
     sendLock.disabledReason ?? // signalbox: send lock
+    (projectPoolNeed ? NEEDS_A_POOL : null) ?? // signalbox
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -5529,7 +5537,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);
-  const composerControls = showProviderUnavailable ? (
+  const composerControls = projectPoolNeed ? ( // signalbox
+    <NeedsPoolControl
+      environmentId={environmentId}
+      need={projectPoolNeed}
+      size={composerControlsCollapsed ? "xs" : "sm"}
+      onOpenProviderSetup={onOpenProviderSetup}
+    />
+  ) : showProviderUnavailable ? (
     <ComposerControl
       type="button"
       disabled={!providerSetupInstanceId}
@@ -5608,7 +5623,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         lockedProvider={lockedProvider}
         lockedContinuationGroupKey={lockedContinuationGroupKey}
         instanceEntries={providerInstanceEntries}
-        pools={pickerPools}
         keybindings={keybindings}
         modelOptionsByInstance={modelOptionsByInstance}
         size={composerControlsCollapsed ? "xs" : "sm"}

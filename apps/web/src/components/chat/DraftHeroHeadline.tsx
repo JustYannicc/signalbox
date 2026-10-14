@@ -41,7 +41,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { draftModelSelection, useSectionPoolModelSelection } from "../../state/sectionPoolDefault"; // signalbox
+import { draftModelSelection, useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox
 
 // Picker value for the "Add project" row; real entries are keyed by logical
 // project key.
@@ -75,7 +75,7 @@ export function DraftHeroHeadline({
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
-  const sectionPool = useSectionPoolModelSelection(); // signalbox
+  const projectPool = useProjectPoolModelSelection(); // signalbox
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
@@ -243,17 +243,17 @@ export function DraftHeroHeadline({
         ? resolveProjectSettings(environmentSettings, project.id, project).settings
             .defaultModelSelection
         : project.defaultModelSelection;
-      // signalbox: unless the project picks its own default, the draft runs on its section's pool.
+      // signalbox: the draft starts on the pool its project runs on.
       const environmentConfig = environments.find(
         (environment) => environment.environmentId === project.environmentId,
       )?.serverConfig;
       const startingModelSelection =
         (environmentConfig &&
-          sectionPool({
+          projectPool({
             environmentId: project.environmentId,
             projectId: project.id,
             selection: defaultModelSelection ?? draftModelSelection(getComposerDraft(draftId)),
-            resolved: resolveProjectSettings(environmentConfig.settings, project.id, project),
+            providerInstances: environmentConfig.settings.providerInstances,
             providers: environmentConfig.providers,
           })) ||
         defaultModelSelection;

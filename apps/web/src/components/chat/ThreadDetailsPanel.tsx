@@ -21,6 +21,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadPoolRow } from "../accountPool/ThreadPoolRow"; // signalbox
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -142,6 +143,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   onAddScript={props.onAddProjectScript}
                   onUpdateScript={props.onUpdateProjectScript}
                   onDeleteScript={props.onDeleteProjectScript}
+                />
+              ) : null}
+              {density !== "essential" ? ( // signalbox
+                <ThreadPoolRow
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  draftId={props.draftId}
                 />
               ) : null}
             </div>
