@@ -50,6 +50,7 @@ const remoteDrive = "shared/personal/github-acme-app";
 const onRemote = {
   place: { ...personal.place, driveId: remoteDrive },
   worktree: remoteThreadWorktree(remoteDrive, threadId),
+  pools: personal.pools,
 };
 const machines = Layer.succeed(MachineBackend, {
   light: fakeBackend("cloudflare", LIGHT_TAIL_MS),

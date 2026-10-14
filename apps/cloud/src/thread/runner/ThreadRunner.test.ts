@@ -259,9 +259,10 @@ describe("ThreadRunner", () => {
     }),
   );
 
-  it.effect("hands the Runner a pool turn as its harness, and the gateway its pool", () =>
+  it.effect("hands the Runner a pool turn as its harness, and the gateway the resolved pool", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
+        // The client names `lab`; the thread's chain resolves to `work`, which wins.
         yield* engine.launch(
           owner,
           {
@@ -270,7 +271,7 @@ describe("ThreadRunner", () => {
             projectId: ProjectId.make("scratch"),
             title: "On a pool",
             modelSelection: {
-              instanceId: ProviderInstanceId.make("codex_hub_work"),
+              instanceId: ProviderInstanceId.make("codex_hub_lab"),
               model: "gpt-6-luna",
             },
             runtimeMode: "full-access",
@@ -278,7 +279,7 @@ describe("ThreadRunner", () => {
             workspaceStrategy: { type: "root" },
             initialMessage: { messageId: MessageId.make("message-1"), text: "Hi", attachments: [] },
           },
-          personal,
+          { ...personal, pools: { top: "personal", projects: { scratch: "work" } } },
         );
         yield* connect(runner);
         const work = yield* runner.work;
@@ -580,7 +581,7 @@ describe("ThreadRunner", () => {
                 attachments: [],
               },
             },
-            { place: { contextId: acme, driveId: design } },
+            { place: { contextId: acme, driveId: design }, pools: personal.pools },
           );
           yield* connect(runner);
           const work = yield* runner.work;
@@ -686,6 +687,7 @@ describe("ThreadRunner", () => {
         Effect.gen(function* () {
           yield* launch(engine, "launch-1", {
             place: { contextId: PERSONAL_CONTEXT_ID, driveId: "shared/personal/repo1" },
+            pools: personal.pools,
           });
           const machine = yield* connect(runner);
           const work = yield* runner.work;

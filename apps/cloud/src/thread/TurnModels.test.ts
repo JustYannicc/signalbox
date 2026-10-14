@@ -82,7 +82,7 @@ describe("TurnModels", () => {
     Effect.gen(function* () {
       const check = (scripted: boolean) =>
         TurnModels.TurnModels.use((models) =>
-          models.check({ ownerId: userId, selection: scriptedModelSelection }),
+          models.check({ ownerId: userId, pool: "personal", selection: scriptedModelSelection }),
         ).pipe(
           Effect.provide(
             TurnModels.layer({ scripted }).pipe(

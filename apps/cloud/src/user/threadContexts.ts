@@ -6,8 +6,10 @@ import * as Layer from "effect/Layer";
 
 import { canWrite, parseDriveId } from "../drive/driveAccess.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
+import type { TurnPools } from "../thread/turnPool.ts";
 import { driveOfProject } from "./contextProjects.ts";
 import * as UserDrives from "./UserDrives.ts";
+import * as UserSections from "./UserSections.ts";
 
 /** Where a new thread works: the drive it changes files in, and the context it acts as. */
 export interface ThreadPlace {
@@ -17,7 +19,10 @@ export interface ThreadPlace {
   readonly remote: boolean;
 }
 
-/** What `CloudThreadService` needs to know about contexts and drives: where a new thread works. */
+/**
+ * What `CloudThreadService` needs to know about the user's tree: where a new
+ * thread works, and the pool each project's turns run on.
+ */
 export class ThreadContexts extends Context.Service<
   ThreadContexts,
   {
@@ -27,6 +32,8 @@ export class ThreadContexts extends Context.Service<
      * can't change files in its drive.
      */
     readonly placeOfProject: (projectId: ProjectId) => Effect.Effect<ThreadPlace | null>;
+    /** Each current project's pool now, resolved from the tree (`poolChain.ts`). */
+    readonly turnPools: Effect.Effect<TurnPools>;
   }
 >()("@signalbox/cloud/user/threadContexts") {}
 
@@ -35,6 +42,7 @@ export const layer = Layer.effect(
   ThreadContexts,
   Effect.gen(function* () {
     const drives = yield* UserDrives.UserDrives;
+    const sections = yield* UserSections.UserSections;
     const directory = yield* Effect.serviceOption(DriveDirectory);
     return ThreadContexts.of({
       placeOfProject: (projectId) =>
@@ -55,6 +63,15 @@ export const layer = Layer.effect(
           // A storage or drive failure is a bug or an outage, not a rejected command.
           Effect.orDie,
         ),
+      turnPools: sections.pools.pipe(
+        Effect.map((pools): TurnPools => ({
+          top: pools.top?.poolId ?? null,
+          projects: Object.fromEntries(
+            pools.projects.map((entry) => [entry.projectId, entry.pool?.poolId ?? null]),
+          ),
+        })),
+        Effect.orDie,
+      ),
     });
   }),
 );
@@ -64,5 +81,6 @@ export const layerWorker = Layer.succeed(
   ThreadContexts,
   ThreadContexts.of({
     placeOfProject: () => Effect.die("Threads are created in their user's object."),
+    turnPools: Effect.die("Turns start in their user's object."),
   }),
 );

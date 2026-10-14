@@ -1,3 +1,4 @@
+import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 import { RUNNER_PROTOCOL_VERSION } from "@signalbox/runner-protocol/RunnerProtocol";
 import { SESSION_PATHS } from "@signalbox/runner-protocol/SessionProtocol";
 import { CommandId, MessageId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import { serveSessionRequest } from "./sessionRoutes.ts";
 const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
 const personal = {
   place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+  pools: { top: PERSONAL_POOL_ID, projects: {} },
 };
 const threadId = ThreadId.make("thread-sessions");
 const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-fable-5-1" };

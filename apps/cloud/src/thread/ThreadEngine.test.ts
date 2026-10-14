@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the eviction tests need a database file that outlives one engine.
+import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -30,6 +31,7 @@ const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
 const stranger = { userId: "user_2", contextIds: [PERSONAL_CONTEXT_ID] };
 const personal = {
   place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+  pools: { top: PERSONAL_POOL_ID, projects: {} },
 };
 const threadId = ThreadId.make("thread-1");
 
