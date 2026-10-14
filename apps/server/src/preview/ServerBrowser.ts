@@ -683,14 +683,18 @@ const make = Effect.gen(function* () {
   /** Whether the preview session for a tab still exists. */
   const sessionOpen = (tab: ServerTab) => !closedSessions.has(tabKey(tab.threadId, tab.tabId));
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  /**
+   * Ends the server's hold on a tab. Viewers reconnect when the session lives
+   * on in another page: a desktop page outlives its connection, and a headless
+   * page `reconnect` hands over to the desktop.
+   */
+  const dropTab = (tab: ServerTab, closeSession: boolean, reconnect = tab.desktop !== null) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
     tab.closing = true;
     clearAbortedNavigation(tab);
-    // A desktop page outlives the connection unless its session closed with it.
-    const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
+    const end = reconnect && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     // The desktop owns its page; letting go only ends this connection.
@@ -2405,18 +2409,28 @@ const make = Effect.gen(function* () {
     ),
     Effect.forkScoped,
   );
-  // The page came back, for example after its DevTools closed. Reconnect now
-  // rather than on the next viewer or agent, or the tab's URL and title stop
-  // reaching every client in the meantime.
+  // The page came back, for example after its DevTools closed, or the desktop
+  // rendered a tab only after it had launched headless. Connect now rather than
+  // on the next viewer or agent: the person sees the desktop's page, with their
+  // own logins, so a headless copy must not keep taking the agent's actions.
   yield* desktopChannel.attached.pipe(
     Stream.runForEach((key) =>
       Effect.gen(function* () {
-        if (tabs.has(tabKey(key.threadId, key.tabId))) return;
+        const id = tabKey(key.threadId, key.tabId);
+        if (tabs.get(id)?.desktop && !pendingTabs.has(id)) return;
+        // A tab still opening may have given up on the desktop just before this attach.
+        const current = yield* Effect.promise(() =>
+          (pendingTabs.get(id) ?? Promise.resolve(tabs.get(id))).catch(() => undefined),
+        );
+        if (current?.desktop) return;
+        // Read after the wait: the session may have closed while the tab opened.
         const { sessions } = yield* manager.list({ threadId: ThreadId.make(key.threadId) });
         const snapshot = sessions.find(
           (session) => session.tabId === key.tabId && session.runtime === "server",
         );
-        if (snapshot) yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
+        if (!snapshot) return;
+        if (current) dropTab(current, false, true);
+        yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
       }).pipe(Effect.ignore),
     ),
     Effect.forkScoped,

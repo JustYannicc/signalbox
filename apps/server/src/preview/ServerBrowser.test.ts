@@ -1375,6 +1375,47 @@ it.live("a desktop page the desktop takes back reconnects instead of closing", (
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a headless tab moves to the desktop's page once the desktop renders it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // The desktop had no webview for the tab in time, so it launched headless.
+      const { browser, broker, tabId } = yield* ready;
+      const headless = contexts[0]!.page;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
+      // Then the desktop showed the thread and offered its own page for the tab.
+      while (desktopDetaches.listenerCount("attach") === 0) yield* Effect.yieldNow;
+      desktopTabs.add(tabId);
+      desktopDetaches.emit("attach", { threadId: scope.thread.threadId, tabId });
+      const end = yield* Queue.take(viewer.output).pipe(
+        Effect.repeat({ until: (item) => item._tag === "reconnect" || item._tag === "gone" }),
+        Effect.timeout("2 seconds"),
+      );
+      expect(end._tag).toBe("reconnect");
+      // The agent's next call reaches the tab through the desktop's page.
+      expect(headless.close).toHaveBeenCalled();
+      // The agent keeps its tab and now drives the page the person sees.
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:5173/after" },
+      });
+      expect(desktopConnections[0]!.context.page.goto).toHaveBeenCalledWith(
+        "http://localhost:5173/after",
+        expect.anything(),
+      );
+      expect(headless.goto).not.toHaveBeenCalled();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.control).toMatchObject({ owner: "agent", ownedByCaller: true });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("agents read a human's tab with no arguments and act on it only while nobody drives", () =>
   Effect.scoped(
     Effect.gen(function* () {
