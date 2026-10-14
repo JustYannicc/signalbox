@@ -7,6 +7,7 @@ import type {
   SidebarProjectSnapshot,
 } from "../../../sidebarProjectGrouping";
 import type { EnvironmentSectionsView } from "../../../state/sections";
+import type { SidebarThreadSummary } from "../../../types";
 import {
   contextFoldId,
   groupSectionTreeByContext,
@@ -33,6 +34,8 @@ export interface SectionSidebarEnvironment {
 export interface SectionSidebarVisibleProjectRow {
   readonly environmentId: EnvironmentId;
   readonly project: SectionSidebarProject;
+  /** signalbox: a folder's list brings its own threads and never folds (`sidebar/folders`). */
+  readonly threads?: ReadonlyArray<SidebarThreadSummary>;
 }
 
 function hasSavedSectionSidebarState(environment: SectionSidebarEnvironment): boolean {

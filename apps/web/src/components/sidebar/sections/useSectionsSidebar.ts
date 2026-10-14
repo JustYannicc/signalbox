@@ -12,6 +12,7 @@ import { environmentSectionTreesAtom } from "../../../state/sections";
 import { environmentContextsAtom } from "../../../state/signalboxContexts"; // signalbox: contexts
 import type { EnvironmentPresentation } from "../../../state/environments";
 import type { Project } from "../../../types";
+import { useFoldersSidebar } from "../folders/useFoldersSidebar"; // signalbox: folders
 import type { SectionEnvironmentOption } from "./SectionSidebarActions";
 import {
   buildSectionSidebarEnvironment,
@@ -30,6 +31,7 @@ export function useSectionsSidebar(input: {
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const serverViews = useAtomValue(environmentSectionTreesAtom);
   const contextsByEnvironment = useAtomValue(environmentContextsAtom); // signalbox: contexts
+  const folders = useFoldersSidebar(input); // signalbox: folders
   const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<string>>(() => new Set());
   const toggleSection = useCallback((environmentId: EnvironmentId, sectionId: string) => {
     const sectionKey = sectionSidebarSectionKey(environmentId, sectionId);
@@ -41,7 +43,10 @@ export function useSectionsSidebar(input: {
     });
   }, []);
 
-  return useMemo(() => {
+  const sections = useMemo(() => {
+    // signalbox: environments with folders show those instead (`sidebar/folders`).
+    const servesFolders = (environmentId: EnvironmentId) =>
+      serverConfigs.get(environmentId)?.environment.capabilities.folders === true;
     const projectEnvironmentIds = new Set(input.projects.map((project) => project.environmentId));
     const environmentIds = new Set<EnvironmentId>([
       ...projectEnvironmentIds,
@@ -49,6 +54,7 @@ export function useSectionsSidebar(input: {
     ]);
     const environments: SectionSidebarEnvironment[] = input.environments.flatMap((environment) => {
       if (!environmentIds.has(environment.environmentId)) return [];
+      if (servesFolders(environment.environmentId)) return [];
       const projects = input.projects.filter(
         (project) => project.environmentId === environment.environmentId,
       );
@@ -80,7 +86,9 @@ export function useSectionsSidebar(input: {
     const hasSavedSectionState =
       hasAnySavedSectionSidebarState(environments) ||
       // signalbox: Signalbox Cloud always shows its contexts, sections or not.
-      environments.some((environment) => environment.contexts);
+      environments.some((environment) => environment.contexts) ||
+      // signalbox: with folders beside it, the rest keeps its tree rather than a flat list.
+      input.environments.some((environment) => servesFolders(environment.environmentId));
     const visibleProjectRows = visibleSectionProjectRows(environments, collapsedSections);
     const failures = input.environments.flatMap((environment) => {
       const status = serverViews.get(environment.environmentId)?.status;
@@ -96,7 +104,8 @@ export function useSectionsSidebar(input: {
     });
     const createOptions: SectionEnvironmentOption[] = input.environments.flatMap((environment) =>
       environment.connection.phase === "connected" &&
-      serverConfigs.get(environment.environmentId)?.environment.capabilities.sections === true
+      serverConfigs.get(environment.environmentId)?.environment.capabilities.sections === true &&
+      !servesFolders(environment.environmentId) // signalbox: folders
         ? [{ environmentId: environment.environmentId, label: environment.label }]
         : [],
     );
@@ -120,4 +129,20 @@ export function useSectionsSidebar(input: {
     contextsByEnvironment,
     toggleSection,
   ]);
+  // signalbox: folders change with their threads, so they join outside the section trees' memo;
+  // folder environments draw first, so their lists come first.
+  return useMemo(
+    () => ({
+      ...sections,
+      visibleProjectRows: [...folders.visibleRows, ...sections.visibleProjectRows],
+      folders,
+      // Only folders: the list is the user's folders, and adding brings in a source
+      // (a repository gets a folder of its own). Projects stay projects anywhere else.
+      labels:
+        folders.environments.length > 0 && (sections.environments?.length ?? 0) === 0
+          ? { title: "Folders", add: "Add a source" }
+          : { title: "Projects", add: "Add project" },
+    }),
+    [folders, sections],
+  );
 }

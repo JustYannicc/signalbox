@@ -2169,6 +2169,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectId,
     allProviderInstanceEntries,
     settings.providerInstances,
+    activeThreadId,
   );
   const projectPoolNeed = providerCatalogKnown ? poolNeedNow : null;
   const needsPool = useNeedsPool(environmentId, projectPoolNeed);

@@ -6,7 +6,7 @@ need a separate branch and working directory.
 ## Home and Pipeline
 
 The icon rail on the left edge of the sidebar switches between two views of your
-threads. **Home** groups them under their projects. **Pipeline** orders them by what
+threads. **Home** groups them by where they live. **Pipeline** orders them by what
 needs your attention, and is the view the rest of this page describes. Collapsing the
 sidebar hides the view but keeps the rail. The back and forward arrows beside the
 sidebar toggle step through where you've been.
@@ -14,33 +14,60 @@ sidebar toggle step through where you've been.
 To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
 **Settings**.
 
-## Organize projects into sections
+## Organize with folders
 
-On web and desktop, choose **Create section** beside **Projects**. Use a section's menu to add a
-subsection, rename it, move it, change its order, or delete it. Deleting a section moves its
-projects and child sections to its parent; deleting a top-level section moves them to the project
-root. Use a project's move menu to place it in a section or back at the root. This organization is
-shared by clients connected to the same environment. On mobile, choose **Browse sections** from
-Home to navigate the project tree.
+In Signalbox Cloud, Home shows Personal and every work organization you belong to, side by side.
+You don't switch accounts, and organizations you join show up the next time you sign in. Each has
+its own folders, nested as deep as you like. Choose **New folder** at the bottom of Personal or an
+organization, or **New folder inside** in a folder's menu; the command palette has **New folder**
+too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves its
+folders and threads up a level. No thread or file is deleted.
 
-These sections organize projects. **Pinned**, **Active**, **Snoozed**, and **Settled** in Pipeline
-are thread status groups.
+### Where threads live
 
-### Contexts in Signalbox Cloud
+Every thread lives in one place: a folder, or the top level of Personal or an organization. It lives
+where you start it: use the new thread button on a folder, or **New thread** in the menu beside
+Personal or an organization. To move a thread, right-click it and choose **Move to folder…**, or use
+**Move thread to folder…** in the command palette. A thread can move anywhere within its own
+Personal or organization, never between them.
 
-When you're signed in to Signalbox Cloud, Home shows Personal and every work organization you
-belong to, side by side. You don't switch accounts. Each context has its own sections: use the
-**New section** button beside a context's name. Sections and projects stay in their own context.
-Organizations you join show up the next time you sign in.
+A thread acts as the Personal or organization it starts in, for good: a work thread uses that
+organization's identity and connections, a personal one uses yours. Moving a thread changes what it
+runs on from its next message, its folder's pool and instructions. Its files stay the ones it
+started in.
 
-A thread acts as the context it starts in, for good: a work thread uses that organization's
-identity and connections, a personal one uses yours. New threads start in Personal. To start one
-in a work context, pick the organization in **New thread in…**.
+### A folder's files
+
+A folder can have its own files: a shared drive, or a folder shared from a My Drive, of the same
+Personal or organization. Pick them under **Files** in the folder's menu, or **No files of its own**.
+They show as one **Files** row inside the folder; open it to browse them. Threads started in the
+folder work in those files. In a folder without files of its own, they work in the files of its
+Personal or organization. Each drive you're given starts out as a folder of its own, which you can
+move, rename, or hand its files to another folder.
+
+### Instructions
+
+Each level can have instructions for agents, its own `AGENTS.md`. Choose **Instructions…** in a
+folder's menu, or in the menu beside Personal for the top level. Agents follow the top level's
+first, then each folder's on the way down to the thread's own folder. Leave them empty to remove
+them.
+
+### Sections on your own server
+
+On a server you run yourself, Home organizes projects into sections instead. On web and desktop,
+choose **Create section** beside **Projects**. Use a section's menu to add a subsection, rename it,
+move it, change its order, or delete it. Deleting a section moves its projects and child sections to
+its parent. Use a project's move menu to place it in a section or back at the root. Clients
+connected to the same environment share this organization. On mobile, choose **Browse sections**
+from Home to navigate the project tree.
+
+Folders and sections organize where work lives. **Pinned**, **Active**, **Snoozed**, and
+**Settled** in Pipeline are thread status groups.
 
 ### Drives and sharing
 
-Each context has a private **My Drive**. In a work organization, choose **New shared drive** beside
-its name to create a drive for the organization. To share a folder from My Drive, right-click it in
+Personal and each organization have a private **My Drive**. In a work organization, choose **New
+shared drive** beside its name to create a drive for the organization; it shows up as a new folder. To share a folder from My Drive, right-click it in
 **Files** and choose **Share folder…**. People you share it with can see that folder and its history.
 Removing someone cuts their access everywhere at once. Threads stay private, even in a shared drive;
 only their file changes land in the drive.
@@ -54,7 +81,7 @@ Right-click a shortcut and choose **Remove shortcut** to take it away; threads s
 its instructions, from their next message. Agents can load up to 64 KiB of instructions: if a drive
 and its shortcuts bring more, the message fails and says which files to shorten.
 
-Agents read every drive you can, in every context, but change only the drive their thread works in.
+Agents read every drive you can, everywhere, but change only the drive their thread works in.
 To reuse work, tell the agent where it happened, like "in Billing we added a dark mode toggle, do the
 same here". It finds the thread and its changes and redoes them in its own drive. If it can't find
 enough to go on, it says so instead of guessing.

@@ -1,6 +1,6 @@
-// signalbox: the composer offers only the pool its project runs on, and says when it needs one.
+// signalbox: the composer offers only the pool its thread runs on, and says when it needs one.
 import { isPoolInstance, poolNeed, type PoolNeed } from "@t3tools/client-runtime/state/sections";
-import type { EnvironmentId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon } from "lucide-react";
 import { useMemo } from "react";
@@ -13,17 +13,18 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { needsPoolCopy } from "./needsPoolCopy";
 
 /**
- * The entries a thread in `projectId` can pick, its pool's only, and what the
- * project needs before its threads can run. Every entry where the server
- * doesn't resolve pools.
+ * The entries a thread in `projectId` can pick, its pool's only, and what it
+ * needs before it can run. `threadId`: where folders do, its home decides the
+ * pool. Every entry where the server doesn't resolve pools.
  */
 export function useProjectPoolEntries(
   environmentId: EnvironmentId | null,
   projectId: ProjectId | null,
   entries: ReadonlyArray<ProviderInstanceEntry>,
   providerInstances: Readonly<Record<string, { readonly config?: unknown }>>,
+  threadId?: ThreadId | null,
 ): { readonly entries: ReadonlyArray<ProviderInstanceEntry>; readonly need: PoolNeed | null } {
-  const pool = useProjectPool(environmentId, projectId);
+  const pool = useProjectPool(environmentId, projectId, threadId);
   return useMemo(() => {
     const own = pool
       ? entries.filter((entry) => isPoolInstance(providerInstances, entry.instanceId, pool.poolId))

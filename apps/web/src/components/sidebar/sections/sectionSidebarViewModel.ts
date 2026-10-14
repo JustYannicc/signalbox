@@ -33,16 +33,19 @@ export function visibleSectionThreadKeys(input: {
     else threadsByProject.set(key, [thread]);
   }
 
-  return input.rows.flatMap(({ environmentId, project }) => {
+  return input.rows.flatMap(({ environmentId, project, threads }) => {
     const projectKey = scopedProjectKey(scopeProjectRef(environmentId, project.id));
     const projectThreads = sortThreads(
-      threadsByProject.get(projectKey) ?? [],
+      threads ?? threadsByProject.get(projectKey) ?? [],
       input.threadSortOrder,
     );
-    const projectExpanded = resolveProjectExpanded(
-      input.projectExpandedById,
-      projectExpansionPreferenceKeys(project.project, project.sidebarProjectKey),
-    );
+    // A folder's list (`threads`) always shows; its folder folds it instead.
+    const projectExpanded =
+      threads !== undefined ||
+      resolveProjectExpanded(
+        input.projectExpandedById,
+        projectExpansionPreferenceKeys(project.project, project.sidebarProjectKey),
+      );
     const pinnedCollapsedThread =
       !projectExpanded && input.activeThreadKey
         ? (projectThreads.find(

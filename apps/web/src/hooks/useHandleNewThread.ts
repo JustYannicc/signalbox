@@ -80,6 +80,8 @@ export function useNewThreadHandler() {
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
         replace?: boolean;
+        /** signalbox: a new draft even when the project has an empty one (folders share projects). */
+        freshDraft?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -219,7 +221,8 @@ export function useNewThreadHandler() {
       // fresh draft instead — the remap in the store preserves invested
       // drafts rather than deleting them.
       const emptyStoredDraftThread =
-        reusableStoredDraftThread &&
+        options?.freshDraft !== true && // signalbox: folders
+        reusableStoredDraftThread !== null &&
         !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
           ? reusableStoredDraftThread
           : null;
@@ -357,6 +360,7 @@ export function useNewThreadHandler() {
       }
 
       if (
+        options?.freshDraft !== true && // signalbox: folders
         latestActiveDraftThread &&
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
@@ -400,6 +404,7 @@ export function useNewThreadHandler() {
         // reuse the winner instead, like the synchronous path above does.
         const racedDraft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
         if (
+          options?.freshDraft !== true && // signalbox: folders
           racedDraft &&
           // Only a draft REGISTERED during the await counts as a raced
           // winner. An invested draft this invocation deliberately declined
