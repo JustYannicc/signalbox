@@ -136,6 +136,12 @@ export function useSectionsSidebar(input: {
       ...sections,
       visibleProjectRows: [...folders.visibleRows, ...sections.visibleProjectRows],
       folders,
+      // Only folders: the list is the user's folders, and adding brings in a source
+      // (a repository gets a folder of its own). Projects stay projects anywhere else.
+      labels:
+        folders.environments.length > 0 && (sections.environments?.length ?? 0) === 0
+          ? { title: "Folders", add: "Add a source" }
+          : { title: "Projects", add: "Add project" },
     }),
     [folders, sections],
   );

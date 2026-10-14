@@ -86,7 +86,9 @@ export function useStartInFolder() {
       if (ownerProjectId === undefined) return;
       const { projectId } = newThreadIn(before, input.folderId, ownerProjectId);
       const result = await settlePromise(() =>
-        handleNewThread(scopeProjectRef(input.environmentId, projectId)),
+        // Folders without files share their owner's project, so its empty draft may be
+        // another folder's: always a draft of this folder's own.
+        handleNewThread(scopeProjectRef(input.environmentId, projectId), { freshDraft: true }),
       );
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);

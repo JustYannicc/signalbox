@@ -80,6 +80,8 @@ export function useNewThreadHandler() {
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
         replace?: boolean;
+        /** signalbox: a new draft even when the project has an empty one (folders share projects). */
+        freshDraft?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -219,7 +221,8 @@ export function useNewThreadHandler() {
       // fresh draft instead — the remap in the store preserves invested
       // drafts rather than deleting them.
       const emptyStoredDraftThread =
-        reusableStoredDraftThread &&
+        options?.freshDraft !== true && // signalbox: folders
+        reusableStoredDraftThread !== null &&
         !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
           ? reusableStoredDraftThread
           : null;
