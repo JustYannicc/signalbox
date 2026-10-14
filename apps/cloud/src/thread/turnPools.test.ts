@@ -13,12 +13,12 @@ import * as Environment from "../environment.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import * as UserPools from "../user/UserPools.ts";
-import * as UserSections from "../user/UserSections.ts";
+import * as UserFolders from "../user/UserFolders.ts";
 import * as CloudThreadService from "./CloudThreadService.ts";
 
 /**
  * Turns run on the pool the thread's chain resolves to, never one the client
- * names: Personal at the top level, a section's pool below it.
+ * names: Personal at the top level, a folder's pool below it.
  */
 
 const userId = "user_1";
@@ -36,7 +36,7 @@ const setup = Effect.gen(function* () {
   const services = yield* Effect.all({
     threads: CloudThreadService.CloudThreadService,
     pools: UserPools.UserPools,
-    sections: UserSections.UserSections,
+    folders: UserFolders.UserFolders,
   }).pipe(Effect.provide(cloud.layerFor(userId)));
   /** Signs a Claude account into the pool, as Add account does. */
   const signInClaude = (poolId: string) =>
@@ -72,9 +72,9 @@ const setup = Effect.gen(function* () {
 });
 
 describe("turn pools", () => {
-  it.effect("ignores the pool a client names, and follows the project when it moves", () =>
+  it.effect("ignores the pool a client names, and follows the thread when it moves", () =>
     Effect.gen(function* () {
-      const { threads, pools, sections, cloud, signInClaude, send, runsOn } = yield* setup;
+      const { threads, pools, folders, cloud, signInClaude, send, runsOn } = yield* setup;
       const work = yield* pools.create({ userId }, { name: "Work" });
       yield* signInClaude(work.id);
 
@@ -93,17 +93,17 @@ describe("turn pools", () => {
       yield* cloud.settle;
       expect(yield* runsOn).toEqual(["claude_hub"]);
 
-      // Moved into a section that runs on Work, its next turn does, whatever it names.
-      let snapshot = yield* sections.create({ name: "Client work", parentId: null });
-      const section = snapshot.sections[0]!.id;
-      yield* sections.update({ id: section, defaultPoolId: work.id });
-      snapshot = yield* sections.moveProject({ projectId: SCRATCH, sectionId: section });
+      // Moved into a folder that runs on Work, its next turn does, whatever it names.
+      const snapshot = yield* folders.create({ name: "Client work", parentId: null });
+      const folder = snapshot.folders[0]!.id;
+      yield* folders.update({ id: folder, poolId: work.id });
+      yield* folders.moveThread({ threadId, folderId: folder });
       yield* send(claudeOn("claudeAgent"));
       yield* cloud.settle;
       expect((yield* runsOn).at(-1)).toBe(`claude_hub_${work.id}`);
 
       // Back out, and it's on Personal again.
-      yield* sections.moveProject({ projectId: SCRATCH, sectionId: null });
+      yield* folders.moveThread({ threadId, folderId: null });
       yield* send(claudeOn(`claude_hub_${work.id}`));
       yield* cloud.settle;
       expect((yield* runsOn).at(-1)).toBe("claude_hub");
@@ -112,12 +112,13 @@ describe("turn pools", () => {
 
   it.effect("refuses a model the resolved pool doesn't serve, even if another pool does", () =>
     Effect.gen(function* () {
-      const { threads, pools, sections, cloud } = yield* setup;
+      const { threads, pools, folders, cloud } = yield* setup;
       // Lab has no accounts; Personal serves Claude.
       const lab = yield* pools.create({ userId }, { name: "Lab" });
-      const snapshot = yield* sections.create({ name: "Lab", parentId: null });
-      yield* sections.update({ id: snapshot.sections[0]!.id, defaultPoolId: lab.id });
-      yield* sections.moveProject({ projectId: SCRATCH, sectionId: snapshot.sections[0]!.id });
+      const snapshot = yield* folders.create({ name: "Lab", parentId: null });
+      yield* folders.update({ id: snapshot.folders[0]!.id, poolId: lab.id });
+      // Filed before it exists, so its very first turn runs on its home's chain.
+      yield* folders.moveThread({ threadId, folderId: snapshot.folders[0]!.id });
 
       const refused = yield* Effect.flip(
         threads.launchThread(actor, {
@@ -141,9 +142,9 @@ describe("turn pools", () => {
 
   it.effect("needs a pool when nothing on the chain has one", () =>
     Effect.gen(function* () {
-      const { threads, sections } = yield* setup;
+      const { threads, folders } = yield* setup;
       // Nothing placed anywhere: Personal taken off the top level.
-      yield* sections.forgetPool("personal");
+      yield* folders.forgetPool("personal");
       const refused = yield* Effect.flip(
         threads.launchThread(actor, {
           commandId: CommandId.make("launch-none"),

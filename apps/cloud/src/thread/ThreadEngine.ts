@@ -32,7 +32,13 @@ import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection } from "./threadProjection.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
-import { commandOnPool, onPool, poolOfProject, type TurnPools } from "./turnPool.ts";
+import {
+  commandOnPool,
+  forThread,
+  onPool,
+  type TurnInstructions,
+  type TurnPools,
+} from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
 import type { ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
 
@@ -102,6 +108,11 @@ export interface ThreadCreation {
    * never starts without its pool resolved.
    */
   readonly pools: TurnPools | null;
+  /**
+   * The `AGENTS.md` of every level on the thread's chain, resolved with
+   * `pools`; a turn it starts keeps them for the Runner. Absent: unresolved.
+   */
+  readonly instructions?: TurnInstructions;
 }
 
 const NO_CONTEXT =
@@ -365,7 +376,7 @@ const make = Effect.gen(function* () {
         const pool =
           creation.pools === null || projectId === undefined
             ? undefined
-            : poolOfProject(creation.pools, projectId);
+            : forThread(creation.pools, projectId);
         const decision = decideWith(current.thread?.projection ?? null, yield* context, pool);
         const refuse = (message: string, options: { readonly record: boolean }) =>
           Effect.gen(function* () {
@@ -417,6 +428,16 @@ const make = Effect.gen(function* () {
                 }),
           },
           ...(place === null ? {} : { owner: { userId: actor.userId, ...place } }),
+          ...(started === undefined ||
+          creation.instructions === undefined ||
+          projectId === undefined
+            ? {}
+            : {
+                instructions: {
+                  runId: started.payload.id,
+                  levels: forThread(creation.instructions, projectId),
+                },
+              }),
         });
         return { sequence, replayed: false };
       }),

@@ -56,7 +56,8 @@ import * as GitHub from "./github/GitHub.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
-import * as UserSections from "./user/UserSections.ts";
+import * as LegacySections from "./user/legacySections.ts";
+import * as UserFolders from "./user/UserFolders.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import * as UserDrives from "./user/UserDrives.ts";
 import { makeUserObjectApi } from "./user/userObjectApi.ts";
@@ -80,7 +81,8 @@ export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_E
   );
 
 /** A user object's storage services on a fresh in-memory database, migrated. */
-export const layerMemoryStore = UserSections.layer.pipe(
+export const layerMemoryStore = LegacySections.layer.pipe(
+  Layer.provideMerge(UserFolders.layer),
   Layer.provideMerge(
     Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives, ResourceBindings.layer),
   ),
@@ -103,7 +105,11 @@ export const layerPersonalThreadContexts = (userId: string) =>
             : { contextId, driveId: myDriveId(contextId, userId), remote: false },
         );
       },
-      turnPools: Effect.succeed({ top: PERSONAL_POOL_ID, projects: {} }),
+      turn: () =>
+        Effect.succeed({
+          pools: { top: PERSONAL_POOL_ID, projects: {} },
+          instructions: { top: [], projects: {} },
+        }),
     }),
   );
 

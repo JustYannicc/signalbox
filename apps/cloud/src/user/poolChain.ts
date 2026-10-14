@@ -1,4 +1,7 @@
-import type { PoolLevel, ResolvedPool } from "@t3tools/contracts/sections";
+import type {
+  FolderLevel as PoolLevel,
+  FolderResolvedPool as ResolvedPool,
+} from "@t3tools/contracts/signalboxFolders";
 
 import type { PoolBinding } from "./ResourceBindings.ts";
 
@@ -9,8 +12,8 @@ import type { PoolBinding } from "./ResourceBindings.ts";
  * whole: it supplies every harness. None on the chain means none at all,
  * never a silent fallback.
  *
- * The chain is only `parentOf`: today sections and projects build it
- * (`UserSections`); folders replace them without touching this.
+ * The chain is only `parentOf`: the user's folders build it (`folderTree.ts`),
+ * and instructions cascade down the same chain.
  */
 
 export interface PoolTree {
@@ -23,10 +26,8 @@ const levelKey = (level: PoolLevel) => {
   switch (level._tag) {
     case "top":
       return "top";
-    case "section":
-      return `section:${level.sectionId}`;
-    case "project":
-      return `project:${level.projectId}`;
+    case "folder":
+      return `folder:${level.folderId}`;
   }
 };
 

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { SectionRows } from "../user/UserSections.ts";
+import { FolderRows, SectionRows } from "../user/folderRows.ts";
 
 /**
  * What crosses between a preview and production when a preview takes a
@@ -36,8 +36,10 @@ export const PreviewSetup = Schema.Struct({
       token: Schema.String,
     }),
   ),
-  /** Sections and project placements, as `UserSections` stores them. */
+  /** Sections and project placements as stored before folders: what an older preview reads. */
   sections: SectionRows,
+  /** Folders and the resources placed at them. Absent from a cloud from before folders. */
+  folders: Schema.optionalKey(FolderRows),
   /** Pipes keeps the tokens under the WorkOS user, which production and previews share. */
   github: Schema.NullOr(Schema.Struct({ login: Schema.String, githubUserId: Schema.Number })),
 });

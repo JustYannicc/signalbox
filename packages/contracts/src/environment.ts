@@ -229,6 +229,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   serverBrowser: Schema.optionalKey(Schema.Boolean),
   /** Server persists organizational sections and per-project placements. */
   sections: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: Server keeps the user's folders and thread homes (`signalboxFolders.ts`). */
+  folders: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Signalbox Cloud opens threads' dev servers through its PreviewGateway (`signalboxPreviews.ts`). */
   signalboxPreviews: Schema.optionalKey(Schema.Boolean),
   /** signalbox: What this environment's pools can do. Absent: everything (`accountHub.ts`). */

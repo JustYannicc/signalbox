@@ -648,6 +648,8 @@ const make = Effect.gen(function* () {
                 token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
                 // Any drive may have a remote to fetch, or a shortcut to one (#142).
                 remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
+                // Its folders' `AGENTS.md`, as the turn was started with (#227).
+                instructions: yield* Effect.orDie(store.instructions(run.id)),
               },
         sessions:
           turn === null || lease.token === null || projection === null

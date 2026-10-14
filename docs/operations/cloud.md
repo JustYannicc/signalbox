@@ -287,8 +287,8 @@ Workers Paid plan; on any other plan every deploy fails at
 
 Each person has a My Drive in every context, work organizations have shared
 drives, and a folder shared from a My Drive is split out into a drive of its
-own (`apps/cloud/src/drive/`). Every drive is a project in its owner's and
-members' sidebars, and a thread works in the drive it was started in. A drive
+own (`apps/cloud/src/drive/`). Every drive is a project in the shell, and a
+thread works in the drive it was started in for good. A drive
 is a git repository with no git server: packs in the `DRIVE_PACKS` R2 bucket
 (`signalbox-drives`, previews `signalbox-drives-preview`, both in the EU
 jurisdiction), refs in the drive's `DriveObject`. Preview pack keys start with
@@ -331,6 +331,30 @@ checkout (`workspaces/<thread>/`), outside the drive: Codex takes that folder
 as its project root and Claude Code reads parent folders, so both load it
 beside the drive's own. When the bundle changes, the Runner restarts the
 harness session so its native resume swaps the instructions in.
+
+### Folders
+
+A user's tree lives in their user object (`apps/cloud/src/user/UserFolders.ts`,
+#227): folders nest freely under the top level, each in one owner's tree
+(Personal or an organization). Every drive someone is given gets a folder of
+its own once (`folder_drives`), which uses the drive as its files. A thread's
+home is the folder it was filed in, else the folder whose files it works in,
+else the top level. Filing a thread moves only its home: it keeps working in
+the drive it started in, but its next turn runs on the new home's chain.
+
+The chain decides two things per turn, both resolved in the user object when a
+command can start a turn and handed to the thread object with it: the nearest
+pool (`poolChain.ts`), and every level's instructions, top level first. The
+thread object keeps each run's instructions (`run_instructions`) and
+sends them with the drive access; the Runner puts them first in the generated
+`AGENTS.md` above the checkout, before the shortcuts' and the drive's own. They
+count toward the same 64 KiB.
+
+`0013` turned sections into folders with the same ids, so pools placed at
+sections or projects still apply (`ResourceBindings` reads both as folders).
+Clients from before folders still get `sections.*`, served as a view of the
+folders (`legacySections.ts`). A pool placed at a folder made since is stored
+as a `folder` level, which a build from before folders can't read.
 
 `wrangler dev` keeps the bucket locally. Deployments need both buckets
 created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
@@ -599,10 +623,11 @@ request builds: production lists the origins it answers in
   there show up at once. Add and manage accounts on production; the preview
   refuses. Every sign-in to the preview renews the links (90 days each) and
   links pools new since.
-- **Copied once:** sections, project placements, the pool placed at each
-  level, and the GitHub connection (Pipes keeps the tokens under your WorkOS
+- **Copied once:** folders with their instructions, the pool placed at each
+  level (from a production from before folders: its sections, read into
+  folders), and the GitHub connection (Pipes keeps the tokens under your WorkOS
   user, which both share). Changes on the preview stick.
 - **Not copied:** threads, sessions, grants, the thread index, drives, Executor
   connection links (they're bound to the cloud that issued them) and anything
-  running. Placements of drives the preview doesn't have stay out of sight;
-  import a GitHub repository again to get its drive.
+  running. Folders keep no files the preview doesn't have; import a GitHub
+  repository again to get its drive, which gets a folder of its own.
