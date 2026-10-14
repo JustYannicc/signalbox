@@ -9,8 +9,11 @@ import {
 } from "@t3tools/contracts";
 import { poolInstanceId, poolSourceId } from "@t3tools/contracts/accountHub";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
@@ -136,6 +139,39 @@ describe("cloud pool RPC", () => {
         available: true,
         usage: [],
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps the pool views live after a read fails", () =>
+    Effect.gen(function* () {
+      const { rpc, cloud } = yield* client();
+      // Personal's object is down for the views' first read, as on a cold start.
+      const name = `${userId}:personal`;
+      const personal = cloud.pools.objectFor(name);
+      const failed = yield* Deferred.make<void>();
+      cloud.pools.objects.set(name, {
+        ...personal,
+        api: {
+          ...personal.api,
+          create: (...args) => {
+            if (Deferred.doneUnsafe(failed, Effect.void)) {
+              return Promise.reject(new Error("Pool object unavailable"));
+            }
+            return personal.api.create(...args);
+          },
+        },
+      });
+      const views = yield* rpc[WS_METHODS.accountPoolSubscribeViews]({}).pipe(
+        Stream.map((all) => all.map((view) => view.name)),
+        Stream.takeUntil((names) => names.includes("Work")),
+        Stream.runLast,
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(failed);
+
+      // The section menu's pool list picks up a pool created after the failure.
+      yield* rpc[WS_METHODS.accountPoolCreate]({ name: "Work" });
+      expect(yield* Fiber.join(views)).toEqual(Option.some(["Personal", "Work"]));
     }).pipe(Effect.scoped),
   );
 
