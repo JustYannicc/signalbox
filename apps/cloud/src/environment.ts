@@ -12,6 +12,7 @@ import {
   type ServerAuthDescriptor,
   type ServerConfig,
   type ServerProvider,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -113,9 +114,12 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     localFilesystem: false,
     // Only GitHub repositories import (`github/GitHubImport.ts`).
     cloneFromUrl: false,
+    sourceControlImports: [SourceControlProviderKind.make("github")],
     remoteAccess: false,
     // Pairing links and client sessions are not served (`http/environmentApi.ts`).
     accessManagement: false,
+    // Automations and their Executor connection run on self-hosted servers only.
+    connectedServices: false,
   },
 });
 

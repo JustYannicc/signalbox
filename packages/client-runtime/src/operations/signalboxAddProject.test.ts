@@ -1,6 +1,11 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveAddProjectAvailability } from "./signalboxAddProject.ts";
+import {
+  addProjectCloneSources,
+  addProjectSourceSupport,
+  resolveAddProjectAvailability,
+} from "./signalboxAddProject.ts";
 
 describe("resolveAddProjectAvailability", () => {
   it("is ready once any environment is connected", () => {
@@ -24,5 +29,45 @@ describe("resolveAddProjectAvailability", () => {
     expect(
       resolveAddProjectAvailability({ catalogReady: true, phases: ["offline", "error"] }),
     ).toBe("unavailable");
+  });
+});
+
+const GITHUB = SourceControlProviderKind.make("github");
+const GITLAB = SourceControlProviderKind.make("gitlab");
+
+describe("addProjectSourceSupport", () => {
+  it("offers every source on servers that don't report the capabilities", () => {
+    const everything = { localFilesystem: true, cloneFromUrl: true };
+    expect(addProjectSourceSupport({})).toEqual(everything);
+    expect(addProjectSourceSupport(undefined)).toEqual(everything);
+  });
+
+  it("drops the sources an environment turns off", () => {
+    expect(
+      addProjectSourceSupport({
+        localFilesystem: false,
+        cloneFromUrl: false,
+        sourceControlImports: [GITHUB],
+      }),
+    ).toEqual({ localFilesystem: false, cloneFromUrl: false, sourceControlImports: [GITHUB] });
+  });
+});
+
+describe("addProjectCloneSources", () => {
+  it("leads with Git URL where any URL clones", () => {
+    expect(addProjectCloneSources([GITHUB, GITLAB], { cloneFromUrl: true })).toEqual([
+      "url",
+      GITHUB,
+      GITLAB,
+    ]);
+  });
+
+  it("offers only the hosts the environment imports from", () => {
+    expect(
+      addProjectCloneSources([GITHUB, GITLAB], {
+        cloneFromUrl: false,
+        sourceControlImports: [GITHUB],
+      }),
+    ).toEqual([GITHUB]);
   });
 });

@@ -8,6 +8,8 @@
  */
 import * as Schema from "effect/Schema";
 
+import { SourceControlProviderKind } from "./sourceControl.ts";
+
 export const SignalboxEnvironmentCapabilityFields = {
   /** Serves `terminal.*`: the terminal drawer and running scripts in it. */
   terminal: Schema.optionalKey(Schema.Boolean),
@@ -29,9 +31,18 @@ export const SignalboxEnvironmentCapabilityFields = {
   remoteAccess: Schema.optionalKey(Schema.Boolean),
   /** Serves pairing links and the list of paired clients. */
   accessManagement: Schema.optionalKey(Schema.Boolean),
+  /** Serves the Executor connection automations reach the user's accounts through
+      (`automations.connectionStatus`, `connect`, `disconnect`). */
+  connectedServices: Schema.optionalKey(Schema.Boolean),
 };
 
 export type SignalboxEnvironmentCapability = keyof typeof SignalboxEnvironmentCapabilityFields;
+
+/** What an environment can do that isn't yes or no; absent is the self-hosted default. */
+export const SignalboxEnvironmentCapabilityListFields = {
+  /** The source control hosts Add project imports repositories from. Absent: every host. */
+  sourceControlImports: Schema.optionalKey(Schema.Array(SourceControlProviderKind)),
+};
 
 /** Whether an environment can do `capability`. Unknown (no config yet) and absent are supported. */
 export function environmentSupports(
@@ -39,4 +50,15 @@ export function environmentSupports(
   capability: SignalboxEnvironmentCapability,
 ): boolean {
   return capabilities?.[capability] !== false;
+}
+
+/** Whether Add project offers `provider` on an environment. Unknown and absent offer every host. */
+export function environmentImportsFrom(
+  capabilities:
+    | { readonly sourceControlImports?: ReadonlyArray<SourceControlProviderKind> }
+    | null
+    | undefined,
+  provider: SourceControlProviderKind,
+): boolean {
+  return capabilities?.sourceControlImports?.includes(provider) ?? true;
 }

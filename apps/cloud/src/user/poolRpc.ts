@@ -7,7 +7,9 @@ import {
 } from "@t3tools/contracts";
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
@@ -105,22 +107,44 @@ const NO_POOLS: UserPools.PoolsState = [];
 const settingsKey = (config: ReturnType<typeof configOf>) =>
   JSON.stringify([config.settings.providerInstances, config.settings.defaultModelSelection]);
 
+/** Up to 30 seconds between reads of pools that can't be read right now. */
+const READ_AGAIN = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+  Schedule.jittered,
+);
+
 /**
- * The pools, falling back to none when they can't be read, so the rest of
- * the config still reaches the client.
+ * The pools, read again when a read fails instead of ending. A client keeps a
+ * failed subscription's last value until it reloads, so one failed read (a
+ * pool object down while this one starts) would hide every pool created
+ * after it from the sidebar and composer.
+ */
+const followPools = (pools: UserPools.UserPools["Service"], actor: PoolActor) =>
+  pools.changes(actor).pipe(
+    Stream.tapCause((cause) => Effect.logWarning("cloud pools unavailable, reading again", cause)),
+    Stream.retry(READ_AGAIN),
+  );
+
+/**
+ * The pools for the server config: none while they can't be read, so the
+ * rest of the config still reaches the client, then the pools once they can.
  */
 const poolStates = (pools: UserPools.UserPools["Service"], actor: PoolActor) =>
-  pools
-    .changes(actor)
-    .pipe(
-      Stream.catchCause((cause) =>
+  pools.changes(actor).pipe(
+    Stream.catchCause((cause) =>
+      Stream.concat(
         Stream.fromEffect(
           Effect.logError("cloud pools unavailable for the server config", cause).pipe(
             Effect.as(NO_POOLS),
           ),
         ),
+        // It reads again for as long as it takes, so it never fails.
+        followPools(pools, actor).pipe(Stream.orDie),
       ),
-    );
+    ),
+  );
 
 export const makePoolHandlers = (input: {
   readonly identity: Environment.CloudEnvironmentIdentity;
@@ -195,13 +219,13 @@ export const makePoolHandlers = (input: {
 
     const handlers = {
       [WS_METHODS.accountPoolSubscribe]: () =>
-        pools
-          .changes(actor)
-          .pipe(Stream.map((state) => state.map((entry) => accountPool(entry.pool)))),
+        followPools(pools, actor).pipe(
+          Stream.map((state) => state.map((entry) => accountPool(entry.pool))),
+        ),
       [WS_METHODS.accountPoolSubscribeViews]: () =>
-        pools
-          .changes(actor)
-          .pipe(Stream.map((state) => state.map((entry) => overview(entry.pool, entry.source)))),
+        followPools(pools, actor).pipe(
+          Stream.map((state) => state.map((entry) => overview(entry.pool, entry.source))),
+        ),
       [WS_METHODS.accountPoolCreate]: (request: Parameters<typeof pools.create>[1]) =>
         pools.create(actor, request),
       [WS_METHODS.accountPoolRename]: (request: Parameters<typeof pools.rename>[1]) =>

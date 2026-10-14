@@ -19,6 +19,7 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { useTargetsSupporting } from "./signalboxSettingsTargets";
 
 const EXECUTOR_HOME = "https://executor.sh";
 const COMMAND_OPTIONS = { reportFailure: false, reportDefect: false };
@@ -40,7 +41,9 @@ const messageOf = (error: unknown) =>
 
 /** The Executor connection automations reach the user's accounts through with `w.call`, per environment. */
 export function SettingsConnectedServicesRouteScreen() {
-  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const filter = useSettingsEnvironmentFilter();
+  // Signalbox Cloud has no Executor connection, so it isn't offered.
+  const selectedTargets = useTargetsSupporting(filter.selectedTargets, "connectedServices");
   const insets = useSafeAreaInsets();
   return (
     <>
@@ -57,7 +60,11 @@ export function SettingsConnectedServicesRouteScreen() {
             keeps only Executor's key.
           </Text>
           {selectedTargets.length === 0 ? (
-            <Text className="px-2 text-foreground-muted">Select a connected environment.</Text>
+            <Text className="px-2 text-foreground-muted">
+              {filter.selectedTargets.length === 0
+                ? "Select a connected environment."
+                : "Connected services run on self-hosted servers."}
+            </Text>
           ) : (
             selectedTargets.map((environment) => (
               <EnvironmentServices

@@ -10,6 +10,7 @@ import { usePoolViews } from "../../state/accountPools";
 import { useProjectPool } from "../../state/projectPool";
 import { ComposerControl, type ComposerControlSize } from "../chat/ComposerControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { needsPoolCopy } from "./needsPoolCopy";
 
 /**
  * The entries a thread in `projectId` can pick, its pool's only, and what the
@@ -38,29 +39,34 @@ export function useProjectPoolEntries(
   }, [entries, pool, providerInstances]);
 }
 
-/** Why sending is blocked while the project needs a pool. */
-export const NEEDS_A_POOL = "This folder needs a pool.";
+/** What the project needs and the composer's copy for it; null when it needs nothing. */
+export function useNeedsPool(
+  environmentId: EnvironmentId | null,
+  need: PoolNeed | null,
+): NeedsPool | null {
+  // Only a sign-in names its pool; views change with usage, so only it subscribes.
+  const views = usePoolViews(need?._tag === "signIn" ? environmentId : null);
+  const poolName =
+    need?._tag === "signIn" ? views.find((view) => view.id === need.poolId)?.name : undefined;
+  return useMemo(
+    () => (need === null ? null : { need, ...needsPoolCopy(need, poolName) }),
+    [need, poolName],
+  );
+}
+
+export type NeedsPool = ReturnType<typeof needsPoolCopy> & { readonly need: PoolNeed };
 
 /**
  * The composer's one action while its project needs a pool: sign in to the
  * pool it runs on, or choose a pool when nothing above it has one.
  */
 export function NeedsPoolControl(props: {
-  readonly environmentId: EnvironmentId | null;
-  readonly need: PoolNeed;
+  readonly pool: NeedsPool;
   readonly size: ComposerControlSize;
   readonly onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
 }) {
   const navigate = useNavigate();
-  const views = usePoolViews(props.environmentId);
-  const { need } = props;
-  const poolName =
-    need._tag === "signIn" ? views.find((view) => view.id === need.poolId)?.name : undefined;
-  const action = need._tag === "signIn" ? `Sign in to ${poolName ?? "its pool"}` : "Choose a pool";
-  const why =
-    need._tag === "signIn"
-      ? "Nobody is signed in to this folder's pool yet."
-      : "Nothing above this folder has a pool.";
+  const { need, action, why } = props.pool;
   return (
     <Tooltip>
       <TooltipTrigger

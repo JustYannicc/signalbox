@@ -20,6 +20,7 @@ import { useState } from "react";
 
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { automationState } from "~/state/automations";
+import { useEnvironmentSupports } from "~/state/environmentCapabilities";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { GitHubIcon } from "../Icons";
@@ -50,6 +51,9 @@ const messageOf = (error: unknown) =>
 export function ConnectedServicesSettings() {
   const { environment, connectedEnvironments } = useSettingsScope();
   const connected = environment?.connection.phase === "connected" && environment.serverConfig;
+  // Signalbox Cloud has no Executor connection to show.
+  const supported = useEnvironmentSupports(environment?.environmentId, "connectedServices");
+  if (!supported) return null;
   return (
     <SettingsSection {...searchableSetting("connected-services")}>
       {connected ? (

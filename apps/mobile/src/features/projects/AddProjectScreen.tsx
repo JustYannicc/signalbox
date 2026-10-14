@@ -92,7 +92,7 @@ import {
   addProjectCloneSources,
   addProjectSourceSupport,
   type AddProjectSourceSupport,
-} from "./signalboxAddProject.logic"; // signalbox
+} from "@t3tools/client-runtime/operations/signalboxAddProject"; // signalbox
 import {
   createNewTaskDraft,
   setComposerDraftText,

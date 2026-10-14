@@ -137,6 +137,7 @@ import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
+import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
 import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 
 function NewTaskWorkspaceIcon(props: {
@@ -1851,6 +1852,7 @@ export function NewTaskDraftScreen(props: {
                 <ComposerActionButton
                   accessibilityLabel={
                     taskPermissionReason ??
+                    (flow.poolNeed ? NEEDS_A_POOL : null) ?? // signalbox
                     attachmentBlockReason ??
                     (cloneBlocksStart
                       ? projectClone === null || projectClone.phase === "running"
