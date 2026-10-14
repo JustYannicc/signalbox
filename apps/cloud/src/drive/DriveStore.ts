@@ -9,6 +9,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
+import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
 import * as DriveMembers from "./DriveMembers.ts";
 import { isWithin } from "./DriveReader.ts";
@@ -312,8 +313,8 @@ const migrations = Migrator.fromRecord({
   }),
 });
 
-/** Applies pending migrations. Ids only ever grow; never renumber one. */
-const migrate = Migrator.make({})({ loader: migrations });
+/** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
+const migrate = Migrations.run(migrations);
 
 const RefRow = Schema.Struct({ name: Schema.String, oid: Schema.String });
 const PackRow = Schema.Struct({ seq: Schema.Number, name: Schema.String, size: Schema.Number });

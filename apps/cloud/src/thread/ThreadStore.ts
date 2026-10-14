@@ -14,6 +14,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 
@@ -188,8 +189,8 @@ const migrations = Migrator.fromRecord({
   }),
 });
 
-/** Applies pending migrations. Ids only ever grow; never renumber one. */
-const migrate = Migrator.make({})({ loader: migrations });
+/** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
+const migrate = Migrations.run(migrations);
 
 const EventJson = Schema.fromJsonString(OrchestrationV2DomainEventJson);
 const encodeEvent = Schema.encodeSync(EventJson);
