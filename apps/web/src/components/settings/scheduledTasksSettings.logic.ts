@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  environmentSupports,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -18,6 +19,15 @@ import {
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+
+/** signalbox: whether the environment runs scheduled tasks. One without a config yet may. */
+export function runsScheduledTasks(environment: {
+  readonly serverConfig: {
+    readonly environment: { readonly capabilities: { readonly scheduledTasks?: boolean } };
+  } | null;
+}): boolean {
+  return environmentSupports(environment.serverConfig?.environment.capabilities, "scheduledTasks");
+}
 
 /** Project IDs belong to an environment, including when a grouped project spans machines. */
 export function matchesScheduledTaskScope(

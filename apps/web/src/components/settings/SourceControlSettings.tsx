@@ -17,7 +17,11 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useServerSettingsWritable,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
@@ -522,6 +526,7 @@ export function SourceControlSettingsPanel() {
   );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
   const isSignalboxCloud = useIsSignalboxCloud(environmentId); // signalbox: GitHub in Signalbox Cloud
+  const serverSettingsWritable = useServerSettingsWritable(); // signalbox
   const hasVersionControlSystems = result.versionControlSystems.length > 0;
   const hasDiscoveryItems = hasVersionControlSystems || result.sourceControlProviders.length > 0;
   const isInitialScanPending = discovery.isPending && discovery.data === null;
@@ -590,7 +595,9 @@ export function SourceControlSettingsPanel() {
             >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
+                  {item.kind === "git" && serverSettingsWritable ? (
+                    <GitFetchIntervalSettings />
+                  ) : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>

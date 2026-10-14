@@ -34,7 +34,11 @@ import {
   scopedSettingsAreMixed,
   scopedSettingsSource,
 } from "./scopedSettings";
-import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
+import {
+  useClearProjectOverrides,
+  useClearScopedSettings,
+  useServerSettingsWritable,
+} from "./useScopedSettings";
 import {
   SettingInheritance,
   type SettingInheritanceState,
@@ -179,6 +183,7 @@ export function SettingsSection({
   titleAction,
   headerAction,
   variant = "grouped",
+  serverScoped = false,
   children,
   className,
   ...sectionProps
@@ -190,9 +195,13 @@ export function SettingsSection({
   titleAction?: ReactNode;
   headerAction?: ReactNode;
   variant?: "grouped" | "plain";
+  /** Every row is server-scoped, so the section hides with them. */
+  serverScoped?: boolean;
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+  const serverSettingsWritable = useServerSettingsWritable();
+  if (serverScoped && !serverSettingsWritable) return null;
 
   return (
     <section
@@ -249,7 +258,8 @@ export function SettingsUnavailableGroup({
  * One setting. `serverScoped` marks rows whose value lives in the primary
  * environment's settings.json; where there is no primary (the hosted app)
  * the control goes inert with a tooltip instead of showing an editable
- * default that would never save.
+ * default that would never save. Environments that never save server
+ * settings hide the row instead.
  *
  * Keep descriptions short enough for one line where possible. Allow wrapping
  * for clarity or narrow screens instead of truncating or forcing no-wrap.
@@ -287,6 +297,7 @@ export function SettingsRow({
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const serverSettingsWritable = useServerSettingsWritable();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -357,6 +368,7 @@ export function SettingsRow({
       ];
     });
   }, [context, isProjectScope, scopedKeys]);
+  if (serverScoped && !serverSettingsWritable) return null;
   const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
     source === "project" || source === "mixed" ? (
       <SettingResetButton

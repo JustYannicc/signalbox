@@ -6,11 +6,13 @@ import {
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
   isSettingsOverviewVisible,
+  isSettingsPathAvailable,
   isSettingsSearchScopeAvailable,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
+  unsupportedSettingsCapabilities,
 } from "./settingsSearch";
 
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
@@ -584,5 +586,66 @@ describe("settings sidebar scope", () => {
     expect(isSettingsOverviewVisible({ machine: "remote" })).toBe(false);
     expect(isSettingsOverviewVisible({ project: "project" })).toBe(true);
     expect(isSettingsOverviewVisible({ project: "project", checkout: "checkout" })).toBe(true);
+  });
+});
+
+describe("environment capability gates", () => {
+  const cloud = {
+    serverConfig: {
+      environment: {
+        capabilities: {
+          serverSettingsWrite: false,
+          devices: false,
+          scheduledTasks: false,
+          remoteAccess: false,
+          accessManagement: false,
+        },
+      },
+    },
+  };
+  const selfHosted = { serverConfig: { environment: { capabilities: {} } } };
+  const loading = { serverConfig: null };
+
+  it("hides a capability only when no environment the settings act on has it", () => {
+    expect([...unsupportedSettingsCapabilities([cloud], cloud)]).toEqual(
+      expect.arrayContaining(["serverSettingsWrite", "devices", "scheduledTasks", "remoteAccess"]),
+    );
+    // Another environment still saves settings and runs tasks, but access is the primary's.
+    expect([...unsupportedSettingsCapabilities([cloud, selfHosted], cloud)].toSorted()).toEqual([
+      "accessManagement",
+      "remoteAccess",
+    ]);
+    expect(unsupportedSettingsCapabilities([selfHosted], selfHosted).size).toBe(0);
+    expect(unsupportedSettingsCapabilities([loading], loading).size).toBe(0);
+    expect(unsupportedSettingsCapabilities([], null).size).toBe(0);
+  });
+
+  it("drops search results and pages for unsupported capabilities", () => {
+    const unsupportedCapabilities = unsupportedSettingsCapabilities([cloud], cloud);
+    const ids = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: true,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: true,
+      isWslSettingsRowVisible: true,
+      hasThreadAutoSettlement: true,
+      unsupportedCapabilities,
+    }).map((item) => item.id);
+    expect(ids).toContain("word-wrap");
+    for (const hidden of [
+      "add-project-starts-in",
+      "default-model",
+      "device-hub",
+      "network-access",
+      "t3-connect",
+    ]) {
+      expect(ids).not.toContain(hidden);
+    }
+    expect(isSettingsPathAvailable("/settings/scheduled-tasks", unsupportedCapabilities)).toBe(
+      false,
+    );
+    expect(isSettingsPathAvailable("/settings/general", unsupportedCapabilities)).toBe(true);
+    expect(isSettingsPathAvailable("/settings/scheduled-tasks", new Set())).toBe(true);
   });
 });

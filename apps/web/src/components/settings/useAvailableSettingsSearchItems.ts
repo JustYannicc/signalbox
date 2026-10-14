@@ -6,7 +6,11 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironment,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
@@ -15,11 +19,30 @@ import type { SettingsScopeSearch } from "./settingsScope";
 import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
+  unsupportedSettingsCapabilities,
 } from "./settingsSearch";
+
+/** signalbox: capabilities no environment the settings act on has, within the machine filter. */
+export function useUnsupportedSettingsCapabilities(scopeSearch: SettingsScopeSearch = {}) {
+  const { environments } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
+  return useMemo(
+    () =>
+      unsupportedSettingsCapabilities(
+        environments.filter(
+          (environment) =>
+            scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine,
+        ),
+        primaryEnvironment,
+      ),
+    [environments, primaryEnvironment, scopeSearch.machine],
+  );
+}
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const unsupportedCapabilities = useUnsupportedSettingsCapabilities(scopeSearch);
   const localEnvironmentDisabled = isLocalEnvironmentDisabled();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const canManageLocalBackend = !localEnvironmentDisabled && canMaintain;
@@ -61,9 +84,11 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         hasThreadAutoSettlement:
           getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
         managedTunnelActive,
+        unsupportedCapabilities,
       }),
     [
       managedTunnelActive,
+      unsupportedCapabilities,
       canManageLocalBackend,
       desktopWsl.data,
       desktopWsl.error,

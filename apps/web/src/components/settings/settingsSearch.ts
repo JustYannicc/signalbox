@@ -2,7 +2,12 @@ import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  environmentSupports,
+  SignalboxEnvironmentCapabilityFields,
+  type EnvironmentId,
+  type SignalboxEnvironmentCapability,
+} from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -69,6 +74,8 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   // Its row only renders while this environment's T3 Connect managed tunnel is on.
   readonly managedTunnelOnly?: boolean;
+  // signalbox: its row only renders where the environment it acts on can do this.
+  readonly capability?: SignalboxEnvironmentCapability;
   /**
    * Sorts after every other match. Keybinding commands mirror rows on other
    * surfaces, so "model" must still lead with Default model, not Model Picker.
@@ -87,6 +94,8 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
+  /** signalbox: capabilities no environment the settings act on has. */
+  readonly unsupportedCapabilities?: ReadonlySet<SignalboxEnvironmentCapability>;
 }
 
 /**
@@ -168,6 +177,7 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "storage-worktree-keep-when",
+    capability: "serverSettingsWrite",
     targetId: "storage-worktrees",
     title: "Keep worktrees with local changes",
     to: "/settings/storage",
@@ -185,6 +195,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-worktrees",
+    capability: "serverSettingsWrite",
     title: "Worktree cleanup",
     to: "/settings/storage",
     scope: "project-defaults",
@@ -194,6 +205,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-worktrees-location",
+    capability: "serverSettingsWrite",
     title: "Worktree location",
     to: "/settings/storage",
     scope: "environment-defaults",
@@ -201,6 +213,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "storage-artifacts",
+    capability: "serverSettingsWrite",
     title: "Artifacts and logs",
     to: "/settings/storage",
     scope: "environment-defaults",
@@ -208,6 +221,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "project-defaults",
+    capability: "serverSettingsWrite",
     title: "Project defaults and overrides",
     to: "/settings/general",
     scope: "project-defaults",
@@ -221,6 +235,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "default-model",
+    capability: "serverSettingsWrite",
     title: "Default model",
     to: "/settings/general",
     scope: "project-defaults",
@@ -228,6 +243,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "default-permissions",
+    capability: "serverSettingsWrite",
     title: "Permissions",
     to: "/settings/general",
     scope: "project-defaults",
@@ -347,12 +363,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "snooze-limited-threads",
+    capability: "serverSettingsWrite",
     title: "Snooze limited threads",
     to: "/settings/general",
     searchTerms: ["usage quota rate limit reset wake recover continue"],
   },
   {
     id: "auto-resume-limited-threads",
+    capability: "serverSettingsWrite",
     title: "Auto-resume limited threads",
     to: "/settings/general",
     searchTerms: ["usage quota rate limit reset recover continue"],
@@ -365,6 +383,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-settle-inactive-threads",
+    capability: "serverSettingsWrite",
     title: "Auto-settle inactive threads",
     to: "/settings/general",
     searchTerms: ["sidebar inactivity days no activity automatically"],
@@ -373,6 +392,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-settle-merged-threads",
+    capability: "serverSettingsWrite",
     title: "Auto-settle merged threads",
     to: "/settings/general",
     searchTerms: ["pull request merge closed automatically sidebar"],
@@ -381,6 +401,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "days-before-auto-settle",
+    capability: "serverSettingsWrite",
     title: "Days of inactivity before auto-settle",
     to: "/settings/general",
     targetId: "auto-settle-inactive-threads",
@@ -408,6 +429,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "response-streaming",
+    capability: "serverSettingsWrite",
     title: "Response streaming",
     to: "/settings/general",
     scope: "project-defaults",
@@ -469,6 +491,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "provider-update-checks",
+    capability: "serverSettingsWrite",
     title: "Provider update checks",
     to: "/settings/general",
     searchTerms: ["installed cli versions newer available codex claude cursor grok opencode"],
@@ -476,6 +499,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "continue-threads-after-server-update",
+    capability: "serverSettingsWrite",
     title: "Continue threads after restarts",
     to: "/settings/general",
     scope: "project-defaults",
@@ -485,6 +509,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "background-activity",
+    capability: "serverSettingsWrite",
     title: "Background activity",
     to: "/settings/general",
     scope: "environment-defaults",
@@ -494,6 +519,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "new-threads",
+    capability: "serverSettingsWrite",
     title: "New threads",
     to: "/settings/general",
     scope: "project-defaults",
@@ -501,6 +527,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-submodules",
+    capability: "serverSettingsWrite",
     title: "Submodules",
     to: "/settings/general",
     scope: "project-defaults",
@@ -508,6 +535,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "start-from-origin",
+    capability: "serverSettingsWrite",
     title: "Start from origin",
     to: "/settings/general",
     scope: "project-defaults",
@@ -515,6 +543,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "add-project-starts-in",
+    capability: "serverSettingsWrite",
     title: "Add project starts in",
     to: "/settings/general",
     scope: "environment-defaults",
@@ -547,6 +576,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "text-generation-model",
+    capability: "serverSettingsWrite",
     title: "Text generation model",
     to: "/settings/general",
     scope: "project-defaults",
@@ -695,6 +725,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-browser-access",
+    capability: "serverSettingsWrite",
     title: "Agent browser access",
     to: "/settings/integrations",
     scope: "project-defaults",
@@ -709,12 +740,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "device-hosts",
+    capability: "devices",
     title: "Device hosts",
     to: "/settings/integrations",
     searchTerms: ["ssh remote simulator emulator ios android mac mini identity key connection"],
   },
   {
     id: "agent-device-access",
+    capability: "devices",
     title: "Agent device access",
     to: "/settings/integrations",
     targetId: "devices",
@@ -722,6 +755,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "device-hub",
+    capability: "devices",
     title: "Device hub",
     to: "/settings/integrations",
     targetId: "devices",
@@ -729,6 +763,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "device-platform-support",
+    capability: "devices",
     title: "Simulator support",
     to: "/settings/integrations",
     targetId: "devices",
@@ -795,6 +830,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "automatic-pull",
+    capability: "serverSettingsWrite",
     title: "Automatically pull",
     to: "/settings/source-control",
     scope: "project-defaults",
@@ -802,6 +838,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "remove-agent-credits-on-merge",
+    capability: "serverSettingsWrite",
     title: "Remove agent credits when merging",
     to: "/settings/source-control",
     scope: "project-defaults",
@@ -809,6 +846,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "pull-request-merge-method",
+    capability: "serverSettingsWrite",
     title: "Default merge method",
     to: "/settings/source-control",
     scope: "project-defaults",
@@ -825,6 +863,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "git-fetch-interval",
+    capability: "serverSettingsWrite",
     title: "Git fetch interval",
     to: "/settings/source-control",
     searchTerms: [
@@ -835,6 +874,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-branch-naming",
+    capability: "serverSettingsWrite",
     title: "Worktree branch naming",
     to: "/settings/source-control",
     searchTerms: ["static semantic prefix custom prompt instructions feat fix refactor chore"],
@@ -854,6 +894,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   ...SOURCE_CONTROL_HOST_SEARCH_ITEMS,
   {
     id: "source-control-writing-style",
+    capability: "serverSettingsWrite",
     title: "Source control writing style",
     to: "/settings/source-control",
     searchTerms: [
@@ -863,6 +904,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "follow-change-request-templates",
+    capability: "serverSettingsWrite",
     title: "Follow change request templates",
     to: "/settings/source-control",
     searchTerms: ["repository pr pull request description structure"],
@@ -870,6 +912,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "source-control-writer-model",
+    capability: "serverSettingsWrite",
     title: "Source control writer model",
     to: "/settings/source-control",
     searchTerms: [
@@ -880,6 +923,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guides",
+    capability: "serverSettingsWrite",
     title: "Review guides (beta)",
     to: "/settings/source-control",
     searchTerms: ["pull request pr guided review guide tour beta experimental"],
@@ -887,6 +931,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guide-model",
+    capability: "serverSettingsWrite",
     title: "Review guide model",
     to: "/settings/source-control",
     // Hidden until review guides are on, so a search lands on the switch that shows it.
@@ -897,6 +942,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guide-instructions",
+    capability: "serverSettingsWrite",
     title: "Review guide instructions",
     to: "/settings/source-control",
     targetId: "review-guides",
@@ -927,6 +973,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "network-access",
+    capability: "remoteAccess",
     title: "Network access",
     to: "/settings/connections",
     targetId: "connections-environment",
@@ -935,6 +982,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "tailscale-https",
+    capability: "remoteAccess",
     title: "Tailscale HTTPS",
     to: "/settings/connections",
     targetId: "connections-environment",
@@ -944,6 +992,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "wsl-backend",
+    capability: "remoteAccess",
     title: "WSL backend",
     to: "/settings/connections",
     searchTerms: [
@@ -956,6 +1005,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "t3-connect",
+    capability: "remoteAccess",
     localEnvironmentOnly: true,
     title: "Signalbox Connect",
     to: "/settings/connections",
@@ -966,6 +1016,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "hold-webhooks-while-offline",
+    capability: "remoteAccess",
     localEnvironmentOnly: true,
     title: "Hold webhooks while offline",
     to: "/settings/connections",
@@ -976,6 +1027,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "publish-agent-activity",
+    capability: "remoteAccess",
     localEnvironmentOnly: true,
     title: "Publish agent activity",
     to: "/settings/connections",
@@ -1159,8 +1211,65 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
-      (!item.managedTunnelOnly || availability.managedTunnelActive === true),
+      (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
+      (!item.capability || !availability.unsupportedCapabilities?.has(item.capability)),
   );
+}
+
+interface CapabilitySearchEnvironment {
+  readonly serverConfig: {
+    readonly environment: {
+      readonly capabilities: { readonly [K in SignalboxEnvironmentCapability]?: boolean };
+    };
+  } | null;
+}
+
+/** Capabilities settings act on the primary environment for; the rest act on any of them. */
+const PRIMARY_ENVIRONMENT_CAPABILITIES = new Set<SignalboxEnvironmentCapability>([
+  "remoteAccess",
+  "accessManagement",
+]);
+
+/**
+ * signalbox: capabilities no environment the settings act on has, so their
+ * rows, sections, and search results are hidden. An environment whose config
+ * hasn't loaded counts as capable, and no environments hides nothing.
+ */
+export function unsupportedSettingsCapabilities(
+  environments: readonly CapabilitySearchEnvironment[],
+  primaryEnvironment: CapabilitySearchEnvironment | null,
+): ReadonlySet<SignalboxEnvironmentCapability> {
+  const capabilities = Object.keys(
+    SignalboxEnvironmentCapabilityFields,
+  ) as SignalboxEnvironmentCapability[];
+  return new Set(
+    capabilities.filter((capability) => {
+      const candidates = PRIMARY_ENVIRONMENT_CAPABILITIES.has(capability)
+        ? primaryEnvironment
+          ? [primaryEnvironment]
+          : []
+        : environments;
+      return (
+        candidates.length > 0 &&
+        !candidates.some((environment) =>
+          environmentSupports(environment.serverConfig?.environment.capabilities, capability),
+        )
+      );
+    }),
+  );
+}
+
+/** signalbox: settings pages that only exist where an environment can do something. */
+const SETTINGS_PATH_CAPABILITIES: Partial<Record<SettingsPath, SignalboxEnvironmentCapability>> = {
+  "/settings/scheduled-tasks": "scheduledTasks",
+};
+
+export function isSettingsPathAvailable(
+  path: SettingsPath,
+  unsupportedCapabilities: ReadonlySet<SignalboxEnvironmentCapability>,
+): boolean {
+  const capability = SETTINGS_PATH_CAPABILITIES[path];
+  return capability === undefined || !unsupportedCapabilities.has(capability);
 }
 
 export function searchSettings(

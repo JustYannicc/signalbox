@@ -257,6 +257,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
 
   return (
     <SettingsSection
+      serverScoped
       id={
         category === "general" || category === "project"
           ? "project-defaults"

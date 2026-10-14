@@ -10,6 +10,7 @@ import {
   ServerSettings,
   type T3ProjectFile,
   type ServerSettingsPatch,
+  environmentSupports,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
@@ -32,7 +33,10 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly environment?: {
-      readonly capabilities: { readonly projectSettingsOverrides?: boolean | undefined };
+      readonly capabilities: {
+        readonly projectSettingsOverrides?: boolean | undefined;
+        readonly serverSettingsWrite?: boolean;
+      };
     };
   } | null;
 }
@@ -43,6 +47,26 @@ const PROJECT_SCOPED_KEYS = new Set<string>(PROJECT_SCOPED_SERVER_SETTING_KEYS);
 
 export function isProjectScopedSettingKey(key: string): key is ProjectScopedServerSettingKey {
   return PROJECT_SCOPED_KEYS.has(key);
+}
+
+/** signalbox: whether the environment saves server settings. One without a config yet may. */
+export function acceptsServerSettings(
+  environment: Pick<ScopedSettingsEnvironment, "serverConfig">,
+) {
+  return environmentSupports(
+    environment.serverConfig?.environment?.capabilities,
+    "serverSettingsWrite",
+  );
+}
+
+/**
+ * signalbox: whether server-scoped rows have anywhere to save. Nothing
+ * connected yet counts as yes, so rows keep their reconnect state.
+ */
+export function serverSettingsWritable(
+  environments: readonly Pick<ScopedSettingsEnvironment, "serverConfig">[],
+): boolean {
+  return environments.length === 0 || environments.some(acceptsServerSettings);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -184,7 +208,8 @@ function projectOverrideWrites(
     if (
       !environment?.serverConfig ||
       environment.connection.phase !== "connected" ||
-      environment.serverConfig.environment?.capabilities.projectSettingsOverrides !== true
+      environment.serverConfig.environment?.capabilities.projectSettingsOverrides !== true ||
+      !acceptsServerSettings(environment)
     ) {
       continue;
     }
@@ -266,7 +291,7 @@ export function planScopedSettingsPatch(
               return next as ProjectSettingsOverrides;
             })
         : scope.kind === "all" || scope.kind === "environment"
-          ? connectedEnvironments.map((environment) => ({
+          ? connectedEnvironments.filter(acceptsServerSettings).map((environment) => ({
               environmentId: environment.environmentId,
               label: environment.label,
               patch:
@@ -299,9 +324,11 @@ export function planScopedSettingsPatch(
         ? scope.message
         : unscopableKeys.length > 0
           ? "This setting is environment-wide and cannot be overridden by a project."
-          : isProjectScope
-            ? "Connect the selected checkouts, or update their environments, to save a project override."
-            : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
+          : !serverSettingsWritable(connectedEnvironments)
+            ? "The selected environments don't save this setting."
+            : isProjectScope
+              ? "Connect the selected checkouts, or update their environments, to save a project override."
+              : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 
@@ -365,7 +392,12 @@ export function planProjectOverridesClear(
   const writes = new Map<EnvironmentId, ScopedServerWrite>();
   for (const { environmentId, projectId } of entries) {
     const environment = byId.get(environmentId);
-    if (!environment?.serverConfig || environment.connection.phase !== "connected") continue;
+    if (
+      !environment?.serverConfig ||
+      environment.connection.phase !== "connected" ||
+      !acceptsServerSettings(environment)
+    )
+      continue;
     const settings = environment.serverConfig.settings;
     const existing = writes.get(environmentId);
     writes.set(environmentId, {

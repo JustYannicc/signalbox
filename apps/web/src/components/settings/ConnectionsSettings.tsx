@@ -168,6 +168,7 @@ import {
   connectSshEnvironment as connectSshEnvironmentAtom,
 } from "~/connection/onboarding";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { useEnvironmentSupports } from "~/state/environmentCapabilities";
 import { useEnvironmentQuery } from "~/state/query";
 import {
   desktopNetworkAccessStateAtom,
@@ -2233,12 +2234,19 @@ export function ConnectionsSettings() {
   const setDefaultAdvertisedEndpointKey = useUiStateStore(
     (state) => state.setDefaultAdvertisedEndpointKey,
   );
-  const canReadAccess = useEnvironmentScope(primaryEnvironmentId, AuthAccessReadScope);
-  const canWriteAccess = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
+  // signalbox: an environment the user doesn't run has no pairing links or
+  // network exposure to manage, whatever this connection's scopes allow.
+  const supportsAccessManagement = useEnvironmentSupports(primaryEnvironmentId, "accessManagement");
+  const supportsRemoteAccess = useEnvironmentSupports(primaryEnvironmentId, "remoteAccess");
+  const canReadAccess =
+    useEnvironmentScope(primaryEnvironmentId, AuthAccessReadScope) && supportsAccessManagement;
+  const canWriteAccess =
+    useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope) && supportsAccessManagement;
   const canReadRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope);
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
   const canManageLocalBackend = !isLocalEnvironmentDisabled() && canMaintain;
+  const canManageRemoteAccess = canManageLocalBackend && supportsRemoteAccess;
   const authAccessChanges = useEnvironmentQuery(
     canReadAccess && primaryEnvironmentId !== null
       ? authEnvironment.accessChanges({
@@ -2248,7 +2256,7 @@ export function ConnectionsSettings() {
       : null,
   );
   const desktopNetworkAccess = useEnvironmentQuery(
-    canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
+    canManageRemoteAccess && desktopBridge ? desktopNetworkAccessStateAtom : null,
   );
   const isSshDiscoveryActive =
     desktopBridge !== undefined && addBackendDialogOpen && savedBackendMode === "ssh";
@@ -2262,7 +2270,7 @@ export function ConnectionsSettings() {
     if (isSshDiscoveryActive) refreshDesktopSshHosts();
   }, [isSshDiscoveryActive, refreshDesktopSshHosts]);
   const desktopWsl = useEnvironmentQuery(
-    canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
+    canManageRemoteAccess && desktopBridge ? desktopWslStateAtom : null,
   );
   const desktopWslState = desktopWsl.data;
   const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
@@ -3701,7 +3709,7 @@ export function ConnectionsSettings() {
                 }
               />
             ) : null}
-            {canManageLocalBackend && desktopBridge ? (
+            {canManageRemoteAccess && desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
@@ -3711,7 +3719,7 @@ export function ConnectionsSettings() {
                   <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
                 ) : null}
               </>
-            ) : canManageLocalBackend ? (
+            ) : canManageRemoteAccess ? (
               <>
                 {renderDisabledNetworkAccessRow()}
                 {canReadRelay || canManageRelay ? (

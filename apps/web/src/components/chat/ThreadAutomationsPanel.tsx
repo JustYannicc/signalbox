@@ -17,6 +17,7 @@ import {
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { cn } from "../../lib/utils";
 import { relativeLabel, scheduleLabel } from "../settings/ScheduledTasksSettings";
+import { useEnvironmentSupports } from "../../state/environmentCapabilities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -41,7 +42,8 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
  * Thread details panel section listing the automations (scheduled tasks) bound
  * to this thread. Fed by the live scheduled-task subscription, so run status
  * and next-run times update as the scheduler works — no manual refresh.
- * Renders nothing when the thread has no bound automations.
+ * Renders nothing when the thread has no bound automations, or its environment
+ * doesn't run scheduled tasks.
  */
 export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
@@ -50,8 +52,11 @@ export function ThreadAutomationsPanel(props: {
   const canOperate = useAtomValue(
     serverEnvironment.runScheduledTaskNow.permissionAtom(props.environmentId),
   );
+  const supported = useEnvironmentSupports(props.environmentId, "scheduledTasks"); // signalbox
   const tasksQuery = useEnvironmentQuery(
-    serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} }),
+    supported
+      ? serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} })
+      : null,
   );
   const setTaskEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "thread automation toggle",
@@ -68,7 +73,7 @@ export function ThreadAutomationsPanel(props: {
   // A load error must not look like "no automations" — this thread may have
   // tasks whose controls would silently vanish. Only hide the section when we
   // positively know there is nothing bound to it.
-  if (tasksQuery.error === null && boundTasks.length === 0) return null;
+  if (!supported || (tasksQuery.error === null && boundTasks.length === 0)) return null;
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
