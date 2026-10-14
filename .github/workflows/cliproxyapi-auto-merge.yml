@@ -1,0 +1,114 @@
+# Enable auto-merge only after every current check, the container smoke, and
+# the Cloud preview pass on the same release PR commit.
+name: CLIProxyAPI sync auto-merge
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy Signalbox Cloud
+      - CLIProxyAPI smoke
+      - Signalbox CI
+    types: [completed]
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'automation/cliproxyapi-update'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Checkout release sync tools
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Resolve the release PR and current check results
+        id: gate
+        run: |
+          pr_json="$(gh pr list --state open --head "$HEAD_BRANCH" --json number,headRefOid)"
+          pr="$(jq -r --arg sha "$HEAD_SHA" '.[] | select(.headRefOid == $sha) | .number' <<< "$pr_json" | head -n1)"
+          if [[ -z "$pr" ]]; then
+            echo "state=waiting" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          checks="$(gh pr checks "$pr" --json name,bucket,startedAt,workflow || true)"
+          if ! jq -e 'type == "array"' <<< "$checks" >/dev/null; then
+            echo "state=failed" >> "$GITHUB_OUTPUT"
+            echo "summary=Could not read the release PR checks for $HEAD_SHA." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest="$(jq -c 'sort_by([(.workflow // ""), .name, (.startedAt // "")]) | group_by([(.workflow // ""), .name]) | map(last)' <<< "$checks")"
+          failures="$(jq -r '[.[] | select(.bucket == "fail") | "\(.workflow // "check") / \(.name)"] | unique | join(", ")' <<< "$latest")"
+          if [[ -n "$failures" ]]; then
+            echo "state=failed" >> "$GITHUB_OUTPUT"
+            echo "summary=Checks failed on ${HEAD_SHA:0:12}: $failures" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ready=true
+          for name in "Deploy preview cloud" "CLIProxyAPI container smoke"; do
+            result="$(jq -r --arg name "$name" '[.[] | select(.name == $name)] | last | .bucket // "missing"' <<< "$latest")"
+            if [[ "$result" != "pass" ]]; then
+              echo "Required gate '$name' is not green on $HEAD_SHA ($result)."
+              ready=false
+            fi
+          done
+          if [[ "$ready" != "true" ]]; then
+            echo "state=waiting" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pending="$(jq -r '[.[] | select(.bucket != "pass" and .bucket != "skipping") | "\(.workflow // "check") / \(.name) (\(.bucket))"] | unique | join(", ")' <<< "$latest")"
+          if [[ -n "$pending" ]]; then
+            echo "Checks are still pending: $pending"
+            echo "state=waiting" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "state=ready" >> "$GITHUB_OUTPUT"
+
+      - name: Leave the release PR open while checks are blocked
+        if: steps.gate.outputs.pr != '' && steps.gate.outputs.state != 'ready'
+        env:
+          PR: ${{ steps.gate.outputs.pr }}
+        run: |
+          auto_merge="$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [[ "$auto_merge" == "true" ]]; then gh pr merge "$PR" --disable-auto; fi
+
+      - name: Report a failed release check
+        if: steps.gate.outputs.state == 'failed'
+        env:
+          PROBLEM_SUMMARY: ${{ steps.gate.outputs.summary }}
+          PROBLEM_DETAILS: "The release PR remains open until the failing check is fixed and all release gates pass. See the workflow run: ${{ github.event.workflow_run.html_url }}"
+        run: node scripts/cliproxyapi/report-problem.mjs report
+
+      - name: Enable GitHub auto-merge
+        if: steps.gate.outputs.state == 'ready'
+        env:
+          PR: ${{ steps.gate.outputs.pr }}
+          CLOSE_REASON: The release checks are green and GitHub auto-merge is enabled.
+        run: |
+          gh pr merge "$PR" --auto --squash
+          node scripts/cliproxyapi/report-problem.mjs close
+
+      - name: Report an auto-merge workflow problem
+        if: failure()
+        env:
+          PROBLEM_SUMMARY: The auto-merge workflow could not finish its check or merge step.
+          PROBLEM_DETAILS: "See this action run and the triggering workflow: ${{ github.event.workflow_run.html_url }}"
+        run: node scripts/cliproxyapi/report-problem.mjs report

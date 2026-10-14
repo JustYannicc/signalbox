@@ -1,0 +1,187 @@
+# Signalbox-only. Keeps the managed-pool image and self-hosted installer on
+# one checksummed CLIProxyAPI release manifest.
+name: CLIProxyAPI release sync
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: cliproxyapi-release-sync
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+      UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+
+      - name: Require the owner token
+        run: |
+          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
+            echo "UPSTREAM_SYNC_TOKEN is required so the release PR runs preview and CI workflows as JustYannicc." >&2
+            exit 1
+          fi
+
+      - name: Read the latest upstream release
+        id: release
+        run: |
+          gh api repos/router-for-me/CLIProxyAPI/releases/latest > "$RUNNER_TEMP/cliproxyapi-release.json"
+          tag="$(jq -r '.tag_name' "$RUNNER_TEMP/cliproxyapi-release.json")"
+          version="${tag#v}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected stable release tag: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare the update branch
+        id: branch
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          manifest=apps/cloud/containers/cliproxyapi/release.json
+          git fetch origin +refs/heads/main:refs/remotes/origin/main
+          current="$(git show "origin/main:$manifest" | jq -er '.version')"
+          if [[ -z "$current" ]]; then
+            echo "Could not read the current CLIProxyAPI manifest from origin/main." >&2
+            exit 1
+          fi
+          if [[ "$current" == "$VERSION" ]]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "existing_pr=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! python3 -c 'import sys; sys.exit(0 if tuple(map(int, sys.argv[1].split("."))) < tuple(map(int, sys.argv[2].split("."))) else 1)' "$current" "$VERSION"; then
+            echo "Latest tag $VERSION is not newer than the pinned version $current; refusing a downgrade." >&2
+            exit 1
+          fi
+
+          branch=automation/cliproxyapi-update
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+          fi
+          existing_pr="$(gh pr list --state open --head "$branch" --json number --jq '.[0].number // empty')"
+          branch_version=""
+          if git show "origin/$branch:$manifest" >/dev/null 2>&1; then
+            branch_version="$(git show "origin/$branch:$manifest" | jq -r '.version')"
+          fi
+          echo "existing_pr=$existing_pr" >> "$GITHUB_OUTPUT"
+          if [[ "$branch_version" == "$VERSION" && -n "$existing_pr" ]]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "update=true" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git checkout -B "$branch" origin/main
+
+      - name: Download upstream checksums
+        if: steps.branch.outputs.update == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/cliproxyapi-release"
+          gh release download "$TAG" \
+            --repo router-for-me/CLIProxyAPI \
+            --pattern checksums.txt \
+            --dir "$RUNNER_TEMP/cliproxyapi-release"
+
+      - name: Update the shared release manifest
+        if: steps.branch.outputs.update == 'true'
+        run: >-
+          python3 scripts/cliproxyapi/update.py
+          "$RUNNER_TEMP/cliproxyapi-release.json"
+          "$RUNNER_TEMP/cliproxyapi-release/checksums.txt"
+          apps/cloud/containers/cliproxyapi/release.json
+
+      - name: Prepare pull request labels and description
+        if: steps.branch.outputs.update == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          gh label create cli-proxyapi-update --color 1d76db --description "Automated CLIProxyAPI release sync" --force
+          cat > "$RUNNER_TEMP/cliproxyapi-pr-body.md" <<EOF
+          Updates the shared CLIProxyAPI release manifest to [$TAG](https://github.com/router-for-me/CLIProxyAPI/releases/tag/$TAG). The manifest contains the version, all self-hosted assets and checksums, and the managed-pool image asset. The Docker build and account-hub installer read the same file.
+
+          The container smoke test, Cloud preview deploy and all repository checks must pass before GitHub auto-merges this PR. The scheduled updater verifies every pinned asset against upstream's release metadata and checksums.txt.
+
+          Upstream release notes: https://github.com/router-for-me/CLIProxyAPI/releases/tag/$TAG
+          EOF
+
+          pr="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
+          if [[ -n "$pr" ]]; then
+            gh pr edit "$pr" \
+              --title "chore(cloud): update CLIProxyAPI to $TAG" \
+              --body-file "$RUNNER_TEMP/cliproxyapi-pr-body.md" \
+              --add-label cli-proxyapi-update
+          fi
+
+      - name: Commit and push the update branch
+        if: steps.branch.outputs.update == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/cloud/containers/cliproxyapi/release.json
+          git commit -m "chore(cloud): update CLIProxyAPI to v$VERSION"
+          git push --force-with-lease origin "$BRANCH"
+
+      - name: Clear auto-merge for the updated commit
+        if: steps.branch.outputs.update == 'true'
+        env:
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          pr="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
+          if [[ -z "$pr" ]]; then exit 0; fi
+          auto_merge="$(gh pr view "$pr" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [[ "$auto_merge" == "true" ]]; then gh pr merge "$pr" --disable-auto; fi
+
+      - name: Create the release pull request
+        if: steps.branch.outputs.update == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          title="chore(cloud): update CLIProxyAPI to $TAG"
+          pr="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
+          if [[ -z "$pr" ]]; then
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/cliproxyapi-pr-body.md" \
+              --label cli-proxyapi-update
+          fi
+
+      - name: Close a stale release problem
+        if: steps.branch.outputs.update != 'true' && steps.branch.outputs.existing_pr == ''
+        env:
+          CLOSE_REASON: The pinned version matches the latest stable release.
+        run: node scripts/cliproxyapi/report-problem.mjs close
+
+      - name: Report a blocked release sync
+        if: failure()
+        env:
+          PROBLEM_SUMMARY: The scheduled release sync could not prepare a verified update.
+          PROBLEM_DETAILS: Check this action run for a missing release asset, checksum problem, or failed GitHub operation. The pinned manifest was not advanced.
+        run: node scripts/cliproxyapi/report-problem.mjs report

@@ -232,6 +232,30 @@ accounts in its object-store backend, which is served from the pool object's
 own SQLite through a host only that container can reach. A pool connected to
 an admin's own CLIProxyAPI never starts a container.
 
+#### CLIProxyAPI updates
+
+The `CLIProxyAPI release sync` workflow checks upstream daily. The shared
+manifest at `apps/cloud/containers/cliproxyapi/release.json` holds the version,
+the six self-hosted assets and their sizes and SHA-256 checksums, plus the
+managed-pool image asset. The Docker build reads it from its build context, and
+the account-hub installer imports the same file. The updater verifies every
+asset against the release metadata and `checksums.txt`, then edits only this
+manifest.
+
+Each release gets one pull request with a link to the release notes. GitHub
+auto-merges it after the container smoke test, Cloud preview deploy, and all
+current checks pass on the same commit. A failed check, checksum, or missing
+asset keeps the release from merging and opens or updates one issue labelled
+`cli-proxyapi-update-needs-hand`. The next clean sync or green release PR closes
+that issue. The updater uses the existing `UPSTREAM_SYNC_TOKEN`, so GitHub runs
+the PR checks and preview as `JustYannicc`.
+
+To roll back a merged update, revert its sync commit and let the normal main
+deployment rebuild the prior pins. This restores the previous executable; it
+does not roll back config or auth files persisted in a pool or self-hosted
+account hub. Treat any release that may have migrated those files as a data
+recovery decision as well as an image rollback.
+
 A self-hosted server that moved a pool here keeps a pool link (`pool/poolLink.ts`,
 `/api/pool-link`): a token naming the pool's object plus a secret only that
 object checks. It acts as the admin who made it, so it stops working when they
@@ -246,9 +270,7 @@ use onto the gateway.
 development needs Docker running. Containers need the Cloudflare account on the
 Workers Paid plan; on any other plan every deploy fails at
 `/containers/me`. Each preview gets its own container application,
-`signalbox-cloud-pr-<number>-pools`, deleted with the preview. Bump the CLIProxyAPI version in the
-Dockerfile together with `ACCOUNT_HUB_VERSION` in
-`apps/server/src/accountHub/AccountHubRelease.ts`.
+`signalbox-cloud-pr-<number>-pools`, deleted with the preview.
 
 ### Drives
 

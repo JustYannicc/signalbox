@@ -1,14 +1,17 @@
 # The CLIProxyAPI every managed account pool runs (src/pool/PoolContainer.ts).
 # Kept small because every pool has one: CLIProxyAPI's static no-plugin
 # release build on distroless, with no shell or package manager at runtime.
-# Bump VERSION and SHA256 together, from the release's checksums.txt, in step
-# with ACCOUNT_HUB_VERSION in apps/server/src/accountHub/AccountHubRelease.ts.
+# The scheduled release sync updates the shared manifest with the release's
+# platform and container assets from checksums.txt.
 
 FROM alpine:3.22 AS fetch
-ARG VERSION=8.0.15
-ARG SHA256=e312357315d560a94cb46caa7800f4020f4a20714959dd3ba762a634b4f5fbda
-RUN wget -q -O /cpa.tar.gz \
-      "https://github.com/router-for-me/CLIProxyAPI/releases/download/v${VERSION}/CLIProxyAPI_${VERSION}_linux_amd64_no-plugin.tar.gz" \
+RUN apk add --no-cache jq
+COPY release.json /release.json
+RUN VERSION="$(jq -er '.version' /release.json)" \
+  && ARCHIVE="$(jq -er '.container.name' /release.json)" \
+  && SHA256="$(jq -er '.container.sha256' /release.json)" \
+  && wget -q -O /cpa.tar.gz \
+      "https://github.com/router-for-me/CLIProxyAPI/releases/download/v${VERSION}/${ARCHIVE}" \
   && echo "${SHA256}  /cpa.tar.gz" | sha256sum -c - \
   && tar -xzf /cpa.tar.gz -C / cli-proxy-api
 
