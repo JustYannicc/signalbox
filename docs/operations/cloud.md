@@ -526,6 +526,21 @@ it.
 `ENVIRONMENT_ID` in `wrangler.jsonc` is the cloud's identity. Clients key saved
 connections on it, so never change it for a live deployment.
 
+### Durable Object migrations
+
+Each object migrates its own SQLite when it starts
+(`apps/cloud/src/storage/migrations.ts`). A migration runs unless its full name
+is recorded, so an object that once ran a branch's `0009_a` still gets main's
+`0009_b`, and two branches can take the same number without renumbering.
+Never edit, rename or remove a merged migration; add another.
+
+The Cloud Migrations CI check fails a pull request that does, and reports
+whether its new migrations are additive, so the previous version still runs on
+the migrated schema, or ship-only. Additive means new tables and indexes, new
+columns that are nullable or have a default, and rows in tables the same pull
+request creates. Anything else is ship-only, including a new entry in
+`migrations` in `wrangler.jsonc`. Ship-only never blocks.
+
 ### What a preview starts with
 
 A preview has its own Durable Objects, so it starts empty. Signing in to one
