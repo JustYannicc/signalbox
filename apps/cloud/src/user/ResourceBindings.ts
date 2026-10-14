@@ -17,7 +17,7 @@ import type { SqlError } from "effect/sql/SqlError";
  * `UserSections` makes every change and tells subscribers.
  */
 
-export type Reach = "here" | "below";
+type Reach = "here" | "below";
 
 export interface PoolBinding {
   readonly level: PoolLevel;

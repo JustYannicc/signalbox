@@ -19,7 +19,7 @@ export interface PoolTree {
   readonly bindings: ReadonlyArray<PoolBinding>;
 }
 
-export const levelKey = (level: PoolLevel) => {
+const levelKey = (level: PoolLevel) => {
   switch (level._tag) {
     case "top":
       return "top";
