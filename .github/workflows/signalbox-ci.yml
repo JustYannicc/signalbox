@@ -310,6 +310,45 @@ jobs:
           esac
           node scripts/upstream-sync/check-merge.ts "$@"
 
+  # Fails when a PR edits or removes a cloud Durable Object migration that
+  # already merged. Reports, never fails, whether its new migrations are
+  # additive or ship-only (step summary and the `verdict` output).
+  cloud_migrations:
+    name: Cloud Migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      verdict: ${{ steps.check.outputs.verdict }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Check cloud migrations
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request) set -- --base "$BASE_SHA" --head "$HEAD_SHA" ;;
+            push) set -- --base HEAD^1 ;;
+            *) set -- --base origin/main ;;
+          esac
+          node scripts/cloud-migrations/check.ts "$@"
+
   # This repo is public: lines the fork adds over upstream must not carry real
   # emails, people, or employers. The denylist is a repository secret because
   # it is personal data itself; fork PRs without it get the email check only.
@@ -354,6 +393,7 @@ jobs:
         rust,
         release_smoke,
         upstream_merge,
+        cloud_migrations,
         personal_data,
       ]
     runs-on: ubuntu-latest

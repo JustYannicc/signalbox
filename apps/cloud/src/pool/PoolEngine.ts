@@ -16,6 +16,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import * as Migrations from "../storage/migrations.ts";
 import * as CliProxyApi from "./cliProxyApi.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolLinks from "./PoolLinks.ts";
@@ -238,7 +239,8 @@ const migrations = Migrator.fromRecord({
   "0004_models": PoolModels.createTables,
 });
 
-const migrate = Migrator.make({})({ loader: migrations });
+/** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
+const migrate = Migrations.run(migrations);
 
 interface PoolRow {
   readonly name: string;

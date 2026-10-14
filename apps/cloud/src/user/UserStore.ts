@@ -19,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
+import * as Migrations from "../storage/migrations.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -194,8 +195,8 @@ const migrations = Migrator.fromRecord({
   "0011_github_name": GitHubConnection.addName,
 });
 
-/** Applies pending migrations. Ids only ever grow; never renumber one. */
-export const migrate = Migrator.make({})({ loader: migrations });
+/** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
+export const migrate = Migrations.run(migrations);
 
 const ProfileRow = Schema.Struct({
   id: Schema.String,

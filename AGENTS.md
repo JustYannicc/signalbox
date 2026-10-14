@@ -79,7 +79,8 @@ Two interaction models I don't want. The first is the department bot: a universi
 - Put fork features in their own modules. Give an upstream file at most a hook line, using existing seams (routes, provider registries, settings sections) before adding new ones.
 - When upstream ships a workflow-shaped feature, adopt the primitive it implies, not the feature itself (principle 8). Make the primitive available to automations and agents, and leave upstream's code in place so merges stay clean.
 - Generic fixes and seams belong upstream. Open those as PRs to T3 Code instead of carrying them.
-- Persistence migrations are numbered and the runner only applies ids above the latest recorded one. A fork migration that takes a number upstream later uses silently skips upstream's. Fork tables create themselves (`CREATE TABLE IF NOT EXISTS`) instead.
+- `apps/server` persistence migrations are numbered and the runner only applies ids above the latest recorded one. A fork migration that takes a number upstream later uses silently skips upstream's. Fork tables create themselves (`CREATE TABLE IF NOT EXISTS`) instead.
+- Cloud Durable Object migrations (`apps/cloud`) run by full name, so ids may repeat or land out of order. Never edit, rename or remove one once merged; CI fails on it. See [Durable Object migrations](docs/operations/cloud.md#durable-object-migrations).
 - `settings.json` decodes through the contracts schema and drops unknown keys on write. Fork settings live in their own file.
 
 ## A small glossary
