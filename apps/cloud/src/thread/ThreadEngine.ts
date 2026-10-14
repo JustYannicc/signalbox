@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -279,6 +280,11 @@ const make = Effect.gen(function* () {
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
+    /** The chain's instructions for the run this commit starts. */
+    readonly instructions?: {
+      readonly runId: string;
+      readonly levels: ReadonlyArray<FolderInstructions>;
+    };
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
@@ -295,6 +301,7 @@ const make = Effect.gen(function* () {
         head: current.head,
         events,
         ...(input.command ? { command: input.command } : {}),
+        ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
         summaryChanged: nextKey !== current.summaryKey,

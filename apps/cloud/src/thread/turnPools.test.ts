@@ -163,4 +163,37 @@ describe("turn pools", () => {
       );
     }),
   );
+
+  it.effect(
+    "hands a thread filed before it exists its folder's instructions, top level first",
+    () =>
+      Effect.gen(function* () {
+        const { threads, folders, cloud } = yield* setup;
+        const work = (yield* folders.create({ name: "Work", parentId: null })).folders[0]!.id;
+        yield* folders.setInstructions({ level: { _tag: "top" }, instructions: "Be brief." });
+        yield* folders.setInstructions({
+          level: { _tag: "folder", folderId: work },
+          instructions: "End every reply with BANANA.",
+        });
+        // As the web does: the draft's thread is filed, then launched.
+        yield* folders.moveThread({ threadId, folderId: work });
+        yield* threads.launchThread(actor, {
+          commandId: CommandId.make("launch-work"),
+          threadId,
+          projectId: SCRATCH,
+          title: "Hello",
+          modelSelection: claudeOn("claude_hub"),
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: { messageId: MessageId.make("message-0"), text: "Hi", attachments: [] },
+        });
+        const { projection } = yield* threads.threadSnapshot(actor, threadId);
+        expect(yield* cloud.runInstructions(threadId, projection.runs[0]!.id)).toEqual([
+          { label: "Top level", text: "Be brief." },
+          { label: "Work", text: "End every reply with BANANA." },
+        ]);
+        yield* cloud.settle;
+      }),
+  );
 });

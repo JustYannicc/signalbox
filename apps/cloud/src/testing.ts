@@ -347,6 +347,13 @@ export const makeMemoryCloud = (
       Effect.promise(() =>
         threadFor(threadId).run(ThreadStore.ThreadStore.use((store) => Effect.orDie(store.owner))),
       ),
+    /** The instructions each of a thread's runs was started with, by run id. */
+    runInstructions: (threadId: string, runId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(
+          ThreadStore.ThreadStore.use((store) => Effect.orDie(store.instructions(runId))),
+        ),
+      ),
     settle,
     /** The services inside `userId`'s object, for handlers that run there (the socket's RPC). */
     userObject,
