@@ -22,6 +22,10 @@ import { DEFAULT_ENVIRONMENT_LABEL } from "./environment.ts";
  * - `T3CODE_WORKOS_WEBHOOK_SECRET`: optional; signs WorkOS's webhook events,
  *   which tell the cloud at once when someone joins or leaves an
  *   organization. Without it, memberships refresh only when people sign in.
+ * - `SCRIPTED_PROVIDER`: `1` offers the scripted provider, a stand-in that
+ *   echoes instead of running a model. Dev and tests only; production leaves
+ *   it unset. The user and thread objects read it from the same vars
+ *   (`thread/scriptedProvider.ts`); the Worker itself never offers providers.
  */
 
 const MIN_SECRET_LENGTH = 32;

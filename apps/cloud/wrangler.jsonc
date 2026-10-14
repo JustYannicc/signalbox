@@ -104,7 +104,8 @@
           "max_instances": 2,
         },
       ],
-      "vars": {},
+      // The scripted provider: a reply without a model, for trying the cloud locally.
+      "vars": { "SCRIPTED_PROVIDER": "1" },
     },
     // A pull request preview: its own Worker and Durable Objects, so it never
     // shares state with production. The workflow passes the name, domain and

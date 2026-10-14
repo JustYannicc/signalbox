@@ -13,6 +13,13 @@ import {
  */
 
 export const SCRIPTED_INSTANCE_ID = ProviderInstanceId.make("scripted");
+
+/**
+ * Whether this cloud offers the scripted provider: only where the
+ * `SCRIPTED_PROVIDER` var is `1` (dev and tests), never in production.
+ */
+export const scriptedProviderEnabled = (env: { readonly SCRIPTED_PROVIDER?: string }) =>
+  env.SCRIPTED_PROVIDER === "1";
 export const SCRIPTED_DRIVER = ProviderDriverKind.make("scripted");
 const SCRIPTED_MODEL = "scripted-echo";
 

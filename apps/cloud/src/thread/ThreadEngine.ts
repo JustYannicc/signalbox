@@ -31,6 +31,8 @@ import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./thre
 import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection } from "./threadProjection.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import * as TurnModels from "./TurnModels.ts";
+import { poolErrorMessage } from "../pool/PoolDirectory.ts";
 import type { ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
 
 /**
@@ -210,6 +212,7 @@ const toStreamItem = (stored: ThreadStore.StoredEvent): OrchestrationV2ThreadStr
 const make = Effect.gen(function* () {
   const store = yield* ThreadStore.ThreadStore;
   const crypto = yield* Crypto.Crypto;
+  const turnModels = yield* TurnModels.TurnModels;
   const lock = yield* Semaphore.make(1);
   const published = yield* PubSub.unbounded<Batch>();
 
@@ -343,15 +346,40 @@ const make = Effect.gen(function* () {
           return yield* ThreadCommandRejectedError.forCommand(command, NO_CONTEXT);
         }
         const decision = decideWith(current.thread?.projection ?? null, yield* context);
+        const refuse = (message: string, options: { readonly record: boolean }) =>
+          Effect.gen(function* () {
+            // Only a thread that exists keeps receipts; an unknown id leaves no trace.
+            if (options.record && current.thread !== null) {
+              yield* Effect.orDie(store.recordRejection({ command, message }));
+            }
+            return yield* ThreadCommandRejectedError.forCommand(command, message);
+          });
+        const refusePool = (error: Parameters<typeof poolErrorMessage>[0]) =>
+          Effect.flatMap(poolErrorMessage(error), (message) => refuse(message, { record: false }));
         if (decision._tag === "rejected") {
-          // Only a thread that exists keeps receipts; an unknown id leaves no trace.
-          if (current.thread !== null) {
-            yield* Effect.orDie(store.recordRejection({ command, message: decision.message }));
-          }
-          return yield* ThreadCommandRejectedError.forCommand(command, decision.message);
+          return yield* refuse(decision.message, { record: true });
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
+        // A turn starts only on a model its pool serves. A pool that can't be
+        // asked right now leaves no receipt, so a retry asks again. Asked under
+        // the lock, from the pool's cache: only a pool whose models were never
+        // read wakes its container here, once.
+        if (started !== undefined) {
+          yield* turnModels
+            .check({
+              ownerId: current.thread?.owner.userId ?? actor.userId,
+              selection: started.payload.modelSelection,
+            })
+            .pipe(
+              Effect.catchTags({
+                ModelNotServedError: (error) => refuse(error.message, { record: true }),
+                ProviderUnavailableError: (error) => refuse(error.message, { record: true }),
+                PoolRejectedError: (error) => refusePool(error),
+                PoolObjectError: (error) => refusePool(error),
+              }),
+            );
+        }
         const sequence = yield* commit({
           events: decision.events,
           command: {

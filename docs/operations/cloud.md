@@ -232,6 +232,17 @@ accounts in its object-store backend, which is served from the pool object's
 own SQLite through a host only that container can reach. A pool connected to
 an admin's own CLIProxyAPI never starts a container.
 
+The model picker offers what each pool's CLIProxyAPI serves (`GET /v1/models`,
+which lists only what its enabled accounts can run), read and cached with the
+pool's accounts. The model manifest the self-hosted server uses names them and
+gives them their options; the Worker fetches it from upstream hourly and falls
+back to its bundled copy. So a CLIProxyAPI bump is what brings new models; the
+manifest only names them, and a model it doesn't know yet shows under its slug.
+A turn on a model its pool doesn't serve is refused at turn start
+(`thread/TurnModels.ts`). The scripted provider, a reply without a model, is
+offered only where `SCRIPTED_PROVIDER=1`: `wrangler dev` and tests, never
+production.
+
 #### CLIProxyAPI updates
 
 The `CLIProxyAPI release sync` workflow checks upstream daily. The shared

@@ -42,6 +42,8 @@ import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
+import * as ModelManifest from "./thread/ModelManifest.ts";
+import * as TurnModels from "./thread/TurnModels.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
 import * as DrivePeople from "./user/DrivePeople.ts";
 import * as DriveSharing from "./user/DriveSharing.ts";
@@ -139,6 +141,8 @@ export const layerThreadObject = (
       never,
       DiagnosticsStore.DiagnosticsStore | Crypto.Crypto
     >;
+    /** Which models turns may start on; any, unless given. */
+    readonly models?: Layer.Layer<TurnModels.TurnModels>;
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
@@ -150,6 +154,7 @@ export const layerThreadObject = (
       }),
     ),
     Layer.provideMerge(ThreadEngine.layer),
+    Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
     Layer.provideMerge(options.analytics ?? CloudAnalytics.layerOff),
     Layer.provideMerge(machines),
@@ -186,7 +191,7 @@ const makeUserRuntime = (
       ),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto)),
       Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
-      Layer.provideMerge(layerMemoryStore),
+      Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
       Layer.provideMerge(Layer.mergeAll(drives, people, github)),
       Layer.provideMerge(
         Layer.mergeAll(
@@ -266,6 +271,10 @@ export const makeMemoryCloud = (
         drives: true,
         writes: (userId, driveId) =>
           Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
+        // Turns check their pool as in production, with the scripted provider on.
+        models: TurnModels.layer({ scripted: true }).pipe(
+          Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
+        ),
       }).pipe(Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, userDirectory))),
     );
     const run = <A, E>(

@@ -10,9 +10,18 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
+import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
+
 import * as Environment from "../environment.ts";
-import { accountPool, overview, poolProviderInstances, poolProviders } from "../pool/poolViews.ts";
+import {
+  accountPool,
+  overview,
+  poolDefaultModelSelection,
+  poolProviderInstances,
+  poolProviders,
+} from "../pool/poolViews.ts";
 import type { PoolActor } from "../pool/PoolEngine.ts";
+import * as ModelManifest from "../thread/ModelManifest.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import * as UserPools from "./UserPools.ts";
 
@@ -22,7 +31,8 @@ import * as UserPools from "./UserPools.ts";
  * pools, connecting a pool to an admin's own CLIProxyAPI, signing accounts
  * in, pausing or removing them, and receiving a pool another server moves
  * here (`pool/poolLink.ts`). The pools also reach the server config:
- * each pool's provider instances, and one usage limit source per pool.
+ * each pool's provider instances with the models it serves, the model new
+ * threads start on, and one usage limit source per pool.
  */
 
 export const POOL_METHODS = [
@@ -79,18 +89,21 @@ const configOf = (
   identity: Environment.CloudEnvironmentIdentity,
   state: UserPools.PoolsState,
   checkedAt: string,
+  manifest: ModelManifestCatalogs,
 ) => {
+  const providers = poolProviders(state, checkedAt, manifest);
   return Environment.serverConfig(identity, checkedAt, {
-    providers: poolProviders(state, checkedAt),
+    providers,
     instances: poolProviderInstances(state.map((entry) => entry.pool)),
+    defaultModelSelection: poolDefaultModelSelection(providers),
   });
 };
 
 const NO_POOLS: UserPools.PoolsState = [];
 
-/** What settings say about the pools: their instances, named after the pools. */
-const settingsKey = (state: UserPools.PoolsState) =>
-  state.map(({ pool }) => `${pool.id}\u0000${pool.name}`).join("\u0001");
+/** What settings say about the pools: their instances, named after them, and the default model. */
+const settingsKey = (config: ReturnType<typeof configOf>) =>
+  JSON.stringify([config.settings.providerInstances, config.settings.defaultModelSelection]);
 
 /**
  * The pools, falling back to none when they can't be read, so the rest of
@@ -116,24 +129,35 @@ export const makePoolHandlers = (input: {
   Effect.gen(function* () {
     const pools = yield* UserPools.UserPools;
     const signIns = yield* PoolSignIns.PoolSignIns;
+    const manifest = yield* ModelManifest.ModelManifest;
     const { actor, identity } = input;
+    const configNowOf = (state: UserPools.PoolsState) =>
+      Effect.all([now, manifest.current]).pipe(
+        Effect.map(([checkedAt, catalogs]) => configOf(identity, state, checkedAt, catalogs)),
+      );
 
     /**
      * `subscribeServerConfig`: a snapshot, then each pool change as updates.
-     * Settings only change with the pool list, so they go out only then.
+     * Settings change with the pool list and the model new threads start on,
+     * so they go out only then.
      */
     const configStream = (request: { readonly usageLimitSources?: boolean | undefined }) =>
       poolStates(pools, actor).pipe(
+        Stream.mapEffect((state) =>
+          Effect.map(configNowOf(state), (config) => ({ state, config })),
+        ),
         Stream.mapAccum(
           (): string | null => null,
-          (previous, state) => {
-            const key = settingsKey(state);
-            return [key, [{ state, first: previous === null, settingsChanged: key !== previous }]];
+          (previous, { state, config }) => {
+            const key = settingsKey(config);
+            return [
+              key,
+              [{ state, config, first: previous === null, settingsChanged: key !== previous }],
+            ];
           },
         ),
-        Stream.mapEffect(({ state, first, settingsChanged }) =>
-          Effect.map(now, (checkedAt): ReadonlyArray<ServerConfigStreamEvent> => {
-            const config = configOf(identity, state, checkedAt);
+        Stream.map(
+          ({ state, config, first, settingsChanged }): ReadonlyArray<ServerConfigStreamEvent> => {
             const sources: ReadonlyArray<ServerConfigStreamEvent> = request.usageLimitSources
               ? [
                   {
@@ -157,17 +181,17 @@ export const makePoolHandlers = (input: {
               { version: 1, type: "providerStatuses", payload: { providers: config.providers } },
               ...sources,
             ];
-          }),
+          },
         ),
         Stream.flattenIterable,
         // A config stream that ends tells the client to reconnect.
         (stream) => Stream.concat(stream, Stream.never),
       );
 
-    const configNow = Effect.gen(function* () {
-      const state = yield* pools.state(actor).pipe(Effect.orElseSucceed(() => NO_POOLS));
-      return configOf(identity, state, yield* now);
-    });
+    const configNow = Effect.flatMap(
+      pools.state(actor).pipe(Effect.orElseSucceed(() => NO_POOLS)),
+      configNowOf,
+    );
 
     const handlers = {
       [WS_METHODS.accountPoolSubscribe]: () =>
@@ -201,7 +225,7 @@ export const makePoolHandlers = (input: {
       [WS_METHODS.serverRefreshProviders]: () =>
         Effect.gen(function* () {
           const state = yield* pools.refresh(actor).pipe(Effect.orElseSucceed(() => NO_POOLS));
-          return { providers: configOf(identity, state, yield* now).providers };
+          return { providers: (yield* configNowOf(state)).providers };
         }),
       [WS_METHODS.providerAuthSubscribe]: (request: Parameters<typeof signIns.subscribe>[1]) =>
         signIns.subscribe(actor, request),

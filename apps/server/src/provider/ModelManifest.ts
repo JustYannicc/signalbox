@@ -13,11 +13,7 @@
  * capabilities from `providers`, then decode their own allowlisted adapter
  * payload separately.
  */
-import {
-  ModelCapabilities,
-  TrimmedNonEmptyString,
-  type ProviderDriverKind,
-} from "@t3tools/contracts";
+import type { ProviderDriverKind } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -29,15 +25,17 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import {
+  MODEL_MANIFEST_URL,
+  ManifestProviderCatalog,
+  manifestUpdatedAtMs,
+} from "@t3tools/shared/modelManifest";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
-
-const MODEL_MANIFEST_URL =
-  "https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json";
 
 /** How long a fetched manifest stays fresh before the next probe re-fetches. */
 const MANIFEST_TTL_MS = 60 * 60 * 1000;
@@ -47,35 +45,6 @@ const MANIFEST_TTL_MS = 60 * 60 * 1000;
 const MANIFEST_RETRY_MS = 5 * 60 * 1000;
 
 const FETCH_TIMEOUT_MS = 10_000;
-
-const ManifestModelStatus = Schema.Literals(["current", "legacy"]);
-
-const ManifestModelProfile = Schema.Struct({
-  capabilities: Schema.optional(ModelCapabilities),
-  adapter: Schema.optional(Schema.Unknown),
-});
-
-const ManifestProviderModel = Schema.Struct({
-  slug: TrimmedNonEmptyString,
-  name: TrimmedNonEmptyString,
-  shortName: Schema.optional(TrimmedNonEmptyString),
-  subProvider: Schema.optional(TrimmedNonEmptyString),
-  aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-  status: ManifestModelStatus,
-  badge: Schema.optional(Schema.Literal("new")),
-  profile: Schema.optional(TrimmedNonEmptyString),
-  adapter: Schema.optional(Schema.Unknown),
-});
-
-const ManifestProviderCatalog = Schema.Struct({
-  defaults: Schema.optional(
-    Schema.Struct({
-      chat: Schema.optional(TrimmedNonEmptyString),
-    }),
-  ),
-  profiles: Schema.Record(Schema.String, ManifestModelProfile),
-  models: Schema.Array(ManifestProviderModel),
-});
 
 /**
  * `version` gates breaking schema changes. Provider catalogs are additive so
@@ -125,13 +94,6 @@ const decodeManifest = Schema.decodeUnknownEffect(ModelManifestSchema);
 
 export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
   Schema.decodeUnknownSync(ModelManifestSchema)(bundledManifestJson);
-
-/** Epoch millis of the manifest's `updatedAt`, or 0 when absent or unparsable. */
-function manifestUpdatedAtMs(manifest: ModelManifestData): number {
-  if (manifest.updatedAt === undefined) return 0;
-  const parsed = Date.parse(manifest.updatedAt);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
 
 /**
  * A driver's catalog entry as provider packages see it, or `null` when the

@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type ExecutionEnvironmentDescriptor,
+  type ModelSelection,
   type OrchestrationProjectShell,
   ORCHESTRATION_PROTOCOL_VERSION,
   type OrchestrationV2ShellSnapshot,
@@ -50,11 +51,12 @@ const SCRATCH_ROOT = "/scratch";
 /** Scratch has no history of its own; it dates from the cloud's first threads. */
 const SCRATCH_CREATED_AT = "2026-10-07T00:00:00.000Z";
 
+/** No model of its own: new threads start on the environment's default (`serverConfig`). */
 export const scratchProject: OrchestrationProjectShell = {
   id: SCRATCH_PROJECT_ID,
   title: "Scratch",
   workspaceRoot: SCRATCH_ROOT,
-  defaultModelSelection: scriptedModelSelection,
+  defaultModelSelection: null,
   scripts: [],
   createdAt: SCRATCH_CREATED_AT,
   updatedAt: SCRATCH_CREATED_AT,
@@ -70,6 +72,8 @@ export interface CloudEnvironmentIdentity {
   readonly label: string;
   /** Whether the PreviewGateway serves threads' dev servers (`thread/preview/`). */
   readonly previews?: boolean;
+  /** Whether clients may pick the scripted provider (`SCRIPTED_PROVIDER`; tests and dev only). */
+  readonly scripted?: boolean;
 }
 
 export const authDescriptor: ServerAuthDescriptor = {
@@ -107,43 +111,55 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
 export interface PoolProviders {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly instances: Record<ProviderInstanceId, ProviderInstanceConfig>;
+  /** What new threads start on: a model a pool serves, or null when none can run. */
+  readonly defaultModelSelection: ModelSelection | null;
 }
 
-const NO_POOL_PROVIDERS: PoolProviders = { providers: [], instances: {} };
+const NO_POOL_PROVIDERS: PoolProviders = {
+  providers: [],
+  instances: {},
+  defaultModelSelection: null,
+};
 
 /** `checkedAt`: when the connection asked; the cloud's providers are always ready. */
 export const serverConfig = (
   identity: CloudEnvironmentIdentity,
   checkedAt: string,
   pools: PoolProviders = NO_POOL_PROVIDERS,
-): ServerConfig => ({
-  environment: descriptor(identity),
-  auth: authDescriptor,
-  cwd: CLOUD_ROOT,
-  keybindingsConfigPath: CLOUD_ROOT,
-  keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
-  issues: [],
-  providers: [...cloudProviders(checkedAt), ...pools.providers],
-  availableEditors: [],
-  observability: {
-    logsDirectoryPath: CLOUD_ROOT,
-    localTracingEnabled: false,
-    otlpTracesEnabled: false,
-    otlpMetricsEnabled: false,
-    otlpLogsEnabled: false,
-  },
-  settings: {
-    ...DEFAULT_SERVER_SETTINGS,
-    // Clients enable a provider instance only when settings list it.
-    providerInstances: {
-      ...cloudProviderInstances(),
-      ...pools.instances,
+): ServerConfig => {
+  const scripted = identity.scripted === true;
+  return {
+    environment: descriptor(identity),
+    auth: authDescriptor,
+    cwd: CLOUD_ROOT,
+    keybindingsConfigPath: CLOUD_ROOT,
+    keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+    issues: [],
+    providers: [...cloudProviders(checkedAt, { scripted }), ...pools.providers],
+    availableEditors: [],
+    observability: {
+      logsDirectoryPath: CLOUD_ROOT,
+      localTracingEnabled: false,
+      otlpTracesEnabled: false,
+      otlpMetricsEnabled: false,
+      otlpLogsEnabled: false,
     },
-  },
-  shellResumeCompletionMarker: true,
-  threadResumeCompletionMarker: true,
-  scratchWorkspaceRoot: SCRATCH_ROOT,
-});
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      // Never Scripted where clients can't pick it: without a pool model, clients say to add an account.
+      defaultModelSelection:
+        pools.defaultModelSelection ?? (scripted ? scriptedModelSelection : null),
+      // Clients enable a provider instance only when settings list it.
+      providerInstances: {
+        ...cloudProviderInstances({ scripted }),
+        ...pools.instances,
+      },
+    },
+    shellResumeCompletionMarker: true,
+    threadResumeCompletionMarker: true,
+    scratchWorkspaceRoot: SCRATCH_ROOT,
+  };
+};
 
 /** Nothing to bootstrap: a cloud user starts with an empty sidebar. */
 export const welcome = (identity: CloudEnvironmentIdentity) => ({

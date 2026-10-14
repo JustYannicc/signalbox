@@ -131,6 +131,10 @@ export class PoolObject
     return this.api.accounts(...args);
   }
 
+  models(...args: Parameters<PoolObjectApi["models"]>) {
+    return this.api.models(...args);
+  }
+
   startLogin(...args: Parameters<PoolObjectApi["startLogin"]>) {
     return this.api.startLogin(...args);
   }
