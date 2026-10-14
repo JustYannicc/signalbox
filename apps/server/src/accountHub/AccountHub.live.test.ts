@@ -21,6 +21,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { makeCliproxyApi } from "../usage/cliproxyApi.ts";
 import * as AccountHub from "./AccountHub.ts";
+import { ACCOUNT_HUB_VERSION } from "./AccountHubRelease.ts";
 
 describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("AccountHub (live)", () => {
   it.live(
@@ -135,7 +136,7 @@ describe.skipIf(process.env.SIGNALBOX_ACCOUNT_HUB_LIVE !== "1")("AccountHub (liv
               "",
             ].join("\n"),
           );
-          const binary = `${baseDir}/tools/cliproxyapi/8.0.15/cli-proxy-api`;
+          const binary = `${baseDir}/tools/cliproxyapi/${ACCOUNT_HUB_VERSION}/cli-proxy-api`;
           const source = NodeChildProcess.spawn(binary, ["--config", `${sourceDir}/config.yaml`], {
             stdio: "ignore",
           });

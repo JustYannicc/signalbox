@@ -1,0 +1,82 @@
+# The sync PR only enters GitHub auto-merge after its container smoke and
+# Cloudflare preview checks succeed on the exact same commit.
+name: CLIProxyAPI sync auto-merge
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy Signalbox Cloud
+      - CLIProxyAPI smoke
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'automation/cliproxyapi-update' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Require the owner token
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "UPSTREAM_SYNC_TOKEN is required so the eventual main push deploys Cloud." >&2
+            exit 1
+          fi
+
+      - name: Wait for both required gates on this commit
+        id: gate
+        run: |
+          pr_json="$(gh pr list --state open --head "$HEAD_BRANCH" --json number,headRefOid,author,labels)"
+          pr="$(jq -r --arg sha "$HEAD_SHA" '.[] | select(.headRefOid == $sha) | .number' <<< "$pr_json" | head -n1)"
+          if [[ -z "$pr" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          author="$(jq -r --argjson pr "$pr" '.[] | select(.number == $pr) | .author.login' <<< "$pr_json")"
+          if [[ "$author" != "JustYannicc" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if jq -e --argjson pr "$pr" '.[] | select(.number == $pr) | .labels[].name | select(. == "cli-proxyapi-format-review")' <<< "$pr_json" >/dev/null; then
+            echo "CLIProxyAPI update is labeled for format review; leaving it open."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # gh may return a nonzero status while checks are pending, but still
+          # prints their JSON. Parse that status instead of letting bash -e stop
+          # before we can leave the PR open.
+          checks="$(gh pr checks "$pr" --json name,bucket,startedAt,workflow || true)"
+          if ! jq -e 'type == "array"' <<< "$checks" >/dev/null; then
+            echo "Could not read check results; leaving the PR open."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for name in "Deploy preview cloud" "CLIProxyAPI container smoke"; do
+            result="$(jq -r --arg name "$name" '[.[] | select(.name == $name)] | sort_by(.startedAt) | last | .bucket // "missing"' <<< "$checks")"
+            if [[ "$result" != "pass" ]]; then
+              echo "Required check '$name' is not green on $HEAD_SHA ($result)."
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Enable GitHub auto-merge
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          PR: ${{ steps.gate.outputs.pr }}
+        run: gh pr merge "$PR" --auto --squash

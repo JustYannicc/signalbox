@@ -1,8 +1,8 @@
 # The CLIProxyAPI every managed account pool runs (src/pool/PoolContainer.ts).
 # Kept small because every pool has one: CLIProxyAPI's static no-plugin
 # release build on distroless, with no shell or package manager at runtime.
-# Bump VERSION and SHA256 together, from the release's checksums.txt, in step
-# with ACCOUNT_HUB_VERSION in apps/server/src/accountHub/AccountHubRelease.ts.
+# The scheduled release sync updates VERSION and SHA256 with the self-hosted
+# account hub pin, using the matching release's checksums.txt.
 
 FROM alpine:3.22 AS fetch
 ARG VERSION=8.0.15

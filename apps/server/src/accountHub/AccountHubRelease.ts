@@ -26,7 +26,7 @@ export interface AccountHubAsset {
   readonly sha256: string;
 }
 
-// From https://github.com/router-for-me/CLIProxyAPI/releases/tag/v8.0.15 checksums.txt.
+// Generated from checksums.txt for the pinned CLIProxyAPI release.
 const ASSETS: Record<string, AccountHubAsset> = {
   "darwin-arm64": {
     name: "CLIProxyAPI_8.0.15_darwin_aarch64.tar.gz",

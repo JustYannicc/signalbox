@@ -232,6 +232,27 @@ accounts in its object-store backend, which is served from the pool object's
 own SQLite through a host only that container can reach. A pool connected to
 an admin's own CLIProxyAPI never starts a container.
 
+#### CLIProxyAPI updates
+
+The `CLIProxyAPI release sync` workflow checks upstream daily and updates the
+managed-pool image and self-hosted account-hub downloader together. It reads
+the release's `checksums.txt` for every pinned archive, then opens or refreshes
+one pull request with a link to the release notes. The PR builds and exercises
+the container with the pool's rendered config, and the Cloud preview must also
+deploy before GitHub auto-merge is enabled. The repository's normal required
+checks still apply. This uses the existing `UPSTREAM_SYNC_TOKEN`, so the PR is
+created by `JustYannicc` and receives the preview workflow.
+
+Upstream changes to config, auth, or storage paths, release notes describing a
+format or migration change, or an incomplete/large comparison add the
+`cli-proxyapi-format-review` label. Those PRs stay open for human review.
+
+To roll back a merged update, revert its sync commit and let the normal main
+deployment rebuild the prior pins. This restores the previous executable; it
+does not roll back config or auth files persisted in a pool or self-hosted
+account hub. Treat any release that may have migrated those files as a data
+recovery decision as well as an image rollback.
+
 A self-hosted server that moved a pool here keeps a pool link (`pool/poolLink.ts`,
 `/api/pool-link`): a token naming the pool's object plus a secret only that
 object checks. It acts as the admin who made it, so it stops working when they
@@ -246,9 +267,7 @@ use onto the gateway.
 development needs Docker running. Containers need the Cloudflare account on the
 Workers Paid plan; on any other plan every deploy fails at
 `/containers/me`. Each preview gets its own container application,
-`signalbox-cloud-pr-<number>-pools`, deleted with the preview. Bump the CLIProxyAPI version in the
-Dockerfile together with `ACCOUNT_HUB_VERSION` in
-`apps/server/src/accountHub/AccountHubRelease.ts`.
+`signalbox-cloud-pr-<number>-pools`, deleted with the preview.
 
 ### Drives
 

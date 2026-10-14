@@ -1,0 +1,46 @@
+name: CLIProxyAPI smoke
+
+on:
+  pull_request:
+    paths:
+      - apps/cloud/containers/cliproxyapi/**
+      - apps/cloud/src/pool/cliProxyApi.ts
+      - .github/scripts/cliproxyapi-smoke.mjs
+      - .github/workflows/cliproxyapi-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: CLIProxyAPI container smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+
+      - name: Run focused pool tests
+        working-directory: apps/cloud
+        run: >-
+          vp test run --config ../../vite.config.ts --dir .
+          src/pool/PoolContainer.test.ts
+          src/pool/poolStore.test.ts
+          src/pool/PoolObject.test.ts
+
+      - name: Build and smoke the pinned container
+        run: node --experimental-strip-types .github/scripts/cliproxyapi-smoke.mjs
