@@ -1,9 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { projectPool } from "@t3tools/client-runtime/state/sections";
 import { ThreadId } from "@t3tools/contracts";
 import { FolderId } from "@t3tools/contracts/signalboxFolders";
 
-import { folderHomeOf, folderPoolOf, folderPoolSourceLabel, poolSnapshotFor } from "./folder-pool";
+import { folderHomeOf, folderPoolOf, folderPoolSourceLabel } from "./folder-pool";
 import { DRIVE, PERSONAL_FILES, snapshot } from "./folder-fixtures.test-support";
 
 describe("the pool a thread runs on, with folders", () => {
@@ -24,12 +23,6 @@ describe("the pool a thread runs on, with folders", () => {
     expect(folderHomeOf(snapshot, DRIVE, undefined)).toBe("northwind");
     expect(folderHomeOf(snapshot, PERSONAL_FILES, undefined)).toBeNull();
     expect(folderPoolOf(snapshot, null, { folderId: FolderId.make("ops") })).toBeNull();
-  });
-
-  it("hands the shared pool helpers that pool", () => {
-    const pool = folderPoolOf(snapshot, PERSONAL_FILES, { folderId: FolderId.make("clients") });
-    expect(projectPool(poolSnapshotFor(pool), null)?.poolId).toBe("work");
-    expect(projectPool(poolSnapshotFor(null), null)).toBeNull();
   });
 
   it("says where the pool comes from", () => {

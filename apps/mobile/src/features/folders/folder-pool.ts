@@ -4,7 +4,6 @@
  */
 import { homeOfThread, poolOfHome } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { ProjectId, ThreadId } from "@t3tools/contracts";
-import type { SectionsSnapshot } from "@t3tools/contracts/sections";
 import type {
   FolderId,
   FolderResolvedPool,
@@ -33,24 +32,6 @@ export function folderPoolOf(
   home: PoolHome | undefined,
 ): FolderResolvedPool | null {
   return poolOfHome(snapshot, folderHomeOf(snapshot, projectId, home));
-}
-
-/**
- * A sections snapshot whose top level runs on `pool`. The shared pool helpers
- * (`projectPool`, `projectPoolModelSelection`, `poolNeed`) read pools from
- * one and only use the pool's id, so reading it with no project gives `pool`.
- */
-export function poolSnapshotFor(pool: FolderResolvedPool | null): SectionsSnapshot {
-  return {
-    revision: 0,
-    sections: [],
-    projectPlacements: [],
-    pools: {
-      top: pool === null ? null : { poolId: pool.poolId, from: { _tag: "top" } },
-      sections: [],
-      projects: [],
-    },
-  };
 }
 
 /** "Runs on Work · from Clients", or "· from the top level" when that's where its pool is placed. */

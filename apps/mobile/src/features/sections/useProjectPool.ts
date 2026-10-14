@@ -3,13 +3,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   isPoolInstance,
+  type PlacedPool,
+  poolModelSelection,
   poolNeed,
   type PoolNeed,
   projectPool,
-  projectPoolModelSelection,
 } from "@t3tools/client-runtime/state/sections";
 import type { EnvironmentId, ModelSelection, ProjectId, ServerProvider } from "@t3tools/contracts";
-import type { ResolvedPool, SectionsSnapshot } from "@t3tools/contracts/sections";
+import type { SectionsSnapshot } from "@t3tools/contracts/sections";
 import type { FolderResolvedPool } from "@t3tools/contracts/signalboxFolders";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
@@ -19,12 +20,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { environmentSections } from "../../state/sections";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentFolders } from "../../state/signalboxFolders";
-import {
-  folderPoolOf,
-  folderPoolSourceLabel,
-  poolSnapshotFor,
-  type PoolHome,
-} from "../folders/folder-pool";
+import { folderPoolOf, folderPoolSourceLabel, type PoolHome } from "../folders/folder-pool";
 
 export type { PoolHome };
 
@@ -39,17 +35,16 @@ function useSectionsSnapshot(environmentId: EnvironmentId | null) {
 }
 
 /**
- * What the pool helpers read for a target: the sections snapshot and its
- * project, or, once the server's folders arrive, a snapshot holding the pool
- * of the target's home folder, read with no project. `folderPool` is that pool.
+ * The pool the target's threads run on: its project's from the sections
+ * snapshot, or, once the server's folders arrive, its home folder's
+ * (`folderPool`). Null for none, undefined where the server doesn't say.
  */
 function usePoolSource(
   environmentId: EnvironmentId | null,
   projectId: ProjectId | null,
   home: PoolHome | undefined,
 ): {
-  readonly snapshot: SectionsSnapshot | null;
-  readonly projectId: ProjectId | null;
+  readonly pool: PlacedPool | null | undefined;
   readonly folderPool?: FolderResolvedPool | null;
 } {
   const sections = useSectionsSnapshot(environmentId);
@@ -57,22 +52,12 @@ function usePoolSource(
   const threadId = home !== undefined && "threadId" in home ? home.threadId : undefined;
   const folderId = home !== undefined && "folderId" in home ? home.folderId : undefined;
   return useMemo(() => {
-    if (!folders) return { snapshot: sections, projectId };
+    if (!folders) return { pool: projectPool(sections, projectId) };
     const target =
       threadId !== undefined ? { threadId } : folderId !== undefined ? { folderId } : undefined;
     const folderPool = folderPoolOf(folders, projectId, target);
-    return { snapshot: poolSnapshotFor(folderPool), projectId: null, folderPool };
+    return { pool: folderPool, folderPool };
   }, [folderId, folders, projectId, sections, threadId]);
-}
-
-/** The pool the target's threads run on: null for none, undefined where the server doesn't say. */
-function useProjectPool(
-  environmentId: EnvironmentId | null,
-  projectId: ProjectId | null,
-  home: PoolHome | undefined,
-): ResolvedPool | null | undefined {
-  const source = usePoolSource(environmentId, projectId, home);
-  return projectPool(source.snapshot, source.projectId);
 }
 
 /**
@@ -89,12 +74,11 @@ export function useProjectPoolModelSelection(input: {
   /** Where the new thread will live, where the server keeps folders. */
   readonly home?: PoolHome;
 }): ModelSelection | null {
-  const { snapshot, projectId } = usePoolSource(input.environmentId, input.projectId, input.home);
+  const { pool } = usePoolSource(input.environmentId, input.projectId, input.home);
   const { selection, providerInstances, providers } = input;
   return useMemo(
-    () =>
-      projectPoolModelSelection({ selection, snapshot, projectId, providerInstances, providers }),
-    [projectId, providerInstances, providers, selection, snapshot],
+    () => poolModelSelection({ selection, pool, providerInstances, providers }),
+    [pool, providerInstances, providers, selection],
   );
 }
 
@@ -102,7 +86,7 @@ export function useProjectPoolModelSelection(input: {
 function providersOnPool(
   providers: ReadonlyArray<ServerProvider>,
   providerInstances: ProviderInstances,
-  pool: ResolvedPool | null | undefined,
+  pool: PlacedPool | null | undefined,
 ): ReadonlyArray<ServerProvider> {
   if (pool === undefined) return providers;
   if (pool === null) return [];
@@ -127,7 +111,7 @@ export function usePoolServerConfig<
   /** The thread, or where a new one will live, where the server keeps folders. */
   home?: PoolHome,
 ): { readonly config: Config | null | undefined; readonly need: PoolNeed | null } {
-  const pool = useProjectPool(environmentId, projectId, home);
+  const { pool } = usePoolSource(environmentId, projectId, home);
   return useMemo(() => {
     if (!config || pool === undefined) return { config, need: null };
     const providers = providersOnPool(config.providers, config.settings.providerInstances, pool);
