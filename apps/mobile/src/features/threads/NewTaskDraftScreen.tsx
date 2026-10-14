@@ -136,6 +136,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -1418,6 +1419,7 @@ export function NewTaskDraftScreen(props: {
     taskPermissionReason === null &&
     attachmentBlockReason === null &&
     !modelUnavailable &&
+    flow.poolNeed === null && // signalbox
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     (flow.prompt.trim().length > 0 || flow.attachments.length > 0) &&
@@ -1697,7 +1699,12 @@ export function NewTaskDraftScreen(props: {
         <Text className="px-3 py-2 text-xs text-muted-foreground">{taskPermissionReason}</Text>
       ) : null}
 
-      {modelUnavailable ? (
+      {flow.poolNeed ? ( // signalbox
+        <NeedsPoolNotice
+          environmentId={flow.selectedProject?.environmentId ?? null}
+          need={flow.poolNeed}
+        />
+      ) : modelUnavailable ? (
         <Pressable
           accessibilityRole="button"
           className="px-3 py-2"

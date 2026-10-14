@@ -142,14 +142,14 @@ export function useSectionActions(input: {
         });
         return;
       }
-      // signalbox: the pool new threads in this section's projects start on.
+      // signalbox: the pool this section and the folders below it run on.
       if (event.startsWith("section:pool:")) {
         const poolId = event.slice("section:pool:".length);
         const defaultPoolId = poolId === "inherit" ? null : AccountPoolId.make(poolId);
         if ((section.defaultPoolId ?? null) === defaultPoolId) return;
         void run(
-          "Could not change the section's pool",
-          "The section's pool could not be changed.",
+          "Could not change this folder's pool",
+          "This folder's pool could not be changed.",
           updateSection({ environmentId, input: { id: section.id, defaultPoolId } }),
         );
         return;

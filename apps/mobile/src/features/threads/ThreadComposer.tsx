@@ -66,6 +66,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
+import { usePoolServerConfig } from "../sections/useProjectPool"; // signalbox
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
@@ -546,7 +548,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.sendBlockedReason ??
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
     attachmentBlockReason;
+  // signalbox: the picker offers only the pool the thread's project runs on.
+  const { config: poolServerConfig, need: poolNeed } = usePoolServerConfig(
+    props.environmentId,
+    props.selectedThread.projectId,
+    props.serverConfig,
+  );
   const canSend =
+    poolNeed === null && // signalbox
     (props.canOperateThread || props.connectionState !== "connected") &&
     hasContent &&
     !contextImports[composerDraftKey] &&
@@ -665,13 +674,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const modelOptions = useMemo(
     () =>
       buildModelOptions(
-        props.serverConfig,
+        poolServerConfig,
         currentModelSelection,
         lockedProviderInstanceId,
         props.selectedThread.projectId,
       ),
     [
-      props.serverConfig,
+      poolServerConfig,
       currentModelSelection,
       lockedProviderInstanceId,
       props.selectedThread.projectId,
@@ -833,7 +842,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             {selectedProviderStatus.compatibilityAdvisory.message}
           </Text>
         ) : null}
-        {modelUnavailable ? (
+        {poolNeed ? ( // signalbox
+          <NeedsPoolNotice environmentId={props.environmentId} need={poolNeed} />
+        ) : modelUnavailable ? (
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
           </Pressable>
