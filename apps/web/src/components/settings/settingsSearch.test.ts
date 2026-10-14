@@ -599,6 +599,7 @@ describe("environment capability gates", () => {
           scheduledTasks: false,
           remoteAccess: false,
           accessManagement: false,
+          connectedServices: false,
         },
       },
     },
@@ -608,7 +609,13 @@ describe("environment capability gates", () => {
 
   it("hides a capability only when no environment the settings act on has it", () => {
     expect([...unsupportedSettingsCapabilities([cloud], cloud)]).toEqual(
-      expect.arrayContaining(["serverSettingsWrite", "devices", "scheduledTasks", "remoteAccess"]),
+      expect.arrayContaining([
+        "serverSettingsWrite",
+        "devices",
+        "scheduledTasks",
+        "remoteAccess",
+        "connectedServices",
+      ]),
     );
     // Another environment still saves settings and runs tasks, but access is the primary's.
     expect([...unsupportedSettingsCapabilities([cloud, selfHosted], cloud)].toSorted()).toEqual([
@@ -635,6 +642,7 @@ describe("environment capability gates", () => {
     expect(ids).toContain("word-wrap");
     for (const hidden of [
       "add-project-starts-in",
+      "connected-services",
       "default-model",
       "device-hub",
       "network-access",

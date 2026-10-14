@@ -19,6 +19,7 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { useTargetsSupporting } from "./signalboxSettingsTargets";
 
 const EXECUTOR_HOME = "https://executor.sh";
 const COMMAND_OPTIONS = { reportFailure: false, reportDefect: false };
@@ -40,7 +41,11 @@ const messageOf = (error: unknown) =>
 
 /** The Executor connection automations reach the user's accounts through with `w.call`, per environment. */
 export function SettingsConnectedServicesRouteScreen() {
-  const { selectedTargets } = useSettingsEnvironmentFilter();
+  // Signalbox Cloud has no Executor connection, so it isn't offered.
+  const selectedTargets = useTargetsSupporting(
+    useSettingsEnvironmentFilter().selectedTargets,
+    "connectedServices",
+  );
   const insets = useSafeAreaInsets();
   return (
     <>

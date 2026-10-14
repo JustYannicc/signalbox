@@ -734,6 +734,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   // signalbox: automations
   {
     id: "connected-services",
+    capability: "connectedServices",
     title: "Connected services",
     to: "/settings/integrations",
     searchTerms: ["executor automations w.call accounts gmail github api key connect"],

@@ -8,31 +8,35 @@ const GITLAB = SourceControlProviderKind.make("gitlab");
 
 describe("addProjectSourceSupport", () => {
   it("offers every source on servers that don't report the capabilities", () => {
-    expect(addProjectSourceSupport({})).toEqual({ localFilesystem: true, cloneFromUrl: true });
-    expect(addProjectSourceSupport(undefined)).toEqual({
-      localFilesystem: true,
-      cloneFromUrl: true,
-    });
+    const everything = { localFilesystem: true, cloneFromUrl: true, sourceControlImports: null };
+    expect(addProjectSourceSupport({})).toEqual(everything);
+    expect(addProjectSourceSupport(undefined)).toEqual(everything);
   });
 
   it("drops the sources an environment turns off", () => {
-    expect(addProjectSourceSupport({ localFilesystem: false, cloneFromUrl: false })).toEqual({
-      localFilesystem: false,
-      cloneFromUrl: false,
-    });
+    expect(
+      addProjectSourceSupport({
+        localFilesystem: false,
+        cloneFromUrl: false,
+        sourceControlImports: [GITHUB],
+      }),
+    ).toEqual({ localFilesystem: false, cloneFromUrl: false, sourceControlImports: [GITHUB] });
   });
 });
 
 describe("addProjectCloneSources", () => {
   it("leads with Git URL where any URL clones", () => {
-    expect(addProjectCloneSources([GITHUB, GITLAB], { cloneFromUrl: true })).toEqual([
-      "url",
-      GITHUB,
-      GITLAB,
-    ]);
+    expect(
+      addProjectCloneSources([GITHUB, GITLAB], { cloneFromUrl: true, sourceControlImports: null }),
+    ).toEqual(["url", GITHUB, GITLAB]);
   });
 
-  it("offers only the hosts where only they import", () => {
-    expect(addProjectCloneSources([GITHUB], { cloneFromUrl: false })).toEqual([GITHUB]);
+  it("offers only the hosts the environment imports from", () => {
+    expect(
+      addProjectCloneSources([GITHUB, GITLAB], {
+        cloneFromUrl: false,
+        sourceControlImports: [GITHUB],
+      }),
+    ).toEqual([GITHUB]);
   });
 });

@@ -57,6 +57,7 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
+  environmentImportsFrom,
   environmentSupports,
   type SignalboxEnvironmentCapability,
 } from "@t3tools/contracts";
@@ -931,6 +932,16 @@ function OpenCommandPaletteDialog(props: {
     [environments],
   );
 
+  const environmentImports = useCallback(
+    (environmentId: EnvironmentId | null, provider: SourceControlProviderKind): boolean =>
+      environmentImportsFrom(
+        environments.find((environment) => environment.environmentId === environmentId)
+          ?.serverConfig?.environment.capabilities,
+        provider,
+      ),
+    [environments],
+  );
+
   const addProjectEnvironmentOptions = useMemo(() => {
     const options = environments
       .filter((environment) => canCreateProjectInEnvironment(environment.connection.phase))
@@ -1601,7 +1612,9 @@ function OpenCommandPaletteDialog(props: {
       // Without `cloneFromUrl` the hosts' own sources still take a pasted URL.
       const orderedSources: ReadonlyArray<AddProjectRemoteSource> = [
         ...(environmentCan(environmentId, "cloneFromUrl") ? (["url"] as const) : []),
-        ...sortAddProjectProviderSources(readinessBySource),
+        ...sortAddProjectProviderSources(readinessBySource).filter((source) =>
+          environmentImports(environmentId, source),
+        ),
       ];
 
       for (const source of orderedSources) {
@@ -1671,6 +1684,7 @@ function OpenCommandPaletteDialog(props: {
     },
     [
       environmentCan,
+      environmentImports,
       newProjectsRootFor,
       openSourceControlSettings,
       startAddProjectBrowse,
