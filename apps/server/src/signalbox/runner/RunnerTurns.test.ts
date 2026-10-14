@@ -276,6 +276,7 @@ describe("RunnerTurns", () => {
               driveCalls.push("abandon");
               return { _tag: "not_landed", reason: "abandoned" } as const;
             }),
+            saveBranch: () => Effect.die(new Error("not in this test")),
           };
           const reported: Array<RunnerItem> = [];
           const turns = yield* makeRunnerTurns({
@@ -436,6 +437,7 @@ describe("RunnerTurns", () => {
             driveCalls.push("abandon");
             return { _tag: "not_landed", reason: "abandoned" } as const;
           }),
+          saveBranch: () => Effect.die(new Error("not in this test")),
         };
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
@@ -695,6 +697,7 @@ describe("RunnerTurns", () => {
           }),
         continueAfterResolution: Effect.die(new Error("not in this test")),
         abandonMerge: Effect.die(new Error("not in this test")),
+        saveBranch: () => Effect.die(new Error("not in this test")),
       }) as RunnerDrive;
     const access = { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" };
     const withMessage = (turn: RunnerTurn): RunnerTurn =>

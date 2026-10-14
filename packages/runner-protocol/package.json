@@ -23,6 +23,10 @@
       "types": "./src/ContextProtocol.ts",
       "import": "./src/ContextProtocol.ts"
     },
+    "./BranchProtocol": {
+      "types": "./src/BranchProtocol.ts",
+      "import": "./src/BranchProtocol.ts"
+    },
     "./drivePaths": {
       "types": "./src/drivePaths.ts",
       "import": "./src/drivePaths.ts"

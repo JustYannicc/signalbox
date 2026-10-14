@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
+import { publishBranch } from "../github/branchPublishing.ts";
+import type * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import { wire } from "../thread/threadWire.ts";
@@ -31,6 +33,7 @@ export const makeUserObjectApi = (
       | UserDriveIndex.UserDriveIndex
       | UserDrives.UserDrives
       | UserPreviewSetup.UserPreviewSetup
+      | GitHubBranches.GitHubBranches
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -86,5 +89,6 @@ export const makeUserObjectApi = (
           drives: UserDrives.UserDrives.use((drives) => drives.drives),
         }),
       ),
+    publishBranch: (input) => run(publishBranch(input)),
   };
 };

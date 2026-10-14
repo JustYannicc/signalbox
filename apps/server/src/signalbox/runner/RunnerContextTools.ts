@@ -4,7 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-// oxlint-disable-next-line t3code/no-raw-mcp-registration -- the Runner's loopback context server has no T3 caller to check: the cloud authorizes every read, and every tool is read-only.
+// oxlint-disable-next-line t3code/no-raw-mcp-registration -- the Runner's loopback context server has no T3 caller to check: the cloud authorizes every call with the thread's own token.
 import { McpSchema, McpServer, Tool } from "effect/ai";
 
 import type { ContextClient, ContextClientError } from "./RunnerContextClient.ts";
@@ -16,7 +16,8 @@ import { DRIVES_ROOT, type DrivesView } from "./RunnerDrivesView.ts";
  * implemented X": search across the user's threads, the drives' history and
  * other threads' unreconciled work, then open a thread or a diff, and read any
  * file the user can read under `/drives`. Everything is read-only; the
- * harness's working directory is the only place it changes files.
+ * harness's working directory is the only place it changes files. The same
+ * server publishes the thread's own branch (`RunnerBranchTools.ts`).
  */
 
 export const CONTEXT_SERVER_NAME = "signalbox";
@@ -27,6 +28,7 @@ export const CONTEXT_INSTRUCTIONS = [
   `When the user refers to work done elsewhere ("in drive B we implemented X"), call search_context first, then open_thread and drive_diff on what it found, and reproduce the change from the diff.`,
   `If search_context answers insufficient_evidence, say that you found nothing, with what you searched; never guess which work was meant.`,
   `Where ${DRIVES_ROOT} is not mounted as a folder, list_drives and read_drive_file read the same paths.`,
+  `In a project backed by a GitHub repository, push and create_pr publish this thread's branch; git push has no credential here.`,
 ].join("\n");
 
 const DrivePath = Schema.String.annotate({
@@ -45,30 +47,43 @@ const presentHit = (view: DrivesView, hit: SearchHit) => {
 /** Most bytes `read_drive_file` answers at once: a file beyond it is read in parts. */
 const READ_LIMIT = 256 * 1024;
 
-const json = (value: unknown) => JSON.stringify(value, null, 1);
+export const json = (value: unknown) => JSON.stringify(value, null, 1);
 
 interface ToolSpec<S extends Schema.Top> {
   readonly name: string;
   readonly description: string;
   readonly parameters: S;
   readonly handle: (input: S["Type"]) => Effect.Effect<string, ContextClientError | ToolError>;
+  /** What the tool does beyond reading what the user can read. Absent: it only reads. */
+  readonly writes?: { readonly destructive: boolean; readonly openWorld: boolean };
 }
 
-class ToolError extends Schema.TaggedError<ToolError>()("ToolError", { message: Schema.String }) {}
+export class ToolError extends Schema.TaggedError<ToolError>()("ToolError", {
+  message: Schema.String,
+}) {}
 
-const fail = (message: string) => Effect.fail(new ToolError({ message }));
+export const fail = (message: string) => Effect.fail(new ToolError({ message }));
 
-const register = <S extends Schema.Top & { readonly DecodingServices: never }>(spec: ToolSpec<S>) =>
+export const register = <S extends Schema.Top & { readonly DecodingServices: never }>(
+  spec: ToolSpec<S>,
+) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const decode = Schema.decodeUnknownEffect(spec.parameters);
-    // oxlint-disable-next-line t3code/no-raw-mcp-registration -- the Runner's loopback context server has no T3 caller to check: the cloud authorizes every read, and every tool is read-only.
+    // oxlint-disable-next-line t3code/no-raw-mcp-registration -- the Runner's loopback context server has no T3 caller to check: the cloud authorizes every call with the thread's own token.
     yield* server.addTool({
       tool: new McpSchema.Tool({
         name: spec.name,
         description: spec.description,
         inputSchema: Tool.getJsonSchemaFromSchema(spec.parameters) as never,
-        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        annotations:
+          spec.writes === undefined
+            ? { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+            : {
+                readOnlyHint: false,
+                destructiveHint: spec.writes.destructive,
+                openWorldHint: spec.writes.openWorld,
+              },
       }),
       annotations: Context.empty(),
       handle: (payload) =>

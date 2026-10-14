@@ -46,6 +46,8 @@ export const makeFakeGitHub = (options: {
     base: string;
     state: "open" | "closed";
     merged: boolean;
+    body?: string;
+    draft?: boolean;
   }> = [];
   const calls: Array<string> = [];
   /** Pipes' connected accounts, by WorkOS user id, and the `return_to` of each user's last authorize. */
@@ -65,7 +67,7 @@ export const makeFakeGitHub = (options: {
     html_url: `${ENDPOINTS.web}/${options.repository}/pull/${pull.number}`,
     state: pull.state,
     merged_at: pull.merged ? "2026-10-08T00:00:00Z" : null,
-    draft: false,
+    draft: pull.draft === true,
     updated_at: "2026-10-08T00:00:00Z",
     base: { ref: pull.base },
     head: { ref: pull.head },
@@ -153,7 +155,13 @@ export const makeFakeGitHub = (options: {
             .map(pullJson),
         );
       }
-      const input = JSON.parse(text) as { title: string; head: string; base: string };
+      const input = JSON.parse(text) as {
+        title: string;
+        head: string;
+        base: string;
+        body: string;
+        draft?: boolean;
+      };
       if (head(input.head) === null) return json({ message: "Validation Failed" }, 422);
       const pull = { ...input, number: pulls.length + 1, state: "open" as const, merged: false };
       pulls.push(pull);

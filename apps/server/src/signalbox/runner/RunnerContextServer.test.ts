@@ -1,4 +1,5 @@
 // @effect-diagnostics globalFetchInEffect:off - speaks MCP and WebDAV to a real loopback server, as the harness and rclone do.
+import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
 import type {
   ContextView,
   SearchResult,
@@ -7,6 +8,7 @@ import type {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import type { BranchDrive } from "./RunnerBranchTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { startContextServer } from "./RunnerContextServer.ts";
 
@@ -89,7 +91,39 @@ const BLOBS: Record<string, string> = {
   [blob(8)]: "v0\n",
 };
 
-const fakeClient = (searches: Array<{ query: string; driveId: string | null }>): ContextClient => ({
+/** What the fake drive and cloud were asked, in order, and what the cloud answers a publish. */
+interface Calls {
+  readonly searches: Array<{ query: string; driveId: string | null }>;
+  readonly log: Array<string>;
+  readonly published: Array<PublishRequest>;
+  answer: PublishResult;
+}
+
+const PUBLISHED: PublishResult = {
+  _tag: "published",
+  branch: "signalbox/0000abcd",
+  repository: "owner/repo",
+  pushed: true,
+  pullRequest: {
+    number: 7,
+    url: "https://github.test/owner/repo/pull/7",
+    title: "Add dark mode",
+    baseBranch: "main",
+    created: true,
+  },
+};
+
+const fakeDrive = (calls: Calls): BranchDrive => ({
+  saveBranch: (message) =>
+    Effect.sync(() => {
+      calls.log.push(`save: ${message}`);
+      return message === "unsavable"
+        ? { _tag: "not_saved", reason: "A merge is in progress here." }
+        : { _tag: "saved", head: C1 };
+    }),
+});
+
+const fakeClient = (calls: Calls): ContextClient => ({
   view: Effect.succeed(VIEW),
   tree: ({ driveId, commit, path }) =>
     Effect.succeed(TREES[`${driveId}:${commit}:${path}`] ?? { _tag: "missing" }),
@@ -101,7 +135,7 @@ const fakeClient = (searches: Array<{ query: string; driveId: string | null }>):
     ),
   diff: () => Effect.succeed({ _tag: "diff", patch: "+dark = true\n", truncated: false }),
   search: (request) => {
-    searches.push(request);
+    calls.searches.push(request);
     return Effect.succeed({
       _tag: "found",
       terms: ["dark", "mode"],
@@ -131,12 +165,19 @@ const fakeClient = (searches: Array<{ query: string; driveId: string | null }>):
     } satisfies SearchResult);
   },
   thread: () => Effect.succeed({ _tag: "not_found" }),
+  publish: (request) =>
+    Effect.sync(() => {
+      calls.log.push(`publish: ${request.action}`);
+      calls.published.push(request);
+      return calls.answer;
+    }),
 });
 
 const serve = Effect.gen(function* () {
-  const searches: Array<{ query: string; driveId: string | null }> = [];
+  const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED };
   const server = yield* startContextServer({ mountPoint: null });
-  yield* server.pin(fakeClient(searches));
+  yield* server.pin(fakeClient(calls));
+  yield* server.attachDrive(fakeDrive(calls));
   const origin = server.mcpUrl.replace(/\/mcp$/, "");
   const dav = (method: string, path: string, headers: Record<string, string> = {}) =>
     Effect.promise(async () => {
@@ -170,7 +211,7 @@ const serve = Effect.gen(function* () {
       mcp("tools/call", { name, arguments: args }),
       (answer) => answer.result as { isError?: boolean; content: ReadonlyArray<{ text: string }> },
     );
-  return { dav, mcp, call, searches };
+  return { dav, mcp, call, searches: calls.searches, calls };
 });
 
 const hrefs = (xml: string) =>
@@ -234,14 +275,14 @@ describe("context server (#141)", () => {
         name: string;
         annotations: { readOnlyHint: boolean };
       }>;
-      expect(tools.map((tool) => tool.name)).toEqual([
+      const reads = tools.filter((tool) => tool.annotations.readOnlyHint);
+      expect(reads.map((tool) => tool.name)).toEqual([
         "search_context",
         "open_thread",
         "drive_diff",
         "list_drives",
         "read_drive_file",
       ]);
-      expect(tools.every((tool) => tool.annotations.readOnlyHint)).toBe(true);
 
       const found = yield* call("search_context", {
         query: "dark mode",
@@ -295,6 +336,68 @@ describe("context server (#141)", () => {
         to: C2,
       });
       expect(diff.content[0]!.text).toBe("+dark = true\n");
+    }),
+  );
+
+  it.effect("publishes the thread's branch: saves it first, then asks the cloud", () =>
+    Effect.gen(function* () {
+      const { mcp, call, calls } = yield* serve;
+      const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
+        name: string;
+        annotations: { readOnlyHint: boolean };
+      }>;
+      expect(
+        tools.filter((tool) => !tool.annotations.readOnlyHint).map((tool) => tool.name),
+      ).toEqual(["push", "create_pr"]);
+
+      const opened = yield* call("create_pr", {
+        title: "Add dark mode",
+        body: "Adds a dark theme.",
+        draft: true,
+      });
+      expect(opened.isError).toBeUndefined();
+      expect(calls.log).toEqual(["save: Add dark mode", "publish: create_pr"]);
+      expect(calls.published).toEqual([
+        { action: "create_pr", title: "Add dark mode", body: "Adds a dark theme.", draft: true },
+      ]);
+      expect(JSON.parse(opened.content[0]!.text)).toEqual({
+        branch: "signalbox/0000abcd",
+        repository: "owner/repo",
+        commit: C1,
+        pushed: true,
+        pullRequest: PUBLISHED._tag === "published" ? PUBLISHED.pullRequest : null,
+      });
+
+      yield* call("push", { commitMessage: "Fix typo" });
+      expect(calls.log.slice(2)).toEqual(["save: Fix typo", "publish: push"]);
+      expect(calls.published.at(-1)).toEqual({ action: "push" });
+
+      // A refusal reads as what to do next.
+      calls.answer = {
+        _tag: "failed",
+        reason: "not_connected",
+        message: "Connect GitHub first: Settings › Source Control.",
+      };
+      const refused = yield* call("create_pr", {});
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0]!.text).toBe(
+        "GitHub isn't connected. Ask the user to connect it in Settings › Source Control, then try again.",
+      );
+      calls.answer = {
+        _tag: "failed",
+        reason: "branch_conflict",
+        message: "The branch on the remote has commits this thread does not. Nothing was pushed.",
+      };
+      expect((yield* call("push", {})).content[0]!.text).toContain("Tell the user");
+
+      // Work that can't be saved is never pushed.
+      const before = calls.published.length;
+      const unsaved = yield* call("push", { commitMessage: "unsavable" });
+      expect(unsaved).toMatchObject({
+        isError: true,
+        content: [{ text: "A merge is in progress here." }],
+      });
+      expect(calls.published).toHaveLength(before);
     }),
   );
 });

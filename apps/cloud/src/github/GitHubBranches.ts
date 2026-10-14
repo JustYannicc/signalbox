@@ -1,4 +1,8 @@
 import {
+  PublishFailureReason,
+  type PublishRequest,
+} from "@signalbox/runner-protocol/BranchProtocol";
+import {
   type GitActionProgressEvent,
   GitManagerError,
   type GitRunStackedActionInput,
@@ -15,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { DriveDirectory, type DriveHandle } from "../drive/DriveDirectory.ts";
@@ -32,7 +37,7 @@ import { canWrite } from "../drive/driveAccess.ts";
 import { driveOfRoot, remoteThreadWorktree, threadWorktreeAt } from "../user/contextProjects.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import { GitHub } from "./GitHub.ts";
-import type { GitHubPullRequest } from "./GitHubApi.ts";
+import type { GitHubError, GitHubPullRequest } from "./GitHubApi.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
 
 /**
@@ -46,6 +51,10 @@ import { GitHubConnection } from "./GitHubConnection.ts";
  * The thread commits its work at the end of each turn, so there is never
  * anything to commit here. Status is recomputed while a client watches it,
  * which also picks up a pull request merged on GitHub.
+ *
+ * `publish` is the push and pull request themselves, for the git panel
+ * (`runAction`) and the thread's own agent (`drive/branchRoutes.ts`) alike,
+ * failing with why in words for both.
  */
 
 /** How often a watched branch's status is recomputed. */
@@ -59,6 +68,55 @@ const PROVIDER = {
 
 const failure = (cwd: string, operation: string, detail: string) =>
   new GitManagerError({ operation, cwd, detail });
+
+/** Why a branch wasn't published, and in which phase. */
+export class BranchPublishError extends Schema.TaggedError<BranchPublishError>()(
+  "BranchPublishError",
+  {
+    reason: PublishFailureReason,
+    phase: Schema.NullOr(Schema.Literals(["push", "pr"])),
+    message: Schema.String,
+  },
+) {}
+
+const refusal = (
+  reason: PublishFailureReason,
+  message: string,
+  phase: BranchPublishError["phase"] = null,
+) => new BranchPublishError({ reason, phase, message });
+
+/** Why GitHub answered `status` (0: no answer). A token it won't take is a connection gone. */
+const reasonForStatus = (status: number): PublishFailureReason =>
+  status === 0 || status === 429 || status >= 500
+    ? "unavailable"
+    : status === 401
+      ? "not_connected"
+      : status === 403 || status === 404
+        ? "no_permission"
+        : "rejected";
+
+/** A GitHub API failure as the reason it gives the user. */
+const gitHubRefusal = (phase: "push" | "pr") => (error: GitHubError) =>
+  refusal(reasonForStatus(error.status), error.message, phase);
+
+/** A push GitHub's receive-pack refused because its branch isn't where the push expected. */
+const STALE_BRANCH = /non-fast-forward|cannot lock ref|but expected/;
+
+/** What `publish` did: the branch on the remote, and its pull request when asked for one. */
+export interface Published {
+  readonly branch: string;
+  readonly repository: string;
+  readonly push: { readonly pushed: boolean; readonly created: boolean };
+  readonly pr: { readonly pr: GitHubPullRequest; readonly created: boolean } | null;
+}
+
+export interface PublishInput {
+  /** The thread's working tree, as `remoteThreadWorktree` names it. */
+  readonly cwd: string;
+  readonly openPullRequest: boolean;
+  /** The pull request's title, body and draft state, when it opens a new one. */
+  readonly pullRequest?: Omit<PublishRequest, "action">;
+}
 
 type Status = {
   readonly local: VcsStatusLocalResult;
@@ -102,6 +160,11 @@ export class GitHubBranches extends Context.Service<
       actor: Actor,
       input: GitRunStackedActionInput,
     ) => Stream.Stream<GitActionProgressEvent, GitManagerError>;
+    /** Pushes a thread's branch, and opens its pull request when asked. */
+    readonly publish: (
+      actor: Actor,
+      input: PublishInput,
+    ) => Effect.Effect<Published, BranchPublishError>;
   }
 >()("@signalbox/cloud/github/GitHubBranches") {}
 
@@ -119,29 +182,30 @@ const make = Effect.gen(function* () {
   // Working trees whose branch just moved, so every watcher recomputes at once.
   const moved = yield* PubSub.unbounded<string>();
 
-  const driveUnavailable = (cwd: string, operation: string) => () =>
-    failure(cwd, operation, "The drive is unavailable right now.");
+  const driveUnavailable = () => refusal("unavailable", "The drive is unavailable right now.");
 
-  const notARepository = (cwd: string, operation: string) =>
-    failure(cwd, operation, "This folder is not a git repository.");
+  const notARepository = refusal("not_a_repository", "This folder is not a git repository.");
+
+  /** A refusal as the git panel's status reads it. */
+  const asManagerError = (cwd: string, operation: string) => (error: BranchPublishError) =>
+    failure(cwd, operation, error.message);
 
   /**
    * What `cwd` names: a drive backed by a remote the user can open, and the
    * thread whose working tree it is. A thread's branch follows from its id.
    */
-  const resolve = (actor: Actor, cwd: string, operation: string) =>
+  const resolve = (actor: Actor, cwd: string) =>
     Effect.gen(function* () {
       const worktree = threadWorktreeAt(cwd);
       const driveId = worktree?.driveId ?? driveOfRoot(cwd, actor.userId);
-      if (driveId === null) return yield* notARepository(cwd, operation);
-      if (drives === null) return yield* failure(cwd, operation, "This cloud stores no drives.");
-      const role = yield* userDrives
-        .access(driveId)
-        .pipe(Effect.mapError(driveUnavailable(cwd, operation)));
-      if (role === null) return yield* failure(cwd, operation, "You can't open this drive.");
+      if (driveId === null) return yield* notARepository;
+      if (drives === null)
+        return yield* refusal("not_a_repository", "This cloud stores no drives.");
+      const role = yield* userDrives.access(driveId).pipe(Effect.mapError(driveUnavailable));
+      if (role === null) return yield* refusal("no_permission", "You can't open this drive.");
       const drive = drives.directory.forDrive(driveId);
-      const remote = yield* drive.remote().pipe(Effect.mapError(driveUnavailable(cwd, operation)));
-      if (remote === null) return yield* notARepository(cwd, operation);
+      const remote = yield* drive.remote().pipe(Effect.mapError(driveUnavailable));
+      if (remote === null) return yield* notARepository;
       const thread =
         worktree === null
           ? null
@@ -160,7 +224,7 @@ const make = Effect.gen(function* () {
   );
 
   /** The thread's branch in its drive, and how many commits it has over its base. */
-  const branchState = (drive: DriveHandle, threadId: string, cwd: string) =>
+  const branchState = (drive: DriveHandle, threadId: string) =>
     Effect.gen(function* () {
       const refs = yield* drive.refs(threadId);
       const known = [refs.base, refs.main].filter((oid): oid is Oid => oid !== null);
@@ -169,7 +233,7 @@ const make = Effect.gen(function* () {
           ? 0
           : (yield* commitsSince(drive, refs.thread, new Set(known))).commits.length;
       return { head: refs.thread, known, ahead };
-    }).pipe(Effect.mapError(driveUnavailable(cwd, "status")));
+    }).pipe(Effect.mapError(driveUnavailable));
 
   type Target = Effect.Success<ReturnType<typeof resolve>>;
 
@@ -192,7 +256,9 @@ const make = Effect.gen(function* () {
         };
       }
       const { branch } = target.thread;
-      const state = yield* branchState(target.drive, target.thread.id, cwd);
+      const state = yield* branchState(target.drive, target.thread.id).pipe(
+        Effect.mapError(asManagerError(cwd, "status")),
+      );
       const branchLocal = { ...local, isDefaultRef: false, refName: branch };
       const userToken = includeRemote ? yield* token : null;
       if (userToken === null) return { local: branchLocal, remote: null };
@@ -213,7 +279,9 @@ const make = Effect.gen(function* () {
           target.drive,
           state.head,
           new Set([remoteHead, ...state.known]),
-        ).pipe(Effect.mapError(driveUnavailable(cwd, "status")));
+        ).pipe(
+          Effect.mapError(() => failure(cwd, "status", "The drive is unavailable right now.")),
+        );
         if (walked.reached.has(remoteHead)) aheadCount = walked.commits.length;
         // The branch on GitHub moved on its own: pushing would drop its commits.
         else behindCount = 1;
@@ -233,13 +301,18 @@ const make = Effect.gen(function* () {
     });
 
   const status: GitHubBranches["Service"]["status"] = (actor, cwd, includeRemote) =>
-    Effect.flatMap(resolve(actor, cwd, "status"), (target) => statusOf(target, cwd, includeRemote));
+    Effect.flatMap(
+      resolve(actor, cwd).pipe(Effect.mapError(asManagerError(cwd, "status"))),
+      (target) => statusOf(target, cwd, includeRemote),
+    );
 
   const watch: GitHubBranches["Service"]["watch"] = (actor, cwd, includeRemote) =>
     Stream.unwrap(
       Effect.gen(function* () {
         // The thread and its branch never change, so they are looked up once.
-        const target = yield* resolve(actor, cwd, "status");
+        const target = yield* resolve(actor, cwd).pipe(
+          Effect.mapError(asManagerError(cwd, "status")),
+        );
         const first = yield* statusOf(target, cwd, includeRemote);
         const subscription = yield* PubSub.subscribe(moved);
         const later = Stream.merge(
@@ -272,32 +345,35 @@ const make = Effect.gen(function* () {
     );
 
   /** Pushes the thread's branch from the drive. Answers whether anything moved and if the branch is new. */
-  const push = (target: Target, branch: string, threadId: string, userToken: string, cwd: string) =>
+  const push = (target: Target, branch: string, threadId: string, userToken: string) =>
     Effect.gen(function* () {
       const repository = target.remote.repository;
-      const state = yield* branchState(target.drive, threadId, cwd);
-      if (state.head === null) {
-        return yield* failure(cwd, "push", "This thread has not saved any work yet.");
+      const [refs, old] = yield* Effect.all(
+        [
+          target.drive.refs(threadId).pipe(Effect.mapError(driveUnavailable)),
+          github.api
+            .branchHead(userToken, repository, branch)
+            .pipe(Effect.mapError(gitHubRefusal("push"))),
+        ],
+        { concurrency: 2 },
+      );
+      if (refs.thread === null) {
+        return yield* refusal("nothing_saved", "This thread has not saved any work yet.");
       }
-      const head = state.head;
-      const old = yield* github.api
-        .branchHead(userToken, repository, branch)
-        .pipe(Effect.mapError((error) => failure(cwd, "push", error.message)));
+      const head = refs.thread;
       if (old === head) return { pushed: false, created: false };
       const packed = yield* packForPush({
         driveId: target.driveId,
         head,
         old,
-        remoteHas: state.known,
+        remoteHas: [refs.base, refs.main].filter((oid): oid is Oid => oid !== null),
       }).pipe(
         Effect.provideService(DriveDirectory, target.drives.directory),
         Effect.provideService(DrivePacks, target.drives.packs),
         Effect.mapError((error) =>
-          failure(
-            cwd,
-            "push",
-            error._tag === "PushRefused" ? error.message : "The drive is unavailable right now.",
-          ),
+          error._tag !== "PushRefused"
+            ? driveUnavailable()
+            : refusal(error.diverged === true ? "branch_conflict" : "rejected", error.message),
         ),
       );
       const ref = `refs/heads/${branch}`;
@@ -307,20 +383,30 @@ const make = Effect.gen(function* () {
           repository,
           receivePackRequest({ ref, old, next: head, pack: packed.pack }),
         )
-        .pipe(Effect.mapError((error) => failure(cwd, "push", error.message)));
+        .pipe(Effect.mapError(gitHubRefusal("push")));
       if (answer.status !== 200) {
-        return yield* failure(
-          cwd,
-          "push",
-          answer.status === 401 || answer.status === 403 || answer.status === 404
+        const reason = reasonForStatus(answer.status);
+        return yield* refusal(
+          reason,
+          reason === "no_permission" || reason === "not_connected"
             ? `GitHub refused the push (${answer.status}). Check the Signalbox app can write to ${repository}.`
             : `GitHub answered the push with ${answer.status}.`,
         );
       }
       const result = receivePackResult(answer.body, ref);
-      if (result._tag === "refused") return yield* failure(cwd, "push", result.reason);
+      if (result._tag === "refused") {
+        return yield* refusal(
+          STALE_BRANCH.test(result.reason) ? "branch_conflict" : "rejected",
+          result.reason,
+        );
+      }
       return { pushed: true, created: old === null };
-    });
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new BranchPublishError({ reason: error.reason, message: error.message, phase: "push" }),
+      ),
+    );
 
   /** The thread's open pull request, or a new one into the default branch. */
   const openPull = (
@@ -328,27 +414,78 @@ const make = Effect.gen(function* () {
     target: Target,
     thread: { readonly id: ThreadId; readonly branch: string },
     userToken: string,
-    cwd: string,
+    details: PublishInput["pullRequest"],
   ) =>
     Effect.gen(function* () {
       const { repository, defaultBranch } = target.remote;
-      const existing = yield* github.api
-        .pullForBranch(userToken, repository, thread.branch)
-        .pipe(Effect.mapError((error) => failure(cwd, "pr", error.message)));
-      if (existing?.state === "open") return { pr: existing, created: false };
-      const title = yield* threads.threadSnapshot(actor, thread.id).pipe(
-        Effect.map((snapshot) => snapshot.projection.thread.title.trim()),
-        Effect.orElseSucceed(() => ""),
+      const openOne = github.api.pullForBranch(userToken, repository, thread.branch).pipe(
+        Effect.mapError(gitHubRefusal("pr")),
+        Effect.map((found) => (found?.state === "open" ? found : null)),
       );
-      const pr = yield* github.api
+      const existing = yield* openOne;
+      if (existing !== null) return { pr: existing, created: false };
+      const title =
+        details?.title?.trim() ||
+        (yield* threads.threadSnapshot(actor, thread.id).pipe(
+          Effect.map((snapshot) => snapshot.projection.thread.title.trim()),
+          Effect.orElseSucceed(() => ""),
+        ));
+      return yield* github.api
         .createPull(userToken, repository, {
           title: title || thread.branch,
           head: thread.branch,
           base: defaultBranch,
-          body: "Opened from Signalbox.",
+          body: details?.body?.trim() || "Opened from Signalbox.",
+          ...(details?.draft === true ? { draft: true } : {}),
         })
-        .pipe(Effect.mapError((error) => failure(cwd, "pr", error.message)));
-      return { pr, created: true };
+        .pipe(
+          Effect.map((pr) => ({ pr, created: true })),
+          // A retried call may find the pull request it opened before GitHub listed it.
+          Effect.catchIf(
+            (error) => error.status === 422,
+            (error) =>
+              Effect.flatMap(openOne, (open) =>
+                open === null
+                  ? Effect.fail(gitHubRefusal("pr")(error))
+                  : Effect.succeed({ pr: open, created: false }),
+              ),
+          ),
+          Effect.mapError((error) =>
+            error._tag === "GitHubError" ? gitHubRefusal("pr")(error) : error,
+          ),
+        );
+    });
+
+  const publish: GitHubBranches["Service"]["publish"] = (actor, input) =>
+    Effect.gen(function* () {
+      const target = yield* resolve(actor, input.cwd);
+      if (target.thread === null) {
+        return yield* refusal("not_a_repository", "Open a thread to push its branch.");
+      }
+      if (!target.writes) {
+        return yield* refusal("no_permission", "You can view this drive but not change it.");
+      }
+      const { thread } = target;
+      const userToken = yield* connection.accessToken.pipe(
+        Effect.tapError((cause) => Effect.logWarning("GitHub token unavailable", { cause })),
+        Effect.mapError(() => refusal("unavailable", "GitHub can't be reached right now.")),
+      );
+      if (userToken === null) {
+        return yield* refusal("not_connected", "Connect GitHub first: Settings › Source Control.");
+      }
+      // Watchers recompute only when the branch or its pull request changed.
+      const pushed = yield* push(target, thread.branch, thread.id, userToken);
+      if (pushed.pushed) yield* PubSub.publish(moved, input.cwd);
+      const pr = input.openPullRequest
+        ? yield* openPull(actor, target, thread, userToken, input.pullRequest)
+        : null;
+      if (pr?.created === true) yield* PubSub.publish(moved, input.cwd);
+      return {
+        branch: thread.branch,
+        repository: target.remote.repository,
+        push: pushed,
+        pr,
+      } satisfies Published;
     });
 
   const runAction: GitHubBranches["Service"]["runAction"] = (actor, input) => {
@@ -356,48 +493,13 @@ const make = Effect.gen(function* () {
     const pushes = PUSHES.has(input.action);
     const opensPr = OPENS_PR.has(input.action);
     const phases = [...(pushes ? (["push"] as const) : []), ...(opensPr ? (["pr"] as const) : [])];
-    let phase: "push" | "pr" | null = null;
     const run = Effect.gen(function* () {
-      const events: Array<GitActionProgressEvent> = [];
       if (!pushes) {
-        return yield* failure(input.cwd, "commit", "Signalbox commits each turn's work itself.");
+        return yield* refusal("rejected", "Signalbox commits each turn's work itself.");
       }
-      const target = yield* resolve(actor, input.cwd, "push");
-      if (target.thread === null) {
-        return yield* failure(input.cwd, "push", "Open a thread to push its branch.");
-      }
-      if (!target.writes) {
-        return yield* failure(input.cwd, "push", "You can view this drive but not change it.");
-      }
-      const { thread } = target;
-      const userToken = yield* token;
-      if (userToken === null) {
-        return yield* failure(
-          input.cwd,
-          "push",
-          "Connect GitHub first: Settings › Source Control.",
-        );
-      }
-      phase = "push";
-      events.push({
-        ...base,
-        kind: "phase_started",
-        phase: "push",
-        label: `Pushing ${thread.branch}`,
-      });
-      const pushed = yield* push(target, thread.branch, thread.id, userToken, input.cwd);
-      let pr: { readonly pr: GitHubPullRequest; readonly created: boolean } | null = null;
-      if (opensPr) {
-        phase = "pr";
-        events.push({
-          ...base,
-          kind: "phase_started",
-          phase: "pr",
-          label: "Opening a pull request",
-        });
-        pr = yield* openPull(actor, target, thread, userToken, input.cwd);
-      }
-      yield* PubSub.publish(moved, input.cwd);
+      const published = yield* publish(actor, { cwd: input.cwd, openPullRequest: opensPr });
+      const { branch, pr } = published;
+      const pushed = published.push;
       const result: GitRunStackedActionResult = {
         action: input.action,
         branch: { status: "skipped_not_requested" },
@@ -408,8 +510,8 @@ const make = Effect.gen(function* () {
         },
         push: {
           status: pushed.pushed ? "pushed" : "skipped_up_to_date",
-          branch: thread.branch,
-          upstreamBranch: `origin/${thread.branch}`,
+          branch,
+          upstreamBranch: `origin/${branch}`,
           setUpstream: pushed.created,
         },
         pr:
@@ -426,7 +528,7 @@ const make = Effect.gen(function* () {
         toast:
           pr === null
             ? {
-                title: pushed.pushed ? `Pushed ${thread.branch}` : `${thread.branch} is up to date`,
+                title: pushed.pushed ? `Pushed ${branch}` : `${branch} is up to date`,
                 cta: { kind: "none" },
               }
             : {
@@ -436,12 +538,19 @@ const make = Effect.gen(function* () {
                 cta: { kind: "open_pr", label: "View pull request", url: pr.pr.url },
               },
       };
-      events.push({ ...base, kind: "action_finished", result });
-      return events;
+      return [
+        ...phases.map((phase): GitActionProgressEvent => ({
+          ...base,
+          kind: "phase_started",
+          phase,
+          label: phase === "push" ? `Pushing ${branch}` : "Opening a pull request",
+        })),
+        { ...base, kind: "action_finished", result },
+      ] satisfies ReadonlyArray<GitActionProgressEvent>;
     }).pipe(
-      Effect.catch((error: GitManagerError) =>
+      Effect.catch((error: BranchPublishError) =>
         Effect.succeed<ReadonlyArray<GitActionProgressEvent>>([
-          { ...base, kind: "action_failed", phase, message: error.detail },
+          { ...base, kind: "action_failed", phase: error.phase, message: error.message },
         ]),
       ),
     );
@@ -452,7 +561,7 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return GitHubBranches.of({ status, watch, runAction });
+  return GitHubBranches.of({ status, watch, runAction, publish });
 });
 
 export const layer = Layer.effect(GitHubBranches, make);

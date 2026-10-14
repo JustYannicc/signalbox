@@ -7,7 +7,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-// oxlint-disable-next-line t3code/no-raw-mcp-registration -- the Runner's loopback context server has no T3 caller to check: the cloud authorizes every read, and every tool is read-only.
+// oxlint-disable-next-line t3code/no-raw-mcp-registration -- the Runner's loopback context server has no T3 caller to check: the cloud authorizes every call with the thread's own token.
 import { McpProtocol, McpServer } from "effect/ai";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
@@ -15,6 +15,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import {
   CONTEXT_INSTRUCTIONS,
@@ -30,7 +31,9 @@ import { makeDrivesView } from "./RunnerDrivesView.ts";
  * context tool as an MCP server for the harnesses (`/mcp`), and `/drives` as
  * a WebDAV share (`/dav`) for the `/drives` mount. The drive token stays in
  * the Runner: both read through the turn's `ContextClient`, which `pin`
- * replaces at every turn start along with the view of the drives.
+ * replaces at every turn start along with the view of the drives. The MCP
+ * server also publishes the thread's branch, saving it through the drive
+ * `attachDrive` gives it.
  */
 
 const MCP_PATH = "/mcp";
@@ -40,6 +43,8 @@ export interface ContextServer {
   readonly mcpUrl: string;
   /** Takes this turn's view of the drives; a failure keeps the last one. */
   readonly pin: (client: ContextClient) => Effect.Effect<void>;
+  /** The thread's drive, once a turn opens it: what publishing saves first. */
+  readonly attachDrive: (drive: BranchDrive) => Effect.Effect<void>;
 }
 
 export const startContextServer = Effect.fn("startContextServer")(function* (input: {
@@ -47,6 +52,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   readonly mountPoint: string | null;
 }) {
   const view = makeDrivesView();
+  let drive: BranchDrive | null = null;
 
   const dav = HttpRouter.add("*", `${DAV_PATH}/*`, (request) =>
     serveDav(view, {
@@ -69,7 +75,10 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
       ),
     ),
   );
-  const mcp = layerContextTools(view).pipe(
+  const mcp = Layer.mergeAll(
+    layerContextTools(view),
+    layerBranchTools(view, () => drive),
+  ).pipe(
     Layer.provideMerge(
       McpServer.layerHttp({
         name: CONTEXT_SERVER_NAME,
@@ -111,13 +120,17 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
           }),
         ),
       ),
+    attachDrive: (next) =>
+      Effect.sync(() => {
+        drive = next;
+      }),
   } satisfies ContextServer;
 });
 
 /** What a turn hands over for its drives: opens a client for that access. */
 export type OpenContextClient = (access: DriveAccess) => Effect.Effect<ContextClient>;
 
-/** `inner` with every Claude query reaching the context server, its read-only tools pre-approved. */
+/** `inner` with every Claude query reaching the context server, its tools pre-approved. */
 export const withContextServer = (
   inner: ClaudeAgentSdkQueryRunnerShape,
   mcpUrl: string,

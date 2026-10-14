@@ -27,6 +27,8 @@ import {
 
 export class PushRefused extends Schema.TaggedError<PushRefused>()("PushRefused", {
   message: Schema.String,
+  /** The remote's branch has commits the pushed one doesn't. */
+  diverged: Schema.optional(Schema.Boolean),
 }) {}
 
 const ZERO_OID: Oid = "0".repeat(40);
@@ -174,6 +176,7 @@ export const packForPush = Effect.fn("gitPush.packForPush")(function* (input: {
   if (input.old !== null && input.old !== input.head && !walked.reached.has(input.old)) {
     return yield* new PushRefused({
       message: "The branch on the remote has commits this thread does not. Nothing was pushed.",
+      diverged: true,
     });
   }
 
