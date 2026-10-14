@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Environment from "../environment.ts";
 import { layerMemoryStore } from "../testing.ts";
@@ -117,17 +118,64 @@ describe("UserSections", () => {
 
       snapshot = yield* sections.delete({ id: idOf(snapshot, "B") });
       expect(outline(snapshot)).toEqual(["A", "B1"]);
-      // The cloud has no pools to pick from; clearing one changes nothing.
+      // A pool the user doesn't have can't be placed; clearing an empty level changes nothing.
       expect(
-        yield* codeOf(
-          sections.update({ id: idOf(snapshot, "A"), defaultPoolId: "pool_1" as never }),
-        ),
+        yield* codeOf(sections.update({ id: idOf(snapshot, "A"), defaultPoolId: "pool_1" })),
       ).toBe("invalid-move");
       const unchanged = yield* sections.update({ id: idOf(snapshot, "A"), defaultPoolId: null });
       expect(unchanged.revision).toBe(snapshot.revision);
       expect(snapshot.projectPlacements).toEqual([
         { projectId: SCRATCH, sectionId: null, position: 0 },
       ]);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect("starts every user on Personal, placed at the top level for everything below", () =>
+    Effect.gen(function* () {
+      const { sections } = yield* services;
+      const { pools } = yield* sections.snapshot;
+      expect(pools?.top).toEqual({ poolId: "personal", from: { _tag: "top" } });
+      expect(pools?.projects).toEqual([
+        { projectId: SCRATCH, pool: { poolId: "personal", from: { _tag: "top" } } },
+      ]);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect("runs a project on its nearest section's pool, and on the next one when it moves", () =>
+    Effect.gen(function* () {
+      const { sections } = yield* services;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO pools (id, object_name, name, personal, backing_url, created_at)
+        VALUES ('work', 'user_1:work', 'Work', 0, NULL, 0)`;
+      let snapshot = yield* sections.create({ name: "Work", parentId: null });
+      snapshot = yield* sections.create({ name: "Clients", parentId: idOf(snapshot, "Work") });
+      const work = idOf(snapshot, "Work");
+      snapshot = yield* sections.update({ id: work, defaultPoolId: "work" });
+      expect(snapshot.sections.find((section) => section.id === work)?.defaultPoolId).toBe("work");
+      snapshot = yield* sections.moveProject({
+        projectId: SCRATCH,
+        sectionId: idOf(snapshot, "Clients"),
+      });
+      const projectPool = (current: SectionsSnapshot) =>
+        current.pools?.projects.find((entry) => entry.projectId === SCRATCH)?.pool;
+      expect(projectPool(snapshot)).toEqual({
+        poolId: "work",
+        from: { _tag: "section", sectionId: work },
+      });
+      expect((yield* sections.pools).projects).toEqual(snapshot.pools?.projects);
+
+      // Out of the section, it's back on the top level's pool.
+      snapshot = yield* sections.moveProject({ projectId: SCRATCH, sectionId: null });
+      expect(projectPool(snapshot)?.poolId).toBe("personal");
+
+      // Deleting the pool takes it off the section, which inherits again.
+      snapshot = yield* sections.moveProject({ projectId: SCRATCH, sectionId: work });
+      yield* sql`DELETE FROM pools WHERE id = 'work'`;
+      yield* sections.forgetPool("work");
+      const after = yield* sections.snapshot;
+      expect(after.revision).toBeGreaterThan(snapshot.revision);
+      expect(after.sections.find((section) => section.id === work)?.defaultPoolId).toBeUndefined();
+      expect(projectPool(after)?.poolId).toBe("personal");
     }).pipe(Effect.provide(layerMemoryStore)),
   );
 

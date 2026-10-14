@@ -1,3 +1,4 @@
+import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 // @effect-diagnostics nodeBuiltinImport:off - tests need database files that outlive one engine.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -39,6 +40,7 @@ import * as ThreadRunner from "./ThreadRunner.ts";
 export const owner = { userId: "user_1", contextIds: [PERSONAL_CONTEXT_ID] };
 export const personal = {
   place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+  pools: { top: PERSONAL_POOL_ID, projects: {} },
 };
 export const threadId = ThreadId.make("thread-claude");
 export const claude = {

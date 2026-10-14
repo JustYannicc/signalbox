@@ -16,7 +16,7 @@ import type { RpcSession } from "../rpc/session.ts";
 
 export * from "./sectionsModel.ts";
 export * from "./sectionsMoves.ts";
-export * from "./sectionPoolDefault.ts";
+export * from "./projectPool.ts";
 
 export type EnvironmentSectionsState =
   | { readonly _tag: "Unsupported" }

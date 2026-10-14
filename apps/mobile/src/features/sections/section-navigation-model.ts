@@ -54,7 +54,7 @@ export function projectMoveMenuActions(input: {
 export function sectionMenuActions(input: {
   readonly section: Section;
   readonly snapshot: SectionsSnapshot;
-  /** signalbox: pools new threads in the section can default to. */
+  /** signalbox: pools the section can run on; only where the server resolves pools. */
   readonly pools?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
 }): MenuAction[] {
   const { section, snapshot } = input;
@@ -82,14 +82,21 @@ export function sectionMenuActions(input: {
     actions.push({ id: "section:move", title: "Move under", subactions: parentOptions });
   }
   const pools = input.pools ?? [];
-  if (pools.length > 1) {
+  if (snapshot.pools !== undefined && pools.length > 1) {
+    // What it runs on when it picks nothing: whatever the level above it does.
+    const inheritedPoolId = (
+      section.parentId === null
+        ? snapshot.pools.top
+        : snapshot.pools.sections.find((entry) => entry.sectionId === section.parentId)?.pool
+    )?.poolId;
+    const inheritedName = pools.find((pool) => pool.id === inheritedPoolId)?.name;
     actions.push({
       id: "section:pool",
-      title: "Pool for new threads",
+      title: "Pool for this folder",
       subactions: [
         {
           id: "section:pool:inherit",
-          title: section.parentId === null ? "Default" : "Same as parent section",
+          title: inheritedName ? `Inherit from above (${inheritedName})` : "Inherit from above",
           state: section.defaultPoolId === undefined ? "on" : undefined,
         },
         ...pools.map((pool) => ({

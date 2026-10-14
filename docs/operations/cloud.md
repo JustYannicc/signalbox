@@ -599,9 +599,9 @@ request builds: production lists the origins it answers in
   there show up at once. Add and manage accounts on production; the preview
   refuses. Every sign-in to the preview renews the links (90 days each) and
   links pools new since.
-- **Copied once:** sections, project placements and the GitHub connection
-  (Pipes keeps the tokens under your WorkOS user, which both share). Changes
-  on the preview stick.
+- **Copied once:** sections, project placements, the pool placed at each
+  level, and the GitHub connection (Pipes keeps the tokens under your WorkOS
+  user, which both share). Changes on the preview stick.
 - **Not copied:** threads, sessions, grants, the thread index, drives, Executor
   connection links (they're bound to the cloud that issued them) and anything
   running. Placements of drives the preview doesn't have stay out of sight;

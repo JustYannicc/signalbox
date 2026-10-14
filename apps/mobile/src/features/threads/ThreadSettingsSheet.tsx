@@ -47,6 +47,7 @@ import {
 } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { usePoolSourceLabel } from "../sections/useProjectPool"; // signalbox
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
@@ -309,6 +310,7 @@ export function useExistingThreadSettingsRoutePresentation() {
 
 type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
+  readonly projectId: ProjectId | null; // signalbox
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
@@ -617,6 +619,7 @@ function ThreadSettingsSessionProvider(
   const value = useMemo<ThreadSettingsSessionValue>(
     () => ({
       environmentId: props.environmentId,
+      projectId: props.projectId, // signalbox
       providerInstanceId: props.providerInstanceId,
       providerGroups,
       manageHidden,
@@ -676,6 +679,7 @@ function ThreadSettingsSessionProvider(
       showLegacyToggle,
       toggleProvider,
       toggleFavorite,
+      props.projectId, // signalbox
     ],
   );
 
@@ -1014,12 +1018,14 @@ function ThreadSettingsMainContent(props: {
   const [animationsReady, setAnimationsReady] = useState(false);
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
+  const poolSource = usePoolSourceLabel(session.environmentId, session.projectId); // signalbox
   const listItems = useMemo<ReadonlyArray<ThreadSettingsCatalogItem>>(
     () => [
+      ...(poolSource ? [{ kind: "notice", key: "pool-source", text: poolSource } as const] : []), // signalbox
       ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
       { kind: "options", key: "options" },
     ],
-    [catalogItems],
+    [catalogItems, poolSource],
   );
   const renderCatalogItem = useCallback(
     (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {

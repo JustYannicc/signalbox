@@ -53,6 +53,13 @@ export function SectionMoveMenu(props: {
   const parent = props.section.parentId
     ? props.snapshot.sections.find((section) => section.id === props.section.parentId)
     : undefined;
+  // What this folder runs on when it picks nothing: whatever the level above it does.
+  const inheritedPoolId = (
+    parent
+      ? props.snapshot.pools?.sections.find((entry) => entry.sectionId === parent.id)?.pool
+      : props.snapshot.pools?.top
+  )?.poolId;
+  const inheritedPoolName = pools.find((pool) => pool.id === inheritedPoolId)?.name;
 
   const moveOrder = (direction: "up" | "down") => {
     const input = sectionSiblingMoveInput({
@@ -119,11 +126,11 @@ export function SectionMoveMenu(props: {
             ))}
           </MenuSubPopup>
         </MenuSub>
-        {pools.length > 1 ? (
+        {props.snapshot.pools !== undefined && pools.length > 1 ? (
           <MenuSub>
             <MenuSubTrigger>
               <LayersIcon />
-              Pool for new threads
+              Pool for this folder
             </MenuSubTrigger>
             <MenuSubPopup>
               <MenuRadioGroup
@@ -137,7 +144,10 @@ export function SectionMoveMenu(props: {
                 }
               >
                 <MenuRadioItem value={INHERIT_POOL}>
-                  {props.section.parentId === null ? "Default" : "Same as parent section"}
+                  Inherit from above
+                  {inheritedPoolName ? (
+                    <span className="ms-auto ps-4 text-muted-foreground">{inheritedPoolName}</span>
+                  ) : null}
                 </MenuRadioItem>
                 {pools.map((pool) => (
                   <MenuRadioItem key={pool.id} value={pool.id}>

@@ -41,6 +41,7 @@ import {
 import * as DrivePeople from "./DrivePeople.ts";
 import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
+import * as ResourceBindings from "./ResourceBindings.ts";
 import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -125,7 +126,6 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         Layer.mergeAll(
           UserShell.layer,
           CloudThreadService.layer,
-          UserSections.layer,
           PoolSignIns.layer,
           drives.services,
           GitHubConnection.layer,
@@ -133,6 +133,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ),
       ),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
+      Layer.provideMerge(UserSections.layer),
       Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
       Layer.provideMerge(
         GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
@@ -140,7 +141,9 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ),
       ),
       Layer.provideMerge(UserDrives.layer),
-      Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives)),
+      Layer.provideMerge(
+        Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives, ResourceBindings.layer),
+      ),
       Layer.provideMerge(drives.store),
       Layer.provideMerge(
         Layer.mergeAll(

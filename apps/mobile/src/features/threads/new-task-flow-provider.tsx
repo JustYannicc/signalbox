@@ -121,7 +121,8 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { useSectionPoolModelSelection } from "../sections/useSectionPoolModelSelection"; // signalbox
+import { usePoolServerConfig, useProjectPoolModelSelection } from "../sections/useProjectPool"; // signalbox
+import type { PoolNeed } from "@t3tools/client-runtime/state/sections"; // signalbox
 
 const NO_PROVIDERS: ReadonlyArray<ServerProvider> = []; // signalbox
 
@@ -201,6 +202,8 @@ type NewTaskFlowContextValue = {
   /** True when the draft is a thread without a project (its machine's Scratch project). */
   readonly isScratchDraft: boolean;
   readonly modelOptions: ReadonlyArray<ModelOption>;
+  /** signalbox: why the project's tasks can't run yet, if they can't. */
+  readonly poolNeed: PoolNeed | null;
   readonly selectedModel: ModelSelection | null;
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderStatus: ServerProvider | null;
@@ -588,12 +591,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject?.id ?? null,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
-  // signalbox: unless the project picks its own default, the task starts on its section's pool.
-  const sectionPoolSelection = useSectionPoolModelSelection({
+  // signalbox: the task starts on the pool its project runs on.
+  const sectionPoolSelection = useProjectPoolModelSelection({
     environmentId: selectedProject?.environmentId ?? null,
     projectId: selectedProject?.id ?? null,
     selection: projectSettings.settings.defaultModelSelection ?? storedStickyModelSelection,
-    resolved: projectSettings,
+    providerInstances: projectSettings.settings.providerInstances,
     providers: selectedEnvironmentServerConfig?.providers ?? NO_PROVIDERS,
   });
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
@@ -606,16 +609,22 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     storedStickyModelSelection,
     selectedProject?.id ?? null,
   );
+  // signalbox: the picker offers only the pool the project runs on.
+  const { config: poolServerConfig, need: poolNeed } = usePoolServerConfig(
+    selectedProject?.environmentId ?? null,
+    selectedProject?.id ?? null,
+    selectedEnvironmentServerConfig,
+  );
   const modelOptions = useMemo(
     () =>
       buildModelOptions(
-        selectedEnvironmentServerConfig,
+        poolServerConfig,
         draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
         undefined,
         selectedProject?.id ?? null,
       ),
     [
-      selectedEnvironmentServerConfig,
+      poolServerConfig,
       draftModelSelection,
       projectDefaultModelSelection,
       stickyModelSelection,
@@ -1356,6 +1365,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProject,
       isScratchDraft,
       modelOptions,
+      poolNeed,
       selectedModel,
       selectedModelOption,
       selectedProviderStatus,
@@ -1412,6 +1422,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       loadMoreBranches,
       projectScopes,
       modelOptions,
+      poolNeed,
       prompt,
       providerGroups,
       replaceAttachments,

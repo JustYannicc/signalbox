@@ -32,6 +32,7 @@ import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection } from "./threadProjection.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
+import { commandOnPool, onPool, poolOfProject, type TurnPools } from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
 import type { ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
 
@@ -95,10 +96,17 @@ export interface ThreadCreation {
   readonly place: { readonly contextId: SignalboxContextId; readonly driveId: string } | null;
   /** The branch and worktree a new thread gets, when its drive has threads work on their own branch. */
   readonly worktree?: ThreadWorktree | null;
+  /**
+   * What the owner's tree resolves each project to (`turnPool.ts`), for a
+   * command that can start a turn or pick a model. Null for any other: a turn
+   * never starts without its pool resolved.
+   */
+  readonly pools: TurnPools | null;
 }
 
 const NO_CONTEXT =
   "That project does not exist in this environment, or you can't change its files.";
+const POOLS_UNRESOLVED = "Couldn't tell which pool this thread runs on. Try again.";
 
 /**
  * A thread's sidebar row as its owner's index stores it. `revision` grows with
@@ -322,10 +330,18 @@ const make = Effect.gen(function* () {
   const runCommand = (
     actor: Actor,
     creation: ThreadCreation,
-    command: { readonly id: CommandId; readonly type: string; readonly createsThread: boolean },
+    command: {
+      readonly id: CommandId;
+      readonly type: string;
+      readonly createsThread: boolean;
+      /** The project a command that creates the thread names. */
+      readonly projectId?: string;
+    },
     decideWith: (
       projection: OrchestrationV2ThreadProjection | null,
       ctx: DecisionContext,
+      /** The pool the thread's turns run on; null when its chain has none. Undefined: unresolved. */
+      pool: string | null | undefined,
     ) => Decision,
   ) =>
     serialized(
@@ -345,7 +361,12 @@ const make = Effect.gen(function* () {
         if (current.thread === null && place === null) {
           return yield* ThreadCommandRejectedError.forCommand(command, NO_CONTEXT);
         }
-        const decision = decideWith(current.thread?.projection ?? null, yield* context);
+        const projectId = current.thread?.projection.thread.projectId ?? command.projectId;
+        const pool =
+          creation.pools === null || projectId === undefined
+            ? undefined
+            : poolOfProject(creation.pools, projectId);
+        const decision = decideWith(current.thread?.projection ?? null, yield* context, pool);
         const refuse = (message: string, options: { readonly record: boolean }) =>
           Effect.gen(function* () {
             // Only a thread that exists keeps receipts; an unknown id leaves no trace.
@@ -361,19 +382,22 @@ const make = Effect.gen(function* () {
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
-        // A turn starts only on a model its pool serves. A pool that can't be
-        // asked right now leaves no receipt, so a retry asks again. Asked under
-        // the lock, from the pool's cache: only a pool whose models were never
-        // read wakes its container here, once.
+        // A turn starts only on its thread's pool, on a model it serves. A pool
+        // that can't be asked right now leaves no receipt, so a retry asks
+        // again. Asked under the lock, from the pool's cache: only a pool whose
+        // models were never read wakes its container here, once.
         if (started !== undefined) {
+          if (pool === undefined) return yield* refuse(POOLS_UNRESOLVED, { record: false });
           yield* turnModels
             .check({
               ownerId: current.thread?.owner.userId ?? actor.userId,
+              pool,
               selection: started.payload.modelSelection,
             })
             .pipe(
               Effect.catchTags({
                 ModelNotServedError: (error) => refuse(error.message, { record: true }),
+                PoolNeededError: (error) => refuse(error.message, { record: true }),
                 ProviderUnavailableError: (error) => refuse(error.message, { record: true }),
                 PoolRejectedError: (error) => refusePool(error),
                 PoolObjectError: (error) => refusePool(error),
@@ -406,15 +430,23 @@ const make = Effect.gen(function* () {
         id: command.commandId,
         type: command.type,
         createsThread: command.type === "thread.create",
+        ...(command.type === "thread.create" ? { projectId: command.projectId } : {}),
       },
-      (projection, ctx) =>
-        decide(
+      (projection, ctx, pool) => {
+        const onItsPool =
+          typeof pool === "string" ? commandOnPool(command, projection, pool) : command;
+        return decide(
           projection,
-          command.type === "thread.create" && creation.worktree
-            ? { ...command, branch: creation.worktree.branch, worktreePath: creation.worktree.path }
-            : command,
+          onItsPool.type === "thread.create" && creation.worktree
+            ? {
+                ...onItsPool,
+                branch: creation.worktree.branch,
+                worktreePath: creation.worktree.path,
+              }
+            : onItsPool,
           ctx,
-        ),
+        );
+      },
     ).pipe(Effect.map(({ sequence }) => ({ sequence })));
 
   const launch: ThreadEngine["Service"]["launch"] = (actor, input, creation) =>
@@ -422,8 +454,21 @@ const make = Effect.gen(function* () {
       const result = yield* runCommand(
         actor,
         creation,
-        { id: input.commandId, type: "thread.launch", createsThread: true },
-        (projection, ctx) => decideLaunch(projection, input, ctx, creation.worktree ?? null),
+        {
+          id: input.commandId,
+          type: "thread.launch",
+          createsThread: true,
+          projectId: input.projectId,
+        },
+        (projection, ctx, pool) =>
+          decideLaunch(
+            projection,
+            typeof pool === "string"
+              ? { ...input, modelSelection: onPool(input.modelSelection, pool) }
+              : input,
+            ctx,
+            creation.worktree ?? null,
+          ),
       );
       const { projection } = yield* readable(actor);
       return { threadId: input.threadId, projection, resumed: result.replayed };

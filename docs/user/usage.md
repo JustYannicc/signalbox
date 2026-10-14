@@ -146,12 +146,17 @@ picker. Pick it to use every account of that kind in the pool: each conversation
 account, and work moves to another account when one runs out. Antigravity accounts offer only its
 Flash models this way.
 
-With several pools, the model picker asks for the pool first and then shows that pool's models. A
-conversation stays on its pool. To start a project's new conversations on a pool, pick a model from
-that pool as the project's default model in its settings. To do it for every project in a section,
-choose **Pool for new threads** in the section's menu; nested sections use their parent's pool
-unless they pick their own, and a project's own default model still wins. Agents can see each pool's providers and
-how much of their usage is left, so they can pick a pool for the work they hand off.
+In Signalbox Cloud, every conversation runs on one pool: the nearest one above it. Personal covers
+everything to start with. To run a folder on another pool, choose **Pool for this folder** in its
+menu; the folders inside it use that pool too unless they pick their own, and **Inherit from above**
+goes back to the pool above. The model picker shows only that pool's models, and **Thread details**
+says which pool a conversation runs on and where that pool comes from. Moving a project into another
+folder moves its conversations to that folder's pool from their next message. When the pool has
+nobody signed in, the composer says it **needs a pool** and opens that pool's sign-in. Agents can see
+each pool's providers and how much of their usage is left.
+
+On a server you run yourself, the model picker shows every pool's models, and a conversation stays on
+the pool its model belongs to.
 
 Cursor accounts in a pool run the pool's **Cursor** provider. To run OpenCode on a pool, choose **Use
 with OpenCode** in the pool's menu in **Settings → Pools**: OpenCode then offers every model the pool
@@ -193,7 +198,8 @@ To bring accounts from a CLIProxyAPI you run into a pool, choose **Import from C
 pool's menu. Leave **Remove them from that CLIProxyAPI** on unless you stop using that instance:
 two places refreshing the same account sign each other out.
 
-Deleting a pool removes its providers from the model picker, and threads on it stop working. The
+Deleting a pool removes its providers from the model picker. In Signalbox Cloud, folders that ran on
+it move to the pool above them; on your own server, threads on it stop working. The
 accounts Signalbox keeps for it are removed; a pool that keeps its logins in your CLIProxyAPI leaves
 them there.
 

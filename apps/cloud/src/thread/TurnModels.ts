@@ -6,15 +6,17 @@ import * as Schema from "effect/Schema";
 
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import type { PoolRejectedError } from "../pool/PoolEngine.ts";
-import { poolIdOfInstance, poolKindOfInstance, servesModel } from "./providerCatalog.ts";
+import { poolKindOfInstance, servesModel } from "./providerCatalog.ts";
 import { SCRIPTED_INSTANCE_ID } from "./scriptedProvider.ts";
 
 /**
- * Whether a turn may start on the model it names. A harness turn runs on its
- * owner's pool, which must serve the model now: the picker offers what the
- * pool serves, and a selection it no longer serves (an account removed, a
- * model retired) is refused with a reason rather than sent to fail upstream.
- * The scripted provider runs only where it is on; nothing else runs at all.
+ * Whether a turn may start on the model it names. A harness turn runs on the
+ * pool its thread's chain resolves to (`turnPool.ts`), never one the
+ * selection names, and that pool must serve the model now: the picker offers
+ * what the pool serves, and a selection it no longer serves (an account
+ * removed, a model retired) is refused with a reason rather than sent to fail
+ * upstream. With no pool on the chain, nothing runs. The scripted provider
+ * runs only where it is on; nothing else runs at all.
  */
 
 export class ModelNotServedError extends Schema.TaggedError<ModelNotServedError>()(
@@ -23,6 +25,12 @@ export class ModelNotServedError extends Schema.TaggedError<ModelNotServedError>
 ) {
   override get message() {
     return `This pool doesn't serve ${this.model} right now. Pick another model.`;
+  }
+}
+
+export class PoolNeededError extends Schema.TaggedError<PoolNeededError>()("PoolNeededError", {}) {
+  override get message() {
+    return "This folder needs a pool. Choose one for it or a folder above it.";
   }
 }
 
@@ -38,13 +46,15 @@ export class ProviderUnavailableError extends Schema.TaggedError<ProviderUnavail
 export class TurnModels extends Context.Service<
   TurnModels,
   {
-    /** Succeeds when a turn of `ownerId`'s may start on `selection`. */
+    /** Succeeds when a turn of `ownerId`'s may start on `selection` on their `pool` (null: none). */
     readonly check: (input: {
       readonly ownerId: string;
+      readonly pool: string | null;
       readonly selection: ModelSelection;
     }) => Effect.Effect<
       void,
       | ModelNotServedError
+      | PoolNeededError
       | ProviderUnavailableError
       | PoolRejectedError
       | PoolDirectory.PoolObjectError
@@ -59,16 +69,16 @@ export const layer = (options: { readonly scripted: boolean }) =>
     Effect.gen(function* () {
       const directory = yield* PoolDirectory.PoolDirectory;
       return TurnModels.of({
-        check: ({ ownerId, selection }) =>
+        check: ({ ownerId, pool, selection }) =>
           Effect.gen(function* () {
             const kind = poolKindOfInstance(selection.instanceId);
-            const poolId = poolIdOfInstance(selection.instanceId);
-            if (kind === undefined || poolId === undefined) {
+            if (kind === undefined) {
               if (options.scripted && selection.instanceId === SCRIPTED_INSTANCE_ID) return;
               return yield* new ProviderUnavailableError({ instanceId: selection.instanceId });
             }
+            if (pool === null) return yield* new PoolNeededError();
             const { models } = yield* directory
-              .forPool(PoolDirectory.poolObjectName(ownerId, poolId))
+              .forPool(PoolDirectory.poolObjectName(ownerId, pool))
               .models({ userId: ownerId });
             if (!servesModel(kind, models, selection.model)) {
               return yield* new ModelNotServedError({

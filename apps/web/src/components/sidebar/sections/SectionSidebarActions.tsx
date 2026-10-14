@@ -92,7 +92,7 @@ function useSectionCommands() {
         run("Could not rename section", update({ environmentId, input })),
       setPool: (environmentId: EnvironmentId, id: SectionId, defaultPoolId: AccountPoolId | null) =>
         run(
-          "Could not change the section's pool",
+          "Could not change this folder's pool",
           update({ environmentId, input: { id, defaultPoolId } }),
         ),
       move: (environmentId: EnvironmentId, input: SectionMoveInput) =>

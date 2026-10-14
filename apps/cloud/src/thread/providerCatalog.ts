@@ -79,9 +79,9 @@ const harnessFor = (instanceId: ProviderInstanceId) => {
 };
 
 /**
- * The pool, among its owner's, whose accounts a harness instance's turns run
- * on. Threads from before pools ran on the plain `claudeAgent` and `codex`
- * instances; those run on the owner's personal pool.
+ * The pool an instance id names: its suffix, or Personal for `claude_hub` and
+ * the plain `claudeAgent` and `codex` instances from before pools. Only trust
+ * it on an id the server wrote; a client's names the harness and nothing more.
  */
 export const poolIdOfInstance = (instanceId: ProviderInstanceId): string | undefined => {
   if (harnessFor(instanceId) === undefined) return undefined;

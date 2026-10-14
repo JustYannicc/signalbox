@@ -21,8 +21,9 @@ export const Section = Schema.Struct({
   parentId: Schema.NullOr(SectionId),
   position: NonNegativeInt,
   /**
-   * The pool new threads in this section's projects run on, unless the
-   * project picks its own default model. Absent inherits the parent section.
+   * The pool placed at this section. Absent inherits from above. Signalbox
+   * Cloud runs every thread on the nearest pool on its chain (`pools`); a
+   * self-hosted server only starts new threads in the section on it.
    */
   defaultPoolId: Schema.optional(AccountPoolId),
   contextId: Schema.optionalKey(SectionContextId),
@@ -36,6 +37,34 @@ export const ProjectSectionPlacement = Schema.Struct({
 });
 export type ProjectSectionPlacement = typeof ProjectSectionPlacement.Type;
 
+/** A level a pool can be placed at: the top level, a section, or a project. */
+export const PoolLevel = Schema.Union([
+  Schema.TaggedStruct("top", {}),
+  Schema.TaggedStruct("section", { sectionId: SectionId }),
+  Schema.TaggedStruct("project", { projectId: ProjectId }),
+]);
+export type PoolLevel = typeof PoolLevel.Type;
+
+/** The pool a level runs on, and the level it's placed at. */
+export const ResolvedPool = Schema.Struct({ poolId: AccountPoolId, from: PoolLevel });
+export type ResolvedPool = typeof ResolvedPool.Type;
+
+/**
+ * What every level runs on, as the server resolves it: the nearest pool on
+ * its chain (itself, then each section above, then the top level). One pool
+ * supplies every harness. Null: no pool on the chain, so its threads need one.
+ */
+export const SectionsPools = Schema.Struct({
+  top: Schema.NullOr(ResolvedPool),
+  sections: Schema.Array(
+    Schema.Struct({ sectionId: SectionId, pool: Schema.NullOr(ResolvedPool) }),
+  ),
+  projects: Schema.Array(
+    Schema.Struct({ projectId: ProjectId, pool: Schema.NullOr(ResolvedPool) }),
+  ),
+});
+export type SectionsPools = typeof SectionsPools.Type;
+
 /** The current organization tree and project placements for one environment. */
 export const SectionsSnapshot = Schema.Struct({
   /** Increases on every committed change and is persisted across restarts. */
@@ -43,6 +72,8 @@ export const SectionsSnapshot = Schema.Struct({
   sections: Schema.Array(Section),
   /** Explicit placements only. Projects without a row belong to root in project-list order. */
   projectPlacements: Schema.Array(ProjectSectionPlacement),
+  /** Only from servers that run threads on pools by hierarchy (Signalbox Cloud). */
+  pools: Schema.optionalKey(SectionsPools),
 });
 export type SectionsSnapshot = typeof SectionsSnapshot.Type;
 
@@ -65,7 +96,7 @@ export const SectionCreateInput = Schema.Struct({
 });
 export type SectionCreateInput = typeof SectionCreateInput.Type;
 
-/** Changes the given fields; `defaultPoolId: null` makes the section inherit its pool again. */
+/** Changes the given fields; `defaultPoolId: null` makes the section inherit its pool from above. */
 export const SectionUpdateInput = Schema.Struct({
   id: SectionId,
   name: Schema.optional(SectionName),

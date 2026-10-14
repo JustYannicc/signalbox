@@ -279,7 +279,9 @@ const UNNEEDED: MachinePlan = { ...IDLE, stop: true };
 
 /**
  * What the live harness run's model token is for, if a run is live. The
- * thread's owner runs its turns, on one of their own pools.
+ * thread's owner runs its turns, on the pool its chain resolved to: the run's
+ * instance names that pool, since the engine moves every selection onto it
+ * before a run exists (`turnPool.ts`). A pool id a client sent never gets here.
  */
 const modelGrantFor = (
   projection: OrchestrationV2ThreadProjection,

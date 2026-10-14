@@ -1,3 +1,4 @@
+import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 import {
   WORKOS_TEST_ENV,
   type WorkOSCodes,
@@ -48,6 +49,7 @@ import { contextOfProject } from "./user/contextProjects.ts";
 import * as DrivePeople from "./user/DrivePeople.ts";
 import * as DriveSharing from "./user/DriveSharing.ts";
 import * as DriveShortcuts from "./user/DriveShortcuts.ts";
+import * as ResourceBindings from "./user/ResourceBindings.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
@@ -79,7 +81,9 @@ export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_E
 
 /** A user object's storage services on a fresh in-memory database, migrated. */
 export const layerMemoryStore = UserSections.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives)),
+  Layer.provideMerge(
+    Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives, ResourceBindings.layer),
+  ),
   Layer.provideMerge(Layer.effectDiscard(UserStore.migrate)),
   Layer.provideMerge(
     Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
@@ -99,6 +103,7 @@ export const layerPersonalThreadContexts = (userId: string) =>
             : { contextId, driveId: myDriveId(contextId, userId), remote: false },
         );
       },
+      turnPools: Effect.succeed({ top: PERSONAL_POOL_ID, projects: {} }),
     }),
   );
 

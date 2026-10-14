@@ -178,10 +178,10 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../state/sectionPoolDefault", () => ({
+vi.mock("../state/projectPool", () => ({
   // signalbox: no section pools in these tests.
   draftModelSelection: () => null,
-  useSectionPoolModelSelection: () => () => null,
+  useProjectPoolModelSelection: () => () => null,
 }));
 vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
 vi.mock("../uiStateStore", () => ({

@@ -37,7 +37,7 @@ import {
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
-import { draftModelSelection, useSectionPoolModelSelection } from "../state/sectionPoolDefault"; // signalbox
+import { draftModelSelection, useProjectPoolModelSelection } from "../state/projectPool"; // signalbox
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -65,7 +65,7 @@ export function useNewThreadHandler() {
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
-  const sectionPool = useSectionPoolModelSelection(); // signalbox
+  const projectPool = useProjectPoolModelSelection(); // signalbox
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
     return resolveThreadRouteTarget(currentRouteParams);
@@ -153,15 +153,15 @@ export function useNewThreadHandler() {
             currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
           destinationDraftId,
         });
-      // signalbox: unless the project picks its own default, the thread starts on its section's pool.
+      // signalbox: the thread starts on the pool its project runs on.
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
         const override = resolveUpstreamModelSelectionOverride(destinationDraftId);
         return (
-          sectionPool({
+          projectPool({
             environmentId: projectRef.environmentId,
             projectId: project?.id ?? null,
             selection: override ?? draftModelSelection(getComposerDraft(destinationDraftId)),
-            resolved: projectSettings,
+            providerInstances: projectSettings.settings.providerInstances,
             providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
           }) ?? override
         );
@@ -460,7 +460,7 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router, sectionPool],
+    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router, projectPool],
   );
 }
 

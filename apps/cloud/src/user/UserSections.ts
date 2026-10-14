@@ -1,5 +1,6 @@
 import type { ProjectId } from "@t3tools/contracts";
 import {
+  type PoolLevel,
   type ProjectSectionPlacement,
   type Section,
   type SectionCreateInput,
@@ -9,6 +10,7 @@ import {
   type SectionProjectMoveInput,
   SectionsRpcError,
   type SectionsRpcErrorCode,
+  type SectionsPools,
   type SectionsSnapshot,
   type SectionUpdateInput,
 } from "@t3tools/contracts/sections";
@@ -23,6 +25,8 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { type PoolTree, resolvePool } from "./poolChain.ts";
+import * as ResourceBindings from "./ResourceBindings.ts";
 import * as UserContexts from "./UserContexts.ts";
 
 /**
@@ -31,8 +35,9 @@ import * as UserContexts from "./UserContexts.ts";
  * every section organizes one context: a top-level section names it (Personal
  * when it doesn't say), a
  * subsection shares its parent's, and neither sections nor projects move
- * between contexts. Sections only organize; moving one never changes where
- * anything is stored or who can reach it.
+ * between contexts. Sections never change where anything is stored or who
+ * can reach it; they do decide what it runs on: a pool placed at a section
+ * serves the projects below it (`poolChain.ts`), from their next turn.
  */
 
 type Failure = SectionsRpcError | SqlError;
@@ -50,6 +55,10 @@ export class UserSections extends Context.Service<
     readonly moveProject: (
       input: SectionProjectMoveInput,
     ) => Effect.Effect<SectionsSnapshot, Failure>;
+    /** Takes a deleted pool off every level, so they inherit from above again. */
+    readonly forgetPool: (poolId: string) => Effect.Effect<void, SqlError>;
+    /** What every current project, and the top level, runs on now. */
+    readonly pools: Effect.Effect<SectionsPools, SqlError>;
     /** Every row as stored, contexts left included: what a preview takes along (`previewSetup/`). */
     readonly rows: Effect.Effect<SectionRows, SqlError>;
     /** Adds rows another of this user's clouds holds, never over ones here. */
@@ -94,17 +103,20 @@ export const PlacementRow = Schema.Struct({
 export const SectionRows = Schema.Struct({
   sections: Schema.Array(SectionRow),
   placements: Schema.Array(PlacementRow),
+  // Optional: a cloud from before pools by hierarchy sends none.
+  bindings: Schema.optionalKey(Schema.Array(ResourceBindings.BindingRow)),
 });
 export type SectionRows = typeof SectionRows.Type;
 const decodeSectionRows = Schema.decodeUnknownSync(Schema.Array(SectionRow));
 const decodePlacementRows = Schema.decodeUnknownSync(Schema.Array(PlacementRow));
 
-const toSection = (row: typeof SectionRow.Type): Section => ({
+const toSection = (row: typeof SectionRow.Type, poolId: string | undefined): Section => ({
   id: row.id,
   name: row.name,
   parentId: row.parent_id,
   position: row.position,
   contextId: row.context_id,
+  ...(poolId === undefined ? {} : { defaultPoolId: poolId }),
 });
 
 const fail = (code: SectionsRpcErrorCode, detail: string) =>
@@ -134,12 +146,55 @@ interface State {
   readonly contexts: ReadonlyArray<SignalboxContext>;
   readonly sections: ReadonlyArray<typeof SectionRow.Type>;
   readonly placements: ReadonlyArray<typeof PlacementRow.Type>;
+  readonly bindings: ReadonlyArray<ResourceBindings.PoolBinding>;
 }
+
+/**
+ * The user's tree as pools see it: a project sits in its section, or at the
+ * top level when it has none; a section sits in its parent, or at the top.
+ */
+const treeOf = (current: State): PoolTree => {
+  const parentOf = new Map(current.sections.map((row) => [row.id, row.parent_id]));
+  const sectionOf = new Map(current.placements.map((row) => [row.project_id, row.section_id]));
+  const inSection = (sectionId: string | null | undefined): PoolLevel =>
+    sectionId != null && parentOf.has(sectionId) ? { _tag: "section", sectionId } : { _tag: "top" };
+  return {
+    parentOf: (level) => {
+      switch (level._tag) {
+        case "top":
+          return null;
+        case "section":
+          return inSection(parentOf.get(level.sectionId));
+        case "project":
+          return inSection(sectionOf.get(level.projectId));
+      }
+    },
+    bindings: current.bindings,
+  };
+};
+
+const poolsOf = (current: State): SectionsPools => {
+  const tree = treeOf(current);
+  return {
+    top: resolvePool(tree, { _tag: "top" }),
+    sections: current.sections.map((row) => ({
+      sectionId: row.id,
+      pool: resolvePool(tree, { _tag: "section", sectionId: row.id }),
+    })),
+    projects: current.contexts
+      .flatMap((context) => context.projectIds)
+      .map((projectId) => ({
+        projectId,
+        pool: resolvePool(tree, { _tag: "project", projectId }),
+      })),
+  };
+};
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
   const contexts = yield* UserContexts.UserContexts;
+  const bindings = yield* ResourceBindings.ResourceBindings;
   // Own changes and context changes share one signal, so a subscriber that
   // subscribes before its first read misses neither.
   const changed = yield* PubSub.sliding<void>(1);
@@ -164,7 +219,7 @@ const make = Effect.gen(function* () {
         projectIds.has(row.project_id) &&
         (row.section_id === null || sectionIds.has(row.section_id)),
     );
-    return { contexts: current, sections, placements };
+    return { contexts: current, sections, placements, bindings: yield* bindings.pools };
   });
 
   const revision = Effect.all([
@@ -174,15 +229,25 @@ const make = Effect.gen(function* () {
 
   const snapshot: UserSections["Service"]["snapshot"] = Effect.gen(function* () {
     const current = yield* state;
+    const ownPool = new Map(
+      current.bindings.flatMap((binding) =>
+        binding.level._tag === "section"
+          ? [[binding.level.sectionId, binding.poolId] as const]
+          : [],
+      ),
+    );
     return {
       // Both parts only grow, so their sum orders snapshots across either kind of change.
       revision: yield* revision,
-      sections: byPosition(current.sections, (row) => row.id).map(toSection),
+      sections: byPosition(current.sections, (row) => row.id).map((row) =>
+        toSection(row, ownPool.get(row.id)),
+      ),
       projectPlacements: current.placements.map((row): ProjectSectionPlacement => ({
         projectId: row.project_id as ProjectId,
         sectionId: row.section_id,
         position: row.position,
       })),
+      pools: poolsOf(current),
     };
   });
 
@@ -296,12 +361,16 @@ const make = Effect.gen(function* () {
     mutate((current) =>
       Effect.gen(function* () {
         const section = yield* requireSection(current, input.id);
-        // The cloud has no account pools yet, so there is no pool to pick; clearing one is a no-op.
-        if (input.defaultPoolId !== undefined && input.defaultPoolId !== null) {
-          return yield* fail("invalid-move", "Signalbox Cloud has no account pools yet.");
-        }
+        const pool =
+          input.defaultPoolId === undefined
+            ? { known: true, changed: false }
+            : yield* bindings.setPool(
+                { _tag: "section", sectionId: section.id },
+                input.defaultPoolId,
+              );
+        if (!pool.known) return yield* fail("invalid-move", "Choose one of your pools.");
         const name = input.name?.trim();
-        if (name === undefined || section.name === name) return false;
+        if (name === undefined || section.name === name) return pool.changed;
         yield* sql`UPDATE sections SET name = ${name} WHERE id = ${input.id}`;
         return true;
       }),
@@ -362,6 +431,8 @@ const make = Effect.gen(function* () {
           ...projectIds(current, contextId, input.id),
         ]);
         yield* sql`DELETE FROM sections WHERE id = ${input.id}`;
+        // Its projects inherit from its parent now, like its pool's other levels.
+        yield* bindings.setPool({ _tag: "section", sectionId: input.id }, null);
         return true;
       }),
     ).pipe(Effect.withSpan("UserSections.delete"));
@@ -404,6 +475,20 @@ const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.withSpan("UserSections.moveProject"));
 
+  const forgetPool: UserSections["Service"]["forgetPool"] = (poolId) =>
+    Effect.gen(function* () {
+      const forgotten = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          if (!(yield* bindings.forgetPool(poolId))) return false;
+          yield* sql`UPDATE sections_state SET revision = revision + 1 WHERE id = 1`;
+          return true;
+        }),
+      );
+      if (forgotten) yield* PubSub.publish(changed, undefined);
+    });
+
+  const pools: UserSections["Service"]["pools"] = Effect.map(state, poolsOf);
+
   const rows: UserSections["Service"]["rows"] = Effect.all({
     sections: sql`SELECT id, context_id, parent_id, name, position FROM sections`.pipe(
       Effect.map(decodeSectionRows),
@@ -411,6 +496,7 @@ const make = Effect.gen(function* () {
     placements: sql`SELECT project_id, section_id, position FROM project_placements`.pipe(
       Effect.map(decodePlacementRows),
     ),
+    bindings: bindings.rows,
   });
 
   const adopt: UserSections["Service"]["adopt"] = (input) =>
@@ -428,6 +514,7 @@ const make = Effect.gen(function* () {
               VALUES (${row.project_id}, ${row.section_id}, ${row.position})
               ON CONFLICT (project_id) DO NOTHING`;
           }
+          yield* bindings.adopt(input.bindings ?? []);
           yield* sql`UPDATE sections_state SET revision = revision + 1 WHERE id = 1`;
         }),
       )
@@ -441,6 +528,8 @@ const make = Effect.gen(function* () {
     move,
     delete: remove,
     moveProject,
+    forgetPool,
+    pools,
     rows,
     adopt,
   });
