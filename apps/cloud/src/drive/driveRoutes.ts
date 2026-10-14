@@ -57,6 +57,7 @@ export interface DriveRouteEnv extends GitHub.GitHubEnv {
   readonly USERS: UserDirectory.UserObjectNamespace;
   readonly DRIVES: DriveDirectory.DriveObjectNamespace;
   readonly DRIVE_PACKS: DrivePacks.PackBucket;
+  readonly DRIVE_PACKS_PREFIX?: string;
 }
 
 type Services =
@@ -122,7 +123,7 @@ export async function handleDriveRequest(
       Layer.provideMerge(
         Layer.mergeAll(
           DriveDirectory.layerDurableObjects(env.DRIVES, options),
-          DrivePacks.layerBucket(env.DRIVE_PACKS),
+          DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
           UserDirectory.layerDurableObjects(env.USERS, options),
           ThreadDirectory.layerDurableObjects(env.THREADS, options),
           // Only users' own tokens act on GitHub here; the App's client stays in their objects.

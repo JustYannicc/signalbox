@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import type { LoginStart, LoginStatus, PoolLoginProvider } from "./cliProxyApi.ts";
 import type { PoolLinkTarget } from "./poolLink.ts";
 import type { PoolModels } from "./poolModels.ts";
+import type { PreviewLinkCleanupTarget } from "./PreviewLinkRegistry.ts";
 import {
   type AccountAction,
   type PoolAccounts,
@@ -180,7 +181,9 @@ export interface PoolObjectNamespace {
   readonly jurisdiction: (name: typeof POOL_OBJECT_JURISDICTION) => {
     readonly idFromName: (name: string) => DurableObjectId;
   };
-  readonly get: (id: DurableObjectId) => PoolObjectApi & PoolModelApi & PoolLinkTarget & Fetcher;
+  readonly get: (
+    id: DurableObjectId,
+  ) => PoolObjectApi & PoolModelApi & PoolLinkTarget & PreviewLinkCleanupTarget & Fetcher;
 }
 
 /** Local workerd has no jurisdictions, so `wrangler dev` uses the plain namespace. */

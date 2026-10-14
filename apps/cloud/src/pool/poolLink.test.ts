@@ -211,19 +211,31 @@ describe("PoolLinks", () => {
       const links = yield* PoolLinks.PoolLinks;
       const moved = yield* links.open(userId);
       const abandoned = yield* links.open(userId);
-      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: true });
+      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: true, previewOrigin: null });
       yield* links.claim(moved);
       yield* TestClock.adjust(PoolLinks.MOVE_WINDOW_MS);
-      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: false });
+      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: false, previewOrigin: null });
       expect(yield* links.resolve(abandoned)).toBeNull();
       expect(yield* links.resolve("unknown")).toBeNull();
 
       // A preview's link routes from the start, never moves, and lapses.
       const preview = yield* links.open(userId, { origin: "https://preview-7.signalbox.run" });
-      expect(yield* links.resolve(preview)).toEqual({ userId, moveOpen: false });
-      yield* TestClock.adjust(PoolLinks.PREVIEW_LINK_TTL_MS);
+      const otherPreview = yield* links.open(userId, { origin: "https://preview-8.signalbox.run" });
+      expect(yield* links.resolve(preview)).toEqual({
+        userId,
+        moveOpen: false,
+        previewOrigin: "https://preview-7.signalbox.run",
+      });
+      expect(yield* links.removePreviewLinks("https://preview-7.signalbox.run")).toBe(1);
       expect(yield* links.resolve(preview)).toBeNull();
-      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: false });
+      expect(yield* links.resolve(otherPreview)).toEqual({
+        userId,
+        moveOpen: false,
+        previewOrigin: "https://preview-8.signalbox.run",
+      });
+      yield* TestClock.adjust(PoolLinks.PREVIEW_LINK_TTL_MS);
+      expect(yield* links.resolve(otherPreview)).toBeNull();
+      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: false, previewOrigin: null });
     }).pipe(
       Effect.provide(
         Layer.effectDiscard(Effect.andThen(PoolLinks.createTables, PoolLinks.addPreviewLinks)).pipe(

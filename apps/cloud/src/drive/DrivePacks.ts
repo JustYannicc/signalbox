@@ -6,9 +6,9 @@ import type { Bytes } from "./git/gitObjects.ts";
 
 /**
  * Where drives' packs live: R2, in the EU jurisdiction, under
- * `<drive id>/packs/pack-<name>.{pack,idx}`. Packs are immutable and named by
- * their checksum, so writing one twice writes the same bytes, and anything
- * read from one can be cached for good.
+ * `<preview prefix><drive id>/packs/pack-<name>.{pack,idx}`. Packs are
+ * immutable and named by their checksum, so writing one twice writes the same
+ * bytes, and anything read from one can be cached for good.
  */
 
 export class DrivePackError extends Schema.TaggedError<DrivePackError>()("DrivePackError", {
@@ -46,8 +46,17 @@ export class DrivePacks extends Context.Service<
   }
 >()("@signalbox/cloud/drive/DrivePacks") {}
 
-const packKey = (driveId: string, name: string, file: PackFile) =>
-  `${driveId}/packs/pack-${name}.${file}`;
+export const drivePackPrefix = (value: string | undefined) => {
+  if (value === undefined || value.trim() === "") return "";
+  const prefix = value.trim();
+  if (!/^pr-[1-9]\d*\/?$/u.test(prefix)) {
+    throw new Error("DRIVE_PACKS_PREFIX must be empty or a PR prefix such as pr-123/.");
+  }
+  return prefix.endsWith("/") ? prefix : `${prefix}/`;
+};
+
+export const drivePackKey = (driveId: string, name: string, file: PackFile, prefix = "") =>
+  `${prefix}${driveId}/packs/pack-${name}.${file}`;
 
 /** The slice of an R2 bucket binding drives use. */
 export interface PackBucket {
@@ -65,24 +74,25 @@ export interface PackBucket {
 const attempt = <A>(operation: string, run: () => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new DrivePackError({ operation, cause }) });
 
-export const layerBucket = (bucket: PackBucket) =>
-  Layer.succeed(
+export const layerBucket = (bucket: PackBucket, prefixValue?: string) => {
+  const prefix = drivePackPrefix(prefixValue);
+  return Layer.succeed(
     DrivePacks,
     DrivePacks.of({
       // The index goes last: a pack without its index is never read.
       put: ({ driveId, name, idx, pack }) =>
         attempt("put", async () => {
-          await bucket.put(packKey(driveId, name, "pack"), pack);
-          await bucket.put(packKey(driveId, name, "idx"), idx);
+          await bucket.put(drivePackKey(driveId, name, "pack", prefix), pack);
+          await bucket.put(drivePackKey(driveId, name, "idx", prefix), idx);
         }),
       get: (driveId, name, file) =>
         attempt("get", async () => {
-          const object = await bucket.get(packKey(driveId, name, file));
+          const object = await bucket.get(drivePackKey(driveId, name, file, prefix));
           return object === null ? null : { body: object.body, size: object.size };
         }),
       range: (driveId, name, offset, length) =>
         attempt("range", async () => {
-          const object = await bucket.get(packKey(driveId, name, "pack"), {
+          const object = await bucket.get(drivePackKey(driveId, name, "pack", prefix), {
             range: { offset, length },
           });
           if (object === null) throw new Error(`Pack ${name} is missing.`);
@@ -90,6 +100,7 @@ export const layerBucket = (bucket: PackBucket) =>
         }),
     }),
   );
+};
 
 /** Packs in memory, for tests. */
 export const makeMemoryBucket = (): PackBucket & { readonly keys: () => ReadonlyArray<string> } => {

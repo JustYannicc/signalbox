@@ -291,9 +291,10 @@ own (`apps/cloud/src/drive/`). Every drive is a project in its owner's and
 members' sidebars, and a thread works in the drive it was started in. A drive
 is a git repository with no git server: packs in the `DRIVE_PACKS` R2 bucket
 (`signalbox-drives`, previews `signalbox-drives-preview`, both in the EU
-jurisdiction), refs in the drive's `DriveObject`. The Runner checks the
-thread's branch out as the harness's working directory, uploads one pack and
-moves `wip/<thread>` after each batch of tool calls, and at the end of a turn
+jurisdiction), refs in the drive's `DriveObject`. Preview pack keys start with
+`pr-<number>/`; production keys have no prefix. The Runner checks the thread's
+branch out as the harness's working directory, uploads one pack and moves
+`wip/<thread>` after each batch of tool calls, and at the end of a turn
 merges `main` into `threads/<thread>` and fast-forwards `main`. A merge
 conflict goes back to the agent as one more step of the same turn. Clients
 browse `main` and each turn's diff through the Worker, with no machine
@@ -334,6 +335,12 @@ harness session so its native resume swaps the instructions in.
 `wrangler dev` keeps the bucket locally. Deployments need both buckets
 created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
 and the same for `-preview`); without them the deploy fails.
+
+The preview bucket may still contain keys written before PR prefixes existed.
+After every currently open preview has redeployed with its `pr-<number>/`
+prefix or closed, run the `Sweep Signalbox Cloud Previews` workflow manually
+with `cleanup_legacy_preview_packs` enabled. It deletes only unprefixed keys in
+`signalbox-drives-preview`.
 
 ### What an agent reads beyond its drive
 
@@ -508,6 +515,11 @@ deploy` with the Worker's secrets attached to the new version:
   `wrangler.jsonc`) with its own Durable Objects, so it never shares users or
   sessions with production. Closing the pull request deletes it.
 
+Closing a pull request also deletes its R2 prefix and removes its pool links
+from production. The close workflow removes both Workers and both container
+applications. A weekly sweep retries leftovers. Reopening a pull request
+clears its closed-link marker before deploying the preview again.
+
 Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
 which each preview derives its own session secret.
@@ -521,6 +533,11 @@ which each preview derives its own session secret.
 | `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                  |
 | `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                                           |
 | `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                             |
+
+The production deploy derives the preview-cleanup token from
+`CLOUDFLARE_API_TOKEN`. Keep the same token value in both GitHub environments
+so preview workflows can call the production cleanup route. The route never
+receives the Cloudflare token itself.
 
 WorkOS must list each origin's `/api/account/callback` as a redirect URI:
 `https://app.signalbox.run/...` for production and

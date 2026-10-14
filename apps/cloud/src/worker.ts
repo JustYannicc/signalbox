@@ -13,10 +13,16 @@ import { ModelGatewayRecord } from "./modelGateway/modelGatewayRecord.ts";
 import { reportModelRequest, serveModel } from "./thread/runner/modelGrants.ts";
 import { connectRunner, isRunnerSocketPath } from "./thread/runner/runnerRoute.ts";
 import { forwardSessionRequest, isSessionApiPath } from "./thread/session/sessionRoutes.ts";
+import {
+  handlePreviewCleanup,
+  PREVIEW_CLEANUP_PATH,
+  type PreviewCleanupEnv,
+} from "./previewSetup/previewCleanup.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 
 export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
+export { PreviewLinkRegistry } from "./pool/PreviewLinkRegistryDO.ts";
 export { DriveObject } from "./drive/DriveObject.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
@@ -28,7 +34,7 @@ export { UserObject } from "./user/UserObject.ts";
  * list the Vite dev proxy forwards) reach this Worker.
  */
 
-export interface CloudEnv extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv {
+export interface CloudEnv extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv, PreviewCleanupEnv {
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
 }
 
@@ -73,6 +79,7 @@ export default {
     if (isSessionApiPath(pathname)) {
       return forwardSessionRequest(env.THREADS, request, { localWorkerd });
     }
+    if (pathname === PREVIEW_CLEANUP_PATH) return handlePreviewCleanup(request, env);
     if (isPoolLinkPath(pathname)) return routePoolLink(env.POOLS, request, { localWorkerd });
     if (isDriveApiPath(pathname)) {
       return env.DRIVES === undefined || env.DRIVE_PACKS === undefined
