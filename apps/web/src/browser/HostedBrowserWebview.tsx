@@ -214,6 +214,17 @@ export function HostedBrowserWebview(props: {
   }, [clientSettingsHydrated, config, initialSrc, runtimeTabId, webviewGeneration]);
 
   const active = presentation.visible && presentation.rect !== null;
+  // The server tells agents whether a person sees the page it drives.
+  useEffect(() => {
+    const bridge = window.desktopBridge?.preview;
+    if (!bridge || !serverDriven) return;
+    withDesktopTab(runtimeTabId, () => bridge.setVisible(runtimeTabId, active));
+  }, [active, runtimeTabId, serverDriven]);
+  useEffect(() => {
+    const bridge = window.desktopBridge?.preview;
+    if (!bridge || !serverDriven) return;
+    return () => withDesktopTab(runtimeTabId, () => bridge.setVisible(runtimeTabId, false));
+  }, [runtimeTabId, serverDriven]);
   const lastRect = presentation.rect;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;

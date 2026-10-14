@@ -9,7 +9,7 @@ import {
   INCOGNITO_BROWSER_PROFILE_ID,
   resolveBrowserProfiles,
   type BrowserProfile,
-  type PreviewReportProfilesInput,
+  PreviewReportProfilesInput,
   PREVIEW_AUTOMATION_SERVER_OPERATIONS,
   PreviewViewportSetting as PreviewViewportSettingSchema,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -44,6 +44,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -54,10 +55,13 @@ import { constVoid } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
@@ -246,8 +250,9 @@ export class ServerBrowser extends Context.Service<
     /** Deletes a human profile's server-side storage, closing its open tabs first. */
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
     /**
-     * Records a client's browser profiles for agents' preview_open. In memory:
-     * clients report again on connect and whenever the list changes.
+     * Records a client's browser profiles for agents' preview_open. The latest
+     * report survives a restart; clients report again on connect and whenever
+     * the list changes.
      */
     readonly reportProfiles: (input: PreviewReportProfilesInput) => Effect.Effect<void>;
   }
@@ -519,6 +524,12 @@ const make = Effect.gen(function* () {
     },
   });
 
+  /** Whether a person sees the tab: a viewer streams it, or a desktop panel shows its page. */
+  const seen = (tab: ServerTab) =>
+    tab.viewers.size > 0 ||
+    (tab.desktop !== null &&
+      desktopChannel.isVisible({ threadId: tab.threadId, tabId: tab.tabId }));
+
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
       ? {
@@ -602,7 +613,7 @@ const make = Effect.gen(function* () {
             liveTabs: [...tabs.values()].map((tab) => ({
               threadId: tab.threadId,
               tabId: tab.tabId,
-              visible: tab.viewers.size > 0,
+              visible: seen(tab),
             })),
           }),
         ),
@@ -683,14 +694,18 @@ const make = Effect.gen(function* () {
   /** Whether the preview session for a tab still exists. */
   const sessionOpen = (tab: ServerTab) => !closedSessions.has(tabKey(tab.threadId, tab.tabId));
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  /**
+   * Ends the server's hold on a tab. Viewers reconnect when the session lives
+   * on in another page: a desktop page outlives its connection, and a headless
+   * page `reconnect` hands over to the desktop.
+   */
+  const dropTab = (tab: ServerTab, closeSession: boolean, reconnect = tab.desktop !== null) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
     tab.closing = true;
     clearAbortedNavigation(tab);
-    // A desktop page outlives the connection unless its session closed with it.
-    const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
+    const end = reconnect && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     // The desktop owns its page; letting go only ends this connection.
@@ -1237,8 +1252,7 @@ const make = Effect.gen(function* () {
   const closeIdleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     for (const tab of tabs.values()) {
-      if (tab.control.agentId !== null && tab.viewers.size === 0 && tab.usedAt < cutoff)
-        dropTab(tab, true);
+      if (tab.control.agentId !== null && !seen(tab) && tab.usedAt < cutoff) dropTab(tab, true);
     }
   };
 
@@ -1253,9 +1267,7 @@ const make = Effect.gen(function* () {
         .filter((tab) => tab.control.agentId === agentSessionId)
         .sort((left, right) => right.createdAt - left.createdAt)[0] ??
       threadTabs.sort(
-        (left, right) =>
-          Number(right.viewers.size > 0) - Number(left.viewers.size > 0) ||
-          right.usedAt - left.usedAt,
+        (left, right) => Number(seen(right)) - Number(seen(left)) || right.usedAt - left.usedAt,
       )[0]
     );
   };
@@ -1273,15 +1285,51 @@ const make = Effect.gen(function* () {
     readonly defaultProfileId: string;
   } | null = null;
 
+  const applyReportedProfiles = (input: PreviewReportProfilesInput) => {
+    const profiles = resolveBrowserProfiles(input.profiles);
+    reportedProfiles = {
+      profiles,
+      defaultProfileId:
+        findBrowserProfile(profiles, input.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+    };
+  };
+
+  // Kept beside the profiles' storage, so an agent tab opened after a restart,
+  // before any client reports again, still lands in the profile with the logins.
+  const reportedProfilesFile = NodePath.join(
+    config.stateDir,
+    "server-browser",
+    "reported-profiles.json",
+  );
+  const reportedProfilesJson = Schema.fromJsonString(PreviewReportProfilesInput);
+  const fileServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  /** Serializes saves so the file ends with the latest report; skips repeats. */
+  const saveLock = yield* Semaphore.make(1);
+  let savedProfilesJson: string | null = null;
+  yield* Effect.tryPromise(() => NodeFSP.readFile(reportedProfilesFile, "utf8")).pipe(
+    Effect.tap((json) => Effect.sync(() => (savedProfilesJson = json))),
+    Effect.flatMap(Schema.decodeUnknownEffect(reportedProfilesJson)),
+    Effect.tap((input) => Effect.sync(() => applyReportedProfiles(input))),
+    Effect.ignore,
+  );
+
   const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = (input) =>
-    Effect.sync(() => {
-      const profiles = resolveBrowserProfiles(input.profiles);
-      reportedProfiles = {
-        profiles,
-        defaultProfileId:
-          findBrowserProfile(profiles, input.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
-      };
-    });
+    Effect.sync(() => applyReportedProfiles(input)).pipe(
+      Effect.andThen(Schema.encodeEffect(reportedProfilesJson)(input)),
+      Effect.flatMap((json) =>
+        saveLock.withPermits(1)(
+          json === savedProfilesJson
+            ? Effect.void
+            : writeFileStringAtomically({ filePath: reportedProfilesFile, contents: json }).pipe(
+                Effect.tap(() => Effect.sync(() => (savedProfilesJson = json))),
+              ),
+        ),
+      ),
+      Effect.provide(fileServices),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("could not save the reported browser profiles", { cause }),
+      ),
+    );
 
   const profileStatus = () => {
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
@@ -1331,7 +1379,7 @@ const make = Effect.gen(function* () {
     const viewport = tab.page.viewportSize();
     const status = {
       available: true,
-      visible: tab.viewers.size > 0,
+      visible: seen(tab),
       tabId: tab.tabId,
       url: url === "about:blank" ? null : url,
       title: null,
@@ -1355,7 +1403,7 @@ const make = Effect.gen(function* () {
           ...(candidate.openerTabId === undefined ? {} : { openerTabId: candidate.openerTabId }),
           owner: tabOwner(candidate),
           ownedByCaller: candidate.control.agentId === agentSessionId,
-          visible: candidate.viewers.size > 0,
+          visible: seen(candidate),
           ...(candidate.profileId === undefined ? {} : { profileId: candidate.profileId }),
         })),
       ...profileStatus(),
@@ -2405,20 +2453,34 @@ const make = Effect.gen(function* () {
     ),
     Effect.forkScoped,
   );
-  // The page came back, for example after its DevTools closed. Reconnect now
-  // rather than on the next viewer or agent, or the tab's URL and title stop
-  // reaching every client in the meantime.
+  // The page came back, for example after its DevTools closed, or the desktop
+  // rendered a tab only after it had launched headless. Connect now rather than
+  // on the next viewer or agent: the person sees the desktop's page, with their
+  // own logins, so a headless copy must not keep taking the agent's actions.
   yield* desktopChannel.attached.pipe(
     Stream.runForEach((key) =>
       Effect.gen(function* () {
-        if (tabs.has(tabKey(key.threadId, key.tabId))) return;
+        const id = tabKey(key.threadId, key.tabId);
+        if (tabs.get(id)?.desktop && !pendingTabs.has(id)) return;
+        // A tab still opening may have given up on the desktop just before this attach.
+        const current = yield* Effect.promise(() =>
+          (pendingTabs.get(id) ?? Promise.resolve(tabs.get(id))).catch(() => undefined),
+        );
+        if (current?.desktop) return;
+        // Read after the wait: the session may have closed while the tab opened.
         const { sessions } = yield* manager.list({ threadId: ThreadId.make(key.threadId) });
         const snapshot = sessions.find(
           (session) => session.tabId === key.tabId && session.runtime === "server",
         );
-        if (snapshot) yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
+        if (!snapshot) return;
+        if (current) dropTab(current, false, true);
+        yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
       }).pipe(Effect.ignore),
     ),
+    Effect.forkScoped,
+  );
+  yield* desktopChannel.visibilityChanged.pipe(
+    Stream.runForEach(() => Effect.sync(reportLiveTabs)),
     Effect.forkScoped,
   );
   yield* Effect.sync(closeIdleAgentTabs).pipe(

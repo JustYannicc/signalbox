@@ -168,6 +168,8 @@ const desktopRenders = (tabId: string) => {
   }
   return desktopTabs.has(tabId);
 };
+/** Desktop tabs a panel shows. */
+const desktopVisibleTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
 const testThread = {
@@ -188,55 +190,61 @@ const asSession = (providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, providerSessionId },
 });
-const dependencies = Layer.mergeAll(
-  Broker.layer,
-  Manager.layer,
-  Layer.succeed(ServerEnvironment.ServerEnvironment, {
-    getEnvironmentId: Effect.succeed(scope.environmentId),
-    getDescriptor: Effect.die("unused descriptor"),
-  }),
-  Layer.succeed(PreviewBrowser.PreviewBrowser, {
-    executable: Effect.die("mock Chromium does not need an executable"),
-    installed: Effect.die("mock Chromium does not need an executable"),
-  }),
-  Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
-    // Only tabs a test marks render on the desktop; the rest stay headless.
-    available: true,
-    awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
-    detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          const onDetach = (key: { threadId: string; tabId: string }) =>
-            Queue.offerUnsafe(queue, key);
-          desktopDetaches.on("detach", onDetach);
-          return onDetach;
-        }),
-        (onDetach) => Effect.sync(() => desktopDetaches.off("detach", onDetach)),
+const dependenciesAt = (home: string | { readonly prefix: string }) =>
+  Layer.mergeAll(
+    Broker.layer,
+    Manager.layer,
+    Layer.succeed(ServerEnvironment.ServerEnvironment, {
+      getEnvironmentId: Effect.succeed(scope.environmentId),
+      getDescriptor: Effect.die("unused descriptor"),
+    }),
+    Layer.succeed(PreviewBrowser.PreviewBrowser, {
+      executable: Effect.die("mock Chromium does not need an executable"),
+      installed: Effect.die("mock Chromium does not need an executable"),
+    }),
+    Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
+      // Only tabs a test marks render on the desktop; the rest stay headless.
+      available: true,
+      awaitAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+      detached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const onDetach = (key: { threadId: string; tabId: string }) =>
+              Queue.offerUnsafe(queue, key);
+            desktopDetaches.on("detach", onDetach);
+            return onDetach;
+          }),
+          (onDetach) => Effect.sync(() => desktopDetaches.off("detach", onDetach)),
+        ),
       ),
-    ),
-    attached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          const onAttach = (key: { threadId: string; tabId: string }) =>
-            Queue.offerUnsafe(queue, key);
-          desktopDetaches.on("attach", onAttach);
-          return onAttach;
-        }),
-        (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
+      attached: Stream.callback<{ threadId: string; tabId: string }>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const onAttach = (key: { threadId: string; tabId: string }) =>
+              Queue.offerUnsafe(queue, key);
+            desktopDetaches.on("attach", onAttach);
+            return onAttach;
+          }),
+          (onAttach) => Effect.sync(() => desktopDetaches.off("attach", onAttach)),
+        ),
       ),
-    ),
-    isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
-    endpoint: (key) =>
-      Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
-        Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
-      ),
-    pointer: () => Effect.void,
-  }),
-).pipe(
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
-  Layer.provideMerge(NodeServices.layer),
-);
-const layer = ServerBrowser.layer.pipe(Layer.provideMerge(dependencies));
+      isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+      isVisible: (key) => desktopVisibleTabs.has(key.tabId),
+      visibilityChanged: Stream.empty,
+      endpoint: (key) =>
+        Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
+          Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
+        ),
+      pointer: () => Effect.void,
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), home)),
+    Layer.provideMerge(NodeServices.layer),
+  );
+/** The service as one server process with its own home, or a fresh temporary one. */
+const layerAt = (home: string | { readonly prefix: string }) =>
+  ServerBrowser.layer.pipe(Layer.provideMerge(dependenciesAt(home)));
+const layer = layerAt({ prefix: "t3-server-browser-" });
 const ready = Effect.gen(function* () {
   const browser = yield* ServerBrowser.ServerBrowser;
   const broker = yield* Broker.PreviewAutomationBroker;
@@ -273,6 +281,7 @@ beforeEach(() => {
   contextGate = null;
   contextFailure = null;
   desktopTabs.clear();
+  desktopVisibleTabs.clear();
   desktopRendersNext = false;
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
@@ -1348,6 +1357,30 @@ it.live("drives the desktop's own page for a tab the desktop renders", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a desktop tab is visible while a desktop panel shows it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const status = broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+        tabId: PreviewTabId.make(opened.tabId),
+      });
+      // The desktop draws the page itself, so no viewer ever streams it.
+      expect(yield* status).toMatchObject({ visible: false });
+      desktopVisibleTabs.add(opened.tabId);
+      const shown = yield* status;
+      expect(shown).toMatchObject({ visible: true });
+      expect(shown.tabs).toEqual([expect.objectContaining({ tabId: opened.tabId, visible: true })]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a desktop page the desktop takes back reconnects instead of closing", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1371,6 +1404,47 @@ it.live("a desktop page the desktop takes back reconnects instead of closing", (
       expect(sessions.map((session) => session.tabId)).toContain(opened.tabId);
       yield* browser.attachViewer(viewerInput(opened.tabId, false));
       expect(desktopConnections).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a headless tab moves to the desktop's page once the desktop renders it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // The desktop had no webview for the tab in time, so it launched headless.
+      const { browser, broker, tabId } = yield* ready;
+      const headless = contexts[0]!.page;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
+      // Then the desktop showed the thread and offered its own page for the tab.
+      while (desktopDetaches.listenerCount("attach") === 0) yield* Effect.yieldNow;
+      desktopTabs.add(tabId);
+      desktopDetaches.emit("attach", { threadId: scope.thread.threadId, tabId });
+      const end = yield* Queue.take(viewer.output).pipe(
+        Effect.repeat({ until: (item) => item._tag === "reconnect" || item._tag === "gone" }),
+        Effect.timeout("2 seconds"),
+      );
+      expect(end._tag).toBe("reconnect");
+      // The agent's next call reaches the tab through the desktop's page.
+      expect(headless.close).toHaveBeenCalled();
+      // The agent keeps its tab and now drives the page the person sees.
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:5173/after" },
+      });
+      expect(desktopConnections[0]!.context.page.goto).toHaveBeenCalledWith(
+        "http://localhost:5173/after",
+        expect.anything(),
+      );
+      expect(headless.goto).not.toHaveBeenCalled();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.control).toMatchObject({ owner: "agent", ownedByCaller: true });
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1546,6 +1620,25 @@ it.live("an agent tab keeps throwaway storage when no client reported profiles",
       expect(contextRequests).toEqual([{ profileId: "default", isolated: true }]);
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.live("an agent tab keeps the profile clients last reported after a server restart", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-browser-restart-" });
+    yield* Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      yield* browser.reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerAt(home)));
+    // The restarted server opens an agent tab before any client reports again.
+    yield* Effect.gen(function* () {
+      yield* ready;
+      expect(contextRequests).toEqual([{ profileId: "profile-work", isolated: false }]);
+    }).pipe(Effect.scoped, Effect.provide(layerAt(home)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.live("a desktop page that comes back reconnects without waiting for a viewer", () =>

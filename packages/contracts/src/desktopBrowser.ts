@@ -25,6 +25,8 @@ export const DesktopBrowserEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("detached"), ...TabKey }),
   /** One CDP message from the tab's relay. */
   Schema.Struct({ type: Schema.Literal("cdp"), ...TabKey, message: Schema.String }),
+  /** Whether a person can see the tab's `<webview>` in a panel right now. */
+  Schema.Struct({ type: Schema.Literal("visibility"), ...TabKey, visible: Schema.Boolean }),
 ]);
 export type DesktopBrowserEvent = typeof DesktopBrowserEvent.Type;
 
