@@ -337,9 +337,12 @@ created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
 and the same for `-preview`); without them the deploy fails.
 
 The preview bucket may still contain keys written before PR prefixes existed.
-After every currently open preview has redeployed with its `pr-<number>/`
-prefix or closed, run the `Sweep Signalbox Cloud Previews` workflow manually
-with `cleanup_legacy_preview_packs` enabled. It deletes only unprefixed keys in
+A preview whose prefixed read misses falls back to the unprefixed key, so
+previews deployed before prefixes keep their packs across redeploys; new packs
+are always written under the prefix. Run the `Sweep Signalbox Cloud Previews`
+workflow manually with `cleanup_legacy_preview_packs` enabled once, after every
+preview that was open when prefixes landed has closed (a redeploy isn't enough:
+it still reads the old keys). It deletes only unprefixed keys in
 `signalbox-drives-preview`.
 
 ### What an agent reads beyond its drive
@@ -517,8 +520,16 @@ deploy` with the Worker's secrets attached to the new version:
 
 Closing a pull request also deletes its R2 prefix and removes its pool links
 from production. The close workflow removes both Workers and both container
-applications. A weekly sweep retries leftovers. Reopening a pull request
-clears its closed-link marker before deploying the preview again.
+applications first, then asks production for the rest; if production's cleanup
+route fails, the job goes red and the weekly sweep retries. Reopening a pull
+request clears its closed-link marker before deploying the preview again.
+
+Production finds a preview's links through a registry that pools record into
+when they make or serve one. Links made before the registry existed aren't in
+it. The sweep's one-off `backfill_preview_links` option asks every production
+PoolObject to drop links for pull requests closed in the last 90 days; run it
+once, after the previews open when the registry landed have closed. Anything it
+misses expires within 90 days.
 
 Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from

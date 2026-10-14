@@ -25,8 +25,9 @@ on:
       - apps/server/src/orchestration-v2/Adapters/**
       - pnpm-lock.yaml
       - .github/workflows/deploy-cloud.yml
-      - .github/workflows/sweep-cloud-previews.yml
-      - .github/scripts/**
+      # Production's cleanup token is derived by this script. The other cleanup
+      # scripts run from main's checkout when a PR closes, so they need no deploy.
+      - .github/scripts/preview-cleanup-token.sh
       # Every deploy reconnects every client, so skip what never ships.
       - "!**/*.test.ts"
       - "!**/*.test.tsx"
@@ -191,7 +192,10 @@ jobs:
           BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
 
       # A reopened pull request may use the same preview origin as before.
-      # Never run PR-controlled cleanup code while the Cloudflare token is available.
+      # This job already runs PR code (the build, wrangler) with the Cloudflare
+      # token, which is enough to derive the cleanup token. Main's checkout isn't
+      # a security boundary: it only means a reopen uses main's reviewed call,
+      # not whatever the PR changed it to.
       - name: Checkout trusted preview cleanup scripts
         if: github.event.action == 'reopened'
         uses: actions/checkout@v6
@@ -268,7 +272,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
-      # Never run PR-controlled cleanup code while the Cloudflare token is available.
+      # Only main's scripts run here: no PR code ever sees the token in this job.
       - name: Checkout trusted cleanup scripts
         uses: actions/checkout@v6
         with:

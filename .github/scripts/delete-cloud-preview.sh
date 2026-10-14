@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Deletes one closed pull request's preview. Cloudflare resources go first and
+# never wait on production: its cleanup route may be down, not deployed yet, or
+# reject the token. Production's part is best effort; any failure exits non-zero
+# at the end so the job shows red and the weekly sweep retries.
 set -euo pipefail
 
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
@@ -19,50 +23,32 @@ while true; do
 done
 
 containers="$(npx --yes wrangler@4 containers list --json)"
-assets="$(bash .github/scripts/call-preview-cleanup.sh list)"
-has_preview_assets=false
-for name in "signalbox-model-gateway-pr-$pr_number" "signalbox-cloud-pr-$pr_number"; do
-  if grep -Fxq "$name" <<< "$worker_names"; then has_preview_assets=true; fi
-done
-for app in pools threads; do
-  id="$(jq -r --arg name "signalbox-cloud-pr-$pr_number-$app" \
-    '.[] | select(.name == $name) | .id' <<< "$containers")"
-  if [[ -n "$id" ]]; then has_preview_assets=true; fi
-done
-if jq -e --argjson number "$pr_number" '.prNumbers | index($number) != null' \
-  <<< "$assets" >/dev/null; then
-  has_preview_assets=true
-fi
-if [[ "$has_preview_assets" != "true" ]]; then
-  echo "No Cloudflare preview resources found for PR #$pr_number."
-  exit 0
-fi
-
-pool_object_ids="$(bash .github/scripts/list-production-pool-object-ids.sh)"
-pool_object_count="$(jq 'length' <<< "$pool_object_ids")"
-offset=0
-while ((offset < pool_object_count)); do
-  pool_object_batch="$(jq -c --argjson offset "$offset" '.[$offset : ($offset + 100)]' <<< "$pool_object_ids")"
-  bash .github/scripts/call-preview-cleanup.sh delete-links "$pr_number" "$pool_object_batch"
-  offset=$((offset + 100))
-done
+failed=0
 
 for name in "signalbox-model-gateway-pr-$pr_number" "signalbox-cloud-pr-$pr_number"; do
-  if grep -Fxq "$name" <<< "$worker_names"; then
-    npx --yes wrangler@4 delete --name "$name" --force
-  else
+  if ! grep -Fxq "$name" <<< "$worker_names"; then
     echo "No preview Worker $name to delete."
+  elif ! npx --yes wrangler@4 delete --name "$name" --force; then
+    echo "::error::Could not delete preview Worker $name."
+    failed=1
   fi
 done
 
 for app in pools threads; do
   id="$(jq -r --arg name "signalbox-cloud-pr-$pr_number-$app" \
     '.[] | select(.name == $name) | .id' <<< "$containers")"
-  if [[ -n "$id" ]]; then
-    npx --yes wrangler@4 containers delete "$id"
-  else
+  if [[ -z "$id" ]]; then
     echo "No preview container signalbox-cloud-pr-$pr_number-$app to delete."
+  elif ! npx --yes wrangler@4 containers delete "$id"; then
+    echo "::error::Could not delete preview container signalbox-cloud-pr-$pr_number-$app."
+    failed=1
   fi
 done
 
-bash .github/scripts/call-preview-cleanup.sh delete "$pr_number"
+# Production drops the preview's pool links (from its registry) and R2 prefix.
+if ! bash .github/scripts/call-preview-cleanup.sh delete "$pr_number"; then
+  echo "::error::Production could not clean up PR #$pr_number's drive packs and pool links."
+  failed=1
+fi
+
+exit "$failed"

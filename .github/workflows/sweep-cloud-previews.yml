@@ -6,7 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       cleanup_legacy_preview_packs:
-        description: Delete unprefixed objects from signalbox-drives-preview
+        description: Delete unprefixed objects from signalbox-drives-preview. Only once every preview deployed before PR prefixes has closed.
+        required: false
+        type: boolean
+        default: false
+      backfill_preview_links:
+        description: Ask every production PoolObject to drop links for PRs closed in the last 90 days, including links made before the registry. One-off; wakes every pool.
         required: false
         type: boolean
         default: false
@@ -31,6 +36,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       GH_TOKEN: ${{ github.token }}
       CLEANUP_LEGACY_PREVIEW_PACKS: ${{ inputs.cleanup_legacy_preview_packs }}
+      BACKFILL_PREVIEW_LINKS: ${{ inputs.backfill_preview_links }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6

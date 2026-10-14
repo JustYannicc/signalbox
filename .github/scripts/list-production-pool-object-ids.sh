@@ -4,13 +4,22 @@ set -euo pipefail
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 
-namespaces="$(curl --fail --silent --show-error --get \
-  --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  --data-urlencode 'per_page=1000' \
-  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/durable_objects/namespaces")"
-namespace_ids="$(jq -r \
-  '.result[]? | select(.script == "signalbox-cloud" and .class == "PoolObject") | .id | select(type == "string")' \
-  <<< "$namespaces")"
+namespace_ids=''
+page=1
+while true; do
+  namespaces="$(curl --fail --silent --show-error --get \
+    --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    --data-urlencode 'per_page=1000' \
+    --data-urlencode "page=$page" \
+    "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/durable_objects/namespaces")"
+  namespace_ids+="$(jq -r \
+    '.result[]? | select(.script == "signalbox-cloud" and .class == "PoolObject") | .id | select(type == "string")' \
+    <<< "$namespaces")"$'\n'
+  total_pages="$(jq -r '.result_info.total_pages // 1' <<< "$namespaces")"
+  ((page >= total_pages)) && break
+  ((page += 1))
+done
+namespace_ids="$(sed '/^$/d' <<< "$namespace_ids")"
 namespace_count="$(grep -c . <<< "$namespace_ids" || true)"
 if [[ "$namespace_count" != "1" ]]; then
   echo "Expected one production PoolObject namespace, found $namespace_count." >&2

@@ -19,10 +19,18 @@ while true; do
   ((page += 1))
 done
 
+failed=0
 containers="$(npx --yes wrangler@4 containers list --json)"
-assets="$(bash .github/scripts/call-preview-cleanup.sh list)"
-closed="$(gh api --paginate --jq '.[].number' \
+# Without production's list, Cloudflare resources still get swept.
+if ! assets="$(bash .github/scripts/call-preview-cleanup.sh list)"; then
+  echo "::error::Could not list production's preview packs and links."
+  assets='{}'
+  failed=1
+fi
+# One "<number> <closed_at> <author>" line per closed pull request.
+closed="$(gh api --paginate --jq '.[] | "\(.number) \(.closed_at) \(.user.login)"' \
   'repos/JustYannicc/signalbox/pulls?state=closed&per_page=100')"
+closed_numbers="$(cut -d' ' -f1 <<< "$closed")"
 
 candidate_numbers="$(
   sed -nE 's/^signalbox-(cloud|model-gateway)-pr-([1-9][0-9]*)$/\2/p' <<< "$worker_names"
@@ -31,10 +39,9 @@ candidate_numbers="$(
   jq -r '.prNumbers[]?' <<< "$assets"
 )"
 
-failed=0
 while IFS= read -r number; do
   [[ -n "$number" ]] || continue
-  if grep -Fxq "$number" <<< "$closed"; then
+  if grep -Fxq "$number" <<< "$closed_numbers"; then
     if PR_NUMBER="$number" bash .github/scripts/delete-cloud-preview.sh; then
       echo "Cleaned preview resources for closed PR #$number."
     else
@@ -44,8 +51,37 @@ while IFS= read -r number; do
   fi
 done < <(sort -nu <<< "$candidate_numbers")
 
-if [[ "$failed" == "1" ]]; then exit 1; fi
+# One-off: links made before production's registry existed are only findable by
+# asking every production PoolObject. Links expire after 90 days, so only pull
+# requests closed within that window can still have them.
+if [[ "${BACKFILL_PREVIEW_LINKS:-false}" == "true" ]]; then
+  if pool_object_ids="$(bash .github/scripts/list-production-pool-object-ids.sh)"; then
+    pool_object_count="$(jq 'length' <<< "$pool_object_ids")"
+    cutoff="$(date -u -d '90 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+    while read -r number closed_at author; do
+      # Only JustYannicc's pull requests get previews.
+      [[ -n "$number" && "$closed_at" > "$cutoff" && "$author" == "JustYannicc" ]] || continue
+      offset=0
+      while ((offset < pool_object_count)); do
+        batch="$(jq -c --argjson offset "$offset" '.[$offset : ($offset + 100)]' <<< "$pool_object_ids")"
+        if ! bash .github/scripts/call-preview-cleanup.sh delete-links "$number" "$batch"; then
+          echo "::error::Could not backfill pool link cleanup for closed PR #$number."
+          failed=1
+        fi
+        offset=$((offset + 100))
+      done
+    done <<< "$closed"
+  else
+    echo "::error::Could not list production PoolObjects for the link backfill."
+    failed=1
+  fi
+fi
 
 if [[ "${CLEANUP_LEGACY_PREVIEW_PACKS:-false}" == "true" ]]; then
-  bash .github/scripts/call-preview-cleanup.sh clear-legacy-packs
+  if ! bash .github/scripts/call-preview-cleanup.sh clear-legacy-packs; then
+    echo "::error::Could not delete legacy preview drive packs."
+    failed=1
+  fi
 fi
+
+exit "$failed"

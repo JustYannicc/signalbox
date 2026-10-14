@@ -57,6 +57,29 @@ const memoryBucket = (initial: ReadonlyArray<string>, pageSize = 1000) => {
   };
 };
 
+const cleanupRequest = (body: unknown) =>
+  new Request("https://app.signalbox.run/api/internal/preview-cleanup", {
+    method: "POST",
+    headers: { authorization: "Bearer cleanup-token", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+const untouchedRegistry: PreviewLinkRegistryApi = {
+  registerPool: async () => expect.unreachable(),
+  cleanupOrigin: async () => expect.unreachable(),
+  activateOrigin: async () => expect.unreachable(),
+  listOrigins: async () => expect.unreachable(),
+};
+
+const cleanupEnv = (bucket: ReturnType<typeof memoryBucket>) => ({
+  PREVIEW_CLEANUP_TOKEN: "cleanup-token",
+  PREVIEW_DRIVE_PACKS: bucket,
+  PREVIEW_LINKS: {
+    idFromName: () => ({}) as DurableObjectId,
+    get: () => untouchedRegistry,
+  } as PreviewLinkRegistryNamespace,
+});
+
 describe("preview drive pack cleanup", () => {
   it("lists PR prefixes and deletes only the requested prefix", async () => {
     const bucket = memoryBucket(
@@ -92,6 +115,33 @@ describe("preview drive pack cleanup", () => {
       "pr-12/drive/packs/pack-a.pack",
       "pr-213/drive/packs/pack-b.idx",
     ]);
+  });
+
+  it("is not found while production has no cleanup token", async () => {
+    const { PREVIEW_CLEANUP_TOKEN: _, ...env } = cleanupEnv(memoryBucket([]));
+    const response = await handlePreviewCleanup(cleanupRequest({ action: "list" }), env);
+    expect(response.status).toBe(404);
+  });
+
+  it.each([
+    ["a zero PR number", { action: "delete", pullRequestNumber: 0 }],
+    ["a negative PR number", { action: "delete", pullRequestNumber: -1 }],
+    ["a fractional PR number", { action: "activate", pullRequestNumber: 1.5 }],
+    ["a path in the PR number", { action: "delete", pullRequestNumber: "1/../" }],
+    ["no pool objects", { action: "delete-links", pullRequestNumber: 1, poolObjectIds: [] }],
+    [
+      "more than 100 pool objects",
+      {
+        action: "delete-links",
+        pullRequestNumber: 1,
+        poolObjectIds: Array.from({ length: 101 }, (_, index) => `pool-${index}`),
+      },
+    ],
+  ])("rejects %s", async (_, body) => {
+    const bucket = memoryBucket(["pr-1/drive/packs/pack-a.pack"]);
+    const response = await handlePreviewCleanup(cleanupRequest(body), cleanupEnv(bucket));
+    expect(response.status).toBe(400);
+    expect(bucket.keys()).toEqual(["pr-1/drive/packs/pack-a.pack"]);
   });
 
   it("requires the cleanup token and removes only the requested preview state", async () => {
