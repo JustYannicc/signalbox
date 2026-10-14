@@ -127,6 +127,9 @@ export type PoolNeed =
       readonly instanceId: ProviderInstanceId | null;
     };
 
+/** What a composer's send button says while its project has a `PoolNeed`. */
+export const NEEDS_A_POOL = "Needs a pool";
+
 export function poolNeed(input: {
   readonly pool: ResolvedPool | null | undefined;
   readonly providerInstances: ProviderInstances;

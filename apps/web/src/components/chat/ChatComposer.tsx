@@ -260,13 +260,13 @@ import {
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
+import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
 import {
-  NEEDS_A_POOL,
   NeedsPoolControl,
-  sendBlamesEnvironment,
   useNeedsPool,
   useProjectPoolEntries,
 } from "../accountPool/ProjectPoolGate"; // signalbox
+import { sendBlamesEnvironment } from "../accountPool/needsPoolCopy"; // signalbox
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
@@ -2266,7 +2266,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentUnavailable: environmentUnavailable !== null,
     projectSelectionRequired,
     noProviderAvailable,
-    poolNeed: projectPoolNeed,
+    poolNeeded: needsPool !== null,
   });
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,

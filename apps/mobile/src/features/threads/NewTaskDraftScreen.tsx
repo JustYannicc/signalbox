@@ -137,7 +137,8 @@ import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
-import { NEEDS_A_POOL, NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
+import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
+import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";

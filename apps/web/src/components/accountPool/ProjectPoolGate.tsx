@@ -12,8 +12,6 @@ import { ComposerControl, type ComposerControlSize } from "../chat/ComposerContr
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { needsPoolCopy } from "./needsPoolCopy";
 
-export { NEEDS_A_POOL, sendBlamesEnvironment } from "./needsPoolCopy";
-
 /**
  * The entries a thread in `projectId` can pick, its pool's only, and what the
  * project needs before its threads can run. Every entry where the server
@@ -46,13 +44,14 @@ export function useNeedsPool(
   environmentId: EnvironmentId | null,
   need: PoolNeed | null,
 ): NeedsPool | null {
-  const views = usePoolViews(environmentId);
-  return useMemo(() => {
-    if (need === null) return null;
-    const poolName =
-      need._tag === "signIn" ? views.find((view) => view.id === need.poolId)?.name : undefined;
-    return { need, ...needsPoolCopy(need, poolName) };
-  }, [need, views]);
+  // Only a sign-in names its pool; views change with usage, so only it subscribes.
+  const views = usePoolViews(need?._tag === "signIn" ? environmentId : null);
+  const poolName =
+    need?._tag === "signIn" ? views.find((view) => view.id === need.poolId)?.name : undefined;
+  return useMemo(
+    () => (need === null ? null : { need, ...needsPoolCopy(need, poolName) }),
+    [need, poolName],
+  );
 }
 
 export type NeedsPool = ReturnType<typeof needsPoolCopy> & { readonly need: PoolNeed };

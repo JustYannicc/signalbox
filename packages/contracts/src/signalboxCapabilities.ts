@@ -54,8 +54,11 @@ export function environmentSupports(
 
 /** Whether Add project offers `provider` on an environment. Unknown and absent offer every host. */
 export function environmentImportsFrom(
-  capabilities: { readonly sourceControlImports?: ReadonlyArray<string> } | null | undefined,
-  provider: string,
+  capabilities:
+    | { readonly sourceControlImports?: ReadonlyArray<SourceControlProviderKind> }
+    | null
+    | undefined,
+  provider: SourceControlProviderKind,
 ): boolean {
   return capabilities?.sourceControlImports?.includes(provider) ?? true;
 }

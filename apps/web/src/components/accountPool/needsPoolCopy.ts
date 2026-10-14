@@ -1,9 +1,6 @@
 // signalbox: what the composer says while its project needs a pool.
 import type { PoolNeed } from "@t3tools/client-runtime/state/sections";
 
-/** Why sending is blocked while the project needs a pool: the send button's label. */
-export const NEEDS_A_POOL = "Needs a pool";
-
 /** The composer's copy for a pool need, given the pool's name once its views list it. */
 export function needsPoolCopy(need: PoolNeed, poolName: string | undefined) {
   const action = need._tag === "signIn" ? `Sign in to ${poolName ?? "its pool"}` : "Choose a pool";
@@ -26,11 +23,11 @@ export function sendBlamesEnvironment(input: {
   readonly environmentUnavailable: boolean;
   readonly projectSelectionRequired: boolean;
   readonly noProviderAvailable: boolean;
-  readonly poolNeed: PoolNeed | null;
+  readonly poolNeeded: boolean;
 }) {
   return (
     input.environmentUnavailable ||
     input.projectSelectionRequired ||
-    (input.noProviderAvailable && input.poolNeed === null)
+    (input.noProviderAvailable && !input.poolNeeded)
   );
 }

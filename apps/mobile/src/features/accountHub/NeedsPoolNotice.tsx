@@ -8,9 +8,6 @@ import { AppText as Text } from "../../components/AppText";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 
-/** Why sending is blocked while the project needs a pool: the send button's label. */
-export const NEEDS_A_POOL = "Needs a pool";
-
 /**
  * Its one action opens the pools in Usage. Subscriptions are added on web and
  * desktop, so it says where.

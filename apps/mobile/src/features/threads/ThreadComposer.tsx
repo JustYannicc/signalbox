@@ -66,7 +66,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { NEEDS_A_POOL, NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
+import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
+import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 import { usePoolServerConfig } from "../sections/useProjectPool"; // signalbox
 
 import { AppText as Text } from "../../components/AppText";
@@ -556,7 +557,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
     attachmentBlockReason;
   const canSend =
-    poolNeed === null && // signalbox
     (props.canOperateThread || props.connectionState !== "connected") &&
     hasContent &&
     !contextImports[composerDraftKey] &&

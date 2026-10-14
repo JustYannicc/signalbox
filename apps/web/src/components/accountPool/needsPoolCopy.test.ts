@@ -26,20 +26,19 @@ describe("needsPoolCopy", () => {
 
 describe("sendBlamesEnvironment", () => {
   it("leaves a connected environment out of a pool need", () => {
-    expect(sendBlamesEnvironment({ ...connected, poolNeed: signIn })).toBe(false);
-    expect(sendBlamesEnvironment({ ...connected, poolNeed: noPool })).toBe(false);
+    expect(sendBlamesEnvironment({ ...connected, poolNeeded: true })).toBe(false);
   });
 
   it("still blames a disconnected environment, pool need or not", () => {
     expect(
-      sendBlamesEnvironment({ ...connected, environmentUnavailable: true, poolNeed: signIn }),
+      sendBlamesEnvironment({ ...connected, environmentUnavailable: true, poolNeeded: true }),
     ).toBe(true);
   });
 
   it("keeps upstream's no-provider behavior where pools don't apply", () => {
-    expect(sendBlamesEnvironment({ ...connected, poolNeed: null })).toBe(true);
+    expect(sendBlamesEnvironment({ ...connected, poolNeeded: false })).toBe(true);
     expect(
-      sendBlamesEnvironment({ ...connected, noProviderAvailable: false, poolNeed: null }),
+      sendBlamesEnvironment({ ...connected, noProviderAvailable: false, poolNeeded: false }),
     ).toBe(false);
   });
 });

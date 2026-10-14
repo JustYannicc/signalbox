@@ -4,7 +4,11 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // signalbox: accounts
 import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
-import { resolveAddProjectAvailability } from "@t3tools/client-runtime/operations/signalboxAddProject"; // signalbox: cloud capability gates
+import {
+  addProjectCloneSources,
+  addProjectSourceSupport,
+  resolveAddProjectAvailability,
+} from "@t3tools/client-runtime/operations/signalboxAddProject"; // signalbox: cloud capability gates
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -57,7 +61,6 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
-  environmentImportsFrom,
   environmentSupports,
   type SignalboxEnvironmentCapability,
 } from "@t3tools/contracts";
@@ -932,12 +935,12 @@ function OpenCommandPaletteDialog(props: {
     [environments],
   );
 
-  const environmentImports = useCallback(
-    (environmentId: EnvironmentId | null, provider: SourceControlProviderKind): boolean =>
-      environmentImportsFrom(
+  // signalbox: the clone sources an environment offers.
+  const environmentSources = useCallback(
+    (environmentId: EnvironmentId | null) =>
+      addProjectSourceSupport(
         environments.find((environment) => environment.environmentId === environmentId)
           ?.serverConfig?.environment.capabilities,
-        provider,
       ),
     [environments],
   );
@@ -1609,13 +1612,10 @@ function OpenCommandPaletteDialog(props: {
         });
       }
 
-      // Without `cloneFromUrl` the hosts' own sources still take a pasted URL.
-      const orderedSources: ReadonlyArray<AddProjectRemoteSource> = [
-        ...(environmentCan(environmentId, "cloneFromUrl") ? (["url"] as const) : []),
-        ...sortAddProjectProviderSources(readinessBySource).filter((source) =>
-          environmentImports(environmentId, source),
-        ),
-      ];
+      const orderedSources = addProjectCloneSources(
+        sortAddProjectProviderSources(readinessBySource),
+        environmentSources(environmentId),
+      );
 
       for (const source of orderedSources) {
         const label = addProjectRemoteSourceLabel(source);
@@ -1684,7 +1684,7 @@ function OpenCommandPaletteDialog(props: {
     },
     [
       environmentCan,
-      environmentImports,
+      environmentSources,
       newProjectsRootFor,
       openSourceControlSettings,
       startAddProjectBrowse,
