@@ -27,6 +27,7 @@ import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubRoutes from "./github/githubRoutes.ts";
+import * as ConnectionRoutes from "./connections/connectionRoutes.ts";
 import * as AccountRoutes from "./http/accountRoutes.ts";
 import * as WorkOSWebhook from "./http/workosWebhook.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
@@ -97,6 +98,7 @@ const routes = Layer.mergeAll(
   DiagnosticsRoutes.layer,
   WorkOSWebhook.layer,
   GitHubRoutes.layer,
+  ConnectionRoutes.layer,
 ).pipe(Layer.provide(layerCors));
 
 const json = (body: unknown, status: number) =>

@@ -18,6 +18,7 @@ import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -122,6 +123,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           PoolSignIns.layer,
           drives.services,
           GitHubConnection.layer,
+          ConnectionLinks.layer,
         ),
       ),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
@@ -244,6 +246,26 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   githubAccessToken() {
     return this.api.githubAccessToken();
+  }
+
+  createConnectionLink(label: string) {
+    return this.api.createConnectionLink(label);
+  }
+
+  connectionLinks() {
+    return this.api.connectionLinks();
+  }
+
+  revokeConnectionLink(id: string) {
+    return this.api.revokeConnectionLink(id);
+  }
+
+  linkedConnections(secret: string) {
+    return this.api.linkedConnections(secret);
+  }
+
+  linkedToken(input: Parameters<UserObjectApi["linkedToken"]>[0]) {
+    return this.api.linkedToken(input);
   }
 
   contextIds() {

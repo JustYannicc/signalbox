@@ -57,12 +57,23 @@ const GitHubConnectClaims = Schema.TaggedStruct("github-connect", {
   exp: ExpiresAt,
 });
 
+/**
+ * A connection link a tool outside Signalbox holds (`connections/ConnectionLinks.ts`).
+ * Signed so a made-up link never wakes a user's object; it lives until revoked.
+ */
+const ConnectionLinkClaims = Schema.TaggedStruct("connection-link", {
+  u: UserId,
+  s: Schema.String,
+  exp: ExpiresAt,
+});
+
 const SignedClaims = Schema.Union([
   SessionClaims,
   TicketClaims,
   CredentialClaims,
   HandoffClaims,
   GitHubConnectClaims,
+  ConnectionLinkClaims,
 ]);
 export type SignedClaims = typeof SignedClaims.Type;
 type SignedKind = SignedClaims["_tag"];
