@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Cookies from "effect/http/Cookies";
 import { HttpServerRequest } from "effect/http";
 
+import * as CloudSessions from "../auth/CloudSessions.ts";
 import { SESSION_COOKIE_NAME } from "../environment.ts";
 
 /** Credential-bearing responses are never cached. */
@@ -17,6 +18,22 @@ export function requestCredentials(request: HttpServerRequest.HttpServerRequest)
     : undefined;
   return { cookie: request.cookies[SESSION_COOKIE_NAME], bearer: bearer || undefined };
 }
+
+/** The request's full URL. */
+export const requestUrl = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+  Option.getOrThrow(HttpServerRequest.toURL(request)),
+);
+
+/**
+ * The browser's session, from its cookie only: for flows that run browser to
+ * browser (connecting GitHub, a preview's setup), where bearer tokens belong to apps.
+ */
+export const browserSession = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const { cookie } = requestCredentials(request);
+  const sessions = yield* CloudSessions.CloudSessions;
+  return yield* sessions.authenticate({ cookie }).pipe(Effect.option);
+});
 
 /** `Secure` everywhere but plain-http local development. */
 function cookieOptions(request: HttpServerRequest.HttpServerRequest) {

@@ -21,6 +21,7 @@ import { HttpClient } from "effect/http";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as CloudConfig from "../CloudConfig.ts";
+import * as PreviewSetup from "../previewSetup/PreviewSetup.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 
 /**
@@ -150,6 +151,7 @@ const make = Effect.gen(function* () {
   const sessions = yield* CloudSessions.CloudSessions;
   const users = yield* UserDirectory.UserDirectory;
   const httpClient = yield* HttpClient.HttpClient;
+  const previewSetup = yield* PreviewSetup.PreviewSetupConfig;
 
   const workosAuthenticate = (grant: WorkOSClient.WorkOSGrant) =>
     WorkOSClient.authenticate(workos, grant).pipe(
@@ -267,7 +269,8 @@ const make = Effect.gen(function* () {
       );
       return {
         _tag: "BrowserSession",
-        location: attempt.target.returnTo,
+        // A preview takes the user's production setup on the way (`previewSetup/`).
+        location: PreviewSetup.signInLocation(previewSetup, attempt.target.returnTo),
         token,
         expiresAt: session.expiresAt,
       } satisfies SignInResult;

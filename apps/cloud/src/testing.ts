@@ -24,6 +24,8 @@ import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
+import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
+import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
@@ -69,7 +71,7 @@ export const CLOUD_TEST_ENV = {
 
 /** Fresh per call: Effect shares a layer built once, which would pin the first env. */
 export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_ENV) =>
-  Layer.fresh(CloudConfig.layer).pipe(
+  Layer.mergeAll(Layer.fresh(CloudConfig.layer), Layer.fresh(PreviewSetup.layerConfig)).pipe(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
   );
 
@@ -164,22 +166,26 @@ const makeUserRuntime = (
   github: Layer.Layer<GitHub.GitHub>,
 ) =>
   ManagedRuntime.make(
-    Layer.mergeAll(
-      UserShell.layer,
-      DriveSharing.layer,
-      DriveShortcuts.layer,
-      DriveFiles.layer,
-      GitHubConnection.layer,
-      ConnectionLinks.layer,
-      PoolSignIns.layer,
-    ).pipe(
-      Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
-      Layer.provideMerge(layerMemoryStore),
-      Layer.provideMerge(Layer.mergeAll(drives, people, github)),
+    UserPreviewSetup.layer.pipe(
       Layer.provideMerge(
         Layer.mergeAll(
-          Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
-          Layer.succeed(PoolDirectory.PoolDirectory, pools),
+          UserShell.layer,
+          DriveSharing.layer,
+          DriveShortcuts.layer,
+          DriveFiles.layer,
+          GitHubConnection.layer,
+          ConnectionLinks.layer,
+          PoolSignIns.layer,
+        ).pipe(
+          Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
+          Layer.provideMerge(layerMemoryStore),
+          Layer.provideMerge(Layer.mergeAll(drives, people, github)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
+              Layer.succeed(PoolDirectory.PoolDirectory, pools),
+            ),
+          ),
         ),
       ),
     ),
@@ -193,7 +199,12 @@ const makeUserRuntime = (
  * pending summary.
  */
 export const makeMemoryCloud = (
-  options: { readonly people?: TestPeople; readonly github?: Layer.Layer<GitHub.GitHub> } = {},
+  options: {
+    readonly people?: TestPeople;
+    readonly github?: Layer.Layer<GitHub.GitHub>;
+    /** What pools backed by a CLIProxyAPI elsewhere reach. */
+    readonly poolFetch?: (request: Request) => Promise<Response>;
+  } = {},
 ) => {
   const users = new Map<
     string,
@@ -222,7 +233,7 @@ export const makeMemoryCloud = (
   const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
     forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),
   };
-  const pools = makeMemoryPools();
+  const pools = makeMemoryPools(options.poolFetch);
   const drives = makeMemoryDrives({ users: () => userDirectory });
   const people = layerTestPeople(options.people ?? []);
   const userFor = (userId: string) => {

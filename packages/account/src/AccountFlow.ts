@@ -46,7 +46,8 @@ export interface ValidatedAuthorizeRequest {
   readonly target: AccountReturnTarget;
 }
 
-const BASE64URL_SHA256 = /^[A-Za-z0-9_-]{43}$/;
+/** A PKCE S256 challenge: base64url(SHA-256(verifier)). */
+export const BASE64URL_SHA256 = /^[A-Za-z0-9_-]{43}$/;
 
 function parseUrl(value: string): URL | null {
   try {
@@ -64,7 +65,7 @@ function normalizeOrigin(value: string): string | null {
 }
 
 /** Same-origin path only. `//host` and `/\host` are protocol-relative to browsers. */
-function isSameOriginPath(value: string): boolean {
+export function isSameOriginPath(value: string): boolean {
   return (
     value.startsWith("/") &&
     !value.startsWith("//") &&
