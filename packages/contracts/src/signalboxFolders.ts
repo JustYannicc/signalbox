@@ -55,7 +55,7 @@ export type FolderId = typeof FolderId.Type;
 const FolderName = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 /** What agents can load beside a drive's own `AGENTS.md`: the Runner's limit. */
-export const FOLDER_INSTRUCTIONS_MAX_LENGTH = 32 * 1024;
+const FOLDER_INSTRUCTIONS_MAX_LENGTH = 32 * 1024;
 const Instructions = Schema.String.check(Schema.isMaxLength(FOLDER_INSTRUCTIONS_MAX_LENGTH));
 
 /** A level of the tree: the top level, or a folder. */
