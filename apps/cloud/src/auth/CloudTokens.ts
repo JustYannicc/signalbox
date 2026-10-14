@@ -67,6 +67,14 @@ const ConnectionLinkClaims = Schema.TaggedStruct("connection-link", {
   exp: ExpiresAt,
 });
 
+/** A preview's one-time claim on the user's setup (`previewSetup/`), bound to its origin. */
+const PreviewSetupClaims = Schema.TaggedStruct("preview-setup", {
+  u: UserId,
+  gid: Schema.String,
+  o: Schema.String,
+  exp: ExpiresAt,
+});
+
 const SignedClaims = Schema.Union([
   SessionClaims,
   TicketClaims,
@@ -74,6 +82,7 @@ const SignedClaims = Schema.Union([
   HandoffClaims,
   GitHubConnectClaims,
   ConnectionLinkClaims,
+  PreviewSetupClaims,
 ]);
 export type SignedClaims = typeof SignedClaims.Type;
 type SignedKind = SignedClaims["_tag"];
@@ -112,7 +121,18 @@ const VerificationSeal = Schema.TaggedStruct("verification", {
   exp: ExpiresAt,
 });
 
-const SealedValue = Schema.Union([AttemptSeal, VerificationSeal]);
+/**
+ * A preview's trip to production for the user's setup (`previewSetup/`). Sealed,
+ * so the verifier its claim is redeemed with never shows in the browser.
+ */
+const PreviewSetupSeal = Schema.TaggedStruct("preview-setup-state", {
+  u: UserId,
+  returnTo: Schema.String,
+  verifier: Schema.String,
+  exp: ExpiresAt,
+});
+
+const SealedValue = Schema.Union([AttemptSeal, VerificationSeal, PreviewSetupSeal]);
 export type SealedValue = typeof SealedValue.Type;
 type SealedKind = SealedValue["_tag"];
 

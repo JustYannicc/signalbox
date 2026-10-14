@@ -66,8 +66,14 @@ export interface PoolObjectApi {
     name: string,
     action: AccountAction,
   ) => Promise<PoolReply<null>>;
-  /** A link for a server moving its own pool here (`PoolLinks.ts`); answers its secret. */
-  readonly openLink: (actor: PoolActor) => Promise<PoolReply<string>>;
+  /**
+   * A link for a server moving its own pool here (`PoolLinks.ts`); answers its
+   * secret. With `preview`, a preview link for that origin.
+   */
+  readonly openLink: (
+    actor: PoolActor,
+    preview?: { readonly origin: string },
+  ) => Promise<PoolReply<string>>;
 }
 
 /** Where a turn's model requests go: a pool's object, for the user the turn runs for. */

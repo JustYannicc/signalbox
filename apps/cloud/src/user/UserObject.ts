@@ -22,6 +22,7 @@ import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
@@ -114,7 +115,7 @@ const layerDrives = (env: UserObjectEnv) => {
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
   return ManagedRuntime.make(
-    GitHubBranches.layer.pipe(
+    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer).pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           UserShell.layer,
@@ -266,6 +267,18 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   linkedToken(input: Parameters<UserObjectApi["linkedToken"]>[0]) {
     return this.api.linkedToken(input);
+  }
+
+  issuePreviewSetupCode(input: Parameters<UserObjectApi["issuePreviewSetupCode"]>[0]) {
+    return this.api.issuePreviewSetupCode(input);
+  }
+
+  redeemPreviewSetup(input: Parameters<UserObjectApi["redeemPreviewSetup"]>[0]) {
+    return this.api.redeemPreviewSetup(input);
+  }
+
+  importPreviewSetup(input: Parameters<UserObjectApi["importPreviewSetup"]>[0]) {
+    return this.api.importPreviewSetup(input);
   }
 
   contextIds() {

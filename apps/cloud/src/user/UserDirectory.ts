@@ -19,6 +19,11 @@ import type {
   LinkedToken,
 } from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
+import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
+import type {
+  PreviewSetupApplied,
+  PreviewSetupRedemption,
+} from "../previewSetup/UserPreviewSetup.ts";
 import { jsonCodec } from "../thread/threadWire.ts";
 import type { DriveAccessEntry } from "./UserDriveIndex.ts";
 import type { GrantKind, HandoffRedemption, SessionRecord } from "./UserStore.ts";
@@ -115,6 +120,21 @@ export interface UserObjectApi {
     readonly secret: string;
     readonly provider: LinkedProvider;
   }) => Promise<LinkedToken>;
+  /** Production: a one-time claim on this user's setup for a preview (`previewSetup/`). */
+  readonly issuePreviewSetupCode: (input: {
+    readonly origin: string;
+    readonly challenge: string;
+  }) => Promise<{ readonly gid: string; readonly expiresAt: number }>;
+  readonly redeemPreviewSetup: (input: {
+    readonly gid: string;
+    readonly origin: string;
+    readonly challenge: string;
+  }) => Promise<PreviewSetupRedemption>;
+  /** A preview: takes in the setup production handed over. */
+  readonly importPreviewSetup: (input: {
+    readonly setup: PreviewSetup;
+    readonly source: string;
+  }) => Promise<PreviewSetupApplied>;
   /** The user's current contexts, which every thread call acts within. */
   readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
@@ -177,6 +197,9 @@ const METHODS = Object.keys({
   revokeConnectionLink: true,
   linkedConnections: true,
   linkedToken: true,
+  issuePreviewSetupCode: true,
+  redeemPreviewSetup: true,
+  importPreviewSetup: true,
   contextIds: true,
   recordDriveAccess: true,
   driveAccess: true,

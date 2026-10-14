@@ -3,11 +3,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 
-import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
-import { NO_STORE_HEADERS, requestCredentials } from "../http/credentials.ts";
+import { browserSession, NO_STORE_HEADERS, requestUrl } from "../http/credentials.ts";
 import { guarded, pageUser } from "../http/pageRoutes.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { GRANT_TTL_MS } from "./GitHubConnection.ts";
@@ -45,18 +44,6 @@ const page = (status: number, title: string, message: string) =>
       `<p><a href="/">Open Signalbox</a></p></body>`,
     { status, headers: NO_STORE_HEADERS, contentType: "text/html; charset=utf-8" },
   );
-
-const requestUrl = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
-  Option.getOrThrow(HttpServerRequest.toURL(request)),
-);
-
-/** The browser's session, from its cookie only: bearer tokens belong to apps, not to this flow. */
-const browserSession = Effect.gen(function* () {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const { cookie } = requestCredentials(request);
-  const sessions = yield* CloudSessions.CloudSessions;
-  return yield* sessions.authenticate({ cookie }).pipe(Effect.option);
-});
 
 const NOT_CONFIGURED = page(
   503,

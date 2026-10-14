@@ -71,6 +71,8 @@
     // Production identity. Never reuse it for another deployment.
     "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
     "ENVIRONMENT_LABEL": "Signalbox Cloud",
+    // Previews that may take a signed-in user's setup (`src/previewSetup/`).
+    "PREVIEW_SETUP_ORIGINS": "https://preview-*.signalbox.run",
   },
   "observability": { "enabled": true },
   "env": {
@@ -146,7 +148,8 @@
           "constraints": { "jurisdiction": "eu" },
         },
       ],
-      "vars": {},
+      // Where a preview takes each user's setup from (`src/previewSetup/`).
+      "vars": { "PREVIEW_SETUP_SOURCE": "https://app.signalbox.run" },
     },
   },
 }

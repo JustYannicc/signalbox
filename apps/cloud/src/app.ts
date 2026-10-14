@@ -34,6 +34,8 @@ import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credential
 import * as DiagnosticsRoutes from "./http/diagnosticsRoutes.ts";
 import * as EnvironmentApi from "./http/environmentApi.ts";
 import * as Platform from "./platform.ts";
+import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
+import * as PreviewSetupRoutes from "./previewSetup/previewSetupRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
@@ -67,7 +69,8 @@ export const layerServices = (input: {
   readonly threads: ThreadDirectory.ThreadObjectNamespace;
   readonly localWorkerd: boolean;
 }) =>
-  Layer.mergeAll(CloudAccounts.layer, CloudThreadService.layer).pipe(
+  Layer.mergeAll(CloudAccounts.layer, CloudThreadService.layer, PreviewSetup.layer).pipe(
+    Layer.provideMerge(PreviewSetup.layerSourceHttp),
     // The Worker only reads threads; they are created in their user's object.
     Layer.provideMerge(ThreadContexts.layerWorker),
     Layer.provideMerge(CloudSessions.layer),
@@ -75,7 +78,7 @@ export const layerServices = (input: {
       GitHub.layer(GitHub.gitHubPipesConfig(input.vars), GitHub.gitHubEndpoints(input.vars)),
     ),
     Layer.provideMerge(CloudTokens.layer),
-    Layer.provideMerge(CloudConfig.layer),
+    Layer.provideMerge(Layer.mergeAll(CloudConfig.layer, PreviewSetup.layerConfig)),
     Layer.provideMerge(
       Layer.mergeAll(
         UserDirectory.layerDurableObjects(input.users, { localWorkerd: input.localWorkerd }),
@@ -99,6 +102,7 @@ const routes = Layer.mergeAll(
   WorkOSWebhook.layer,
   GitHubRoutes.layer,
   ConnectionRoutes.layer,
+  PreviewSetupRoutes.layer,
 ).pipe(Layer.provide(layerCors));
 
 const json = (body: unknown, status: number) =>

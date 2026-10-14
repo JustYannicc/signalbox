@@ -19,6 +19,11 @@ import * as PoolLinks from "./PoolLinks.ts";
  *
  * The server's harnesses use `/v1/*` as their provider API, exactly as they
  * used the server's own hub, so its threads keep running on the pool.
+ *
+ * A link also answers the read-only part of CLIProxyAPI's management API
+ * (`config` and `auth-files`), so a pool elsewhere can use it as its external
+ * backing: that's how a preview's pools run on production's (`previewSetup/`).
+ * Everything that changes accounts stays with this pool.
  */
 
 const TOKEN_PREFIX = "sbpl_";
@@ -87,6 +92,23 @@ export const handleLinkRequest = (secret: string, request: Request) =>
     }
     if (path === "" && request.method === "GET") {
       return Response.json(yield* engine.linkInfo(actor));
+    }
+    if (path === "/v0/management/config" && request.method === "GET") {
+      yield* engine.info(actor);
+      return Response.json({});
+    }
+    if (path === "/v0/management/auth-files" && request.method === "GET") {
+      const { accounts } = yield* engine.accounts(actor);
+      // The fields `cliProxyApi.listAccounts` reads, signed-out ones as CLIProxyAPI marks them.
+      return Response.json({
+        files: accounts.map((account) => ({
+          name: account.name,
+          type: account.type,
+          ...(account.email === null ? {} : { email: account.email }),
+          disabled: account.disabled,
+          ...(account.signedOut ? { status: "error", unavailable: true } : {}),
+        })),
+      });
     }
     if (path === "/accounts" && request.method === "POST") {
       if (!link.moveOpen) {

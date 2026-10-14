@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
+import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import { wire } from "../thread/threadWire.ts";
 import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -29,6 +30,7 @@ export const makeUserObjectApi = (
       | ConnectionLinks.ConnectionLinks
       | UserDriveIndex.UserDriveIndex
       | UserDrives.UserDrives
+      | UserPreviewSetup.UserPreviewSetup
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -66,6 +68,12 @@ export const makeUserObjectApi = (
       run(ConnectionLinks.ConnectionLinks.use((links) => links.revoke(id))),
     linkedConnections: (secret) => run(linkedConnections(secret)),
     linkedToken: (input) => run(linkedToken(input)),
+    issuePreviewSetupCode: (input) =>
+      run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.issueCode(input))),
+    redeemPreviewSetup: (input) =>
+      run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.redeem(input))),
+    importPreviewSetup: (input) =>
+      run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.apply(input))),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),

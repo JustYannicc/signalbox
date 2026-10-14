@@ -19,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
+import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
@@ -189,6 +190,7 @@ const migrations = Migrator.fromRecord({
   "0007_pools": UserPools.createTables,
   "0008_github_pipes": GitHubConnection.moveToPipes,
   "0009_connection_links": ConnectionLinks.createTables,
+  "0010_preview_setup": UserPreviewSetup.createTables,
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */

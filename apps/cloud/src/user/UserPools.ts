@@ -89,6 +89,19 @@ export class UserPools extends Context.Service<
       actor: PoolActor,
       input: AccountPoolReceiveInput,
     ) => Effect.Effect<AccountPoolReceiveResult, AccountHubRpcError>;
+    /** The user's own pools, without reading their accounts. */
+    readonly list: (actor: PoolActor) => Effect.Effect<ReadonlyArray<UserPool>, AccountHubRpcError>;
+    /**
+     * Backs the pool with this id (Personal for a personal one) by a pool link
+     * elsewhere, creating it under that id and name when it's missing. How a
+     * preview's pools route through production's (`previewSetup/`). Doesn't
+     * refresh; the caller does once it's linked everything.
+     */
+    readonly link: (
+      actor: PoolActor,
+      pool: { readonly id: string; readonly name: string; readonly personal: boolean },
+      backing: { readonly url: string; readonly key: string },
+    ) => Effect.Effect<void, AccountHubRpcError>;
     /** The pool behind one of its provider instances. */
     readonly poolOfInstance: (
       actor: PoolActor,
@@ -251,9 +264,9 @@ const make = Effect.gen(function* () {
   const call = <A>(effect: Effect.Effect<A, PoolDirectory.PoolObjectError | PoolRejectedError>) =>
     effect.pipe(Effect.catchTags({ PoolRejectedError: poolFailure, PoolObjectError: poolFailure }));
 
-  const createPool = (actor: PoolActor, name: string) =>
+  const createPool = (actor: PoolActor, name: string, poolId?: string) =>
     Effect.gen(function* () {
-      const id = yield* newPoolId;
+      const id = poolId ?? (yield* newPoolId);
       const objectName = PoolDirectory.poolObjectName(actor.userId, id);
       const info = yield* call(
         directory.forPool(objectName).create(actor, { name: name.trim(), personal: false }),
@@ -303,13 +316,24 @@ const make = Effect.gen(function* () {
       yield* refresh(actor);
     });
 
-  const setBacking: UserPools["Service"]["setBacking"] = (actor, input) =>
+  /** Changes the pool's backing in its object, then in this list. */
+  const applyBacking = (
+    actor: PoolActor,
+    pool: UserPool,
+    backing: AccountPoolSetBackingInput["backing"],
+  ) =>
     Effect.gen(function* () {
-      const pool = yield* requirePool(actor, input.poolId);
-      const info = yield* call(directory.forPool(pool.objectName).setBacking(actor, input.backing));
+      const info = yield* call(directory.forPool(pool.objectName).setBacking(actor, backing));
       yield* sql`UPDATE pools SET backing_url = ${backingUrl(info.backing)} WHERE id = ${pool.id}`.pipe(
         Effect.catchTags({ SqlError: storageFailed }),
       );
+      return info;
+    });
+
+  const setBacking: UserPools["Service"]["setBacking"] = (actor, input) =>
+    Effect.gen(function* () {
+      const pool = yield* requirePool(actor, input.poolId);
+      const info = yield* applyBacking(actor, pool, input.backing);
       yield* refresh(actor);
       return accountPool({ ...pool, backing: info.backing });
     });
@@ -335,6 +359,19 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const link: UserPools["Service"]["link"] = (actor, input, backing) =>
+    Effect.gen(function* () {
+      const all = yield* pools(actor);
+      const existing = all.find((pool) => (input.personal ? pool.personal : pool.id === input.id));
+      const pool = existing ?? (yield* createPool(actor, input.name, input.id));
+      yield* applyBacking(actor, pool, {
+        mode: "external",
+        url: backing.url,
+        managementKey: backing.key,
+        clientKey: backing.key,
+      });
+    });
+
   const updateAccount: UserPools["Service"]["updateAccount"] = (actor, input) =>
     Effect.gen(function* () {
       const poolId = poolIdForSourceId(input.sourceId);
@@ -358,6 +395,8 @@ const make = Effect.gen(function* () {
     setBacking,
     updateAccount,
     receive,
+    list: pools,
+    link,
     poolOfInstance: (actor, instanceId) =>
       Effect.map(pools(actor), (all) => poolOfInstance(all, instanceId)),
   });

@@ -498,3 +498,30 @@ it.
 
 `ENVIRONMENT_ID` in `wrangler.jsonc` is the cloud's identity. Clients key saved
 connections on it, so never change it for a live deployment.
+
+### What a preview starts with
+
+A preview has its own Durable Objects, so it starts empty. Signing in to one
+in a browser takes your production setup along (`apps/cloud/src/previewSetup/`):
+the preview sends the browser through `app.signalbox.run`, which, if you're
+signed in there, hands it a one-time claim bound to you, that preview's origin
+and a verifier only the preview holds. The preview redeems it with production,
+server to server, and takes in the setup. Not signed in on production, or
+signed in as someone else, sign-in just goes on. No secret is shared with pull
+request builds: production lists the origins it answers in
+`PREVIEW_SETUP_ORIGINS`, previews name production in `PREVIEW_SETUP_SOURCE`
+(both in `wrangler.jsonc`).
+
+- **Pools are links, not copies.** Each of your pools on the preview, under the
+  same id, is backed by a preview link into production's pool, so production
+  stays the only thing refreshing the accounts' tokens, and accounts added
+  there show up at once. Add and manage accounts on production; the preview
+  refuses. Every sign-in to the preview renews the links (90 days each) and
+  links pools new since.
+- **Copied once:** sections, project placements and the GitHub connection
+  (Pipes keeps the tokens under your WorkOS user, which both share). Changes
+  on the preview stick.
+- **Not copied:** threads, sessions, grants, the thread index, drives, Executor
+  connection links (they're bound to the cloud that issued them) and anything
+  running. Placements of drives the preview doesn't have stay out of sight;
+  import a GitHub repository again to get its drive.

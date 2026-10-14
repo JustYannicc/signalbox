@@ -50,6 +50,10 @@ export class UserSections extends Context.Service<
     readonly moveProject: (
       input: SectionProjectMoveInput,
     ) => Effect.Effect<SectionsSnapshot, Failure>;
+    /** Every row as stored, contexts left included: what a preview takes along (`previewSetup/`). */
+    readonly rows: Effect.Effect<SectionRows, SqlError>;
+    /** Adds rows another of this user's clouds holds, never over ones here. */
+    readonly adopt: (rows: SectionRows) => Effect.Effect<void, SqlError>;
   }
 >()("@signalbox/cloud/user/UserSections") {}
 
@@ -75,18 +79,23 @@ export const createTables = Effect.gen(function* () {
   yield* sql`INSERT INTO sections_state (id, revision) VALUES (1, 0)`;
 });
 
-const SectionRow = Schema.Struct({
+export const SectionRow = Schema.Struct({
   id: SectionId,
   context_id: Schema.String,
   parent_id: Schema.NullOr(SectionId),
   name: Schema.String,
   position: Schema.Number,
 });
-const PlacementRow = Schema.Struct({
+export const PlacementRow = Schema.Struct({
   project_id: Schema.String,
   section_id: Schema.NullOr(SectionId),
   position: Schema.Number,
 });
+export const SectionRows = Schema.Struct({
+  sections: Schema.Array(SectionRow),
+  placements: Schema.Array(PlacementRow),
+});
+export type SectionRows = typeof SectionRows.Type;
 const decodeSectionRows = Schema.decodeUnknownSync(Schema.Array(SectionRow));
 const decodePlacementRows = Schema.decodeUnknownSync(Schema.Array(PlacementRow));
 
@@ -395,7 +404,46 @@ const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.withSpan("UserSections.moveProject"));
 
-  return UserSections.of({ snapshot, changes, create, update, move, delete: remove, moveProject });
+  const rows: UserSections["Service"]["rows"] = Effect.all({
+    sections: sql`SELECT id, context_id, parent_id, name, position FROM sections`.pipe(
+      Effect.map(decodeSectionRows),
+    ),
+    placements: sql`SELECT project_id, section_id, position FROM project_placements`.pipe(
+      Effect.map(decodePlacementRows),
+    ),
+  });
+
+  const adopt: UserSections["Service"]["adopt"] = (input) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          for (const row of input.sections) {
+            yield* sql`INSERT INTO sections (id, context_id, parent_id, name, position)
+              VALUES (${row.id}, ${row.context_id}, ${row.parent_id}, ${row.name}, ${row.position})
+              ON CONFLICT (id) DO NOTHING`;
+          }
+          // Placements of projects this cloud doesn't have stay out of sight (`state`).
+          for (const row of input.placements) {
+            yield* sql`INSERT INTO project_placements (project_id, section_id, position)
+              VALUES (${row.project_id}, ${row.section_id}, ${row.position})
+              ON CONFLICT (project_id) DO NOTHING`;
+          }
+          yield* sql`UPDATE sections_state SET revision = revision + 1 WHERE id = 1`;
+        }),
+      )
+      .pipe(Effect.andThen(PubSub.publish(changed, undefined)), Effect.asVoid);
+
+  return UserSections.of({
+    snapshot,
+    changes,
+    create,
+    update,
+    move,
+    delete: remove,
+    moveProject,
+    rows,
+    adopt,
+  });
 });
 
 export const layer = Layer.effect(UserSections, make);

@@ -217,9 +217,16 @@ describe("PoolLinks", () => {
       expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: false });
       expect(yield* links.resolve(abandoned)).toBeNull();
       expect(yield* links.resolve("unknown")).toBeNull();
+
+      // A preview's link routes from the start, never moves, and lapses.
+      const preview = yield* links.open(userId, { origin: "https://preview-7.signalbox.run" });
+      expect(yield* links.resolve(preview)).toEqual({ userId, moveOpen: false });
+      yield* TestClock.adjust(PoolLinks.PREVIEW_LINK_TTL_MS);
+      expect(yield* links.resolve(preview)).toBeNull();
+      expect(yield* links.resolve(moved)).toEqual({ userId, moveOpen: false });
     }).pipe(
       Effect.provide(
-        Layer.effectDiscard(PoolLinks.createTables).pipe(
+        Layer.effectDiscard(Effect.andThen(PoolLinks.createTables, PoolLinks.addPreviewLinks)).pipe(
           Layer.provideMerge(PoolLinks.layer),
           Layer.provideMerge(
             Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),

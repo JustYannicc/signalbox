@@ -42,6 +42,11 @@ export type ConnectResult =
   | { readonly _tag: "connected"; readonly login: string }
   | { readonly _tag: "failed"; readonly reason: string };
 
+export interface GitHubAccount {
+  readonly login: string;
+  readonly githubUserId: number;
+}
+
 export class GitHubConnection extends Context.Service<
   GitHubConnection,
   {
@@ -58,6 +63,10 @@ export class GitHubConnection extends Context.Service<
     readonly complete: (grantId: string) => Effect.Effect<ConnectResult, SqlError>;
     /** Undoes a connect attempt that came back in someone else's browser. */
     readonly abort: (grantId: string) => Effect.Effect<void, SqlError>;
+    /** The connection as recorded, for a preview of this user's to take along (`previewSetup/`). */
+    readonly recorded: Effect.Effect<GitHubAccount | null, SqlError>;
+    /** Records a connection Pipes already holds for this user, unless one is recorded here. */
+    readonly adopt: (account: GitHubAccount) => Effect.Effect<void, SqlError>;
     /** Forgets the connection here and in WorkOS. */
     readonly disconnect: Effect.Effect<void, SqlError>;
     /**
@@ -116,6 +125,8 @@ export const moveToPipes = Effect.gen(function* () {
 
 const ConnectionRow = Schema.Struct({ login: Schema.String });
 const decodeConnectionRows = Schema.decodeUnknownSync(Schema.Array(ConnectionRow));
+const RecordedRow = Schema.Struct({ login: Schema.String, github_user_id: Schema.Number });
+const decodeRecordedRows = Schema.decodeUnknownSync(Schema.Array(RecordedRow));
 
 const pipesError = (error: { readonly status: number; readonly message: string }) =>
   new GitHubError({ operation: "token", status: error.status, message: error.message });
@@ -225,6 +236,22 @@ const make = Effect.gen(function* () {
 
   const disconnect: GitHubConnection["Service"]["disconnect"] = forgetEverywhere;
 
+  const recorded: GitHubConnection["Service"]["recorded"] =
+    sql`SELECT login, github_user_id FROM github_connection WHERE id = 1`.pipe(
+      Effect.map((rows) => {
+        const [found] = decodeRecordedRows(rows);
+        return found ? { login: found.login, githubUserId: found.github_user_id } : null;
+      }),
+    );
+
+  const adopt: GitHubConnection["Service"]["adopt"] = (input) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql`INSERT INTO github_connection (id, login, github_user_id, connected_at)
+        VALUES (1, ${input.login}, ${input.githubUserId}, ${now})
+        ON CONFLICT (id) DO NOTHING`;
+    });
+
   const reuse = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const current = yield* Ref.get(cached);
@@ -272,6 +299,8 @@ const make = Effect.gen(function* () {
     complete,
     abort,
     disconnect,
+    recorded,
+    adopt,
     accessToken,
   });
 });
