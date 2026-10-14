@@ -66,7 +66,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
+import { NEEDS_A_POOL, NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 import { usePoolServerConfig } from "../sections/useProjectPool"; // signalbox
 
 import { AppText as Text } from "../../components/AppText";
@@ -543,17 +543,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     states: uploadStates,
   });
   const contextImports = useAtomValue(composerContextImportsAtom);
-  const sendBlockedReason =
-    (queuedEdit?.saving === true ? "Saving…" : null) ??
-    props.sendBlockedReason ??
-    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
-    attachmentBlockReason;
   // signalbox: the picker offers only the pool the thread's project runs on.
   const { config: poolServerConfig, need: poolNeed } = usePoolServerConfig(
     props.environmentId,
     props.selectedThread.projectId,
     props.serverConfig,
   );
+  const sendBlockedReason =
+    (queuedEdit?.saving === true ? "Saving…" : null) ??
+    props.sendBlockedReason ??
+    (poolNeed ? NEEDS_A_POOL : null) ?? // signalbox
+    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
+    attachmentBlockReason;
   const canSend =
     poolNeed === null && // signalbox
     (props.canOperateThread || props.connectionState !== "connected") &&

@@ -263,6 +263,8 @@ import { useDebouncedValue } from "~/state/queries";
 import {
   NEEDS_A_POOL,
   NeedsPoolControl,
+  sendBlamesEnvironment,
+  useNeedsPool,
   useProjectPoolEntries,
 } from "../accountPool/ProjectPoolGate"; // signalbox
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -2169,6 +2171,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     settings.providerInstances,
   );
   const projectPoolNeed = providerCatalogKnown ? poolNeedNow : null;
+  const needsPool = useNeedsPool(environmentId, projectPoolNeed);
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const {
     selectedProviderEntry,
@@ -2250,7 +2253,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const sendDisabledReason =
     sendLock.disabledReason ?? // signalbox: send lock
-    (projectPoolNeed ? NEEDS_A_POOL : null) ?? // signalbox
+    (needsPool ? NEEDS_A_POOL : null) ?? // signalbox
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -2258,6 +2261,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : (attachmentBlockReason ??
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
+  // signalbox: a pool need says why itself instead of "Environment disconnected".
+  const environmentBlocksSend = sendBlamesEnvironment({
+    environmentUnavailable: environmentUnavailable !== null,
+    projectSelectionRequired,
+    noProviderAvailable,
+    poolNeed: projectPoolNeed,
+  });
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
@@ -3088,11 +3098,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     (!composerSendState.hasSendableContent && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = showResumeAction
-    ? "Resume thread"
-    : props.resumeCompactionTokens !== null && !props.keepFullHistory
-      ? "Open composer to compact and send"
-      : "Send message";
+  const collapsedComposerPrimaryActionLabel = needsPool // signalbox
+    ? NEEDS_A_POOL
+    : showResumeAction
+      ? "Resume thread"
+      : props.resumeCompactionTokens !== null && !props.keepFullHistory
+        ? "Open composer to compact and send"
+        : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -5537,10 +5549,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);
-  const composerControls = projectPoolNeed ? ( // signalbox
+  const composerControls = needsPool ? ( // signalbox
     <NeedsPoolControl
-      environmentId={environmentId}
-      need={projectPoolNeed}
+      pool={needsPool}
       size={composerControlsCollapsed ? "xs" : "sm"}
       onOpenProviderSetup={onOpenProviderSetup}
     />
@@ -6972,11 +6983,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               isSendBusy={isSendBusy}
                               sendDisabledReason={sendDisabledReason}
                               isConnecting={isConnecting}
-                              isEnvironmentUnavailable={
-                                environmentUnavailable !== null ||
-                                noProviderAvailable ||
-                                projectSelectionRequired
-                              }
+                              isEnvironmentUnavailable={environmentBlocksSend}
                               isPreparingWorktree={false}
                               hasSendableContent={false}
                               preserveComposerFocusOnPointerDown
@@ -7070,9 +7077,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : activePendingProgress.customAnswer ||
                         "Type your own answer, or leave this blank to use the selected option"
                     : prompt.trim() ||
-                      (showProviderUnavailable
-                        ? "Enable a provider in Settings"
-                        : "Ask anything...")}
+                      (needsPool // signalbox
+                        ? needsPool.action
+                        : showProviderUnavailable
+                          ? "Enable a provider in Settings"
+                          : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
                 <button
@@ -7630,11 +7639,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
                             : projectSelectionRequired
                               ? "Choose a project above to start a thread"
-                              : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
-                                : phase === "disconnected"
-                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                              : needsPool // signalbox
+                                ? needsPool.placeholder
+                                : showProviderUnavailable
+                                  ? "Enable a provider in Settings to send a message"
+                                  : phase === "disconnected"
+                                    ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
                     disabled={
                       isConnecting ||
@@ -7662,11 +7673,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isSendBusy={isSendBusy}
                       sendDisabledReason={sendDisabledReason}
                       isConnecting={isConnecting}
-                      isEnvironmentUnavailable={
-                        environmentUnavailable !== null ||
-                        noProviderAvailable ||
-                        projectSelectionRequired
-                      }
+                      isEnvironmentUnavailable={environmentBlocksSend}
                       isPreparingWorktree={false}
                       hasSendableContent={false}
                       preserveComposerFocusOnPointerDown
@@ -7789,11 +7796,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isSendBusy={isSendBusy}
                     sendDisabledReason={sendDisabledReason}
                     isConnecting={isConnecting}
-                    isEnvironmentUnavailable={
-                      environmentUnavailable !== null ||
-                      noProviderAvailable ||
-                      projectSelectionRequired
-                    }
+                    isEnvironmentUnavailable={environmentBlocksSend}
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
                     canResume={showResumeAction}
