@@ -1,5 +1,5 @@
-# Signalbox-only. Tracks CLIProxyAPI releases and keeps managed-pool and
-# self-hosted account-hub pins on the same checksummed release.
+# Signalbox-only. Keeps the managed-pool image and self-hosted installer on
+# one checksummed CLIProxyAPI release manifest.
 name: CLIProxyAPI release sync
 
 on:
@@ -22,7 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+      GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+      UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -31,8 +32,8 @@ jobs:
 
       - name: Require the owner token
         run: |
-          if [[ -z "$GH_TOKEN" ]]; then
-            echo "UPSTREAM_SYNC_TOKEN is required so sync PRs run preview and CI workflows as JustYannicc." >&2
+          if [[ -z "$UPSTREAM_SYNC_TOKEN" ]]; then
+            echo "UPSTREAM_SYNC_TOKEN is required so the release PR runs preview and CI workflows as JustYannicc." >&2
             exit 1
           fi
 
@@ -54,14 +55,16 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
+          manifest=apps/cloud/containers/cliproxyapi/release.json
           git fetch origin +refs/heads/main:refs/remotes/origin/main
-          current="$(git show origin/main:apps/cloud/containers/cliproxyapi/Dockerfile | sed -n 's/^ARG VERSION=//p')"
+          current="$(git show "origin/main:$manifest" | jq -er '.version')"
           if [[ -z "$current" ]]; then
-            echo "Could not read the current Dockerfile pin from origin/main." >&2
+            echo "Could not read the current CLIProxyAPI manifest from origin/main." >&2
             exit 1
           fi
           if [[ "$current" == "$VERSION" ]]; then
             echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "existing_pr=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if ! python3 -c 'import sys; sys.exit(0 if tuple(map(int, sys.argv[1].split("."))) < tuple(map(int, sys.argv[2].split("."))) else 1)' "$current" "$VERSION"; then
@@ -75,19 +78,13 @@ jobs:
           fi
           existing_pr="$(gh pr list --state open --head "$branch" --json number --jq '.[0].number // empty')"
           branch_version=""
-          if git show "origin/$branch:apps/cloud/containers/cliproxyapi/Dockerfile" >/dev/null 2>&1; then
-            branch_version="$(git show "origin/$branch:apps/cloud/containers/cliproxyapi/Dockerfile" | sed -n 's/^ARG VERSION=//p')"
+          if git show "origin/$branch:$manifest" >/dev/null 2>&1; then
+            branch_version="$(git show "origin/$branch:$manifest" | jq -r '.version')"
           fi
+          echo "existing_pr=$existing_pr" >> "$GITHUB_OUTPUT"
           if [[ "$branch_version" == "$VERSION" && -n "$existing_pr" ]]; then
-            pull="$(gh pr view "$existing_pr" --json autoMergeRequest,labels)"
-            if [[ "$(jq -r '.autoMergeRequest != null' <<< "$pull")" == "true" ]] && jq -e '.labels[].name | select(. == "cli-proxyapi-format-review")' <<< "$pull" >/dev/null; then
-              gh pr merge "$existing_pr" --disable-auto
-            fi
             echo "update=false" >> "$GITHUB_OUTPUT"
             exit 0
-          fi
-          if [[ -n "$existing_pr" ]] && [[ "$(gh pr view "$existing_pr" --json autoMergeRequest --jq '.autoMergeRequest != null')" == "true" ]]; then
-            gh pr merge "$existing_pr" --disable-auto
           fi
 
           echo "update=true" >> "$GITHUB_OUTPUT"
@@ -95,50 +92,39 @@ jobs:
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           git checkout -B "$branch" origin/main
 
-      - name: Download upstream checksums and compare the release
+      - name: Download upstream checksums
         if: steps.branch.outputs.update == 'true'
         env:
           TAG: ${{ steps.release.outputs.tag }}
-          CURRENT: ${{ steps.branch.outputs.current }}
         run: |
           mkdir -p "$RUNNER_TEMP/cliproxyapi-release"
           gh release download "$TAG" \
             --repo router-for-me/CLIProxyAPI \
             --pattern checksums.txt \
             --dir "$RUNNER_TEMP/cliproxyapi-release"
-          gh api "repos/router-for-me/CLIProxyAPI/compare/v${CURRENT}...${TAG}" > "$RUNNER_TEMP/cliproxyapi-compare.json"
 
-      - name: Update all pinned assets
-        id: pins
+      - name: Update the shared release manifest
         if: steps.branch.outputs.update == 'true'
         run: >-
           python3 scripts/cliproxyapi/update.py
           "$RUNNER_TEMP/cliproxyapi-release.json"
           "$RUNNER_TEMP/cliproxyapi-release/checksums.txt"
-          "$RUNNER_TEMP/cliproxyapi-compare.json"
-          apps/cloud/containers/cliproxyapi/Dockerfile
-          apps/server/src/accountHub/AccountHubRelease.ts
+          apps/cloud/containers/cliproxyapi/release.json
 
       - name: Prepare pull request labels and description
         if: steps.branch.outputs.update == 'true'
         env:
           TAG: ${{ steps.release.outputs.tag }}
           BRANCH: ${{ steps.branch.outputs.branch }}
-          REQUIRES_REVIEW: ${{ steps.pins.outputs.requires_review }}
-          REVIEW_REASONS: ${{ steps.pins.outputs.review_reasons }}
         run: |
           gh label create cli-proxyapi-update --color 1d76db --description "Automated CLIProxyAPI release sync" --force
-          gh label create cli-proxyapi-format-review --color b60205 --description "CLIProxyAPI config or auth format needs human review" --force
           cat > "$RUNNER_TEMP/cliproxyapi-pr-body.md" <<EOF
-          Updates both Signalbox CLIProxyAPI pins to [$TAG](https://github.com/router-for-me/CLIProxyAPI/releases/tag/$TAG).
+          Updates the shared CLIProxyAPI release manifest to [$TAG](https://github.com/router-for-me/CLIProxyAPI/releases/tag/$TAG). The manifest contains the version, all self-hosted assets and checksums, and the managed-pool image asset. The Docker build and account-hub installer read the same file.
 
-          The container smoke test and Signalbox Cloud preview must pass before this PR can auto-merge. The scheduled updater verifies upstream checksums for every pinned binary.
+          The container smoke test, Cloud preview deploy and all repository checks must pass before GitHub auto-merges this PR. The scheduled updater verifies every pinned asset against upstream's release metadata and checksums.txt.
 
           Upstream release notes: https://github.com/router-for-me/CLIProxyAPI/releases/tag/$TAG
           EOF
-          if [[ "$REQUIRES_REVIEW" == "true" ]]; then
-            printf '\nFormat review required: %s\n' "$REVIEW_REASONS" >> "$RUNNER_TEMP/cliproxyapi-pr-body.md"
-          fi
 
           pr="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
           if [[ -n "$pr" ]]; then
@@ -146,9 +132,6 @@ jobs:
               --title "chore(cloud): update CLIProxyAPI to $TAG" \
               --body-file "$RUNNER_TEMP/cliproxyapi-pr-body.md" \
               --add-label cli-proxyapi-update
-            if [[ "$REQUIRES_REVIEW" == "true" ]]; then
-              gh pr edit "$pr" --add-label cli-proxyapi-format-review
-            fi
           fi
 
       - name: Commit and push the update branch
@@ -159,50 +142,46 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/cloud/containers/cliproxyapi/Dockerfile apps/server/src/accountHub/AccountHubRelease.ts
+          git add apps/cloud/containers/cliproxyapi/release.json
           git commit -m "chore(cloud): update CLIProxyAPI to v$VERSION"
           git push --force-with-lease origin "$BRANCH"
 
-      - name: Clear stale auto-merge on an updated pull request
+      - name: Clear auto-merge for the updated commit
         if: steps.branch.outputs.update == 'true'
         env:
           BRANCH: ${{ steps.branch.outputs.branch }}
         run: |
           pr="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
           if [[ -z "$pr" ]]; then exit 0; fi
-          pull="$(gh pr view "$pr" --json autoMergeRequest,labels)"
-          if [[ "$(jq -r '.autoMergeRequest != null' <<< "$pull")" != "true" ]]; then exit 0; fi
-          if jq -e '.labels[].name | select(. == "cli-proxyapi-format-review")' <<< "$pull" >/dev/null; then
-            gh pr merge "$pr" --disable-auto
-            exit 0
-          fi
-          checks="$(gh pr checks "$pr" --json name,bucket,startedAt || true)"
-          if ! jq -e 'type == "array"' <<< "$checks" >/dev/null; then
-            echo "Could not read check results; disabling auto-merge."
-            gh pr merge "$pr" --disable-auto
-            exit 0
-          fi
-          for name in "Deploy preview cloud" "CLIProxyAPI container smoke"; do
-            result="$(jq -r --arg name "$name" '[.[] | select(.name == $name)] | sort_by(.startedAt) | last | .bucket // "missing"' <<< "$checks")"
-            if [[ "$result" != "pass" ]]; then
-              gh pr merge "$pr" --disable-auto
-              exit 0
-            fi
-          done
+          auto_merge="$(gh pr view "$pr" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [[ "$auto_merge" == "true" ]]; then gh pr merge "$pr" --disable-auto; fi
 
-      - name: Create the sync pull request
+      - name: Create the release pull request
         if: steps.branch.outputs.update == 'true'
         env:
           TAG: ${{ steps.release.outputs.tag }}
           BRANCH: ${{ steps.branch.outputs.branch }}
-          REQUIRES_REVIEW: ${{ steps.pins.outputs.requires_review }}
         run: |
           title="chore(cloud): update CLIProxyAPI to $TAG"
           pr="$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')"
           if [[ -z "$pr" ]]; then
-            create_args=(--base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/cliproxyapi-pr-body.md" --label cli-proxyapi-update)
-            if [[ "$REQUIRES_REVIEW" == "true" ]]; then
-              create_args+=(--label cli-proxyapi-format-review)
-            fi
-            gh pr create "${create_args[@]}"
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/cliproxyapi-pr-body.md" \
+              --label cli-proxyapi-update
           fi
+
+      - name: Close a stale release problem
+        if: steps.branch.outputs.update != 'true' && steps.branch.outputs.existing_pr == ''
+        env:
+          CLOSE_REASON: The pinned version matches the latest stable release.
+        run: node scripts/cliproxyapi/report-problem.mjs close
+
+      - name: Report a blocked release sync
+        if: failure()
+        env:
+          PROBLEM_SUMMARY: The scheduled release sync could not prepare a verified update.
+          PROBLEM_DETAILS: Check this action run for a missing release asset, checksum problem, or failed GitHub operation. The pinned manifest was not advanced.
+        run: node scripts/cliproxyapi/report-problem.mjs report

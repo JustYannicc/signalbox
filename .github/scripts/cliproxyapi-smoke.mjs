@@ -10,6 +10,8 @@ const container = `cliproxyapi-smoke-${process.pid}`;
 const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "cliproxyapi-smoke-"));
 const dockerfile =
   process.env.CLIPROXYAPI_DOCKERFILE ?? "apps/cloud/containers/cliproxyapi/Dockerfile";
+const dockerfilePath = NodePath.resolve(dockerfile);
+const buildContext = NodePath.dirname(dockerfilePath);
 const configPath = NodePath.join(directory, "config.yaml");
 const managementKey = "smoke-management-key";
 const clientKey = "smoke-client-key";
@@ -38,7 +40,7 @@ try {
   NodeFS.chmodSync(directory, 0o777);
   NodeFS.chmodSync(configPath, 0o666);
 
-  docker(["build", "--tag", image, "--file", dockerfile, "."], { stdio: "inherit" });
+  docker(["build", "--tag", image, "--file", dockerfilePath, buildContext], { stdio: "inherit" });
 
   docker([
     "run",

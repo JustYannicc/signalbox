@@ -234,18 +234,21 @@ an admin's own CLIProxyAPI never starts a container.
 
 #### CLIProxyAPI updates
 
-The `CLIProxyAPI release sync` workflow checks upstream daily and updates the
-managed-pool image and self-hosted account-hub downloader together. It reads
-the release's `checksums.txt` for every pinned archive, then opens or refreshes
-one pull request with a link to the release notes. The PR builds and exercises
-the container with the pool's rendered config, and the Cloud preview must also
-deploy before GitHub auto-merge is enabled. The repository's normal required
-checks still apply. This uses the existing `UPSTREAM_SYNC_TOKEN`, so the PR is
-created by `JustYannicc` and receives the preview workflow.
+The `CLIProxyAPI release sync` workflow checks upstream daily. The shared
+manifest at `apps/cloud/containers/cliproxyapi/release.json` holds the version,
+the six self-hosted assets and their sizes and SHA-256 checksums, plus the
+managed-pool image asset. The Docker build reads it from its build context, and
+the account-hub installer imports the same file. The updater verifies every
+asset against the release metadata and `checksums.txt`, then edits only this
+manifest.
 
-Upstream changes to config, auth, or storage paths, release notes describing a
-format or migration change, or an incomplete/large comparison add the
-`cli-proxyapi-format-review` label. Those PRs stay open for human review.
+Each release gets one pull request with a link to the release notes. GitHub
+auto-merges it after the container smoke test, Cloud preview deploy, and all
+current checks pass on the same commit. A failed check, checksum, or missing
+asset keeps the release from merging and opens or updates one issue labelled
+`cli-proxyapi-update-needs-hand`. The next clean sync or green release PR closes
+that issue. The updater uses the existing `UPSTREAM_SYNC_TOKEN`, so GitHub runs
+the PR checks and preview as `JustYannicc`.
 
 To roll back a merged update, revert its sync commit and let the normal main
 deployment rebuild the prior pins. This restores the previous executable; it

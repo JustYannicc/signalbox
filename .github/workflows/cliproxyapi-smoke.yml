@@ -5,8 +5,13 @@ on:
     paths:
       - apps/cloud/containers/cliproxyapi/**
       - apps/cloud/src/pool/cliProxyApi.ts
+      - apps/server/src/accountHub/AccountHubRelease.ts
+      - apps/server/src/accountHub/AccountHubRelease.test.ts
+      - scripts/cliproxyapi/**
       - .github/scripts/cliproxyapi-smoke.mjs
+      - .github/workflows/cliproxyapi-auto-merge.yml
       - .github/workflows/cliproxyapi-smoke.yml
+      - .github/workflows/cliproxyapi-update.yml
 
 permissions:
   contents: read
@@ -33,6 +38,9 @@ jobs:
           run-install: |
             args:
               - --filter=@signalbox/cloud...
+
+      - name: Run updater fixtures and tests
+        run: python3 -m unittest scripts/cliproxyapi/test_update.py
 
       - name: Run focused pool tests
         working-directory: apps/cloud
