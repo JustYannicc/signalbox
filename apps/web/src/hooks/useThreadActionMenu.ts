@@ -47,6 +47,8 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+import { labelCopyPathItems } from "../components/workspacePathLocation.logic";
+import { readWorkspacePathLocation } from "../components/workspacePathLocation";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -161,7 +163,12 @@ export function useThreadActionMenu(input: {
           supports,
           snoozePresets,
         });
-        const clicked = await settlePromise(() => api.contextMenu.show(items, position));
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            labelCopyPathItems(items, readWorkspacePathLocation(threadRef.environmentId)),
+            position,
+          ),
+        );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const action: ThreadActionMenuId = clicked.value;
         if (
