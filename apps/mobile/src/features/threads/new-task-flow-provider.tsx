@@ -18,11 +18,13 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   DEFAULT_SERVER_SETTINGS,
+  environmentSupports, // signalbox
   MessageId,
   repositoryGroupingKeyOf,
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
+import { newThreadWorkspaceMode, offersNewThreadBranch } from "./signalboxWorktrees"; // signalbox
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
@@ -543,6 +545,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // A thread without a project runs in a plain folder, so worktree mode
   // would leave it unsendable: it is always local and offers no choice.
   const canChooseWorkspace = !isScratchDraft;
+  // signalbox: without worktrees a thread starts in the project checkout.
+  const supportsWorktrees = environmentSupports(
+    selectedEnvironmentServerConfig?.environment.capabilities,
+    "worktrees",
+  );
   const selectedProjectHasThreads =
     selectedProject !== null &&
     threads.some(
@@ -550,14 +557,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         thread.environmentId === selectedProject.environmentId &&
         thread.projectId === selectedProject.id,
     );
-  const defaultWorkspaceMode: WorkspaceMode = canChooseWorkspace
-    ? resolveNewThreadEnvMode({
-        projectSettings,
-        workspaceRoot: selectedProject?.workspaceRoot ?? null,
-        newProjectsRoot: selectedEnvironmentServerConfig?.newProjectsRoot,
-        projectHasThreads: selectedProjectHasThreads,
-      })
-    : "local";
+  const defaultWorkspaceMode: WorkspaceMode =
+    canChooseWorkspace && supportsWorktrees // signalbox
+      ? resolveNewThreadEnvMode({
+          projectSettings,
+          workspaceRoot: selectedProject?.workspaceRoot ?? null,
+          newProjectsRoot: selectedEnvironmentServerConfig?.newProjectsRoot,
+          projectHasThreads: selectedProjectHasThreads,
+        })
+      : "local";
   // While the file read is pending and nothing above it decided, the
   // resolved default is provisional. Nothing may write it into the draft
   // during that window (the auto-branch effect does), or the frozen interim
@@ -567,7 +575,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
     (!t3ProjectFileQuery.isPending && !fileAccessPending);
   const workspaceMode = canChooseWorkspace
-    ? (selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode)
+    ? newThreadWorkspaceMode({
+        supportsWorktrees, // signalbox
+        chosen: selectedProjectDraft.workspaceSelection?.mode,
+        fallback: defaultWorkspaceMode,
+      })
     : "local";
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
@@ -785,8 +797,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       pipe(
         allBranchRefs,
         Arr.filter((branch) => !branch.isRemote),
+        // signalbox
+        Arr.filter((branch) =>
+          offersNewThreadBranch(branch, {
+            supportsWorktrees,
+            workspaceRoot: selectedProject?.workspaceRoot ?? null,
+          }),
+        ),
       ),
-    [allBranchRefs],
+    [allBranchRefs, selectedProject?.workspaceRoot, supportsWorktrees],
   );
   // The ref actually checked out in the project root, serialized onto new
   // local threads. It comes from the live status stream rather than listRefs'
@@ -1156,7 +1175,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const workspaceSelection = canChooseWorkspace ? draft.workspaceSelection : undefined;
       // Fall back to the resolved mode (server default) so queued tasks drain
       // with the same mode the composer displayed.
-      const mode = workspaceSelection?.mode ?? workspaceMode;
+      const mode = newThreadWorkspaceMode({
+        supportsWorktrees, // signalbox
+        chosen: workspaceSelection?.mode,
+        fallback: workspaceMode,
+      });
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back
@@ -1227,6 +1250,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       legacyPlanModeEnabled,
       planModePreferenceLoaded,
       startFromOrigin,
+      supportsWorktrees,
       workspaceMode,
     ],
   );

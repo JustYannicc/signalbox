@@ -43,7 +43,7 @@ import {
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { environmentSupports, isProviderNativeSubagentThread } from "@t3tools/contracts"; // signalbox: environmentSupports
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -335,7 +335,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     threadId: props.selectedThread.id,
   });
   const deviceState = useEnvironmentQuery(
-    deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
+    // signalbox: environments without device hosts don't serve `device.*`.
+    environmentSupports(props.serverConfig?.environment.capabilities, "devices")
+      ? deviceEnvironment.state({ environmentId: props.environmentId, input: {} })
+      : null,
   );
   const devicePreviews = useMemo(
     () => threadDevicePreviews(deviceState.data, props.selectedThread.id),

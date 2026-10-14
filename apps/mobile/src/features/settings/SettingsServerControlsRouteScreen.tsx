@@ -31,6 +31,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { useTargetsSupporting } from "./signalboxSettingsTargets"; // signalbox
 import {
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
@@ -141,7 +142,9 @@ export function SettingsEnvironmentMaintenanceRouteScreen() {
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const filter = useSettingsEnvironmentFilter();
+  const { projectGroups, selectedProjectKey } = filter;
+  const selectedTargets = useTargetsSupporting(filter.selectedTargets, "serverSettingsWrite"); // signalbox
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const projectSelected = selectedProjectKey !== null;

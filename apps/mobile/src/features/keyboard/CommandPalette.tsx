@@ -29,6 +29,10 @@ import { useThreadSearch } from "../../state/queries";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  useAnyEnvironmentSupports,
+  useEnvironmentSupports,
+} from "../../state/environmentCapabilities"; // signalbox
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import {
@@ -146,6 +150,8 @@ export function CommandPalette(props: {
   const threads = useThreadShells();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
+  const supportsTerminal = useEnvironmentSupports(activeThreadRef?.environmentId, "terminal"); // signalbox
+  const supportsScheduledTasks = useAnyEnvironmentSupports("scheduledTasks"); // signalbox
   const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");
@@ -293,13 +299,15 @@ export function CommandPalette(props: {
         ["copyThreadReference", "Copy PR link or thread ID", ["reference", "clipboard"]],
       ] as const;
       actions.push(
-        ...threadActions.map(([command, title, searchTerms]) => ({
-          key: command,
-          kind: "action" as const,
-          title,
-          searchTerms,
-          run: () => runCommand(command),
-        })),
+        ...threadActions
+          .filter(([command]) => supportsTerminal || command !== "terminal") // signalbox
+          .map(([command, title, searchTerms]) => ({
+            key: command,
+            kind: "action" as const,
+            title,
+            searchTerms,
+            run: () => runCommand(command),
+          })),
       );
     }
     const projectItems: CommandPaletteItem[] = projects.map((project) => ({
@@ -343,7 +351,12 @@ export function CommandPalette(props: {
           run: () => selectThread(thread),
         };
       });
-    return [...actions, ...projectItems, ...threadItems];
+    return [
+      // signalbox: no scheduled tasks where no environment runs them.
+      ...actions.filter((action) => supportsScheduledTasks || action.key !== "scheduledTasks"),
+      ...projectItems,
+      ...threadItems,
+    ];
   }, [
     activeThread,
     activeThreadRef,
@@ -352,6 +365,8 @@ export function CommandPalette(props: {
     runCommand,
     savedConnectionsById,
     selectThread,
+    supportsScheduledTasks,
+    supportsTerminal,
     threads,
   ]);
   const results = useMemo(

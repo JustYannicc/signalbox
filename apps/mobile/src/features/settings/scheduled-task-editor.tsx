@@ -19,6 +19,7 @@ import {
 } from "./scheduledTaskDraft";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
+import { useTargetsSupporting } from "./signalboxSettingsTargets"; // signalbox
 
 import {
   scheduledTaskEditorSessionAtom,
@@ -41,7 +42,9 @@ const ScheduledTaskEditorContext = createContext<{
 
 /** Keeps the form draft alive while its native picker routes are on top. */
 export function ScheduledTaskEditorProvider({ children }: { readonly children: ReactNode }) {
-  const { selectedTargets, selectedProjectKey, projectGroups } = useSettingsEnvironmentFilter();
+  const filter = useSettingsEnvironmentFilter();
+  const { selectedProjectKey, projectGroups } = filter;
+  const selectedTargets = useTargetsSupporting(filter.selectedTargets, "scheduledTasks"); // signalbox
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
   const configs = useServerConfigs();
   const projects = useProjects();

@@ -102,6 +102,8 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
     readonly onPress: () => void;
   };
   readonly canOpenTerminal: boolean;
+  /** signalbox: false hides the terminal on environments without one (`terminal` capability). */
+  readonly supportsTerminal?: boolean;
   readonly canOperateTerminal: boolean;
   readonly canOpenFiles: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
@@ -433,19 +435,38 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
   );
 }
 
+/** signalbox: drops the terminal item where the environment has no terminal. */
+function withTerminal(
+  items: HeaderItems,
+  terminal: HeaderItem,
+  supportsTerminal: boolean | undefined,
+): HeaderItems {
+  return supportsTerminal === false ? items.filter((item) => item !== terminal) : items;
+}
+
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems,
-    [actionItems],
+    () =>
+      withTerminal(
+        [actionItems.git, actionItems.files, actionItems.terminal],
+        actionItems.terminal,
+        props.supportsTerminal,
+      ),
+    [actionItems, props.supportsTerminal],
   );
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems,
-    [actionItems],
+    () =>
+      withTerminal(
+        [actionItems.files, actionItems.git, actionItems.terminal],
+        actionItems.terminal,
+        props.supportsTerminal,
+      ),
+    [actionItems, props.supportsTerminal],
   );
 }
 
@@ -467,7 +488,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls ? (
+      {showActionControls && props.supportsTerminal !== false ? ( // signalbox
         <NativeHeaderToolbar.Menu
           accessibilityLabel="Open terminal"
           icon="terminal"

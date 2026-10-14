@@ -49,6 +49,7 @@ import {
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { uuidv4 } from "../../lib/uuid";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
@@ -289,6 +290,7 @@ function ThreadRouteContent(
     selectedThread?.environmentId ?? null,
     AuthTerminalOperateScope,
   );
+  const supportsTerminal = useEnvironmentSupports(selectedThread?.environmentId, "terminal"); // signalbox
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
@@ -806,7 +808,10 @@ function ThreadRouteContent(
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
     canOpenTerminal:
-      Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
+      supportsTerminal && // signalbox
+      Boolean(selectedThreadProject?.workspaceRoot) &&
+      (canReadTerminal || canOperateTerminal),
+    supportsTerminal, // signalbox
     canOperateTerminal,
     canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
     projectScripts: selectedThreadProject

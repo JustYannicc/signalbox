@@ -19,6 +19,7 @@ import { useThreadShell } from "../../state/entities";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
 import { CommandPalette } from "./CommandPalette";
+import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 import {
   dispatchHardwareKeyboardCommand,
   getHardwareKeyboardCommandRegistrationVersion,
@@ -51,6 +52,7 @@ export function HardwareKeyboardCommandProvider({
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const activeThreadRef = useMemo(() => parseActiveThreadPath(pathname), [pathname]);
   const activeThread = useThreadShell(activeThreadRef);
+  const supportsTerminal = useEnvironmentSupports(activeThreadRef?.environmentId, "terminal"); // signalbox
   const copyTarget = useMemo(
     () =>
       activeThreadRef === null
@@ -108,12 +110,12 @@ export function HardwareKeyboardCommandProvider({
     if (pathname !== "/" || navigation.canGoBack()) commands.add("back");
     if (activeThreadRef !== null) {
       commands.add("files");
-      commands.add("terminal");
+      if (supportsTerminal) commands.add("terminal"); // signalbox
       commands.add("review");
       if (pathname.split("/")[4] !== "terminal") commands.add("copyThreadReference");
     }
     return [...commands];
-  }, [activeThreadRef, pathname, registrationVersion, navigation]);
+  }, [activeThreadRef, pathname, registrationVersion, navigation, supportsTerminal]);
 
   const onCommand = useCallback(
     (command: HardwareKeyboardCommand) => {
@@ -165,14 +167,14 @@ export function HardwareKeyboardCommandProvider({
       if (command === "files" && !/\/files(?:\/|$)/.test(pathname)) {
         navigation.navigate("ThreadFiles", thread);
       }
-      if (command === "terminal" && !/\/terminal(?:\/|$)/.test(pathname)) {
+      if (command === "terminal" && supportsTerminal && !/\/terminal(?:\/|$)/.test(pathname)) {
         navigation.navigate("ThreadTerminal", thread);
       }
       if (command === "review" && !/\/review(?:\/|$)/.test(pathname)) {
         navigation.navigate("ThreadReview", thread);
       }
     },
-    [copyTarget, navigation, pathname, showCopyFeedback],
+    [copyTarget, navigation, pathname, showCopyFeedback, supportsTerminal],
   );
 
   const palette = useMemo(

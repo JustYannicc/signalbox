@@ -87,13 +87,19 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { ConnectingEnvironmentState, useAddProjectAvailability } from "./signalboxAddProject"; // signalbox
+import {
+  addProjectCloneSources,
+  addProjectSourceSupport,
+  type AddProjectSourceSupport,
+} from "./signalboxAddProject.logic"; // signalbox
 import {
   createNewTaskDraft,
   setComposerDraftText,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 
-interface EnvironmentOption {
+interface EnvironmentOption extends AddProjectSourceSupport {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly platform: string;
@@ -422,6 +428,7 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
         connectionError: runtime?.connectionError ?? null,
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
         supportsCloneTracking: config?.environment.capabilities.projectCloneTracking === true,
+        ...addProjectSourceSupport(config?.environment.capabilities), // signalbox
       };
     });
     return Arr.sort(
@@ -458,6 +465,8 @@ function useSelectedEnvironment(): {
 
 function EmptyEnvironmentState() {
   const navigation = useNavigation();
+  // signalbox: an environment still connecting is not one to go and add.
+  if (useAddProjectAvailability() === "connecting") return <ConnectingEnvironmentState />;
 
   return (
     <View className="items-center gap-3 rounded-2xl bg-grouped-card px-5 py-8">
@@ -628,49 +637,56 @@ export function AddProjectSourceScreen() {
                 }
               />
             ) : null}
-            <ListRow
-              title="Local folder"
-              subtitle={
-                canCreateProject
-                  ? "Browse a folder on disk"
-                  : "This connection cannot add projects."
-              }
-              icon={
-                <SymbolView
-                  name="folder.badge.plus"
-                  size={Platform.OS === "android" ? 24 : 17}
-                  tintColorClassName="accent-icon"
-                  type="monochrome"
-                />
-              }
-              isFirst={selectedEnvironment.newProjectsRoot === null}
-              disabled={!canCreateProject}
-              onPress={() =>
-                navigation.dispatch(
-                  StackActions.push("AddProjectLocal", {
-                    environmentId: selectedEnvironment.environmentId,
-                  }),
-                )
-              }
-            />
-            {(["url", ...sortAddProjectProviderSources(readiness)] as AddProjectRemoteSource[]).map(
-              (candidate) => (
-                <SourceControlRow
-                  key={candidate}
-                  source={candidate}
-                  selectedEnvironmentId={selectedEnvironment.environmentId}
-                  ready={canCloneProject && readiness(candidate).ready}
-                  hint={
-                    !canCloneProject
-                      ? "This connection cannot clone projects."
-                      : readiness(candidate).ready
-                        ? addProjectRemoteSourcePathHint(candidate)
-                        : (readiness(candidate).hint ?? "")
-                  }
-                  isFirst={false}
-                />
-              ),
-            )}
+            {selectedEnvironment.localFilesystem ? ( // signalbox
+              <ListRow
+                title="Local folder"
+                subtitle={
+                  canCreateProject
+                    ? "Browse a folder on disk"
+                    : "This connection cannot add projects."
+                }
+                icon={
+                  <SymbolView
+                    name="folder.badge.plus"
+                    size={Platform.OS === "android" ? 24 : 17}
+                    tintColorClassName="accent-icon"
+                    type="monochrome"
+                  />
+                }
+                isFirst={selectedEnvironment.newProjectsRoot === null}
+                disabled={!canCreateProject}
+                onPress={() =>
+                  navigation.dispatch(
+                    StackActions.push("AddProjectLocal", {
+                      environmentId: selectedEnvironment.environmentId,
+                    }),
+                  )
+                }
+              />
+            ) : null}
+            {addProjectCloneSources(
+              sortAddProjectProviderSources(readiness),
+              selectedEnvironment,
+            ).map((candidate, index) => (
+              <SourceControlRow
+                key={candidate}
+                source={candidate}
+                selectedEnvironmentId={selectedEnvironment.environmentId}
+                ready={canCloneProject && readiness(candidate).ready}
+                hint={
+                  !canCloneProject
+                    ? "This connection cannot clone projects."
+                    : readiness(candidate).ready
+                      ? addProjectRemoteSourcePathHint(candidate)
+                      : (readiness(candidate).hint ?? "")
+                }
+                isFirst={
+                  index === 0 &&
+                  selectedEnvironment.newProjectsRoot === null &&
+                  !selectedEnvironment.localFilesystem
+                }
+              />
+            ))}
           </ListSection>
           {discoveryState.isPending ? (
             <AppActivityIndicator colorClassName="accent-icon-muted" />
@@ -1518,7 +1534,10 @@ export function AddProjectDestinationScreen(props: {
       ) : null}
       {environment ? (
         <>
-          <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
+          {/* signalbox: without a reachable filesystem the server picks where it goes. */}
+          {environment.localFilesystem ? (
+            <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
+          ) : null}
           <PrimaryActionButton
             label="Clone project"
             disabled={!canCloneProject || isBrowseNavigating || isSubmitting || !remoteUrl}
@@ -1530,13 +1549,15 @@ export function AddProjectDestinationScreen(props: {
               This connection cannot clone projects.
             </Text>
           ) : null}
-          <FolderBrowser
-            environment={environment}
-            navigateToBrowsePath={navigateToBrowsePath}
-            pathInput={pathInput}
-            setPathInput={setPathInput}
-            pinnedDirectoryName={repositoryName}
-          />
+          {environment.localFilesystem ? (
+            <FolderBrowser
+              environment={environment}
+              navigateToBrowsePath={navigateToBrowsePath}
+              pathInput={pathInput}
+              setPathInput={setPathInput}
+              pinnedDirectoryName={repositoryName}
+            />
+          ) : null}
         </>
       ) : (
         <EmptyEnvironmentState />
