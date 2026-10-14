@@ -104,6 +104,18 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     signalboxPreviews: identity.previews === true,
     // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
     projectCloneTracking: true,
+    // Threads run on machines nobody operates, and the user never runs this server.
+    terminal: false,
+    worktrees: false,
+    serverSettingsWrite: false,
+    devices: false,
+    scheduledTasks: false,
+    localFilesystem: false,
+    // Only GitHub repositories import (`github/GitHubImport.ts`).
+    cloneFromUrl: false,
+    remoteAccess: false,
+    // Pairing links and client sessions are not served (`http/environmentApi.ts`).
+    accessManagement: false,
   },
 });
 
