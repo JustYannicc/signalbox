@@ -6,11 +6,7 @@ import {
   projectPool,
   type PlacedPool,
 } from "@t3tools/client-runtime/state/sections";
-import {
-  homeOfProject,
-  homeOfThread,
-  poolOfHome,
-} from "@t3tools/client-runtime/state/signalboxFolders";
+import { poolOfTarget } from "@t3tools/client-runtime/state/signalboxFolders";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -71,14 +67,7 @@ function resolvePool(
 ): ResolvedPlacedPool | null | undefined {
   if (source === undefined) return undefined;
   if (source._tag === "sections") return projectPool(source.sections, target.projectId);
-  const snapshot = source.folders;
-  if (snapshot === null) return undefined;
-  if (target.projectId === null) return poolOfHome(snapshot, null);
-  const home =
-    target.threadId == null
-      ? homeOfProject(snapshot, target.projectId)
-      : homeOfThread(snapshot, { id: target.threadId, projectId: target.projectId });
-  return poolOfHome(snapshot, home);
+  return source.folders === null ? undefined : poolOfTarget(source.folders, target);
 }
 
 /**

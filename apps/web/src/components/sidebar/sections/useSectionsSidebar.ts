@@ -12,6 +12,7 @@ import { environmentSectionTreesAtom } from "../../../state/sections";
 import { environmentContextsAtom } from "../../../state/signalboxContexts"; // signalbox: contexts
 import type { EnvironmentPresentation } from "../../../state/environments";
 import type { Project } from "../../../types";
+import { useFoldersSidebar } from "../folders/useFoldersSidebar"; // signalbox: folders
 import type { SectionEnvironmentOption } from "./SectionSidebarActions";
 import {
   buildSectionSidebarEnvironment,
@@ -30,6 +31,7 @@ export function useSectionsSidebar(input: {
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const serverViews = useAtomValue(environmentSectionTreesAtom);
   const contextsByEnvironment = useAtomValue(environmentContextsAtom); // signalbox: contexts
+  const folders = useFoldersSidebar(input); // signalbox: folders
   const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<string>>(() => new Set());
   const toggleSection = useCallback((environmentId: EnvironmentId, sectionId: string) => {
     const sectionKey = sectionSidebarSectionKey(environmentId, sectionId);
@@ -41,7 +43,7 @@ export function useSectionsSidebar(input: {
     });
   }, []);
 
-  return useMemo(() => {
+  const sections = useMemo(() => {
     // signalbox: environments with folders show those instead (`sidebar/folders`).
     const servesFolders = (environmentId: EnvironmentId) =>
       serverConfigs.get(environmentId)?.environment.capabilities.folders === true;
@@ -127,4 +129,14 @@ export function useSectionsSidebar(input: {
     contextsByEnvironment,
     toggleSection,
   ]);
+  // signalbox: folders change with their threads, so they join outside the section trees' memo;
+  // folder environments draw first, so their lists come first.
+  return useMemo(
+    () => ({
+      ...sections,
+      visibleProjectRows: [...folders.visibleRows, ...sections.visibleProjectRows],
+      folders,
+    }),
+    [folders, sections],
+  );
 }

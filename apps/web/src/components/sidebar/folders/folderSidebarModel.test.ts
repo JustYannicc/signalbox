@@ -1,5 +1,8 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { threadHomeLookup } from "@t3tools/client-runtime/state/signalboxFolders";
+import {
+  threadFolderChoices,
+  threadHomeLookup,
+} from "@t3tools/client-runtime/state/signalboxFolders";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   SignalboxContextId,
@@ -13,16 +16,17 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  folderListOfThreads,
   folderNodeKey,
   folderOwnerKey,
   folderOwners,
-  folderThreadCounts,
   folderThreadListKey,
   movedThreadDestination,
   moveThreadMenuItem,
-  threadsByHome,
-  visibleFolderThreadKeys,
-  type FolderThread,
+  sameResidents,
+  sliceFolderThreads,
+  visibleFolderLists,
+  type FolderResident,
 } from "./folderSidebarModel";
 
 const ENV = EnvironmentId.make("cloud");
@@ -31,6 +35,7 @@ const ACME = SignalboxContextId.make("org_acme");
 const SCRATCH = ProjectId.make("scratch");
 const NORTHWIND_DRIVE = ProjectId.make("drive:shared/acme/northwind");
 const ACME_FILES = ProjectId.make("context:org_acme");
+const ELSEWHERE = ProjectId.make("not-an-owners");
 
 const folder = (
   id: string,
@@ -74,108 +79,96 @@ const snapshot: SignalboxFoldersSnapshot = {
   pools: { top: null, folders: [] },
 };
 
-const thread = (
+const resident = (
   id: string,
   projectId: ProjectId,
-  updatedAt: string,
   archivedAt: string | null = null,
-): FolderThread => ({
-  id: ThreadId.make(id),
-  environmentId: ENV,
-  projectId,
-  archivedAt,
-  createdAt: updatedAt,
-  updatedAt,
-  latestUserMessageAt: updatedAt,
-});
+): FolderResident => ({ environmentId: ENV, id: ThreadId.make(id), projectId, archivedAt });
 
-const threads = [
-  thread("loose", SCRATCH, "2026-10-01T10:00:00Z"),
-  thread("loose-newer", SCRATCH, "2026-10-02T10:00:00Z"),
-  thread("archived", SCRATCH, "2026-10-03T10:00:00Z", "2026-10-04T10:00:00Z"),
-  thread("filed-in-clients", SCRATCH, "2026-10-01T09:00:00Z"),
-  thread("in-northwind", NORTHWIND_DRIVE, "2026-10-01T08:00:00Z"),
-  thread("filed-at-top", NORTHWIND_DRIVE, "2026-10-01T07:00:00Z"),
+const residents = [
+  resident("loose", SCRATCH),
+  resident("archived", SCRATCH, "2026-10-04T10:00:00Z"),
+  resident("filed-in-clients", SCRATCH),
+  resident("in-northwind", NORTHWIND_DRIVE),
+  resident("filed-at-top", NORTHWIND_DRIVE),
+  resident("no-owner", ELSEWHERE),
 ];
 
 const key = (id: string) => scopedThreadKey(scopeThreadRef(ENV, ThreadId.make(id)));
-
 const owners = folderOwners(contexts, snapshot);
-const homeOf = threadHomeLookup(snapshot);
-const environment = {
-  environmentId: ENV,
-  owners: owners.map((owner) => ({
-    ...owner,
-    threadsByHome: threadsByHome(homeOf, owner, threads),
-  })),
-};
+const listOf = folderListOfThreads(ENV, owners, threadHomeLookup(snapshot), residents);
 
 describe("folderSidebarModel", () => {
   it("lists owners Personal first, each with its own files and its own tree", () => {
     expect(owners.map((owner) => owner.context.name)).toEqual(["Personal", "Acme"]);
     expect(owners.map((owner) => owner.filesProjectId)).toEqual([SCRATCH, ACME_FILES]);
     expect(owners[0]!.roots.map((node) => node.folder.name)).toEqual(["Work", "Notes"]);
-    expect(owners[1]!.roots.map((node) => node.folder.name)).toEqual(["Northwind"]);
   });
 
-  it("puts each live thread at its home, within its owner's tree only", () => {
-    const personal = threadsByHome(homeOf, owners[0]!, threads);
-    expect(personal.get(null)?.map((entry) => entry.id)).toEqual(["loose", "loose-newer"]);
-    expect(personal.get(FolderId.make("clients"))?.map((entry) => entry.id)).toEqual([
-      "filed-in-clients",
-    ]);
-    const acme = threadsByHome(homeOf, owners[1]!, threads);
-    expect(acme.get(FolderId.make("northwind"))?.map((entry) => entry.id)).toEqual([
-      "in-northwind",
-    ]);
-    expect(acme.get(null)?.map((entry) => entry.id)).toEqual(["filed-at-top"]);
+  it("shows each live thread in its owner's list for its home, and others nowhere", () => {
+    expect(Object.fromEntries(listOf)).toEqual({
+      [key("loose")]: folderThreadListKey(ENV, PERSONAL, null),
+      [key("filed-in-clients")]: folderThreadListKey(ENV, PERSONAL, FolderId.make("clients")),
+      [key("in-northwind")]: folderThreadListKey(ENV, ACME, FolderId.make("northwind")),
+      [key("filed-at-top")]: folderThreadListKey(ENV, ACME, null),
+    });
   });
 
-  it("counts the threads in a folder and everywhere below it", () => {
-    const counts = folderThreadCounts(owners[0]!.roots, threadsByHome(homeOf, owners[0]!, threads));
-    expect(counts.get(FolderId.make("work"))).toBe(1);
-    expect(counts.get(FolderId.make("clients"))).toBe(1);
-    expect(counts.get(FolderId.make("notes"))).toBe(0);
+  it("keeps a list's array, and the whole map, while its threads stay the same objects", () => {
+    const threads = residents.map((entry) => ({ ...entry }));
+    const first = sliceFolderThreads(threads, listOf, undefined);
+    expect(first.get(folderThreadListKey(ENV, PERSONAL, null))?.map((entry) => entry.id)).toEqual([
+      "loose",
+    ]);
+    expect(sliceFolderThreads(threads, listOf, first)).toBe(first);
+    const renamed = threads.map((entry) => (entry.id === "loose" ? { ...entry } : entry));
+    const second = sliceFolderThreads(renamed, listOf, first);
+    expect(second).not.toBe(first);
+    const clients = folderThreadListKey(ENV, PERSONAL, FolderId.make("clients"));
+    expect(second.get(clients)).toBe(first.get(clients));
   });
 
-  it("orders visible threads as drawn: top level, then open folders, honoring Show more", () => {
-    const visible = (input: {
-      collapsed?: ReadonlyArray<string>;
-      previewCount?: number;
-      expanded?: ReadonlyArray<string>;
-    }) =>
-      visibleFolderThreadKeys({
-        environments: [environment],
-        collapsed: new Set(input.collapsed ?? []),
-        threadSortOrder: "updated_at",
-        threadPreviewCount: input.previewCount ?? 10,
-        expandedThreadLists: new Set(input.expanded ?? []),
-      });
-    expect(visible({})).toEqual([
-      key("loose-newer"),
-      key("loose"),
-      key("filed-in-clients"),
-      key("filed-at-top"),
-      key("in-northwind"),
-    ]);
+  it("tells residents apart only by what decides where they show", () => {
     expect(
-      visible({
-        collapsed: [folderNodeKey(ENV, FolderId.make("work")), folderOwnerKey(ENV, ACME)],
-      }),
-    ).toEqual([key("loose-newer"), key("loose")]);
-    const topList = folderThreadListKey(ENV, PERSONAL, null);
-    expect(visible({ previewCount: 1 }).slice(0, 2)).toEqual([
-      key("loose-newer"),
-      key("filed-in-clients"),
+      sameResidents(
+        residents,
+        residents.map((entry) => ({ ...entry })),
+      ),
+    ).toBe(true);
+    expect(
+      sameResidents(
+        residents,
+        residents.map((entry) =>
+          entry.id === "loose" ? { ...entry, archivedAt: "2026-10-05T00:00:00Z" } : entry,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("orders the open lists as drawn: top level, then each open folder's subfolders, then its own", () => {
+    const lists = (collapsed: ReadonlyArray<string>) =>
+      visibleFolderLists([{ environmentId: ENV, owners }], new Set(collapsed)).map(
+        (list) => list.listKey,
+      );
+    expect(lists([])).toEqual([
+      folderThreadListKey(ENV, PERSONAL, null),
+      folderThreadListKey(ENV, PERSONAL, FolderId.make("clients")),
+      folderThreadListKey(ENV, PERSONAL, FolderId.make("work")),
+      folderThreadListKey(ENV, PERSONAL, FolderId.make("notes")),
+      folderThreadListKey(ENV, ACME, null),
+      folderThreadListKey(ENV, ACME, FolderId.make("northwind")),
     ]);
-    expect(visible({ previewCount: 1, expanded: [topList] }).slice(0, 2)).toEqual([
-      key("loose-newer"),
-      key("loose"),
+    expect(lists([folderNodeKey(ENV, FolderId.make("work")), folderOwnerKey(ENV, ACME)])).toEqual([
+      folderThreadListKey(ENV, PERSONAL, null),
+      folderThreadListKey(ENV, PERSONAL, FolderId.make("notes")),
     ]);
   });
 
   it("offers a thread every other place in its owner's tree, and reads the choice back", () => {
-    const menu = moveThreadMenuItem(snapshot, PERSONAL, FolderId.make("clients"));
+    const menu = moveThreadMenuItem(
+      threadFolderChoices(snapshot, PERSONAL, FolderId.make("clients")),
+      false,
+    );
     expect(menu.children?.map((item) => [item.label, item.disabled])).toEqual([
       ["Top level", false],
       ["Work", false],
@@ -188,5 +181,6 @@ describe("folderSidebarModel", () => {
     expect(movedThreadDestination(menu.id)).toBeNull();
     expect(movedThreadDestination("rename")).toBeNull();
     expect(movedThreadDestination(null)).toBeNull();
+    expect(moveThreadMenuItem([], true).disabled).toBe(true);
   });
 });

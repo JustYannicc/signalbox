@@ -12,14 +12,14 @@ import type {
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
+import { type AccountPoolId, hubInstancePoolId } from "@t3tools/contracts/accountHub";
 import type { ResolvedPool, SectionsSnapshot } from "@t3tools/contracts/sections";
 
 type ProviderInstances = Readonly<Record<string, { readonly config?: unknown }>>;
 
 /** A pool a level runs on, however its server says where it's placed (sections or folders). */
 export interface PlacedPool {
-  readonly poolId: string;
+  readonly poolId: AccountPoolId;
 }
 
 /**
@@ -69,7 +69,7 @@ const defaultModel = (provider: ServerProvider) =>
  */
 function modelSelectionOnPool(input: {
   readonly selection: ModelSelection | null;
-  readonly poolId: string;
+  readonly poolId: AccountPoolId;
   readonly providerInstances: ProviderInstances;
   readonly providers: ReadonlyArray<ServerProvider>;
 }): ModelSelection | null {
@@ -137,7 +137,7 @@ export type PoolNeed =
   | { readonly _tag: "noPool" }
   | {
       readonly _tag: "signIn";
-      readonly poolId: string;
+      readonly poolId: AccountPoolId;
       readonly instanceId: ProviderInstanceId | null;
     };
 

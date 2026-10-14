@@ -8,14 +8,20 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  folderDeleteMessage,
   folderDestinations,
+  folderLevelName,
   folderPath,
   folderSiblingMove,
+  folderThreadCounts,
   folderTree,
   homeOfProject,
   homeOfThread,
   newThreadIn,
+  ownerFilesProject,
   poolOfHome,
+  poolOfTarget,
+  threadFolderChoices,
   threadHomeLookup,
 } from "./foldersModel.ts";
 
@@ -71,7 +77,8 @@ describe("foldersModel", () => {
       { Work: [{ Clients: ["Northwind"] }] },
       "Notes",
     ]);
-    expect(folderTree(snapshot, "org_acme")).toEqual([]);
+    expect(folderTree(snapshot, SignalboxContextId.make("org_acme"))).toEqual([]);
+    expect(folderTree(snapshot, PERSONAL)).toBe(folderTree(snapshot, PERSONAL));
   });
 
   it("homes a thread where it was filed, else with its project's files, else at the top", () => {
@@ -147,5 +154,81 @@ describe("foldersModel", () => {
       file: true,
     });
     expect(newThreadIn(snapshot, null, SCRATCH)).toEqual({ projectId: SCRATCH, file: false });
+  });
+
+  it("keeps one lookup per snapshot, so its identity only changes with the folders", () => {
+    expect(threadHomeLookup(snapshot)).toBe(threadHomeLookup(snapshot));
+    expect(threadHomeLookup({ ...snapshot })).not.toBe(threadHomeLookup(snapshot));
+  });
+
+  it("resolves the pool of a folder, a thread, a new thread in a project, or the top level", () => {
+    expect(
+      poolOfTarget(snapshot, { projectId: SCRATCH, folderId: FolderId.make("clients") })?.poolId,
+    ).toBe("work");
+    expect(
+      poolOfTarget(snapshot, { projectId: SCRATCH, threadId: ThreadId.make("filed") })?.poolId,
+    ).toBe("work");
+    expect(poolOfTarget(snapshot, { projectId: SCRATCH })?.poolId).toBe("personal");
+    expect(poolOfTarget(snapshot, { projectId: null })?.poolId).toBe("personal");
+  });
+
+  it("names where a pool is placed", () => {
+    expect(folderLevelName(snapshot, { _tag: "top" })).toBe("the top level");
+    expect(folderLevelName(snapshot, { _tag: "folder", folderId: FolderId.make("work") })).toBe(
+      "Work",
+    );
+    expect(
+      folderLevelName(snapshot, { _tag: "folder", folderId: FolderId.make("gone") }),
+    ).toBeNull();
+  });
+
+  it("offers a thread its owner's top level and every folder, its home checked", () => {
+    expect(
+      threadFolderChoices(snapshot, PERSONAL, FolderId.make("clients")).map((choice) => [
+        choice.folderId,
+        choice.label,
+        choice.checked,
+      ]),
+    ).toEqual([
+      [null, "Top level", false],
+      ["work", "Work", false],
+      ["clients", "Work / Clients", true],
+      ["northwind", "Work / Clients / Northwind", false],
+      ["notes", "Notes", false],
+    ]);
+  });
+
+  it("says where a deleted folder's contents go", () => {
+    const byId = (id: string) => snapshot.folders.find((entry) => entry.id === id)!;
+    expect(folderDeleteMessage(snapshot, byId("clients"))).toBe(
+      "Its folders and threads move up to “Work”. No thread or file is deleted.",
+    );
+    expect(folderDeleteMessage(snapshot, byId("work"))).toBe(
+      "Its folders and threads move up to the top level. No thread or file is deleted.",
+    );
+  });
+
+  it("counts live threads in each folder and everything below it", () => {
+    const counts = folderThreadCounts(snapshot, [
+      { id: ThreadId.make("filed"), projectId: SCRATCH },
+      { id: ThreadId.make("in-northwind"), projectId: DRIVE },
+      { id: ThreadId.make("archived"), projectId: DRIVE, archivedAt: "2026-10-01T00:00:00Z" },
+      { id: ThreadId.make("loose"), projectId: SCRATCH },
+    ]);
+    expect(Object.fromEntries(counts)).toEqual({ work: 2, clients: 2, northwind: 1 });
+  });
+
+  it("names an owner's own files", () => {
+    expect(
+      ownerFilesProject({
+        id: PERSONAL,
+        kind: "personal",
+        name: "Personal",
+        projectIds: [SCRATCH],
+      }),
+    ).toBe(SCRATCH);
+    expect(
+      ownerFilesProject({ id: PERSONAL, kind: "personal", name: "Personal", projectIds: [] }),
+    ).toBeNull();
   });
 });

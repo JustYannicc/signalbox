@@ -1,60 +1,99 @@
 import { useAtomValue } from "@effect/atom-react";
-import { threadHomeLookup } from "@t3tools/client-runtime/state/signalboxFolders";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { FolderId, SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { useCallback, useMemo, useState } from "react";
 
 import {
-  isDesktopLocalConnectionTarget,
-  isWslConnectionTarget,
-} from "../../../connection/desktopLocal";
-import type { SidebarProjectSnapshot } from "../../../sidebarProjectGrouping";
+  buildSidebarProjectSnapshots,
+  type SidebarProjectSnapshot,
+} from "../../../sidebarProjectGrouping";
+import type { ProjectGroupingSettings } from "../../../logicalProject";
 import type { EnvironmentPresentation } from "../../../state/environments";
-import { environmentContextsAtom } from "../../../state/signalboxContexts";
 import { environmentFoldersAtom } from "../../../state/signalboxFolders";
 import type { Project, SidebarThreadSummary } from "../../../types";
-import {
-  buildSectionSidebarEnvironment,
-  type SectionSidebarProject,
+import type {
+  SectionSidebarProject,
+  SectionSidebarVisibleProjectRow,
 } from "../sections/sectionProjectTree";
+import { visibleFolderLists, type FolderOwner } from "./folderSidebarModel";
 import {
-  folderOwners,
-  folderThreadCounts,
-  threadsByHome,
-  type FolderOwnerThreads,
-  type HomeOf,
-} from "./folderSidebarModel";
+  folderCountsAtom,
+  folderThreadSlicesAtom,
+  folderTreesAtom,
+  type FolderEnvironmentTree,
+} from "./folderThreads";
 
-export interface FolderOwnerView extends FolderOwnerThreads<SidebarThreadSummary> {
-  /** Threads living in each folder or below it. */
-  readonly counts: ReadonlyMap<FolderId, number>;
+export interface FolderEnvironmentView extends FolderEnvironmentTree {
+  readonly label: string;
+  /** The project row each owner's lists draw with (`ownerListProject`). */
+  readonly ownerProjects: ReadonlyMap<SignalboxContextId, SidebarProjectSnapshot>;
+  /** Each project's own key, for its settings. */
+  readonly projectKeys: ReadonlyMap<ProjectId, string>;
 }
 
-export interface FolderEnvironmentView {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly snapshot: SignalboxFoldersSnapshot;
-  readonly homeOf: HomeOf;
-  /** Each project as the thread list draws it, one row per project of this environment. */
-  readonly projectRows: ReadonlyMap<ProjectId, SectionSidebarProject>;
-  /** Personal first, then each organization, in the contexts' order. */
-  readonly owners: ReadonlyArray<FolderOwnerView>;
+const SEPARATE: ProjectGroupingSettings = {
+  sidebarProjectGroupingMode: "separate",
+  sidebarProjectGroupingOverrides: {},
+};
+
+/**
+ * The project row an owner's thread lists draw with: its own files' row,
+ * spanning all of its projects, so a thread's path is its own project's.
+ * Built from the owner's projects one by one, never grouped.
+ */
+function ownerProjects(input: {
+  environment: EnvironmentPresentation;
+  owners: ReadonlyArray<FolderOwner>;
+  projects: ReadonlyArray<Project>;
+  primaryEnvironmentId: EnvironmentId | null;
+}) {
+  const snapshots = buildSidebarProjectSnapshots({
+    projects: input.projects,
+    settings: SEPARATE,
+    primaryEnvironmentId: input.primaryEnvironmentId,
+    resolveEnvironmentLabel: () => input.environment.label,
+  });
+  const byId = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
+  const lists = new Map<SignalboxContextId, SidebarProjectSnapshot>();
+  for (const owner of input.owners) {
+    const members = owner.context.projectIds.flatMap((id) => byId.get(id) ?? []);
+    const own = (owner.filesProjectId && byId.get(owner.filesProjectId)) || members[0];
+    if (own === undefined) continue;
+    lists.set(owner.context.id, {
+      ...own,
+      memberProjects: members.flatMap((member) => member.memberProjects),
+      memberProjectRefs: members.map((member) => scopeProjectRef(member.environmentId, member.id)),
+    });
+  }
+  return {
+    lists,
+    keys: new Map(snapshots.map((snapshot) => [snapshot.id, snapshot.projectKey])),
+  };
+}
+
+/** The row a list hands the sidebar's project renderer: keyed by the list. */
+export function folderListRow(
+  project: SidebarProjectSnapshot,
+  listKey: string,
+): SectionSidebarProject {
+  return { id: project.id, sidebarProjectKey: listKey, project, sectionId: null };
 }
 
 /**
- * The Home sidebar's folder environments, their collapse state, and those
- * that failed to load. The tree itself only changes with folders, contexts
- * and projects; threads only regroup it.
+ * The Home sidebar's folder environments, their collapse state, the lists
+ * it shows (for jump keys and ↑/↓), and the environments whose folders
+ * failed to load.
  */
 export function useFoldersSidebar(input: {
   environments: ReadonlyArray<EnvironmentPresentation>;
   projects: ReadonlyArray<Project>;
-  projectGroups: ReadonlyArray<SidebarProjectSnapshot>;
   primaryEnvironmentId: EnvironmentId | null;
-  threads: ReadonlyArray<SidebarThreadSummary>;
 }) {
   const folders = useAtomValue(environmentFoldersAtom);
-  const contexts = useAtomValue(environmentContextsAtom);
+  const trees = useAtomValue(folderTreesAtom);
+  const counts = useAtomValue(folderCountsAtom);
+  const slices = useAtomValue(folderThreadSlicesAtom);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = useCallback((key: string) => {
     setCollapsed((current) => {
@@ -65,78 +104,66 @@ export function useFoldersSidebar(input: {
     });
   }, []);
 
-  const structure = useMemo(() => {
-    const trees = [];
-    const failures: Array<{ environmentId: EnvironmentId; label: string; error: string }> = [];
-    for (const environment of input.environments) {
-      const { environmentId } = environment;
-      const environmentFolders = folders.get(environmentId);
-      if (environmentFolders === undefined) continue;
-      if (environmentFolders.error !== null) {
-        failures.push({ environmentId, label: environment.label, error: environmentFolders.error });
-      }
-      const snapshot = environmentFolders.snapshot;
-      const environmentContexts = contexts.get(environmentId);
-      if (snapshot === null || environmentContexts === undefined) continue;
-      const rows = buildSectionSidebarEnvironment({
-        environmentId,
-        label: environment.label,
-        primaryEnvironmentId: input.primaryEnvironmentId,
-        isDesktopLocalEnvironment: isDesktopLocalConnectionTarget(environment.entry.target),
-        isWslEnvironment: isWslConnectionTarget(environment.entry.target),
-        projects: input.projects.filter((project) => project.environmentId === environmentId),
-        projectGroups: input.projectGroups,
-        serverView: undefined,
-      }).tree.unplacedProjects;
-      trees.push({
-        environmentId,
-        label: environment.label,
-        snapshot,
-        homeOf: threadHomeLookup(snapshot),
-        projectRows: new Map(rows.map((row) => [row.id, row])),
-        owners: folderOwners(environmentContexts, snapshot),
-      });
-    }
-    return { trees, failures };
-  }, [
-    contexts,
-    folders,
-    input.environments,
-    input.primaryEnvironmentId,
-    input.projectGroups,
-    input.projects,
-  ]);
-
   const environments = useMemo(
     (): ReadonlyArray<FolderEnvironmentView> =>
-      structure.trees.map((tree) => {
-        const threads = input.threads.filter(
-          (thread) => thread.environmentId === tree.environmentId,
-        );
-        return {
-          ...tree,
-          owners: tree.owners.map((owner) => {
-            const byHome = threadsByHome(tree.homeOf, owner, threads);
-            return {
-              ...owner,
-              threadsByHome: byHome,
-              counts: folderThreadCounts(owner.roots, byHome),
-            };
-          }),
-        };
+      input.environments.flatMap((environment) => {
+        const tree = trees.get(environment.environmentId);
+        if (tree === undefined) return [];
+        const { lists, keys } = ownerProjects({
+          environment,
+          owners: tree.owners,
+          projects: input.projects.filter(
+            (project) => project.environmentId === environment.environmentId,
+          ),
+          primaryEnvironmentId: input.primaryEnvironmentId,
+        });
+        return [{ ...tree, label: environment.label, ownerProjects: lists, projectKeys: keys }];
       }),
-    [input.threads, structure],
+    [input.environments, input.primaryEnvironmentId, input.projects, trees],
+  );
+
+  const failures = useMemo(
+    () =>
+      input.environments.flatMap((environment) => {
+        const error = folders.get(environment.environmentId)?.error;
+        return error
+          ? [{ environmentId: environment.environmentId, label: environment.label, error }]
+          : [];
+      }),
+    [folders, input.environments],
+  );
+
+  const visibleRows = useMemo(
+    (): ReadonlyArray<SectionSidebarVisibleProjectRow> =>
+      visibleFolderLists(environments, collapsed).flatMap((list) => {
+        const project = environments
+          .find((environment) => environment.environmentId === list.environmentId)
+          ?.ownerProjects.get(list.owner.context.id);
+        const threads: ReadonlyArray<SidebarThreadSummary> | undefined = slices.get(list.listKey);
+        return project && threads
+          ? [
+              {
+                environmentId: list.environmentId,
+                project: folderListRow(project, list.listKey),
+                threads,
+              },
+            ]
+          : [];
+      }),
+    [collapsed, environments, slices],
   );
 
   return useMemo(
     () => ({
       environments,
-      failures: structure.failures,
+      counts,
+      failures,
+      visibleRows,
       showEnvironmentLabels: input.environments.length > 1,
       collapsed,
       toggle,
     }),
-    [collapsed, environments, input.environments.length, structure.failures, toggle],
+    [collapsed, counts, environments, failures, input.environments.length, toggle, visibleRows],
   );
 }
 

@@ -21,8 +21,8 @@ export type FolderDialog =
       readonly kind: "delete";
       readonly environmentId: EnvironmentId;
       readonly folder: Folder;
-      /** Where its folders and threads move up to: null is the top level. */
-      readonly parentName: string | null;
+      /** What deleting it does (`folderDeleteMessage`). */
+      readonly message: string;
     }
   | {
       readonly kind: "instructions";

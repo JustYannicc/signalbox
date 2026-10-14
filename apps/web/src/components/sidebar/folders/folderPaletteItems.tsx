@@ -3,8 +3,7 @@
  * another folder of its owner, and make a new folder.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { folderDestinations, homeOfThread } from "@t3tools/client-runtime/state/signalboxFolders";
-import type { FolderId } from "@t3tools/contracts/signalboxFolders";
+import { homeOfThread, threadFolderChoices } from "@t3tools/client-runtime/state/signalboxFolders";
 import { useParams } from "@tanstack/react-router";
 import { FolderInputIcon, FolderPlusIcon } from "lucide-react";
 
@@ -56,33 +55,18 @@ export function useFolderPaletteItems(): Array<
       ?.contexts.find((context) => context.projectIds.includes(thread.projectId));
   if (thread && snapshot && owner && editable.has(thread.environmentId)) {
     const home = homeOfThread(snapshot, { id: thread.threadId, projectId: thread.projectId });
-    const move = (folderId: FolderId | null) => async () => {
-      await commands.moveThread(thread.environmentId, thread.threadId, folderId);
-    };
-    const destinations: Array<CommandPaletteActionItem> = [
-      ...(home === null
-        ? []
-        : [
-            {
-              kind: "action" as const,
-              value: "move-thread-to-folder:top",
-              searchTerms: ["top level", owner.name],
-              title: "Top level",
-              icon: <FolderInputIcon className={ITEM_ICON_CLASS} />,
-              run: move(null),
-            },
-          ]),
-      ...folderDestinations(snapshot, owner.id)
-        .filter((destination) => destination.folder.id !== home)
-        .map((destination): CommandPaletteActionItem => ({
-          kind: "action",
-          value: `move-thread-to-folder:${destination.folder.id}`,
-          searchTerms: [destination.label],
-          title: destination.label,
-          icon: <FolderInputIcon className={ITEM_ICON_CLASS} />,
-          run: move(destination.folder.id),
-        })),
-    ];
+    const destinations = threadFolderChoices(snapshot, owner.id, home)
+      .filter((choice) => !choice.checked)
+      .map((choice): CommandPaletteActionItem => ({
+        kind: "action",
+        value: `move-thread-to-folder:${choice.folderId ?? "top"}`,
+        searchTerms: choice.folderId === null ? [choice.label, owner.name] : [choice.label],
+        title: choice.label,
+        icon: <FolderInputIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await commands.moveThread(thread.environmentId, thread.threadId, choice.folderId);
+        },
+      }));
     if (destinations.length > 0) {
       items.push({
         kind: "submenu",

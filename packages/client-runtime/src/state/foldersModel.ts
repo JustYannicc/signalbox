@@ -1,7 +1,9 @@
 import type { ProjectId, ThreadId } from "@t3tools/contracts";
+import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type {
   Folder,
   FolderId,
+  FolderLevel,
   FolderMoveInput,
   FolderResolvedPool,
   SignalboxFoldersSnapshot,
@@ -10,7 +12,9 @@ import type {
 /**
  * A Signalbox Cloud user's tree as clients show it (`signalboxFolders.ts`):
  * every owner's folders nested, where each thread lives, and what a level
- * runs on. Pure; web and mobile both read their sidebars from it.
+ * runs on. Pure; web and mobile both read their sidebars from it. Lookups
+ * that every row needs are cached per snapshot, so they keep their identity
+ * until the folders change.
  */
 
 export interface FolderNode {
@@ -22,11 +26,20 @@ export interface FolderNode {
 const byPosition = (left: Folder, right: Folder) =>
   left.position - right.position || left.id.localeCompare(right.id);
 
-/** One owner's folders, nested, in order. */
+const treeCache = new WeakMap<
+  SignalboxFoldersSnapshot,
+  Map<SignalboxContextId, ReadonlyArray<FolderNode>>
+>();
+
+/** One owner's folders, nested, in order. The same array for the same snapshot. */
 export function folderTree(
   snapshot: SignalboxFoldersSnapshot,
-  ownerId: string,
+  ownerId: SignalboxContextId,
 ): ReadonlyArray<FolderNode> {
+  const trees = treeCache.get(snapshot) ?? new Map();
+  treeCache.set(snapshot, trees);
+  const cached = trees.get(ownerId);
+  if (cached !== undefined) return cached;
   const children = new Map<FolderId | null, Array<Folder>>();
   for (const folder of snapshot.folders) {
     if (folder.ownerId !== ownerId) continue;
@@ -43,7 +56,19 @@ export function folderTree(
         folder,
         children: build(folder.id, new Set([...seen, folder.id])),
       }));
-  return build(null, new Set());
+  const tree = build(null, new Set());
+  trees.set(ownerId, tree);
+  return tree;
+}
+
+/** The files an owner's own threads work in: Scratch for Personal, `context:<org>` for an organization. */
+export function ownerFilesProject(context: SignalboxContext): ProjectId | null {
+  return context.projectIds[0] ?? null;
+}
+
+interface ThreadRef {
+  readonly id: ThreadId;
+  readonly projectId: ProjectId;
 }
 
 /**
@@ -52,13 +77,9 @@ export function folderTree(
  */
 export function homeOfThread(
   snapshot: SignalboxFoldersSnapshot,
-  thread: { readonly id: ThreadId; readonly projectId: ProjectId },
+  thread: ThreadRef,
 ): FolderId | null {
-  const filed = snapshot.threadHomes.find((home) => home.threadId === thread.id);
-  if (filed !== undefined) return filed.folderId;
-  return (
-    snapshot.projectHomes.find((home) => home.projectId === thread.projectId)?.folderId ?? null
-  );
+  return threadHomeLookup(snapshot)(thread);
 }
 
 /** Where a project's threads live unless filed elsewhere: the folder it's the files of, else the top level. */
@@ -69,14 +90,22 @@ export function homeOfProject(
   return snapshot.projectHomes.find((home) => home.projectId === projectId)?.folderId ?? null;
 }
 
-/** Each thread's home, for grouping many threads at once. */
-export function threadHomeLookup(snapshot: SignalboxFoldersSnapshot) {
+const lookupCache = new WeakMap<SignalboxFoldersSnapshot, (thread: ThreadRef) => FolderId | null>();
+
+/** Each thread's home, for grouping many threads at once. The same function for the same snapshot. */
+export function threadHomeLookup(
+  snapshot: SignalboxFoldersSnapshot,
+): (thread: ThreadRef) => FolderId | null {
+  const cached = lookupCache.get(snapshot);
+  if (cached !== undefined) return cached;
   const filed = new Map(snapshot.threadHomes.map((home) => [home.threadId, home.folderId]));
   const byProject = new Map(snapshot.projectHomes.map((home) => [home.projectId, home.folderId]));
-  return (thread: { readonly id: ThreadId; readonly projectId: ProjectId }): FolderId | null =>
+  const lookup = (thread: ThreadRef): FolderId | null =>
     filed.has(thread.id)
       ? (filed.get(thread.id) ?? null)
       : (byProject.get(thread.projectId) ?? null);
+  lookupCache.set(snapshot, lookup);
+  return lookup;
 }
 
 /** The pool a level runs on: null when nothing on its chain has one. */
@@ -86,6 +115,37 @@ export function poolOfHome(
 ): FolderResolvedPool | null {
   if (home === null) return snapshot.pools.top;
   return snapshot.pools.folders.find((entry) => entry.folderId === home)?.pool ?? null;
+}
+
+/**
+ * The pool something runs on: a folder (where a thread is being started),
+ * else a thread (its home), else a new thread in a project (its project's
+ * home), else the top level.
+ */
+export function poolOfTarget(
+  snapshot: SignalboxFoldersSnapshot,
+  target: {
+    readonly projectId: ProjectId | null;
+    readonly threadId?: ThreadId | null | undefined;
+    readonly folderId?: FolderId | null | undefined;
+  },
+): FolderResolvedPool | null {
+  if (target.folderId !== undefined) return poolOfHome(snapshot, target.folderId);
+  if (target.projectId === null) return poolOfHome(snapshot, null);
+  const home =
+    target.threadId == null
+      ? homeOfProject(snapshot, target.projectId)
+      : homeOfThread(snapshot, { id: target.threadId, projectId: target.projectId });
+  return poolOfHome(snapshot, home);
+}
+
+/** Where a pool is placed, as "Runs on X · from Y" names it: null when that folder is gone. */
+export function folderLevelName(
+  snapshot: SignalboxFoldersSnapshot,
+  level: FolderLevel,
+): string | null {
+  if (level._tag === "top") return "the top level";
+  return snapshot.folders.find((folder) => folder.id === level.folderId)?.name ?? null;
 }
 
 /** `folderId` and the folders above it, top first; empty for the top level. */
@@ -118,7 +178,7 @@ export interface FolderDestination {
  */
 export function folderDestinations(
   snapshot: SignalboxFoldersSnapshot,
-  ownerId: string,
+  ownerId: SignalboxContextId,
   moving?: FolderId,
 ): ReadonlyArray<FolderDestination> {
   const destinations: Array<FolderDestination> = [];
@@ -132,6 +192,60 @@ export function folderDestinations(
   };
   walk(folderTree(snapshot, ownerId), []);
   return destinations;
+}
+
+export interface ThreadFolderChoice {
+  /** Null: the owner's top level. */
+  readonly folderId: FolderId | null;
+  readonly label: string;
+  /** Where the thread lives now. */
+  readonly checked: boolean;
+}
+
+/** Where a thread living at `home` can be moved: its owner's top level, then every folder. */
+export function threadFolderChoices(
+  snapshot: SignalboxFoldersSnapshot,
+  ownerId: SignalboxContextId,
+  home: FolderId | null,
+): ReadonlyArray<ThreadFolderChoice> {
+  return [
+    { folderId: null, label: "Top level", checked: home === null },
+    ...folderDestinations(snapshot, ownerId).map((destination) => ({
+      folderId: destination.folder.id,
+      label: destination.label,
+      checked: destination.folder.id === home,
+    })),
+  ];
+}
+
+/** What deleting `folder` does, for its confirmation. */
+export function folderDeleteMessage(snapshot: SignalboxFoldersSnapshot, folder: Folder): string {
+  const parent = snapshot.folders.find((candidate) => candidate.id === folder.parentId);
+  return `Its folders and threads move up to ${
+    parent === undefined ? "the top level" : `“${parent.name}”`
+  }. No thread or file is deleted.`;
+}
+
+/**
+ * How many live threads are in each folder or anywhere below it, by their
+ * home. Archived threads don't count.
+ */
+export function folderThreadCounts(
+  snapshot: SignalboxFoldersSnapshot,
+  residents: ReadonlyArray<ThreadRef & { readonly archivedAt?: string | null }>,
+): ReadonlyMap<FolderId, number> {
+  const homeOf = threadHomeLookup(snapshot);
+  const parentOf = new Map(snapshot.folders.map((folder) => [folder.id, folder.parentId]));
+  const counts = new Map<FolderId, number>();
+  for (const thread of residents) {
+    if (thread.archivedAt != null) continue;
+    const seen = new Set<FolderId>();
+    for (let id = homeOf(thread); id !== null && !seen.has(id); id = parentOf.get(id) ?? null) {
+      seen.add(id);
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 /**
@@ -177,7 +291,5 @@ export function newThreadIn(
   const folder =
     folderId === null ? undefined : snapshot.folders.find((candidate) => candidate.id === folderId);
   const projectId = folder?.files?.projectId ?? ownerProjectId;
-  const projectHome =
-    snapshot.projectHomes.find((home) => home.projectId === projectId)?.folderId ?? null;
-  return { projectId, file: projectHome !== folderId };
+  return { projectId, file: homeOfProject(snapshot, projectId) !== folderId };
 }

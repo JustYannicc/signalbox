@@ -2,14 +2,19 @@
  * The Home sidebar of an environment with folders (Signalbox Cloud). Per
  * owner, Personal first: the threads living at its top level, then its
  * folders, nested at any depth. An open folder shows its subfolders, its
- * files as one "Files" source, and the threads that live there. Thread rows
- * are the sidebar's own (`renderThreads`).
+ * files as one "Files" source, and the threads that live there, drawn by
+ * the sidebar's own project renderer inside a `SidebarThreadScope`.
  */
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { FolderNode } from "@t3tools/client-runtime/state/signalboxFolders";
-import type { EnvironmentId } from "@t3tools/contracts";
-import type { FolderId } from "@t3tools/contracts/signalboxFolders";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  threadFolderChoices,
+  threadHomeLookup,
+  type FolderNode,
+} from "@t3tools/client-runtime/state/signalboxFolders";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { FolderId, SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import { useParams } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
   FolderClosedIcon,
@@ -18,24 +23,22 @@ import {
   HardDriveIcon,
   SquarePenIcon,
 } from "lucide-react";
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { createContext, memo, useCallback, useContext, useMemo, type KeyboardEvent } from "react";
 
+import { useComposerDraftStore } from "../../../composerDraftStore";
 import { cn } from "../../../lib/utils";
-import type { SidebarProjectSnapshot } from "../../../sidebarProjectGrouping";
-import { retryEnvironmentFolders, signalboxFolders } from "../../../state/signalboxFolders";
+import {
+  folderEditableEnvironmentsAtom,
+  retryEnvironmentFolders,
+} from "../../../state/signalboxFolders";
+import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "../../../threadRoutes";
 import { DriveShareDialogHost } from "../../drives/DriveProjectShareMenuItem";
 import { NewSharedDriveButton } from "../../drives/NewSharedDriveButton";
 import { Button } from "../../ui/button";
 import { CollapsibleSectionHeader } from "../../ui/collapsible-section-header";
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "../../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
+import type { RenderProject } from "../sections/SectionsProjectTree";
 import { openFolderDialog } from "./folderDialogStore";
 import { FolderMenu, OwnerMenu } from "./FolderMenus";
 import {
@@ -44,31 +47,34 @@ import {
   folderThreadListKey,
   moveThreadMenuItem,
   movedThreadDestination,
+  type FolderOwner,
 } from "./folderSidebarModel";
-import type { SidebarThreadScope } from "./threadScope";
+import { folderThreadSliceAtom } from "./folderThreads";
+import { SidebarThreadScopeContext, type SidebarThreadScope } from "./threadScope";
 import { useFolderCommands, type FolderCommands } from "./useFolderCommands";
-import type { FolderEnvironmentView, FolderOwnerView, FoldersSidebar } from "./useFoldersSidebar";
+import {
+  folderListRow,
+  type FolderEnvironmentView,
+  type FoldersSidebar,
+} from "./useFoldersSidebar";
 import { useStartInFolder, type StartInFolder } from "./useStartInFolder";
 
 /** Nesting stops indenting past this depth, so deep trees keep their names readable. */
 const MAX_INDENTED_DEPTH = 4;
+const NO_SIBLINGS: ReadonlyArray<ProjectId> = [];
 
-export interface FolderThreadList {
-  readonly key: string;
-  /** The project the list belongs to: its owner's own files. */
-  readonly project: SidebarProjectSnapshot;
-  readonly scope: SidebarThreadScope;
-}
-
+/** What every row reads; it changes when a folder folds, not when threads do. */
 interface TreeContext {
   readonly collapsed: ReadonlySet<string>;
   readonly toggle: (key: string) => void;
   readonly commands: FolderCommands;
   readonly start: (input: StartInFolder) => void;
-  readonly renderThreads: (list: FolderThreadList) => ReactNode;
 }
 
 const FolderTreeContext = createContext<TreeContext | null>(null);
+/** Only the thread lists read the renderer and the open thread, so those redraw them alone. */
+const RenderProjectContext = createContext<RenderProject | null>(null);
+const ActiveThreadContext = createContext<string | null>(null);
 
 function useTree(): TreeContext {
   const tree = useContext(FolderTreeContext);
@@ -76,27 +82,53 @@ function useTree(): TreeContext {
   return tree;
 }
 
+/** The open thread, wherever it lives. */
+function useActiveThreadKey(): string | null {
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const draft = useComposerDraftStore((store) =>
+    routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
+  );
+  const ref = resolveActiveThreadRouteRef(routeTarget, draft);
+  return ref ? scopedThreadKey(ref) : null;
+}
+
+interface ListProps {
+  readonly environment: FolderEnvironmentView;
+  readonly owner: FolderOwner;
+  readonly home: FolderId | null;
+  readonly canEdit: boolean;
+}
+
 /** The threads living at one home, as the sidebar's own thread list. */
-function HomeThreads(props: {
-  environment: FolderEnvironmentView;
-  owner: FolderOwnerView;
-  home: FolderId | null;
-  canEdit: boolean;
-}) {
+function HomeThreads(props: ListProps) {
   const { environment, owner, home, canEdit } = props;
-  const { commands, renderThreads } = useTree();
-  const { environmentId, snapshot, homeOf, projectRows } = environment;
+  const { environmentId, snapshot, projectKeys } = environment;
   const ownerId = owner.context.id;
-  const projectIds = owner.context.projectIds;
-  // Only what changes with the tree: a new scope would redraw every thread row.
-  const scope = useMemo<SidebarThreadScope>(
-    () => ({
-      listKey: folderThreadListKey(environmentId, ownerId, home),
-      projectRefs: projectIds.map((projectId) => scopeProjectRef(environmentId, projectId)),
-      includes: (thread) => homeOf(thread) === home,
-      projectOf: (thread) => projectRows.get(thread.projectId)?.project,
+  const { commands } = useTree();
+  const activeThreadKey = useContext(ActiveThreadContext);
+  const renderProject = useContext(RenderProjectContext);
+  const listKey = folderThreadListKey(environmentId, ownerId, home);
+  const threads = useAtomValue(folderThreadSliceAtom(listKey));
+  // Only the list holding the open thread changes when it does.
+  const activeHere = threads.some(
+    (thread) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
+  )
+    ? activeThreadKey
+    : null;
+  const scope = useMemo<SidebarThreadScope>(() => {
+    const homeOf = threadHomeLookup(snapshot);
+    return {
+      threads,
+      activeThreadKey: activeHere,
+      settingsProjectKey: (thread) => projectKeys.get(thread.projectId),
       threadMenu: (thread) => ({
-        items: [{ ...moveThreadMenuItem(snapshot, ownerId, homeOf(thread)), disabled: !canEdit }],
+        items: [
+          moveThreadMenuItem(threadFolderChoices(snapshot, ownerId, homeOf(thread)), !canEdit),
+        ],
         select: (clicked) => {
           const destination = movedThreadDestination(clicked);
           if (destination === null) return false;
@@ -104,14 +136,16 @@ function HomeThreads(props: {
           return true;
         },
       }),
-    }),
-    [canEdit, commands, environmentId, home, homeOf, ownerId, projectIds, projectRows, snapshot],
+    };
+  }, [activeHere, canEdit, commands, environmentId, ownerId, projectKeys, snapshot, threads]);
+  const project = environment.ownerProjects.get(ownerId);
+  const row = useMemo(() => project && folderListRow(project, listKey), [listKey, project]);
+  if (!row || !renderProject || threads.length === 0) return null;
+  return (
+    <SidebarThreadScopeContext value={scope}>
+      {renderProject(environmentId, row, null, NO_SIBLINGS, null)}
+    </SidebarThreadScopeContext>
   );
-  const row =
-    (owner.filesProjectId && projectRows.get(owner.filesProjectId)) ||
-    projectIds.map((id) => projectRows.get(id)).find(Boolean);
-  if (!row || (owner.threadsByHome.get(home)?.length ?? 0) === 0) return null;
-  return renderThreads({ key: scope.listKey, project: row.project, scope });
 }
 
 function FilesRow(props: { name: string; onOpen: () => void }) {
@@ -137,21 +171,21 @@ function FilesRow(props: { name: string; onOpen: () => void }) {
   );
 }
 
-function FolderRow(props: {
+const FolderRow = memo(function FolderRow(props: {
   environment: FolderEnvironmentView;
-  owner: FolderOwnerView;
+  owner: FolderOwner;
   node: FolderNode;
   depth: number;
   canEdit: boolean;
+  counts: ReadonlyMap<FolderId, number>;
 }) {
-  const { environment, owner, node, depth, canEdit } = props;
+  const { environment, owner, node, depth, canEdit, counts } = props;
   const { collapsed, toggle, commands, start } = useTree();
   const { folder } = node;
   const key = folderNodeKey(environment.environmentId, folder.id);
   const expanded = !collapsed.has(key);
-  const count = owner.counts.get(folder.id) ?? 0;
-  const ownThreads = owner.threadsByHome.get(folder.id)?.length ?? 0;
-  const empty = node.children.length === 0 && folder.files === undefined && ownThreads === 0;
+  const count = counts.get(folder.id) ?? 0;
+  const empty = node.children.length === 0 && folder.files === undefined && count === 0;
   // A folder with its own files can start threads even where its owner has none.
   const canStart = owner.filesProjectId !== null || folder.files !== undefined;
   const startHere = (openFiles: boolean) =>
@@ -239,6 +273,7 @@ function FolderRow(props: {
               node={child}
               depth={depth + 1}
               canEdit={canEdit}
+              counts={counts}
             />
           ))}
           {folder.files ? <FilesRow name={folder.name} onOpen={() => startHere(true)} /> : null}
@@ -252,25 +287,51 @@ function FolderRow(props: {
       ) : null}
     </SidebarMenuItem>
   );
+});
+
+function NewFolderRow(props: { environmentId: EnvironmentId; owner: FolderOwner }) {
+  return (
+    <SidebarMenuItem>
+      <button
+        type="button"
+        onClick={() =>
+          openFolderDialog({
+            kind: "create",
+            environmentId: props.environmentId,
+            ownerId: props.owner.context.id,
+            ownerName: props.owner.context.name,
+            parent: null,
+          })
+        }
+        className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md ps-5.5 pe-2 text-left text-xs text-sidebar-muted-foreground/60 outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset"
+      >
+        <FolderPlusIcon aria-hidden className="size-3.5 shrink-0" />
+        New folder
+      </button>
+    </SidebarMenuItem>
+  );
 }
 
-function OwnerGroup(props: { environment: FolderEnvironmentView; owner: FolderOwnerView }) {
-  const { environment, owner } = props;
+const OwnerGroup = memo(function OwnerGroup(props: {
+  environment: FolderEnvironmentView;
+  owner: FolderOwner;
+  snapshot: SignalboxFoldersSnapshot;
+  canEdit: boolean;
+  counts: ReadonlyMap<FolderId, number>;
+}) {
+  const { environment, owner, canEdit, counts } = props;
   const { collapsed, toggle, start } = useTree();
-  const canEdit = useAtomValue(
-    signalboxFolders.updateFolder.permissionAtom(environment.environmentId),
-  );
   const key = folderOwnerKey(environment.environmentId, owner.context.id);
   const expanded = !collapsed.has(key);
-  const filesProjectId = owner.filesProjectId;
-  const newThread = filesProjectId
-    ? () =>
-        start({
-          environmentId: environment.environmentId,
-          ownerProjectId: filesProjectId,
-          folderId: null,
-        })
-    : null;
+  const newThread =
+    owner.filesProjectId === null
+      ? null
+      : () =>
+          start({
+            environmentId: environment.environmentId,
+            ownerProjectId: owner.filesProjectId,
+            folderId: null,
+          });
 
   return (
     <section aria-label={owner.context.name} className="flex flex-col">
@@ -289,7 +350,7 @@ function OwnerGroup(props: { environment: FolderEnvironmentView; owner: FolderOw
         ) : null}
         <OwnerMenu
           environmentId={environment.environmentId}
-          snapshot={environment.snapshot}
+          snapshot={props.snapshot}
           owner={owner}
           canEdit={canEdit}
           onNewThread={newThread}
@@ -306,33 +367,17 @@ function OwnerGroup(props: { environment: FolderEnvironmentView; owner: FolderOw
               node={node}
               depth={0}
               canEdit={canEdit}
+              counts={counts}
             />
           ))}
           {canEdit ? (
-            <SidebarMenuItem>
-              <button
-                type="button"
-                onClick={() =>
-                  openFolderDialog({
-                    kind: "create",
-                    environmentId: environment.environmentId,
-                    ownerId: owner.context.id,
-                    ownerName: owner.context.name,
-                    parent: null,
-                  })
-                }
-                className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md ps-5.5 pe-2 text-left text-xs text-sidebar-muted-foreground/60 outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset"
-              >
-                <FolderPlusIcon aria-hidden className="size-3.5 shrink-0" />
-                New folder
-              </button>
-            </SidebarMenuItem>
+            <NewFolderRow environmentId={environment.environmentId} owner={owner} />
           ) : null}
         </SidebarMenu>
       ) : null}
     </section>
   );
-}
+});
 
 function FolderFailure(props: { environmentId: EnvironmentId; label: string; error: string }) {
   const retry = useAtomSet(retryEnvironmentFolders);
@@ -349,13 +394,17 @@ function FolderFailure(props: { environmentId: EnvironmentId; label: string; err
   );
 }
 
+const NO_COUNTS: ReadonlyMap<FolderId, number> = new Map();
+
 export function FoldersSidebarTree(props: {
   sidebar: FoldersSidebar;
-  renderThreads: (list: FolderThreadList) => ReactNode;
+  renderProject: RenderProject;
 }) {
   const { sidebar } = props;
   const commands = useFolderCommands();
   const startInFolder = useStartInFolder();
+  const editable = useAtomValue(folderEditableEnvironmentsAtom);
+  const activeThreadKey = useActiveThreadKey();
   const { isMobile, setOpenMobile } = useSidebar();
   const start = useCallback(
     (input: StartInFolder) => {
@@ -365,41 +414,46 @@ export function FoldersSidebarTree(props: {
     [isMobile, setOpenMobile, startInFolder],
   );
   const tree = useMemo<TreeContext>(
-    () => ({
-      collapsed: sidebar.collapsed,
-      toggle: sidebar.toggle,
-      commands,
-      start,
-      renderThreads: props.renderThreads,
-    }),
-    [commands, props.renderThreads, sidebar.collapsed, sidebar.toggle, start],
+    () => ({ collapsed: sidebar.collapsed, toggle: sidebar.toggle, commands, start }),
+    [commands, sidebar.collapsed, sidebar.toggle, start],
   );
   if (sidebar.environments.length === 0 && sidebar.failures.length === 0) return null;
 
   return (
     <FolderTreeContext value={tree}>
-      <div className="flex flex-col gap-2">
-        {sidebar.environments.map((environment) => (
-          <section
-            key={environment.environmentId}
-            aria-label={environment.label}
-            className="flex flex-col gap-1"
-          >
-            {sidebar.showEnvironmentLabels ? (
-              <h3 className="px-2.5 pb-1 text-xs font-medium text-sidebar-muted-foreground/70">
-                {environment.label}
-              </h3>
-            ) : null}
-            <DriveShareDialogHost environmentId={environment.environmentId} />
-            {environment.owners.map((owner) => (
-              <OwnerGroup key={owner.context.id} environment={environment} owner={owner} />
+      <RenderProjectContext value={props.renderProject}>
+        <ActiveThreadContext value={activeThreadKey}>
+          <div className="flex flex-col gap-2">
+            {sidebar.environments.map((environment) => (
+              <section
+                key={environment.environmentId}
+                aria-label={environment.label}
+                className="flex flex-col gap-1"
+              >
+                {sidebar.showEnvironmentLabels ? (
+                  <h3 className="px-2.5 pb-1 text-xs font-medium text-sidebar-muted-foreground/70">
+                    {environment.label}
+                  </h3>
+                ) : null}
+                <DriveShareDialogHost environmentId={environment.environmentId} />
+                {environment.owners.map((owner) => (
+                  <OwnerGroup
+                    key={owner.context.id}
+                    environment={environment}
+                    owner={owner}
+                    snapshot={environment.snapshot}
+                    canEdit={editable.has(environment.environmentId)}
+                    counts={sidebar.counts.get(environment.environmentId) ?? NO_COUNTS}
+                  />
+                ))}
+              </section>
             ))}
-          </section>
-        ))}
-        {sidebar.failures.map((failure) => (
-          <FolderFailure key={failure.environmentId} {...failure} />
-        ))}
-      </div>
+            {sidebar.failures.map((failure) => (
+              <FolderFailure key={failure.environmentId} {...failure} />
+            ))}
+          </div>
+        </ActiveThreadContext>
+      </RenderProjectContext>
     </FolderTreeContext>
   );
 }

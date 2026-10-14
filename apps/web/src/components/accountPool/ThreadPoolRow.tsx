@@ -1,5 +1,6 @@
 // signalbox: Thread details says which pool the thread runs on, and where that pool is placed.
 import { useAtomValue } from "@effect/atom-react";
+import { folderLevelName } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SectionsSnapshot } from "@t3tools/contracts/sections";
 import type { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
@@ -17,10 +18,7 @@ import { THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS } from "../chat/threadDetailsPane
 
 const NO_SECTIONS = Atom.make<SectionsSnapshot | null>(null);
 
-/**
- * The level a pool is placed at, as the user knows it: a folder's name, or
- * the top level (Personal, where sections still organize).
- */
+/** The level a pool is placed at, as the user knows it. */
 function levelName(
   level: ResolvedPlacedPool["from"],
   sections: SectionsSnapshot | null,
@@ -29,9 +27,10 @@ function levelName(
 ): string | undefined {
   switch (level._tag) {
     case "top":
-      return folders ? "the top level" : "Personal";
+      // Where sections organize, the top level is Personal's.
+      return folders ? (folderLevelName(folders, level) ?? undefined) : "Personal";
     case "folder":
-      return folders?.folders.find((folder) => folder.id === level.folderId)?.name;
+      return (folders && folderLevelName(folders, level)) ?? undefined;
     case "section":
       return sections?.sections.find((section) => section.id === level.sectionId)?.name;
     case "project":

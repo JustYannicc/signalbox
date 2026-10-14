@@ -24,23 +24,36 @@ export interface EnvironmentFolders {
   readonly error: string | null;
 }
 
-/** Every connected environment that serves folders, keyed by id, whether or not they've arrived. */
+/**
+ * Every connected environment that serves folders, keyed by id, whether or
+ * not they've arrived. Server config events that change none of them answer
+ * the same map, and an unchanged environment keeps its entry.
+ */
 export const environmentFoldersAtom = Atom.make((get) => {
+  const previous = Option.getOrUndefined(
+    get.self<ReadonlyMap<EnvironmentId, EnvironmentFolders>>(),
+  );
   const folders = new Map<EnvironmentId, EnvironmentFolders>();
   const configs = get(environmentServerConfigsAtom);
   for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
     if (configs.get(environmentId)?.environment.capabilities.folders !== true) continue;
     const result = get(signalboxFolders.snapshot({ environmentId, input: {} }));
-    const snapshot = AsyncResult.value(result);
-    folders.set(environmentId, {
-      snapshot: Option.getOrNull(snapshot),
-      error:
-        result._tag === "Failure" && Option.isNone(snapshot)
-          ? formatEnvironmentQueryError(result.cause)
-          : null,
-    });
+    const snapshot = Option.getOrNull(AsyncResult.value(result));
+    const error =
+      result._tag === "Failure" && snapshot === null
+        ? formatEnvironmentQueryError(result.cause)
+        : null;
+    const kept = previous?.get(environmentId);
+    folders.set(
+      environmentId,
+      kept?.snapshot === snapshot && kept.error === error ? kept : { snapshot, error },
+    );
   }
-  return folders;
+  const unchanged =
+    previous !== undefined &&
+    previous.size === folders.size &&
+    [...folders].every(([environmentId, entry]) => previous.get(environmentId) === entry);
+  return unchanged ? previous : folders;
 }).pipe(Atom.withLabel("web-environment-folders"));
 
 /** Subscribes to an environment's folders again after they failed. */

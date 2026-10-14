@@ -106,11 +106,7 @@ function DeleteDialog(props: { dialog: Extract<FolderDialog, { kind: "delete" }>
     <>
       <DialogHeader>
         <DialogTitle>Delete “{dialog.folder.name}”?</DialogTitle>
-        <DialogDescription>
-          Its folders and threads move up to{" "}
-          {dialog.parentName === null ? "the top level" : `“${dialog.parentName}”`}. No thread or
-          file is deleted.
-        </DialogDescription>
+        <DialogDescription>{dialog.message}</DialogDescription>
       </DialogHeader>
       <DialogFooter>
         <Button variant="outline" disabled={pending} onClick={closeFolderDialog}>

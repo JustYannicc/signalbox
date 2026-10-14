@@ -4,12 +4,12 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
+  folderDeleteMessage,
   folderDestinations,
   folderSiblingMove,
   poolOfHome,
 } from "@t3tools/client-runtime/state/signalboxFolders";
 import { type EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { AccountPoolId } from "@t3tools/contracts/accountHub";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import type { Folder, SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import {
@@ -20,13 +20,13 @@ import {
   FolderInputIcon,
   FolderPlusIcon,
   HardDriveIcon,
-  LayersIcon,
   PencilIcon,
   SquarePenIcon,
   Trash2Icon,
 } from "lucide-react";
 
 import { usePoolViews } from "../../../state/accountPools";
+import { PoolRadioSubmenu } from "../../accountPool/PoolRadioSubmenu";
 import { environmentDrivesAtom } from "../../../state/signalboxDrives";
 import { DriveProjectShareMenuItem } from "../../drives/DriveProjectShareMenuItem";
 import { Button } from "../../ui/button";
@@ -46,7 +46,6 @@ import { openFolderDialog } from "./folderDialogStore";
 import type { FolderOwner } from "./folderSidebarModel";
 import type { FolderCommands } from "./useFolderCommands";
 
-const INHERIT_POOL = "inherit";
 const NO_FILES = "none";
 
 function MoreTrigger(props: { label: string }) {
@@ -84,7 +83,6 @@ function FolderMenuItems(props: FolderMenuProps) {
     (drive) =>
       drive.contextId === folder.ownerId && (drive.kind === "shared" || drive.kind === "folder"),
   );
-  const parent = snapshot.folders.find((candidate) => candidate.id === folder.parentId) ?? null;
   const destinations = folderDestinations(snapshot, folder.ownerId, folder.id).filter(
     (destination) => destination.folder.id !== folder.parentId,
   );
@@ -171,36 +169,12 @@ function FolderMenuItems(props: FolderMenuProps) {
         </MenuSubPopup>
       </MenuSub>
       {pools.length > 1 || folder.poolId !== undefined ? (
-        <MenuSub>
-          <MenuSubTrigger>
-            <LayersIcon />
-            Pool for this folder
-          </MenuSubTrigger>
-          <MenuSubPopup>
-            <MenuRadioGroup
-              value={folder.poolId ?? INHERIT_POOL}
-              onValueChange={(value) =>
-                void commands.setPool(
-                  environmentId,
-                  folder.id,
-                  value === INHERIT_POOL ? null : AccountPoolId.make(value),
-                )
-              }
-            >
-              <MenuRadioItem value={INHERIT_POOL}>
-                Inherit from above
-                {inheritedPoolName ? (
-                  <span className="ms-auto ps-4 text-muted-foreground">{inheritedPoolName}</span>
-                ) : null}
-              </MenuRadioItem>
-              {pools.map((pool) => (
-                <MenuRadioItem key={pool.id} value={pool.id}>
-                  {pool.name}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuSubPopup>
-        </MenuSub>
+        <PoolRadioSubmenu
+          pools={pools}
+          value={folder.poolId}
+          inheritedPoolName={inheritedPoolName}
+          onChange={(poolId) => void commands.setPool(environmentId, folder.id, poolId)}
+        />
       ) : null}
       <MenuItem
         onClick={() =>
@@ -245,7 +219,7 @@ function FolderMenuItems(props: FolderMenuProps) {
             kind: "delete",
             environmentId,
             folder,
-            parentName: parent?.name ?? null,
+            message: folderDeleteMessage(snapshot, folder),
           })
         }
       >

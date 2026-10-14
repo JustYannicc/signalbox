@@ -1,10 +1,10 @@
 /**
  * Starts a thread in a folder: a draft in the folder's files (or its owner's
- * own), filed there when its project's threads live somewhere else, on the
- * folder's pool. With `openFiles` it also opens the draft's Files panel,
- * which is how a folder's files are browsed.
+ * own), filed there when it lives somewhere else, on the folder's pool. With
+ * `openFiles` it also opens the draft's Files panel, which is how a folder's
+ * files are browsed.
  */
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { poolModelSelection } from "@t3tools/client-runtime/state/sections";
@@ -14,9 +14,10 @@ import {
   poolOfHome,
 } from "@t3tools/client-runtime/state/signalboxFolders";
 import { DEFAULT_SERVER_SETTINGS, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import type { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { useCallback } from "react";
+import { useCallback, useContext } from "react";
 
 import { type DraftId, useComposerDraftStore } from "../../../composerDraftStore";
 import { useNewThreadHandler } from "../../../hooks/useHandleNewThread";
@@ -38,18 +39,22 @@ export interface StartInFolder {
 }
 
 export function useStartInFolder() {
+  const registry = useContext(RegistryContext);
   const handleNewThread = useNewThreadHandler();
   const commands = useFolderCommands();
-  const folders = useAtomValue(environmentFoldersAtom);
-  const configs = useAtomValue(environmentServerConfigsAtom);
 
-  /** Moves a draft's model onto the pool of the folder it was just filed in, unless the user picked one. */
+  /** Moves a draft's model onto the pool of the folder it's in, unless the user picked one. */
   const followPool = useCallback(
-    (draftId: DraftId, environmentId: EnvironmentId, projectId: ProjectId, poolId: string) => {
+    (
+      draftId: DraftId,
+      environmentId: EnvironmentId,
+      projectId: ProjectId,
+      poolId: AccountPoolId,
+    ) => {
       const { getComposerDraft, setModelSelection } = useComposerDraftStore.getState();
       const draft = getComposerDraft(draftId);
       if (hasExplicitComposerModelSelection(draft)) return;
-      const config = configs.get(environmentId);
+      const config = registry.get(environmentServerConfigsAtom).get(environmentId);
       const project = readProjects().find(
         (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
       );
@@ -66,18 +71,20 @@ export function useStartInFolder() {
       });
       if (selection) setModelSelection(draftId, selection, { replaceOptions: true });
     },
-    [configs],
+    [registry],
   );
 
   return useCallback(
     async (input: StartInFolder) => {
-      const snapshot = folders.get(input.environmentId)?.snapshot;
-      if (!snapshot) return;
+      const snapshotNow = () =>
+        registry.get(environmentFoldersAtom).get(input.environmentId)?.snapshot ?? null;
+      const before = snapshotNow();
+      if (before === null) return;
       const ownerProjectId =
         input.ownerProjectId ??
-        snapshot.folders.find((folder) => folder.id === input.folderId)?.files?.projectId;
+        before.folders.find((folder) => folder.id === input.folderId)?.files?.projectId;
       if (ownerProjectId === undefined) return;
-      const { projectId } = newThreadIn(snapshot, input.folderId, ownerProjectId);
+      const { projectId } = newThreadIn(before, input.folderId, ownerProjectId);
       const result = await settlePromise(() =>
         handleNewThread(scopeProjectRef(input.environmentId, projectId)),
       );
@@ -94,12 +101,14 @@ export function useStartInFolder() {
       }
       const opened = result.value;
       if (opened === null) return;
-      // A reused draft may have been filed elsewhere before, so check its home, not only its project's.
+      // Read the tree again: it may have changed while the draft opened. For a fresh draft this
+      // is `newThreadIn(...).file`; it also catches an empty draft reused from another folder.
+      const latest = snapshotNow() ?? before;
       const filed =
-        homeOfThread(snapshot, { id: opened.threadId, projectId }) === input.folderId
-          ? snapshot
+        homeOfThread(latest, { id: opened.threadId, projectId }) === input.folderId
+          ? latest
           : await commands.moveThread(input.environmentId, opened.threadId, input.folderId);
-      // The new thread picked its pool by its project; it runs on its folder's.
+      // The draft picked its pool by its project; it runs on its folder's.
       const pool = filed && poolOfHome(filed, input.folderId);
       if (pool) followPool(opened.draftId, input.environmentId, projectId, pool.poolId);
       if (input.openFiles) {
@@ -108,6 +117,6 @@ export function useStartInFolder() {
           .open(scopeThreadRef(input.environmentId, opened.threadId), "files");
       }
     },
-    [commands, folders, followPool, handleNewThread],
+    [commands, followPool, handleNewThread, registry],
   );
 }
