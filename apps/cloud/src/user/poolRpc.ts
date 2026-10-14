@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -106,22 +107,13 @@ const NO_POOLS: UserPools.PoolsState = [];
 const settingsKey = (config: ReturnType<typeof configOf>) =>
   JSON.stringify([config.settings.providerInstances, config.settings.defaultModelSelection]);
 
-/**
- * The pools, falling back to none when they can't be read, so the rest of
- * the config still reaches the client.
- */
-const poolStates = (pools: UserPools.UserPools["Service"], actor: PoolActor) =>
-  pools
-    .changes(actor)
-    .pipe(
-      Stream.catchCause((cause) =>
-        Stream.fromEffect(
-          Effect.logError("cloud pools unavailable for the server config", cause).pipe(
-            Effect.as(NO_POOLS),
-          ),
-        ),
-      ),
-    );
+/** Up to 30 seconds between reads of pools that can't be read right now. */
+const READ_AGAIN = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+  Schedule.jittered,
+);
 
 /**
  * The pools, read again when a read fails instead of ending. A client keeps a
@@ -132,7 +124,26 @@ const poolStates = (pools: UserPools.UserPools["Service"], actor: PoolActor) =>
 const followPools = (pools: UserPools.UserPools["Service"], actor: PoolActor) =>
   pools.changes(actor).pipe(
     Stream.tapCause((cause) => Effect.logWarning("cloud pools unavailable, reading again", cause)),
-    Stream.retry(Schedule.spaced("1 second")),
+    Stream.retry(READ_AGAIN),
+  );
+
+/**
+ * The pools for the server config: none while they can't be read, so the
+ * rest of the config still reaches the client, then the pools once they can.
+ */
+const poolStates = (pools: UserPools.UserPools["Service"], actor: PoolActor) =>
+  pools.changes(actor).pipe(
+    Stream.catchCause((cause) =>
+      Stream.concat(
+        Stream.fromEffect(
+          Effect.logError("cloud pools unavailable for the server config", cause).pipe(
+            Effect.as(NO_POOLS),
+          ),
+        ),
+        // It reads again for as long as it takes, so it never fails.
+        followPools(pools, actor).pipe(Stream.orDie),
+      ),
+    ),
   );
 
 export const makePoolHandlers = (input: {

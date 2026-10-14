@@ -68,6 +68,30 @@ const config = (rpc: Rpc) =>
     }),
   );
 
+/**
+ * Personal's object is down for the first read of the pools, as on a cold
+ * start. Completes the returned Deferred when that read has failed.
+ */
+const personalDownOnce = (cloud: Effect.Success<ReturnType<typeof client>>["cloud"]) =>
+  Effect.gen(function* () {
+    const name = `${userId}:personal`;
+    const personal = cloud.pools.objectFor(name);
+    const failed = yield* Deferred.make<void>();
+    cloud.pools.objects.set(name, {
+      ...personal,
+      api: {
+        ...personal.api,
+        create: (...args) => {
+          if (Deferred.doneUnsafe(failed, Effect.void)) {
+            return Promise.reject(new Error("Pool object unavailable"));
+          }
+          return personal.api.create(...args);
+        },
+      },
+    });
+    return failed;
+  });
+
 describe("cloud pool RPC", () => {
   it.live("creates a pool and signs an account into it from the existing pool UI", () =>
     Effect.gen(function* () {
@@ -145,22 +169,7 @@ describe("cloud pool RPC", () => {
   it.live("keeps the pool views live after a read fails", () =>
     Effect.gen(function* () {
       const { rpc, cloud } = yield* client();
-      // Personal's object is down for the views' first read, as on a cold start.
-      const name = `${userId}:personal`;
-      const personal = cloud.pools.objectFor(name);
-      const failed = yield* Deferred.make<void>();
-      cloud.pools.objects.set(name, {
-        ...personal,
-        api: {
-          ...personal.api,
-          create: (...args) => {
-            if (Deferred.doneUnsafe(failed, Effect.void)) {
-              return Promise.reject(new Error("Pool object unavailable"));
-            }
-            return personal.api.create(...args);
-          },
-        },
-      });
+      const failed = yield* personalDownOnce(cloud);
       const views = yield* rpc[WS_METHODS.accountPoolSubscribeViews]({}).pipe(
         Stream.map((all) => all.map((view) => view.name)),
         Stream.takeUntil((names) => names.includes("Work")),
@@ -172,6 +181,26 @@ describe("cloud pool RPC", () => {
       // The section menu's pool list picks up a pool created after the failure.
       yield* rpc[WS_METHODS.accountPoolCreate]({ name: "Work" });
       expect(yield* Fiber.join(views)).toEqual(Option.some(["Personal", "Work"]));
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("brings the pools into the config once they can be read", () =>
+    Effect.gen(function* () {
+      const { rpc, cloud } = yield* client();
+      yield* personalDownOnce(cloud);
+      const personalClaude = ProviderInstanceId.make(poolInstanceId("claude", "personal"));
+      const events = yield* rpc[WS_METHODS.subscribeServerConfig]({}).pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "providerStatuses" &&
+            event.payload.providers.some((provider) => provider.instanceId === personalClaude),
+        ),
+        Stream.runCollect,
+      );
+      // The config goes out without pools first, then picks them up.
+      const [snapshot] = events;
+      expect(snapshot?.type === "snapshot" && snapshot.config.providers).toEqual([]);
+      expect(events.at(-1)?.type).toBe("providerStatuses");
     }).pipe(Effect.scoped),
   );
 
