@@ -33,6 +33,8 @@ export interface ResolvedLink {
   readonly userId: string;
   /** Still within its move window: it may move accounts in. */
   readonly moveOpen: boolean;
+  /** Set for a production link backing one preview's pool. */
+  readonly previewOrigin: string | null;
 }
 
 export class PoolLinks extends Context.Service<
@@ -50,6 +52,8 @@ export class PoolLinks extends Context.Service<
     readonly resolve: (secret: string) => Effect.Effect<ResolvedLink | null, SqlError>;
     /** Marks the link's move as landed, so it keeps working past its move window. */
     readonly claim: (secret: string) => Effect.Effect<void, SqlError>;
+    /** Revokes every preview link for one origin and returns how many rows were removed. */
+    readonly removePreviewLinks: (origin: string) => Effect.Effect<number, SqlError>;
   }
 >()("@signalbox/cloud/pool/PoolLinks") {}
 
@@ -124,13 +128,16 @@ export const layer = Layer.effect(
           readonly move_until: number;
           readonly claimed: number;
           readonly expires_at: number | null;
-        }>`SELECT user_id, move_until, claimed, expires_at FROM links
+          readonly preview_origin: string | null;
+        }>`SELECT user_id, move_until, claimed, expires_at, preview_origin FROM links
           WHERE secret_hash = ${yield* hash(secret)}`;
         if (row === undefined) return null;
         const now = yield* Clock.currentTimeMillis;
         if (row.expires_at !== null && row.expires_at <= now) return null;
         const moveOpen = now < row.move_until;
-        return row.claimed === 1 || moveOpen ? { userId: row.user_id, moveOpen } : null;
+        return row.claimed === 1 || moveOpen
+          ? { userId: row.user_id, moveOpen, previewOrigin: row.preview_origin }
+          : null;
       });
 
     const claim: PoolLinks["Service"]["claim"] = (secret) =>
@@ -138,6 +145,11 @@ export const layer = Layer.effect(
         Effect.asVoid(sql`UPDATE links SET claimed = 1 WHERE secret_hash = ${secretHash}`),
       );
 
-    return PoolLinks.of({ open, resolve, claim });
+    const removePreviewLinks: PoolLinks["Service"]["removePreviewLinks"] = (origin) =>
+      sql`DELETE FROM links WHERE preview_origin = ${origin} RETURNING secret_hash`.pipe(
+        Effect.map((rows) => rows.length),
+      );
+
+    return PoolLinks.of({ open, resolve, claim, removePreviewLinks });
   }),
 );

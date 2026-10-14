@@ -15,6 +15,11 @@ import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolEngine from "./PoolEngine.ts";
 import type { PoolLinkTarget } from "./poolLink.ts";
 import * as PoolLinks from "./PoolLinks.ts";
+import {
+  previewLinkRegistry,
+  type PreviewLinkCleanupTarget,
+  type PreviewLinkRegistryNamespace,
+} from "./PreviewLinkRegistry.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
 
@@ -29,6 +34,7 @@ export interface PoolObjectEnv {
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly POOLS: PoolObjectNamespace;
+  readonly PREVIEW_LINKS: PreviewLinkRegistryNamespace;
 }
 
 /** The `ctx.exports` loopback for `PoolStoreGateway`, which workers-types does not declare yet. */
@@ -77,7 +83,7 @@ const makeRuntime = (ctx: DurableObjectState) =>
 
 export class PoolObject
   extends DurableObject<PoolObjectEnv>
-  implements PoolObjectApi, PoolModelApi, PoolLinkTarget
+  implements PoolObjectApi, PoolModelApi, PoolLinkTarget, PreviewLinkCleanupTarget
 {
   private readonly runtime: ReturnType<typeof makeRuntime>;
   private readonly api: PoolObjectApi & PoolModelApi & PoolLinkTarget;
@@ -155,13 +161,46 @@ export class PoolObject
     return this.api.updateAccount(...args);
   }
 
-  openLink(...args: Parameters<PoolObjectApi["openLink"]>) {
-    return this.api.openLink(...args);
+  async openLink(
+    actor: Parameters<PoolObjectApi["openLink"]>[0],
+    preview?: Parameters<PoolObjectApi["openLink"]>[1],
+  ) {
+    if (preview === undefined) return this.api.openLink(actor, preview);
+    const registry = previewLinkRegistry(this.env.PREVIEW_LINKS);
+    const poolId = this.ctx.id.toString();
+    if (!(await registry.registerPool(preview.origin, poolId))) {
+      return { _tag: "rejected", reason: "This preview has been closed." } as const;
+    }
+    const result = await this.api.openLink(actor, preview);
+    if (result._tag !== "ok") return result;
+    // Check again after the write so a close racing this call cannot leave a
+    // newly created link behind the cleanup's revocation pass.
+    if (!(await registry.registerPool(preview.origin, poolId))) {
+      await this.removePreviewLinks(preview.origin);
+      return { _tag: "rejected", reason: "This preview has been closed." } as const;
+    }
+    return result;
+  }
+
+  removePreviewLinks(origin: string): Promise<number> {
+    return this.runtime.runPromise(
+      PoolLinks.PoolLinks.use((links) => links.removePreviewLinks(origin)),
+    );
   }
 
   /** A request on one of the pool's links (`poolLink.ts`), from the Worker. */
-  linkFetch(...args: Parameters<PoolLinkTarget["linkFetch"]>) {
-    return this.api.linkFetch(...args);
+  async linkFetch(secret: string, request: Request): Promise<Response> {
+    const link = await this.runtime.runPromise(
+      PoolLinks.PoolLinks.use((links) => links.resolve(secret)),
+    );
+    if (link !== null && link.previewOrigin !== null) {
+      const registered = await previewLinkRegistry(this.env.PREVIEW_LINKS).registerPool(
+        link.previewOrigin,
+        this.ctx.id.toString(),
+      );
+      if (!registered) return new Response("This preview has been closed.", { status: 410 });
+    }
+    return this.api.linkFetch(secret, request);
   }
 
   forwardModel(...args: Parameters<PoolModelApi["forwardModel"]>) {

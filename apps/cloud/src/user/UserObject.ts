@@ -68,6 +68,7 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.Git
    */
   readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
   readonly DRIVE_PACKS?: DrivePacks.PackBucket;
+  readonly DRIVE_PACKS_PREFIX?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
@@ -97,7 +98,7 @@ const layerDrives = (env: UserObjectEnv) => {
   }
   const store = Layer.mergeAll(
     DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-    DrivePacks.layerBucket(env.DRIVE_PACKS),
+    DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
   );
   // The Worker's own account settings, read the same way.
   const people = Layer.unwrap(
