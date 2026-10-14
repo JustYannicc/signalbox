@@ -22,6 +22,7 @@ import {
   type RunId,
   ThreadId,
   TurnItemId,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, expect } from "@effect/vitest";
@@ -109,6 +110,7 @@ export const launch = (
   commandId = "launch-1",
   creation: ThreadEngine.ThreadCreation = personal,
   projectId = ProjectId.make("scratch"),
+  modelSelection: ModelSelection = claude,
 ) =>
   engine.launch(
     owner,
@@ -117,7 +119,7 @@ export const launch = (
       threadId,
       projectId,
       title: "Hello Claude",
-      modelSelection: claude,
+      modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       workspaceStrategy: { type: "root" },

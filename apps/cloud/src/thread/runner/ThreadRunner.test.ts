@@ -28,6 +28,11 @@ import {
   withObject,
 } from "./runnerTestKit.ts";
 
+const POOL_CLAUDE = {
+  instanceId: ProviderInstanceId.make("claude_hub"),
+  model: "claude-fable-5-1",
+};
+
 describe("ThreadRunner", () => {
   it.effect("answers for a thread that does not exist without touching storage", () =>
     withObject(freshDatabase(), (_engine, runner) =>
@@ -72,6 +77,107 @@ describe("ThreadRunner", () => {
         expect(rows.map((item) => item.type)).toEqual(["user_message", "assistant_message"]);
         expect(rows.map((item) => item.ordinal)).toEqual([1_000_000, 1_000_001]);
         expect(rows[1]).toMatchObject({ text: "Hello!", status: "completed" });
+      }),
+    ),
+  );
+
+  it.effect("resumes the harness's own session when the next message lands on a new machine", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        // As in the cloud: the thread runs on a pool's instance, the Runner on the harness's.
+        yield* launch(engine, "launch-1", personal, ProjectId.make("scratch"), POOL_CLAUDE);
+        const first = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        // The adapter reports its provider thread as the Runner named it: on the harness's instance.
+        const threadUpdated: RunnerItem = {
+          kind: "provider",
+          runId: turn.runId,
+          event: {
+            driver: claudeDriver,
+            type: "provider_thread.updated",
+            providerThread: encodeProviderThread({
+              ...turn.providerThread,
+              nativeThreadRef: {
+                driver: claudeDriver,
+                nativeId: "claude-session-1",
+                strength: "strong",
+              },
+            }),
+          },
+        };
+        yield* runner.batch({
+          generation: first.generation,
+          sequence: 1,
+          items: [report.started, threadUpdated, report.full, report.terminal],
+        });
+        yield* runner.ended(first.generation, "test");
+        yield* engine.dispatch(
+          owner,
+          {
+            type: "message.dispatch",
+            commandId: CommandId.make("send-2"),
+            createdBy: "user",
+            creationSource: "web",
+            threadId,
+            messageId: MessageId.make("message-2"),
+            text: "Again",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+          },
+          personal,
+        );
+        yield* connect(runner);
+        // The next machine resumes the session the first one wrote, not a new one.
+        expect(yield* liveTurn(runner)).toMatchObject({
+          providerTurnOrdinal: 2,
+          providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
+        });
+      }),
+    ),
+  );
+
+  it.effect("starts a new harness session when the thread holds none to resume", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine, "launch-1", personal, ProjectId.make("scratch"), POOL_CLAUDE);
+        const first = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        // A harness that never said which session it wrote (or a thread whose
+        // record lost it): the next turn has nothing to resume.
+        const started = {
+          ...report.started,
+          providerThread: { ...report.started.providerThread, nativeThreadRef: null },
+        } satisfies RunnerItem;
+        yield* runner.batch({
+          generation: first.generation,
+          sequence: 1,
+          items: [started, report.full, report.terminal],
+        });
+        yield* runner.ended(first.generation, "test");
+        yield* engine.dispatch(
+          owner,
+          {
+            type: "message.dispatch",
+            commandId: CommandId.make("send-2"),
+            createdBy: "user",
+            creationSource: "web",
+            threadId,
+            messageId: MessageId.make("message-2"),
+            text: "Again",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+          },
+          personal,
+        );
+        yield* connect(runner);
+        expect(yield* liveTurn(runner)).toMatchObject({
+          providerTurnOrdinal: 1,
+          providerThread: { nativeThreadRef: null },
+        });
       }),
     ),
   );
