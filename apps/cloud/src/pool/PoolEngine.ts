@@ -1,6 +1,7 @@
 import type { UsageLimitSourceUpdateAccountInput } from "@t3tools/contracts";
 import {
   isCloudPoolAccountType,
+  POOL_LINK_PATH,
   type PoolLinkInfo,
   type PoolLinkMoveRequest,
   type PoolLinkMoveResult,
@@ -132,8 +133,14 @@ export class PoolEngine extends Context.Service<
       name: string,
       action: AccountAction,
     ) => Effect.Effect<void, Failure>;
-    /** A link for a server moving its own pool here (`PoolLinks.ts`). Answers its secret. */
-    readonly openLink: (actor: PoolActor) => Effect.Effect<string, Failure>;
+    /**
+     * A link for a server moving its own pool here (`PoolLinks.ts`). Answers its
+     * secret. With `preview`, a preview link for that origin.
+     */
+    readonly openLink: (
+      actor: PoolActor,
+      preview?: { readonly origin: string },
+    ) => Effect.Effect<string, Failure>;
     /** The pool's name and accounts, as a linked server sees them. */
     readonly linkInfo: (actor: PoolActor) => Effect.Effect<PoolLinkInfo, Failure>;
     /**
@@ -218,6 +225,7 @@ const migrations = Migrator.fromRecord({
     yield* PoolStore.createTables;
   }),
   "0002_links": PoolLinks.createTables,
+  "0003_preview_links": PoolLinks.addPreviewLinks,
 });
 
 const migrate = Migrator.make({})({ loader: migrations });
@@ -260,6 +268,22 @@ const backingOf = (row: PoolRow): PoolBacking =>
     : { mode: "managed" };
 
 const normalizeUrl = (url: string) => url.trim().replace(/\/+$/u, "");
+
+/**
+ * A pool backed by another cloud's pool link (a preview routing through
+ * production's pool) holds no accounts of its own: they're added and managed
+ * where the pool lives.
+ */
+const isPoolLinkUrl = (url: string | null) => url?.endsWith(POOL_LINK_PATH) === true;
+
+const refuseIfLinked = (row: PoolRow) => {
+  if (row.backing !== "external" || row.external_url === null || !isPoolLinkUrl(row.external_url)) {
+    return Effect.void;
+  }
+  return reject(
+    `This pool is linked to ${new URL(row.external_url).host}. Add and manage its accounts there.`,
+  );
+};
 
 /** The account file names a hub writes; never a hidden file. */
 const ACCOUNT_FILE_NAME = /^[\w@+-][\w.@+-]*\.json$/u;
@@ -491,7 +515,11 @@ const make = Effect.gen(function* () {
           external_management_key: backing.managementKey,
           external_client_key: backing.clientKey,
         };
-        yield* CliProxyApi.checkKeys(endpointOf(external));
+        // A link is one key for both, and the pool behind it may be asleep: asking
+        // for its models would wake it just to answer what the management call has.
+        yield* isPoolLinkUrl(url)
+          ? CliProxyApi.checkManagementKey(endpointOf(external))
+          : CliProxyApi.checkKeys(endpointOf(external));
         yield* sql`UPDATE pool SET backing = 'external', external_url = ${url},
           external_management_key = ${backing.managementKey},
           external_client_key = ${backing.clientKey} WHERE id = 1`;
@@ -536,6 +564,7 @@ const make = Effect.gen(function* () {
   const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
+      yield* refuseIfLinked(row);
       const endpoint = endpointOf(row);
       const known = yield* refreshAccounts(row);
       const login = yield* CliProxyApi.startLogin(endpoint, provider);
@@ -584,6 +613,7 @@ const make = Effect.gen(function* () {
   const updateAccount: PoolEngine["Service"]["updateAccount"] = (actor, name, action) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
+      yield* refuseIfLinked(row);
       const endpoint = endpointOf(row);
       if (action === "remove") yield* CliProxyApi.removeAccount(endpoint, name);
       else yield* CliProxyApi.setAccountDisabled(endpoint, name, action === "pause");
@@ -591,11 +621,15 @@ const make = Effect.gen(function* () {
       yield* refreshAccounts(row).pipe(Effect.ignore);
     });
 
-  const openLink: PoolEngine["Service"]["openLink"] = (actor) =>
+  const openLink: PoolEngine["Service"]["openLink"] = (actor, preview) =>
     Effect.gen(function* () {
       yield* access(actor, "admin");
-      const secret = yield* links.open(actor.userId);
-      yield* audit(actor, "open-link");
+      const secret = yield* links.open(actor.userId, preview);
+      yield* audit(
+        actor,
+        preview === undefined ? "open-link" : "open-preview-link",
+        preview?.origin,
+      );
       return secret;
     });
 
@@ -617,6 +651,7 @@ const make = Effect.gen(function* () {
   const importAccounts: PoolEngine["Service"]["importAccounts"] = (actor, files) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
+      yield* refuseIfLinked(row);
       // One entry per name: the last one sent wins.
       const credentials = new Map<string, Record<string, unknown>>();
       for (const file of files) {

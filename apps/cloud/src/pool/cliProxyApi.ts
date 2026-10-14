@@ -142,8 +142,8 @@ const decodeOr = <A>(schema: Schema.Decoder<A>, detail: string) => {
     decode(value).pipe(Effect.mapError((cause) => new PoolBackendError({ detail, cause })));
 };
 
-/** Confirms both keys work: management for admin calls, the client key for model requests. */
-export const checkKeys = (endpoint: PoolEndpoint) =>
+/** Confirms the management key works. */
+export const checkManagementKey = (endpoint: PoolEndpoint) =>
   Effect.gen(function* () {
     const config = yield* management(endpoint, "GET", "config");
     if (config.status >= 300) {
@@ -151,6 +151,12 @@ export const checkKeys = (endpoint: PoolEndpoint) =>
         detail: `${hostOf(endpoint)} answered ${config.status} to a management call.`,
       });
     }
+  });
+
+/** Confirms both keys work: management for admin calls, the client key for model requests. */
+export const checkKeys = (endpoint: PoolEndpoint) =>
+  Effect.gen(function* () {
+    yield* checkManagementKey(endpoint);
     const models = yield* send(
       endpoint,
       new Request(`${endpoint.baseUrl}/v1/models`, {
