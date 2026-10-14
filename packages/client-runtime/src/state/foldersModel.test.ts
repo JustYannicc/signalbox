@@ -1,0 +1,120 @@
+import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import {
+  type Folder,
+  FolderId,
+  type SignalboxFoldersSnapshot,
+} from "@t3tools/contracts/signalboxFolders";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  folderDestinations,
+  folderPath,
+  folderTree,
+  homeOfThread,
+  newThreadIn,
+  poolOfHome,
+  threadHomeLookup,
+} from "./foldersModel.ts";
+
+const PERSONAL = SignalboxContextId.make("personal");
+const SCRATCH = ProjectId.make("scratch");
+const DRIVE = ProjectId.make("drive:folder/personal/nw");
+
+const folder = (id: string, parentId: string | null, position = 0, extra: Partial<Folder> = {}) =>
+  ({
+    id: FolderId.make(id),
+    name: id[0]!.toUpperCase() + id.slice(1),
+    parentId: parentId === null ? null : FolderId.make(parentId),
+    position,
+    ownerId: PERSONAL,
+    ...extra,
+  }) satisfies Folder;
+
+/** Work › Clients › Northwind (with its drive's files), and Notes beside Work. */
+const snapshot: SignalboxFoldersSnapshot = {
+  revision: 3,
+  top: {},
+  folders: [
+    folder("notes", null, 1),
+    folder("work", null, 0),
+    folder("clients", "work"),
+    folder("northwind", "clients", 0, { files: { projectId: DRIVE } }),
+  ],
+  threadHomes: [{ threadId: ThreadId.make("filed"), folderId: FolderId.make("clients") }],
+  projectHomes: [
+    { projectId: SCRATCH, folderId: null },
+    { projectId: DRIVE, folderId: FolderId.make("northwind") },
+  ],
+  pools: {
+    top: { poolId: "personal", from: { _tag: "top" } },
+    folders: [
+      {
+        folderId: FolderId.make("clients"),
+        pool: { poolId: "work", from: { _tag: "folder", folderId: FolderId.make("work") } },
+      },
+    ],
+  },
+};
+
+describe("foldersModel", () => {
+  it("nests an owner's folders in order", () => {
+    const names = (nodes: ReturnType<typeof folderTree>): Array<unknown> =>
+      nodes.map((node) =>
+        node.children.length === 0
+          ? node.folder.name
+          : { [node.folder.name]: names(node.children) },
+      );
+    expect(names(folderTree(snapshot, PERSONAL))).toEqual([
+      { Work: [{ Clients: ["Northwind"] }] },
+      "Notes",
+    ]);
+    expect(folderTree(snapshot, "org_acme")).toEqual([]);
+  });
+
+  it("homes a thread where it was filed, else with its project's files, else at the top", () => {
+    expect(homeOfThread(snapshot, { id: ThreadId.make("filed"), projectId: SCRATCH })).toBe(
+      "clients",
+    );
+    expect(homeOfThread(snapshot, { id: ThreadId.make("other"), projectId: DRIVE })).toBe(
+      "northwind",
+    );
+    expect(homeOfThread(snapshot, { id: ThreadId.make("loose"), projectId: SCRATCH })).toBeNull();
+    const lookup = threadHomeLookup(snapshot);
+    expect(lookup({ id: ThreadId.make("filed"), projectId: DRIVE })).toBe("clients");
+  });
+
+  it("names a folder's path and resolves its pool", () => {
+    expect(folderPath(snapshot, FolderId.make("northwind")).map((entry) => entry.name)).toEqual([
+      "Work",
+      "Clients",
+      "Northwind",
+    ]);
+    expect(poolOfHome(snapshot, FolderId.make("clients"))?.poolId).toBe("work");
+    expect(poolOfHome(snapshot, null)?.poolId).toBe("personal");
+  });
+
+  it("never offers a folder itself or anything under it as where it moves", () => {
+    expect(
+      folderDestinations(snapshot, PERSONAL, FolderId.make("work")).map((entry) => entry.label),
+    ).toEqual(["Notes"]);
+    expect(folderDestinations(snapshot, PERSONAL).map((entry) => entry.label)).toEqual([
+      "Work",
+      "Work / Clients",
+      "Work / Clients / Northwind",
+      "Notes",
+    ]);
+  });
+
+  it("starts a thread in a folder's files, filing it only when its project lives elsewhere", () => {
+    expect(newThreadIn(snapshot, FolderId.make("northwind"), SCRATCH)).toEqual({
+      projectId: DRIVE,
+      file: false,
+    });
+    expect(newThreadIn(snapshot, FolderId.make("clients"), SCRATCH)).toEqual({
+      projectId: SCRATCH,
+      file: true,
+    });
+    expect(newThreadIn(snapshot, null, SCRATCH)).toEqual({ projectId: SCRATCH, file: false });
+  });
+});
