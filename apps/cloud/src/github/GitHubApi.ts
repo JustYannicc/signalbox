@@ -29,7 +29,12 @@ const GITHUB_ENDPOINTS: GitHubEndpoints = {
   api: "https://api.github.com",
 };
 
-const Viewer = Schema.Struct({ login: Schema.String, id: Schema.Number });
+const Viewer = Schema.Struct({
+  login: Schema.String,
+  id: Schema.Number,
+  /** The display name the user set on their profile; null when they set none. */
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 const Repository = Schema.Struct({
   id: Schema.Number,

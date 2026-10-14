@@ -191,6 +191,7 @@ const migrations = Migrator.fromRecord({
   "0008_github_pipes": GitHubConnection.moveToPipes,
   "0009_connection_links": ConnectionLinks.createTables,
   "0010_preview_setup": UserPreviewSetup.createTables,
+  "0011_github_name": GitHubConnection.addName,
 });
 
 /** Applies pending migrations. Ids only ever grow; never renumber one. */

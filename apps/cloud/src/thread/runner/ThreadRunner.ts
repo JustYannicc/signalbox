@@ -1,4 +1,4 @@
-import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import {
   type MachineClass,
@@ -141,6 +141,8 @@ export class ThreadDrives extends Context.Service<
   {
     readonly enabled: boolean;
     readonly writes: (userId: string, driveId: string) => Effect.Effect<boolean, UserObjectError>;
+    /** Who `userId`'s commits are by, from their GitHub connection; null without one. */
+    readonly commitAuthor: (userId: string) => Effect.Effect<CommitAuthor | null, UserObjectError>;
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner/ThreadDrives") {}
 
@@ -250,8 +252,17 @@ export class ThreadRunner extends Context.Service<
     readonly authorizeSession: (token: string) => Effect.Effect<SessionAuthorization>;
     /** Whether `token` may fetch the thread's drive's remote right now (#135). */
     readonly authorizeRemote: (token: string) => Effect.Effect<RemoteAuthorization>;
+    /**
+     * Who the turn's drive commits are by: the owner as GitHub knows them.
+     * Null when they have no GitHub connected, or it can't be asked right now:
+     * the Runner then commits as `DRIVE_COMMIT_AUTHOR`.
+     */
+    readonly commitAuthor: Effect.Effect<CommitAuthor | null>;
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
+
+/** How long a turn start waits for its owner's commit author before going without. */
+const COMMIT_AUTHOR_TIMEOUT = "5 seconds";
 
 const IDLE: MachinePlan = {
   ensure: null,
@@ -739,6 +750,18 @@ const make = Effect.gen(function* () {
       } satisfies RemoteAuthorization;
     });
 
+  // Asks the owner's object, so never under the lock; a turn starts without it rather than wait.
+  const commitAuthor: ThreadRunner["Service"]["commitAuthor"] = Effect.gen(function* () {
+    const userId = yield* ownerId;
+    if (drives._tag === "None" || userId === null) return null;
+    return yield* drives.value.commitAuthor(userId).pipe(
+      Effect.timeout(COMMIT_AUTHOR_TIMEOUT),
+      Effect.catch((cause) =>
+        Effect.as(Effect.logWarning("reading the owner's commit author failed", { cause }), null),
+      ),
+    );
+  });
+
   // Like drive calls, session writes read committed state without the lock;
   // the session API checks the generation again as it writes.
   const authorizeSession: ThreadRunner["Service"]["authorizeSession"] = (token) =>
@@ -922,6 +945,7 @@ const make = Effect.gen(function* () {
     authorizeDrive,
     authorizeSession,
     authorizeRemote,
+    commitAuthor,
   });
 });
 

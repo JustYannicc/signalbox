@@ -132,6 +132,8 @@ export const layerThreadObject = (
       userId: string,
       driveId: string,
     ) => Effect.Effect<boolean, UserDirectory.UserObjectError>;
+    /** Who an owner's commits are by; nobody (the fallback) unless given. */
+    readonly commitAuthor?: ThreadRunner.ThreadDrives["Service"]["commitAuthor"];
     readonly analytics?: Layer.Layer<
       CloudAnalytics.CloudAnalytics,
       never,
@@ -144,6 +146,7 @@ export const layerThreadObject = (
       Layer.succeed(ThreadRunner.ThreadDrives, {
         enabled: options.drives === true,
         writes: options.writes ?? (() => Effect.succeed(true)),
+        commitAuthor: options.commitAuthor ?? (() => Effect.succeed(null)),
       }),
     ),
     Layer.provideMerge(ThreadEngine.layer),

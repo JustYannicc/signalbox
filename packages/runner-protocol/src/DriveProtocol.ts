@@ -95,8 +95,18 @@ export const MAX_PACK_BYTES = 64 * 1024 * 1024;
 export const Oid = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
 export type Oid = typeof Oid.Type;
 
-/** Who drive commits made by Signalbox are by: a reserved address that never delivers mail. */
-export const DRIVE_COMMIT_AUTHOR = { name: "Signalbox", email: "agent@signalbox.invalid" } as const;
+/** Who a drive commit is by, as git's `user.name` and `user.email`. */
+export const CommitAuthor = Schema.Struct({ name: Schema.String, email: Schema.String });
+export type CommitAuthor = typeof CommitAuthor.Type;
+
+/**
+ * Who drive commits made by Signalbox are by when no one else is: a reserved
+ * address that never delivers mail.
+ */
+export const DRIVE_COMMIT_AUTHOR: CommitAuthor = {
+  name: "Signalbox",
+  email: "agent@signalbox.invalid",
+};
 
 /** The message of the commit a turn's reconcile makes when it merges `main` in. */
 export const DRIVE_MERGE_MESSAGE = "Merge main";
@@ -210,6 +220,12 @@ export const DriveAccess = Schema.Struct({
    * issues none.
    */
   remoteToken: Schema.NullOr(Schema.String),
+  /**
+   * Who the turn's commits are by: the thread's owner as GitHub knows them,
+   * so commits they push show as theirs. Absent when they have no GitHub
+   * connected, or from a cloud older than this field: `DRIVE_COMMIT_AUTHOR`.
+   */
+  author: Schema.optionalKey(CommitAuthor),
 });
 export type DriveAccess = typeof DriveAccess.Type;
 

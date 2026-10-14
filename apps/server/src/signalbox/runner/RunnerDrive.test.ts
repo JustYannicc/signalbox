@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { DRIVE_COMMIT_AUTHOR } from "@signalbox/runner-protocol/DriveProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -77,6 +78,36 @@ describe("RunnerDrive", () => {
         expect(read(second.cwd, "a.txt")).toBe("one\ntwo\n");
         expect(read(second.cwd, "b.txt")).toBe("new\n");
         expect(status(second.cwd)).toEqual([" M a.txt", "?? b.txt"]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("commits as the turn's author, and as Signalbox when the turn names none", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+        const ident = (rev: string) => git(cwd, "log", "-1", "--format=%an <%ae>|%cn <%ce>", rev);
+        const octo = "Octo Cat <1+octo@users.noreply.github.com>";
+
+        yield* runner.prepare("remote-token", {
+          name: "Octo Cat",
+          email: "1+octo@users.noreply.github.com",
+        });
+        write(cwd, "a.txt", "one\n");
+        yield* runner.autosave;
+        yield* runner.flush;
+        expect(ident(drive.refs("t1").wip!)).toBe(`${octo}|${octo}`);
+        yield* runner.finishTurn({ message: "Add a" });
+        expect(ident("HEAD")).toBe(`${octo}|${octo}`);
+
+        // A cloud that sends no author, or an owner who disconnected GitHub.
+        yield* runner.prepare("remote-token");
+        write(cwd, "b.txt", "two\n");
+        yield* runner.finishTurn({ message: "Add b" });
+        const signalbox = `${DRIVE_COMMIT_AUTHOR.name} <${DRIVE_COMMIT_AUTHOR.email}>`;
+        expect(ident("HEAD")).toBe(`${signalbox}|${signalbox}`);
+        expect(ident("HEAD^")).toBe(`${octo}|${octo}`);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     ),
   );

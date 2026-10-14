@@ -281,6 +281,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.importPreviewSetup(input);
   }
 
+  githubCommitAuthor() {
+    return this.api.githubCommitAuthor();
+  }
+
   contextIds() {
     return this.api.contextIds();
   }
