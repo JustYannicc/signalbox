@@ -45,10 +45,11 @@ To work on a repository, choose **Add project → GitHub repository** and pick i
 repositories, or type its `owner/name`. Signalbox doesn't copy
 anything up front: each new thread starts from the latest commit on the default branch. Every
 thread has its own branch, `signalbox/…`. Push it or open a pull request from the thread's git
-panel. Once the pull request is merged on GitHub, new threads start from the merged commit.
+panel, or ask the agent to: it can push the branch and open the pull request itself, as you.
+Once the pull request is merged on GitHub, new threads start from the merged commit.
 
-Signalbox saves a thread's files as it goes. Those saves stay in Signalbox; only the commit each
-turn ends with is pushed. Imported repositories appear under Personal for now.
+Signalbox saves a thread's files as it goes. Those saves stay in Signalbox; only the thread's
+commits are pushed: the one each turn ends with, and the one an agent makes when it publishes. Imported repositories appear under Personal for now.
 
 ### Forgejo and Gitea
 

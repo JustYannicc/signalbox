@@ -1,4 +1,10 @@
 import {
+  BRANCH_PATHS,
+  branchJson,
+  type PublishRequest,
+  type PublishResult,
+} from "@signalbox/runner-protocol/BranchProtocol";
+import {
   CONTEXT_PATHS,
   type ContextView,
   contextJson,
@@ -20,6 +26,11 @@ import { HttpClient, HttpClientRequest } from "effect/http";
  * reaches all of this through the Runner's local context server
  * (`RunnerContextServer.ts`), never with the token itself. Network failures
  * and 5xx are retried a few times; anything else fails at once.
+ *
+ * `publish` is the one call that changes anything: the thread's agent asking
+ * the cloud to push the thread's branch (`BranchProtocol.ts`). It is safe to
+ * retry: pushing a branch that's there and opening a pull request that's open
+ * do nothing.
  */
 
 export class ContextClientError extends Schema.TaggedError<ContextClientError>()(
@@ -55,6 +66,7 @@ export interface ContextClient {
     readonly threadId: string;
     readonly turn: number | null;
   }) => Effect.Effect<ThreadResult, ContextClientError>;
+  readonly publish: (request: PublishRequest) => Effect.Effect<PublishResult, ContextClientError>;
 }
 
 class Retryable extends Schema.TaggedError<Retryable>()("Retryable", { message: Schema.String }) {}
@@ -138,5 +150,10 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
     diff: json(CONTEXT_PATHS.diff, contextJson.diffRequest.encode, contextJson.diff.decode),
     search: json(CONTEXT_PATHS.search, contextJson.searchRequest.encode, contextJson.search.decode),
     thread: json(CONTEXT_PATHS.thread, contextJson.threadRequest.encode, contextJson.thread.decode),
+    publish: json(
+      BRANCH_PATHS.publish,
+      branchJson.publishRequest.encode,
+      branchJson.publish.decode,
+    ),
   } satisfies ContextClient;
 });

@@ -41,6 +41,8 @@ import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
  * starts from the remote's latest. `finishTurn` saves the branch and stops
  * there: the user pushes it or opens a pull request, and merging that on the
  * remote is what lands the work. Auto-saves never leave the drive.
+ * `saveBranch` does the same mid-turn, so the thread's agent can publish its
+ * work before the turn ends (`BranchProtocol.ts`).
  *
  * `prepare` also mounts the drive's shortcuts (`RunnerShortcuts.ts`) and
  * writes the instructions they bring (`RunnerInstructions.ts`), answering
@@ -62,6 +64,10 @@ export type DriveOutcome =
   | { readonly _tag: "not_landed"; readonly reason: string };
 
 export type RunnerDriveError = RunnerGitError | DriveClientError | PlatformError.PlatformError;
+
+export type SavedBranch =
+  | { readonly _tag: "saved"; readonly head: string }
+  | { readonly _tag: "not_saved"; readonly reason: string };
 
 /** What a turn start left in the working directory. */
 export interface PreparedDrive {
@@ -95,6 +101,11 @@ export interface RunnerDrive {
   >;
   readonly continueAfterResolution: Effect.Effect<DriveOutcome, RunnerDriveError>;
   readonly abandonMerge: Effect.Effect<DriveOutcome, RunnerDriveError>;
+  /**
+   * Commits the worktree's changes with `message` and saves the thread's
+   * branch now, as `finishTurn` would. Only a drive backed by a remote.
+   */
+  readonly saveBranch: (message: string) => Effect.Effect<SavedBranch, RunnerDriveError>;
 }
 
 const BRANCH = "refs/heads/signalbox";
@@ -426,6 +437,35 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     }),
   );
 
+  const saveBranch: RunnerDrive["saveBranch"] = (message) =>
+    exclusive(
+      Effect.gen(function* () {
+        if (remote === undefined) remote = yield* drive.refresh;
+        if (remote === null) {
+          return {
+            _tag: "not_saved",
+            reason: "This project isn't backed by a GitHub repository.",
+          } as const;
+        }
+        if (yield* mergeInProgress) {
+          return {
+            _tag: "not_saved",
+            reason: "A merge is in progress here; resolve it before publishing.",
+          } as const;
+        }
+        if ((yield* git.run(["status", "--porcelain", "--untracked-files=all"])).trim()) {
+          yield* git.run(["add", "-A"]);
+          yield* git.run(["commit", "-q", "--no-verify", "-m", commitTitle(message)]);
+        }
+        const head = yield* git.resolve("HEAD");
+        if (head === null) return { _tag: "not_saved", reason: "Nothing to save yet." } as const;
+        const refused = yield* drive.saveBranch(head);
+        return refused === null
+          ? ({ _tag: "saved", head } as const)
+          : ({ _tag: "not_saved", reason: refused } as const);
+      }),
+    );
+
   return {
     prepare,
     autosave,
@@ -433,5 +473,6 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     finishTurn,
     continueAfterResolution: exclusive(resolveAndLand),
     abandonMerge,
+    saveBranch,
   } satisfies RunnerDrive;
 });

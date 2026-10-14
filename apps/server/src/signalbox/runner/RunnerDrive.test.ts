@@ -280,6 +280,19 @@ describe("RunnerDrive", () => {
     return { dir, commit };
   };
 
+  it.effect("doesn't save a branch to publish on a drive with no remote", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+        yield* runner.prepare("remote-token");
+        write(cwd, "a.txt", "a\n");
+        expect((yield* runner.saveBranch("Publish"))._tag).toBe("not_saved");
+        expect(drive.refs("t1").thread).toBeNull();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   describe("backed by a remote", () => {
     it.effect("starts a new thread from the remote's head and keeps its history there", () =>
       scopedTest((root) =>
@@ -325,6 +338,42 @@ describe("RunnerDrive", () => {
           expect(gitOk(drive.store, "merge-base", "--is-ancestor", autosave!, refs.thread!)).toBe(
             false,
           );
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("saves unsaved work on the thread's branch mid-turn, for the agent to publish", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+          yield* runner.prepare("remote-token");
+          const head = drive.refs("t1").main;
+          // Edited a moment ago: no auto-save has run yet.
+          write(cwd, "src/app.ts", "export const app = 1;\n");
+          write(cwd, "notes.md", "new\n");
+
+          const saved = yield* runner.saveBranch("Add app");
+          expect(saved._tag).toBe("saved");
+          const refs = drive.refs("t1");
+          expect(refs.main).toBe(head);
+          expect(refs.thread).toBe(git(cwd, "rev-parse", "HEAD"));
+          expect(git(cwd, "log", "-1", "--format=%s")).toBe("Add app");
+          expect(git(drive.store, "show", `${refs.thread}:notes.md`)).toBe("new");
+          expect(status(cwd)).toEqual([]);
+
+          // Nothing new: the branch stays where it is.
+          expect(yield* runner.saveBranch("Again")).toEqual({ _tag: "saved", head: refs.thread });
+          // The turn's end still saves, with the publish inside its checkpoint.
+          write(cwd, "later.md", "later\n");
+          const turn = yield* runner.finishTurn({ message: "More" });
+          expect(turn.checkpoint?.start).toBe(head);
+          expect(turn.checkpoint?.files.map((file) => file.path).toSorted()).toEqual([
+            "later.md",
+            "notes.md",
+            "src/app.ts",
+          ]);
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );

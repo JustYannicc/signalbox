@@ -159,7 +159,12 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
                     makeRunnerDrive({ cwd, client }),
-                  ).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices)),
+                  ).pipe(
+                    // The agent's push and create_pr save the branch through it first.
+                    Effect.tap(context.attachDrive),
+                    Effect.provide(FetchHttpClient.layer),
+                    Effect.provide(driveServices),
+                  ),
                 sessions,
                 // Each generation's class, as the thread asked for it.
                 machineClass: request.machineClass ?? "heavy",
