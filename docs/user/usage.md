@@ -146,13 +146,13 @@ picker. Pick it to use every account of that kind in the pool: each conversation
 account, and work moves to another account when one runs out. Antigravity accounts offer only its
 Flash models this way.
 
-In Signalbox Cloud, every conversation runs on one pool: the nearest one above it. Personal covers
-everything to start with. To run a folder on another pool, choose **Pool for this folder** in its
-menu; the folders inside it use that pool too unless they pick their own, and **Inherit from above**
-goes back to the pool above. The model picker shows only that pool's models, and **Thread details**
-says which pool a conversation runs on and where that pool comes from. Moving a project into another
-folder moves its conversations to that folder's pool from their next message. When the pool has
-nobody signed in, the composer says it **needs a pool** and opens that pool's sign-in. Agents can see
+In Signalbox Cloud, every conversation runs on one pool: the nearest one above the folder it lives
+in. The top level's pool covers everything to start with. To run a folder on another pool, choose
+**Pool for this folder** in its menu; the folders inside it use that pool too unless they pick their
+own, and **Inherit from above** goes back to the pool above. The model picker shows only that pool's
+models, and **Thread details** says which pool a conversation runs on and which folder, or the top
+level, that pool comes from. Moving a conversation to another folder moves it to that folder's pool
+from its next message. When the pool has nobody signed in, the composer says it **needs a pool** and opens that pool's sign-in. Agents can see
 each pool's providers and how much of their usage is left.
 
 On a server you run yourself, the model picker shows every pool's models, and a conversation stays on
