@@ -34,9 +34,10 @@ export function folderTree(
     children.set(folder.parentId, siblings);
   }
   const build = (parentId: FolderId | null, seen: ReadonlySet<FolderId>): Array<FolderNode> =>
+    // Hermes (mobile) has no Array#toSorted; `filter` copies before the in-place sort.
     (children.get(parentId) ?? [])
-      .toSorted(byPosition)
       .filter((folder) => !seen.has(folder.id))
+      .sort(byPosition)
       .map((folder) => ({
         folder,
         children: build(folder.id, new Set([...seen, folder.id])),
