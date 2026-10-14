@@ -232,6 +232,10 @@ import {
 import { SectionsProjectTree } from "./sidebar/sections/SectionsProjectTree";
 import { useSectionsSidebar } from "./sidebar/sections/useSectionsSidebar";
 import { visibleSectionThreadKeys } from "./sidebar/sections/sectionSidebarViewModel";
+import { FoldersSidebarTree } from "./sidebar/folders/FoldersSidebarTree"; // signalbox: folders
+import { visibleFolderThreadKeys } from "./sidebar/folders/folderSidebarModel"; // signalbox: folders
+import type { SidebarThreadScope } from "./sidebar/folders/threadScope"; // signalbox: folders
+import { useFoldersSidebar } from "./sidebar/folders/useFoldersSidebar"; // signalbox: folders
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -1148,6 +1152,8 @@ interface SidebarProjectItemProps {
   settingsProjectKey?: string;
   sectionRowKey?: string;
   sectionActions?: React.ReactNode;
+  /** signalbox: one home's threads without the project header (`sidebar/folders`). */
+  threadScope?: SidebarThreadScope;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   openPullRequestsInRightPanel: boolean;
@@ -1190,6 +1196,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
     dragHandleProps,
+    threadScope,
   } = props;
   const settingsProjectKey = requestedSettingsProjectKey ?? project.projectKey;
   const environmentMachine = project.allRemoteMembersAreWsl
@@ -1271,7 +1278,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
-  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const shownThreads = useThreadShellsForProjectRefs(
+    threadScope?.projectRefs ?? project.memberProjectRefs,
+  );
+  const sidebarThreads = useMemo(
+    () => (threadScope ? shownThreads.filter(threadScope.includes) : shownThreads), // signalbox
+    [shownThreads, threadScope],
+  );
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -1292,9 +1305,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     () => projectExpansionPreferenceKeys(project, sectionRowKey),
     [project, sectionRowKey],
   );
-  const projectListKey = sectionRowKey ?? project.projectKey;
-  const projectExpanded = useUiStateStore((state) =>
-    resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
+  const projectListKey = threadScope?.listKey ?? sectionRowKey ?? project.projectKey;
+  const projectExpanded = useUiStateStore(
+    (state) =>
+      threadScope !== undefined || // signalbox: a folder folds its threads itself
+      resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
   );
   const threadLastVisitedAts = useUiStateStore(
     useShallow((state) =>
@@ -2313,18 +2328,24 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadProject = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
+      const scopedProject = threadScope?.projectOf(thread); // signalbox: folders
       const threadWorkspacePath =
-        thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+        thread.worktreePath ??
+        (scopedProject ?? threadProject)?.workspaceRoot ??
+        project.workspaceRoot ??
+        null;
       const canOperateThread = readEnvironmentScope(
         thread.environmentId,
         AuthOrchestrationOperateScope,
       );
+      const scopeMenu = threadScope?.threadMenu(thread); // signalbox: folders
       const clicked = await api.contextMenu.show(
         [
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
+          ...(scopeMenu?.items ?? []), // signalbox: folders
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2340,11 +2361,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         position,
       );
 
+      if (clicked && scopeMenu?.select(clicked)) return; // signalbox: folders
       if (clicked === "project-settings") {
         if (isMobile) setOpenMobile(false);
         void router.navigate({
           to: "/projects/$projectKey",
-          params: { projectKey: settingsProjectKey },
+          params: { projectKey: scopedProject?.projectKey ?? settingsProjectKey },
         });
         return;
       }
@@ -2441,12 +2463,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       router,
       setOpenMobile,
       startThreadRename,
+      threadScope,
     ],
   );
 
   return (
     <>
-      <div className="group/project-header relative">
+      {/* signalbox: a folder's thread list has no project header */}
+      <div className="group/project-header relative" hidden={threadScope !== undefined}>
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
           className={isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : undefined}
@@ -2995,6 +3019,7 @@ interface SidebarProjectsContentProps {
   markThreadUnread: ReturnType<typeof useThreadActions>["markThreadUnread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
   sectionsSidebar: ReturnType<typeof useSectionsSidebar>;
+  foldersSidebar: ReturnType<typeof useFoldersSidebar>; // signalbox: folders
   activeRouteProjectRef: { environmentId: string; projectId: string } | null;
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
@@ -3040,6 +3065,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     markThreadUnread,
     sortedProjects,
     sectionsSidebar,
+    foldersSidebar,
     activeRouteProjectRef,
     expandedThreadListsByProject,
     activeRouteProjectKey,
@@ -3171,6 +3197,34 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </div>
         </div>
 
+        {/* signalbox: environments with folders show them in place of sections */}
+        <FoldersSidebarTree
+          sidebar={foldersSidebar}
+          renderThreads={(list) => (
+            <SidebarProjectListRow
+              key={list.key}
+              project={list.project}
+              threadScope={list.scope}
+              isThreadListExpanded={expandedThreadListsByProject.has(list.key)}
+              activeRouteThreadKey={routeThreadKey}
+              openPullRequestsInRightPanel={openPullRequestsInRightPanel}
+              newThreadShortcutLabel={newThreadShortcutLabel}
+              handleNewThread={handleNewThread}
+              archiveThread={archiveThread}
+              deleteThread={deleteThread}
+              markThreadUnread={markThreadUnread}
+              threadJumpLabelByKey={threadJumpLabelByKey}
+              attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+              expandThreadListForProject={expandThreadListForProject}
+              collapseThreadListForProject={collapseThreadListForProject}
+              dragInProgressRef={dragInProgressRef}
+              suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+              suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+              isManualProjectSorting={false}
+              dragHandleProps={null}
+            />
+          )}
+        />
         {sectionsSidebar.environments ? (
           <SectionsProjectTree
             environments={sectionsSidebar.environments}
@@ -3641,18 +3695,36 @@ export default function LegacySidebar() {
     projectGroups: sortedProjects,
     primaryEnvironmentId,
   });
+  const foldersSidebar = useFoldersSidebar({
+    environments,
+    projects: orderedProjects,
+    projectGroups: sortedProjects,
+    primaryEnvironmentId,
+    threads: sidebarThreads,
+  }); // signalbox: folders
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
   const visibleSidebarThreadKeys = useMemo(() => {
+    // signalbox: folder environments come first, as the sidebar draws them.
+    const folderThreadKeys = visibleFolderThreadKeys({
+      environments: foldersSidebar.environments,
+      collapsed: foldersSidebar.collapsed,
+      threadSortOrder: sidebarThreadSortOrder,
+      threadPreviewCount: sidebarThreadPreviewCount,
+      expandedThreadLists: expandedThreadListsByProject,
+    });
     if (sectionsSidebar.environments !== null) {
-      return visibleSectionThreadKeys({
-        rows: sectionsSidebar.visibleProjectRows,
-        threads: sidebarThreads,
-        threadSortOrder: sidebarThreadSortOrder,
-        threadPreviewCount: sidebarThreadPreviewCount,
-        expandedThreadLists: expandedThreadListsByProject,
-        projectExpandedById,
-        activeThreadKey: routeThreadKey,
-      });
+      return [
+        ...folderThreadKeys,
+        ...visibleSectionThreadKeys({
+          rows: sectionsSidebar.visibleProjectRows,
+          threads: sidebarThreads,
+          threadSortOrder: sidebarThreadSortOrder,
+          threadPreviewCount: sidebarThreadPreviewCount,
+          expandedThreadLists: expandedThreadListsByProject,
+          projectExpandedById,
+          activeThreadKey: routeThreadKey,
+        }),
+      ];
     }
 
     return sortedProjects.flatMap((project) => {
@@ -3691,6 +3763,8 @@ export default function LegacySidebar() {
       );
     });
   }, [
+    foldersSidebar.environments,
+    foldersSidebar.collapsed,
     sectionsSidebar.environments,
     sectionsSidebar.visibleProjectRows,
     sidebarThreadSortOrder,
@@ -4004,6 +4078,7 @@ export default function LegacySidebar() {
           markThreadUnread={markThreadUnread}
           sortedProjects={sortedProjects}
           sectionsSidebar={sectionsSidebar}
+          foldersSidebar={foldersSidebar}
           activeRouteProjectRef={activeRouteProjectRef}
           expandedThreadListsByProject={expandedThreadListsByProject}
           activeRouteProjectKey={activeRouteProjectKey}

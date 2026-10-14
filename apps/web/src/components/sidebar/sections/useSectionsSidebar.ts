@@ -42,6 +42,9 @@ export function useSectionsSidebar(input: {
   }, []);
 
   return useMemo(() => {
+    // signalbox: environments with folders show those instead (`sidebar/folders`).
+    const servesFolders = (environmentId: EnvironmentId) =>
+      serverConfigs.get(environmentId)?.environment.capabilities.folders === true;
     const projectEnvironmentIds = new Set(input.projects.map((project) => project.environmentId));
     const environmentIds = new Set<EnvironmentId>([
       ...projectEnvironmentIds,
@@ -49,6 +52,7 @@ export function useSectionsSidebar(input: {
     ]);
     const environments: SectionSidebarEnvironment[] = input.environments.flatMap((environment) => {
       if (!environmentIds.has(environment.environmentId)) return [];
+      if (servesFolders(environment.environmentId)) return [];
       const projects = input.projects.filter(
         (project) => project.environmentId === environment.environmentId,
       );
@@ -80,7 +84,9 @@ export function useSectionsSidebar(input: {
     const hasSavedSectionState =
       hasAnySavedSectionSidebarState(environments) ||
       // signalbox: Signalbox Cloud always shows its contexts, sections or not.
-      environments.some((environment) => environment.contexts);
+      environments.some((environment) => environment.contexts) ||
+      // signalbox: with folders beside it, the rest keeps its tree rather than a flat list.
+      input.environments.some((environment) => servesFolders(environment.environmentId));
     const visibleProjectRows = visibleSectionProjectRows(environments, collapsedSections);
     const failures = input.environments.flatMap((environment) => {
       const status = serverViews.get(environment.environmentId)?.status;
@@ -96,7 +102,8 @@ export function useSectionsSidebar(input: {
     });
     const createOptions: SectionEnvironmentOption[] = input.environments.flatMap((environment) =>
       environment.connection.phase === "connected" &&
-      serverConfigs.get(environment.environmentId)?.environment.capabilities.sections === true
+      serverConfigs.get(environment.environmentId)?.environment.capabilities.sections === true &&
+      !servesFolders(environment.environmentId) // signalbox: folders
         ? [{ environmentId: environment.environmentId, label: environment.label }]
         : [],
     );
