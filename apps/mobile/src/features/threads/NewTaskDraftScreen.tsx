@@ -139,7 +139,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
 import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
-import { useFileNewThreadInFolder } from "../folders/use-thread-folder-menu"; // signalbox: folders
+import { FolderDraftOfflineNotice, useFileDraftInFolder } from "../folders/FolderDraftFiling"; // signalbox: folders
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -221,10 +221,8 @@ export function NewTaskDraftScreen(props: {
   // The picker and sidebar name a project by its repository scope; a workspace
   // inside it (e.g. apps/server) is titled by its folder, which reads as
   // ambiguous on its own.
-  const folderTargetName = flow.folderTarget?.name; // signalbox: folders
-  const selectedProjectLabel = useMemo(() => {
+  const projectScopeLabel = useMemo(() => {
     if (!selectedProject) return null;
-    if (folderTargetName !== undefined) return folderTargetName; // signalbox: folders
     const scope = projectScopes.find((candidate) =>
       candidate.projectRefs.some(
         (ref) =>
@@ -233,7 +231,8 @@ export function NewTaskDraftScreen(props: {
       ),
     );
     return scope?.title ?? selectedProject.title;
-  }, [folderTargetName, projectScopes, selectedProject]);
+  }, [projectScopes, selectedProject]);
+  const selectedProjectLabel = flow.folders.target?.name ?? projectScopeLabel; // signalbox: folders
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
@@ -288,7 +287,7 @@ export function NewTaskDraftScreen(props: {
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
-  const fileInFolder = useFileNewThreadInFolder(); // signalbox: folders
+  const fileInFolder = useFileDraftInFolder(flow); // signalbox: folders
   // The delete is awaited; by then the picker may point somewhere else, and
   // only the removed project's draft should leave the screen.
   const selectedProjectRef = useRef(selectedProject);
@@ -1347,20 +1346,8 @@ export function NewTaskDraftScreen(props: {
     if (!message) {
       return;
     }
-    // signalbox: folders. A thread can be filed before it exists, so its first turn already
-    // runs on the folder's pool and instructions. Offline, the queued task isn't filed.
-    const folderTarget = flow.folderTarget;
-    if (folderTarget?.file && !editingPendingTask && environmentConnected) {
-      flow.setSubmitting(true);
-      const filed = await fileInFolder({
-        environmentId: message.environmentId,
-        threadId: message.threadId,
-        folderId: folderTarget.folderId,
-        folderName: folderTarget.name,
-      });
-      flow.setSubmitting(false);
-      if (!filed) return;
-    }
+    const editing = editingPendingTask !== null; // signalbox: folders
+    if (!(await fileInFolder(message, { editing, connected: environmentConnected }))) return; // signalbox: folders
     if (!queuesInsteadOfStarting) {
       // Arm the lock-screen card before the async thread creation: backgrounding
       // the app right after tapping submit would otherwise reject the foreground
@@ -1725,6 +1712,7 @@ export function NewTaskDraftScreen(props: {
         <Text className="px-3 py-2 text-xs text-muted-foreground">{taskPermissionReason}</Text>
       ) : null}
 
+      <FolderDraftOfflineNotice target={flow.folders.target} connected={environmentConnected} />
       {flow.poolNeed ? ( // signalbox
         <NeedsPoolNotice
           environmentId={flow.selectedProject?.environmentId ?? null}

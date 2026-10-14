@@ -48,8 +48,7 @@ import {
   projectFilterOptions as buildProjectFilterOptions,
   resolveSelectedProjectScope,
 } from "../sections/section-project-filter";
-import { withFolderFilterOption } from "../folders/folder-filter"; // signalbox: folders
-import { useFolderFilter } from "../folders/use-folder-filter"; // signalbox: folders
+import { useFolderFilterOptions, useFolderScope } from "../folders/use-folder-filter"; // signalbox: folders
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -227,6 +226,7 @@ function ThreadNavigationSidebarPane(
       setSelectedProjectKey(resolvedProjectKey);
     }
   }, [projectScopeKey, resolvedProjectKey, setSelectedProjectKey]);
+  const folderScope = useFolderScope(resolvedProjectKey, threads, pendingTasks); // signalbox: folders
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
@@ -236,19 +236,16 @@ function ThreadNavigationSidebarPane(
       }),
     [options.projectGroupingMode, options.selectedEnvironmentId, projects],
   );
-  const folderFilter = useFolderFilter(resolvedProjectKey); // signalbox: folders
-  const projectFilterOptions = useMemo(
+  const scopeFilterOptions = useMemo(
     () =>
-      withFolderFilterOption(
-        buildProjectFilterOptions({
-          selectedProjectKey: resolvedProjectKey,
-          projectScopes,
-          projects,
-        }),
-        folderFilter,
-      ),
-    [folderFilter, projectScopes, projects, resolvedProjectKey],
+      buildProjectFilterOptions({
+        selectedProjectKey: resolvedProjectKey,
+        projectScopes,
+        projects,
+      }),
+    [projectScopes, projects, resolvedProjectKey],
   );
+  const projectFilterOptions = useFolderFilterOptions(scopeFilterOptions, folderScope.filter); // signalbox: folders
   const projectTitleByProjectKey = useMemo(
     () =>
       new Map(
@@ -274,7 +271,7 @@ function ThreadNavigationSidebarPane(
     [projectScopes, projects, resolvedProjectKey],
   );
   // A saved project stays selected while its environment is offline or filtered out.
-  const selectedProjectKey = selectedProjectScope?.key ?? folderFilter?.key ?? null;
+  const selectedProjectKey = selectedProjectScope?.key ?? folderScope.filter?.key ?? null; // signalbox: folders
   const selectedProjectRefs = useMemo(
     () =>
       selectedProjectScope === null
@@ -391,10 +388,7 @@ function ThreadNavigationSidebarPane(
     threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
     return buildThreadListV2Items({
       pendingOrder,
-      threads: threads.filter(
-        (thread) =>
-          thread.archivedAt === null && (folderFilter === null || folderFilter.includes(thread)), // signalbox: folders
-      ),
+      threads: folderScope.threads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
@@ -427,9 +421,8 @@ function ThreadNavigationSidebarPane(
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
-    threads,
+    folderScope.threads, // signalbox: folders; follows threads
     selectedProjectScope,
-    folderFilter,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -452,7 +445,7 @@ function ThreadNavigationSidebarPane(
     // deletable while their environment is offline. Same environment scope
     // and search filter as the list.
     const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
-    const v2PendingTasks = pendingTasks.filter(
+    const v2PendingTasks = folderScope.pendingTasks.filter(
       (pendingTask) =>
         (options.selectedEnvironmentId === null ||
           pendingTask.environmentId === options.selectedEnvironmentId) &&
@@ -460,13 +453,6 @@ function ThreadNavigationSidebarPane(
           selectedProjectRefs.has(
             scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
           )) &&
-        // signalbox: folders; a draft isn't a thread yet, so it goes by its project.
-        (folderFilter === null ||
-          folderFilter.includes({
-            environmentId: pendingTask.environmentId,
-            projectId: pendingTask.projectId,
-            id: pendingTask.kind === "pending" ? pendingTask.message.threadId : null,
-          })) &&
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
@@ -499,12 +485,11 @@ function ThreadNavigationSidebarPane(
   }, [
     nowMinute,
     options.selectedEnvironmentId,
-    pendingTasks,
+    folderScope.pendingTasks,
     props.searchQuery,
     queuedThreadKeys,
     threadMoveAvailability,
     selectedProjectRefs,
-    folderFilter,
     settledShelfExpanded,
     shelfPreferencesLoaded,
     snoozedShelfExpanded,
@@ -936,9 +921,7 @@ function ThreadNavigationSidebarPane(
               : "No matching threads"
             : selectedProjectScope !== null
               ? `No threads in ${selectedProjectScope.title}`
-              : folderFilter !== null // signalbox: folders
-                ? `No threads in ${folderFilter.label}`
-                : "No threads yet"}
+              : `No threads ${folderScope.filter ? `in ${folderScope.filter.label}` : "yet"}`}
     </Text>
   );
 

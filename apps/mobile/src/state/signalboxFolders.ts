@@ -1,11 +1,15 @@
 /** Signalbox Cloud folders, per cloud environment (see `signalboxContexts.ts`). */
 import { createSignalboxFoldersAtoms } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import type { SignalboxContextsSnapshot } from "@t3tools/contracts/signalboxContexts";
+import type { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentServerConfig } from "./entities";
 import { useEnvironmentQuery } from "./query";
+import { environmentServerConfigsAtom } from "./server";
 import { signalboxContexts } from "./signalboxContexts";
 import { environmentThreadShells } from "./threads";
 
@@ -37,34 +41,66 @@ export function useFolderOwners(environmentId: EnvironmentId | null) {
   ).data;
 }
 
+export interface FolderEnvironment {
+  readonly snapshot: SignalboxFoldersSnapshot;
+  readonly owners: SignalboxContextsSnapshot;
+}
+
+/**
+ * Every environment whose folders and owners have both arrived. An
+ * environment whose snapshots didn't change keeps its entry.
+ */
+export const folderEnvironmentsAtom = Atom.make((get) => {
+  const previous = Option.getOrUndefined(get.self<ReadonlyMap<EnvironmentId, FolderEnvironment>>());
+  const environments = new Map<EnvironmentId, FolderEnvironment>();
+  for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
+    if (config.environment.capabilities.folders !== true) continue;
+    const input = { environmentId, input: {} };
+    const snapshot = Option.getOrNull(AsyncResult.value(get(signalboxFolders.snapshot(input))));
+    const owners = Option.getOrNull(AsyncResult.value(get(signalboxContexts.snapshot(input))));
+    if (snapshot === null || owners === null) continue;
+    const kept = previous?.get(environmentId);
+    environments.set(
+      environmentId,
+      kept?.snapshot === snapshot && kept.owners === owners ? kept : { snapshot, owners },
+    );
+  }
+  const unchanged =
+    previous !== undefined &&
+    previous.size === environments.size &&
+    [...environments].every(([id, entry]) => previous.get(id) === entry);
+  return unchanged ? previous : environments;
+}).pipe(Atom.withLabel("signalbox-folder-environments"));
+
 export interface FolderThreadResident {
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
   readonly projectId: ProjectId;
 }
 
-let previousResidents: ReadonlyArray<FolderThreadResident> = [];
+const sameResidents = (
+  left: ReadonlyArray<FolderThreadResident>,
+  right: ReadonlyArray<FolderThreadResident>,
+) =>
+  left.length === right.length &&
+  left.every(
+    (resident, index) =>
+      resident.environmentId === right[index]!.environmentId &&
+      resident.id === right[index]!.id &&
+      resident.projectId === right[index]!.projectId,
+  );
+
 /**
  * The threads folders count: what the thread list shows. Streaming turns
- * rewrite thread shells many times a second; this only changes when a thread
- * comes, goes, or changes project.
+ * rewrite thread shells many times a second; this keeps its array until a
+ * thread comes, goes, or changes project.
  */
 export const folderThreadResidentsAtom = Atom.make((get) => {
-  const next = get(environmentThreadShells.navigationThreadShellsAtom).map((thread) => ({
+  const residents = get(environmentThreadShells.navigationThreadShellsAtom).map((thread) => ({
     environmentId: thread.environmentId,
     id: thread.id,
     projectId: thread.projectId,
   }));
-  const same =
-    next.length === previousResidents.length &&
-    next.every((resident, index) => {
-      const previous = previousResidents[index]!;
-      return (
-        previous.environmentId === resident.environmentId &&
-        previous.id === resident.id &&
-        previous.projectId === resident.projectId
-      );
-    });
-  if (!same) previousResidents = next;
-  return previousResidents;
+  const previous = Option.getOrUndefined(get.self<ReadonlyArray<FolderThreadResident>>());
+  return previous !== undefined && sameResidents(previous, residents) ? previous : residents;
 }).pipe(Atom.withLabel("signalbox-folder-thread-residents"));

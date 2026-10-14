@@ -255,8 +255,7 @@ type ThreadSettingsSubmenuPage =
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null;
-  /** signalbox: the thread, or the folder a new one starts in, its pool resolves by. */
-  readonly poolHome?: PoolHome;
+  readonly poolHome?: PoolHome | undefined; // signalbox: what its pool resolves by, with folders
   readonly providerInstanceId?: ProviderInstanceId;
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -313,7 +312,7 @@ export function useExistingThreadSettingsRoutePresentation() {
 type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null; // signalbox
-  readonly poolHome?: PoolHome; // signalbox
+  readonly poolHome?: PoolHome | undefined; // signalbox
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
@@ -623,7 +622,7 @@ function ThreadSettingsSessionProvider(
     () => ({
       environmentId: props.environmentId,
       projectId: props.projectId, // signalbox
-      ...(props.poolHome ? { poolHome: props.poolHome } : {}), // signalbox
+      poolHome: props.poolHome, // signalbox
       providerInstanceId: props.providerInstanceId,
       providerGroups,
       manageHidden,
@@ -1626,7 +1625,7 @@ export function NewTaskThreadSettingsRouteScreen() {
     <ThreadSettingsPickerScreen
       environmentId={flow.selectedEnvironmentId}
       projectId={flow.selectedProject?.id ?? null}
-      {...(flow.folderTarget ? { poolHome: { folderId: flow.folderTarget.folderId } } : {})}
+      poolHome={flow.folders.poolHome} // signalbox: folders
       {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}

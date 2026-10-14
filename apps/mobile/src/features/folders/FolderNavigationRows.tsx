@@ -1,7 +1,8 @@
 // signalbox: one row per level of an owner's tree: its top level, then its folders, nested.
 import type { FolderNode } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { MenuAction } from "@react-native-menu/menu";
-import type { Folder } from "@t3tools/contracts/signalboxFolders";
+import type { SignalboxContext } from "@t3tools/contracts/signalboxContexts";
+import type { Folder, FolderId } from "@t3tools/contracts/signalboxFolders";
 import { memo, useCallback, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
@@ -10,19 +11,20 @@ import { AppText } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 
 const MAX_VISUAL_DEPTH = 5;
+const NO_ACTIONS: MenuAction[] = [];
 
 type MenuEvent = { readonly nativeEvent: { readonly event: string } };
 
 /** A row's ⋯ button and its native menu. */
 function RowMenu(props: {
   readonly label: string;
-  readonly actions: ReadonlyArray<MenuAction>;
+  readonly actions: MenuAction[];
   readonly onPressAction: (event: MenuEvent) => void;
 }) {
   if (props.actions.length === 0) return null;
   return (
     <ControlPillMenu
-      actions={[...props.actions]}
+      actions={props.actions}
       onPressAction={props.onPressAction}
       title={props.label}
     >
@@ -37,7 +39,7 @@ function RowMenu(props: {
   );
 }
 
-/** A selectable level: name, how many threads live right there, and a menu. */
+/** A selectable level: its name, how many threads are in it or below, and a menu. */
 function LevelRow(props: {
   readonly depth: number;
   readonly icon: "folder" | "folder.fill";
@@ -86,45 +88,47 @@ function LevelRow(props: {
   );
 }
 
+/** An owner's top level: the threads that aren't in any of its folders. */
 export const OwnerTopLevelRow = memo(function OwnerTopLevelRow(props: {
-  readonly name: string;
-  readonly count: number;
+  readonly owner: SignalboxContext;
   readonly selected: boolean;
-  readonly actions: ReadonlyArray<MenuAction>;
-  readonly onSelect: () => void;
-  readonly onAction: (event: string) => void;
+  readonly actions: MenuAction[];
+  readonly onSelect: (owner: SignalboxContext) => void;
+  readonly onAction: (owner: SignalboxContext, event: string) => void;
 }) {
-  const onAction = props.onAction;
+  const { owner, onAction, onSelect } = props;
   const handleMenu = useCallback(
-    (event: MenuEvent) => onAction(event.nativeEvent.event),
-    [onAction],
+    (event: MenuEvent) => onAction(owner, event.nativeEvent.event),
+    [onAction, owner],
   );
+  const handleSelect = useCallback(() => onSelect(owner), [onSelect, owner]);
   return (
     <LevelRow
       depth={0}
       icon="folder.fill"
-      name={props.name}
-      accessibilityLabel={`Threads at the top level of ${props.name}`}
-      count={props.count}
+      name={owner.name}
+      accessibilityLabel={`Threads at the top level of ${owner.name}`}
+      count={0}
       selected={props.selected}
-      onSelect={props.onSelect}
-      menu={<RowMenu label={props.name} actions={props.actions} onPressAction={handleMenu} />}
+      onSelect={handleSelect}
+      menu={<RowMenu label={owner.name} actions={props.actions} onPressAction={handleMenu} />}
     />
   );
 });
 
 export interface FolderRowContext {
-  readonly counts: ReadonlyMap<string, number>;
-  readonly selectedFolderId: string | null;
-  readonly collapsed: ReadonlySet<string>;
-  readonly menuFor: (folder: Folder) => ReadonlyArray<MenuAction>;
+  readonly counts: ReadonlyMap<FolderId, number>;
+  readonly selectedFolderId: FolderId | null;
+  readonly collapsed: ReadonlySet<FolderId>;
+  /** Each folder's menu, built once per snapshot. */
+  readonly menus: ReadonlyMap<FolderId, MenuAction[]>;
   readonly onSelect: (folder: Folder) => void;
   readonly onToggle: (folder: Folder) => void;
   readonly onAction: (folder: Folder, event: string) => void;
 }
 
 /** A folder and, unless collapsed, the folders inside it. */
-export function FolderNodeRow(
+export const FolderNodeRow = memo(function FolderNodeRow(
   props: FolderRowContext & {
     readonly node: FolderNode;
     readonly depth: number;
@@ -139,6 +143,7 @@ export function FolderNodeRow(
     (event: MenuEvent) => onAction(folder, event.nativeEvent.event),
     [folder, onAction],
   );
+  const handleSelect = useCallback(() => onSelect(folder), [folder, onSelect]);
   return (
     <View>
       <LevelRow
@@ -148,7 +153,7 @@ export function FolderNodeRow(
         accessibilityLabel={`Threads in ${path}`}
         count={props.counts.get(folder.id) ?? 0}
         selected={props.selectedFolderId === folder.id}
-        onSelect={() => onSelect(folder)}
+        onSelect={handleSelect}
         leading={
           children.length > 0 ? (
             <Pressable
@@ -166,7 +171,13 @@ export function FolderNodeRow(
             </Pressable>
           ) : null
         }
-        menu={<RowMenu label={path} actions={props.menuFor(folder)} onPressAction={handleMenu} />}
+        menu={
+          <RowMenu
+            label={path}
+            actions={props.menus.get(folder.id) ?? NO_ACTIONS}
+            onPressAction={handleMenu}
+          />
+        }
       />
       {collapsed
         ? null
@@ -181,4 +192,4 @@ export function FolderNodeRow(
           ))}
     </View>
   );
-}
+});

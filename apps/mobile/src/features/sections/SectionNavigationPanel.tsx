@@ -7,7 +7,7 @@ import { Pressable, View } from "react-native";
 import { AppText } from "../../components/AppText";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { SymbolView } from "../../components/AppSymbol";
-import { useEnvironmentServerConfig, useProjects, useServerConfigs } from "../../state/entities";
+import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { environmentSections } from "../../state/sections";
@@ -16,7 +16,9 @@ import { SectionNodeRow, ProjectRow } from "./SectionNavigationRows";
 import { useSectionActions } from "./use-section-actions";
 import { ContextSections } from "../contexts/ContextSections"; // signalbox: contexts
 import { useEnvironmentContexts } from "../../state/signalboxContexts"; // signalbox: contexts
-import { FolderNavigationEnvironment } from "../folders/FolderNavigationEnvironment"; // signalbox: folders
+import { useNavigationPanelCopy, withFolderTrees } from "../folders/FolderPanelParts"; // signalbox: folders
+
+const EnvironmentTree = withFolderTrees(SectionTreeEnvironment); // signalbox: folders
 
 export function SectionNavigationPanel(props: {
   readonly environments: ReadonlyArray<SectionNavigationEnvironment>;
@@ -35,13 +37,7 @@ export function SectionNavigationPanel(props: {
       ),
     [props.environments, props.selectedEnvironmentId],
   );
-  // signalbox: Signalbox Cloud keeps folders; self-hosted environments keep their sections.
-  const configs = useServerConfigs();
-  const hasFolders = (environmentId: EnvironmentId) =>
-    configs.get(environmentId)?.environment.capabilities.folders === true;
-  const allFolders =
-    visibleEnvironments.length > 0 &&
-    visibleEnvironments.every((environment) => hasFolders(environment.environmentId));
+  const copy = useNavigationPanelCopy(visibleEnvironments); // signalbox: folders
 
   return (
     <View className="mx-3 mb-3 overflow-hidden rounded-2xl border border-border bg-card">
@@ -51,13 +47,9 @@ export function SectionNavigationPanel(props: {
             accessibilityRole="header"
             className="text-base font-t3-semibold text-foreground"
           >
-            {allFolders ? "Folders" : "Sections"}
+            {copy.title}
           </AppText>
-          <AppText className="mt-0.5 text-xs text-foreground-muted">
-            {allFolders
-              ? "Choose a folder to show its threads."
-              : "Choose a project to show its threads."}
-          </AppText>
+          <AppText className="mt-0.5 text-xs text-foreground-muted">{copy.subtitle}</AppText>
         </View>
         <View className="flex-row items-center gap-1">
           <Pressable
@@ -69,7 +61,7 @@ export function SectionNavigationPanel(props: {
             <AppText className="text-sm text-primary">All threads</AppText>
           </Pressable>
           <MaterialIconButton
-            accessibilityLabel={allFolders ? "Hide folders" : "Hide sections"}
+            accessibilityLabel={copy.hide}
             icon="chevron.up"
             onPress={props.onClose}
             variant="tonal"
@@ -83,26 +75,16 @@ export function SectionNavigationPanel(props: {
           </AppText>
         </View>
       ) : (
-        visibleEnvironments.map((environment) =>
-          hasFolders(environment.environmentId) ? (
-            <FolderNavigationEnvironment // signalbox: folders
-              key={environment.environmentId}
-              environmentId={environment.environmentId}
-              label={visibleEnvironments.length > 1 ? environment.label : null}
-              selectedKey={props.selectedProjectKey}
-              onSelect={props.onProjectChange}
-            />
-          ) : (
-            <SectionTreeEnvironment
-              key={environment.environmentId}
-              environment={environment}
-              environmentCount={visibleEnvironments.length}
-              projects={projects}
-              selectedProjectKey={props.selectedProjectKey}
-              onProjectChange={props.onProjectChange}
-            />
-          ),
-        )
+        visibleEnvironments.map((environment) => (
+          <EnvironmentTree
+            key={environment.environmentId}
+            environment={environment}
+            environmentCount={visibleEnvironments.length}
+            projects={projects}
+            selectedProjectKey={props.selectedProjectKey}
+            onProjectChange={props.onProjectChange}
+          />
+        ))
       )}
     </View>
   );

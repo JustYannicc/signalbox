@@ -124,8 +124,7 @@ import {
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import { usePoolServerConfig, useProjectPoolModelSelection } from "../sections/useProjectPool"; // signalbox
-import type { FolderStart } from "../folders/folder-filter"; // signalbox: folders
-import { useNewTaskFolderStart } from "../folders/use-folder-filter"; // signalbox: folders
+import { type NewTaskFolders, useNewTaskFolders } from "../folders/draft-folder"; // signalbox: folders
 import type { PoolNeed } from "@t3tools/client-runtime/state/sections"; // signalbox
 
 const NO_PROVIDERS: ReadonlyArray<ServerProvider> = []; // signalbox
@@ -208,10 +207,7 @@ type NewTaskFlowContextValue = {
   readonly modelOptions: ReadonlyArray<ModelOption>;
   /** signalbox: why the project's tasks can't run yet, if they can't. */
   readonly poolNeed: PoolNeed | null;
-  /** signalbox: where a new task starts while the thread list shows a folder. */
-  readonly folderStart: FolderStart | null;
-  /** signalbox: that folder, while the draft is in the project it starts in; the task is filed there. */
-  readonly folderTarget: FolderStart | null;
+  readonly folders: NewTaskFolders; // signalbox: folders
   readonly selectedModel: ModelSelection | null;
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderStatus: ServerProvider | null;
@@ -609,23 +605,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject?.id ?? null,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
-  // signalbox: a task started while the list shows a folder lives there.
-  const folderStart = useNewTaskFolderStart();
-  const folderTarget =
-    folderStart !== null &&
-    selectedProject?.environmentId === folderStart.environmentId &&
-    selectedProject.id === folderStart.projectId
-      ? folderStart
-      : null;
-  const poolHome = folderTarget ? { folderId: folderTarget.folderId } : undefined;
-  // signalbox: the task starts on the pool its project (or folder) runs on.
+  const folders = useNewTaskFolders(activeDraftKey, selectedProject); // signalbox: folders
+  // signalbox: the task starts on the pool its project runs on.
   const sectionPoolSelection = useProjectPoolModelSelection({
     environmentId: selectedProject?.environmentId ?? null,
     projectId: selectedProject?.id ?? null,
     selection: projectSettings.settings.defaultModelSelection ?? storedStickyModelSelection,
     providerInstances: projectSettings.settings.providerInstances,
     providers: selectedEnvironmentServerConfig?.providers ?? NO_PROVIDERS,
-    ...(poolHome ? { home: poolHome } : {}),
+    home: folders.poolHome, // signalbox: folders
   });
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
@@ -642,7 +630,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject?.environmentId ?? null,
     selectedProject?.id ?? null,
     selectedEnvironmentServerConfig,
-    poolHome,
+    folders.poolHome, // signalbox: folders
   );
   const modelOptions = useMemo(
     () =>
@@ -1407,8 +1395,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       isScratchDraft,
       modelOptions,
       poolNeed,
-      folderStart, // signalbox
-      folderTarget, // signalbox
+      folders, // signalbox: folders
       selectedModel,
       selectedModelOption,
       selectedProviderStatus,
@@ -1466,8 +1453,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       projectScopes,
       modelOptions,
       poolNeed,
-      folderStart, // signalbox
-      folderTarget, // signalbox
+      folders, // signalbox: folders
       prompt,
       providerGroups,
       replaceAttachments,

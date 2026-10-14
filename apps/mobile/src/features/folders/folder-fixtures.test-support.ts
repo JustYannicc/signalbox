@@ -63,6 +63,13 @@ export const snapshot: SignalboxFoldersSnapshot = {
         },
       },
       {
+        folderId: FolderId.make("northwind"),
+        pool: {
+          poolId: AccountPoolId.make("work"),
+          from: { _tag: "folder", folderId: FolderId.make("work") },
+        },
+      },
+      {
         folderId: FolderId.make("notes"),
         pool: { poolId: AccountPoolId.make("personal"), from: { _tag: "top" } },
       },

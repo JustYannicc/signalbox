@@ -11,7 +11,7 @@ import {
 } from "@t3tools/client-runtime/state/sections";
 import type { EnvironmentId, ModelSelection, ProjectId, ServerProvider } from "@t3tools/contracts";
 import type { SectionsSnapshot } from "@t3tools/contracts/sections";
-import type { FolderResolvedPool } from "@t3tools/contracts/signalboxFolders";
+import type { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
@@ -20,7 +20,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { environmentSections } from "../../state/sections";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentFolders } from "../../state/signalboxFolders";
-import { folderPoolOf, folderPoolSourceLabel, type PoolHome } from "../folders/folder-pool";
+import { folderPoolSourceLabel, poolOfPoolHome, type PoolHome } from "../folders/folder-pool";
 
 export type { PoolHome };
 
@@ -28,16 +28,11 @@ const NO_SNAPSHOT = Atom.make<SectionsSnapshot | null>(null);
 
 type ProviderInstances = Readonly<Record<string, { readonly config?: unknown }>>;
 
-function useSectionsSnapshot(environmentId: EnvironmentId | null) {
-  return useAtomValue(
-    environmentId ? environmentSections.snapshotAtom(environmentId) : NO_SNAPSHOT,
-  );
-}
-
 /**
- * The pool the target's threads run on: its project's from the sections
- * snapshot, or, once the server's folders arrive, its home folder's
- * (`folderPool`). Null for none, undefined where the server doesn't say.
+ * The pool the target's threads run on: null for none, undefined where the
+ * server doesn't say or hasn't yet. A folders environment resolves it by the
+ * target's home once its folders arrive, and never reads sections; any other
+ * by the project's place in its sections.
  */
 function usePoolSource(
   environmentId: EnvironmentId | null,
@@ -45,19 +40,26 @@ function usePoolSource(
   home: PoolHome | undefined,
 ): {
   readonly pool: PlacedPool | null | undefined;
-  readonly folderPool?: FolderResolvedPool | null;
+  readonly sections: SectionsSnapshot | null;
+  readonly folders: SignalboxFoldersSnapshot | null;
 } {
-  const sections = useSectionsSnapshot(environmentId);
-  const folders = useEnvironmentFolders(environmentId).data;
+  const folderQuery = useEnvironmentFolders(environmentId);
+  const folders = folderQuery.data;
+  const sections = useAtomValue(
+    environmentId && !folderQuery.supported
+      ? environmentSections.snapshotAtom(environmentId)
+      : NO_SNAPSHOT,
+  );
   const threadId = home !== undefined && "threadId" in home ? home.threadId : undefined;
   const folderId = home !== undefined && "folderId" in home ? home.folderId : undefined;
+  const supported = folderQuery.supported;
   return useMemo(() => {
-    if (!folders) return { pool: projectPool(sections, projectId) };
+    if (!supported) return { pool: projectPool(sections, projectId), sections, folders: null };
+    if (!folders) return { pool: undefined, sections: null, folders: null };
     const target =
       threadId !== undefined ? { threadId } : folderId !== undefined ? { folderId } : undefined;
-    const folderPool = folderPoolOf(folders, projectId, target);
-    return { pool: folderPool, folderPool };
-  }, [folderId, folders, projectId, sections, threadId]);
+    return { pool: poolOfPoolHome(folders, projectId, target), sections: null, folders };
+  }, [folderId, folders, projectId, sections, supported, threadId]);
 }
 
 /**
@@ -72,7 +74,7 @@ export function useProjectPoolModelSelection(input: {
   readonly providerInstances: ProviderInstances;
   readonly providers: ReadonlyArray<ServerProvider>;
   /** Where the new thread will live, where the server keeps folders. */
-  readonly home?: PoolHome;
+  readonly home?: PoolHome | undefined;
 }): ModelSelection | null {
   const { pool } = usePoolSource(input.environmentId, input.projectId, input.home);
   const { selection, providerInstances, providers } = input;
@@ -132,28 +134,25 @@ export function usePoolSourceLabel(
   projectId: ProjectId | null,
   home?: PoolHome,
 ): string | null {
-  const snapshot = useSectionsSnapshot(environmentId);
-  const folders = useEnvironmentFolders(environmentId).data;
-  const source = usePoolSource(environmentId, projectId, home);
+  const { pool, sections, folders } = usePoolSource(environmentId, projectId, home);
   const project = useProject(environmentId && projectId ? { environmentId, projectId } : null);
   const views = useEnvironmentQuery(
     environmentId ? serverEnvironment.accountPoolViewsLive({ environmentId, input: {} }) : null,
   ).data;
-  if (folders && source.folderPool !== undefined) {
-    const folderPool = source.folderPool;
-    const name = views?.find((view) => view.id === folderPool?.poolId)?.name;
-    return folderPoolSourceLabel(folders, folderPool, name);
-  }
-  const pool = projectPool(snapshot, projectId);
   if (pool === undefined) return null;
-  if (pool === null) return "Needs a pool";
-  const name = views?.find((view) => view.id === pool.poolId)?.name ?? "its pool";
-  const level = pool.from;
+  const name = views?.find((view) => view.id === pool?.poolId)?.name;
+  if (folders) {
+    return folderPoolSourceLabel(folders, poolOfPoolHome(folders, projectId, home), name);
+  }
+  const placed = projectPool(sections, projectId);
+  if (!placed) return "Needs a pool";
+  const level = placed.from;
   const from =
     level._tag === "top"
       ? "Personal"
       : level._tag === "section"
-        ? snapshot?.sections.find((section) => section.id === level.sectionId)?.name
+        ? sections?.sections.find((section) => section.id === level.sectionId)?.name
         : project?.title;
-  return from ? `Runs on ${name} · from ${from}` : `Runs on ${name}`;
+  const runsOn = name ?? "its pool";
+  return from ? `Runs on ${runsOn} · from ${from}` : `Runs on ${runsOn}`;
 }

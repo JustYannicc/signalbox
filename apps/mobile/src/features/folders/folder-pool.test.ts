@@ -2,33 +2,27 @@ import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import { FolderId } from "@t3tools/contracts/signalboxFolders";
 
-import { folderHomeOf, folderPoolOf, folderPoolSourceLabel } from "./folder-pool";
+import { folderPoolSourceLabel, poolOfPoolHome } from "./folder-pool";
 import { DRIVE, PERSONAL_FILES, snapshot } from "./folder-fixtures.test-support";
 
 describe("the pool a thread runs on, with folders", () => {
   it("follows the thread's home, not its project", () => {
-    expect(folderHomeOf(snapshot, PERSONAL_FILES, { threadId: ThreadId.make("filed") })).toBe(
-      "clients",
-    );
-    expect(folderPoolOf(snapshot, PERSONAL_FILES, { threadId: ThreadId.make("filed") })).toEqual({
+    expect(poolOfPoolHome(snapshot, PERSONAL_FILES, { threadId: ThreadId.make("filed") })).toEqual({
       poolId: "work",
       from: { _tag: "folder", folderId: "work" },
     });
   });
 
   it("uses the folder a new task starts in, else the project's home", () => {
-    expect(folderHomeOf(snapshot, PERSONAL_FILES, { folderId: FolderId.make("notes") })).toBe(
-      "notes",
-    );
-    expect(folderHomeOf(snapshot, DRIVE, undefined)).toBe("northwind");
-    expect(folderHomeOf(snapshot, PERSONAL_FILES, undefined)).toBeNull();
-    expect(folderPoolOf(snapshot, null, { folderId: FolderId.make("ops") })).toBeNull();
+    expect(poolOfPoolHome(snapshot, PERSONAL_FILES, { folderId: FolderId.make("ops") })).toBeNull();
+    expect(poolOfPoolHome(snapshot, PERSONAL_FILES, { folderId: null })?.poolId).toBe("personal");
+    expect(poolOfPoolHome(snapshot, DRIVE, undefined)?.poolId).toBe("work");
   });
 
   it("says where the pool comes from", () => {
-    const clients = folderPoolOf(snapshot, null, { folderId: FolderId.make("clients") });
+    const clients = poolOfPoolHome(snapshot, null, { folderId: FolderId.make("clients") });
     expect(folderPoolSourceLabel(snapshot, clients, "Work")).toBe("Runs on Work · from Work");
-    const notes = folderPoolOf(snapshot, null, { folderId: FolderId.make("notes") });
+    const notes = poolOfPoolHome(snapshot, null, { folderId: FolderId.make("notes") });
     expect(folderPoolSourceLabel(snapshot, notes, undefined)).toBe(
       "Runs on its pool · from the top level",
     );
