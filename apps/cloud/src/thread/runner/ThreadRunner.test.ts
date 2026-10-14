@@ -717,6 +717,39 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect(
+    "signs the turn's commits as the owner's GitHub account, or leaves the fallback",
+    () => {
+      const octo = { name: "Octo Cat", email: "1+octo@users.noreply.github.com" };
+      let author: "connected" | "none" | "unreachable" = "connected";
+      return withObject(
+        freshDatabase(),
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            expect(yield* runner.commitAuthor).toEqual(octo);
+            author = "none";
+            expect(yield* runner.commitAuthor).toBeNull();
+            // A turn doesn't wait on the owner's object: it starts with the fallback.
+            author = "unreachable";
+            expect(yield* runner.commitAuthor).toBeNull();
+          }),
+        {
+          drives: true,
+          commitAuthor: (userId) => {
+            expect(userId).toBe("user_1");
+            if (author === "unreachable") {
+              return Effect.fail(
+                new UserObjectError({ operation: "githubCommitAuthor", cause: "down" }),
+              );
+            }
+            return Effect.succeed(author === "connected" ? octo : null);
+          },
+        },
+      );
+    },
+  );
+
   it.effect("hands out no drive when the cloud stores none", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {

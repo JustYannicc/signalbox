@@ -114,7 +114,8 @@ export const makeFakeGitHub = (options: {
       }
       return new Response("not found", { status: 404 });
     }
-    if (method === "GET" && path === "/user") return json({ login: "octo", id: 1 });
+    if (method === "GET" && path === "/user")
+      return json({ login: "octo", id: 1, name: "Octo Cat" });
     const repositoryJson = {
       id: 42,
       full_name: options.repository,

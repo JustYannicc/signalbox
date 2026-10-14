@@ -118,7 +118,7 @@ const noteMachine = (
     ),
   );
 
-/** Drives, when bound, and the owner's access to one, asked of their own object. */
+/** Drives, when bound, and the owner's access to one and commit author, asked of their own object. */
 const layerThreadDrives = (env: ThreadObjectEnv) =>
   Layer.effect(
     ThreadRunner.ThreadDrives,
@@ -129,6 +129,7 @@ const layerThreadDrives = (env: ThreadObjectEnv) =>
         driveId === myDriveId(PERSONAL_CONTEXT_ID, userId)
           ? Effect.succeed(true)
           : Effect.map(users.forUser(userId).driveAccess(driveId), canWrite),
+      commitAuthor: (userId: string) => users.forUser(userId).githubCommitAuthor(),
     })),
   );
 

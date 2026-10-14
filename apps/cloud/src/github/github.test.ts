@@ -96,6 +96,22 @@ const setup = () => {
   return { bare, machine, pack, head: git(machine, ["rev-parse", "HEAD"]) };
 };
 
+describe("commitAuthorOf", () => {
+  it("names commits by the login when the account has no usable display name", () => {
+    const account = { login: "octo", githubUserId: 1 };
+    expect(GitHubConnection.commitAuthorOf({ ...account, name: null })).toEqual({
+      name: "octo",
+      email: "1+octo@users.noreply.github.com",
+    });
+    expect(GitHubConnection.commitAuthorOf({ ...account, name: " <>\n " }).name).toBe("octo");
+    // git would drop the dot and then refuse an empty name.
+    expect(GitHubConnection.commitAuthorOf({ ...account, name: "." }).name).toBe("octo");
+    expect(GitHubConnection.commitAuthorOf({ ...account, name: "Octo <Cat>" }).name).toBe(
+      "Octo Cat",
+    );
+  });
+});
+
 describe("GitHub-backed drives", () => {
   it.effect("connect, import, work on a thread's branch, push it and open a pull request", () => {
     const remote = setup();
@@ -115,6 +131,8 @@ describe("GitHub-backed drives", () => {
       const started = yield* user.beginGitHubConnect({ grantId: "g1", returnTo: REDIRECT });
       if (started._tag !== "started") return expect.unreachable();
       expect(yield* user.githubAccessToken()).toBeNull();
+      // Without GitHub, agents commit as Signalbox's fallback.
+      expect(yield* user.githubCommitAuthor()).toBeNull();
       expect(github.authorize(userId)).toBe(REDIRECT);
       expect(yield* user.completeGitHubConnect("g1")).toEqual({
         _tag: "connected",
@@ -122,6 +140,11 @@ describe("GitHub-backed drives", () => {
       });
       expect((yield* user.completeGitHubConnect("g1"))._tag).toBe("failed");
       expect(yield* user.githubAccessToken()).toBe(`gho_${userId}`);
+      // Their agents' commits are theirs on GitHub, at the noreply address that links them.
+      expect(yield* user.githubCommitAuthor()).toEqual({
+        name: "Octo Cat",
+        email: "1+octo@users.noreply.github.com",
+      });
 
       const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
         Effect.provide(

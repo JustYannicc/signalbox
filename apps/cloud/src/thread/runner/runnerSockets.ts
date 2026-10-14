@@ -1,3 +1,4 @@
+import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import {
   runnerFrame,
   type ThreadMessage,
@@ -82,8 +83,25 @@ export function endRunners(ctx: DurableObjectState, generation: number, reason: 
  */
 export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunner.RunnerWork> {
   const work = await host.run(runner.use((service) => service.work));
-  const sockets = host.ctx.getWebSockets(RUNNER_TAG);
-  for (const socket of sockets) {
+  const handedOut =
+    work.turn !== null && work.modelToken !== null && work.sessions !== null
+      ? work.turn.runId
+      : null;
+  const starting =
+    handedOut !== null &&
+    host.ctx.getWebSockets(RUNNER_TAG).some((socket) => {
+      const attachment = attachmentOf(socket);
+      return attachment?.generation === work.generation && attachment.sentRunId !== handedOut;
+    });
+  // Asked only when a turn is handed out, and before the sends: it's a call to the owner's
+  // object, and nothing may run between reading a socket's attachment and writing it back.
+  const author =
+    starting && work.drive !== null
+      ? await host.run(runner.use((service) => service.commitAuthor))
+      : null;
+  const drive: DriveAccess | null =
+    work.drive === null || author === null ? work.drive : { ...work.drive, author };
+  for (const socket of host.ctx.getWebSockets(RUNNER_TAG)) {
     const attachment = attachmentOf(socket);
     if (attachment === null || attachment.generation !== work.generation) continue;
     let sentRunId = attachment.sentRunId;
@@ -101,7 +119,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         type: "turn.start",
         turn: work.turn,
         modelToken: work.modelToken,
-        drive: work.drive,
+        drive,
         sessions: work.sessions,
       });
       sentRunId = work.turn.runId;

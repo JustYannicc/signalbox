@@ -622,7 +622,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       const prepared = yield* preparing.withPermits(1)(
         Effect.gen(function* () {
           const drive =
-            opened !== null && access !== null ? yield* opened.prepare(access.remoteToken) : null;
+            opened !== null && access !== null
+              ? yield* opened.prepare(access.remoteToken, access.author)
+              : null;
           if (input.dependencies !== undefined) {
             yield* input.dependencies.prepare((message) =>
               input.emit({ kind: "drive.notice", runId: turn.runId, message }),

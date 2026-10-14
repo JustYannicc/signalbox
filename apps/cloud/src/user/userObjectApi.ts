@@ -74,6 +74,7 @@ export const makeUserObjectApi = (
       run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.redeem(input))),
     importPreviewSetup: (input) =>
       run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.apply(input))),
+    githubCommitAuthor: () => github((service) => service.commitAuthor),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),

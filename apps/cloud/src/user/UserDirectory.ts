@@ -4,6 +4,7 @@ import {
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
+import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type { SignalboxDrive, SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
@@ -135,6 +136,8 @@ export interface UserObjectApi {
     readonly setup: PreviewSetup;
     readonly source: string;
   }) => Promise<PreviewSetupApplied>;
+  /** Who the user's agents commit as, from their GitHub connection; null when not connected. */
+  readonly githubCommitAuthor: () => Promise<CommitAuthor | null>;
   /** The user's current contexts, which every thread call acts within. */
   readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
@@ -200,6 +203,7 @@ const METHODS = Object.keys({
   issuePreviewSetupCode: true,
   redeemPreviewSetup: true,
   importPreviewSetup: true,
+  githubCommitAuthor: true,
   contextIds: true,
   recordDriveAccess: true,
   driveAccess: true,

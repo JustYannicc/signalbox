@@ -1,3 +1,4 @@
+import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -54,6 +55,8 @@ export class GitHubConnection extends Context.Service<
     readonly configured: boolean;
     /** The connected GitHub account, or null. */
     readonly account: Effect.Effect<{ readonly login: string } | null, SqlError>;
+    /** Who the user's agents commit as: the connected account (`commitAuthorOf`), or null. */
+    readonly commitAuthor: Effect.Effect<CommitAuthor | null, SqlError>;
     /** Starts connecting under `grantId`; WorkOS sends the browser back to `returnTo`. */
     readonly begin: (input: {
       readonly grantId: string;
@@ -123,7 +126,40 @@ export const moveToPipes = Effect.gen(function* () {
   )`;
 });
 
-const ConnectionRow = Schema.Struct({ login: Schema.String });
+/**
+ * `UserStore`'s `0011` migration: the account's display name, which commits
+ * are signed with. Connections made before it have none until they connect again.
+ */
+export const addName = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE github_connection ADD COLUMN name TEXT`;
+});
+
+/**
+ * A GitHub account as a commit author: its display name, or its login without
+ * one, at its noreply address. GitHub links commits by that address to the
+ * account without showing the user's own email.
+ */
+export const commitAuthorOf = (account: {
+  readonly login: string;
+  readonly githubUserId: number;
+  readonly name: string | null;
+}): CommitAuthor => {
+  // git refuses `<`, `>` and line breaks, and drops punctuation at either end; nothing left fails.
+  const name = (account.name ?? "")
+    .replace(/[<>\p{Cc}]/gu, "")
+    .replace(/^[\s.,:;"'\\]+|[\s.,:;"'\\]+$/g, "");
+  return {
+    name: name === "" ? account.login : name,
+    email: `${account.githubUserId}+${account.login}@users.noreply.github.com`,
+  };
+};
+
+const ConnectionRow = Schema.Struct({
+  login: Schema.String,
+  github_user_id: Schema.Number,
+  name: Schema.NullOr(Schema.String),
+});
 const decodeConnectionRows = Schema.decodeUnknownSync(Schema.Array(ConnectionRow));
 const RecordedRow = Schema.Struct({ login: Schema.String, github_user_id: Schema.Number });
 const decodeRecordedRows = Schema.decodeUnknownSync(Schema.Array(RecordedRow));
@@ -139,7 +175,7 @@ const make = Effect.gen(function* () {
   // One Pipes request at a time; the others wait for its token.
   const fetching = yield* Semaphore.make(1);
 
-  const row = sql`SELECT login FROM github_connection WHERE id = 1`.pipe(
+  const row = sql`SELECT login, github_user_id, name FROM github_connection WHERE id = 1`.pipe(
     Effect.map((rows) => decodeConnectionRows(rows)[0] ?? null),
   );
   const forget = Effect.andThen(
@@ -172,7 +208,19 @@ const make = Effect.gen(function* () {
       );
   });
 
-  const account: GitHubConnection["Service"]["account"] = row;
+  const account: GitHubConnection["Service"]["account"] = Effect.map(row, (found) =>
+    found === null ? null : { login: found.login },
+  );
+
+  const commitAuthor: GitHubConnection["Service"]["commitAuthor"] = Effect.map(row, (found) =>
+    found === null
+      ? null
+      : commitAuthorOf({
+          login: found.login,
+          githubUserId: found.github_user_id,
+          name: found.name,
+        }),
+  );
 
   const begin: GitHubConnection["Service"]["begin"] = (input) =>
     Effect.gen(function* () {
@@ -217,10 +265,12 @@ const make = Effect.gen(function* () {
       const used = yield* sql<{ readonly grant_id: string }>`UPDATE github_connect_grants
         SET used = 1 WHERE grant_id = ${grantId} AND used = 0 RETURNING grant_id`;
       if (used.length === 0) return failed("This GitHub sign-in expired. Start it again.");
-      yield* sql`INSERT INTO github_connection (id, login, github_user_id, connected_at)
-        VALUES (1, ${viewer.success.login}, ${viewer.success.id}, ${now})
+      yield* sql`INSERT INTO github_connection (id, login, github_user_id, name, connected_at)
+        VALUES (1, ${viewer.success.login}, ${viewer.success.id}, ${viewer.success.name ?? null},
+          ${now})
         ON CONFLICT (id) DO UPDATE SET login = excluded.login,
-          github_user_id = excluded.github_user_id, connected_at = excluded.connected_at`;
+          github_user_id = excluded.github_user_id, name = excluded.name,
+          connected_at = excluded.connected_at`;
       yield* Ref.set(cached, null);
       return { _tag: "connected", login: viewer.success.login } as const;
     });
@@ -295,6 +345,7 @@ const make = Effect.gen(function* () {
   return GitHubConnection.of({
     configured: pipes !== null,
     account,
+    commitAuthor,
     begin,
     complete,
     abort,

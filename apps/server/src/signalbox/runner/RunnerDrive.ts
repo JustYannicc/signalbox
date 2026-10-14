@@ -1,4 +1,5 @@
 import {
+  type CommitAuthor,
   DRIVE_COMMIT_AUTHOR,
   DRIVE_MERGE_MESSAGE,
   type DriveFileChange,
@@ -74,11 +75,13 @@ export interface RunnerDrive {
   /**
    * At each turn start: opens the drive and checks the thread's branch out,
    * first bringing a remote-backed drive's `main` up to the remote with the
-   * turn's `remoteToken`, then mounts its shortcuts. Fails when their
-   * instructions are too big to load.
+   * turn's `remoteToken`, then mounts its shortcuts. Everything committed in
+   * the checkout until the next turn start is by `author`, `DRIVE_COMMIT_AUTHOR`
+   * when not given. Fails when the shortcuts' instructions are too big to load.
    */
   readonly prepare: (
     remoteToken: string | null,
+    author?: CommitAuthor,
   ) => Effect.Effect<PreparedDrive, RunnerDriveError | RunnerInstructionsError>;
   /** Starts an auto-save, or queues one behind the running one. Never fails. */
   readonly autosave: Effect.Effect<void>;
@@ -97,12 +100,13 @@ export interface RunnerDrive {
 const BRANCH = "refs/heads/signalbox";
 /** The remote's head as last fetched. */
 const REMOTE_REF = "refs/drive/remote";
-const CONFIG = [
-  ["user.name", DRIVE_COMMIT_AUTHOR.name],
-  ["user.email", DRIVE_COMMIT_AUTHOR.email],
-  ["gc.auto", "0"],
-  ["core.quotepath", "false"],
-] as const;
+const configFor = (author: CommitAuthor) =>
+  [
+    ["user.name", author.name],
+    ["user.email", author.email],
+    ["gc.auto", "0"],
+    ["core.quotepath", "false"],
+  ] as const;
 /**
  * Never saved to a drive, whatever its own ignore files say: dependency trees
  * are the machine's cache (`RunnerDependencies.ts`), rebuilt from lockfiles.
@@ -341,13 +345,13 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       });
     });
 
-  const prepare = (remoteToken: string | null) =>
+  const prepare: RunnerDrive["prepare"] = (remoteToken, author = DRIVE_COMMIT_AUTHOR) =>
     exclusive(
       Effect.gen(function* () {
         const existed = yield* fs.exists(gitDir);
         yield* fs.makeDirectory(input.cwd, { recursive: true });
         if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
-        for (const [key, value] of CONFIG) yield* git.run(["config", key, value]);
+        for (const [key, value] of configFor(author)) yield* git.run(["config", key, value]);
         yield* excludeCaches;
         const localThread = existed ? yield* git.resolve("refs/drive/thread") : null;
         // A drive backed by a remote brings `main` up to it before opening pins the branch's base.
