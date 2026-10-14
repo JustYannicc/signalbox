@@ -27,6 +27,9 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+import { branchJson, type PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
+
+import { serveBranchRequest } from "../drive/branchRoutes.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { threadRef, wipRef } from "../drive/DriveStore.ts";
 import { makeRepo } from "../drive/driveTesting.ts";
@@ -307,6 +310,176 @@ describe("GitHub-backed drives", () => {
       expect(head).toBe(turn);
       expect(yield* status()).toMatchObject(Option.some({ remote: { pr: { state: "merged" } } }));
     }).pipe(Effect.provide(Layer.mergeAll(drives.layer, github.layer)));
+  });
+
+  it.effect("a thread's agent publishes its own branch, as the git panel does", () => {
+    const remote = setup();
+    const github = makeFakeGitHub({
+      bare: remote.bare,
+      repository: "owner/repo",
+      defaultBranch: "main",
+    });
+    const cloud = makeMemoryCloud({ github: github.layer });
+    const otherThread = ThreadId.make("thread-1111efgh");
+    return Effect.gen(function* () {
+      const user = cloud.userDirectory.forUser(userId);
+      yield* user.recordSignIn({ id: userId, email: "a@b.c" });
+      yield* user.beginGitHubConnect({ grantId: "g1", returnTo: REDIRECT });
+      github.authorize(userId);
+      yield* user.completeGitHubConnect("g1");
+      const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CloudRpc.layerHandlers({ identity, userId }),
+            CloudRpc.layerScopeAuthorization([
+              AuthOrchestrationReadScope,
+              AuthOrchestrationOperateScope,
+              AuthSourceControlWriteScope,
+            ]),
+          ).pipe(Layer.provide(cloud.layerFor(userId))),
+        ),
+      );
+      const imported = yield* rpc[WS_METHODS.projectCloneStart]({
+        projectId,
+        title: "repo",
+        createdAt: "2026-10-08T10:00:00.000Z",
+        remoteUrl: "https://github.com/owner/repo.git",
+        destinationPath: "~/repo",
+      });
+      const driveId = imported.cwd.slice("/drives/".length);
+      const launch = (id: ThreadId, title: string) =>
+        rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+          commandId: CommandId.make(`launch-${id}`),
+          threadId: id,
+          projectId: imported.projectId,
+          title,
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+        });
+      const cwd = (yield* launch(threadId, "Make the app say hi")).projection.thread.worktreePath!;
+      yield* launch(otherThread, "Something else");
+
+      // The thread's Runner saved its branch, as `push` and `create_pr` do before asking.
+      const handle = (yield* DriveDirectory).forDrive(driveId);
+      const writer = { threadId, userId, generation: 1, live: true, packsAfter: 0 };
+      yield* uploadPack({
+        driveId,
+        threadId,
+        ...remote.pack([remote.head]),
+        remoteHead: remote.head,
+      });
+      yield* handle.mirror(writer, { expectedMain: null, newMain: remote.head });
+      yield* handle.open(writer);
+      NodeFS.writeFileSync(NodePath.join(remote.machine, "src/app.ts"), "export const hi = 1;\n");
+      git(remote.machine, ["commit", "-qam", "Say hi"]);
+      const turn = git(remote.machine, ["rev-parse", "HEAD"]);
+      yield* uploadPack({ driveId, threadId, ...remote.pack([turn], [remote.head]) });
+      yield* handle.updateRefs(writer, [
+        { name: threadRef(threadId), old: remote.head, new: turn },
+      ]);
+
+      // What the drive route does once the drive token checks out: the thread is the token's.
+      const publish = (thread: ThreadId, body: Record<string, unknown>, live = true) =>
+        Effect.gen(function* () {
+          const response = yield* serveBranchRequest(
+            { userId, threadId: thread, driveId, live },
+            JSON.stringify(body),
+          );
+          const text = yield* Effect.promise(() => response.text());
+          return response.status === 200
+            ? branchJson.publish.decode(text)
+            : ({ status: response.status, text } as const);
+        });
+
+      expect(yield* publish(threadId, { action: "push" }, false)).toEqual({
+        status: 403,
+        text: "Only a running turn publishes its branch.",
+      });
+      expect(yield* publish(threadId, { action: "merge" })).toMatchObject({ status: 400 });
+      // Another thread's token publishes that thread's branch, never this one's.
+      expect(yield* publish(otherThread, { action: "push" })).toMatchObject({
+        _tag: "failed",
+        reason: "nothing_saved",
+      } satisfies Partial<PublishResult>);
+      expect(github.head("signalbox/0000abcd")).toBeNull();
+      expect(github.calls.some((call) => call.includes("git-receive-pack"))).toBe(false);
+
+      expect(
+        yield* publish(threadId, {
+          action: "create_pr",
+          title: "Say hi from the app",
+          body: "The app greets you now.",
+          draft: true,
+        }),
+      ).toEqual({
+        _tag: "published",
+        branch: "signalbox/0000abcd",
+        repository: "owner/repo",
+        pushed: true,
+        pullRequest: {
+          number: 1,
+          url: "https://github.test/owner/repo/pull/1",
+          title: "Say hi from the app",
+          baseBranch: "main",
+          created: true,
+        },
+      } satisfies PublishResult);
+      expect(github.head("signalbox/0000abcd")).toBe(turn);
+      expect(github.pulls[0]).toMatchObject({
+        head: "signalbox/0000abcd",
+        base: "main",
+        body: "The app greets you now.",
+        draft: true,
+      });
+      // The git panel sees the same branch and pull request.
+      expect(
+        yield* rpc[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(Stream.take(1), Stream.runHead),
+      ).toMatchObject(
+        Option.some({
+          local: { refName: "signalbox/0000abcd" },
+          remote: { hasUpstream: true, aheadCount: 0, pr: { number: 1, isDraft: true } },
+        }),
+      );
+      // Asking again changes nothing.
+      expect(yield* publish(threadId, { action: "create_pr" })).toMatchObject({
+        _tag: "published",
+        pushed: false,
+        pullRequest: { number: 1, created: false },
+      });
+
+      // Someone pushed to the branch on GitHub: the thread's push would drop their commit.
+      const theirs = git(remote.bare, [
+        "commit-tree",
+        `${turn}^{tree}`,
+        "-p",
+        turn,
+        "-m",
+        "Theirs",
+      ]);
+      git(remote.bare, ["update-ref", "refs/heads/signalbox/0000abcd", theirs]);
+      NodeFS.writeFileSync(NodePath.join(remote.machine, "src/app.ts"), "export const hi = 2;\n");
+      git(remote.machine, ["commit", "-qam", "Say hi again"]);
+      const next = git(remote.machine, ["rev-parse", "HEAD"]);
+      yield* uploadPack({ driveId, threadId, ...remote.pack([next], [turn]) });
+      yield* handle.updateRefs(writer, [{ name: threadRef(threadId), old: turn, new: next }]);
+      expect(yield* publish(threadId, { action: "push" })).toMatchObject({
+        _tag: "failed",
+        reason: "branch_conflict",
+      });
+      expect(github.head("signalbox/0000abcd")).toBe(theirs);
+
+      yield* user.disconnectGitHub();
+      expect(yield* publish(threadId, { action: "push" })).toEqual({
+        _tag: "failed",
+        reason: "not_connected",
+        message: "Connect GitHub first: Settings › Source Control.",
+      });
+    }).pipe(
+      Effect.provide(Layer.mergeAll(cloud.drives.layer, github.layer)),
+      Effect.provideService(UserDirectory, cloud.userDirectory),
+    );
   });
 
   it.effect("asks Pipes for tokens, and forgets connections WorkOS can't use", () => {

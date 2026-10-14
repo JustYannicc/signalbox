@@ -350,6 +350,11 @@ shared like any drive. Its drive keeps GitHub as its home
   user's object builds the push from the drive's packs and sends it over git's
   smart HTTP, with no machine running. Only the thread's branch is pushed
   (`signalbox/<id>`), so auto-saves never reach GitHub.
+- **The agent publishes through the same path.** The context MCP's `push` and
+  `create_pr` commit the worktree onto the thread's branch, save it, then post
+  `/api/drive/branch/publish` with the drive token. The thread and drive come
+  from the token, never the request, and the owner's object runs the git
+  panel's `GitHubBranches.publish` (`runner-protocol/src/BranchProtocol.ts`).
 - **No GitHub credential reaches a machine.** Users connect GitHub through
   WorkOS Pipes, which keeps and refreshes their OAuth tokens. Their own object
   only records that they connected, and as whom, and asks Pipes for a token

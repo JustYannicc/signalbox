@@ -241,7 +241,13 @@ export const makeGitHubApi = (
     createPull: (
       token: string,
       repository: string,
-      input: { title: string; head: string; base: string; body: string },
+      input: {
+        readonly title: string;
+        readonly head: string;
+        readonly base: string;
+        readonly body: string;
+        readonly draft?: boolean;
+      },
     ) =>
       json(
         "createPull",

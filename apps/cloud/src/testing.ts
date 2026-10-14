@@ -162,6 +162,7 @@ export const layerThreadObject = (
 const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.layer));
 
 const makeUserRuntime = (
+  users: UserDirectory.UserDirectory["Service"],
   threads: ThreadDirectory.ThreadDirectory["Service"],
   pools: PoolDirectory.PoolDirectory["Service"],
   drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
@@ -169,7 +170,8 @@ const makeUserRuntime = (
   github: Layer.Layer<GitHub.GitHub>,
 ) =>
   ManagedRuntime.make(
-    UserPreviewSetup.layer.pipe(
+    // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
+    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer).pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           UserShell.layer,
@@ -179,16 +181,18 @@ const makeUserRuntime = (
           GitHubConnection.layer,
           ConnectionLinks.layer,
           PoolSignIns.layer,
-        ).pipe(
-          Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
-          Layer.provideMerge(layerMemoryStore),
-          Layer.provideMerge(Layer.mergeAll(drives, people, github)),
-          Layer.provideMerge(
-            Layer.mergeAll(
-              Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
-              Layer.succeed(PoolDirectory.PoolDirectory, pools),
-            ),
-          ),
+          CloudThreadService.layer,
+        ),
+      ),
+      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto)),
+      Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
+      Layer.provideMerge(layerMemoryStore),
+      Layer.provideMerge(Layer.mergeAll(drives, people, github)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(UserDirectory.UserDirectory, users),
+          Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
+          Layer.succeed(PoolDirectory.PoolDirectory, pools),
         ),
       ),
     ),
@@ -243,6 +247,7 @@ export const makeMemoryCloud = (
     const existing = users.get(userId);
     if (existing) return existing;
     const runtime = makeUserRuntime(
+      userDirectory,
       threadDirectory,
       pools.directory,
       drives.layer,
@@ -327,8 +332,7 @@ export const makeMemoryCloud = (
     userObject,
     /** The thread service as `userId`'s object runs it, with that user's contexts. */
     layerFor: (userId: string) =>
-      GitHubBranches.layer.pipe(
-        Layer.provideMerge(threadService),
+      threadService.pipe(
         Layer.provideMerge(ThreadContexts.layer),
         Layer.provideMerge(userObject(userId)),
       ),

@@ -4,6 +4,7 @@ import {
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
+import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
 import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
@@ -149,6 +150,12 @@ export interface UserObjectApi {
     readonly contexts: ReadonlyArray<SignalboxContext>;
     readonly drives: ReadonlyArray<SignalboxDrive>;
   }>;
+  /** Pushes a thread's branch for its agent, as the git panel does (`drive/branchRoutes.ts`). */
+  readonly publishBranch: (input: {
+    readonly threadId: string;
+    readonly driveId: string;
+    readonly request: PublishRequest;
+  }) => Promise<PublishResult>;
 }
 
 type Method = keyof UserObjectApi;
@@ -208,6 +215,7 @@ const METHODS = Object.keys({
   recordDriveAccess: true,
   driveAccess: true,
   readableDrives: true,
+  publishBranch: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** Results that cross RPC encoded, decoded on arrival. */

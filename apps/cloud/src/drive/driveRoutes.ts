@@ -35,6 +35,7 @@ import {
   threadRef,
   wipRef,
 } from "./DriveStore.ts";
+import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import { threadOfDriveToken } from "./driveToken.ts";
 import { forwardRemote, isRemoteHead, proxyRemote } from "./remoteRoutes.ts";
@@ -159,6 +160,11 @@ async function route(
     return contextResponse(
       await runtime!.runPromise(serveContextRequest(reader, path, await request.text())),
     );
+  }
+  // The thread's agent publishing its own branch, as its owner (#135).
+  if (isBranchApiPath(new URL(request.url).pathname)) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    return await runtime!.runPromise(serveBranchRequest(auth, await request.text()));
   }
   const packsAfter = Number(request.headers.get(PACKS_AFTER_HEADER) ?? 0);
   const writer: DriveWriter = {
