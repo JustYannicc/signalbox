@@ -143,6 +143,17 @@ export function recordedEvents(
   const owner = payloadThreadId(event, payload);
   if (owner !== undefined && owner !== threadId) return [];
   const ownNode = recorded.type === "node.updated" || recorded.type === "subagent.updated";
+  const runInstance =
+    projection.runs.find((run) => run.id === item.runId)?.providerInstanceId ??
+    projection.thread.providerInstanceId;
+  // The Runner names the harness's own instance, not the pool's (`runnerTurnFor`).
+  // The provider thread is the thread's record: on the run's instance, as
+  // `turn.started` keeps it, or the next turn takes it for a provider switch and
+  // starts over without the harness's session.
+  const recordedPayload =
+    recorded.type === "provider-thread.updated"
+      ? { ...payload, providerInstanceId: runInstance }
+      : payload;
   const decoded = decodeDomainEvent({
     id: unstampedEventId,
     type: recorded.type,
@@ -154,11 +165,9 @@ export function recordedEvents(
         ? {}
         : { nodeId: stringField(payload, "nodeId") }),
     ...(stringField(event, "driver") === undefined ? {} : { driver: stringField(event, "driver") }),
-    providerInstanceId:
-      projection.runs.find((run) => run.id === item.runId)?.providerInstanceId ??
-      projection.thread.providerInstanceId,
+    providerInstanceId: runInstance,
     occurredAt: DateTime.formatIso(ctx.now),
-    payload,
+    payload: recordedPayload,
   });
   if (Exit.isFailure(decoded)) return "undecodable";
   const domainEvent = decoded.value;
