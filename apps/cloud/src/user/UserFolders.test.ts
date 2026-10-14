@@ -4,6 +4,7 @@ import type { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolde
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as Environment from "../environment.ts";
 import { layerMemoryStore } from "../testing.ts";
@@ -137,9 +138,18 @@ describe("UserFolders", () => {
         expect(outline(snapshot)).toEqual(["Work"]);
         expect(snapshot.threadHomes).toEqual([{ threadId: scratchThread, folderId: work }]);
 
-        // Back to where its project would put it: no filing left.
+        // A thread filed before it exists, never created: the next filing a day on drops it.
+      yield* folders.moveThread({ threadId: ThreadId.make("never-created"), folderId: work });
+      yield* TestClock.adjust("25 hours");
+      snapshot = yield* folders.moveThread({ threadId: ThreadId.make("just-filed"), folderId: work });
+      expect(snapshot.threadHomes.map((home) => home.threadId)).toEqual([
+        scratchThread,
+        "just-filed",
+      ]);
+
+      // Back to where its project would put it: no filing left.
         snapshot = yield* folders.moveThread({ threadId: scratchThread, folderId: null });
-        expect(snapshot.threadHomes).toEqual([]);
+        expect(snapshot.threadHomes).toEqual([{ threadId: "just-filed", folderId: work }]);
       }).pipe(Effect.provide(layerMemoryStore)),
   );
 

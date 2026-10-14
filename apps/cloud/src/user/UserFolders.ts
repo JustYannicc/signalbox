@@ -154,6 +154,9 @@ const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
   instructions: row.instructions,
 });
 
+/** How long a filing waits for its thread to be created before the next filing drops it. */
+const UNCLAIMED_FILING_MS = 24 * 60 * 60 * 1000;
+
 const refuse = (message: string, reason: "not-found" | "invalid" = "invalid") =>
   Effect.fail(new FolderRefusedError({ reason, message }));
 
@@ -497,6 +500,10 @@ const make = Effect.gen(function* () {
         }
         if (current.tree.filed.has(input.threadId) && filed === input.folderId) return false;
         const now = yield* Clock.currentTimeMillis;
+        // A thread filed before it was created that never was: its filing goes.
+        yield* sql`DELETE FROM thread_homes WHERE filed_at < ${now - UNCLAIMED_FILING_MS}
+          AND thread_id NOT IN (SELECT thread_id FROM thread_index)
+          AND thread_id NOT IN (SELECT thread_id FROM thread_members)`;
         yield* sql`INSERT INTO thread_homes (thread_id, folder_id, filed_at)
           VALUES (${input.threadId}, ${input.folderId}, ${now})
           ON CONFLICT (thread_id) DO UPDATE SET folder_id = excluded.folder_id,
