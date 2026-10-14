@@ -2163,12 +2163,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings, activeProjectId],
   );
-  // signalbox: only the pool the project runs on; its need waits for the catalog, like the chrome.
+  // signalbox: only the pool the thread runs on; its need waits for the catalog, like the chrome.
   const { entries: providerInstanceEntries, need: poolNeedNow } = useProjectPoolEntries(
     environmentId,
     activeProjectId,
     allProviderInstanceEntries,
     settings.providerInstances,
+    activeThreadId,
   );
   const projectPoolNeed = providerCatalogKnown ? poolNeedNow : null;
   const needsPool = useNeedsPool(environmentId, projectPoolNeed);

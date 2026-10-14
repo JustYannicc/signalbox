@@ -1,56 +1,121 @@
-// signalbox: the pool each project runs on, as its server resolved it, on the web client.
+// signalbox: the pool each thread runs on, as its server resolved it, on the web client.
 import { useAtomValue } from "@effect/atom-react";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
-import { projectPool, projectPoolModelSelection } from "@t3tools/client-runtime/state/sections";
-import type { EnvironmentId, ModelSelection, ProjectId, ServerProvider } from "@t3tools/contracts";
-import type { ResolvedPool, SectionsSnapshot } from "@t3tools/contracts/sections";
+import {
+  poolModelSelection,
+  projectPool,
+  type PlacedPool,
+} from "@t3tools/client-runtime/state/sections";
+import {
+  homeOfProject,
+  homeOfThread,
+  poolOfHome,
+} from "@t3tools/client-runtime/state/signalboxFolders";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ProjectId,
+  ServerProvider,
+  ThreadId,
+} from "@t3tools/contracts";
+import type { PoolLevel, SectionsSnapshot } from "@t3tools/contracts/sections";
+import type { FolderLevel, SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import { Atom } from "effect/reactivity";
 import { useCallback } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { environmentSections } from "./sections";
-
-const sectionSnapshotsAtom = Atom.make((get) => {
-  const snapshots = new Map<EnvironmentId, SectionsSnapshot | null>();
-  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
-    snapshots.set(environmentId, get(environmentSections.snapshotAtom(environmentId)));
-  }
-  return snapshots;
-}).pipe(Atom.withLabel("web-section-pool-snapshots"));
+import { environmentFoldersAtom } from "./signalboxFolders";
 
 /**
- * Moves a new thread's model onto the pool its project runs on. Subscribes to
- * the section trees, which carry the pools, so they are current when a thread
- * starts from anywhere.
+ * Where an environment's pools come from: its folders where it serves them
+ * (`folders` is null until they arrive), else its sections.
+ */
+type PoolSource =
+  | { readonly _tag: "folders"; readonly folders: SignalboxFoldersSnapshot | null }
+  | { readonly _tag: "sections"; readonly sections: SectionsSnapshot | null };
+
+const poolSourcesAtom = Atom.make((get) => {
+  const sources = new Map<EnvironmentId, PoolSource>();
+  const folders = get(environmentFoldersAtom);
+  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
+    const environmentFolders = folders.get(environmentId);
+    sources.set(
+      environmentId,
+      environmentFolders
+        ? { _tag: "folders", folders: environmentFolders.snapshot }
+        : { _tag: "sections", sections: get(environmentSections.snapshotAtom(environmentId)) },
+    );
+  }
+  return sources;
+}).pipe(Atom.withLabel("web-pool-sources"));
+
+/** Which thread, or which project a new thread starts in. */
+interface PoolTarget {
+  readonly projectId: ProjectId | null;
+  /** The thread or draft: where folders do, its filing decides its home. */
+  readonly threadId?: ThreadId | null | undefined;
+}
+
+/** A pool and the level it's placed at, as the server says. */
+export type ResolvedPlacedPool = PlacedPool & { readonly from: PoolLevel | FolderLevel };
+
+/**
+ * The pool `target` runs on: its home's where folders do, else its project's.
+ * Null for none on its chain; undefined while unknown or where the server
+ * doesn't resolve pools.
+ */
+function resolvePool(
+  source: PoolSource | undefined,
+  target: PoolTarget,
+): ResolvedPlacedPool | null | undefined {
+  if (source === undefined) return undefined;
+  if (source._tag === "sections") return projectPool(source.sections, target.projectId);
+  const snapshot = source.folders;
+  if (snapshot === null) return undefined;
+  if (target.projectId === null) return poolOfHome(snapshot, null);
+  const home =
+    target.threadId == null
+      ? homeOfProject(snapshot, target.projectId)
+      : homeOfThread(snapshot, { id: target.threadId, projectId: target.projectId });
+  return poolOfHome(snapshot, home);
+}
+
+/**
+ * Moves a new thread's model onto the pool it runs on. Subscribes to the
+ * trees, which carry the pools, so they are current when a thread starts
+ * from anywhere.
  */
 export function useProjectPoolModelSelection() {
-  const snapshots = useAtomValue(sectionSnapshotsAtom);
+  const sources = useAtomValue(poolSourcesAtom);
   return useCallback(
-    (input: {
-      readonly environmentId: EnvironmentId;
-      readonly projectId: ProjectId | null;
-      /** What the thread would otherwise start on. */
-      readonly selection: ModelSelection | null;
-      readonly providerInstances: Readonly<Record<string, { readonly config?: unknown }>>;
-      readonly providers: ReadonlyArray<ServerProvider>;
-    }): ModelSelection | null =>
-      projectPoolModelSelection({
+    (
+      input: PoolTarget & {
+        readonly environmentId: EnvironmentId;
+        /** What the thread would otherwise start on. */
+        readonly selection: ModelSelection | null;
+        readonly providerInstances: Readonly<Record<string, { readonly config?: unknown }>>;
+        readonly providers: ReadonlyArray<ServerProvider>;
+      },
+    ): ModelSelection | null =>
+      poolModelSelection({
         ...input,
-        snapshot: snapshots.get(input.environmentId) ?? null,
+        pool: resolvePool(sources.get(input.environmentId), input),
       }),
-    [snapshots],
+    [sources],
   );
 }
 
-/** The pool `projectId`'s threads run on: null for none, undefined where the server doesn't say. */
+/** The pool a thread (or a new thread in `projectId`) runs on; see `resolvePool`. */
 export function useProjectPool(
   environmentId: EnvironmentId | null,
   projectId: ProjectId | null,
-): ResolvedPool | null | undefined {
-  const snapshots = useAtomValue(sectionSnapshotsAtom);
+  threadId?: ThreadId | null,
+): ResolvedPlacedPool | null | undefined {
+  const sources = useAtomValue(poolSourcesAtom);
   return environmentId === null
     ? undefined
-    : projectPool(snapshots.get(environmentId) ?? null, projectId);
+    : resolvePool(sources.get(environmentId), { projectId, threadId });
 }
 
 /** The model a composer draft holds for its active provider, after sticky state. */

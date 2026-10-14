@@ -17,6 +17,11 @@ import type { ResolvedPool, SectionsSnapshot } from "@t3tools/contracts/sections
 
 type ProviderInstances = Readonly<Record<string, { readonly config?: unknown }>>;
 
+/** A pool a level runs on, however its server says where it's placed (sections or folders). */
+export interface PlacedPool {
+  readonly poolId: string;
+}
+
 /**
  * The pool `projectId`'s threads run on: null when nothing on its chain has
  * one, undefined when the server doesn't resolve pools. Without a project,
@@ -104,11 +109,20 @@ export function projectPoolModelSelection(input: {
   readonly providerInstances: ProviderInstances;
   readonly providers: ReadonlyArray<ServerProvider>;
 }): ModelSelection | null {
-  const pool = projectPool(input.snapshot, input.projectId);
-  if (!pool) return null;
+  return poolModelSelection({ ...input, pool: projectPool(input.snapshot, input.projectId) });
+}
+
+/** `projectPoolModelSelection` for a pool already resolved, such as a folder's. */
+export function poolModelSelection(input: {
+  readonly selection: ModelSelection | null;
+  readonly pool: PlacedPool | null | undefined;
+  readonly providerInstances: ProviderInstances;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}): ModelSelection | null {
+  if (!input.pool) return null;
   return modelSelectionOnPool({
     selection: input.selection,
-    poolId: pool.poolId,
+    poolId: input.pool.poolId,
     providerInstances: input.providerInstances,
     providers: input.providers,
   });
@@ -131,7 +145,7 @@ export type PoolNeed =
 export const NEEDS_A_POOL = "Needs a pool";
 
 export function poolNeed(input: {
-  readonly pool: ResolvedPool | null | undefined;
+  readonly pool: PlacedPool | null | undefined;
   readonly providerInstances: ProviderInstances;
   readonly providers: ReadonlyArray<ServerProvider>;
 }): PoolNeed | null {

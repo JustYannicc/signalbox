@@ -2,6 +2,7 @@ import type { ProjectId, ThreadId } from "@t3tools/contracts";
 import type {
   Folder,
   FolderId,
+  FolderMoveInput,
   FolderResolvedPool,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
@@ -58,6 +59,14 @@ export function homeOfThread(
   return (
     snapshot.projectHomes.find((home) => home.projectId === thread.projectId)?.folderId ?? null
   );
+}
+
+/** Where a project's threads live unless filed elsewhere: the folder it's the files of, else the top level. */
+export function homeOfProject(
+  snapshot: SignalboxFoldersSnapshot,
+  projectId: ProjectId,
+): FolderId | null {
+  return snapshot.projectHomes.find((home) => home.projectId === projectId)?.folderId ?? null;
 }
 
 /** Each thread's home, for grouping many threads at once. */
@@ -123,6 +132,36 @@ export function folderDestinations(
   };
   walk(folderTree(snapshot, ownerId), []);
   return destinations;
+}
+
+/**
+ * The move that swaps a folder with its sibling above or below; null at
+ * either end. Moving down goes before the folder two places on, or last.
+ */
+export function folderSiblingMove(
+  snapshot: SignalboxFoldersSnapshot,
+  folderId: FolderId,
+  direction: "up" | "down",
+): FolderMoveInput | null {
+  const folder = snapshot.folders.find((candidate) => candidate.id === folderId);
+  if (folder === undefined) return null;
+  const siblings = snapshot.folders
+    .filter(
+      (candidate) => candidate.ownerId === folder.ownerId && candidate.parentId === folder.parentId,
+    )
+    .sort(byPosition);
+  const index = siblings.findIndex((candidate) => candidate.id === folderId);
+  if (direction === "up") {
+    const before = siblings[index - 1];
+    return before === undefined
+      ? null
+      : { id: folderId, parentId: folder.parentId, beforeId: before.id };
+  }
+  if (index >= siblings.length - 1) return null;
+  const after = siblings[index + 2];
+  return after === undefined
+    ? { id: folderId, parentId: folder.parentId }
+    : { id: folderId, parentId: folder.parentId, beforeId: after.id };
 }
 
 /**

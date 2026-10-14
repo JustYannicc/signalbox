@@ -10,7 +10,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   folderDestinations,
   folderPath,
+  folderSiblingMove,
   folderTree,
+  homeOfProject,
   homeOfThread,
   newThreadIn,
   poolOfHome,
@@ -104,6 +106,35 @@ describe("foldersModel", () => {
       "Work / Clients / Northwind",
       "Notes",
     ]);
+  });
+
+  it("homes a project's threads with the folder it's the files of", () => {
+    expect(homeOfProject(snapshot, DRIVE)).toBe("northwind");
+    expect(homeOfProject(snapshot, SCRATCH)).toBeNull();
+    expect(homeOfProject(snapshot, ProjectId.make("unknown"))).toBeNull();
+  });
+
+  it("moves a folder past its sibling, and nowhere at either end", () => {
+    const work = FolderId.make("work");
+    const notes = FolderId.make("notes");
+    expect(folderSiblingMove(snapshot, work, "up")).toBeNull();
+    expect(folderSiblingMove(snapshot, work, "down")).toEqual({ id: work, parentId: null });
+    expect(folderSiblingMove(snapshot, notes, "up")).toEqual({
+      id: notes,
+      parentId: null,
+      beforeId: work,
+    });
+    expect(folderSiblingMove(snapshot, notes, "down")).toBeNull();
+    const three = {
+      ...snapshot,
+      folders: [...snapshot.folders, folder("later", null, 2)],
+    };
+    expect(folderSiblingMove(three, work, "down")).toEqual({
+      id: work,
+      parentId: null,
+      beforeId: FolderId.make("later"),
+    });
+    expect(folderSiblingMove(snapshot, FolderId.make("northwind"), "down")).toBeNull();
   });
 
   it("starts a thread in a folder's files, filing it only when its project lives elsewhere", () => {
