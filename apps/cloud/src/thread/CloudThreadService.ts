@@ -19,8 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { remoteThreadWorktree } from "../user/contextProjects.ts";
-import { ThreadContexts, type ThreadPlace } from "../user/threadContexts.ts";
-import type { TurnPools } from "./turnPool.ts";
+import { ThreadContexts, type ThreadPlace, type ThreadTurn } from "../user/threadContexts.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
@@ -184,19 +183,20 @@ const cursorAfter = (batch: Batch): number | undefined => {
 
 /**
  * A new thread's place, its own branch when its drive is backed by a remote
- * (#135), and the pools turns resolve to.
+ * (#135), and what its turn runs on and follows.
  */
 const placed = (
   place: ThreadPlace | null,
   threadId: ThreadId,
-  pools: TurnPools | null,
+  turn: ThreadTurn | null,
 ): ThreadCreation => ({
   place: place === null ? null : { contextId: place.contextId, driveId: place.driveId },
   worktree: place?.remote === true ? remoteThreadWorktree(place.driveId, threadId) : null,
-  pools,
+  pools: turn?.pools ?? null,
+  ...(turn === null ? {} : { instructions: turn.instructions }),
 });
 
-/** Commands that can start a turn or pick a model: they carry the resolved pools. */
+/** Commands that can start a turn or pick a model: they carry the resolved pools and instructions. */
 const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.create",
   "message.dispatch",
@@ -223,11 +223,16 @@ const make = Effect.gen(function* () {
         command.type === "thread.create"
           ? yield* threadContexts.placeOfProject(command.projectId)
           : null;
-      // Resolved on every turn start, so a project that moved runs on its new pool.
-      const pools = PICKS_A_POOL.has(command.type) ? yield* threadContexts.turnPools : null;
+      // Resolved on every turn start, so a thread that moved runs on its new home's chain.
+      const turn = PICKS_A_POOL.has(command.type)
+        ? yield* threadContexts.turn(
+            threadId,
+            command.type === "thread.create" ? command.projectId : null,
+          )
+        : null;
       return yield* directory
         .forThread(threadId)
-        .dispatch(actor, command, placed(place, threadId, pools));
+        .dispatch(actor, command, placed(place, threadId, turn));
     });
 
   const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
@@ -249,7 +254,7 @@ const make = Effect.gen(function* () {
         .launch(
           actor,
           { ...input, threadId },
-          placed(place, threadId, yield* threadContexts.turnPools),
+          placed(place, threadId, yield* threadContexts.turn(threadId, input.projectId)),
         );
     });
 

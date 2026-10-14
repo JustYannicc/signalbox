@@ -10,7 +10,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
-import * as Environment from "../environment.ts";
+import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { makeFakeGitHub } from "../github/githubTesting.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -18,7 +18,7 @@ import { decodeLinkToken } from "../pool/poolLink.ts";
 import { CLOUD_TEST_ENV, layerConfig, makeMemoryCloud } from "../testing.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as UserPools from "../user/UserPools.ts";
-import * as UserSections from "../user/UserSections.ts";
+import * as UserFolders from "../user/UserFolders.ts";
 import * as PreviewSetup from "./PreviewSetup.ts";
 import type { PreviewSetup as Setup } from "./previewSetupWire.ts";
 
@@ -128,7 +128,7 @@ const setup = Effect.gen(function* () {
     effect: Effect.Effect<
       A,
       E,
-      UserPools.UserPools | UserSections.UserSections | SqlClient.SqlClient
+      UserPools.UserPools | UserFolders.UserFolders | SqlClient.SqlClient
     >,
   ) => Effect.provide(effect, cloud.userObject(userId));
   const poolsOf = (cloud: ReturnType<typeof makeMemoryCloud>) =>
@@ -165,27 +165,29 @@ describe("preview setup", () => {
     Effect.gen(function* () {
       const { prod, preview, github, handed, handOff, inside, poolsOf, signInOnProd } =
         yield* setup;
-      // Production: pools with an account, a section with a project and one
-      // placement of a drive previews don't have, and GitHub connected.
+      // Production: pools with an account, folders nested with instructions and
+      // one placement of a drive previews don't have, and GitHub connected.
       const work = yield* inside(
         prod,
         UserPools.UserPools.use((pools) => pools.create(actor, { name: "Work" })),
       );
       yield* signInOnProd(PERSONAL_POOL_ID);
-      const sections = yield* inside(
+      const folders = yield* inside(
         prod,
         Effect.gen(function* () {
-          const service = yield* UserSections.UserSections;
+          const service = yield* UserFolders.UserFolders;
           const created = yield* service.create({
             name: "Clients",
             parentId: null,
-            contextId: "personal",
+            ownerId: PERSONAL_CONTEXT_ID,
           });
-          const clients = created.sections.find((section) => section.name === "Clients")!;
-          yield* service.moveProject({
-            projectId: Environment.SCRATCH_PROJECT_ID,
-            sectionId: clients.id,
+          const clients = created.folders.find((folder) => folder.name === "Clients")!;
+          yield* service.create({ name: "Acme", parentId: clients.id });
+          yield* service.setInstructions({
+            level: { _tag: "folder", folderId: clients.id },
+            instructions: "Bill hourly.",
           });
+          yield* service.setInstructions({ level: { _tag: "top" }, instructions: "Be brief." });
           const sql = yield* SqlClient.SqlClient;
           yield* sql`INSERT INTO project_placements (project_id, section_id, position)
             VALUES ('drive-gone', ${clients.id}, 1)`;
@@ -201,7 +203,13 @@ describe("preview setup", () => {
 
       // Setup only: nothing that runs or signs anyone in.
       expect(handed).toHaveLength(1);
-      expect(Object.keys(handed[0]!).toSorted()).toEqual(["github", "pools", "sections", "userId"]);
+      expect(Object.keys(handed[0]!).toSorted()).toEqual([
+        "folders",
+        "github",
+        "pools",
+        "sections",
+        "userId",
+      ]);
 
       // Same pools, under the same ids, each routed through production's link.
       const linked = yield* poolsOf(preview);
@@ -246,15 +254,13 @@ describe("preview setup", () => {
         ),
       ).toBe("This pool is linked to app.signalbox.run. Add and manage its accounts there.");
 
-      // Sections and GitHub came along; the placement of a missing drive stays out of sight.
-      const previewSections = yield* inside(
+      // Folders, their instructions and GitHub came along.
+      const previewFolders = yield* inside(
         preview,
-        UserSections.UserSections.use((service) => service.snapshot),
+        UserFolders.UserFolders.use((service) => service.snapshot),
       );
-      expect(previewSections.sections).toEqual(sections.sections);
-      expect(previewSections.projectPlacements).toEqual(
-        sections.projectPlacements.filter((placement) => placement.projectId !== "drive-gone"),
-      );
+      expect(previewFolders.folders).toEqual(folders.folders);
+      expect(previewFolders.top).toEqual({ instructions: "Be brief." });
       expect(yield* preview.userDirectory.forUser(userId).githubAccessToken()).toBe(
         `gho_${userId}`,
       );
@@ -264,33 +270,33 @@ describe("preview setup", () => {
   it.effect("running it again renews the pool links and copies nothing twice", () =>
     Effect.gen(function* () {
       const { prod, preview, handed, handOff, inside, poolsOf } = yield* setup;
-      const sectionsOf = (cloud: typeof prod) =>
+      const foldersOf = (cloud: typeof prod) =>
         inside(
           cloud,
-          UserSections.UserSections.use((service) => service.snapshot),
-        ).pipe(Effect.map((snapshot) => snapshot.sections.map((section) => section.name)));
+          UserFolders.UserFolders.use((service) => service.snapshot),
+        ).pipe(Effect.map((snapshot) => snapshot.folders.map((folder) => folder.name)));
       yield* inside(
         prod,
-        UserSections.UserSections.use((service) =>
-          service.create({ name: "Clients", parentId: null, contextId: "personal" }),
+        UserFolders.UserFolders.use((service) =>
+          service.create({ name: "Clients", parentId: null, ownerId: PERSONAL_CONTEXT_ID }),
         ),
       );
       yield* handOff();
-      expect(yield* sectionsOf(preview)).toEqual(["Clients"]);
+      expect(yield* foldersOf(preview)).toEqual(["Clients"]);
       const firstPersonal = handed[0]!.pools.find((pool) => pool.personal)!.token;
       // Since then: deleted on the preview, and more made on production.
       yield* inside(
         preview,
         Effect.gen(function* () {
-          const service = yield* UserSections.UserSections;
-          const [clients] = (yield* service.snapshot).sections;
+          const service = yield* UserFolders.UserFolders;
+          const [clients] = (yield* service.snapshot).folders;
           yield* service.delete({ id: clients!.id });
         }),
       );
       yield* inside(
         prod,
-        UserSections.UserSections.use((service) =>
-          service.create({ name: "Later", parentId: null, contextId: "personal" }),
+        UserFolders.UserFolders.use((service) =>
+          service.create({ name: "Later", parentId: null, ownerId: PERSONAL_CONTEXT_ID }),
         ),
       );
       const team = yield* inside(
@@ -300,8 +306,8 @@ describe("preview setup", () => {
 
       expect(yield* handOff()).toBe("/settings");
       expect(handed).toHaveLength(2);
-      // Sections were copied once: the preview's own changes stand.
-      expect(yield* sectionsOf(preview)).toEqual([]);
+      // Folders were copied once: the preview's own changes stand.
+      expect(yield* foldersOf(preview)).toEqual([]);
       // One preview pool per production pool, the new one included, on fresh links.
       const pools = yield* poolsOf(preview);
       expect(pools.map((pool) => pool.id).toSorted()).toEqual(

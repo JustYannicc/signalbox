@@ -1,3 +1,4 @@
+import { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { MachineClass } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   CommandId,
@@ -124,6 +125,11 @@ export class ThreadStore extends Context.Service<
       readonly summaryChanged: boolean;
       /** The machine lease as of these events, such as a Runner batch's acknowledgement. */
       readonly machine?: MachineLease;
+      /** The instructions of the thread's chain, for the run these events start. */
+      readonly instructions?: {
+        readonly runId: string;
+        readonly levels: ReadonlyArray<FolderInstructions>;
+      };
     }) => Effect.Effect<number, SqlError>;
     readonly recordRejection: (input: {
       readonly command: { readonly id: CommandId; readonly type: string };
@@ -136,6 +142,10 @@ export class ThreadStore extends Context.Service<
     /** The machine backend's record of the thread's machine (`MachineBackend.ts`). */
     readonly machineRecord: Effect.Effect<MachineRecord, SqlError>;
     readonly saveMachineRecord: (record: MachineRecord) => Effect.Effect<void, SqlError>;
+    /** The instructions a run was started with, top level first; none for one started without. */
+    readonly instructions: (
+      runId: string,
+    ) => Effect.Effect<ReadonlyArray<FolderInstructions>, SqlError>;
   }
 >()("@signalbox/cloud/thread/ThreadStore") {}
 
@@ -187,10 +197,24 @@ const migrations = Migrator.fromRecord({
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE owner ADD COLUMN drive_id TEXT`;
   }),
+  // Each run's folder chain `AGENTS.md` as it was started with (#227), for the Runner.
+  "0006_instructions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE run_instructions (
+      run_id TEXT PRIMARY KEY,
+      levels TEXT NOT NULL
+    )`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
 const migrate = Migrations.run(migrations);
+
+const InstructionsJson = Schema.fromJsonString(Schema.Array(FolderInstructions));
+const encodeInstructions = Schema.encodeSync(InstructionsJson);
+const decodeInstructionRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ levels: InstructionsJson })),
+);
 
 const EventJson = Schema.fromJsonString(OrchestrationV2DomainEventJson);
 const encodeEvent = Schema.encodeSync(EventJson);
@@ -329,8 +353,18 @@ const make = Effect.gen(function* () {
       yield* sql`UPDATE outbox SET revision = ${sequence} WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
+    if (input.instructions) {
+      yield* sql`INSERT INTO run_instructions (run_id, levels)
+          VALUES (${input.instructions.runId}, ${encodeInstructions(input.instructions.levels)})
+          ON CONFLICT (run_id) DO NOTHING`;
+    }
     return sequence;
   }, sql.withTransaction);
+
+  const instructions: ThreadStore["Service"]["instructions"] = (runId) =>
+    sql`SELECT levels FROM run_instructions WHERE run_id = ${runId}`.pipe(
+      Effect.map((rows) => decodeInstructionRows(rows)[0]?.levels ?? []),
+    );
 
   const recordRejection: ThreadStore["Service"]["recordRejection"] = Effect.fn(
     "ThreadStore.recordRejection",
@@ -367,6 +401,7 @@ const make = Effect.gen(function* () {
     machine,
     saveMachine,
     machineRecord,
+    instructions,
     saveMachineRecord,
   });
 });

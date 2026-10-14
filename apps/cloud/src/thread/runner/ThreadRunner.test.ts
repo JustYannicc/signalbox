@@ -718,6 +718,28 @@ describe("ThreadRunner", () => {
     );
   });
 
+  it.effect("hands the machine the folder instructions its turn was started with", () =>
+    withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          const levels = [
+            { label: "Top level", text: "Be brief." },
+            { label: "Work", text: "End every reply with BANANA." },
+          ];
+          // What the owner's object resolved for this thread's home (`UserFolders.turn`).
+          yield* launch(engine, "launch-1", {
+            ...personal,
+            instructions: { top: [], projects: {}, thread: levels },
+          });
+          yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.drive?.instructions).toEqual(levels);
+        }),
+      { drives: true },
+    ),
+  );
+
   it.effect("gives each machine a drive token that acts only for its own generation and turn", () =>
     withObject(
       freshDatabase(),
