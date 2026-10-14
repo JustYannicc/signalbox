@@ -108,6 +108,14 @@ export const forwardModel = (endpoint: PoolEndpoint, path: string, request: Requ
   return send(endpoint, new Request(`${endpoint.baseUrl}${path}`, init));
 };
 
+/** A response's body as JSON, or `null` when it isn't JSON. */
+const readJson = (endpoint: PoolEndpoint, response: Response) =>
+  Effect.tryPromise({
+    try: () => response.text(),
+    catch: (cause) =>
+      new PoolBackendError({ detail: `${hostOf(endpoint)} broke off its answer.`, cause }),
+  }).pipe(Effect.map((text) => Option.getOrNull(decodeJson(text))));
+
 const management = (endpoint: PoolEndpoint, method: string, path: string, body?: unknown) =>
   Effect.gen(function* () {
     const response = yield* send(
@@ -121,18 +129,13 @@ const management = (endpoint: PoolEndpoint, method: string, path: string, body?:
         ...(body === undefined ? {} : { body: encodeJson(body) }),
       }),
     );
-    const text = yield* Effect.tryPromise({
-      try: () => response.text(),
-      catch: (cause) =>
-        new PoolBackendError({ detail: `${hostOf(endpoint)} broke off its answer.`, cause }),
-    });
+    // Not JSON: callers that need a body decode `null` and fail.
+    const json = yield* readJson(endpoint, response);
     if (response.status === 401 || response.status === 403) {
       return yield* new PoolBackendError({
         detail: `${hostOf(endpoint)} refused the management key.`,
       });
     }
-    // Not JSON: callers that need a body decode `null` and fail.
-    const json = Option.getOrNull(decodeJson(text));
     return { status: response.status, json };
   });
 
@@ -169,6 +172,58 @@ export const checkKeys = (endpoint: PoolEndpoint) =>
         detail: `${hostOf(endpoint)} refused the client key.`,
       });
     }
+  });
+
+const ModelList = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      owned_by: Schema.optional(Schema.String),
+      created: Schema.optional(Schema.Number),
+    }),
+  ),
+});
+
+/**
+ * A model the CLIProxyAPI serves. It lists only what its loaded, enabled
+ * accounts can run, every provider together; `ownedBy` says whose it is
+ * (`anthropic` for Claude accounts, `openai` for ChatGPT ones).
+ */
+export interface ServedModel {
+  readonly id: string;
+  readonly ownedBy: string;
+  /** When the model came out, in epoch seconds, if the CLIProxyAPI knows. */
+  readonly created: number | null;
+}
+
+/**
+ * The models the CLIProxyAPI serves now (`GET /v1/models`). Asked without
+ * `Anthropic-Version` or a `claude-cli` agent, which would get the
+ * Anthropic-shaped list with other providers' models renamed.
+ */
+export const listModels = (endpoint: PoolEndpoint) =>
+  Effect.gen(function* () {
+    const response = yield* send(
+      endpoint,
+      new Request(`${endpoint.baseUrl}/v1/models`, {
+        headers: { authorization: `Bearer ${endpoint.clientKey}` },
+      }),
+    );
+    const json = yield* readJson(endpoint, response);
+    if (response.status >= 300) {
+      return yield* new PoolBackendError({
+        detail: `${hostOf(endpoint)} answered ${response.status} to the model list.`,
+      });
+    }
+    const decoded = yield* decodeOr(
+      ModelList,
+      `${hostOf(endpoint)} returned an invalid model list.`,
+    )(json);
+    return decoded.data.map((model): ServedModel => ({
+      id: model.id,
+      ownedBy: model.owned_by ?? "unknown",
+      created: model.created && model.created > 0 ? model.created : null,
+    }));
   });
 
 const LoginStart = Schema.Struct({

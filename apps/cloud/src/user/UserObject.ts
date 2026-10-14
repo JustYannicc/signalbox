@@ -24,6 +24,8 @@ import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ModelManifest from "../thread/ModelManifest.ts";
+import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
@@ -72,6 +74,8 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.Git
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
+  /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
+  readonly SCRIPTED_PROVIDER?: string;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -128,6 +132,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ),
       ),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
+      Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
       Layer.provideMerge(
         GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
           Layer.provide(FetchHttpClient.layer),
@@ -168,6 +173,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       label: env.ENVIRONMENT_LABEL ?? Environment.DEFAULT_ENVIRONMENT_LABEL,
       // Only machines run dev servers.
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
+      scripted: scriptedProviderEnabled(env),
     };
     this.runtime = makeRuntime(ctx.storage, env);
     void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));

@@ -19,6 +19,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as CliProxyApi from "./cliProxyApi.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import * as PoolLinks from "./PoolLinks.ts";
+import * as PoolModels from "./poolModels.ts";
 import * as PoolStore from "./poolStore.ts";
 
 /**
@@ -60,6 +61,8 @@ export interface PoolAccounts {
   readonly accounts: ReadonlyArray<PoolAccount>;
   /** Why the latest read failed; `accounts` is then the last known list. */
   readonly error: string | null;
+  /** The models the accounts serve, as last read with them. */
+  readonly models: ReadonlyArray<CliProxyApi.ServedModel>;
 }
 
 export type PoolBackingInput =
@@ -118,6 +121,12 @@ export class PoolEngine extends Context.Service<
      */
     readonly prepareDelete: (actor: PoolActor) => Effect.Effect<void, Failure>;
     readonly accounts: (actor: PoolActor) => Effect.Effect<PoolAccounts, Failure>;
+    /**
+     * The models the pool serves, for the check at turn start. A pool whose
+     * list was never read reads it now, waking its container: the turn is
+     * about to anyway.
+     */
+    readonly models: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
     readonly startLogin: (
       actor: PoolActor,
       provider: CliProxyApi.PoolLoginProvider,
@@ -226,6 +235,7 @@ const migrations = Migrator.fromRecord({
   }),
   "0002_links": PoolLinks.createTables,
   "0003_preview_links": PoolLinks.addPreviewLinks,
+  "0004_models": PoolModels.createTables,
 });
 
 const migrate = Migrator.make({})({ loader: migrations });
@@ -302,6 +312,9 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const links = yield* PoolLinks.PoolLinks;
   const randomKey = PoolLinks.randomKey.pipe(Effect.provideService(Crypto.Crypto, crypto));
+  const withSql = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+    Effect.provideService(effect, SqlClient.SqlClient, sql);
+  const cachedModels = withSql(PoolModels.cached);
 
   const poolRow = sql<PoolRow>`SELECT name, personal, backing, management_key, client_key,
     store_access_key, store_secret_key, external_url, external_management_key,
@@ -389,9 +402,11 @@ const make = Effect.gen(function* () {
       readonly checked_at: number;
       readonly error: string | null;
     }>`SELECT checked_at, error FROM accounts_state WHERE id = 1`;
+    const { models } = yield* cachedModels;
     return {
       checkedAt: state?.checked_at ?? 0,
       error: state?.error ?? null,
+      models,
       accounts: rows.map((row): PoolAccount => ({
         name: row.name,
         type: row.type,
@@ -420,6 +435,16 @@ const make = Effect.gen(function* () {
           PoolBackendError: (error) =>
             sql`UPDATE accounts_state SET checked_at = ${now}, error = ${error.detail}
               WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
+        }),
+      );
+      // The models the accounts serve. A failed read keeps the last list.
+      yield* CliProxyApi.listModels(endpointOf(row, options)).pipe(
+        Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
+        Effect.catchTags({
+          PoolBackendError: (error) =>
+            Effect.logWarning("pool model list read failed", error.detail, error.cause).pipe(
+              Effect.andThen(withSql(PoolModels.markTried(now))),
+            ),
         }),
       );
       const cached = yield* cachedAccounts;
@@ -528,6 +553,7 @@ const make = Effect.gen(function* () {
       }
       yield* sql`DELETE FROM accounts`;
       yield* sql`UPDATE accounts_state SET checked_at = 0, error = NULL WHERE id = 1`;
+      yield* withSql(PoolModels.clear);
       yield* audit(actor, "set-backing", backing.mode === "managed" ? "managed" : backing.url);
       const updated = yield* access(actor, "admin");
       // A managed pool's accounts come back when its container next wakes.
@@ -546,11 +572,31 @@ const make = Effect.gen(function* () {
     });
 
   /**
+   * The first read of the models of a pool whose accounts were cached before
+   * its models were (a pool from before the cache kept them). Wakes its
+   * container once; a failed read counts too, so a pool that can't answer
+   * isn't woken again on every look.
+   */
+  const firstModelsRead = (row: PoolRow) =>
+    Effect.gen(function* () {
+      const { accounts: held } = yield* cachedAccounts;
+      if (held.length === 0 || (yield* cachedModels).checkedAt > 0) return;
+      yield* refreshAccounts(row).pipe(
+        Effect.tapError(() =>
+          Effect.flatMap(Clock.currentTimeMillis, (now) => withSql(PoolModels.markTried(now))),
+        ),
+      );
+    });
+
+  /**
    * The cached accounts, read again once stale. Reading never wakes a sleeping
-   * container or keeps one awake: an asleep pool's accounts are what it last had.
+   * container or keeps one awake: an asleep pool's accounts are what it last
+   * had. The one exception is `firstModelsRead`.
    */
   const cachedOrRead = (row: PoolRow) =>
     Effect.gen(function* () {
+      // A failed first read leaves the cached accounts as they were.
+      yield* firstModelsRead(row).pipe(Effect.ignore);
       const cached = yield* cachedAccounts;
       if ((yield* Clock.currentTimeMillis) - cached.checkedAt < ACCOUNTS_FRESH_MS) return cached;
       if (row.backing !== "external" && !(yield* container.running)) return cached;
@@ -560,6 +606,17 @@ const make = Effect.gen(function* () {
 
   const accounts: PoolEngine["Service"]["accounts"] = (actor) =>
     Effect.flatMap(access(actor, "member"), ({ row }) => cachedOrRead(row));
+
+  // From the cache, as the picker sees it: a turn start never waits on a refresh.
+  const models: PoolEngine["Service"]["models"] = (actor) =>
+    Effect.gen(function* () {
+      const { row } = yield* access(actor, "member", {
+        gone: "This thread's pool no longer exists. Pick another pool for it.",
+        denied: "You no longer have access to this thread's pool. Pick another pool for it.",
+      });
+      yield* firstModelsRead(row);
+      return yield* cachedModels;
+    });
 
   const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider) =>
     Effect.gen(function* () {
@@ -727,6 +784,7 @@ const make = Effect.gen(function* () {
     setBacking,
     prepareDelete,
     accounts,
+    models,
     startLogin,
     loginStatus,
     completeLogin,

@@ -49,6 +49,7 @@ export const makePoolObjectApi = (
       return result;
     },
     accounts: (actor) => reply((engine) => engine.accounts(actor)),
+    models: (actor) => reply((engine) => engine.models(actor)),
     startLogin: (actor, provider) => reply((engine) => engine.startLogin(actor, provider)),
     loginStatus: (actor, state) => reply((engine) => engine.loginStatus(actor, state)),
     completeLogin: (actor, url) => reply((engine) => done(engine.completeLogin(actor, url))),

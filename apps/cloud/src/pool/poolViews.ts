@@ -8,6 +8,7 @@ import {
   poolSourceId,
 } from "@t3tools/contracts/accountHub";
 import {
+  type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
@@ -16,9 +17,11 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 
+import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
 import * as DateTime from "effect/DateTime";
 
-import { CLOUD_POOL_KINDS, poolServerProvider } from "../thread/providerCatalog.ts";
+import { CLOUD_POOL_KINDS, harnessModels, poolServerProvider } from "../thread/providerCatalog.ts";
+import type { ServedModel } from "./cliProxyApi.ts";
 import type { PoolAccounts } from "./PoolEngine.ts";
 
 /**
@@ -36,10 +39,11 @@ export interface UserPool {
   readonly backing: AccountHubConnection;
 }
 
-/** A pool with its accounts, as one usage limit source. */
+/** A pool with its accounts, as one usage limit source, and the models they serve. */
 export interface PoolEntry {
   readonly pool: UserPool;
   readonly source: UsageLimitSourceSnapshot;
+  readonly models: ReadonlyArray<ServedModel>;
 }
 
 export const accountPool = (pool: UserPool): AccountPool => ({
@@ -139,8 +143,9 @@ export const overview = (
 export const poolProviders = (
   pools: ReadonlyArray<PoolEntry>,
   checkedAt: string,
+  manifest: ModelManifestCatalogs,
 ): ReadonlyArray<ServerProvider> =>
-  pools.flatMap(({ pool, source }) =>
+  pools.flatMap(({ pool, source, models }) =>
     CLOUD_POOL_KINDS.map((kind) => {
       const [instanceId, config] = instanceOf(kind, pool);
       return poolServerProvider({
@@ -148,10 +153,28 @@ export const poolProviders = (
         instanceId,
         displayName: config.displayName ?? POOL_INSTANCE_KINDS[kind].displayName,
         signedIn: canRun(source, POOL_INSTANCE_KINDS[kind].driver),
+        models: harnessModels(kind, models, manifest),
         checkedAt,
       });
     }),
   );
+
+/**
+ * What a new thread starts on unless something closer picks (the project, its
+ * section's pool, the user's last choice): the first pool, Personal first,
+ * with a provider ready to run, on that provider's default model. Null when
+ * no pool can run anything; clients then say to add an account.
+ */
+export const poolDefaultModelSelection = (
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection | null => {
+  for (const provider of providers) {
+    if (provider.status !== "ready") continue;
+    const model = provider.models.find((candidate) => candidate.isDefault) ?? provider.models[0];
+    if (model) return { instanceId: provider.instanceId, model: model.slug };
+  }
+  return null;
+};
 
 /** Settings list each instance with its pool, which is how clients group instances by pool. */
 export const poolProviderInstances = (

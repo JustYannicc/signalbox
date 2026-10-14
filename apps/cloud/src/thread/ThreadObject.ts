@@ -20,6 +20,7 @@ import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
+import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
@@ -46,6 +47,8 @@ import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirect
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import * as ThreadStore from "./ThreadStore.ts";
+import * as TurnModels from "./TurnModels.ts";
+import { scriptedProviderEnabled } from "./scriptedProvider.ts";
 
 /**
  * One per thread, named by its thread id, always in the EU jurisdiction. It
@@ -69,6 +72,10 @@ export interface ThreadObjectEnv
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
+  /** Pools' objects: a turn starts only on a model its pool serves (`TurnModels.ts`). */
+  readonly POOLS: PoolDirectory.PoolObjectNamespace;
+  /** `1` in dev and tests: scripted turns run (`scriptedProvider.ts`). */
+  readonly SCRIPTED_PROVIDER?: string;
   /** Drives' objects and packs (`drive/`). Turns work in a drive only when both are bound. */
   readonly DRIVES?: DriveObjectNamespace;
   readonly DRIVE_PACKS?: PackBucket;
@@ -151,6 +158,15 @@ const makeRuntime = (
       ),
       Layer.provideMerge(layerThreadDrives(env)),
       Layer.provideMerge(ThreadEngine.layer),
+      Layer.provideMerge(
+        TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
+          Layer.provide(
+            PoolDirectory.layerDurableObjects(env.POOLS, {
+              localWorkerd: env.LOCAL_WORKERD === "1",
+            }),
+          ),
+        ),
+      ),
       Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
       Layer.provideMerge(CloudAnalytics.layerFromEnv(env)),
       Layer.provideMerge(layerMachineBackend(env, machine)),

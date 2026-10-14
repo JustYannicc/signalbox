@@ -22,20 +22,66 @@ interface FakeAccount {
   disabled: boolean;
 }
 
+interface FakeModel {
+  readonly id: string;
+  /** Epoch seconds. */
+  readonly created: number;
+}
+
+/** What `/v1/models` lists per account type: CLIProxyAPI's catalog, trimmed to what tests need. */
+const fakeCatalog = (): Record<string, Array<FakeModel>> => ({
+  claude: [
+    { id: "claude-opus-5-5", created: 1_790_035_200 },
+    { id: "claude-sonnet-5-5", created: 1_790_553_600 },
+    { id: "claude-fable-5-1", created: 1_788_220_800 },
+    // Legacy in the model manifest.
+    { id: "claude-opus-5", created: 1_784_038_800 },
+    // Unknown to the manifest, and older than every current model.
+    { id: "claude-3-7-sonnet-20250219", created: 1_708_300_800 },
+  ],
+  codex: [
+    { id: "gpt-6-astra", created: 1_783_616_400 },
+    { id: "gpt-6.1-sol", created: 1_790_640_000 },
+    { id: "gpt-6-luna", created: 1_790_035_200 },
+    { id: "gpt-5.5", created: 1_776_902_400 },
+  ],
+});
+
+/** CLIProxyAPI's `owned_by` per account type. */
+const OWNER_BY_TYPE: Record<string, string> = { claude: "anthropic", codex: "openai" };
+
 /**
  * The management API of a CLIProxyAPI. A login finishes when its redirect is
- * pasted back (`oauth-callback`), adding `<provider>-<n>@example.test`. Model
+ * pasted back (`oauth-callback`), adding `<provider>-<n>@example.test`.
+ * `/v1/models` lists `catalog`'s models for the types of its enabled
+ * accounts, as CLIProxyAPI registers models per loaded account. Other model
  * requests echo what they got.
  */
 export const makeFakeCliProxyApi = () => {
   const accounts = new Map<string, FakeAccount>();
+  const catalog = fakeCatalog();
   const logins = new Map<string, { readonly type: string; done: boolean }>();
   let counter = 0;
   const json = (body: unknown, status = 200) => Response.json(body, { status });
 
   const serve = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    if (url.pathname === "/v1/models") return json({ data: [] });
+    if (url.pathname === "/v1/models") {
+      const types = new Set(
+        [...accounts.values()].filter((account) => !account.disabled).map((a) => a.type),
+      );
+      return json({
+        object: "list",
+        data: [...types].flatMap((type) =>
+          (catalog[type] ?? []).map((model) => ({
+            id: model.id,
+            object: "model",
+            created: model.created,
+            owned_by: OWNER_BY_TYPE[type] ?? type,
+          })),
+        ),
+      });
+    }
     // A model request: says what it got, so tests can check what the pool sent.
     if (url.pathname.startsWith("/v1/")) {
       return json({
@@ -103,7 +149,7 @@ export const makeFakeCliProxyApi = () => {
         return json({ error: `no route ${request.method} ${route}` }, 404);
     }
   };
-  return { serve, accounts };
+  return { serve, accounts, catalog };
 };
 
 /**

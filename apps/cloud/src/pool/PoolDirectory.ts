@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 
 import type { LoginStart, LoginStatus, PoolLoginProvider } from "./cliProxyApi.ts";
 import type { PoolLinkTarget } from "./poolLink.ts";
+import type { PoolModels } from "./poolModels.ts";
 import {
   type AccountAction,
   type PoolAccounts,
@@ -54,6 +55,8 @@ export interface PoolObjectApi {
   /** Stops the pool's container and erases the pool. */
   readonly delete: (actor: PoolActor) => Promise<PoolReply<null>>;
   readonly accounts: (actor: PoolActor) => Promise<PoolReply<PoolAccounts>>;
+  /** The models the pool serves, for the check at turn start (`thread/TurnModels.ts`). */
+  readonly models: (actor: PoolActor) => Promise<PoolReply<PoolModels>>;
   readonly startLogin: (
     actor: PoolActor,
     provider: PoolLoginProvider,
@@ -132,6 +135,7 @@ const METHODS = Object.keys({
   setBacking: true,
   delete: true,
   accounts: true,
+  models: true,
   startLogin: true,
   loginStatus: true,
   completeLogin: true,

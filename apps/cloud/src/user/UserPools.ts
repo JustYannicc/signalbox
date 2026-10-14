@@ -235,7 +235,11 @@ const make = Effect.gen(function* () {
                       error: message,
                     })),
                 }),
-                Effect.map((accounts) => ({ pool, source: usageSource({ pool, accounts }, now) })),
+                Effect.map((accounts): PoolEntry => ({
+                  pool,
+                  source: usageSource({ pool, accounts }, now),
+                  models: "models" in accounts ? accounts.models : [],
+                })),
               ),
           { concurrency: "unbounded" },
         );
