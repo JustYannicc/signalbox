@@ -4,6 +4,7 @@ import {
   request,
   type EnvironmentRpcSubscriptionObservation,
 } from "@t3tools/client-runtime/rpc";
+import { unlessSignalboxCloud } from "@t3tools/client-runtime/signalboxCloudActivity";
 import {
   type BackgroundScope,
   type ClientActivityReportInput,
@@ -202,9 +203,11 @@ export const layer = Layer.effectDiscard(
           registry
             .run(
               environmentId,
-              request(
-                WS_METHODS.serverReportClientActivity,
-                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
+              unlessSignalboxCloud(
+                request(
+                  WS_METHODS.serverReportClientActivity,
+                  createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
+                ),
               ),
             )
             .pipe(Effect.ignore),

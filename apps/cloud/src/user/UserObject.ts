@@ -6,7 +6,6 @@ import { DurableObject } from "cloudflare:workers";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -38,7 +37,7 @@ import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
-import { serveConnection } from "./connection.ts";
+import { ClientSockets, PING, PONG } from "./clientSockets.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import {
   CONNECTION_HEADER,
@@ -68,8 +67,8 @@ import * as UserStore from "./UserStore.ts";
  * authenticates every request before it gets here and forwards a socket's
  * session in `CONNECTION_HEADER`.
  *
- * Sockets use the standard (non-hibernating) API, so an object stays in memory
- * while a client is connected.
+ * Client sockets hibernate (`clientSockets.ts`), so an object whose clients
+ * are only connected leaves memory and costs nothing until something happens.
  */
 
 export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv {
@@ -206,8 +205,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   private readonly identity: Environment.CloudEnvironmentIdentity;
   /** The person's MCP server (`api/mcpObject.ts`), made on first use. */
   private mcp: ReturnType<typeof makeMcpHandler> | undefined;
-  /** Open sockets per session, so revoking a session also disconnects it. */
-  private readonly connections = new Map<string, Set<Fiber.Fiber<void>>>();
+  private readonly sockets: ClientSockets;
 
   constructor(ctx: DurableObjectState, env: UserObjectEnv) {
     super(ctx, env);
@@ -226,7 +224,22 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
-    void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));
+    this.sockets = new ClientSockets({
+      ctx,
+      identity: this.identity,
+      run: (effect) => this.runtime.runPromise(effect),
+    });
+    // Client keepalives are answered without waking a hibernating object.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
+    // Serves sockets that outlived the object's memory before anything else runs.
+    void ctx.blockConcurrencyWhile(async () => {
+      await this.runtime.runPromise(UserStore.migrate);
+      await this.sockets.restore(await this.now());
+    });
+  }
+
+  private now() {
+    return this.runtime.runPromise(Clock.currentTimeMillis);
   }
 
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
@@ -252,8 +265,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   async revokeSession(sid: string) {
     const revoked = await this.api.revokeSession(sid);
-    const fibers = this.connections.get(sid);
-    if (fibers) await this.runtime.runPromise(Fiber.interruptAll(fibers));
+    await this.sockets.revoke(sid);
     return revoked;
   }
 
@@ -417,39 +429,31 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     if (!session || !profile) return new Response("Unauthorized", { status: 401 });
 
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
-    server.accept();
-    const fibers = this.connections.get(sid) ?? new Set();
-    this.connections.set(sid, fibers);
-    const fiber = this.runtime.runFork(
-      serveConnection({
-        webSocket: server,
-        scopes: session.scopes,
-        identity: this.identity,
-        userId: profile.id,
-        sid,
-      }).pipe(
-        // An open socket never outlives its session.
-        Effect.raceFirst(
-          Clock.currentTimeMillis.pipe(
-            Effect.flatMap((now) => Effect.sleep(Math.max(0, session.expiresAt - now))),
-          ),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            fibers.delete(fiber);
-            if (fibers.size === 0) this.connections.delete(sid);
-            try {
-              server.close(1000);
-            } catch {
-              // Already closed by the client.
-            }
-          }),
-        ),
-      ),
-    );
-    fibers.add(fiber);
-    // A revoke that landed while the socket was being set up missed this fiber.
-    if (!(await this.findSession(sid))) await this.runtime.runPromise(Fiber.interrupt(fiber));
+    await this.sockets.accept(server, session, profile.id);
+    // The alarm disconnects it when its session expires.
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > session.expiresAt)
+      await this.ctx.storage.setAlarm(session.expiresAt);
+    // A revoke that landed while the socket was being set up missed it.
+    if (!(await this.findSession(sid))) await this.sockets.revoke(sid);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    await this.sockets.message(socket, message);
+  }
+
+  override async webSocketClose(socket: WebSocket, code: number, reason: string) {
+    await this.sockets.closed(socket, code, reason);
+  }
+
+  override async webSocketError(socket: WebSocket) {
+    await this.sockets.closed(socket);
+  }
+
+  /** Only client sockets' session expiry sets the alarm. */
+  override async alarm() {
+    const next = await this.sockets.expire(await this.now());
+    if (next !== null) await this.ctx.storage.setAlarm(next);
   }
 }

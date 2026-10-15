@@ -127,6 +127,10 @@
       "types": "./src/t3ToolSummary.ts",
       "default": "./src/t3ToolSummary.ts"
     },
+    "./signalboxCloudActivity": {
+      "types": "./src/signalboxCloudActivity.ts",
+      "default": "./src/signalboxCloudActivity.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
