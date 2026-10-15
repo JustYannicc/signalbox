@@ -391,6 +391,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.publishBranch(input);
   }
 
+  automationTool(threadId: string, name: string, input: unknown) {
+    return this.api.automationTool(threadId, name, input);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });

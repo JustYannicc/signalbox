@@ -4,6 +4,7 @@ import {
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
+import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
 import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import type { AccountProfile } from "@t3tools/contracts/account";
@@ -171,6 +172,11 @@ export interface UserObjectApi {
     readonly driveId: string;
     readonly request: PublishRequest;
   }) => Promise<PublishResult>;
+  /**
+   * An automation tool a thread's agent called from its machine, for that
+   * thread (`drive/automationRoutes.ts`). The engine's refusal is an answer.
+   */
+  readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
 }
 
 type Method = keyof UserObjectApi;
@@ -233,6 +239,7 @@ const METHODS = Object.keys({
   driveAccess: true,
   readableDrives: true,
   publishBranch: true,
+  automationTool: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** Results that cross RPC encoded, decoded on arrival. */
