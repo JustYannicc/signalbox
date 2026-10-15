@@ -26,6 +26,7 @@ export const serveConnection = (input: {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly identity: Environment.CloudEnvironmentIdentity;
   readonly userId: string;
+  readonly sid: string;
 }) =>
   Effect.gen(function* () {
     const socket = yield* Socket.fromWebSocket(Effect.succeed(input.webSocket));
@@ -46,7 +47,11 @@ export const serveConnection = (input: {
       Effect.provideService(RpcServer.Protocol, protocol),
       Effect.provide(
         Layer.mergeAll(
-          CloudRpc.layerHandlers({ identity: input.identity, userId: input.userId }),
+          CloudRpc.layerHandlers({
+            identity: input.identity,
+            userId: input.userId,
+            sid: input.sid,
+          }),
           CloudRpc.layerScopeAuthorization(input.scopes),
         ),
       ),

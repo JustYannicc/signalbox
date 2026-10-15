@@ -73,6 +73,7 @@ import {
   STAGE_INSTALL_ARGS,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
+  hasNativeLoaderMarkers,
   LinuxBrowserSecretHostError,
   stageBrowserSecret,
   validateWindowsPackagedPayload,
@@ -2564,3 +2565,36 @@ it("ignores trailing separators", () => {
     ancestorNodeModulesPaths("C:\\tmp\\probe\\app", "\\"),
   );
 });
+
+// napi-rs packages (oxc-parser, oxc-transform) carry neither binding.gyp nor
+// prebuilds: their loader requires a per-platform optional package instead.
+// Missing that shape let oxc-parser be inlined into the server bundle, and the
+// packaged backend then died looking for @oxc-parser/binding-<platform>.
+it.effect("treats napi-rs loaders as native", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-native-markers-" });
+    const writeManifest = (name: string, manifest: object) =>
+      Effect.gen(function* () {
+        const packageDir = path.join(root, name);
+        yield* fs.makeDirectory(packageDir, { recursive: true });
+        yield* fs.writeFileString(path.join(packageDir, "package.json"), JSON.stringify(manifest));
+        return packageDir;
+      });
+
+    const napiLoader = yield* writeManifest("napi-loader", {
+      name: "napi-loader",
+      dependencies: { "@oxc-project/types": "^0.148.0" },
+      napi: { binaryName: "parser", packageName: "@napi-loader/binding" },
+      optionalDependencies: { "@napi-loader/binding-darwin-arm64": "1.0.0" },
+    });
+    const plainPackage = yield* writeManifest("plain", {
+      name: "plain",
+      dependencies: { yaml: "^2.0.0" },
+    });
+
+    assert.strictEqual(yield* hasNativeLoaderMarkers(napiLoader), true);
+    assert.strictEqual(yield* hasNativeLoaderMarkers(plainPackage), false);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

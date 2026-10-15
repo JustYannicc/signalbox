@@ -44,6 +44,10 @@ import {
   SignalboxPreviewsUnavailableError,
 } from "@t3tools/contracts/signalboxPreviews";
 import {
+  SIGNALBOX_PUSH_REQUIRED_SCOPES,
+  SIGNALBOX_PUSH_WS_METHODS,
+} from "@t3tools/contracts/signalboxPush";
+import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
@@ -56,6 +60,7 @@ import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type { SqlError } from "effect/sql/SqlError";
 
+import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
@@ -64,6 +69,7 @@ import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
+import { makePushHandlers } from "../push/pushRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -103,6 +109,8 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+  // Images tools returned in a thread (`assets/CloudAssets.ts`).
+  WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
   // Drives, browsed without a machine (`driveBrowsing.ts`).
   WS_METHODS.projectsListEntries,
@@ -126,6 +134,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
+  ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
@@ -156,6 +165,8 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  // A cloud serves only tool output images, which a self-hosted server gates on this scope.
+  [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
@@ -177,6 +188,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
+  ...SIGNALBOX_PUSH_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
@@ -272,11 +284,14 @@ const storageFailed = (cause: unknown) =>
 export const layerHandlers = (input: {
   readonly identity: Environment.CloudEnvironmentIdentity;
   readonly userId: string;
+  /** The socket's session; phones it registers get pushes while it lives. */
+  readonly sid: string;
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
+      const assets = yield* CloudAssets.CloudAssets;
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
@@ -327,8 +342,10 @@ export const layerHandlers = (input: {
       const sharingCall = withDrives(sharing);
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
+      const pushes = yield* makePushHandlers(input.sid);
       return {
         ...pools.handlers,
+        ...pushes,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
@@ -410,6 +427,8 @@ export const layerHandlers = (input: {
             (message) =>
               new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message }),
           ),
+        [WS_METHODS.assetsCreateUrl]: ({ resource }) =>
+          Effect.flatMap(actorNow, (actor) => assets.createUrl(actor, resource)),
         // Scratch is the Personal context's project, always in the shell.
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),
