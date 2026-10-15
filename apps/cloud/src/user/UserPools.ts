@@ -165,7 +165,7 @@ const make = Effect.gen(function* () {
   const folders = yield* UserFolders.UserFolders;
   const crypto = yield* Crypto.Crypto;
   /** Pool ids: 8 lowercase hex characters, like a self-hosted server's. */
-  const newPoolId = Effect.map(Effect.orDie(crypto.randomUUIDv4), (uuid) =>
+  const newPoolId = Effect.map(Effect.orDie(crypto.randomUUIDv4()), (uuid) =>
     uuid.replaceAll("-", "").slice(0, 8),
   );
   // None until the first read; reads take turns so a change is read once.

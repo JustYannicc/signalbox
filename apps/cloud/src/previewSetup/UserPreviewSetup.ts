@@ -116,7 +116,7 @@ export const layer = Layer.effect(
 
     const issueCode: UserPreviewSetup["Service"]["issueCode"] = (input) =>
       Effect.gen(function* () {
-        const gid = yield* Effect.orDie(crypto.randomUUIDv4);
+        const gid = yield* Effect.orDie(crypto.randomUUIDv4());
         const now = yield* Clock.currentTimeMillis;
         yield* sql`DELETE FROM preview_setup_codes WHERE expires_at <= ${now}`;
         yield* sql`INSERT INTO preview_setup_codes (gid, origin, challenge, expires_at)
