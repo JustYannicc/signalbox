@@ -114,16 +114,18 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         const stdin = [commit, ...have.flatMap((oid) => [`^${oid}`, `^${oid}^{tree}`]), ""].join(
           "\n",
         );
-        const args = [
-          "pack-objects",
-          "--revs",
-          // The remote's files stay on the remote: the drive holds them as promised.
-          ...(options.remoteHead === true ? ["--filter=blob:none"] : []),
-          "--delta-base-offset",
-          "-q",
-          path.join(tmp, "pack"),
-        ];
-        const hash = (yield* git.run(args, { stdin })).trim();
+        const into = ["pack-objects", "--delta-base-offset", "-q", path.join(tmp, "pack")];
+        // The remote's files stay on the remote: the drive holds them as promised. Listed
+        // first and packed by name, since git before 2.42 filters only into `--stdout`.
+        const hash = (
+          options.remoteHead === true
+            ? yield* git.run(into, {
+                stdin: yield* git.run(["rev-list", "--objects", "--filter=blob:none", "--stdin"], {
+                  stdin,
+                }),
+              })
+            : yield* git.run(["pack-objects", "--revs", ...into.slice(1)], { stdin })
+        ).trim();
         const file = (ext: string) => path.join(tmp, `pack-${hash}.${ext}`);
         const result = yield* client.uploadPack(
           yield* fs.readFile(file("idx")),
