@@ -4,6 +4,7 @@ import type { AccountPool } from "@t3tools/contracts/accountHub";
 import { useAccountPools } from "../../state/accountPools";
 import { useSettingsScope } from "../settings/SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { LocalPoolKeys } from "./LocalPoolKeys";
 import { MoveNativeLogins } from "./MoveNativeLogins";
 import { NewPoolButton, PoolActionsMenu } from "./PoolActions";
 
@@ -42,6 +43,7 @@ function EnvironmentPools({ environmentId }: { readonly environmentId: Environme
           />
         ))}
       </SettingsSection>
+      <LocalPoolKeys environmentId={environmentId} />
     </SettingsPageContainer>
   );
 }
