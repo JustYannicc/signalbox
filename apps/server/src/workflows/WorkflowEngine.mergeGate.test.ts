@@ -303,7 +303,7 @@ export default workflow(async (w) => {
         draft: true,
       });
       if (!draft.ok) throw new Error("draft didn't save");
-      yield* engine.publish(draft.automation.id, "person");
+      yield* engine.publish(draft.automation.id, { version: draft.automation.draftVersion! });
       expect((yield* run(draft.automation.id)).status).toBe("succeeded");
       expect(tools.calls.map((call) => call.tool)).toEqual(["pull_request_action"]);
 
@@ -316,10 +316,73 @@ export default workflow(async (w) => {
         draft: true,
       });
       if (!away.ok) throw new Error("draft didn't save");
-      yield* engine.publish(away.automation.id, "person");
+      yield* engine.publish(away.automation.id, { version: away.automation.draftVersion! });
       const elsewhere = yield* run(away.automation.id);
       expect(elsewhere.status).toBe("failed");
       expect(elsewhere.error).toContain("only acts on threads in the automation's own project");
+    }),
+  );
+});
+
+it.effect("publishing vouches only for the draft version the person reviewed", () => {
+  const threads = linkedThreads();
+  const tools = fakeTools({ pull_request_action: { state: "merged", moved: false } });
+  const source = (step: string) => `export const meta = { name: "Merge on green" } as const;
+export default workflow(async (w) => {
+  return await w.call("${step}", "signalbox.pull_request_action", { threadId: "thread-9", url: "${PR_URL}", action: "merge" });
+});`;
+  const saveDraft = (step: string) =>
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const saved = yield* engine.save({
+        source: source(step),
+        projectId: "project-automations" as never,
+        defaults: DEFAULTS,
+        draft: true,
+      });
+      if (!saved.ok) throw new Error("draft didn't save");
+      return saved.automation;
+    });
+  return withEngine(
+    { threads },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      yield* engine.registerBuiltinTools(tools.handler);
+      const reviewed = yield* saveDraft("Merge it");
+      // An agent saves a newer draft after the person looked at the first one.
+      const swapped = yield* saveDraft("Merge it now");
+      expect(swapped.draftVersion).not.toBe(reviewed.draftVersion);
+      const refused = yield* Effect.flip(
+        engine.publish(reviewed.id, { version: reviewed.draftVersion! }),
+      );
+      expect(refused.message).toContain("The draft changed since you looked");
+
+      // Publishing without saying which version goes live but vouches for nothing.
+      yield* engine.publish(reviewed.id);
+      const started = yield* engine.startRun({ automationId: reviewed.id, trigger: "manual" });
+      yield* engine.drain;
+      expect((yield* engine.getRun(started.id)).run.error).toContain(
+        "Only Signalbox's own automations, or one a person published",
+      );
+      expect(tools.calls).toEqual([]);
+    }),
+  );
+});
+
+it.effect("an approval the host can't pin to a commit says so", () => {
+  const threads = linkedThreads();
+  const tools = fakeTools({ pull_request_read: { ...READ, headSha: null } });
+  return withEngine(
+    { threads },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      yield* engine.registerBuiltinTools(tools.handler);
+      const ask = yield* requestMerge(engine);
+      expect(ask.ask.args).toEqual([
+        expect.objectContaining({
+          question: expect.stringContaining("this approval isn't pinned to one"),
+        }),
+      ]);
     }),
   );
 });

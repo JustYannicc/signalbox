@@ -34,9 +34,11 @@ export function AutomationDraftBar(props: {
   const discard = useAutomationCommand(automationState.discardDraft, "Couldn't discard the draft");
   const busy = publish.busy || discard.busy;
   const input = { automationId: automation.id };
+  // Publishing vouches for exactly the version shown here; a newer draft is refused.
+  const publishInput = { automationId: automation.id, version: draft.version };
 
   const runPublish = async () => {
-    if (await publish.run({ environmentId, input })) {
+    if (await publish.run({ environmentId, input: publishInput })) {
       toastManager.add({ type: "success", title: `Version ${draft.version} is live` });
     }
   };

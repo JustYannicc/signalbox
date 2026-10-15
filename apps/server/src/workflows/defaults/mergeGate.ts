@@ -32,10 +32,14 @@ export default workflow(async (w, input: Input, trigger: { attach?: { threadId: 
   const pr: PullRequest = await w.call("Read the pull request", "signalbox.pull_request_read", { threadId, url: input.url });
   const name = \`\${pr.repository}#\${pr.number} (\${input.url})\`;
   const commit = pr.headSha ? pr.headSha.slice(0, 7) : "its current head";
+  // Without a head commit from the host there's nothing to pin the approval to; say so.
+  const pinned = pr.headSha
+    ? \`At \${commit}.\`
+    : "The host didn't report a head commit, so this approval isn't pinned to one: whatever is the head when you choose merge, merges.";
 
   // The approval is for this commit; anything pushed later needs its own.
   const answer = await w.ask(\`Merge \${pr.repository}#\${pr.number}?\`, {
-    question: [pr.title, input.url, \`At \${commit}.\`, input.note].filter(Boolean).join("\\n\\n"),
+    question: [pr.title, input.url, pinned, input.note].filter(Boolean).join("\\n\\n"),
     options: ["merge", "not yet"],
     fields: { reason: { type: "longText", label: "Anything to do first?" } },
   });
