@@ -92,6 +92,7 @@ import {
   useProjects,
   useThreadShells,
   useThreadShellsForProjectRefs,
+  waitForProjectRemoval,
 } from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -232,6 +233,11 @@ import {
 import { SectionsProjectTree } from "./sidebar/sections/SectionsProjectTree";
 import { useSectionsSidebar } from "./sidebar/sections/useSectionsSidebar";
 import { visibleSectionThreadKeys } from "./sidebar/sections/sectionSidebarViewModel";
+import {
+  NO_PROJECT_REFS,
+  SidebarProjectHeader,
+  useSidebarThreadScope,
+} from "./sidebar/folders/threadScope"; // signalbox: folders
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -1174,7 +1180,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     sectionRowKey,
     sectionActions,
     isThreadListExpanded,
-    activeRouteThreadKey,
+    activeRouteThreadKey: projectActiveThreadKey,
     openPullRequestsInRightPanel,
     newThreadShortcutLabel,
     handleNewThread,
@@ -1191,6 +1197,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
+  const threadScope = useSidebarThreadScope(); // signalbox: a folder's threads (`sidebar/folders`)
+  const activeRouteThreadKey = threadScope ? threadScope.activeThreadKey : projectActiveThreadKey;
   const settingsProjectKey = requestedSettingsProjectKey ?? project.projectKey;
   const environmentMachine = project.allRemoteMembersAreWsl
     ? "linux"
@@ -1271,7 +1279,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
-  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const projectThreadShells = useThreadShellsForProjectRefs(
+    threadScope ? NO_PROJECT_REFS : project.memberProjectRefs,
+  );
+  const sidebarThreads = threadScope?.threads ?? projectThreadShells;
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -1293,9 +1304,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [project, sectionRowKey],
   );
   const projectListKey = sectionRowKey ?? project.projectKey;
-  const projectExpanded = useUiStateStore((state) =>
+  const storedProjectExpanded = useUiStateStore((state) =>
     resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
   );
+  const projectExpanded = threadScope !== null || storedProjectExpanded;
   const threadLastVisitedAts = useUiStateStore(
     useShallow((state) =>
       projectThreads.map(
@@ -1554,6 +1566,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (result._tag === "Failure") {
         return result;
       }
+      await waitForProjectRemoval(memberProjectRef);
       const draftStore = useComposerDraftStore.getState();
       releaseProjectDraftUploads(
         memberProjectRef,
@@ -2319,12 +2332,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         thread.environmentId,
         AuthOrchestrationOperateScope,
       );
+      const scopeMenu = threadScope?.threadMenu(thread);
       const clicked = await api.contextMenu.show(
         [
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
+          ...(scopeMenu?.items ?? []),
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2340,11 +2355,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         position,
       );
 
+      if (clicked && scopeMenu?.select(clicked)) return;
       if (clicked === "project-settings") {
         if (isMobile) setOpenMobile(false);
         void router.navigate({
           to: "/projects/$projectKey",
-          params: { projectKey: settingsProjectKey },
+          params: { projectKey: threadScope?.settingsProjectKey(thread) ?? settingsProjectKey },
         });
         return;
       }
@@ -2441,12 +2457,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       router,
       setOpenMobile,
       startThreadRename,
+      threadScope,
     ],
   );
 
   return (
     <>
-      <div className="group/project-header relative">
+      <SidebarProjectHeader>
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
           className={isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : undefined}
@@ -2556,7 +2573,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
           </TooltipPopup>
         </Tooltip>
-      </div>
+      </SidebarProjectHeader>
 
       <SidebarProjectThreadList
         projectKey={projectListKey}
@@ -3124,7 +3141,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       <LocalSecondaryStatus />
       <SidebarGroup>
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-          <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
+          <span className="text-xs font-medium text-sidebar-muted-foreground/80">
+            {sectionsSidebar.labels.title /* signalbox: folders */}
+          </span>
           <div className="flex items-center gap-1">
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
@@ -3141,7 +3160,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    aria-label="Add project"
+                    aria-label={sectionsSidebar.labels.add /* signalbox: folders */}
                     data-testid="sidebar-add-project-trigger"
                     onClick={openAddProject}
                   />
@@ -3149,7 +3168,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               >
                 <FolderPlusIcon className="size-3.5" />
               </TooltipTrigger>
-              <TooltipPopup side="right">Add project</TooltipPopup>
+              <TooltipPopup side="right">
+                {sectionsSidebar.labels.add /* signalbox: folders */}
+              </TooltipPopup>
             </Tooltip>
             {sectionsSidebar.createOptions.length > 0 ? (
               <Tooltip>
@@ -3175,6 +3196,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <SectionsProjectTree
             environments={sectionsSidebar.environments}
             showEnvironmentLabels={sectionsSidebar.showEnvironmentLabels}
+            folders={sectionsSidebar.folders}
             collapsedSections={sectionsSidebar.collapsedSections}
             onToggleSection={sectionsSidebar.toggleSection}
             renderProject={(environmentId, row, _sectionId, _siblingProjectIds, actions) => (

@@ -39,6 +39,7 @@ import {
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { ThreadPreviewsControl } from "./ThreadPreviewsControl"; // signalbox: previews
+import { useFolderBreadcrumb } from "../sidebar/folders/useFolderBreadcrumb"; // signalbox: folders
 import { useClientSettings } from "../../hooks/useSettings";
 
 interface ChatHeaderProps {
@@ -88,7 +89,13 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
 }: ChatHeaderProps) {
-  const activeProjectName = activeProject?.title;
+  // signalbox: where the environment keeps folders, the header names the thread's folder.
+  const folderCrumb = useFolderBreadcrumb({
+    environmentId: activeThreadEnvironmentId,
+    threadId: activeThreadId,
+    projectId: activeProject?.id ?? null,
+  });
+  const activeProjectName = folderCrumb?.label ?? activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
@@ -323,12 +330,14 @@ export const ChatHeader = memo(function ChatHeader({
                     <button
                       type="button"
                       aria-label={`New thread in ${activeProjectName}`}
-                      onClick={onNewThreadInProject}
+                      onClick={folderCrumb?.onNewThread ?? onNewThreadInProject}
                       className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                     />
                   }
                 >
-                  <ProjectFavicon project={activeProject} className="size-3.5" />
+                  {folderCrumb ? null : (
+                    <ProjectFavicon project={activeProject} className="size-3.5" />
+                  )}
                   <WorkspaceBreadcrumbText className="max-w-40">
                     {activeProjectName}
                   </WorkspaceBreadcrumbText>

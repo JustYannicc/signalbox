@@ -10,7 +10,9 @@ const aggregateOf = (tag: SignalboxRpc["_tag"]) =>
       ? "analytics"
       : tag.startsWith("sections.")
         ? "sections"
-        : "provider";
+        : tag.startsWith("signalbox.folders.")
+          ? "folders"
+          : "provider";
 
 /**
  * The `rpc.aggregate` span label of every Signalbox RPC, spread into upstream's

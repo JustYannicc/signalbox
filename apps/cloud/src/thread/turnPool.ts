@@ -5,24 +5,41 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { poolInstanceId } from "@t3tools/contracts/accountHub";
+import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 
 import { poolKindOfInstance } from "./providerCatalog.ts";
 
 /**
- * The pool a thread's turns run on. The owner's object resolves it from the
- * tree (`user/poolChain.ts`) and sends it with each command; the thread takes
- * its own project's. A selection names only a harness: whichever pool its
- * instance id names, the turn runs on the resolved pool's instance of it.
+ * What a thread's turns run on and follow: its pool, and its chain's
+ * `AGENTS.md`. The owner's object resolves both from the tree
+ * (`user/folderTree.ts`) and sends them with each command: for the thread's
+ * own home when it knows the thread, and for each project's home, so the
+ * thread object can pick by the project it knows. A selection names only a
+ * harness: whichever pool its instance id names, the turn runs on the
+ * resolved pool's instance of it.
  */
 
-/** Each project's pool, and the top level's for anything else. Null: none on the chain. */
-export interface TurnPools {
-  readonly top: string | null;
-  readonly projects: Readonly<Record<string, string | null>>;
+/** One value per home a thread can have. */
+export interface ByHome<A> {
+  readonly top: A;
+  /** Each project's home's: where its threads live unless filed elsewhere. */
+  readonly projects: Readonly<Record<string, A>>;
+  /** The thread's own home's, when the owner's object knows the thread. */
+  readonly thread?: A;
 }
 
-export const poolOfProject = (pools: TurnPools, projectId: string): string | null =>
-  Object.hasOwn(pools.projects, projectId) ? (pools.projects[projectId] ?? null) : pools.top;
+/** Null: no pool on the chain. */
+export type TurnPools = ByHome<string | null>;
+/** Top level first. */
+export type TurnInstructions = ByHome<ReadonlyArray<FolderInstructions>>;
+
+/** The value for a thread in `projectId`. */
+export const forThread = <A>(byHome: ByHome<A>, projectId: string): A =>
+  byHome.thread !== undefined
+    ? byHome.thread
+    : Object.hasOwn(byHome.projects, projectId)
+      ? (byHome.projects[projectId] as A)
+      : byHome.top;
 
 /** `selection` on `poolId`'s instance of the same harness; other providers stay as they are. */
 export const onPool = (selection: ModelSelection, poolId: string): ModelSelection => {

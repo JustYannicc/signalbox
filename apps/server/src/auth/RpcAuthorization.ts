@@ -38,6 +38,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import { SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES } from "../signalbox/analytics/rpc.ts"; // signalbox: analytics
 import { SIGNALBOX_CONTEXTS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
 import { SIGNALBOX_DRIVES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxDrives"; // signalbox: drives
+import { SIGNALBOX_FOLDERS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxFolders"; // signalbox: folders
 import { SIGNALBOX_PREVIEWS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
 import { SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxRepositories"; // signalbox: repositories
 import { SECTIONS_RPC_REQUIRED_SCOPES } from "../sections/rpcScopes.ts"; // signalbox: sections
@@ -56,6 +57,7 @@ export const RPC_REQUIRED_SCOPES = {
   ...SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES, // signalbox: analytics
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES, // signalbox: contexts
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES, // signalbox: drives
+  ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES, // signalbox: folders
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES, // signalbox: previews
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES, // signalbox: repositories
   ...SECTIONS_RPC_REQUIRED_SCOPES, // signalbox: sections

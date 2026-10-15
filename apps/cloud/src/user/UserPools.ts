@@ -27,7 +27,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import type { PoolActor, PoolRejectedError } from "../pool/PoolEngine.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { encodeLinkToken } from "../pool/poolLink.ts";
-import * as UserSections from "./UserSections.ts";
+import * as UserFolders from "./UserFolders.ts";
 import {
   type PoolEntry,
   type UserPool,
@@ -46,7 +46,7 @@ import {
  * The pools with their accounts are read once per change and shared by every
  * subscription on every connection.
  *
- * Which pool a thread runs on is placed in the user's tree (`UserSections`,
+ * Which pool a thread runs on is placed in the user's tree (`UserFolders`,
  * `poolChain.ts`); deleting a pool takes it off every level there.
  */
 
@@ -162,10 +162,10 @@ const poolFailure = (error: PoolDirectory.PoolObjectError | PoolRejectedError) =
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const directory = yield* PoolDirectory.PoolDirectory;
-  const sections = yield* UserSections.UserSections;
+  const folders = yield* UserFolders.UserFolders;
   const crypto = yield* Crypto.Crypto;
   /** Pool ids: 8 lowercase hex characters, like a self-hosted server's. */
-  const newPoolId = Effect.map(Effect.orDie(crypto.randomUUIDv4), (uuid) =>
+  const newPoolId = Effect.map(Effect.orDie(crypto.randomUUIDv4()), (uuid) =>
     uuid.replaceAll("-", "").slice(0, 8),
   );
   // None until the first read; reads take turns so a change is read once.
@@ -317,7 +317,7 @@ const make = Effect.gen(function* () {
       // left behind by a failure here can be deleted again.
       yield* call(directory.forPool(pool.objectName).delete(actor));
       yield* sql`DELETE FROM pools WHERE id = ${pool.id}`.pipe(
-        Effect.andThen(sections.forgetPool(pool.id)),
+        Effect.andThen(folders.forgetPool(pool.id)),
         Effect.catchTags({ SqlError: storageFailed }),
       );
       yield* refresh(actor);

@@ -136,8 +136,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server checks OTLP endpoints for the telemetry export settings. */
   otlpEndpointCheck: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
+  settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   /** Server honors the `worktreesDirectory` setting. */
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
+  /** Server can exclude PR-linked threads from inactivity settlement. */
+  threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),
   /** Server persists the opt-in for continuing interrupted threads after restarts. */
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   /** Server resolves `projectSettingsOverrides`; older servers ignore the key. */
@@ -229,6 +232,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   serverBrowser: Schema.optionalKey(Schema.Boolean),
   /** Server persists organizational sections and per-project placements. */
   sections: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: Server keeps the user's folders and thread homes (`signalboxFolders.ts`). */
+  folders: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Signalbox Cloud opens threads' dev servers through its PreviewGateway (`signalboxPreviews.ts`). */
   signalboxPreviews: Schema.optionalKey(Schema.Boolean),
   /** signalbox: What this environment's pools can do. Absent: everything (`accountHub.ts`). */

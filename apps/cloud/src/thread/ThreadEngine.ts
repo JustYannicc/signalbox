@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -32,7 +33,13 @@ import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection } from "./threadProjection.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
-import { commandOnPool, onPool, poolOfProject, type TurnPools } from "./turnPool.ts";
+import {
+  commandOnPool,
+  forThread,
+  onPool,
+  type TurnInstructions,
+  type TurnPools,
+} from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
 import type { ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
 
@@ -102,6 +109,11 @@ export interface ThreadCreation {
    * never starts without its pool resolved.
    */
   readonly pools: TurnPools | null;
+  /**
+   * The `AGENTS.md` of every level on the thread's chain, resolved with
+   * `pools`; a turn it starts keeps them for the Runner. Absent: unresolved.
+   */
+  readonly instructions?: TurnInstructions;
 }
 
 const NO_CONTEXT =
@@ -254,7 +266,7 @@ const make = Effect.gen(function* () {
 
   const stamp = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
     Effect.forEach(events, (event) =>
-      Effect.map(Effect.orDie(crypto.randomUUIDv4), (id) => ({ ...event, id: EventId.make(id) })),
+      Effect.map(Effect.orDie(crypto.randomUUIDv4()), (id) => ({ ...event, id: EventId.make(id) })),
     );
 
   /** Commits decided events and publishes them. Callers hold the lock. */
@@ -268,6 +280,11 @@ const make = Effect.gen(function* () {
     /** Set by the commit that creates the thread. */
     readonly owner?: ThreadStore.ThreadOwner;
     readonly machine?: ThreadStore.MachineLease;
+    /** The chain's instructions for the run this commit starts. */
+    readonly instructions?: {
+      readonly runId: string;
+      readonly levels: ReadonlyArray<FolderInstructions>;
+    };
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
@@ -284,6 +301,7 @@ const make = Effect.gen(function* () {
         head: current.head,
         events,
         ...(input.command ? { command: input.command } : {}),
+        ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
         summaryChanged: nextKey !== current.summaryKey,
@@ -365,7 +383,7 @@ const make = Effect.gen(function* () {
         const pool =
           creation.pools === null || projectId === undefined
             ? undefined
-            : poolOfProject(creation.pools, projectId);
+            : forThread(creation.pools, projectId);
         const decision = decideWith(current.thread?.projection ?? null, yield* context, pool);
         const refuse = (message: string, options: { readonly record: boolean }) =>
           Effect.gen(function* () {
@@ -417,6 +435,16 @@ const make = Effect.gen(function* () {
                 }),
           },
           ...(place === null ? {} : { owner: { userId: actor.userId, ...place } }),
+          ...(started === undefined ||
+          creation.instructions === undefined ||
+          projectId === undefined
+            ? {}
+            : {
+                instructions: {
+                  runId: started.payload.id,
+                  levels: forThread(creation.instructions, projectId),
+                },
+              }),
         });
         return { sequence, replayed: false };
       }),

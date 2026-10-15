@@ -224,7 +224,7 @@ describe("RunnerShortcuts", () => {
         const error = yield* Effect.flip(runner.prepare("remote-token"));
         expect(error._tag).toBe("RunnerInstructionsError");
         expect(error.message).toMatch(
-          /^This drive's instructions come to 64\.\d KiB, over the 64\.0 KiB agents can load: AGENTS\.md 11 bytes, big\/AGENTS\.md 64\.0 KiB\. Shorten them or remove a shortcut/,
+          /^This thread's instructions come to 64\.\d KiB, over the 64\.0 KiB agents can load: AGENTS\.md 11 bytes, big\/AGENTS\.md 64\.0 KiB\. Shorten a folder's instructions or remove a shortcut/,
         );
         expect(bundle(cwd)).toBeNull();
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

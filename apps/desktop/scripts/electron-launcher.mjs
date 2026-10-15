@@ -20,7 +20,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.justyannicc.signalbox.dev.${devBundleIdSuffix || "local"}`
   : "com.justyannicc.signalbox";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["signalbox-dev"] : ["signalbox"];
-const LAUNCHER_VERSION = 19;
+const LAUNCHER_VERSION = 20;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -281,6 +281,8 @@ function patchMainBundleInfoPlist(appBundlePath, iconPath, executableName) {
   for (const [key, value] of Object.entries(resolveMacBundleInfoPlistStrings(executableName))) {
     setPlistString(infoPlistPath, key, value);
   }
+  // macOS 26 offers Messages/Mail codes in every text field unless opted out.
+  setPlistJson(infoPlistPath, "NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac", true);
   setPlistJson(infoPlistPath, "CFBundleURLTypes", [
     {
       CFBundleURLName: APP_BUNDLE_ID,

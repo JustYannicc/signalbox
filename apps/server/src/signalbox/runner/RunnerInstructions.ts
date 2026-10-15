@@ -4,11 +4,14 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import type { MountedShortcut } from "./RunnerShortcuts.ts";
 
 /**
- * The instructions a thread's agents follow when its drive has shortcuts
- * (#142). Neither harness looks for guidance in folders it only works in:
+ * The instructions a thread's agents follow beyond its drive's own: its
+ * folders' (#227) and its drive's shortcuts' (#142). The folders' come first,
+ * the top level's then each folder's down to the thread's home, as the cloud
+ * resolves them. Neither harness looks for guidance in folders it only works in:
  * Codex reads the `AGENTS.md` chain from its project root down to the working
  * directory, and Claude Code reads `CLAUDE.md` and (as the machine configures
  * it, `RunnerModelAccess.ts`) `AGENTS.md` up the same way. So the mounted
@@ -18,9 +21,10 @@ import type { MountedShortcut } from "./RunnerShortcuts.ts";
  * outside the drive's repository, so it is never saved, and the drive's own
  * `AGENTS.md` and `CLAUDE.md` stay exactly as they are.
  *
- * Each block is a mounted drive's root `AGENTS.override.md` or `AGENTS.md`
- * (the file Codex itself would pick), labeled with the folder it applies to,
- * in the drive's shortcut order. With no such files the bundle is removed.
+ * After the folders' blocks, each block is a mounted drive's root
+ * `AGENTS.override.md` or `AGENTS.md` (the file Codex itself would pick),
+ * labeled with the folder it applies to, in the drive's shortcut order. With
+ * nothing to bundle the bundle is removed.
  *
  * Codex silently cuts its instruction chain at `project_doc_max_bytes`; the
  * machine sets that to `INSTRUCTIONS_MAX_BYTES`, and a bundle that would not
@@ -47,12 +51,19 @@ export class RunnerInstructionsError extends Schema.TaggedError<RunnerInstructio
 const size = (bytes: number) =>
   bytes < 1024 ? `${bytes} bytes` : `${(bytes / 1024).toFixed(1)} KiB`;
 
-const HEADER = [
-  "# Instructions from shortcuts",
-  "",
-  "Signalbox wrote this file from the drive's shortcuts: folders that show another drive,",
-  "read-only, with that drive's own history. Each section is that drive's instructions and",
-  "applies only to files under its folder. The drive's own instructions apply everywhere else.",
+const HEADER = "# Instructions from Signalbox";
+
+const FOLDERS_HEADER = [
+  "Signalbox wrote this file. First come the instructions of the folders this thread",
+  "lives in: the top level's, then each folder's down to the thread's. Each adds to the",
+  "ones before it, and the nearer one wins where they disagree. The drive's own",
+  "instructions follow this file and are the nearest of all.",
+].join("\n");
+
+const SHORTCUTS_HEADER = [
+  "Then the drive's shortcuts: folders that show another drive, read-only, with that",
+  "drive's own history. Each section is that drive's instructions and applies only to",
+  "files under its folder. The drive's own instructions apply everywhere else.",
 ].join("\n");
 
 export const makeRunnerInstructions = Effect.fn("makeRunnerInstructions")(function* (input: {
@@ -79,11 +90,23 @@ export const makeRunnerInstructions = Effect.fn("makeRunnerInstructions")(functi
    * Writes the bundle for `mounted`, or removes it when there is nothing to
    * bundle, and answers its text: the instructions' version.
    */
-  const compose = (mounted: ReadonlyArray<MountedShortcut>) =>
+  const compose = (
+    mounted: ReadonlyArray<MountedShortcut>,
+    folders: ReadonlyArray<FolderInstructions> = [],
+  ) =>
     Effect.gen(function* () {
       const marker = path.join(root, ROOT_MARKER);
       if (!(yield* fs.exists(marker))) yield* fs.writeFileString(marker, "");
       const sources: Array<{ readonly label: string; readonly bytes: number }> = [];
+      const folderBlocks: Array<string> = [];
+      for (const folder of folders) {
+        if (folder.text.trim().length === 0) continue;
+        sources.push({
+          label: folder.label,
+          bytes: new TextEncoder().encode(folder.text).byteLength,
+        });
+        folderBlocks.push([`## ${folder.label}`, "", folder.text.trim()].join("\n"));
+      }
       const blocks: Array<string> = [];
       for (const shortcut of mounted) {
         const found = yield* instructionsIn(shortcut.dir);
@@ -102,11 +125,15 @@ export const makeRunnerInstructions = Effect.fn("makeRunnerInstructions")(functi
           ].join("\n"),
         );
       }
-      if (blocks.length === 0) {
+      if (folderBlocks.length === 0 && blocks.length === 0) {
         yield* fs.remove(bundleFile, { force: true });
         return "";
       }
-      const bundle = `${[HEADER, ...blocks].join("\n\n")}\n`;
+      const bundle = `${[
+        HEADER,
+        ...(folderBlocks.length === 0 ? [] : [FOLDERS_HEADER, ...folderBlocks]),
+        ...(blocks.length === 0 ? [] : [SHORTCUTS_HEADER, ...blocks]),
+      ].join("\n\n")}\n`;
       const bundleBytes = new TextEncoder().encode(bundle).byteLength;
       const own = yield* instructionsIn(input.cwd);
       const ownBytes = own === null ? 0 : new TextEncoder().encode(own.text).byteLength;
@@ -119,9 +146,9 @@ export const makeRunnerInstructions = Effect.fn("makeRunnerInstructions")(functi
         yield* fs.remove(bundleFile, { force: true });
         return yield* new RunnerInstructionsError({
           message:
-            `This drive's instructions come to ${size(bundleBytes + ownBytes)}, over the ` +
+            `This thread's instructions come to ${size(bundleBytes + ownBytes)}, over the ` +
             `${size(INSTRUCTIONS_MAX_BYTES)} agents can load: ${parts.join(", ")}. ` +
-            "Shorten them or remove a shortcut, then send the message again.",
+            "Shorten a folder's instructions or remove a shortcut, then send the message again.",
         });
       }
       const current = yield* fs.readFileString(bundleFile).pipe(Effect.orElseSucceed(() => null));

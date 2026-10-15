@@ -12,6 +12,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { GitHub } from "./GitHub.ts";
 import { GitHubError } from "./GitHubApi.ts";
+import { makeProfileId } from "../user/profileId.ts";
 
 /**
  * A user's GitHub connection, in their own object. WorkOS Pipes holds the
@@ -182,17 +183,7 @@ const make = Effect.gen(function* () {
     Ref.set(cached, null),
     sql`DELETE FROM github_connection`.pipe(Effect.asVoid),
   );
-  // The user this object belongs to, from `UserStore`'s profile (importing it would be a cycle).
-  // It never changes once known, so it's read until it is.
-  const knownUserId = yield* Ref.make<string | null>(null);
-  const userId = Effect.gen(function* () {
-    const known = yield* Ref.get(knownUserId);
-    if (known !== null) return known;
-    const rows = yield* sql<{ readonly id: string }>`SELECT id FROM profile LIMIT 1`;
-    const id = rows[0]?.id ?? null;
-    if (id !== null) yield* Ref.set(knownUserId, id);
-    return id;
-  });
+  const userId = yield* makeProfileId;
 
   /** Forgets the connection in WorkOS too; a failure there only gets logged. */
   const forgetEverywhere = Effect.gen(function* () {

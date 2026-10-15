@@ -60,6 +60,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import { SidebarViews } from "./sidebar/SidebarViews";
 import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons";
+import { FolderDialogs } from "./sidebar/folders/FolderDialogs"; // signalbox: folders
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -377,6 +378,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarControl />
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
+        <FolderDialogs />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

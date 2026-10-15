@@ -1,5 +1,6 @@
 import {
   type CommitAuthor,
+  type FolderInstructions,
   DRIVE_COMMIT_AUTHOR,
   DRIVE_MERGE_MESSAGE,
   type DriveFileChange,
@@ -83,11 +84,13 @@ export interface RunnerDrive {
    * first bringing a remote-backed drive's `main` up to the remote with the
    * turn's `remoteToken`, then mounts its shortcuts. Everything committed in
    * the checkout until the next turn start is by `author`, `DRIVE_COMMIT_AUTHOR`
-   * when not given. Fails when the shortcuts' instructions are too big to load.
+   * when not given. `folders` is the `AGENTS.md` of the thread's chain, top
+   * level first. Fails when the instructions are too big to load.
    */
   readonly prepare: (
     remoteToken: string | null,
     author?: CommitAuthor,
+    folders?: ReadonlyArray<FolderInstructions>,
   ) => Effect.Effect<PreparedDrive, RunnerDriveError | RunnerInstructionsError>;
   /** Starts an auto-save, or queues one behind the running one. Never fails. */
   readonly autosave: Effect.Effect<void>;
@@ -356,7 +359,11 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       });
     });
 
-  const prepare: RunnerDrive["prepare"] = (remoteToken, author = DRIVE_COMMIT_AUTHOR) =>
+  const prepare: RunnerDrive["prepare"] = (
+    remoteToken,
+    author = DRIVE_COMMIT_AUTHOR,
+    folders = [],
+  ) =>
     exclusive(
       Effect.gen(function* () {
         const existed = yield* fs.exists(gitDir);
@@ -380,7 +387,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         turnStart = yield* git.resolve("HEAD");
         const mounts = yield* shortcuts.mount(remoteToken);
         return {
-          instructions: yield* instructions.compose(mounts.mounted),
+          instructions: yield* instructions.compose(mounts.mounted, folders),
           notices: mounts.notices,
         } satisfies PreparedDrive;
       }),

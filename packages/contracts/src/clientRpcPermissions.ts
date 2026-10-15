@@ -9,6 +9,7 @@ import {
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 import { SIGNALBOX_DRIVES_WS_METHODS } from "./signalboxDrives.ts"; // signalbox: drives
+import { SIGNALBOX_FOLDERS_WS_METHODS } from "./signalboxFolders.ts"; // signalbox: folders
 import { SIGNALBOX_PREVIEWS_WS_METHODS } from "./signalboxPreviews.ts"; // signalbox: previews
 
 /** Incremental client enforcement; the server still authorizes every request. */
@@ -56,6 +57,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_DRIVES_WS_METHODS.addShortcut]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_PREVIEWS_WS_METHODS.open]: AuthOrchestrationOperateScope, // signalbox: previews
+  [SIGNALBOX_FOLDERS_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.update]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.move]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.delete]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.moveThread]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: AuthOrchestrationOperateScope, // signalbox: folders
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

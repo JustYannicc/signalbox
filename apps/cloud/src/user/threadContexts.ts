@@ -1,4 +1,4 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -6,10 +6,10 @@ import * as Layer from "effect/Layer";
 
 import { canWrite, parseDriveId } from "../drive/driveAccess.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
-import type { TurnPools } from "../thread/turnPool.ts";
+import type { TurnInstructions, TurnPools } from "../thread/turnPool.ts";
 import { driveOfProject } from "./contextProjects.ts";
 import * as UserDrives from "./UserDrives.ts";
-import * as UserSections from "./UserSections.ts";
+import * as UserFolders from "./UserFolders.ts";
 
 /** Where a new thread works: the drive it changes files in, and the context it acts as. */
 export interface ThreadPlace {
@@ -19,9 +19,15 @@ export interface ThreadPlace {
   readonly remote: boolean;
 }
 
+/** What a thread's next turn runs on and follows, from its home's chain. */
+export interface ThreadTurn {
+  readonly pools: TurnPools;
+  readonly instructions: TurnInstructions;
+}
+
 /**
  * What `CloudThreadService` needs to know about the user's tree: where a new
- * thread works, and the pool each project's turns run on.
+ * thread works, and what its turns run on and follow.
  */
 export class ThreadContexts extends Context.Service<
   ThreadContexts,
@@ -32,8 +38,11 @@ export class ThreadContexts extends Context.Service<
      * can't change files in its drive.
      */
     readonly placeOfProject: (projectId: ProjectId) => Effect.Effect<ThreadPlace | null>;
-    /** Each current project's pool now, resolved from the tree (`poolChain.ts`). */
-    readonly turnPools: Effect.Effect<TurnPools>;
+    /**
+     * The thread's turn now, resolved from its home's chain (`folderTree.ts`).
+     * `projectId`: the thread's, when the caller knows it (a create does).
+     */
+    readonly turn: (threadId: ThreadId, projectId: ProjectId | null) => Effect.Effect<ThreadTurn>;
   }
 >()("@signalbox/cloud/user/threadContexts") {}
 
@@ -42,7 +51,7 @@ export const layer = Layer.effect(
   ThreadContexts,
   Effect.gen(function* () {
     const drives = yield* UserDrives.UserDrives;
-    const sections = yield* UserSections.UserSections;
+    const folders = yield* UserFolders.UserFolders;
     const directory = yield* Effect.serviceOption(DriveDirectory);
     return ThreadContexts.of({
       placeOfProject: (projectId) =>
@@ -63,15 +72,7 @@ export const layer = Layer.effect(
           // A storage or drive failure is a bug or an outage, not a rejected command.
           Effect.orDie,
         ),
-      turnPools: sections.pools.pipe(
-        Effect.map((pools): TurnPools => ({
-          top: pools.top?.poolId ?? null,
-          projects: Object.fromEntries(
-            pools.projects.map((entry) => [entry.projectId, entry.pool?.poolId ?? null]),
-          ),
-        })),
-        Effect.orDie,
-      ),
+      turn: (threadId, projectId) => Effect.orDie(folders.turn({ threadId, projectId })),
     });
   }),
 );
@@ -81,6 +82,6 @@ export const layerWorker = Layer.succeed(
   ThreadContexts,
   ThreadContexts.of({
     placeOfProject: () => Effect.die("Threads are created in their user's object."),
-    turnPools: Effect.die("Turns start in their user's object."),
+    turn: () => Effect.die("Turns start in their user's object."),
   }),
 );

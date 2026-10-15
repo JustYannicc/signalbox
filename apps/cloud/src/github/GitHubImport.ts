@@ -156,7 +156,7 @@ export const makeGitHubImport = Effect.fn("makeGitHubImport")(function* () {
         return yield* repositoryError("clone", `${repository.full_name} is already a project.`);
       }
       const owner = yield* me;
-      const key = (yield* Effect.orDie(crypto.randomUUIDv4)).replaceAll("-", "");
+      const key = (yield* Effect.orDie(crypto.randomUUIDv4())).replaceAll("-", "");
       const driveId = sharedDriveId(PERSONAL_CONTEXT_ID, key);
       const drive = drives.value.forDrive(driveId);
       const unavailable = () => repositoryError("clone", "Drives are unavailable right now.");

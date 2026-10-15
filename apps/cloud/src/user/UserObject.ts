@@ -47,7 +47,8 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
 import * as UserPools from "./UserPools.ts";
-import * as UserSections from "./UserSections.ts";
+import * as LegacySections from "./legacySections.ts";
+import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 
@@ -133,7 +134,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ),
       ),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
-      Layer.provideMerge(UserSections.layer),
+      Layer.provideMerge(LegacySections.layer),
+      Layer.provideMerge(UserFolders.layer),
       Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
       Layer.provideMerge(
         GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(

@@ -26,7 +26,9 @@ export const environmentSectionTreesAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   const configs = get(environmentServerConfigsAtom);
   for (const environmentId of enabledEnvironmentIds(catalog)) {
-    if (configs.get(environmentId)?.environment.capabilities.sections !== true) continue;
+    const capabilities = configs.get(environmentId)?.environment.capabilities;
+    // Signalbox Cloud also serves sections for older clients; this one shows its folders.
+    if (capabilities?.sections !== true || capabilities.folders === true) continue;
     trees.set(environmentId, {
       status: get(environmentSections.stateAtom(environmentId)),
       snapshot: get(environmentSections.snapshotAtom(environmentId)),

@@ -23,12 +23,13 @@ import { DRIVES_ROOT, type DrivesView } from "./RunnerDrivesView.ts";
 export const CONTEXT_SERVER_NAME = "signalbox";
 
 export const CONTEXT_INSTRUCTIONS = [
-  `Everything your user can read is under ${DRIVES_ROOT}: ${DRIVES_ROOT}/<context>/My Drive, ${DRIVES_ROOT}/<context>/Shared drives/<name> and ${DRIVES_ROOT}/<context>/Shared with me/<name>, across all their contexts.`,
+  `Everything your user can read is under ${DRIVES_ROOT}: ${DRIVES_ROOT}/<owner>/My Drive, ${DRIVES_ROOT}/<owner>/Shared drives/<name> and ${DRIVES_ROOT}/<owner>/Shared with me/<name>, where an owner is Personal or one of their organizations.`,
   `It is read-only and pinned to the version at the start of this turn. Your working directory is your own drive, the only one you change: to reuse a file from another drive, copy it into your working directory.`,
   `When the user refers to work done elsewhere ("in drive B we implemented X"), call search_context first, then open_thread and drive_diff on what it found, and reproduce the change from the diff.`,
   `If search_context answers insufficient_evidence, say that you found nothing, with what you searched; never guess which work was meant.`,
   `Where ${DRIVES_ROOT} is not mounted as a folder, list_drives and read_drive_file read the same paths.`,
-  `In a project backed by a GitHub repository, push and create_pr publish this thread's branch; git push has no credential here.`,
+  `In a drive backed by a GitHub repository, push and create_pr publish this thread's branch; git push has no credential here.`,
+  `The instructions of the folders this thread lives in come first in your AGENTS.md, top level first; they apply to all your work here, not to one drive's files.`,
 ].join("\n");
 
 const DrivePath = Schema.String.annotate({
@@ -192,7 +193,7 @@ export const layerContextTools = (view: DrivesView) => {
       }),
       register({
         name: "list_drives",
-        description: `List a folder under ${DRIVES_ROOT}: the user's contexts, their drives, or a folder in a drive. at reads the drive at another commit, such as a thread's unmerged work.`,
+        description: `List a folder under ${DRIVES_ROOT}: the user's owners (Personal and their organizations), their drives, or a folder in a drive. at reads the drive at another commit, such as a thread's unmerged work.`,
         parameters: Schema.Struct({
           path: Schema.optional(DrivePath),
           at: Schema.optional(Commit),
