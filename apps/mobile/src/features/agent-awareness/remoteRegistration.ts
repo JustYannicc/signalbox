@@ -40,6 +40,7 @@ import { getAgentLiveActivities, startAgentLiveActivity } from "./agentLiveActiv
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
+import { registerWithSignalboxClouds } from "./signalboxCloudPush"; // signalbox: cloud push
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
 
@@ -357,6 +358,7 @@ function registerDeviceWithRelay(
       });
       return;
     }
+    void registerWithSignalboxClouds(body); // signalbox: cloud push, beside the relay
     const relayConfig = readRelayConfig();
     if (!relayConfig) {
       // Nothing is in flight and nothing can succeed until configuration
@@ -877,6 +879,14 @@ export function registerAgentAwarenessConnection(connection: SavedRemoteConnecti
     refreshActiveLiveActivityRemoteRegistration(),
     "active live activity registration after environment connection failed",
   );
+}
+
+// signalbox: Signalbox Cloud takes the registration without a relay account.
+export function registerAgentAwarenessForSignalboxCloud(): void {
+  if (!canRegisterPushNotifications()) return;
+  ensurePushTokenListener();
+  ensureAppStateListener();
+  enqueueDeviceRegistration({}, "Signalbox Cloud device registration failed");
 }
 
 function removeAgentAwarenessConnection(environmentId: EnvironmentId): void {

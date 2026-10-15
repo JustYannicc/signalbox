@@ -1,7 +1,6 @@
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeModule from "node:module";
 import * as NodeProcess from "node:process";
-import { parseSync } from "oxc-parser";
 import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -11,6 +10,7 @@ import * as Path from "effect/Path";
 
 import { ServerConfig } from "../config.ts";
 import { ProcessRunner } from "../processRunner.ts";
+import { parseSync } from "./compiler/oxc.ts";
 import { automationError, errorMessage, fail, isAutomationError } from "./errors.ts";
 import { fromJson, toJson } from "./json.ts";
 import { findPackageRunner } from "./packageRunner.ts";

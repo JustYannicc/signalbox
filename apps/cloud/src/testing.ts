@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 import {
   WORKOS_TEST_ENV,
@@ -14,6 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -26,6 +28,7 @@ import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
+import * as PushNotifier from "./push/PushNotifier.ts";
 import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
@@ -174,6 +177,12 @@ export const layerThreadObject = (
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
+/** A user object's signing keys, as `UserObject` reads them. */
+const layerUserObjectTokens = CloudTokens.layerSessionSecret.pipe(
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: CLOUD_TEST_ENV }))),
+  Layer.orDie,
+);
+
 /** GitHub with no App and no network, for tests that never reach it. */
 const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.layer));
 
@@ -187,7 +196,7 @@ const makeUserRuntime = (
 ) =>
   ManagedRuntime.make(
     // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer).pipe(
+    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           UserShell.layer,
@@ -201,6 +210,17 @@ const makeUserRuntime = (
         ),
       ),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto)),
+      // No push credentials, so phones are recorded and every push is skipped.
+      Layer.provideMerge(
+        PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              FetchHttpClient.layer,
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            ),
+          ),
+        ),
+      ),
       Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
       Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
       Layer.provideMerge(Layer.mergeAll(drives, people, github)),
@@ -209,6 +229,7 @@ const makeUserRuntime = (
           Layer.succeed(UserDirectory.UserDirectory, users),
           Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
           Layer.succeed(PoolDirectory.PoolDirectory, pools),
+          layerUserObjectTokens,
         ),
       ),
     ),
