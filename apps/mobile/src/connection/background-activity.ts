@@ -1,5 +1,6 @@
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { EnvironmentRpcSubscriptionObserver, request } from "@t3tools/client-runtime/rpc";
+import { unlessSignalboxCloud } from "@t3tools/client-runtime/signalboxCloudActivity";
 import {
   type BackgroundScope,
   type ClientActivityReportInput,
@@ -65,21 +66,23 @@ export const layerReporter = Layer.effectDiscard(
           registry
             .run(
               environmentId,
-              request(WS_METHODS.serverReportClientActivity, {
-                environmentId: environmentId as EnvironmentId,
-                clientId,
-                clientKind: "mobile",
-                visible: active,
-                focused: active,
-                recentlyInteracted: active,
-                appState: normalizeAppState(appState),
-                scopes: [
-                  ...BASELINE_SCOPES,
-                  ...retainedMobileBackgroundScopes(environmentId as EnvironmentId),
-                ],
-                ttlMs: LEASE_TTL_MS,
-                observedAt: DateTime.makeUnsafe(observedAtMs),
-              }),
+              unlessSignalboxCloud(
+                request(WS_METHODS.serverReportClientActivity, {
+                  environmentId: environmentId as EnvironmentId,
+                  clientId,
+                  clientKind: "mobile",
+                  visible: active,
+                  focused: active,
+                  recentlyInteracted: active,
+                  appState: normalizeAppState(appState),
+                  scopes: [
+                    ...BASELINE_SCOPES,
+                    ...retainedMobileBackgroundScopes(environmentId as EnvironmentId),
+                  ],
+                  ttlMs: LEASE_TTL_MS,
+                  observedAt: DateTime.makeUnsafe(observedAtMs),
+                }),
+              ),
             )
             .pipe(Effect.ignore),
         { concurrency: "unbounded", discard: true },

@@ -26,7 +26,10 @@ import * as UserContexts from "./UserContexts.ts";
  * runs it; tasks and threads without a kind never archive themselves.
  */
 
-/** When the user object's alarm goes off. Its only alarm, so it's the sweep's. */
+/**
+ * When the user object's alarm goes off. Client sockets' session expiry
+ * shares it (`clientSockets.ts`); an early alarm only sweeps early.
+ */
 export class ChatArchiveAlarm extends Context.Service<
   ChatArchiveAlarm,
   {
