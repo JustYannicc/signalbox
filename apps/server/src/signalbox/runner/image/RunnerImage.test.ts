@@ -35,4 +35,14 @@ describe("Runner image pins", () => {
     expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-parser"]);
     expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-transform"]);
   });
+
+  // A second `npm install --no-save` into the same prefix prunes what the
+  // first one put there, which shipped an image without playwright-core.
+  it("installs everything beside the Runner in one npm install", () => {
+    const installs = dockerfile.match(/npm install --prefix \/opt\/signalbox[^&]*/g) ?? [];
+    expect(installs).toHaveLength(1);
+    expect(installs[0]).toContain('"playwright-core@${PLAYWRIGHT_CORE_VERSION}"');
+    expect(installs[0]).toContain('"@1password/sdk@${ONEPASSWORD_SDK_VERSION}"');
+    expect(installs[0]).toContain('"oxc-parser@${OXC_VERSION}"');
+  });
 });

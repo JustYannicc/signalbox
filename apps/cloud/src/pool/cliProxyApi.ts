@@ -349,6 +349,13 @@ export const cancelLogin = (endpoint: PoolEndpoint, state: string) =>
     Effect.ignore,
   );
 
+/** One local retry restriction CLIProxyAPI holds an account in (its `cooldowns` view). */
+const Cooldown = Schema.Struct({
+  scope: Schema.optional(Schema.String),
+  reason: Schema.optional(Schema.String),
+  retry_at: Schema.optional(Schema.String),
+});
+
 const AuthFiles = Schema.Struct({
   files: Schema.Array(
     Schema.Struct({
@@ -370,6 +377,7 @@ const AuthFiles = Schema.Struct({
       id_token: Schema.optional(
         Schema.Struct({ chatgpt_account_id: Schema.optional(Schema.String) }),
       ),
+      cooldowns: Schema.optional(Schema.NullOr(Schema.Array(Cooldown))),
     }),
   ),
 });
@@ -399,6 +407,11 @@ export type ListedUsage =
       /** Epoch millis of the response the signals came from, or null. */
       readonly observedAt: number | null;
       readonly chatgptAccountId: string | null;
+      /**
+       * Until when the CLIProxyAPI holds the whole account after the provider
+       * said its quota ran out, answering for it without asking again.
+       */
+      readonly heldUntil: number | null;
     }
   | { readonly _tag: "reported"; readonly limits: ServerProviderUsageLimits | null };
 
@@ -409,6 +422,21 @@ export interface ListedAccount extends BackendAccount {
 const epochMillis = (iso: string | undefined) => {
   const at = iso === undefined ? Number.NaN : Date.parse(iso);
   return Number.isFinite(at) && at > 0 ? at : null;
+};
+
+/**
+ * When the account-wide quota cooldown ends, if one holds the account: the
+ * gate CLIProxyAPI puts on the whole account when the provider says its
+ * quota ran out. Model-scoped cooldowns and short backoffs aren't it.
+ */
+const heldUntil = (cooldowns: ReadonlyArray<typeof Cooldown.Type>) => {
+  const ends = cooldowns
+    .filter((cooldown) => cooldown.scope === "credential" && cooldown.reason === "credential_quota")
+    .flatMap((cooldown) => {
+      const at = epochMillis(cooldown.retry_at);
+      return at === null ? [] : [at];
+    });
+  return ends.length === 0 ? null : Math.max(...ends);
 };
 
 const listCredentials = (endpoint: PoolEndpoint) =>
@@ -431,6 +459,7 @@ const listCredentials = (endpoint: PoolEndpoint) =>
           signals: file.quota?.signals ?? {},
           observedAt: epochMillis(file.quota?.observed_at),
           chatgptAccountId: file.id_token?.chatgpt_account_id ?? null,
+          heldUntil: heldUntil(file.cooldowns ?? []),
         },
       })),
     ),
@@ -510,4 +539,10 @@ export const accountGet = (
       )(response.json),
     ),
     Effect.map((response) => ({ status: response.status_code, body: response.body })),
+  );
+
+/** Lets the CLIProxyAPI route to an account again now, ending the cooldown it holds it in. */
+export const resetCooldown = (endpoint: PoolEndpoint, authIndex: string) =>
+  management(endpoint, "POST", "routing/cooldown/reset", { auth_index: authIndex }).pipe(
+    Effect.flatMap(expectOk(endpoint, (status) => `answered ${status} to a cooldown reset.`)),
   );

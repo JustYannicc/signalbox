@@ -32,16 +32,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip \
 FROM node:24-bookworm-slim
 
 # The browser's libraries (`DEBIAN_PACKAGES` in PreviewBrowserHost.ts) and
-# fonts for its screenshots; Playwright beside the Runner, which loads it from
-# disk, at the version apps/server pins.
-ARG PLAYWRIGHT_CORE_VERSION=1.60.0
+# fonts for its screenshots.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libnss3 libglib2.0-0 libatk1.0-0 libatk-bridge2.0-0 \
     libatspi2.0-0 libdbus-1-3 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
     libxrandr2 libxkbcommon0 libgbm1 libasound2 libexpat1 fonts-liberation \
-  && rm -rf /var/lib/apt/lists/* \
-  && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save "playwright-core@${PLAYWRIGHT_CORE_VERSION}" \
-  && npm cache clean --force
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=chrome /opt/chrome-headless-shell /opt/chrome-headless-shell
 # The machine is the thread's own sandbox and its containers can't create the
 # user namespace Chrome's sandbox needs; the browser carries no logins.
@@ -73,18 +69,22 @@ RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/clau
 # fetched once into the machine's caches (`COREPACK_HOME`, RunnerCaches.ts).
 RUN corepack enable pnpm yarn
 
-# 1Password's SDK, which reads a folder's secrets (RunnerOnePassword.ts), stays out
-# of the bundle: it loads its WebAssembly core from beside itself. Installed
-# beside the Runner, where its `import` finds it. So do oxc's native parser and
-# transformer, which compile the automations agents save
-# (`RunnerAutomationTools.ts`). One install, so neither prunes the other. The
-# versions apps/server pins.
+# What the Runner loads from disk beside itself, at the versions apps/server
+# pins: Playwright, which drives the browser; 1Password's SDK, which reads a
+# folder's secrets (RunnerOnePassword.ts) and loads its WebAssembly core from
+# beside itself; and oxc's native parser and transformer, which compile the
+# automations agents save (`RunnerAutomationTools.ts`). One install: a second
+# `--no-save` install into the same prefix prunes the first one's packages, so
+# the build checks they all still load.
+ARG PLAYWRIGHT_CORE_VERSION=1.60.0
 ARG ONEPASSWORD_SDK_VERSION=0.5.0
 ARG OXC_VERSION=0.148.0
 RUN install -d /opt/signalbox \
-  && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save "@1password/sdk@${ONEPASSWORD_SDK_VERSION}" \
+  && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save \
+    "playwright-core@${PLAYWRIGHT_CORE_VERSION}" "@1password/sdk@${ONEPASSWORD_SDK_VERSION}" \
     "oxc-parser@${OXC_VERSION}" "oxc-transform@${OXC_VERSION}" \
-  && npm cache clean --force
+  && npm cache clean --force \
+  && cd /opt/signalbox && node -e 'require("playwright-core"); require("@1password/sdk"); require("oxc-parser"); require("oxc-transform")'
 
 COPY main.mjs /opt/signalbox/runner.mjs
 
