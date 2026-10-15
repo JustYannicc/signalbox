@@ -25,6 +25,7 @@ import {
   harnessEnvironment,
   machineLayout,
   prepareMachine,
+  type RunnerMcpServers,
 } from "./RunnerModelAccess.ts";
 
 /**
@@ -81,14 +82,14 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   readonly gatewayUrl: string;
   /** Claude's query runner; upstream's own by default. */
   readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
-  /** The Runner's context server, which Codex is configured with (Claude's query runner adds it). */
-  readonly contextMcpUrl?: string;
+  /** The Runner's MCP servers, which Codex is configured with (Claude's query runner adds them). */
+  readonly mcpServers?: RunnerMcpServers;
   /** The machine's cache variables (`RunnerCaches.ts`), for the harnesses and what they run. */
   readonly caches?: Readonly<Record<string, string>>;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
   const stderr = makeHarnessStderr();
-  yield* prepareMachine(layout, machine.gatewayUrl, machine.contextMcpUrl ?? null);
+  yield* prepareMachine(layout, machine.gatewayUrl, machine.mcpServers);
   const environment = harnessEnvironment(
     yield* HostProcess.Environment,
     layout,

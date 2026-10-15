@@ -19,13 +19,16 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpRouter } from "effect/http";
 
 import * as Environment from "../environment.ts";
-import { layerAttachments, layerThreadObject, makeMemoryCloud } from "../testing.ts";
+import { layerAttachments, layerConfig, layerThreadObject, makeMemoryCloud } from "../testing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ThreadRunner from "../thread/runner/ThreadRunner.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as ThreadEngine from "../thread/ThreadEngine.ts";
 import { threadSegment } from "./attachmentIds.ts";
 import { makeMemoryObjects } from "./attachmentTesting.ts";
+import * as AssetRoutes from "../assets/assetRoutes.ts";
+import * as CloudAssets from "../assets/CloudAssets.ts";
+import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as AttachmentRoutes from "./attachmentRoutes.ts";
 import { attachmentKey, CloudAttachments } from "./CloudAttachments.ts";
 import { serveRunnerAttachments } from "./runnerAttachments.ts";
@@ -149,23 +152,20 @@ describe("CloudAttachments", () => {
           "'shot.png' can't be sent: it isn't an upload of yours.",
         );
 
-        // The transcript links the copy for anyone who sees the thread; the bytes keep the upload's type.
-        const resource = { _tag: "attachment", attachmentId: claimed.id } as const;
+        // Anyone who sees the thread reads the copy; the bytes keep the upload's type.
         const sees = (visible: boolean) => () => Effect.succeed(visible);
-        expect((yield* Effect.flip(service.fileUrl("user_2", resource, sees(false))))._tag).toBe(
-          "AssetAttachmentNotFoundError",
-        );
-        const link = yield* service.fileUrl("user_2", resource, sees(true));
-        const file = yield* service.openFile(tokenOf(link.relativeUrl));
+        expect(yield* service.canRead("user_2", claimed.id, sees(false))).toBe(false);
+        expect(yield* service.canRead("user_2", claimed.id, sees(true))).toBe(true);
+        const read = (reader: string, attachmentId: string, visible: boolean) =>
+          service.open({ userId: reader, attachmentId, canSee: sees(visible) });
+        expect(yield* read("user_2", claimed.id, false)).toBeNull();
+        const file = yield* read("user_2", claimed.id, true);
         expect(file?.headers["content-type"]).toBe("image/png");
         expect(file?.headers["content-disposition"]).toBeUndefined();
         expect(yield* bytesOf(file!.body)).toEqual(PNG);
-        // A pending upload links for its uploader only.
-        const pending = { _tag: "attachment", attachmentId: shot.id } as const;
-        yield* service.fileUrl(userId, pending, sees(false));
-        expect((yield* Effect.flip(service.fileUrl("user_2", pending, sees(true))))._tag).toBe(
-          "AssetAttachmentNotFoundError",
-        );
+        // A pending upload is its uploader's only.
+        expect(yield* service.canRead(userId, shot.id, sees(false))).toBe(true);
+        expect(yield* service.canRead("user_2", shot.id, sees(true))).toBe(false);
 
         // A refused message's copies go again.
         const another = yield* upload(service, userId, PNG);
@@ -199,17 +199,13 @@ describe("CloudAttachments", () => {
           commandId: "send-1",
           attachments: [notes],
         });
-        const link = yield* service.fileUrl(
+        const file = yield* service.open({
           userId,
-          {
-            _tag: "attachment",
-            attachmentId: sent.attachments[0]!.id,
-            fileName: "page.html",
-            disposition: "inline",
-          },
-          () => Effect.succeed(true),
-        );
-        const file = yield* service.openFile(tokenOf(link.relativeUrl));
+          attachmentId: sent.attachments[0]!.id,
+          canSee: () => Effect.succeed(false),
+          fileName: "page.html",
+          disposition: "inline",
+        });
         expect(file?.headers).toMatchObject({
           "content-type": "application/octet-stream",
           "content-disposition": 'attachment; filename="page.html"',
@@ -238,9 +234,9 @@ describe("CloudAttachments", () => {
   );
 });
 
-describe("attachment URLs", () => {
+describe("the upload URL", () => {
   // Live: the web handler checks token expiry against the real clock.
-  it.live("take the bytes and serve them back at the URLs the RPCs mint", () =>
+  it.live("takes exactly the promised bytes at the URL the RPC mints", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const objects = makeMemoryObjects();
@@ -263,17 +259,10 @@ describe("attachment URLs", () => {
         expect(short.status).toBe(400);
         const stored = yield* call(minted.relativeUrl, { method: "POST", body: PNG.slice() });
         expect(stored.status).toBe(204);
-
-        const link = yield* service.fileUrl(
-          userId,
-          { _tag: "attachment", attachmentId: minted.attachmentId },
-          () => Effect.succeed(false),
+        expect(objects.keys()).toEqual([attachmentKey("", minted.attachmentId)]);
+        expect((yield* call("/api/attachments/upload/made.up", { method: "POST" })).status).toBe(
+          404,
         );
-        const file = yield* call(link.relativeUrl);
-        expect(file.status).toBe(200);
-        expect(file.headers.get("content-type")).toBe("image/png");
-        expect(new Uint8Array(yield* Effect.promise(() => file.arrayBuffer()))).toEqual(PNG);
-        expect((yield* call("/api/attachments/file/made.up")).status).toBe(404);
       }),
     ),
   );
@@ -342,6 +331,64 @@ describe("sending attachments", () => {
       expect(refused._tag).toBe("ThreadCommandRejectedError");
       expect(cloud.attachmentObjects.keys()).toHaveLength(before + 1);
     }),
+  );
+});
+
+describe("links to sent attachments", () => {
+  // Live: the asset route checks token expiry against the real clock.
+  it.live("serve a sent attachment through the asset route to whoever sees its thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cloud = makeMemoryCloud();
+        const context = yield* Layer.build(
+          CloudAssets.layer.pipe(
+            Layer.provideMerge(cloud.layerPersonal(userId)),
+            Layer.provideMerge(CloudTokens.layer),
+            Layer.provideMerge(layerConfig()),
+          ),
+        );
+        const threads = Context.get(context, CloudThreadService.CloudThreadService);
+        const assets = Context.get(context, CloudAssets.CloudAssets);
+        const shot = yield* upload(Context.get(context, CloudAttachments), userId, PNG);
+        const launched = yield* threads.launchThread(actor, {
+          commandId: CommandId.make("launch-1"),
+          threadId: ThreadId.make("thread-links"),
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Screenshot",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: {
+            messageId: MessageId.make("message-1"),
+            text: "Look",
+            attachments: [shot],
+          },
+        });
+        const kept = launched.projection.messages[0]!.attachments[0]!;
+        const resource = {
+          _tag: "attachment" as const,
+          attachmentId: kept.id,
+          fileName: "shot.png",
+        };
+
+        const url = yield* assets.createUrl(actor, resource);
+        expect(url.relativeUrl).toMatch(/^\/api\/assets\/[\w-]+\.[\w-]+\/shot\.png$/);
+        const httpEffect = yield* HttpRouter.toHttpEffect(AssetRoutes.layer);
+        const handler = HttpEffect.toWebHandler(httpEffect.pipe(Effect.provide(context)));
+        const file = yield* Effect.promise(() =>
+          handler(new Request(`https://cloud.test${url.relativeUrl}`)),
+        );
+        expect(file.status).toBe(200);
+        expect(file.headers.get("content-type")).toBe("image/png");
+        expect(new Uint8Array(yield* Effect.promise(() => file.arrayBuffer()))).toEqual(PNG);
+        // Someone who can't see the thread gets no link.
+        const stranger = { userId: "user_2", contextIds: [PERSONAL_CONTEXT_ID] };
+        expect((yield* Effect.flip(assets.createUrl(stranger, resource)))._tag).toBe(
+          "AssetAttachmentNotFoundError",
+        );
+      }),
+    ),
   );
 });
 

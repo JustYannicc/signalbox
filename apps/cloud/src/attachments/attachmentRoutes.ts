@@ -1,36 +1,30 @@
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import {
-  ATTACHMENT_FILE_PATH,
-  ATTACHMENT_UPLOAD_PATH,
-  CloudAttachments,
-} from "./CloudAttachments.ts";
+import { ATTACHMENT_UPLOAD_PATH, CloudAttachments } from "./CloudAttachments.ts";
 
 /**
- * The URLs `attachments.createUploadUrl` and `assets.createUrl` hand out. Each
- * carries its own signed token, so neither asks for a session: a desktop or
- * mobile client uploads and an `<img>` loads without a cookie.
- *
- * - `POST /api/attachments/upload/<token>`: the upload's bytes, exactly as many as promised.
- * - `GET /api/attachments/file/<token>`: a sent attachment's bytes.
+ * `POST /api/attachments/upload/<token>`: the bytes `attachments.createUploadUrl`
+ * promised, exactly as many. The signed token is the only credential, so a
+ * desktop or mobile client uploads without a cookie. Sent attachments load
+ * through `CloudAssets` (`assets/assetRoutes.ts`).
  */
 
 /**
  * The signed token at the end of `url`. Tokens outgrow the router's path
- * parameters (100 characters), so the routes match a wildcard and read it here,
+ * parameters (100 characters), so the route matches a wildcard and reads it here,
  * as the self-hosted server's upload route does.
  */
-const tokenAfter = (prefix: string, url: string) => {
-  const pathname = new URL(url, "http://cloud").pathname;
-  return pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length + 1) : "";
+const tokenAfter = (url: string) => {
+  const { pathname } = new URL(url, "http://cloud");
+  const prefix = `${ATTACHMENT_UPLOAD_PATH}/`;
+  return pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
 };
 
 const upload = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const web = yield* HttpServerRequest.toWeb(request);
-  const token = tokenAfter(ATTACHMENT_UPLOAD_PATH, web.url);
+  const token = tokenAfter(web.url);
   const declared = web.headers.get("content-length");
   const declaredSize = declared === null ? null : Number(declared);
   if (declaredSize !== null && !Number.isSafeInteger(declaredSize)) {
@@ -54,19 +48,4 @@ const upload = Effect.gen(function* () {
   }),
 );
 
-const file = Effect.gen(function* () {
-  const { url } = yield* HttpServerRequest.HttpServerRequest;
-  const opened = yield* (yield* CloudAttachments).openFile(tokenAfter(ATTACHMENT_FILE_PATH, url));
-  return opened === null
-    ? HttpServerResponse.text("Not Found", { status: 404 })
-    : HttpServerResponse.raw(opened.body, {
-        headers: opened.headers,
-        contentType: opened.headers["content-type"],
-        contentLength: opened.size,
-      });
-});
-
-export const layer = Layer.mergeAll(
-  HttpRouter.add("POST", `${ATTACHMENT_UPLOAD_PATH}/*`, upload),
-  HttpRouter.add("GET", `${ATTACHMENT_FILE_PATH}/*`, file),
-);
+export const layer = HttpRouter.add("POST", `${ATTACHMENT_UPLOAD_PATH}/*`, upload);

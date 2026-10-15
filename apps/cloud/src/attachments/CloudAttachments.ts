@@ -1,8 +1,5 @@
 import {
   ATTACHMENT_UPLOAD_URL_TTL_MS,
-  AssetAttachmentNotFoundError,
-  type AssetCreateUrlResult,
-  type AssetResource,
   type AttachmentCreateUploadUrlInput,
   type AttachmentCreateUploadUrlResult,
   type ChatAttachment,
@@ -31,7 +28,7 @@ import { type AttachmentStorage, exactly } from "./attachmentObjects.ts";
  * 2. Sending a message `claim`s each pending upload: it is checked against what
  *    its uploader promised and copied under an id of the thread, which the
  *    message keeps. Pending uploads nobody sent are swept after a day.
- * 3. `fileUrl` signs a short-lived link for someone who can see the thread.
+ * 3. `CloudAssets` signs short-lived links for those who `canRead` it, and serves them with `open`.
  *    The thread's machine reads them with its session token (`runnerAttachments.ts`)
  *    and keeps them as files for the harness.
  *
@@ -40,9 +37,7 @@ import { type AttachmentStorage, exactly } from "./attachmentObjects.ts";
  */
 
 export const ATTACHMENT_UPLOAD_PATH = "/api/attachments/upload";
-export const ATTACHMENT_FILE_PATH = "/api/attachments/file";
 
-const FILE_URL_TTL_MS = 60 * 60_000;
 const PENDING_MAX_AGE_MS = 24 * 60 * 60_000;
 const SWEEP_INTERVAL_MS = 15 * 60_000;
 const SWEEP_MAX_PAGES = 20;
@@ -98,8 +93,6 @@ export interface Claimed {
   readonly release: Effect.Effect<void>;
 }
 
-type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;
-
 export class CloudAttachments extends Context.Service<
   CloudAttachments,
   {
@@ -116,16 +109,23 @@ export class CloudAttachments extends Context.Service<
     /** Deletes `userId`'s own pending upload. Sent attachments stay with their messages. */
     readonly deletePending: (userId: string, attachmentId: string) => Effect.Effect<void>;
     /**
-     * A link to an attachment, for its uploader or anyone `canSee` its thread.
-     * Anyone else is told it doesn't exist.
+     * Whether `userId` may read an attachment: its uploader may, and so may
+     * anyone who `canSee` the thread whose message holds it.
      */
-    readonly fileUrl: (
+    readonly canRead: (
       userId: string,
-      resource: AttachmentResource,
+      attachmentId: string,
       canSee: (threadId: string) => Effect.Effect<boolean>,
-    ) => Effect.Effect<AssetCreateUrlResult, AssetAttachmentNotFoundError>;
-    /** The bytes a `fileUrl` link names; null when the link or the attachment is gone. */
-    readonly openFile: (token: string) => Effect.Effect<AttachmentFile | null>;
+    ) => Effect.Effect<boolean>;
+    /** The attachment's bytes for `userId`, as `canRead` allows; null otherwise, or once it is gone. */
+    readonly open: (input: {
+      readonly userId: string;
+      readonly attachmentId: string;
+      readonly canSee: (threadId: string) => Effect.Effect<boolean>;
+      /** The name a download is saved under. */
+      readonly fileName?: string | undefined;
+      readonly disposition?: "inline" | "attachment" | undefined;
+    }) => Effect.Effect<AttachmentFile | null>;
     /**
      * A message's attachments as `threadId` keeps them: each of `userId`'s
      * pending uploads copied under an id of the thread, derived from the
@@ -176,7 +176,7 @@ const downloadDisposition = (name: string | undefined) => {
  */
 const fileHeaders = (
   meta: AttachmentMeta,
-  claims: { readonly n?: string; readonly d?: "inline" | "attachment" },
+  claims: { readonly n?: string | undefined; readonly d?: "inline" | "attachment" | undefined },
 ): Record<string, string> => {
   const mime = meta.mime?.toLowerCase() ?? "application/octet-stream";
   const base = { "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" };
@@ -312,51 +312,47 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
           }),
         );
 
-      const fileUrl: CloudAttachments["Service"]["fileUrl"] = (userId, resource, canSee) =>
-        Effect.gen(function* () {
-          const notFound = new AssetAttachmentNotFoundError({ resource });
-          if (Ids.parse(resource.attachmentId) === null) return yield* notFound;
-          const head = yield* storage("head", () =>
-            objects.head(keyOf(resource.attachmentId)),
-          ).pipe(
-            Effect.catchTags({
-              AttachmentStorageError: (failure) =>
-                Effect.logError("reading an attachment failed", failure).pipe(Effect.as(null)),
-            }),
-          );
-          if (head === null) return yield* notFound;
-          const meta = metaOf(head);
-          const allowed =
-            meta.owner === userId || (meta.thread !== undefined && (yield* canSee(meta.thread)));
-          if (!allowed) return yield* notFound;
-          const expiresAt = (yield* Clock.currentTimeMillis) + FILE_URL_TTL_MS;
-          const token = yield* tokens.sign({
-            _tag: "attachment-file",
-            a: resource.attachmentId,
-            ...(resource.fileName === undefined ? {} : { n: resource.fileName }),
-            ...(resource.disposition === undefined ? {} : { d: resource.disposition }),
-            exp: expiresAt,
-          });
-          return { relativeUrl: `${ATTACHMENT_FILE_PATH}/${token}`, expiresAt };
-        });
+      /** Whether `meta`'s attachment is `userId`'s to read. */
+      const allows = (
+        meta: AttachmentMeta,
+        userId: string,
+        canSee: (threadId: string) => Effect.Effect<boolean>,
+      ) =>
+        meta.owner === userId
+          ? Effect.succeed(true)
+          : meta.thread === undefined
+            ? Effect.succeed(false)
+            : canSee(meta.thread);
 
-      const openFile: CloudAttachments["Service"]["openFile"] = (token) =>
+      const readFailed = (failure: AttachmentStorageError) =>
+        Effect.logError("reading an attachment failed", failure).pipe(Effect.as(null));
+
+      const canRead: CloudAttachments["Service"]["canRead"] = (userId, attachmentId, canSee) =>
+        Ids.parse(attachmentId) === null
+          ? Effect.succeed(false)
+          : storage("head", () => objects.head(keyOf(attachmentId))).pipe(
+              Effect.catchTags({ AttachmentStorageError: readFailed }),
+              Effect.flatMap((head) =>
+                head === null ? Effect.succeed(false) : allows(metaOf(head), userId, canSee),
+              ),
+            );
+
+      const open: CloudAttachments["Service"]["open"] = (input) =>
         Effect.gen(function* () {
-          const claims = yield* tokens.verify("attachment-file", token).pipe(Effect.option);
-          if (claims._tag === "None") return null;
-          const object = yield* storage("get", () => objects.get(keyOf(claims.value.a)));
+          if (Ids.parse(input.attachmentId) === null) return null;
+          const object = yield* storage("get", () => objects.get(keyOf(input.attachmentId)));
           if (object === null) return null;
+          const meta = metaOf(object);
+          if (!(yield* allows(meta, input.userId, input.canSee))) {
+            yield* Effect.promise(() => object.body.cancel());
+            return null;
+          }
           return {
             body: object.body,
             size: object.size,
-            headers: fileHeaders(metaOf(object), claims.value),
+            headers: fileHeaders(meta, { n: input.fileName, d: input.disposition }),
           };
-        }).pipe(
-          Effect.catchTags({
-            AttachmentStorageError: (failure) =>
-              Effect.logError("reading an attachment failed", failure).pipe(Effect.as(null)),
-          }),
-        );
+        }).pipe(Effect.catchTags({ AttachmentStorageError: readFailed }));
 
       /** The thread's id for `pending` as `commandId` sends it: the same on every retry. */
       const sentId = (threadId: string, commandId: string, pending: string) =>
@@ -493,8 +489,8 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
         issueUpload,
         storeUpload,
         deletePending,
-        fileUrl,
-        openFile,
+        canRead,
+        open,
         claim,
       });
     }),

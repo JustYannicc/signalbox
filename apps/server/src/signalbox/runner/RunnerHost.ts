@@ -130,9 +130,9 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               root,
               gatewayUrl: request.modelGatewayUrl,
               claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
-                withContextServer(runner, context.mcpUrl),
+                withContextServer(runner, context.mcpServers),
               ),
-              contextMcpUrl: context.mcpUrl,
+              mcpServers: context.mcpServers,
               caches: caches.environment,
             });
           const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });

@@ -22,6 +22,8 @@ import {
 } from "effect/http";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as AssetRoutes from "./assets/assetRoutes.ts";
+import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as AttachmentRoutes from "./attachments/attachmentRoutes.ts";
 import type { AttachmentStorage } from "./attachments/attachmentObjects.ts";
 import * as CloudAttachments from "./attachments/CloudAttachments.ts";
@@ -74,7 +76,10 @@ export const layerServices = (input: {
   /** The drives bucket and its preview prefix, where attachments live. */
   readonly attachments: AttachmentStorage;
 }) =>
-  Layer.mergeAll(CloudAccounts.layer, CloudThreadService.layer, PreviewSetup.layer).pipe(
+  CloudAssets.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(CloudAccounts.layer, CloudThreadService.layer, PreviewSetup.layer),
+    ),
     Layer.provideMerge(CloudAttachments.layer(input.attachments)),
     Layer.provideMerge(PreviewSetup.layerSourceHttp),
     // The Worker only reads threads; they are created in their user's object.
@@ -109,6 +114,7 @@ const routes = Layer.mergeAll(
   GitHubRoutes.layer,
   ConnectionRoutes.layer,
   PreviewSetupRoutes.layer,
+  AssetRoutes.layer,
   AttachmentRoutes.layer,
 ).pipe(Layer.provide(layerCors));
 
