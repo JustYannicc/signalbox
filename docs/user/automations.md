@@ -23,6 +23,14 @@ draft live; **Discard** drops it. A new automation saved as a draft stays off un
 To see every automation, open **Automations** from the command palette (`mod+alt+w`) and pick
 **All**.
 
+## In Signalbox Cloud
+
+Automations in your cloud folders run in Signalbox Cloud, so they fire on schedules, thread events
+and pull request news with every app closed, and their questions reach your phone. Ask an agent in
+a cloud thread to write one. Some steps don't run in the cloud yet: webhooks and callback links
+(`w.hook`), calls to connected services, `w.run` functions, and model steps (`w.llm`, `w.judge`,
+`w.extract`). Use a self-hosted server for automations that need them.
+
 ## Connect your services
 
 Automations reach your accounts, like Gmail, GitHub or Linear, through

@@ -1,4 +1,6 @@
 /** signalbox: what the navigation panel calls itself, by which kinds of tree it lists. */
+import { folderWording } from "./folder-copy";
+
 export interface NavigationPanelCopy {
   readonly title: string;
   readonly subtitle: string;
@@ -31,6 +33,5 @@ export function navigationPanelCopy(input: {
   readonly withFolders: number;
   readonly total: number;
 }): NavigationPanelCopy {
-  if (input.withFolders === 0) return SECTIONS;
-  return input.withFolders === input.total ? FOLDERS : MIXED;
+  return { projects: SECTIONS, folders: FOLDERS, mixed: MIXED }[folderWording(input)];
 }

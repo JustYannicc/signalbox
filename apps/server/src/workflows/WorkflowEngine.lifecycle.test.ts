@@ -12,16 +12,17 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import {
+  acceptedRun,
   DEFAULTS,
   fakeHttp,
   fakeThreads,
   jsonResponse,
+  receiveWebhook,
   saveOk,
-  withEngine,
-  acceptedRun,
   webhookRequest,
+  withEngine,
 } from "./WorkflowEngine.testkit.ts";
 
 /** An HTTP route that never answers, and says when it was called and when it was abandoned. */
@@ -347,7 +348,7 @@ export default workflow(async (w, input: { fail?: boolean }) => {
         });
         yield* engine.drain;
         const hooked = yield* acceptedRun(
-          yield* engine.receiveWebhook(webhookRequest(automation, { body: '{"fail":true}' })),
+          yield* receiveWebhook(webhookRequest(automation, { body: '{"fail":true}' })),
         );
         yield* engine.drain;
         const seen = yield* Fiber.join(collected);

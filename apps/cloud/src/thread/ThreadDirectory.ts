@@ -29,7 +29,12 @@ import {
   type ThreadSnapshot,
   type ThreadSummary,
 } from "./ThreadEngine.ts";
-import { type LaunchInputWire, type ThreadObjectReply, wire } from "./threadWire.ts";
+import {
+  type LaunchInputWire,
+  type ThreadMonitor,
+  type ThreadObjectReply,
+  wire,
+} from "./threadWire.ts";
 
 /**
  * How the Worker and user objects reach thread objects. Every thread has
@@ -83,6 +88,12 @@ export interface ThreadObjectApi {
   ) => Promise<ThreadMatch | null>;
   /** The thread's turns for the context tool (`turn`: just that one); null when the actor can't see it. */
   readonly contextTurns: (actor: Actor, turn: number | null) => Promise<ThreadContextTurns | null>;
+  /**
+   * The owner's automations: the runs attached to the thread now, in their
+   * JSON encoding (`wire.monitors`). Its shell lists them as monitors; an
+   * empty list clears them. `not_found` unless `actor` owns the thread.
+   */
+  readonly setMonitors: (actor: Actor, monitors: unknown) => Promise<ThreadObjectReply<void>>;
 }
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
@@ -131,6 +142,14 @@ export interface ThreadHandle {
     actor: Actor,
     turn: number | null,
   ) => Effect.Effect<ThreadContextTurns | null, ThreadObjectError>;
+  /**
+   * See `ThreadObjectApi.setMonitors`. A thread that is gone, or not the
+   * actor's, has nothing to show them on, so that changes nothing.
+   */
+  readonly setMonitors: (
+    actor: Actor,
+    monitors: ReadonlyArray<ThreadMonitor>,
+  ) => Effect.Effect<void, ThreadObjectError>;
 }
 
 export class ThreadDirectory extends Context.Service<
@@ -226,6 +245,15 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
     previewLink: (actor, port) => call("previewLink", () => api.previewLink(actor, port)),
     contextMatch: (actor, terms) => call("contextMatch", () => api.contextMatch(actor, terms)),
     contextTurns: (actor, turn) => call("contextTurns", () => api.contextTurns(actor, turn)),
+    setMonitors: (actor, monitors) =>
+      call("setMonitors", () => api.setMonitors(actor, wire.monitors.encode(monitors))).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({
+          ThreadNotFoundError: () => Effect.void,
+          // Monitors decide no command, so a rejection here is a protocol bug.
+          ThreadCommandRejectedError: (error) => Effect.die(error),
+        }),
+      ),
     summary: (actor) =>
       call("summary", () => api.summary(actor)).pipe(
         Effect.flatMap((value) =>

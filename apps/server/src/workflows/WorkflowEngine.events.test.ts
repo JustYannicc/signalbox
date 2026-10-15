@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import {
   fakeThreads,
   PROJECT,
@@ -110,6 +110,7 @@ it.effect("a finished turn starts each automation listening for it, once per tur
         type: "event",
         event: "turn.finished",
         eventId: "turn.finished:thread-9-run",
+        at: detail.run.startedAt,
       });
       expect(yield* runsOf(failures.id)).toHaveLength(0);
 

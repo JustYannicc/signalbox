@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import { DEFAULTS, PROJECT, saveOk, withEngine } from "./WorkflowEngine.testkit.ts";
 
 const source = (body: string, meta = "") =>

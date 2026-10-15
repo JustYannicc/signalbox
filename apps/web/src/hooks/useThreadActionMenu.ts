@@ -50,6 +50,7 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
 import { labelCopyPathItems } from "../components/workspacePathLocation.logic";
+import { readProjectSettingsLabel } from "../components/sidebar/folders/useFolderCopy"; // signalbox: folder words
 import { readWorkspacePathLocation } from "../components/workspacePathLocation";
 
 function failureToast(title: string, error: unknown) {
@@ -165,6 +166,7 @@ export function useThreadActionMenu(input: {
           supports,
           snoozePresets,
           threadKind: readThreadKind(threadRef), // signalbox: thread kinds
+          projectSettingsLabel: readProjectSettingsLabel(threadRef.environmentId), // signalbox: folder words
         });
         const clicked = await settlePromise(() =>
           api.contextMenu.show(

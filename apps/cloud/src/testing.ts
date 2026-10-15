@@ -18,6 +18,7 @@ import * as CloudAccounts from "./account/CloudAccounts.ts";
 import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
+import * as CloudAutomations from "./automations/CloudAutomations.ts";
 import type { AttachmentObjects } from "./attachments/attachmentObjects.ts";
 import { makeMemoryObjects } from "./attachments/attachmentTesting.ts";
 import * as CloudAttachments from "./attachments/CloudAttachments.ts";
@@ -41,6 +42,7 @@ import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
+import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
@@ -71,6 +73,9 @@ import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LocalKeys from "./localKeys/LocalKeys.ts";
 import * as LegacySections from "./user/legacySections.ts";
+import * as CloudEngine from "./automations/cloudEngine.ts";
+import type { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
+import { makeMemoryWorkflows } from "./automations/memoryWorkflows.ts";
 import * as UserFolders from "./user/UserFolders.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import * as UserDrives from "./user/UserDrives.ts";
@@ -223,6 +228,19 @@ const layerUserObjectTokens = CloudTokens.layerSessionSecret.pipe(
 /** GitHub with no App and no network, for tests that never reach it. */
 const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.layer));
 
+/** A user object's alarm, recorded: `alarms.get(userId)` is when it would fire next. */
+const layerRecordedAlarm = (alarms: Map<string, number>, userId: string) =>
+  Layer.succeed(
+    CloudAutomations.AutomationAlarm,
+    CloudAutomations.AutomationAlarm.of({
+      arm: (at) =>
+        Effect.sync(() => {
+          const current = alarms.get(userId);
+          if (at !== null && (current === undefined || at < current)) alarms.set(userId, at);
+        }),
+    }),
+  );
+
 const makeUserRuntime = (
   users: UserDirectory.UserDirectory["Service"],
   threads: ThreadDirectory.ThreadDirectory["Service"],
@@ -233,55 +251,68 @@ const makeUserRuntime = (
   classifier: Layer.Layer<KindClassifier.KindClassifier>,
   attachments: Layer.Layer<CloudAttachments.CloudAttachments>,
   observe: Layer.Layer<never>,
+  alarm: Layer.Layer<CloudAutomations.AutomationAlarm>,
+  runner: Layer.Layer<AutomationRunner>,
+  /** Replaces the real automations, for tests that watch what they're handed. */
+  automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
 ) =>
   ManagedRuntime.make(
-    // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
+    // The user's automations, on the same services the object gives them.
+    CloudEngine.layer.pipe(
+      Layer.provide(Layer.mergeAll(runner, alarm)),
       Layer.provideMerge(
-        Layer.mergeAll(
-          UserShell.layer,
-          DriveSharing.layer,
-          DriveShortcuts.layer,
-          DriveFiles.layer,
-          GitHubConnection.layer,
-          ConnectionLinks.layer,
-          LocalKeys.layer,
-          PoolSignIns.layer,
-          CloudThreadService.layer,
-        ),
-      ),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          ThreadContexts.layer,
-          Platform.layerCrypto,
-          UserThreadKinds.layerTurns,
-          attachments,
-        ),
-      ),
-      // No push credentials, so phones are recorded and every push is skipped.
-      Layer.provideMerge(
-        PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
-          Layer.provide(
+        // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
+        Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
+          Layer.provideMerge(
             Layer.mergeAll(
-              FetchHttpClient.layer,
-              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+              UserShell.layer,
+              DriveSharing.layer,
+              DriveShortcuts.layer,
+              DriveFiles.layer,
+              GitHubConnection.layer,
+              ConnectionLinks.layer,
+              LocalKeys.layer,
+              PoolSignIns.layer,
+              CloudThreadService.layer,
             ),
           ),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ThreadContexts.layer,
+              Platform.layerCrypto,
+              UserThreadKinds.layerTurns,
+              attachments,
+            ),
+          ),
+          // No push credentials, so phones are recorded and every push is skipped.
+          Layer.provideMerge(
+            PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  FetchHttpClient.layer,
+                  ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+                ),
+              ),
+            ),
+          ),
+          Layer.provideMerge(
+            Layer.mergeAll(UserDrives.layer, UserPools.layer, UserThreadKinds.layer),
+          ),
+          Layer.provideMerge(Layer.mergeAll(classifier, ChatArchive.layerAlarmNone)),
+          Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
+          Layer.provideMerge(Layer.mergeAll(drives, people, github)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.succeed(UserDirectory.UserDirectory, users),
+              Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
+              Layer.succeed(PoolDirectory.PoolDirectory, pools),
+              layerUserObjectTokens,
+            ),
+          ),
+          Layer.provideMerge(observe),
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer, UserThreadKinds.layer)),
-      Layer.provideMerge(Layer.mergeAll(classifier, ChatArchive.layerAlarmNone)),
-      Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
-      Layer.provideMerge(Layer.mergeAll(drives, people, github)),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          Layer.succeed(UserDirectory.UserDirectory, users),
-          Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
-          Layer.succeed(PoolDirectory.PoolDirectory, pools),
-          layerUserObjectTokens,
-        ),
-      ),
-      Layer.provideMerge(observe),
+      Layer.merge(automations),
     ),
   );
 
@@ -290,7 +321,7 @@ const makeUserRuntime = (
  * object per thread id, running the same APIs the Durable Objects do and
  * reaching each other through the same directories. `settle` does what the
  * thread objects' alarms do: drive every turn to the end and deliver every
- * pending summary.
+ * pending summary and event.
  */
 export const makeMemoryCloud = (
   options: {
@@ -302,6 +333,8 @@ export const makeMemoryCloud = (
     readonly classifier?: Layer.Layer<KindClassifier.KindClassifier>;
     /** Loggers or a tracer every object here runs with, to see what they log and trace. */
     readonly observe?: Layer.Layer<never>;
+    /** Every user object's automations; none unless given, so thread events are dropped. */
+    readonly automations?: Layer.Layer<CloudAutomations.CloudAutomations>;
   } = {},
 ) => {
   const users = new Map<
@@ -362,6 +395,10 @@ export const makeMemoryCloud = (
   const people = layerTestPeople(options.people ?? []);
   const attachmentObjects = makeMemoryObjects();
   const attachments = layerAttachments(attachmentObjects);
+  /** When each user object's alarm would fire next, as its automations armed it. */
+  const alarms = new Map<string, number>();
+  /** Every user's automation runs, as Workflow instances of the real runtime. */
+  const workflows = makeMemoryWorkflows(() => userDirectory);
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
@@ -375,6 +412,9 @@ export const makeMemoryCloud = (
       options.classifier ?? KindClassifier.layerNone,
       attachments,
       options.observe ?? Layer.empty,
+      layerRecordedAlarm(alarms, userId),
+      workflows.layerFor(userId),
+      options.automations ?? Layer.empty,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -440,7 +480,7 @@ export const makeMemoryCloud = (
     ),
     Layer.provideMerge(Platform.layerCrypto),
   );
-  const settle = Effect.promise(async () => {
+  const settleThreads = Effect.promise(async () => {
     for (const { run } of threads.values()) {
       await run(
         Effect.gen(function* () {
@@ -449,13 +489,44 @@ export const makeMemoryCloud = (
             // One provider step per alarm in production; here, until the turn ends.
           }
           yield* deliverPendingSummary;
+          yield* deliverPendingEvents;
         }),
       );
     }
   });
+  /**
+   * Turns run to their end and automation runs until they block, twice over:
+   * a turn's events start runs, and a run's steps start turns.
+   */
+  const settle = Effect.gen(function* () {
+    for (let round = 0; round < 3; round++) {
+      yield* workflows.idle;
+      yield* settleThreads;
+    }
+    yield* workflows.idle;
+  });
   return {
     userDirectory,
     threadDirectory,
+    /** Runs `effect` in a user object, with its automations. */
+    inUser: <A, E>(
+      userId: string,
+      effect: Effect.Effect<A, E, Layer.Success<typeof CloudEngine.layer>>,
+    ) => Effect.promise(() => userFor(userId).runtime.runPromise(effect)),
+    /** The runs' Workflow instances: `idle` lets them run until they block, `advance` moves time. */
+    workflows,
+    /** When a user object's alarm would fire next; what fired clears it. */
+    alarmAt: (userId: string) => alarms.get(userId),
+    /** Fires a user object's alarm, as workerd does when it's due. */
+    fireAlarm: (userId: string) =>
+      Effect.promise(() => {
+        alarms.delete(userId);
+        return userFor(userId).runtime.runPromise(
+          CloudAutomations.CloudAutomations.use((automations) => automations.wake),
+        );
+      }),
+    /** A user object's API as its Durable Object stub answers it, for routes that call stubs. */
+    userObjectApi: (userId: string) => userFor(userId).api,
     /** Pool objects by name, each with its fake CLIProxyAPI. */
     pools,
     /** The drives' objects and packs, shared by every user and thread here. */

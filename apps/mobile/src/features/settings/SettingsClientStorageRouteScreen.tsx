@@ -18,6 +18,7 @@ import {
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -30,6 +31,7 @@ export function SettingsClientStorageRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const serverConfigs = useServerConfigs();
   const showsEnvironments = useShowsEnvironmentUi(); // signalbox
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const isClearing = clearResult.waiting;
   const summary = AsyncResult.isSuccess(summaryResult) ? summaryResult.value : null;
   const environmentSummaries = useMemo(
@@ -48,7 +50,9 @@ export function SettingsClientStorageRouteScreen() {
       environment.environmentId;
     Alert.alert(
       `Clear cache for ${label}?`,
-      "This removes offline threads, server metadata, and cached branches for this environment. The saved connection and credentials stay intact.",
+      environmentCopy(
+        "This removes offline threads, server metadata, and cached branches for this environment. The saved connection and credentials stay intact.",
+      ),
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -64,7 +68,9 @@ export function SettingsClientStorageRouteScreen() {
   const confirmClearAll = () => {
     Alert.alert(
       "Clear all client caches?",
-      "This removes offline data for every environment. Connections, credentials, account data, and app preferences stay intact.",
+      environmentCopy(
+        "This removes offline data for every environment. Connections, credentials, account data, and app preferences stay intact.",
+      ),
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -135,7 +141,9 @@ export function SettingsClientStorageRouteScreen() {
               />
               <Text className="text-center text-base text-foreground">No cached data</Text>
               <Text className="text-center text-sm text-foreground-muted">
-                Offline cache records will appear here after environments are used.
+                {environmentCopy(
+                  "Offline cache records will appear here after environments are used.",
+                )}
               </Text>
             </View>
           )}
@@ -153,8 +161,9 @@ export function SettingsClientStorageRouteScreen() {
             />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            Clearing caches never removes environment connections, credentials, account data, or
-            appearance preferences.
+            {environmentCopy(
+              "Clearing caches never removes environment connections, credentials, account data, or appearance preferences.",
+            )}
           </Text>
           {AsyncResult.isFailure(summaryResult) || AsyncResult.isFailure(clearResult) ? (
             <Text selectable className="px-2 text-sm text-danger-foreground">

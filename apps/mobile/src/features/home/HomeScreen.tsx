@@ -79,6 +79,7 @@ import { resolveSelectedProjectScope } from "../sections/section-project-filter"
 import { withAutomationsBanner } from "../automations/AutomationsHomeBanner"; // signalbox: automations
 import { FolderEmptyState, scopeFilterOptions } from "../folders/FolderListParts"; // signalbox: folders
 import { useFolderScope } from "../folders/use-folder-filter"; // signalbox: folders
+import { useFolderCopy, useScratchScopeTitles } from "../folders/use-folder-copy"; // signalbox: folders
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
@@ -278,6 +279,7 @@ function renderHomeScrollView(props: ScrollViewProps) {
 
 export function HomeScreen(props: HomeScreenProps) {
   const showsEnvironments = useShowsEnvironmentUi(); // signalbox
+  const folderCopy = useFolderCopy(); // signalbox: folders
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const workspace = useWorkspaceTabs();
   const [initialScrollOffset] = useState(() => workspace?.getScrollOffset("threads") ?? 0);
@@ -414,7 +416,7 @@ export function HomeScreen(props: HomeScreenProps) {
     onScrollBeginDrag: handleScrollBeginDrag,
   });
 
-  const projectScopes = useMemo(
+  const upstreamProjectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects: props.projects,
@@ -423,6 +425,7 @@ export function HomeScreen(props: HomeScreenProps) {
       }),
     [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
   );
+  const projectScopes = useScratchScopeTitles(upstreamProjectScopes); // signalbox: folders
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
@@ -1043,7 +1046,7 @@ export function HomeScreen(props: HomeScreenProps) {
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
         title={`No threads in ${v2ScopedProjectGroup.title}`}
-        detail="Choose another project or create a new task."
+        detail={folderCopy("Choose another project or create a new task.")}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : selectedEnvironmentLabel ? (

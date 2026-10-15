@@ -37,6 +37,12 @@ export function skillFiles(): Record<string, string> {
   };
 }
 
+/** What `automation_reference` answers for a topic the skill doesn't have. */
+export function unknownTopic(topic: string): string {
+  const topics = [...Object.keys(SKILL_TOPICS), ...Object.keys(EXAMPLES)];
+  return `There's no reference topic "${topic}". Topics: ${topics.join(", ")}.`;
+}
+
 /**
  * What `automation_reference` returns: the skill's entry page without its
  * frontmatter, one topic, or one example by file name.

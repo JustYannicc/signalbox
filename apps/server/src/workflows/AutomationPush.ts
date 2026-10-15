@@ -27,9 +27,9 @@ import {
   relayEnvironmentProofClaims,
 } from "../relay/AgentAwarenessRelay.ts";
 import { forkParked } from "../serverActivation.ts";
-import { logFailure } from "./errors.ts";
-import { relayNotificationForNotice } from "./notices.ts";
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { logFailure } from "@signalbox/automations/errors";
+import { relayNotificationForNotice } from "@signalbox/automations/notices";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 
 /**
  * Sends automation notices to the user's phones through the Signalbox Connect

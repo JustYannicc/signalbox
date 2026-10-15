@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -15,6 +15,12 @@ import {
   ProviderInstanceCard,
   readProviderEnvironmentVariable,
 } from "./ProviderInstanceCard";
+
+// signalbox: rendered without a browser, so environment UI reads as shown.
+vi.mock("../../state/environmentCapabilities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environmentCapabilities")>()),
+  useShowsEnvironmentUi: () => true,
+}));
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {

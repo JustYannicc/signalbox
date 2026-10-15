@@ -29,6 +29,7 @@ import { useHomeListOptions } from "./home-list-options";
 import { useAtomValueWhileVisible, useHomeRouteVisible } from "./home-route-visibility";
 import { useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
+import { useScratchScopeTitles } from "../folders/use-folder-copy"; // signalbox: folders
 import { projectFilterOptions as buildProjectFilterOptions } from "../sections/section-project-filter";
 import { useFolderFilter, useFolderFilterOptions } from "../folders/use-folder-filter"; // signalbox: folders
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
@@ -147,7 +148,7 @@ export function HomeRouteScreen() {
       setSelectedProjectKey(resolvedProjectKey);
     }
   }, [projectScopeKey, resolvedProjectKey, setSelectedProjectKey]);
-  const projectScopes = useMemo(
+  const upstreamProjectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
@@ -156,6 +157,7 @@ export function HomeRouteScreen() {
       }),
     [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );
+  const projectScopes = useScratchScopeTitles(upstreamProjectScopes); // signalbox: folders
   // signalbox: sections can select a single project outside the grouped scopes.
   const scopeFilterOptions = useMemo(
     () =>

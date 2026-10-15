@@ -14,9 +14,9 @@ import type { Caller, CallerLimits } from "../mcp/threadAccess.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { getAutoBootstrapThreadModelSelection } from "../serverRuntimeStartup.ts";
-import type { AuthorizeAutomation } from "./catalog.ts";
-import { automationError, fail } from "./errors.ts";
-import * as WorkflowEngine from "./WorkflowEngine.ts";
+import type { AuthorizeAutomation } from "@signalbox/automations/catalog";
+import { automationError, fail } from "@signalbox/automations/errors";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 /**
  * Automations saved, run or retried for an MCP caller: an agent's thread, or

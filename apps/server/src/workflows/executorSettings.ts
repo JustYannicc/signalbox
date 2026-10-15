@@ -1,6 +1,5 @@
 import { AutomationError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -11,15 +10,8 @@ import * as Schema from "effect/Schema";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
-import { fromJson, toJson } from "./json.ts";
-
-/** Where `w.call` sends calls, and the key it sends them with. */
-export interface ExecutorSettings {
-  readonly url: string;
-  readonly apiKey: string;
-  /** "environment" when SIGNALBOX_EXECUTOR_URL / SIGNALBOX_EXECUTOR_API_KEY set it. */
-  readonly source: "settings" | "environment";
-}
+import { ExecutorSettingsStore } from "@signalbox/automations/executorConnection";
+import { fromJson, toJson } from "@signalbox/automations/json";
 
 /** The API key lives in the server's secret store under this name. */
 const EXECUTOR_API_KEY_SECRET = "automations-executor-api-key";
@@ -31,22 +23,10 @@ const decodeFileExecutor = Schema.decodeUnknownOption(FileExecutor);
 const fail = (message: string) => (cause: unknown) => new AutomationError({ message, cause });
 
 /**
- * Reads and writes the Executor connection. The URL sits in the fork settings
- * file `<stateDir>/automations.json` (settings.json drops unknown keys); the key
+ * The server's Executor connection. The URL sits in the fork settings file
+ * `<stateDir>/automations.json` (settings.json drops unknown keys); the key
  * sits in the server secret store. The env vars win over both.
  */
-export class ExecutorSettingsStore extends Context.Service<
-  ExecutorSettingsStore,
-  {
-    readonly read: Effect.Effect<Option.Option<ExecutorSettings>, AutomationError>;
-    readonly write: (input: {
-      readonly url: string;
-      readonly apiKey: string;
-    }) => Effect.Effect<void, AutomationError>;
-    readonly clear: Effect.Effect<void, AutomationError>;
-  }
->()("t3/workflows/executorSettings/ExecutorSettingsStore") {}
-
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

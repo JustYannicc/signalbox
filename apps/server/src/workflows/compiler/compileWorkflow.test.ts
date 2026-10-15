@@ -1,7 +1,8 @@
 import type { WorkflowNode } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { compileWorkflow, type CompiledWorkflow } from "./compileWorkflow.ts";
+import type { CompiledWorkflow } from "@signalbox/automations/compiled";
+import { compileWorkflow } from "./compileWorkflow.ts";
 
 const META = `export const meta = { name: "Test", triggers: [{ cron: "0 * * * *" }] } as const;\n`;
 
@@ -275,7 +276,7 @@ describe("compileWorkflow", () => {
       // Retry until the export is ready
       while (!ready) {
         ready = (await w.http("Check the export", { url: \`https://api.example.com/exports/\${input.id}\` })).ready;
-        if (!ready) await w.sleep("Wait a minute", { minutes: 1 });
+        if (!ready) await w.waitFor("Wait a minute", { event: "export.ready", timeout: { minutes: 1 } });
       }
       try {
         await w.call("Post to Slack", "slack.chat.postMessage", {});
@@ -293,7 +294,7 @@ describe("compileWorkflow", () => {
       "  http(api.example.com) Check the export",
       "  ? !ready",
       "    [Yes]",
-      "      sleep Wait a minute",
+      "      waitFor Wait a minute",
       "    [No]",
       "try If something fails",
       "  call(slack) Post to Slack",
@@ -317,7 +318,7 @@ describe("compileWorkflow", () => {
       let total = 0;
       for (const item of items) total += item;
       if (total > 5) total = 5;
-      const stamp = new Date().toISOString() + Math.random();
+      const stamp = new Date(input.at).toISOString() + Math.max(1, 2);
       await w.notify("Report", \`Total \${total} \${stamp}\`);
     `);
     expect(outline(graph.nodes)).toEqual(["notify Report"]);
@@ -369,6 +370,28 @@ export default workflow(async (w) => {
     expect(script).toContain('const REPO = "acme/app"');
     expect(runModule).toContain("const gh = (args) =>");
     expect(runModule).toContain("export { issues, pulls };");
+  });
+
+  it("emits a worker module whose factory gives each run its own top-level state", async () => {
+    const { workerModule } = compiled(
+      `await w.notify("Count", String(bump()));\n  return count;`,
+      `let count = 0;\nconst bump = () => ++count;\n`,
+    );
+    expect(workerModule).toMatch(/^export function load\(workflow\) \{\n/);
+    expect(workerModule).toContain("const meta = {");
+    expect(workerModule).toContain('w.notify("s1", "Count"');
+    expect(workerModule).toMatch(/return __signalboxWorkflow;\n\}\n$/);
+
+    // Evaluate it as a module would, with a `workflow` wrapper that returns the callback.
+    const load = new Function(`${workerModule!.replace(/^export /, "")}\nreturn load;`)() as (
+      workflow: (fn: unknown) => unknown,
+    ) => (w: unknown, input: unknown, trigger: unknown) => Promise<number>;
+    const w = { notify: async () => null };
+    const first = load((fn) => fn);
+    const second = load((fn) => fn);
+    expect(await first(w, null, {})).toBe(1);
+    expect(await first(w, null, {})).toBe(2);
+    expect(await second(w, null, {})).toBe(1);
   });
 
   it("draws try/finally without a catch as plain steps", () => {
@@ -467,10 +490,10 @@ export default workflow(async (w) => {
   });
 
   it("hints at a replacement for globals the sandbox lacks", () => {
-    const result = compile(`await w.notify("N", String(performance.now()));`);
+    const result = compile(`await w.notify("N", String(performance.timeOrigin));`);
     expect(!result.ok && result.diagnostics[0]).toMatchObject({
       message: "performance isn't available in automation code.",
-      hint: "Use Date.now().",
+      hint: "Use trigger.at (when the run started, an ISO string) or a time a step returned.",
     });
   });
 

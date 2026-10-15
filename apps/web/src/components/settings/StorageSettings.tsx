@@ -41,6 +41,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox: one environment
 import {
   useClearScopedSettings,
   useScopedSettings,
@@ -401,6 +402,7 @@ function CleanupSection() {
 
 export function StorageSettingsPanel() {
   const { scope, environments, connectedEnvironments, targets, target } = useSettingsScope();
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   const scopedSettings = useScopedSettings();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const settings = {
@@ -460,8 +462,9 @@ export function StorageSettingsPanel() {
           )
           .map((environment) => environment.environmentId)}
       >
-        Update the selected environments to use storage cleanup, or choose a machine that supports
-        it.
+        {showsEnvironmentUi // signalbox: one environment
+          ? "Update the selected environments to use storage cleanup, or choose a machine that supports it."
+          : "Storage cleanup isn't available here."}
       </SettingsScopeNotice>
     );
   }

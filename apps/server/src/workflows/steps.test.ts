@@ -5,7 +5,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { httpRequest } from "./steps.ts";
+import { httpRequest } from "@signalbox/automations/steps";
 
 /** Runs `w.http` against a client that records the request and answers 200 `{}`. */
 const send = (request: unknown) => {

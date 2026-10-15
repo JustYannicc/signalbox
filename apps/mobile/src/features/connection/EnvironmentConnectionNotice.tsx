@@ -8,6 +8,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 
 function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string): string {
   switch (phase) {
@@ -61,6 +62,7 @@ export function EnvironmentConnectionNotice(props: {
 }) {
   const isRetrying =
     props.connection.phase === "connecting" || props.connection.phase === "reconnecting";
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
 
   return (
     <View className="flex-1 items-center justify-center px-8">
@@ -80,7 +82,9 @@ export function EnvironmentConnectionNotice(props: {
           {noticeTitle(props.connection.phase, props.environmentLabel)}
         </Text>
         <Text className="text-center text-sm leading-normal text-foreground-muted">
-          {noticeDetail(props.connection.phase, props.resourceName, props.connection.error)}
+          {environmentCopy(
+            noticeDetail(props.connection.phase, props.resourceName, props.connection.error),
+          )}
           {props.connection.traceId ? (
             <ConnectionTraceId traceId={props.connection.traceId} />
           ) : null}

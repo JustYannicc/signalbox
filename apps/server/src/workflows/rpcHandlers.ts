@@ -5,7 +5,7 @@ import * as Stream from "effect/Stream";
 
 import { projectDefaults } from "./callerAccess.ts";
 import * as ConnectionSettings from "./connectionSettings.ts";
-import type * as WorkflowEngine from "./WorkflowEngine.ts";
+import type * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 const METHODS = AUTOMATION_WS_METHODS;
 

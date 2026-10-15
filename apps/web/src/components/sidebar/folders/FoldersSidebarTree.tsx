@@ -427,7 +427,8 @@ export function FoldersSidebarTree(props: {
             {sidebar.environments.map((environment) => (
               <section
                 key={environment.environmentId}
-                aria-label={environment.label}
+                // One environment is nothing to announce: no region, like no heading.
+                aria-label={sidebar.showEnvironmentLabels ? environment.label : undefined}
                 className="flex flex-col gap-1"
               >
                 {sidebar.showEnvironmentLabels ? (

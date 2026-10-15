@@ -6,13 +6,15 @@ import { DurableObject } from "cloudflare:workers";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
+import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import * as CloudAttachments from "../attachments/CloudAttachments.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
@@ -39,7 +41,7 @@ import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import * as KindClassifier from "../threadKinds/KindClassifier.ts";
-import { serveConnection } from "./connection.ts";
+import { ClientSockets, PING, PONG } from "./clientSockets.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import {
   CONNECTION_HEADER,
@@ -71,8 +73,8 @@ import * as ChatArchive from "./chatArchive.ts";
  * authenticates every request before it gets here and forwards a socket's
  * session in `CONNECTION_HEADER`.
  *
- * Sockets use the standard (non-hibernating) API, so an object stays in memory
- * while a client is connected.
+ * Client sockets hibernate (`clientSockets.ts`), so an object whose clients
+ * are only connected leaves memory and costs nothing until something happens.
  */
 
 export interface UserObjectEnv
@@ -90,6 +92,8 @@ export interface UserObjectEnv
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
+  /** Automation runs, one Workflow instance each (`automations/automationWorkflow.ts`). */
+  readonly AUTOMATION_RUNS?: Workflow;
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
@@ -132,16 +136,32 @@ const layerDrives = (env: UserObjectEnv) => {
   };
 };
 
-/** The object's alarm, which only the idle-chat sweep uses (`chatArchive.ts`). */
+/**
+ * Makes the object's alarm go off no later than `atMs`. Its one alarm is
+ * shared: the idle-chat sweep (`chatArchive.ts`), client sockets' session
+ * expiry and automation crons each only move it earlier, and each treats an
+ * early alarm as nothing to do yet.
+ */
+const armBy = async (storage: DurableObjectStorage, atMs: number) => {
+  const current = await storage.getAlarm();
+  if (current === null || current > atMs) await storage.setAlarm(atMs);
+};
+
+/** Automations' side of the object's alarm: their next cron. */
+const layerAutomationAlarm = (storage: DurableObjectStorage) =>
+  Layer.succeed(
+    AutomationAlarm,
+    AutomationAlarm.of({
+      arm: (at) => (at === null ? Effect.void : Effect.promise(() => armBy(storage, at))),
+    }),
+  );
+
+/** The idle-chat sweep's side of the object's alarm. */
 const layerAlarm = (storage: DurableObjectStorage) =>
   Layer.succeed(
     ChatArchive.ChatArchiveAlarm,
     ChatArchive.ChatArchiveAlarm.of({
-      armBy: (atMs) =>
-        Effect.promise(async () => {
-          const current = await storage.getAlarm();
-          if (current === null || current > atMs) await storage.setAlarm(atMs);
-        }),
+      armBy: (atMs) => Effect.promise(() => armBy(storage, atMs)),
     }),
   );
 
@@ -149,75 +169,87 @@ const layerAlarm = (storage: DurableObjectStorage) =>
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
   return ManagedRuntime.make(
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
-      Layer.provideMerge(
-        Layer.mergeAll(
-          UserShell.layer,
-          CloudThreadService.layer,
-          PoolSignIns.layer,
-          drives.services,
-          ConnectionLinks.layer,
-          LocalKeys.layer,
-        ),
+    // The user's automations (#434), on the services below.
+    CloudEngine.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAutomationAlarm(storage)),
       ),
-      // Below the drive services: the files panel reads promised files with it (#406).
-      Layer.provideMerge(GitHubConnection.layer),
+      // Building it only touches the object's own SQLite, which the object can't run without either.
+      Layer.orDie,
       Layer.provideMerge(
-        Layer.mergeAll(
-          ThreadContexts.layer,
-          UserPools.layer,
-          UserThreadKinds.layerTurns,
-          // Pasted screenshots and files, signed with the same keys as asset URLs.
-          CloudAttachments.layer(attachmentStorage(env)),
-        ),
-      ),
-      Layer.provideMerge(UserThreadKinds.layer),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
-          layerAlarm(storage),
-          PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                FetchHttpClient.layer,
-                ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+        Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              UserShell.layer,
+              CloudThreadService.layer,
+              PoolSignIns.layer,
+              drives.services,
+              ConnectionLinks.layer,
+              LocalKeys.layer,
+            ),
+          ),
+          // Below the drive services: the files panel reads promised files with it (#406).
+          Layer.provideMerge(GitHubConnection.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ThreadContexts.layer,
+              UserPools.layer,
+              UserThreadKinds.layerTurns,
+              // Pasted screenshots and files, signed with the same keys as asset URLs.
+              CloudAttachments.layer(attachmentStorage(env)),
+            ),
+          ),
+          Layer.provideMerge(UserThreadKinds.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+              layerAlarm(storage),
+              PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    FetchHttpClient.layer,
+                    ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      ),
-      Layer.provideMerge(LegacySections.layer),
-      Layer.provideMerge(UserFolders.layer),
-      Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
-      Layer.provideMerge(
-        GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
-          Layer.provide(FetchHttpClient.layer),
-        ),
-      ),
-      Layer.provideMerge(UserDrives.layer),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          UserStore.layer,
-          UserContexts.layerWithDrives,
-          ResourceBindings.layer,
-          OnePasswordAccount.layer,
-        ),
-      ),
-      Layer.provideMerge(drives.store),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          ThreadDirectory.layerDurableObjects(env.THREADS, {
-            localWorkerd: env.LOCAL_WORKERD === "1",
-          }),
-          PoolDirectory.layerDurableObjects(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-        ),
-      ),
-      Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
-      // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
-      Layer.provideMerge(
-        CloudTokens.layerSessionSecret.pipe(
-          Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
-          Layer.orDie,
+          Layer.provideMerge(LegacySections.layer),
+          Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
+          Layer.provideMerge(
+            GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
+              Layer.provide(FetchHttpClient.layer),
+            ),
+          ),
+          Layer.provideMerge(UserDrives.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              UserStore.layer,
+              UserContexts.layerWithDrives,
+              ResourceBindings.layer,
+              OnePasswordAccount.layer,
+            ),
+          ),
+          Layer.provideMerge(drives.store),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ThreadDirectory.layerDurableObjects(env.THREADS, {
+                localWorkerd: env.LOCAL_WORKERD === "1",
+              }),
+              PoolDirectory.layerDurableObjects(env.POOLS, {
+                localWorkerd: env.LOCAL_WORKERD === "1",
+              }),
+            ),
+          ),
+          Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+          // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
+          Layer.provideMerge(
+            CloudTokens.layerSessionSecret.pipe(
+              Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
+              Layer.orDie,
+            ),
+          ),
         ),
       ),
     ),
@@ -229,8 +261,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   private readonly identity: Environment.CloudEnvironmentIdentity;
   /** The person's MCP server (`api/mcpObject.ts`), made on first use. */
   private mcp: ReturnType<typeof makeMcpHandler> | undefined;
-  /** Open sockets per session, so revoking a session also disconnects it. */
-  private readonly connections = new Map<string, Set<Fiber.Fiber<void>>>();
+  private readonly sockets: ClientSockets;
 
   constructor(ctx: DurableObjectState, env: UserObjectEnv) {
     super(ctx, env);
@@ -249,23 +280,38 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
+    this.sockets = new ClientSockets({
+      ctx,
+      identity: this.identity,
+      run: (effect) => this.runtime.runPromise(effect),
+    });
+    // Client keepalives are answered without waking a hibernating object.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
     void ctx.blockConcurrencyWhile(async () => {
       await this.runtime.runPromise(UserStore.migrate);
+      // Serves sockets that outlived the object's memory before anything else runs.
+      await this.sockets.restore(await this.now());
       // An alarm lost to a crash between sweeps is set again; one that's set is enough.
-      if ((await ctx.storage.getAlarm()) !== null) return;
-      await this.runtime.runPromise(
-        UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logError("arming the idle-chat sweep failed", { cause }),
+      if ((await ctx.storage.getAlarm()) === null) {
+        await this.runtime.runPromise(
+          UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("arming the idle-chat sweep failed", { cause }),
+            ),
           ),
+        );
+      }
+      // Then automations give cut-off launches their instance and set the alarm for the next cron.
+      await this.runtime.runPromise(
+        CloudAutomations.use((automations) => automations.start).pipe(
+          Effect.catchCause((cause) => Effect.logError("starting automations failed", { cause })),
         ),
       );
     });
   }
 
-  /** Idle chats archive themselves (`UserThreadKinds`). */
-  override async alarm() {
-    await this.runtime.runPromise(UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm));
+  private now() {
+    return this.runtime.runPromise(Clock.currentTimeMillis);
   }
 
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
@@ -291,8 +337,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   async revokeSession(sid: string) {
     const revoked = await this.api.revokeSession(sid);
-    const fibers = this.connections.get(sid);
-    if (fibers) await this.runtime.runPromise(Fiber.interruptAll(fibers));
+    await this.sockets.revoke(sid);
     return revoked;
   }
 
@@ -424,6 +469,22 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.publishBranch(input);
   }
 
+  threadEvents(input: Parameters<UserObjectApi["threadEvents"]>[0]) {
+    return this.api.threadEvents(input);
+  }
+
+  automationTool(threadId: string, name: string, input: unknown) {
+    return this.api.automationTool(threadId, name, input);
+  }
+
+  automationHost(call: Parameters<UserObjectApi["automationHost"]>[0]) {
+    return this.api.automationHost(call);
+  }
+
+  automationWorkerModule(automationId: string, version: number) {
+    return this.api.automationWorkerModule(automationId, version);
+  }
+
   sweepThreadKinds(asOfMs: number) {
     return this.api.sweepThreadKinds(asOfMs);
   }
@@ -460,39 +521,45 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     if (!session || !profile) return new Response("Unauthorized", { status: 401 });
 
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
-    server.accept();
-    const fibers = this.connections.get(sid) ?? new Set();
-    this.connections.set(sid, fibers);
-    const fiber = this.runtime.runFork(
-      serveConnection({
-        webSocket: server,
-        scopes: session.scopes,
-        identity: this.identity,
-        userId: profile.id,
-        sid,
-      }).pipe(
-        // An open socket never outlives its session.
-        Effect.raceFirst(
-          Clock.currentTimeMillis.pipe(
-            Effect.flatMap((now) => Effect.sleep(Math.max(0, session.expiresAt - now))),
+    await this.sockets.accept(server, session, profile.id);
+    // The alarm disconnects it when its session expires.
+    await armBy(this.ctx.storage, session.expiresAt);
+    // A revoke that landed while the socket was being set up missed it.
+    if (!(await this.findSession(sid))) await this.sockets.revoke(sid);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    await this.sockets.message(socket, message);
+  }
+
+  override async webSocketClose(socket: WebSocket, code: number, reason: string) {
+    await this.sockets.closed(socket, code, reason);
+  }
+
+  override async webSocketError(socket: WebSocket) {
+    await this.sockets.closed(socket);
+  }
+
+  /**
+   * Expired sessions' sockets close, idle chats archive themselves
+   * (`UserThreadKinds`), and due crons start. Each re-arms it.
+   */
+  override async alarm() {
+    const next = await this.sockets.expire(await this.now());
+    if (next !== null) await armBy(this.ctx.storage, next);
+    await this.runtime.runPromise(
+      Effect.all(
+        [
+          UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm).pipe(
+            Effect.catchCause((cause) => Effect.logError("idle-chat sweep failed", { cause })),
           ),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            fibers.delete(fiber);
-            if (fibers.size === 0) this.connections.delete(sid);
-            try {
-              server.close(1000);
-            } catch {
-              // Already closed by the client.
-            }
-          }),
-        ),
+          CloudAutomations.use((automations) => automations.wake).pipe(
+            Effect.catchCause((cause) => Effect.logError("automation crons failed", { cause })),
+          ),
+        ],
+        { discard: true },
       ),
     );
-    fibers.add(fiber);
-    // A revoke that landed while the socket was being set up missed this fiber.
-    if (!(await this.findSession(sid))) await this.runtime.runPromise(Fiber.interrupt(fiber));
-    return new Response(null, { status: 101, webSocket: client });
   }
 }

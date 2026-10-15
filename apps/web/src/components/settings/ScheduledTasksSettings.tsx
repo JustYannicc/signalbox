@@ -95,6 +95,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox: one environment
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -241,6 +242,7 @@ export function ScheduledTasksSettings(target: {
   readonly taskId?: ScheduledTaskId | undefined;
 }) {
   const { scope, environments, connectedEnvironments, environment } = useSettingsScope();
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   const [editor, setEditor] = useState<{
     environmentId: EnvironmentId;
     task: ScheduledTask | null;
@@ -300,9 +302,11 @@ export function ScheduledTasksSettings(target: {
                 <Clock3Icon />
               </EmptyMedia>
               <EmptyTitle>Scheduled tasks aren't available here</EmptyTitle>
-              <EmptyDescription>
-                The selected environments don't run scheduled tasks.
-              </EmptyDescription>
+              {showsEnvironmentUi ? ( // signalbox: one environment, nothing to select
+                <EmptyDescription>
+                  The selected environments don't run scheduled tasks.
+                </EmptyDescription>
+              ) : null}
             </EmptyHeader>
           </Empty>
         ) : (

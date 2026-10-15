@@ -131,6 +131,7 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
+import { readProjectSettingsLabel } from "./sidebar/folders/useFolderCopy"; // signalbox: folder words
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
@@ -2391,7 +2392,7 @@ function OpenCommandPaletteDialog(props: {
         "remove",
         "t3.json",
       ],
-      title: "Project settings",
+      title: readProjectSettingsLabel(contextualProjectGroup.environmentId), // signalbox: folder words
       description: contextualProjectGroup.displayName,
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
       run: async () => {

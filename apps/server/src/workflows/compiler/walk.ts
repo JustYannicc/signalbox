@@ -1,6 +1,6 @@
 import type { Node } from "oxc-parser";
 
-import { visitorKeys } from "./oxc.ts";
+import { visitorKeysOf } from "./oxc.ts";
 
 /** Keys that hold types, decorators or labels: never values the workflow computes. */
 const SKIPPED_KEYS = new Set([
@@ -68,7 +68,7 @@ function isNameKey(node: Node, key: string) {
 export function* children(node: Node): Generator<Node> {
   if (node.type.startsWith("TS") && !VALUE_TS_NODES.has(node.type)) return;
   const record = node as unknown as Record<string, unknown>;
-  for (const key of visitorKeys[node.type] ?? []) {
+  for (const key of visitorKeysOf(node.type) ?? []) {
     if (SKIPPED_KEYS.has(key) || isNameKey(node, key)) continue;
     const value = record[key];
     if (Array.isArray(value)) {

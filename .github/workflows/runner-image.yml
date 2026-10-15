@@ -25,7 +25,10 @@ on:
       - apps/server/src/signalbox/runner/**
       - apps/server/src/preview/ServerBrowser*.ts
       - apps/server/src/orchestration-v2/Adapters/**
+      # The Runner compiles and forwards agents' automations.
+      - apps/server/src/workflows/**
       - packages/runner-protocol/**
+      - packages/automations/**
       - .github/workflows/runner-image.yml
   workflow_call:
     inputs:

@@ -27,6 +27,10 @@
       "types": "./src/BranchProtocol.ts",
       "import": "./src/BranchProtocol.ts"
     },
+    "./AutomationProtocol": {
+      "types": "./src/AutomationProtocol.ts",
+      "import": "./src/AutomationProtocol.ts"
+    },
     "./drivePaths": {
       "types": "./src/drivePaths.ts",
       "import": "./src/drivePaths.ts"

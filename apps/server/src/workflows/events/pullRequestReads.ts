@@ -1,5 +1,4 @@
 import type {
-  PullRequestCheck,
   PullRequestComment,
   PullRequestRef,
   ThreadPullRequestWatch,
@@ -10,8 +9,9 @@ import * as Option from "effect/Option";
 
 import { evaluatePullRequestWatch } from "../../orchestration-v2/pullRequestWatch.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
-import { WorkflowEngine } from "../WorkflowEngine.ts";
-import { cap, SHORT_TEXT } from "./candidate.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
+import { cap, SHORT_TEXT } from "@signalbox/automations/events/candidate";
+import type { PullRequestReads, Remark } from "@signalbox/automations/events/pullRequestDetails";
 
 /**
  * Host reads behind `pr.commented`, `pr.reviewed` and the failed checks on
@@ -24,33 +24,6 @@ import { cap, SHORT_TEXT } from "./candidate.ts";
  * read that fails or takes too long answers null, so the event still goes,
  * without the details.
  */
-
-/** A comment or review, as the event carries it. */
-export interface Remark {
-  readonly id: string;
-  readonly kind: PullRequestComment["kind"];
-  readonly author: string | null;
-  readonly body: string | null;
-  readonly path: string | null;
-  readonly reviewState: string | null;
-  readonly url: string | null;
-  readonly at: string;
-}
-
-export interface FailedCheck {
-  readonly name: string;
-  readonly status: PullRequestCheck["status"];
-  readonly url: string | null;
-}
-
-export interface PullRequestReads {
-  /** Remarks by others than the account Signalbox reads with, active after `since`, oldest first. */
-  readonly remarksSince: (
-    ref: PullRequestRef,
-    since: string,
-  ) => Effect.Effect<ReadonlyArray<Remark> | null>;
-  readonly failedChecks: (ref: PullRequestRef) => Effect.Effect<ReadonlyArray<FailedCheck> | null>;
-}
 
 /** Event delivery waits on these reads, so a slow host only costs the details. */
 const READ_TIMEOUT = "20 seconds";
