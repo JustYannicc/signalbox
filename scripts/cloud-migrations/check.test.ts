@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics nodeBuiltinImport:off - Builds throwaway git repositories on disk.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
-import { check, type Tree } from "./check.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+
+import { check, gitTree, type Tree } from "./check.ts";
 
 const STORE = "apps/cloud/src/user/UserStore.ts";
 const TABLES = "apps/cloud/src/user/UserTables.ts";
@@ -195,6 +201,73 @@ describe("cloud migrations check", () => {
     );
     expect(renamed.violations).toEqual([
       `${WRANGLER} migrations[0]: edited or removed after it merged`,
+    ]);
+  });
+});
+
+// CI checks a pull request on GitHub's merge of it into its base, against that
+// base (the merge's first parent).
+describe("cloud migrations check on a pull request's merge", () => {
+  let repo: string;
+  const git = (...args: ReadonlyArray<string>) =>
+    NodeChildProcess.execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  const commit = (entries: ReadonlyArray<string>, message: string) => {
+    NodeFS.writeFileSync(NodePath.join(repo, STORE), store(entries.join("\n")));
+    git("commit", "--quiet", "--all", "-m", message);
+  };
+  /** Merges `branch` into `base` the way GitHub builds `refs/pull/<n>/merge`. */
+  const pullRequestMerge = (base: string, branch: string) => {
+    git("checkout", "--quiet", "--detach", base);
+    git("merge", "--quiet", "--no-ff", "--no-edit", branch);
+    return check(gitTree(repo, "HEAD^1"), gitTree(repo, "HEAD"));
+  };
+
+  const ROLES = sqlEntry("0002_roles", "CREATE TABLE roles (id TEXT PRIMARY KEY)");
+  const LINKS = sqlEntry("0003_links", "CREATE TABLE links (id TEXT PRIMARY KEY)");
+  const KEYS = sqlEntry("0017_api_keys", "CREATE TABLE api_keys (id TEXT PRIMARY KEY)");
+
+  beforeEach(() => {
+    repo = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "cloud-migrations-"));
+    git("init", "--quiet", "--initial-branch", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    git("config", "commit.gpgsign", "false");
+    NodeFS.mkdirSync(NodePath.join(repo, NodePath.dirname(STORE)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(repo, STORE), store([INIT, ROLES, LINKS].join("\n")));
+    git("add", "--all");
+    git("commit", "--quiet", "-m", "root");
+    git("branch", "feature");
+    // Main merges a migration after the branch forked.
+    commit([INIT, ROLES, LINKS, KEYS], "api keys");
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("passes a branch that only lags main", () => {
+    git("checkout", "--quiet", "feature");
+    NodeFS.writeFileSync(NodePath.join(repo, "README.md"), "unrelated\n");
+    git("add", "README.md");
+    git("commit", "--quiet", "-m", "unrelated");
+
+    // The branch's head alone lacks main's migration.
+    expect(check(gitTree(repo, "main"), gitTree(repo, "feature")).violations).toEqual([
+      `${STORE} 0017_api_keys: removed after it merged`,
+    ]);
+    expect(pullRequestMerge("main", "feature")).toEqual({
+      violations: [],
+      added: [],
+      verdict: "none",
+    });
+  });
+
+  it("fails a branch that removes a merged migration", () => {
+    git("checkout", "--quiet", "feature");
+    commit([ROLES, LINKS], "drop init");
+
+    expect(pullRequestMerge("main", "feature").violations).toEqual([
+      `${STORE} 0001_init: removed after it merged`,
     ]);
   });
 });
