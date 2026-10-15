@@ -28,7 +28,6 @@ import type { DrainContext } from "evlog";
 import type { WorkflowCompileResult } from "./compiled.ts";
 import type { LaunchRun } from "./engineTypes.ts";
 import type { Envelope } from "./events/eventTriggers.ts";
-import type { ReplayWorkflow } from "./sandbox/replayWorkflow.ts";
 import type { WorkflowStore } from "./WorkflowStore.ts";
 
 /**
@@ -146,15 +145,6 @@ export class AutomationCompiler extends Context.Service<
   AutomationCompiler,
   { readonly compile: (source: string) => WorkflowCompileResult }
 >()("@signalbox/automations/host/AutomationCompiler") {}
-
-/**
- * Where automation code replays. One seam, so a host can swap QuickJS for
- * another isolate (sandbox/replayWorkflow.ts holds the contract and QuickJS).
- */
-export class AutomationSandbox extends Context.Service<
-  AutomationSandbox,
-  { readonly replay: ReplayWorkflow }
->()("@signalbox/automations/host/AutomationSandbox") {}
 
 /** `w.run`: a function from the file, run where the host runs code. */
 export class AutomationFunctions extends Context.Service<

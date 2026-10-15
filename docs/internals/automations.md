@@ -4,10 +4,9 @@ An automation is one TypeScript file an agent writes. It compiles into a diagram
 
 ## The engine runs on a host
 
-The engine never touches threads, the machine or the network setup of where it runs. [`host.ts`](../../packages/automations/src/host.ts) names what it needs: threads (start, send, read, interrupt, settle, domain events, attached-run monitors), a compiler, the sandbox, `w.run`, a run-log sink, model options, and hooks. The server provides them in [`serverHost.ts`](../../apps/server/src/workflows/serverHost.ts).
+The engine never touches threads, the machine or the network setup of where it runs. [`host.ts`](../../packages/automations/src/host.ts) names what it needs: threads (start, send, read, interrupt, settle, domain events, attached-run monitors), a compiler, `w.run`, a run-log sink, model options, and hooks. The server provides them in [`serverHost.ts`](../../apps/server/src/workflows/serverHost.ts).
 
 - **Monitors are pushed.** The engine tells the host what each thread's attached runs are (`monitorsChanged`), because a host's engine and its thread projections may live in different processes or objects.
-- **The sandbox is one seam.** [`sandbox/replayWorkflow.ts`](../../packages/automations/src/sandbox/replayWorkflow.ts) holds the replay contract and QuickJS with the build and runaway budget injected; a host can swap the whole sandbox through `AutomationSandbox`.
 - **Compiling needs Node.** oxc's wasm build needs threads, so a host without Node can't compile a save itself.
 - **The package mirrors a few upstream values** (the hook route, the PR watch's wake limit, the runtime-mode order); `serverHost.test.ts` holds them equal.
 

@@ -58,7 +58,6 @@ import {
   AutomationFunctions,
   AutomationIngress,
   AutomationModels,
-  AutomationSandbox,
   AutomationThreads,
   forkRoot,
 } from "./host.ts";
@@ -68,7 +67,7 @@ import { automationNotice, failureNotice } from "./notices.ts";
 import { makeReplayQueue } from "./replayQueue.ts";
 import { makeRestart } from "./restart.ts";
 import * as RunLinkStore from "./runLinkStore.ts";
-import type { JournalResult } from "./sandbox/replayWorkflow.ts";
+import { replayWorkflow, type JournalResult } from "./sandbox/replayWorkflow.ts";
 import { makeInheritance, makeRetryRun, type RetryRun } from "./retry.ts";
 import { isTerminalRunStatus } from "./runs.ts";
 import { makeStartStep, type StepOutcome } from "./startStep.ts";
@@ -194,7 +193,6 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<Change>();
   const functions = yield* AutomationFunctions;
   const compiler = yield* AutomationCompiler;
-  const sandbox = yield* AutomationSandbox;
   const connections = yield* makeConnections;
   const runLogs = yield* makeRunLogs;
   const replays = yield* makeReplayQueue;
@@ -566,7 +564,7 @@ const make = Effect.gen(function* () {
       let mismatch: string | null = null;
       const outcome = yield* Effect.tryPromise({
         try: () =>
-          sandbox.replay({
+          replayWorkflow({
             script,
             input: fromJson(run.input_json),
             trigger: fromJson(run.trigger_json) ?? { type: run.trigger },
