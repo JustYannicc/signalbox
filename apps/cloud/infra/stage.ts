@@ -27,8 +27,13 @@ export const PREVIEW_ZONE = {
 
 const previewHost = (tag: string) => `*-${tag}.${PREVIEW_ZONE.name}`;
 
-/** Same as wrangler.jsonc, so `wrangler dev` runs what deploys. */
-export const COMPATIBILITY_DATE = "2026-09-30";
+/**
+ * Same as wrangler.jsonc, so `wrangler dev` runs what deploys. From
+ * 2026-10-01 pending I/O (`ctx.container.monitor()`, DO RPC, service binding
+ * calls, `waitUntil`) keeps a Durable Object up with no client connected, so a
+ * ThreadObject or PoolObject isn't evicted while its container still works.
+ */
+export const COMPATIBILITY_DATE = "2026-10-01";
 
 /**
  * Durable Object bindings and the classes behind them. A binding is its
@@ -84,9 +89,15 @@ export const cloudStage = (stage: string): CloudStage => {
       cloudDomain: "app.signalbox.run",
       gatewayDomain: "gateway.signalbox.run",
       previewHost: previews,
-      // wrangler's default names: `<worker>-<class, lowercased>`.
-      poolContainer: { name: "signalbox-cloud-poolobject", maxInstances: 10 },
-      threadContainer: { name: "signalbox-cloud-threadobject", maxInstances: 50 },
+      // wrangler's default names: `<worker>-<class, lowercased>`. A cap is
+      // only a brake on a runaway start loop: containers bill while they run,
+      // and the account allows 1,500 vCPU / 6 TiB at once. Pools run one lite
+      // container each (a company pool is one, however many people use it),
+      // so 100 is 100 pools busy at once, 6.25 vCPU. Threads run one basic
+      // container per working turn, so 200 is 50 vCPU. `check-container-capacity.ts`
+      // opens an issue at 80%.
+      poolContainer: { name: "signalbox-cloud-poolobject", maxInstances: 100 },
+      threadContainer: { name: "signalbox-cloud-threadobject", maxInstances: 200 },
       drivePacksBucket: "signalbox-drives",
       vars: {
         // Production identity. Never reuse it for another deployment.
