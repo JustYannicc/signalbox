@@ -66,24 +66,6 @@ export function PrimaryButton(props: {
   );
 }
 
-export function QuietLink(props: {
-  readonly label: string;
-  readonly disabled?: boolean;
-  readonly onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={props.disabled}
-      hitSlop={6}
-      onPress={props.onPress}
-      className="items-center self-center px-3 py-2 active:opacity-60 disabled:opacity-40"
-    >
-      <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
-    </Pressable>
-  );
-}
-
 export function OrDivider() {
   return (
     <View className="flex-row items-center gap-3 py-1" accessibilityElementsHidden>

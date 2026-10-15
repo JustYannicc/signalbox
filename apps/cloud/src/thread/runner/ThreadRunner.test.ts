@@ -23,6 +23,8 @@ import {
   owner,
   personal,
   type Previews,
+  saveSession,
+  send,
   snapshot,
   threadId,
   turnReport,
@@ -83,7 +85,7 @@ describe("ThreadRunner", () => {
   );
 
   it.effect("resumes the harness's own session when the next message lands on a new machine", () =>
-    withObject(freshDatabase(), (engine, runner) =>
+    withObject(freshDatabase(), (engine, runner, context) =>
       Effect.gen(function* () {
         // As in the cloud: the thread runs on a pool's instance, the Runner on the harness's.
         yield* launch(engine, "launch-1", personal, ProjectId.make("scratch"), POOL_CLAUDE);
@@ -112,23 +114,9 @@ describe("ThreadRunner", () => {
           sequence: 1,
           items: [report.started, threadUpdated, report.full, report.terminal],
         });
+        yield* saveSession(context, "claude-session-1");
         yield* runner.ended(first.generation, "test");
-        yield* engine.dispatch(
-          owner,
-          {
-            type: "message.dispatch",
-            commandId: CommandId.make("send-2"),
-            createdBy: "user",
-            creationSource: "web",
-            threadId,
-            messageId: MessageId.make("message-2"),
-            text: "Again",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-            deliveryIntent: "auto",
-          },
-          personal,
-        );
+        yield* send(engine, 2, "Again");
         yield* connect(runner);
         // The next machine resumes the session the first one wrote, not a new one.
         expect(yield* liveTurn(runner)).toMatchObject({
@@ -158,22 +146,7 @@ describe("ThreadRunner", () => {
           items: [started, report.full, report.terminal],
         });
         yield* runner.ended(first.generation, "test");
-        yield* engine.dispatch(
-          owner,
-          {
-            type: "message.dispatch",
-            commandId: CommandId.make("send-2"),
-            createdBy: "user",
-            creationSource: "web",
-            threadId,
-            messageId: MessageId.make("message-2"),
-            text: "Again",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-            deliveryIntent: "auto",
-          },
-          personal,
-        );
+        yield* send(engine, 2, "Again");
         yield* connect(runner);
         expect(yield* liveTurn(runner)).toMatchObject({
           providerTurnOrdinal: 1,
@@ -251,22 +224,7 @@ describe("ThreadRunner", () => {
         });
         // The machine went away; the next message gets a new one.
         yield* runner.ended(first.generation, "test");
-        yield* engine.dispatch(
-          owner,
-          {
-            type: "message.dispatch",
-            commandId: CommandId.make("send-2"),
-            createdBy: "user",
-            creationSource: "web",
-            threadId,
-            messageId: MessageId.make("message-2"),
-            text: "Again",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-            deliveryIntent: "auto",
-          },
-          personal,
-        );
+        yield* send(engine, 2, "Again");
         const second = yield* connect(runner);
         expect(second.generation).toBe(first.generation + 1);
 
@@ -475,7 +433,7 @@ describe("ThreadRunner", () => {
   );
 
   it.effect("continues a run whose machine is lost on a new machine, from the same session", () =>
-    withObject(freshDatabase(), (engine, runner) =>
+    withObject(freshDatabase(), (engine, runner, context) =>
       Effect.gen(function* () {
         yield* launch(engine);
         const machine = yield* connect(runner);
@@ -486,6 +444,7 @@ describe("ThreadRunner", () => {
           sequence: 1,
           items: [report.started, report.partial],
         });
+        yield* saveSession(context, "claude-session-1");
         // The machine is killed: its socket drops and never comes back.
         yield* runner.disconnected({
           generation: machine.generation,
@@ -533,6 +492,102 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect(
+    "starts a fresh session with the transcript when the lost machine saved none of it",
+    () =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const machine = yield* connect(runner);
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.partial],
+          });
+          // Killed mid first turn, before the harness saved a row of its session (#465).
+          yield* runner.disconnected({
+            generation: machine.generation,
+            connection: 1,
+            detail: "1006",
+          });
+          yield* TestClock.adjust(60_000);
+          yield* runner.reconcile;
+
+          yield* connect(runner);
+          const next = yield* liveTurn(runner);
+          // Nothing to resume: a new session, told what the thread said so far.
+          expect(next).toMatchObject({
+            providerTurnOrdinal: 1,
+            providerThread: { nativeThreadRef: null },
+          });
+          expect(next.restartContinuationOfRunId).toBeUndefined();
+          expect(next.message.text).toContain("User:\nHi\n\nAssistant:\nHel\n\n");
+          expect(next.message.text.endsWith(`User message:\n${CONTINUE_PROMPT}`)).toBe(true);
+        }),
+      ),
+  );
+
+  it.effect("answers in a fresh session once the one a thread names was never saved", () =>
+    withObject(freshDatabase(), (engine, runner, context) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const first = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        // The thread names claude-session-1, but none of it reached the store.
+        yield* runner.batch({
+          generation: first.generation,
+          sequence: 1,
+          items: [report.started, report.full, report.terminal],
+        });
+        yield* runner.ended(first.generation, "test");
+        yield* send(engine, 2, "Again");
+        const second = yield* connect(runner);
+        const fresh = yield* liveTurn(runner);
+        expect(fresh).toMatchObject({
+          providerTurnOrdinal: 1,
+          providerThread: { nativeThreadRef: null },
+        });
+        expect(fresh.message.text).toContain("User:\nHi\n\nAssistant:\nHello!\n\n");
+        expect(fresh.message.text.endsWith("User message:\nAgain")).toBe(true);
+
+        // The fresh session is the one the thread resumes from then on.
+        const freshReport = turnReport(fresh.runId, fresh.runOrdinal, fresh.providerThread);
+        yield* runner.batch({
+          generation: second.generation,
+          sequence: 1,
+          items: [
+            {
+              ...freshReport.started,
+              providerThread: {
+                ...freshReport.started.providerThread,
+                nativeThreadRef: {
+                  driver: claudeDriver,
+                  nativeId: "claude-session-2",
+                  strength: "strong",
+                },
+              },
+            },
+            freshReport.full,
+            freshReport.terminal,
+          ],
+        });
+        yield* saveSession(context, "claude-session-2");
+        yield* runner.ended(second.generation, "test");
+        yield* send(engine, 3, "Once more");
+        yield* connect(runner);
+        const resumed = yield* liveTurn(runner);
+        expect(resumed).toMatchObject({
+          providerTurnOrdinal: 3,
+          providerThread: { nativeThreadRef: { nativeId: "claude-session-2" } },
+          message: { text: "Once more" },
+        });
+      }),
+    ),
+  );
+
   it.effect("fails a run whose machines keep going away, or that never started", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
@@ -559,22 +614,7 @@ describe("ThreadRunner", () => {
         });
 
         // A machine lost before the harness took the next message: nothing to resume.
-        yield* engine.dispatch(
-          owner,
-          {
-            type: "message.dispatch",
-            commandId: CommandId.make("send-2"),
-            createdBy: "user",
-            creationSource: "web",
-            threadId,
-            messageId: MessageId.make("message-2"),
-            text: "Again",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-            deliveryIntent: "auto",
-          },
-          personal,
-        );
+        yield* send(engine, 2, "Again");
         const machine = yield* connect(runner);
         yield* runner.ended(machine.generation, "test");
         const { projection } = yield* snapshot(engine);

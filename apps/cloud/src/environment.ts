@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   type OrchestrationProjectShell,
   ORCHESTRATION_PROTOCOL_VERSION,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
   ProjectId,
@@ -75,6 +76,8 @@ export interface CloudEnvironmentIdentity {
   readonly previews?: boolean;
   /** Whether clients may pick the scripted provider (`SCRIPTED_PROVIDER`; tests and dev only). */
   readonly scripted?: boolean;
+  /** Whether threads take pasted screenshots and files (`attachments/`): the cloud has a bucket. */
+  readonly attachments?: boolean;
 }
 
 export const authDescriptor: ServerAuthDescriptor = {
@@ -104,6 +107,13 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.
     poolFeatures: CLOUD_POOL_KINDS,
     signalboxPreviews: identity.previews === true,
+    // Uploaded to R2 and claimed into the thread on send (`attachments/CloudAttachments.ts`).
+    ...(identity.attachments === true
+      ? {
+          attachmentUploads: true,
+          fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
+        }
+      : {}),
     // Importing a GitHub repository registers it at once (`github/GitHubImport.ts`).
     projectCloneTracking: true,
     // Threads run on machines nobody operates, and the user never runs this server.
@@ -121,6 +131,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     accessManagement: false,
     // Automations and their Executor connection run on self-hosted servers only.
     connectedServices: false,
+    // The cloud is the user's one environment; desktop and mobile are gateways to it.
+    otherEnvironments: false,
   },
 });
 

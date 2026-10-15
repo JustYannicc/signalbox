@@ -1,7 +1,7 @@
 /**
  * The `automations.open` keybinding (mod+alt+w by default): opens the
- * overview with the Automations panel in the sidebar, the same as the palette
- * entry. Lives here so CommandPalette's own key handler stays upstream's.
+ * overview, the same as the palette entry. Lives here so CommandPalette's own
+ * key handler stays upstream's.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";

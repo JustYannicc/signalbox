@@ -5,30 +5,31 @@ import type { Candidate, EventReads } from "@signalbox/automations/events/candid
 import { makePullRequestTracker } from "@signalbox/automations/events/pullRequestFacts";
 import type { PullRequestReads, Remark } from "@signalbox/automations/events/pullRequestDetails";
 
-const sync = (snapshot: Record<string, unknown> | null, syncedAt = "2026-10-06T10:00:00.000Z") =>
+const link = (snapshot: Record<string, unknown> | null, syncedAt = "2026-10-06T10:00:00.000Z") => ({
+  host: "github.com",
+  repository: "acme/app",
+  number: 7,
+  url: "https://github.com/acme/app/pull/7",
+  source: "agent",
+  snapshot: snapshot && {
+    title: "T",
+    headBranch: "h",
+    baseBranch: "main",
+    isDraft: false,
+    syncedAt,
+    ...snapshot,
+  },
+});
+
+const sync = (snapshot: Record<string, unknown> | null, syncedAt?: string) =>
   ({
     threadId: "thread-1",
-    payload: {
-      projectId: "project-1",
-      pullRequests: [
-        {
-          host: "github.com",
-          repository: "acme/app",
-          number: 7,
-          url: "https://github.com/acme/app/pull/7",
-          source: "agent",
-          snapshot: snapshot && {
-            title: "T",
-            headBranch: "h",
-            baseBranch: "main",
-            isDraft: false,
-            syncedAt,
-            ...snapshot,
-          },
-        },
-      ],
-    },
+    payload: { projectId: "project-1", pullRequests: [link(snapshot, syncedAt)] },
   }) as never;
+
+/** One pull request's own sync, which carries only its link. */
+const linkSync = (snapshot: Record<string, unknown> | null, syncedAt?: string) =>
+  ({ threadId: "thread-1", payload: link(snapshot, syncedAt) }) as never;
 
 const names = (tracker: ReturnType<typeof makePullRequestTracker>, event: unknown) =>
   tracker.observe(event as never).map((candidate) => candidate.name);
@@ -52,6 +53,44 @@ describe("pull request facts", () => {
       projectId: "project-1",
     });
   });
+
+  it("folds a pull request's own sync onto what the thread's syncs showed", () => {
+    const tracker = makePullRequestTracker(0);
+    const linkNames = (event: never) => tracker.observeLink(event).map((c) => c.name);
+    expect(names(tracker, sync({ state: "open", checksState: "pending" }))).toEqual([]);
+    const [passed] = tracker.observeLink(linkSync({ state: "open", checksState: "passing" }));
+    expect(passed).toMatchObject({ name: "pr.checks.passed", projectId: "project-1" });
+    expect(linkNames(linkSync({ state: "open", checksState: "passing" }))).toEqual([]);
+    expect(linkNames(linkSync({ state: "merged", checksState: "passing" }))).toEqual(["pr.merged"]);
+    // A later full sync of the same state doesn't repeat it.
+    expect(names(tracker, sync({ state: "merged", checksState: "passing" }))).toEqual([]);
+  });
+
+  it.effect("reads the project from the thread when a pull request's sync comes first", () =>
+    Effect.gen(function* () {
+      const refs: unknown[] = [];
+      const reads = {
+        shell: Effect.succeed({ projectId: "project-9" } as never),
+        threads: {} as never,
+        pullRequests: {
+          remarksSince: () => Effect.succeed([]),
+          failedChecks: (ref) =>
+            Effect.sync(() => {
+              refs.push(ref);
+              return [];
+            }),
+        },
+      } satisfies EventReads;
+      const tracker = makePullRequestTracker(0);
+      const [failed] = tracker.observeLink(linkSync({ state: "open", checksState: "failing" }));
+      expect(failed!.name).toBe("pr.checks.failed");
+      expect(failed!.projectId).toBeUndefined();
+      expect(yield* failed!.build(reads)).toMatchObject({ number: 7, failedChecks: [] });
+      expect(refs).toEqual([
+        { projectId: "project-9", host: "github.com", repository: "acme/app", number: 7 },
+      ]);
+    }),
+  );
 
   it("after a restart, counts only state synced since then", () => {
     const tracker = makePullRequestTracker(Date.parse("2026-10-06T12:00:00.000Z"));

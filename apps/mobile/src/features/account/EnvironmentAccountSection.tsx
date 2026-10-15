@@ -10,18 +10,38 @@ import { Alert, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { environmentCatalog } from "../../connection/catalog";
 import { usePreparedConnection } from "../../state/session";
+import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { fetchEnvironmentAccount, signOutAccount } from "./accountApi";
 
 /**
+ * Settings' account section when environments are hidden (Signalbox Cloud is the only one):
+ * the account and sign-out for each saved environment, normally exactly one.
+ */
+export function OnlyEnvironmentAccountSections() {
+  const { savedConnectionsById } = useSavedRemoteConnections();
+  return Object.values(savedConnectionsById).map((connection) => (
+    <EnvironmentAccountSection
+      key={connection.environmentId}
+      environmentId={connection.environmentId}
+      environmentLabel={connection.environmentLabel}
+      onlyEnvironment
+    />
+  ));
+}
+
+/**
  * The account behind an environment, with sign-out. Renders nothing for
- * environments connected by pairing code, relay, or before the server answers.
+ * environments connected by pairing code, relay, or before the server answers,
+ * unless it is the user's `onlyEnvironment`: then sign-out is always offered,
+ * since there is no environment screen to remove it from.
  */
 export function EnvironmentAccountSection(props: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
+  readonly onlyEnvironment?: boolean;
 }) {
   const navigation = useNavigation();
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, "environment remove");
@@ -49,7 +69,7 @@ export function EnvironmentAccountSection(props: {
     };
   }, [httpBaseUrl, token]);
 
-  if (account === null) return null;
+  if (account === null && props.onlyEnvironment !== true) return null;
 
   const signOut = async () => {
     setSigningOut(true);
@@ -70,20 +90,22 @@ export function EnvironmentAccountSection(props: {
     }
   };
 
-  const name = [account.firstName, account.lastName].filter(Boolean).join(" ");
+  const name = account ? [account.firstName, account.lastName].filter(Boolean).join(" ") : "";
 
   return (
     <SettingsSection title="Account">
-      <View className="gap-0.5 p-4">
-        <Text className="text-base text-foreground" selectable>
-          {name || account.email}
-        </Text>
-        {name ? (
-          <Text className="text-sm text-foreground-muted" selectable>
-            {account.email}
+      {account ? (
+        <View className="gap-0.5 p-4">
+          <Text className="text-base text-foreground" selectable>
+            {name || account.email}
           </Text>
-        ) : null}
-      </View>
+          {name ? (
+            <Text className="text-sm text-foreground-muted" selectable>
+              {account.email}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
       <SettingsActionRow
         icon={{ ios: "rectangle.portrait.and.arrow.right", android: "lock" }}
         label="Sign out"
@@ -92,8 +114,12 @@ export function EnvironmentAccountSection(props: {
         loading={signingOut}
         onPress={() =>
           Alert.alert(
-            `Sign out of ${props.environmentLabel}?`,
-            "This removes it and its cached threads from this device. Sign in again to get them back.",
+            props.onlyEnvironment
+              ? "Sign out of Signalbox?"
+              : `Sign out of ${props.environmentLabel}?`,
+            props.onlyEnvironment
+              ? "This removes your cached threads from this device. Sign in again to get them back."
+              : "This removes it and its cached threads from this device. Sign in again to get them back.",
             [
               { text: "Cancel", style: "cancel" },
               { text: "Sign out", style: "destructive", onPress: () => void signOut() },

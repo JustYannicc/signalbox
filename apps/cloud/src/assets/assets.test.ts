@@ -18,7 +18,8 @@ import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpRouter } from "effect/http";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
-import { layerConfig, makeMemoryCloud } from "../testing.ts";
+import { makeMemoryObjects } from "../attachments/attachmentTesting.ts";
+import { layerAttachments, layerConfig, makeMemoryCloud } from "../testing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
@@ -85,6 +86,7 @@ const threads = CloudThreadService.CloudThreadService.of({
   previews: () => Stream.die("not used by assets"),
   openPreview: unused,
   turnDiagnostics: unused,
+  canSee: (actor, id) => Effect.succeed(actor.userId === owner && id === threadId),
 });
 
 const layer = CloudAssets.layer.pipe(
@@ -93,6 +95,7 @@ const layer = CloudAssets.layer.pipe(
       CloudTokens.layer,
       Layer.succeed(CloudThreadService.CloudThreadService, threads),
       Layer.sync(UserDirectory.UserDirectory, () => makeMemoryCloud().userDirectory),
+      layerAttachments(makeMemoryObjects()),
     ),
   ),
   Layer.provideMerge(layerConfig()),

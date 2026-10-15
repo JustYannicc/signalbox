@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { MAIN_REF, threadRef, wipRef } from "./DriveStore.ts";
 import { makeMemoryDrives, makeRepo } from "./driveTesting.ts";
+import { makeDriveReader } from "./DriveReader.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import { packForPush, receivePackRequest, receivePackResult } from "./gitPush.ts";
 import type { Bytes } from "./git/gitObjects.ts";
@@ -82,11 +83,21 @@ const setup = () => {
       input,
       encoding: "utf8",
     }).trim();
-  /** A pack of what `include` reaches past `exclude`, as the Runner uploads it. */
-  const pack = (include: ReadonlyArray<string>, exclude: ReadonlyArray<string> = []) => {
+  /** A pack of what `include` reaches past `exclude`, as the Runner uploads it; `filter` leaves objects out. */
+  const pack = (
+    include: ReadonlyArray<string>,
+    exclude: ReadonlyArray<string> = [],
+    filter?: string,
+  ) => {
     const out = tempDir("remote-pack-");
     const name = git(
-      ["pack-objects", "--revs", "--delta-base-offset", NodePath.join(out, "pack")],
+      [
+        "pack-objects",
+        "--revs",
+        ...(filter === undefined ? [] : [`--filter=${filter}`]),
+        "--delta-base-offset",
+        NodePath.join(out, "pack"),
+      ],
       [...include, ...exclude.map((oid) => `^${oid}`)].join("\n") + "\n",
     );
     const read = (ext: string): Bytes =>
@@ -154,16 +165,98 @@ describe("a drive backed by a remote", () => {
     }).pipe(Effect.provide(makeMemoryDrives().layer)),
   );
 
+  it.effect("holds the remote head's files as promised, never as a copy (#406)", () =>
+    Effect.gen(function* () {
+      const remote = setup();
+      const handle = (yield* DriveDirectory).forDrive(DRIVE);
+      yield* handle.setRemote(REMOTE);
+      yield* handle.setup({ name: "owner/repo", members: [MANAGER] });
+      const files = remote.git([
+        "ls-tree",
+        "-r",
+        "--format=%(objectname) %(objectsize)",
+        remote.head,
+      ]);
+      const sizes = new Map(
+        files.split("\n").map((line) => [line.split(" ")[0]!, Number(line.split(" ")[1])]),
+      );
+      const blobless = remote.pack([remote.head], [], "blob:none");
+      // Files left out only a checked remote head may promise.
+      expect((yield* uploadPack({ driveId: DRIVE, threadId: "t1", ...blobless }))._tag).toBe(
+        "refused",
+      );
+      expect(
+        (yield* uploadPack({
+          driveId: DRIVE,
+          threadId: "t1",
+          ...blobless,
+          remoteHead: remote.head,
+          promisedSizes: Effect.succeed(sizes),
+        }))._tag,
+      ).toBe("ok");
+      expect((yield* handle.locate([...sizes.keys()])).length).toBe(0);
+      expect(
+        (yield* handle.promised([...sizes.keys()])).toSorted((a, b) => a.oid.localeCompare(b.oid)),
+      ).toEqual(
+        [...sizes]
+          .map(([oid, size]) => ({ oid, size }))
+          .toSorted((a, b) => a.oid.localeCompare(b.oid)),
+      );
+      yield* handle.mirror(writer("t1"), { expectedMain: null, newMain: remote.head });
+      yield* handle.open(writer("t1"));
+
+      // A turn's commit leans on the promised files it didn't change.
+      const turn = remote.commit("src/app.ts", "export const app = 1;\n", "Add app");
+      expect(
+        (yield* uploadPack({
+          driveId: DRIVE,
+          threadId: "t1",
+          ...remote.pack([turn], [remote.head]),
+        }))._tag,
+      ).toBe("ok");
+      // A file nobody promised, or a missing folder, is still refused.
+      const stray = remote.commit("stray.txt", "not on the remote\n", "Stray");
+      expect(
+        (yield* uploadPack({
+          driveId: DRIVE,
+          threadId: "t1",
+          ...remote.pack([stray], [turn], "blob:none"),
+        }))._tag,
+      ).toBe("refused");
+      expect(
+        (yield* uploadPack({
+          driveId: DRIVE,
+          threadId: "t1",
+          ...remote.pack([stray], [turn], "tree:0"),
+        }))._tag,
+      ).toBe("refused");
+
+      // Reading a promised file asks the remote, and checks what comes back.
+      const readme = remote.git(["rev-parse", `${remote.head}:README.md`]);
+      const fromRemote = (bytes: string) => ({
+        blob: () => Effect.succeed(new TextEncoder().encode(bytes)),
+      });
+      // Without the remote, a promised file can't be read.
+      const offline = yield* makeDriveReader(DRIVE);
+      expect((yield* offline.blob(readme).pipe(Effect.flip))._tag).toBe("DriveReadError");
+      const lying = yield* makeDriveReader(DRIVE, fromRemote("tampered\n"));
+      expect((yield* lying.blob(readme).pipe(Effect.flip))._tag).toBe("DriveReadError");
+      const reader = yield* makeDriveReader(DRIVE, fromRemote("hello\n"));
+      expect(new TextDecoder().decode(yield* reader.blob(readme))).toBe("hello\n");
+    }).pipe(Effect.provide(makeMemoryDrives().layer)),
+  );
+
   it.effect("pushes a thread's branch to the remote, and never its auto-saves", () =>
     Effect.gen(function* () {
       const remote = setup();
       const handle = (yield* DriveDirectory).forDrive(DRIVE);
       yield* handle.setRemote(REMOTE);
       yield* handle.setup({ name: "owner/repo", members: [MANAGER] });
+      // The remote's files stay on the remote (#406); pushing never needs them.
       yield* uploadPack({
         driveId: DRIVE,
         threadId: "t1",
-        ...remote.pack([remote.head]),
+        ...remote.pack([remote.head], [], "blob:none"),
         remoteHead: remote.head,
       });
       yield* handle.mirror(writer("t1"), { expectedMain: null, newMain: remote.head });

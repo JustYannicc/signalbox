@@ -4,6 +4,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
+  AuthStandardClientScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -19,7 +20,7 @@ import {
   RpcScopeAuthorization,
   type ProjectCloneListEvent,
   SectionsRpcError,
-  type ThreadId,
+  ThreadId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -48,6 +49,10 @@ import {
   SIGNALBOX_PUSH_WS_METHODS,
 } from "@t3tools/contracts/signalboxPush";
 import {
+  SIGNALBOX_KEYS_REQUIRED_SCOPES,
+  SIGNALBOX_KEYS_WS_METHODS,
+} from "@t3tools/contracts/signalboxKeys";
+import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
@@ -61,6 +66,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
@@ -70,6 +76,7 @@ import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { makePushHandlers } from "../push/pushRpc.ts";
+import { makeKeysHandlers } from "./keysRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -109,7 +116,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
-  // Images tools returned in a thread (`assets/CloudAssets.ts`).
+  // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
   // Drives, browsed without a machine (`driveBrowsing.ts`).
@@ -119,6 +126,9 @@ const SERVED = [
   WS_METHODS.reviewGetDiffPreview,
   ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
   ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
+  // Pasted screenshots and files (`attachments/CloudAttachments.ts`).
+  WS_METHODS.attachmentsCreateUploadUrl,
+  WS_METHODS.attachmentsDelete,
   // GitHub repositories as drives (`github/`): import, branch status, push and pull requests.
   WS_METHODS.serverDiscoverSourceControl,
   WS_METHODS.sourceControlLookupRepository,
@@ -136,6 +146,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
+  ...Object.values(SIGNALBOX_KEYS_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
 ] as const;
@@ -174,6 +185,8 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
+  [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
+  [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
@@ -190,6 +203,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   ...SIGNALBOX_PUSH_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
+  ...SIGNALBOX_KEYS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -286,6 +300,8 @@ export const layerHandlers = (input: {
   readonly userId: string;
   /** The socket's session; phones it registers get pushes while it lives. */
   readonly sid: string;
+  /** What the connection's credential holds; new keys get no more. Defaults to an app's. */
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -306,6 +322,7 @@ export const layerHandlers = (input: {
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
       const githubImport = yield* makeGitHubImport();
       const branches = yield* GitHubBranches.GitHubBranches;
+      const attachments = yield* CloudAttachments;
       /**
        * Fails with not-found once the user leaves a context and so can't see
        * the thread anymore. Only a context going away is worth asking the
@@ -343,9 +360,14 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
+      const keys = yield* makeKeysHandlers({
+        userId,
+        scopes: input.scopes ?? AuthStandardClientScopes,
+      });
       return {
         ...pools.handlers,
         ...pushes,
+        ...keys,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
@@ -478,6 +500,10 @@ export const layerHandlers = (input: {
             .pipe(
               Effect.mapError((message) => new OrchestrationGetFullThreadDiffError({ message })),
             ),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (request) =>
+          attachments.issueUpload(userId, request),
+        [WS_METHODS.attachmentsDelete]: (request) =>
+          attachments.deletePending(userId, request.attachmentId),
         [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
         [WS_METHODS.sourceControlLookupRepository]: (request) =>
           githubImport.lookup(request.repository),

@@ -93,7 +93,7 @@ export interface EventTriggerDependencies {
   readonly launchRun: LaunchRun;
   /** Runs whose `w.waitFor({ on })` steps want events too. */
   readonly runWaits: RunWaits;
-  /** Derives `pr.*` facts from pull request syncs. */
+  /** Derives `pr.*` facts from pull request syncs, full and per link. */
   readonly pullRequests: PullRequestTracker;
   /** Host reads for pull request details, once the server registered them. */
   readonly pullRequestReads: () => PullRequestReads | undefined;
@@ -139,7 +139,11 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.gen(function* () {
         // Pull request facts are transitions, so every sync is seen, wanted or not.
         const facts =
-          event.type === "thread.pull-request-synced" ? deps.pullRequests.observe(event) : [];
+          event.type === "thread.pull-request-synced"
+            ? deps.pullRequests.observe(event)
+            : event.type === "thread.pull-request-link-updated"
+              ? deps.pullRequests.observeLink(event)
+              : [];
         if (event.type === "thread.deleted") deps.pullRequests.forget(event.threadId);
         const current = yield* currentIndex;
         const hits: Array<Extract<Work, { type: "domain" }>["hits"][number]> = [];

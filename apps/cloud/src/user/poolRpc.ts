@@ -8,6 +8,7 @@ import {
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -17,6 +18,7 @@ import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
 import * as Environment from "../environment.ts";
 import {
   accountPool,
+  limitsSource,
   overview,
   poolDefaultModelSelection,
   poolProviderInstances,
@@ -187,7 +189,7 @@ export const makePoolHandlers = (input: {
                   {
                     version: 1,
                     type: "usageLimitSourcesUpdated",
-                    payload: { sources: state.map((entry) => entry.source) },
+                    payload: { sources: state.map(limitsSource) },
                   },
                 ]
               : [];
@@ -224,7 +226,11 @@ export const makePoolHandlers = (input: {
         ),
       [WS_METHODS.accountPoolSubscribeViews]: () =>
         followPools(pools, actor).pipe(
-          Stream.map((state) => state.map((entry) => overview(entry.pool, entry.source))),
+          Stream.mapEffect((state) =>
+            Effect.map(Clock.currentTimeMillis, (now) =>
+              state.map((entry) => overview(entry.pool, entry.source, now)),
+            ),
+          ),
         ),
       [WS_METHODS.accountPoolCreate]: (request: Parameters<typeof pools.create>[1]) =>
         pools.create(actor, request),

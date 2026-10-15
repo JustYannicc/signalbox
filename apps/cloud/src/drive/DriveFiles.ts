@@ -2,12 +2,16 @@ import type { OrchestrationV2Checkpoint, ProjectEntry } from "@t3tools/contracts
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { parseCheckpointRange } from "../thread/runner/driveItems.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks } from "./DrivePacks.ts";
 import { type DriveReader, DriveReadError, makeDriveReader, pathSegments } from "./DriveReader.ts";
 import { MAIN_REF } from "./DriveStore.ts";
+import { remoteDriveReader } from "./remoteFiles.ts";
+import { GitHub } from "../github/GitHub.ts";
+import { GitHubConnection } from "../github/GitHubConnection.ts";
 import { isBinary } from "./drivePatch.ts";
 import type { Oid } from "./git/gitObjects.ts";
 
@@ -16,7 +20,8 @@ import type { Oid } from "./git/gitObjects.ts";
  * `main` (what every thread has reconciled), and each turn's changes as a diff
  * between the commits its checkpoint names. The shapes are the environment
  * protocol's own, so the files panel, file search and diff panel work
- * unchanged.
+ * unchanged. A remote-backed drive's promised files come from GitHub with the
+ * user's own connection (#406).
  */
 
 /** Files above this are returned cut off, like a self-hosted server does. */
@@ -88,8 +93,16 @@ const rank = (path: string, query: string) => {
 const make = Effect.gen(function* () {
   const directory = yield* DriveDirectory;
   const packs = yield* DrivePacks;
+  const github = yield* Effect.serviceOption(GitHub);
+  const connection = yield* Effect.serviceOption(GitHubConnection);
+  // The user's own GitHub connection reads their remote-backed drives' promised files.
   const readerOf = (driveId: string) =>
-    makeDriveReader(driveId).pipe(
+    (Option.isSome(github) && Option.isSome(connection)
+      ? remoteDriveReader(driveId, connection.value.accessToken).pipe(
+          Effect.provideService(GitHub, github.value),
+        )
+      : makeDriveReader(driveId)
+    ).pipe(
       Effect.provideService(DriveDirectory, directory),
       Effect.provideService(DrivePacks, packs),
     );
@@ -150,8 +163,8 @@ const make = Effect.gen(function* () {
       if (entry.kind === "directory" || entry.kind === "submodule")
         return { _tag: "not_file" } as const;
       // Only the start is shown, so a file too big to show whole is not read at all.
-      const [location] = yield* reader.drive.locate([entry.oid]);
-      if (location !== undefined && location.size > MAX_READ_BYTES)
+      const size = (yield* reader.sizes([entry.oid])).get(entry.oid);
+      if (size !== undefined && size !== null && size > MAX_READ_BYTES)
         return { _tag: "too_large" } as const;
       const found = yield* reader.object(entry.oid);
       if (found.type !== "blob") return { _tag: "not_file" } as const;

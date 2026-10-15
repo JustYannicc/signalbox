@@ -36,31 +36,36 @@ export function buildHomeListFilterMenu(props: {
   readonly selectedProjectKey: string | null;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  /** signalbox: false when the user has one environment, which then needs no filter. */
+  readonly showsEnvironments?: boolean;
 }): HomeListFilterMenu {
   const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [];
 
-  items.push({
-    type: "submenu",
-    title: "Environment",
-    items: [
-      {
-        type: "action",
-        title: "All environments",
-        subtitle: "Show threads from every environment",
-        state: props.selectedEnvironmentId === null ? "on" : "off",
-        onPress: () => props.onEnvironmentChange(null),
-      },
-      ...props.environments.map((environment) => ({
-        type: "action" as const,
-        title: environment.label,
-        state:
-          props.selectedEnvironmentId === environment.environmentId
-            ? ("on" as const)
-            : ("off" as const),
-        onPress: () => props.onEnvironmentChange(environment.environmentId),
-      })),
-    ],
-  });
+  // signalbox: one environment needs no environment filter.
+  if (props.showsEnvironments !== false) {
+    items.push({
+      type: "submenu",
+      title: "Environment",
+      items: [
+        {
+          type: "action",
+          title: "All environments",
+          subtitle: "Show threads from every environment",
+          state: props.selectedEnvironmentId === null ? "on" : "off",
+          onPress: () => props.onEnvironmentChange(null),
+        },
+        ...props.environments.map((environment) => ({
+          type: "action" as const,
+          title: environment.label,
+          state:
+            props.selectedEnvironmentId === environment.environmentId
+              ? ("on" as const)
+              : ("off" as const),
+          onPress: () => props.onEnvironmentChange(environment.environmentId),
+        })),
+      ],
+    });
+  }
 
   if (props.projects.length > 0) {
     items.push({
