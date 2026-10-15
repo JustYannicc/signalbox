@@ -154,9 +154,14 @@ const RetryRunRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsRetryRun, {
   error,
 });
 
-/** Makes the pending draft the live version. */
+/**
+ * Makes the pending draft the live version. `version` is the draft the person
+ * looked at: publishing it vouches for that code (it may then merge pull
+ * requests), so a different pending draft is refused. Without it the draft
+ * goes live but vouches for nothing.
+ */
 const PublishRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsPublish, {
-  payload: Schema.Struct({ automationId: AutomationId }),
+  payload: Schema.Struct({ automationId: AutomationId, version: Schema.optional(Schema.Int) }),
   success: Automation,
   error,
 });

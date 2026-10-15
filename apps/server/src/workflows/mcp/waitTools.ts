@@ -74,3 +74,22 @@ export const StopWaitingTool = tool("stop_waiting", {
   success: Schema.Struct({ stopped: Schema.Boolean }),
   readonly: false,
 });
+
+export const MergePullRequestTool = tool("merge_pull_request", {
+  title: "Merge pull request",
+  description:
+    "Ask to merge a pull request you own, then end your turn. The folder's merge gate decides: by default a person approves it as a needs-you, then Signalbox merges it, deletes its branch and wakes you with the outcome; if they say not yet, you're told why. Call it once checks pass and the work is done, and never merge any other way (no gh pr merge). The pull request has to be linked to this thread and still open.",
+  parameters: Schema.Struct({
+    url: Schema.String.annotate({ description: "The pull request's URL." }),
+    note: Schema.optional(Schema.String).annotate({
+      description: "What the person deciding should know: what changed and how you checked it.",
+    }),
+  }),
+  success: Schema.Struct({
+    waitId: WaitId,
+    alreadyRequested: Schema.Boolean.annotate({
+      description: "A merge request for it was already waiting; this one changed nothing.",
+    }),
+  }),
+  readonly: false,
+});

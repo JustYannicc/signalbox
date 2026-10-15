@@ -176,6 +176,8 @@ export const makeStartStep =
             .call(String(first), {
               args: args[1] ?? {},
               automationId: automation.automation_id,
+              projectId: automation.project_id,
+              runId: step.run_id,
               automationName: automation.name,
               runtimeMode: defaults().runtimeMode,
               requestKey: `${step.run_id}/${step.step_key}`,

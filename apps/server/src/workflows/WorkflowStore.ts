@@ -66,7 +66,14 @@ export interface VersionRow {
   /** The defaults of the thread that saved it, which apply once it's live. Null before drafts. */
   readonly defaults_json: string | null;
   readonly created_at: string;
+  /**
+   * Who stands behind this code: `signalbox` for a built-in's own, `person` once someone
+   * published it in the app, else `agent` (null for versions saved before this was recorded).
+   */
+  readonly approved_by?: VersionApproval | null;
 }
+
+export type VersionApproval = "signalbox" | "person" | "agent";
 
 export interface RunRow {
   readonly run_id: string;
@@ -379,11 +386,21 @@ export const make = Effect.gen(function* () {
         sql`
           INSERT INTO signalbox_automation_versions (
             automation_id, version, source, script, run_module, graph_json, meta_json,
-            defaults_json, created_at
+            defaults_json, created_at, approved_by
           ) VALUES (
             ${row.automation_id}, ${row.version}, ${row.source}, ${row.script}, ${row.run_module},
-            ${row.graph_json}, ${row.meta_json}, ${row.defaults_json}, ${row.created_at}
+            ${row.graph_json}, ${row.meta_json}, ${row.defaults_json}, ${row.created_at},
+            ${row.approved_by ?? "agent"}
           )
+        `,
+      ),
+    /** A person published this version in the app: they stand behind it. */
+    approveVersion: (automationId: string, version: number) =>
+      run(
+        "approveVersion",
+        sql`
+          UPDATE signalbox_automation_versions SET approved_by = 'person'
+          WHERE automation_id = ${automationId} AND version = ${version}
         `,
       ),
     getVersion: (automationId: string, version: number) =>
