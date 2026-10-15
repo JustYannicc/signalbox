@@ -198,9 +198,15 @@ importers:
       '@effect/sql-sqlite-do':
         specifier: 'catalog:'
         version: 4.0.4(effect@4.0.4)
+      '@jitl/quickjs-wasmfile-release-sync':
+        specifier: 0.32.0
+        version: 0.32.0
       '@signalbox/account':
         specifier: workspace:*
         version: link:../../packages/account
+      '@signalbox/automations':
+        specifier: workspace:*
+        version: link:../../packages/automations
       '@signalbox/runner-protocol':
         specifier: workspace:*
         version: link:../../packages/runner-protocol
@@ -228,6 +234,9 @@ importers:
       jose:
         specifier: 'catalog:'
         version: 6.2.2
+      quickjs-emscripten-core:
+        specifier: 0.32.0
+        version: 0.32.0
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260604.1

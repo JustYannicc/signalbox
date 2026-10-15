@@ -2,6 +2,9 @@
   "name": "@signalbox/cloud",
   "private": true,
   "type": "module",
+  "imports": {
+    "#quickjs/emscripten-module.wasm": "@jitl/quickjs-wasmfile-release-sync/wasm"
+  },
   "scripts": {
     "dev": "mkdir -p ../web/dist && wrangler dev --env dev --port 8787 --var LOCAL_WORKERD:1 --var ENVIRONMENT_ID:cloud-dev --var 'ENVIRONMENT_LABEL:Signalbox Cloud (dev)'",
     "dev:gateway": "wrangler dev -c wrangler.model-gateway.jsonc --port 8788 --inspector-port 9230",
@@ -10,7 +13,9 @@
   },
   "dependencies": {
     "@effect/sql-sqlite-do": "catalog:",
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "@signalbox/account": "workspace:*",
+    "@signalbox/automations": "workspace:*",
     "@signalbox/runner-protocol": "workspace:*",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
@@ -19,7 +24,8 @@
     "@t3tools/source-control-github": "workspace:*",
     "diff": "8.0.3",
     "effect": "catalog:",
-    "jose": "catalog:"
+    "jose": "catalog:",
+    "quickjs-emscripten-core": "0.32.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",
