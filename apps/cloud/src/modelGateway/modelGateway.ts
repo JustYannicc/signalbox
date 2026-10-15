@@ -189,8 +189,11 @@ export async function handleModelRequest(
   }
   const { authMs } = served;
   if (served._tag === "denied") {
-    record({ status: 401, authMs, denied: served.reason });
-    return errorResponse(provider, 401, served.reason);
+    // A key in its own header rides next to the harness's own sign-in, which is
+    // fine: a 401 would make Codex refresh its ChatGPT token for nothing.
+    const status = request.headers.has(LOCAL_KEY_HEADER) ? 403 : 401;
+    record({ status, authMs, denied: served.reason });
+    return errorResponse(provider, status, served.reason);
   }
   // Who the request was for: a turn, or a local key's owner.
   const grant =
