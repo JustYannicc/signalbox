@@ -18,6 +18,8 @@ export interface SourceRow {
   readonly interval_ms: number;
   readonly next_check_at: string;
   readonly last_checked_at: string | null;
+  /** The last read that succeeded: the snapshot is the source as it was then. */
+  readonly last_read_at?: string | null;
   readonly last_changed_at: string | null;
   /** Failed reads in a row. */
   readonly failures: number;
@@ -132,6 +134,7 @@ export const make = Effect.gen(function* () {
             interval_ms = ${input.intervalMs},
             next_check_at = ${input.nextCheckAt},
             last_checked_at = ${input.checkedAt},
+            last_read_at = ${input.checkedAt},
             last_changed_at = ${input.changed ? input.checkedAt : sql`last_changed_at`},
             failures = 0,
             last_error = NULL

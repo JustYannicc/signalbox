@@ -4,6 +4,7 @@ import * as NodeProcess from "node:process";
 import { expect, it } from "@effect/vitest";
 import type { AutomationNotice } from "@t3tools/contracts";
 import type * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
@@ -29,26 +30,33 @@ function fakeSource() {
     calls: 0,
     failing: 0,
     failStatus: 429,
+    /** While set, reads wait for it: a read in flight. */
+    gate: undefined as Deferred.Deferred<void> | undefined,
   };
   const http = fakeHttp({
     "https://executor.example/api/executions": () =>
-      Effect.sync(() => {
-        state.calls += 1;
-        if (state.failing > 0) {
-          state.failing -= 1;
-          return jsonResponse({ text: "Slow down" }, { status: state.failStatus });
-        }
-        return jsonResponse({
-          status: "completed",
-          structured: {
+      Effect.suspend(() => (state.gate ? Deferred.await(state.gate) : Effect.void)).pipe(
+        Effect.map(() => {
+          state.calls += 1;
+          if (state.failing > 0) {
+            state.failing -= 1;
+            return jsonResponse({ text: "Slow down" }, { status: state.failStatus });
+          }
+          return jsonResponse({
             status: "completed",
-            result: {
-              ok: true,
-              value: { total_count: state.runs.length, workflow_runs: structuredClone(state.runs) },
+            structured: {
+              status: "completed",
+              result: {
+                ok: true,
+                value: {
+                  total_count: state.runs.length,
+                  workflow_runs: structuredClone(state.runs),
+                },
+              },
             },
-          },
-        });
-      }),
+          });
+        }),
+      ),
   });
   const environment = {
     ...NodeProcess.env,
@@ -486,6 +494,88 @@ it.effect("a list too long to watch fails with how to narrow it", () => {
       expect((yield* engine.get(automation.id)).watching).toMatchObject([
         { status: "failing", error: expect.stringContaining("narrow it with args") },
       ]);
+    }),
+  );
+});
+
+it.effect("a draft doesn't move a trigger's start, so changes before it still fire", () => {
+  const fake = fakeSource();
+  return withEngine(
+    { http: fake.http, environment: fake.environment },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const automation = yield* saveOk(source("New runs", "source.item.added"));
+      yield* check(engine, "0 millis");
+      fake.state.runs.unshift({ id: 2, status: "queued", updated_at: "2" });
+      yield* TestClock.adjust("30 seconds");
+      const draft = yield* engine.save({
+        automationId: automation.id,
+        source: source("New runs", "source.item.added", `, fields: ["status"]`),
+        projectId: PROJECT,
+        defaults: DEFAULTS,
+        draft: true,
+      });
+      expect(draft.ok).toBe(true);
+      yield* check(engine);
+      const runs = (yield* engine.get(automation.id)).runs;
+      expect(runs).toHaveLength(1);
+      expect((yield* engine.getRun(runs[0]!.id)).output).toBe("2");
+    }),
+  );
+});
+
+it.effect("a failed read doesn't hand a newcomer the changes from before it joined", () => {
+  const fake = fakeSource();
+  return withEngine(
+    { http: fake.http, environment: fake.environment },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const first = yield* saveOk(source("First", "source.item.added"));
+      yield* check(engine, "0 millis");
+      fake.state.runs.unshift({ id: 2, status: "queued", updated_at: "2" });
+      yield* TestClock.adjust("30 seconds");
+
+      // The newcomer's first read fails; the next good one finds run 2, which predates it.
+      fake.state.failing = 1;
+      const later = yield* saveOk(source("Later", "source.item.added"));
+      yield* check(engine, "0 millis");
+      expect(fake.state.calls).toBe(2);
+      yield* check(engine, "2 minutes");
+      expect(fake.state.calls).toBe(3);
+      expect((yield* engine.get(first.id)).runs).toHaveLength(1);
+      expect((yield* engine.get(later.id)).runs).toEqual([]);
+    }),
+  );
+});
+
+it.effect("someone who joins while a read is in flight still gets their own read", () => {
+  const fake = fakeSource();
+  return withEngine(
+    { http: fake.http, environment: fake.environment },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      yield* saveOk(source("First", "source.item.added"));
+      yield* check(engine, "0 millis");
+      expect(fake.state.calls).toBe(1);
+
+      const gate = yield* Deferred.make<void>();
+      fake.state.gate = gate;
+      yield* TestClock.adjust("1 minute");
+      yield* engine.tick;
+      yield* engine.startWait(
+        { threadId: "thread-agent", until: "a new run", watch: RUNS_WATCH },
+        { builtInDefaults: DEFAULTS },
+      );
+      yield* TestClock.adjust("5 seconds");
+      yield* engine.tick;
+      fake.state.gate = undefined;
+      yield* Deferred.succeed(gate, undefined);
+      yield* engine.drain;
+      expect(fake.state.calls).toBe(2);
+
+      yield* engine.tick;
+      yield* engine.drain;
+      expect(fake.state.calls).toBe(3);
     }),
   );
 });

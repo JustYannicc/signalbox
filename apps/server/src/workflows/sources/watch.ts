@@ -48,6 +48,10 @@ export interface SourceScope {
   readonly autoApprove: boolean;
 }
 
+/** When a trigger started watching: its live version or switch-on, not drafts or webhook edits. */
+export const liveSince = (automation: AutomationRow) =>
+  automation.live_since ?? automation.updated_at;
+
 /** An automation's reading scope. */
 export const scopeOf = (automation: AutomationRow): SourceScope => ({
   projectId: automation.project_id,

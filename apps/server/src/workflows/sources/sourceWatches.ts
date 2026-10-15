@@ -291,7 +291,8 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
         checkedAt: at,
         changed: changes.length > 0,
       });
-      const since = row.last_checked_at ?? at;
+      // Changes happened after the last good read; a failed read in between doesn't narrow that.
+      const since = row.last_read_at ?? row.last_checked_at ?? at;
       for (const change of changes) yield* deps.publish(envelopeOf(group, change, at, since));
       return true;
     });
@@ -344,7 +345,6 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
       const row = rows.get(group.sourceId)!;
       const ids = new Set(group.watchers.map((watcher) => watcher.id));
       const before = seen.get(group.sourceId);
-      seen.set(group.sourceId, ids);
       // Someone new (since the last tick, or this server started) gets an up-to-date baseline.
       const someoneNew = [...ids].some((id) => !before?.has(id));
       if (row.paused_at !== null) {
@@ -353,15 +353,24 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
             ? []
             : (fromJson(row.paused_watchers_json) as ReadonlyArray<string>),
         );
-        if ([...ids].every((id) => pausedFor.has(id))) continue;
+        if ([...ids].every((id) => pausedFor.has(id))) {
+          seen.set(group.sourceId, ids);
+          continue;
+        }
+        // A read in flight can't have seen the resume; the next tick picks it up.
+        if (reading.has(group.sourceId)) continue;
         yield* store.resume(group.sourceId, at);
       } else if (
         row.next_check_at > at &&
         !tooSlow(row, group) &&
         !(someoneNew && row.failures === 0 && row.snapshot_json !== null)
-      )
+      ) {
+        seen.set(group.sourceId, ids);
         continue;
+      }
+      // A newcomer counts as served only once a read starts for it, not while another is in flight.
       if (reading.has(group.sourceId)) continue;
+      seen.set(group.sourceId, ids);
       reading.add(group.sourceId);
       yield* deps.adjustBusy(1);
       yield* check(group.sourceId, group, someoneNew).pipe(

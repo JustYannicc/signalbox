@@ -31,6 +31,12 @@ export interface AutomationRow {
   readonly next_run_at: string | null;
   readonly created_at: string;
   readonly updated_at: string;
+  /**
+   * When the live version last went live or the automation was last switched
+   * on; drafts, discards and webhook changes leave it. Watched sources count
+   * a trigger from here. Null on rows older than the column.
+   */
+  readonly live_since?: string | null;
   /** `meta.timeout` of the current version, for runs it starts. */
   readonly timeout_ms: number | null;
   /** `meta.overlap`; null means the default, skip. */
@@ -243,12 +249,12 @@ export const make = Effect.gen(function* () {
           INSERT INTO signalbox_automations (
             automation_id, name, description, enabled, version, project_id, defaults_json,
             triggers_json, webhook_token, next_run_at, created_at, updated_at, timeout_ms, overlap,
-            intent, draft_version
+            intent, draft_version, live_since
           ) VALUES (
             ${row.automation_id}, ${row.name}, ${row.description}, ${row.enabled}, ${row.version},
             ${row.project_id}, ${row.defaults_json}, ${row.triggers_json}, ${row.webhook_token},
             ${row.next_run_at}, ${row.created_at}, ${row.updated_at}, ${row.timeout_ms},
-            ${row.overlap}, ${row.intent}, ${row.draft_version}
+            ${row.overlap}, ${row.intent}, ${row.draft_version}, ${row.updated_at}
           )
           ON CONFLICT (automation_id) DO UPDATE SET
             name = excluded.name,
@@ -263,7 +269,14 @@ export const make = Effect.gen(function* () {
             timeout_ms = excluded.timeout_ms,
             overlap = excluded.overlap,
             intent = excluded.intent,
-            draft_version = excluded.draft_version
+            draft_version = excluded.draft_version,
+            -- Only a new live version or switching it on moves it; a draft save or discard doesn't.
+            live_since = CASE
+              WHEN excluded.version != signalbox_automations.version
+                OR (excluded.enabled = 1 AND signalbox_automations.enabled = 0)
+              THEN excluded.updated_at
+              ELSE signalbox_automations.live_since
+            END
         `,
       ),
     setSchedule: (id: string, enabled: boolean, nextRunAt: string | null, now: string) =>
@@ -271,7 +284,8 @@ export const make = Effect.gen(function* () {
         "setSchedule",
         sql`
           UPDATE signalbox_automations
-          SET enabled = ${enabled ? 1 : 0}, next_run_at = ${nextRunAt}, updated_at = ${now}
+          SET enabled = ${enabled ? 1 : 0}, next_run_at = ${nextRunAt}, updated_at = ${now},
+            live_since = CASE WHEN ${enabled ? 1 : 0} = 1 AND enabled = 0 THEN ${now} ELSE live_since END
           WHERE automation_id = ${id}
         `,
       ),

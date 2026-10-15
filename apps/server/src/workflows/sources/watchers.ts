@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import type { RunWaitListener } from "../events/runWaits.ts";
 import type { AutomationRow } from "../WorkflowStore.ts";
 import type { Watcher } from "./sourceWatches.ts";
-import { scopeOf } from "./watch.ts";
+import { liveSince, scopeOf } from "./watch.ts";
 
 /**
  * Everyone watching a source right now: live automations' triggers, and
@@ -21,8 +21,8 @@ export const watchersOf = (sources: {
     const watchers: Watcher[] = [];
     for (const { automation, watch } of yield* sources.triggers)
       watchers.push({
-        // Saving or switching it on again is someone new watching.
-        id: `trigger:${automation.automation_id}@${automation.updated_at}`,
+        // A new live version or switching it on again is someone new watching; a draft isn't.
+        id: `trigger:${automation.automation_id}@${liveSince(automation)}`,
         scope: scopeOf(automation),
         watch,
         automation,

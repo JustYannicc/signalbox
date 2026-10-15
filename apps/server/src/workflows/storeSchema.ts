@@ -31,6 +31,7 @@ const TABLES = [
     intent TEXT,
     webhook_secret_set INTEGER NOT NULL DEFAULT 0,
     builtin_slug TEXT,
+    live_since TEXT,
     UNIQUE (project_id, name)
   )`,
   `CREATE TABLE IF NOT EXISTS signalbox_automation_versions (
@@ -163,6 +164,7 @@ const TABLES = [
     interval_ms INTEGER NOT NULL,
     next_check_at TEXT NOT NULL,
     last_checked_at TEXT,
+    last_read_at TEXT,
     last_changed_at TEXT,
     failures INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
@@ -183,6 +185,8 @@ const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automations", "webhook_secret_set", "INTEGER NOT NULL DEFAULT 0"],
   ["signalbox_automations", "builtin_slug", "TEXT"],
   ["signalbox_automation_sources", "paused_watchers_json", "TEXT"],
+  ["signalbox_automation_sources", "last_read_at", "TEXT"],
+  ["signalbox_automations", "live_since", "TEXT"],
 ];
 
 /** Indexes go last: some cover added columns. */

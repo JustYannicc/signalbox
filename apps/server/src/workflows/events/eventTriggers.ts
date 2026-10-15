@@ -21,7 +21,7 @@ import type { PullRequestTracker } from "./pullRequestFacts.ts";
 import type { PullRequestReads } from "./pullRequestReads.ts";
 import type { RunWaitListener, RunWaits } from "./runWaits.ts";
 import type { SourceEnvelope } from "../sources/sourceWatches.ts";
-import { scopeOf, watchMatches } from "../sources/watch.ts";
+import { liveSince, scopeOf, watchMatches } from "../sources/watch.ts";
 import {
   ACTORS,
   buildIndex,
@@ -250,8 +250,8 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
         // A trigger watching a source takes only that source's changes, and only to its fields.
         // Only a trigger watching a source gets its changes, so nobody sees another's sources.
         if (envelope.sourceId !== undefined || trigger.watch) {
-          // A trigger watches from when it was last saved or switched on.
-          const watcher = { scope: scopeOf(automation), startedAt: automation.updated_at };
+          // A trigger watches from when its live version went live or it was switched on.
+          const watcher = { scope: scopeOf(automation), startedAt: liveSince(automation) };
           if (!trigger.watch || !watchMatches(watcher, trigger.watch, envelope)) return false;
         }
         if (trigger.includeAutomationThreads !== true && (yield* context.fromAutomation))
