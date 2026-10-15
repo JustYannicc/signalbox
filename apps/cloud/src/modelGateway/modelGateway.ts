@@ -20,6 +20,10 @@ import { makeUsageScanner } from "./usageScanner.ts";
  * The response streams back as it arrives. No key or credential ever reaches
  * the gateway or the machine.
  *
+ * A harness on someone's own computer presents a local key instead
+ * (`localKeys/LocalKeys.ts`), which the user's object checks in the thread's
+ * place; everything after that is the same.
+ *
  * Only the endpoints a harness needs for a turn are served, so a token is no
  * use for anything else the pool could do.
  */
@@ -120,7 +124,7 @@ export async function handleModelRequest(
     return errorResponse(provider, 404, `The ModelGateway does not serve ${path}.`);
   }
   const token = bearerOrKey(request.headers);
-  if (token === null) return errorResponse(provider, 401, "Missing model token.");
+  if (token === null) return errorResponse(provider, 401, "Missing model token or Signalbox key.");
 
   const startedAt = deps.now();
   const threadId = threadOfModelToken(token);
@@ -160,21 +164,26 @@ export async function handleModelRequest(
     );
   } catch {
     record({ status: 503, authMs: deps.now() - startedAt });
-    return errorResponse(provider, 503, "Could not check the model token. Try again.");
+    return errorResponse(provider, 503, "Could not check the model token or key. Try again.");
   }
   const { authMs } = served;
   if (served._tag === "denied") {
     record({ status: 401, authMs, denied: served.reason });
     return errorResponse(provider, 401, served.reason);
   }
-  const { runId, traceId, reply } = served;
+  // Who the request was for: a turn, or a local key's owner.
+  const grant =
+    served._tag === "granted"
+      ? { runId: served.runId, traceId: served.traceId }
+      : { local: { userId: served.userId, keyId: served.keyId } };
+  const { reply } = served;
   if (reply._tag === "denied") {
-    record({ status: 403, runId, traceId, authMs, denied: reply.reason });
+    record({ status: 403, ...grant, authMs, denied: reply.reason });
     return errorResponse(provider, 403, reply.reason);
   }
   if (reply._tag === "failed") {
-    record({ status: 502, runId, traceId, authMs, outcome: "failed" });
-    return errorResponse(provider, 502, `This thread's pool is unavailable: ${reply.reason}`);
+    record({ status: 502, ...grant, authMs, outcome: "failed" });
+    return errorResponse(provider, 502, `The pool is unavailable: ${reply.reason}`);
   }
   const { response } = reply;
   const headersMs = deps.now() - startedAt;
@@ -186,7 +195,7 @@ export async function handleModelRequest(
   for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name);
   const init = { status: response.status, statusText: response.statusText, headers };
   if (response.body === null) {
-    record({ status: response.status, runId, traceId, authMs, upstreamHeadersMs, addedMs });
+    record({ status: response.status, ...grant, authMs, upstreamHeadersMs, addedMs });
     return new Response(null, init);
   }
 
@@ -206,8 +215,7 @@ export async function handleModelRequest(
     const { model, usage } = scanner.finish();
     record({
       status: response.status,
-      runId,
-      traceId,
+      ...grant,
       authMs,
       upstreamHeadersMs,
       firstChunkMs,

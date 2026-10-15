@@ -22,6 +22,7 @@ import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as Migrations from "../storage/migrations.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
+import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
@@ -197,6 +198,7 @@ const migrations = Migrator.fromRecord({
   "0011_github_name": GitHubConnection.addName,
   "0012_resource_bindings": ResourceBindings.createTables,
   "0013_folders": FolderTables.createTables,
+  "0014_local_keys": LocalKeys.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
