@@ -17,6 +17,8 @@ import {
   status,
   write,
 } from "./driveTesting.ts";
+import { makeRunnerDrive } from "./RunnerDrive.ts";
+import { DriveClientError } from "./RunnerDriveClient.ts";
 
 describe("RunnerDrive", () => {
   it.effect(
@@ -439,6 +441,33 @@ describe("RunnerDrive", () => {
           yield* second.runner.prepare("remote-token");
           expect(drive.refs("t2")).toMatchObject({ main: before, thread: before });
           expect(read(second.cwd, "src/app.ts")).toBe("export {}\n");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("fails a thread's first turn with why its first save was rejected, in one line", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const client = drive.client("t1");
+          const runner = yield* makeRunnerDrive({
+            cwd: NodePath.join(root, "vm-1", "threads", "t1"),
+            client: {
+              ...client,
+              uploadPack: () =>
+                Effect.fail(
+                  new DriveClientError({
+                    message: "A pack of 110795399 bytes is bigger than the drive takes (67108864).",
+                    retryable: false,
+                  }),
+                ),
+            },
+          });
+          const failed = yield* runner.prepare("remote-token").pipe(Effect.flip);
+          expect(failed.message).toBe(
+            "Saving owner/repo's latest version failed: A pack of 110795399 bytes is bigger than the drive takes (67108864).",
+          );
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );
