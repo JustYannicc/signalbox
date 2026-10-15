@@ -119,6 +119,12 @@ const make = Effect.gen(function* () {
     yield* alarm.arm(yield* engine.nextWakeAt);
   });
 
+  /** Who the spans are about: the owner, never anything they wrote. */
+  const annotateOwner = owner.pipe(
+    Effect.flatMap((actor) => Effect.annotateCurrentSpan({ "person.id": actor.userId })),
+    Effect.ignore,
+  );
+
   const storageError = (cause: unknown) =>
     new AutomationError({ message: "Automation storage failed.", cause });
 
@@ -137,6 +143,7 @@ const make = Effect.gen(function* () {
           VALUES (${threadId}, ${last.sequence})
           ON CONFLICT (thread_id) DO UPDATE SET sequence = excluded.sequence
         `;
+        yield* annotateOwner;
         yield* feed.publish(fresh.map((entry) => entry.event));
         yield* settle;
       }).pipe(
@@ -147,14 +154,23 @@ const make = Effect.gen(function* () {
       ),
     tool: (caller, name, input) =>
       Effect.gen(function* () {
+        yield* annotateOwner;
         const shell = yield* threads.getThreadShell(ThreadId.make(caller.threadId));
         if (shell === null)
           return yield* new AutomationError({ message: "The calling thread is gone." });
         const result = yield* callTool(tools, shell, name, input);
         yield* settle;
         return result;
-      }),
-    wake: engine.tick.pipe(Effect.andThen(settle), Effect.withSpan("CloudAutomations.wake")),
+      }).pipe(
+        Effect.withSpan("CloudAutomations.toolCall", {
+          attributes: { "thread.id": caller.threadId },
+        }),
+      ),
+    wake: annotateOwner.pipe(
+      Effect.andThen(engine.tick),
+      Effect.andThen(settle),
+      Effect.withSpan("CloudAutomations.wake"),
+    ),
     settle,
   });
 });

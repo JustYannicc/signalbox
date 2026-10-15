@@ -119,7 +119,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     remoteAccess: false,
     // Pairing links and client sessions are not served (`http/environmentApi.ts`).
     accessManagement: false,
-    // Automations and their Executor connection run on self-hosted servers only.
+    // Automations run on each user's object (`automations/`); their Executor connection doesn't yet.
     connectedServices: false,
   },
 });

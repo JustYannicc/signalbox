@@ -269,7 +269,11 @@ export const callTool = (
     input !== null && typeof input === "object" && !Array.isArray(input) ? (input as Input) : {};
   return handler(caller, args).pipe(
     Effect.withSpan("CloudAutomations.tool", {
-      attributes: { "tool.name": name, "thread.id": ThreadId.make(caller.id) },
+      attributes: {
+        "tool.name": name,
+        "thread.id": ThreadId.make(caller.id),
+        "folder.id": caller.projectId,
+      },
     }),
   );
 };

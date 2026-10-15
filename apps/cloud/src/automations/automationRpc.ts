@@ -47,6 +47,9 @@ export const makeAutomationHandlers = Effect.gen(function* () {
   const threads = yield* AutomationThreads;
   const settled = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.tap(() => automations.settle));
+  /** Spans name the automation or run, never what's in them. */
+  const about = (attributes: Readonly<Record<string, string>>) =>
+    Effect.annotateCurrentSpan(attributes);
 
   return {
     [METHODS.automationsSubscribe]: (_input: Payload<typeof METHODS.automationsSubscribe>) =>
@@ -59,7 +62,9 @@ export const makeAutomationHandlers = Effect.gen(function* () {
     [METHODS.automationsSubscribeRun]: (input: Payload<typeof METHODS.automationsSubscribeRun>) =>
       engine.subscribeRun(input.runId),
     [METHODS.automationsSetEnabled]: (input: Payload<typeof METHODS.automationsSetEnabled>) =>
-      settled(engine.setEnabled(input.automationId, input.enabled)),
+      about({ "automation.id": input.automationId }).pipe(
+        Effect.andThen(settled(engine.setEnabled(input.automationId, input.enabled))),
+      ),
     [METHODS.automationsDelete]: (input: Payload<typeof METHODS.automationsDelete>) =>
       settled(engine.remove(input.automationId)).pipe(Effect.as({})),
     [METHODS.automationsRotateWebhook]: (
@@ -100,7 +105,10 @@ export const makeAutomationHandlers = Effect.gen(function* () {
         Effect.map((cancelled) => ({ cancelled })),
       ),
     [METHODS.automationsCancelRun]: (input: Payload<typeof METHODS.automationsCancelRun>) =>
-      settled(engine.cancelRun(input.runId)).pipe(Effect.as({})),
+      about({ "automation.run_id": input.runId }).pipe(
+        Effect.andThen(settled(engine.cancelRun(input.runId))),
+        Effect.as({}),
+      ),
     [METHODS.automationsRetryRun]: (input: Payload<typeof METHODS.automationsRetryRun>) =>
       settled(engine.retryRun({ runId: input.runId, version: input.version })),
     [METHODS.automationsPublish]: (input: Payload<typeof METHODS.automationsPublish>) =>
@@ -108,7 +116,10 @@ export const makeAutomationHandlers = Effect.gen(function* () {
     [METHODS.automationsDiscardDraft]: (input: Payload<typeof METHODS.automationsDiscardDraft>) =>
       settled(engine.discardDraft(input.automationId)),
     [METHODS.automationsAnswer]: (input: Payload<typeof METHODS.automationsAnswer>) =>
-      settled(engine.answer(input)).pipe(Effect.as({})),
+      about({ "automation.run_id": input.runId }).pipe(
+        Effect.andThen(settled(engine.answer(input))),
+        Effect.as({}),
+      ),
     [METHODS.automationsConnectionStatus]: (
       _input: Payload<typeof METHODS.automationsConnectionStatus>,
     ) => Effect.succeed(NOT_CONNECTED),
