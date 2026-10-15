@@ -243,7 +243,7 @@ describe("a pool's limits", () => {
 
       const accounts = yield* pool.accounts(alice);
       const source = usageSource({ pool: userPool, accounts }, NOW);
-      const entry = { pool: userPool, source, models: [], role: accounts.role };
+      const entry = { pool: userPool, source, models: [], role: accounts.role, routing: null };
       expect(limitsSource(entry).accounts).toHaveLength(2);
       expect(limitsSource({ ...entry, role: "member" }).accounts).toEqual([]);
 

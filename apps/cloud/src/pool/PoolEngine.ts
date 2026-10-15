@@ -3,8 +3,11 @@ import type {
   UsageLimitSourceUpdateAccountInput,
 } from "@t3tools/contracts";
 import {
+  type AccountPoolSetRoutingInput,
+  DEFAULT_POOL_ROUTING,
   isCloudPoolAccountType,
   POOL_LINK_PATH,
+  PoolRouting,
   type PoolLinkInfo,
   type PoolLinkMoveRequest,
   type PoolLinkMoveResult,
@@ -14,6 +17,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Migrator from "effect/sql/Migrator";
@@ -55,6 +59,8 @@ export interface PoolInfo {
   readonly personal: boolean;
   readonly backing: PoolBacking;
   readonly role: PoolRole;
+  /** How it spreads turns; only for its admins, and only where Signalbox runs its CLIProxyAPI. */
+  readonly routing: PoolRouting | null;
 }
 
 export interface PoolAccount extends CliProxyApi.BackendAccount {
@@ -70,6 +76,8 @@ type CachedAccount = Omit<PoolAccount, "usageLimits">;
 export interface PoolAccounts {
   /** The reader's role: per-account detail is for admins, members see the pooled view. */
   readonly role: PoolRole;
+  /** How it spreads turns, for admins of a pool Signalbox runs (`PoolInfo.routing`). */
+  readonly routing: PoolRouting | null;
   readonly checkedAt: number;
   readonly accounts: ReadonlyArray<PoolAccount>;
   /** Why the latest read failed; `accounts` is then the last known list. */
@@ -124,6 +132,14 @@ export class PoolEngine extends Context.Service<
     ) => Effect.Effect<PoolInfo, Failure>;
     readonly info: (actor: PoolActor) => Effect.Effect<PoolInfo, Failure>;
     readonly rename: (actor: PoolActor, name: string) => Effect.Effect<PoolInfo, Failure>;
+    /**
+     * Changes how the pool spreads turns across its accounts, applied to its
+     * CLIProxyAPI right away. Only for pools Signalbox runs.
+     */
+    readonly setRouting: (
+      actor: PoolActor,
+      change: AccountPoolSetRoutingInput["routing"],
+    ) => Effect.Effect<PoolInfo, Failure>;
     readonly setBacking: (
       actor: PoolActor,
       backing: PoolBackingInput,
@@ -251,7 +267,7 @@ const migrations = Migrator.fromRecord({
   "0004_models": PoolModels.createTables,
   "0005_managed_config": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // The `MANAGED_CONFIG` last patched into a managed pool's CLIProxyAPI, as JSON.
+    // The managed config last patched into a managed pool's CLIProxyAPI, as JSON.
     yield* sql`CREATE TABLE managed_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       applied TEXT
@@ -259,6 +275,11 @@ const migrations = Migrator.fromRecord({
     yield* sql`INSERT INTO managed_config (id, applied) VALUES (1, NULL)`;
   }),
   "0006_account_limits": PoolLimits.createTables,
+  "0007_routing": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // The admins' `PoolRouting` as JSON; null runs `DEFAULT_POOL_ROUTING`.
+    yield* sql`ALTER TABLE managed_config ADD COLUMN routing TEXT`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -298,6 +319,13 @@ const encodeKnown = Schema.encodeSync(KnownAccounts);
 const decodeKnown = Schema.decodeUnknownSync(KnownAccounts);
 
 const reject = (reason: string) => Effect.fail(new PoolRejectedError({ reason }));
+
+const RoutingJson = Schema.fromJsonString(PoolRouting);
+const encodeRouting = Schema.encodeSync(RoutingJson);
+const decodeRoutingOption = Schema.decodeUnknownOption(RoutingJson);
+/** A stored routing the schema no longer reads falls back to the default. */
+const decodeRouting = (json: string) =>
+  Option.getOrElse(decodeRoutingOption(json), () => DEFAULT_POOL_ROUTING);
 
 /** Who the audit log names for what the pool does on its own. */
 const POOL_ITSELF: PoolActor = { userId: "pool" };
@@ -382,12 +410,18 @@ const make = Effect.gen(function* () {
       return { row, role: grant.role };
     });
 
-  const infoOf = (row: PoolRow, role: PoolRole): PoolInfo => ({
-    name: row.name,
-    personal: row.personal === 1,
-    backing: backingOf(row),
-    role,
-  });
+  /** The routing `role` may see and change: an admin's, on a pool Signalbox runs. */
+  const routingFor = (row: PoolRow, role: PoolRole) =>
+    role === "admin" && row.backing !== "external" ? routingOf : Effect.succeed(null);
+
+  const infoOf = (row: PoolRow, role: PoolRole) =>
+    Effect.map(routingFor(row, role), (routing): PoolInfo => ({
+      name: row.name,
+      personal: row.personal === 1,
+      backing: backingOf(row),
+      role,
+      routing,
+    }));
 
   /**
    * Where the pool's CLIProxyAPI answers. `passive` reads reach a managed
@@ -427,6 +461,15 @@ const make = Effect.gen(function* () {
           link: false,
         };
 
+  /** The routing the pool's admins chose, or the default. */
+  const routingOf = sql<{
+    readonly routing: string | null;
+  }>`SELECT routing FROM managed_config WHERE id = 1`.pipe(
+    Effect.map(([state]) =>
+      state?.routing == null ? DEFAULT_POOL_ROUTING : decodeRouting(state.routing),
+    ),
+  );
+
   /**
    * This object's view of the managed config: applied, or when to try again.
    * Kept in memory so model requests skip the check once it's applied.
@@ -434,35 +477,47 @@ const make = Effect.gen(function* () {
   const managedConfigState = { applied: false, retryAt: 0 };
   const applyingManagedConfig = yield* Semaphore.make(1);
 
+  /** Patches the managed config into the CLIProxyAPI unless it already runs it. */
+  const applyManagedConfig = (endpoint: CliProxyApi.PoolEndpoint) =>
+    Effect.gen(function* () {
+      const routing = yield* routingOf;
+      const desired = CliProxyApi.managedConfigJson(routing);
+      const [state] = yield* sql<{
+        readonly applied: string | null;
+      }>`SELECT applied FROM managed_config WHERE id = 1`;
+      if (state?.applied !== desired) {
+        yield* CliProxyApi.applyManagedConfig(endpoint, routing);
+        yield* sql`UPDATE managed_config SET applied = ${desired} WHERE id = 1`;
+        yield* Effect.logInfo("pool managed config applied").pipe(
+          Effect.annotateLogs({
+            "routing.strategy": routing.strategy,
+            "routing.session_affinity": routing.sessionAffinity,
+            "routing.move_on": routing.moveOn,
+          }),
+        );
+      }
+      managedConfigState.applied = true;
+    }).pipe(applyingManagedConfig.withPermits(1));
+
   /**
-   * Brings a managed pool's CLIProxyAPI up to `MANAGED_CONFIG` once: a pool
-   * created before a setting was added gets it on its next request. Never
-   * fails the request it runs before. Concurrent requests share one attempt,
-   * and a failed one waits `MANAGED_CONFIG_RETRY_MS` before the next.
+   * Brings a managed pool's CLIProxyAPI up to its managed config: a pool
+   * created before a setting was added gets it on its next request, and one
+   * that missed a routing change catches up. Never fails the request it runs
+   * before; a failed patch waits `MANAGED_CONFIG_RETRY_MS` before the next.
    */
-  const ensureManagedConfig = (row: PoolRow, endpoint: CliProxyApi.PoolEndpoint) =>
+  const ensureManagedConfig = (endpoint: CliProxyApi.PoolEndpoint) =>
     Effect.gen(function* () {
       if (managedConfigState.applied || endpoint.baseUrl !== PoolContainer.CONTAINER_ORIGIN) return;
       const now = yield* Clock.currentTimeMillis;
       if (now < managedConfigState.retryAt) return;
-      const [state] = yield* sql<{
-        readonly applied: string | null;
-      }>`SELECT applied FROM managed_config WHERE id = 1`;
-      if (state?.applied !== CliProxyApi.MANAGED_CONFIG_JSON) {
-        yield* CliProxyApi.applyManagedConfig(endpoint).pipe(
-          Effect.tapError(() =>
-            Effect.sync(() => {
-              managedConfigState.retryAt = now + MANAGED_CONFIG_RETRY_MS;
-            }),
-          ),
-        );
-        yield* sql`UPDATE managed_config SET applied = ${CliProxyApi.MANAGED_CONFIG_JSON}
-          WHERE id = 1`;
-        yield* Effect.logInfo("pool managed config applied");
-      }
-      managedConfigState.applied = true;
+      yield* applyManagedConfig(endpoint).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            managedConfigState.retryAt = now + MANAGED_CONFIG_RETRY_MS;
+          }),
+        ),
+      );
     }).pipe(
-      applyingManagedConfig.withPermits(1),
       Effect.catchTags({
         PoolBackendError: (error) =>
           Effect.logWarning("pool managed config not applied", error.detail, error.cause),
@@ -570,7 +625,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const endpoint = endpointOf(row, options);
-      yield* ensureManagedConfig(row, endpoint);
+      yield* ensureManagedConfig(endpoint);
       const live = yield* CliProxyApi.listAccounts(endpoint).pipe(
         Effect.catchTags({
           PoolBackendError: (error) =>
@@ -634,7 +689,7 @@ const make = Effect.gen(function* () {
       const existing = yield* poolRow;
       if (existing !== null) {
         const { row, role } = yield* access(actor, "admin");
-        return infoOf(row, role);
+        return yield* infoOf(row, role);
       }
       const now = yield* Clock.currentTimeMillis;
       const managementKey = yield* randomKey;
@@ -653,17 +708,47 @@ const make = Effect.gen(function* () {
             PoolStore.CONFIG_KEY,
             CliProxyApi.renderConfig({ managementKey, clientKey }),
           );
-          yield* sql`UPDATE managed_config SET applied = ${CliProxyApi.MANAGED_CONFIG_JSON}
-            WHERE id = 1`;
+          yield* sql`UPDATE managed_config
+            SET applied = ${CliProxyApi.managedConfigJson(DEFAULT_POOL_ROUTING)} WHERE id = 1`;
           yield* audit(actor, "create", input.name);
         }),
       );
       const { row, role } = yield* access(actor, "admin");
-      return infoOf(row, role);
+      return yield* infoOf(row, role);
     });
 
   const info: PoolEngine["Service"]["info"] = (actor) =>
-    Effect.map(access(actor, "member"), ({ row, role }) => infoOf(row, role));
+    Effect.flatMap(access(actor, "member"), ({ row, role }) => infoOf(row, role));
+
+  const setRouting: PoolEngine["Service"]["setRouting"] = (actor, change) =>
+    Effect.gen(function* () {
+      const { row, role } = yield* access(actor, "admin");
+      if (row.backing === "external") {
+        return yield* reject(
+          isPoolLinkUrl(row.external_url)
+            ? `This pool is linked to ${new URL(row.external_url!).host}. Change its load balancing there.`
+            : "This pool runs on your own CLIProxyAPI. Set its routing in that CLIProxyAPI's config.",
+        );
+      }
+      const current = yield* routingOf;
+      const routing: PoolRouting = {
+        strategy: change.strategy ?? current.strategy,
+        sessionAffinity: change.sessionAffinity ?? current.sessionAffinity,
+        moveOn: change.moveOn ?? current.moveOn,
+      };
+      yield* sql`UPDATE managed_config SET routing = ${encodeRouting(routing)} WHERE id = 1`;
+      yield* audit(
+        actor,
+        "set-routing",
+        `${routing.strategy}, affinity ${routing.sessionAffinity ? "on" : "off"}, move on ${routing.moveOn}`,
+      );
+      // Applied now if the pool is up; otherwise the request that wakes it applies
+      // it first. Either way it holds from the next request, and a click never wakes it.
+      managedConfigState.applied = false;
+      managedConfigState.retryAt = 0;
+      if (yield* container.running) yield* ensureManagedConfig(endpointOf(row, { passive: true }));
+      return yield* infoOf(row, role);
+    });
 
   const rename: PoolEngine["Service"]["rename"] = (actor, name) =>
     Effect.gen(function* () {
@@ -706,7 +791,7 @@ const make = Effect.gen(function* () {
       if (updated.row.backing === "external") {
         yield* refreshAccounts(updated.row).pipe(Effect.ignore);
       }
-      return infoOf(updated.row, updated.role);
+      return yield* infoOf(updated.row, updated.role);
     });
 
   const prepareDelete: PoolEngine["Service"]["prepareDelete"] = (actor) =>
@@ -752,7 +837,7 @@ const make = Effect.gen(function* () {
 
   /** The cached accounts with the windows last read for each. */
   const withLimits = (
-    read: Omit<PoolAccounts, "role" | "accounts"> & {
+    read: Omit<PoolAccounts, "role" | "routing" | "accounts"> & {
       readonly accounts: ReadonlyArray<CachedAccount>;
     },
   ) =>
@@ -768,7 +853,9 @@ const make = Effect.gen(function* () {
     Effect.flatMap(access(actor, "member"), ({ row, role }) =>
       cachedOrRead(row).pipe(
         Effect.flatMap(withLimits),
-        Effect.map((read) => ({ ...read, role })),
+        Effect.flatMap((read) =>
+          Effect.map(routingFor(row, role), (routing) => ({ ...read, role, routing })),
+        ),
       ),
     );
 
@@ -935,7 +1022,7 @@ const make = Effect.gen(function* () {
           sent.at = clock.currentTimeMillisUnsafe();
         },
       });
-      yield* ensureManagedConfig(row, endpoint);
+      yield* ensureManagedConfig(endpoint);
       const response = yield* CliProxyApi.forwardModel(endpoint, path, request);
       const upstreamMs = clock.currentTimeMillisUnsafe() - sent.at;
       if (response.status === 429) yield* checkHeldAccounts(row);
@@ -954,6 +1041,7 @@ const make = Effect.gen(function* () {
     create,
     info,
     rename,
+    setRouting,
     setBacking,
     prepareDelete,
     accounts,

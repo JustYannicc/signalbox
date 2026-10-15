@@ -28,4 +28,6 @@ export const AUTOMATION_RPC_SCOPES = {
   [AUTOMATION_WS_METHODS.automationsConnectionStatus]: AuthOrchestrationReadScope,
   [AUTOMATION_WS_METHODS.automationsConnect]: AuthOrchestrationOperateScope,
   [AUTOMATION_WS_METHODS.automationsDisconnect]: AuthOrchestrationOperateScope,
+  [AUTOMATION_WS_METHODS.automationsValidate]: AuthOrchestrationReadScope,
+  [AUTOMATION_WS_METHODS.automationsSave]: AuthOrchestrationOperateScope,
 } as const;

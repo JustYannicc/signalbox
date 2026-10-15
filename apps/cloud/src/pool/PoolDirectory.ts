@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import type { AccountPoolSetRoutingInput } from "@t3tools/contracts/accountHub";
 
 import type { LoginStart, LoginStatus, PoolLoginProvider } from "./cliProxyApi.ts";
 import type { PoolLinkTarget } from "./poolLink.ts";
@@ -49,6 +50,10 @@ export interface PoolObjectApi {
   ) => Promise<PoolReply<PoolInfo>>;
   readonly info: (actor: PoolActor) => Promise<PoolReply<PoolInfo>>;
   readonly rename: (actor: PoolActor, name: string) => Promise<PoolReply<PoolInfo>>;
+  readonly setRouting: (
+    actor: PoolActor,
+    change: AccountPoolSetRoutingInput["routing"],
+  ) => Promise<PoolReply<PoolInfo>>;
   readonly setBacking: (
     actor: PoolActor,
     backing: PoolBackingInput,
@@ -133,6 +138,7 @@ const METHODS = Object.keys({
   create: true,
   info: true,
   rename: true,
+  setRouting: true,
   setBacking: true,
   delete: true,
   accounts: true,

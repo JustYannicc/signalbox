@@ -6,6 +6,14 @@
     "./catalog": {
       "types": "./src/catalog.ts",
       "import": "./src/catalog.ts"
+    },
+    "./mcpTools": {
+      "types": "./src/mcpTools.ts",
+      "import": "./src/mcpTools.ts"
+    },
+    "./search": {
+      "types": "./src/search.ts",
+      "import": "./src/search.ts"
     }
   },
   "scripts": {

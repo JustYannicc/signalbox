@@ -21,8 +21,11 @@ import { API_PREFIX } from "./apiPaths.ts";
 export const API_HEADER = "x-signalbox-api";
 
 export const ApiCredential = Schema.Union([
-  /** A personal key; the object looks up its scopes. */
-  Schema.TaggedStruct("key", { secret: Schema.String }),
+  /**
+   * A personal key; the object looks up its scopes. `agent`: an agent is using
+   * the person's key (`signalbox mcp`), so the call gets an agent's limits.
+   */
+  Schema.TaggedStruct("key", { secret: Schema.String, agent: Schema.optionalKey(Schema.Boolean) }),
   /** An agent acting for the person, as the Worker verified (MCP). */
   Schema.TaggedStruct("agent", { sid: Schema.String, scopes: AuthEnvironmentScopes }),
 ]);
@@ -43,7 +46,7 @@ const refused = (status: number, code: string, message: string): ApiAnswer => ({
   body: { error: { code, message } },
 });
 
-const callerFor = (credential: ApiCredential, userId: string) =>
+export const callerFor = (credential: ApiCredential, userId: string) =>
   Effect.gen(function* () {
     if (credential._tag === "agent") {
       return {
@@ -57,7 +60,7 @@ const callerFor = (credential: ApiCredential, userId: string) =>
     if (access === null) return null;
     return {
       userId,
-      kind: "person",
+      kind: credential.agent === true ? "agent" : "person",
       scopes: access.scopes,
       credentialId: access.id,
     } satisfies ApiCaller;
