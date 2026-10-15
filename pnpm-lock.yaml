@@ -216,6 +216,12 @@ importers:
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@t3tools/source-control-core':
+        specifier: workspace:*
+        version: link:../../packages/source-control-core
+      '@t3tools/source-control-github':
+        specifier: workspace:*
+        version: link:../../packages/source-control-github
       diff:
         specifier: 8.0.3
         version: 8.0.3
