@@ -1,17 +1,18 @@
 // @effect-diagnostics globalTimers:off globalDateInEffect:off - a test double for Cloudflare's engine, on its fake clock.
 import { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
-import type { AutomationRunHost, Settlement } from "@signalbox/automations/workflow/hostProtocol";
+import type { Settlement } from "@signalbox/automations/workflow/hostProtocol";
 import {
   defineAutomationRun,
   type AutomationRunEnv,
   type LoadAutomation,
 } from "@signalbox/automations/workflow/runtime";
-import { FakeWorkflows } from "@signalbox/automations/workflow/testing";
+import { FakeWorkflows, payload } from "@signalbox/automations/workflow/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { vi } from "@effect/vitest";
 
 import type * as UserDirectory from "../user/UserDirectory.ts";
+import { hostOver } from "./CloudAutomations.ts";
 
 /**
  * Cloudflare Workflows for the memory cloud: each run is an instance of the
@@ -34,43 +35,27 @@ const loadOf = (source: string): LoadAutomation =>
 
 interface Instance {
   readonly workflows: FakeWorkflows;
-  readonly done: Promise<unknown>;
+  /** How `run` ended: its value, or what it threw (a failed run throws by design). */
+  readonly done: Promise<{ readonly ok: boolean; readonly value: unknown }>;
   terminated: boolean;
 }
 
 export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Service"]) => {
   const instances = new Map<string, Instance>();
-  /** Host calls in flight, so `idle` knows when every instance is blocked. */
-  let calls = 0;
+  /** Host calls in flight; `idle` waits for them. */
+  const pending = new Set<Promise<unknown>>();
 
-  const hostFor = (userId: string, automationId: string, version: number): AutomationRunHost => {
-    const call = async (body: Record<string, unknown>) => {
-      calls++;
-      try {
-        return await Effect.runPromise(
-          users()
-            .forUser(userId)
-            .automationHost({ ...body, automationId, version } as never),
-        );
-      } finally {
-        calls--;
-      }
-    };
-    return {
-      step: (runId, request, marks) =>
-        call({ method: "step", runId, request, marks }) as ReturnType<AutomationRunHost["step"]>,
-      settled: async (runId, key) => {
-        await call({ method: "settled", runId, key });
-      },
-      timedOut: (runId, key) => call({ method: "timedOut", runId, key }) as Promise<Settlement>,
-      failed: async (runId, key, error) => {
-        await call({ method: "failed", runId, key, error });
-      },
-      finish: async (runId, end, marks) => {
-        await call({ method: "finish", runId, end, marks });
-      },
-    };
-  };
+  const hostFor = (userId: string, automationId: string, version: number) =>
+    hostOver((request) => {
+      const call = Effect.runPromise(
+        users()
+          .forUser(userId)
+          .automationHost({ ...request, automationId, version }),
+      );
+      pending.add(call);
+      void call.finally(() => pending.delete(call)).catch(() => undefined);
+      return call;
+    });
 
   const layerFor = (userId: string) =>
     Layer.succeed(
@@ -88,11 +73,11 @@ export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Se
               HOST: hostFor(userId, run.automationId, run.version),
             });
             const done = entry
-              .run(
-                { payload: { runId: run.runId, input: run.input, trigger: run.trigger } },
-                workflows.step(),
-              )
-              .catch((error: unknown) => error);
+              .run(payload(run.runId, run.input, run.trigger), workflows.step())
+              .then(
+                (value: unknown) => ({ ok: true, value }),
+                (error: unknown) => ({ ok: false, value: error }),
+              );
             instances.set(run.runId, { workflows, done, terminated: false });
           }),
         sendEvent: (runId, type, payload) =>
@@ -111,13 +96,15 @@ export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Se
       }),
     );
 
-  /** Lets every instance run until it's blocked on a sleep or a wait, or done. */
+  /**
+   * Lets every instance run until it's blocked on a sleep or a wait, or done:
+   * until no host call is in flight after the instances had a turn to make one.
+   */
   const idle = Effect.promise(async () => {
-    let quiet = 0;
-    while (quiet < 5) {
+    do {
+      await Promise.allSettled(pending);
       await new Promise((resolve) => setTimeout(resolve, 0));
-      quiet = calls === 0 ? quiet + 1 : 0;
-    }
+    } while (pending.size > 0);
   });
 
   /** Moves the (faked) clock on, waking every instance's due sleeps and timing out due waits. */
@@ -131,6 +118,11 @@ export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Se
     layerFor,
     idle,
     advance,
+    /** Drops a run's instance, as if it was never created. */
+    forget: (runId: string) => {
+      instances.get(runId)?.workflows.evict();
+      instances.delete(runId);
+    },
     /** A run's instance: its journal and what it's blocked on. */
     instance: (runId: string) => instances.get(runId),
   };

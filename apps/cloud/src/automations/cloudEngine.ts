@@ -22,7 +22,12 @@ import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
-import { AutomationAlarm, CloudAutomations, type AutomationHostCall } from "./CloudAutomations.ts";
+import {
+  AutomationAlarm,
+  CloudAutomations,
+  type AutomationHostCall,
+  type AutomationHostRequest,
+} from "./CloudAutomations.ts";
 import { makeCloudBuiltinTools } from "./cloudBuiltinTools.ts";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
 import * as CloudThreads from "./cloudThreads.ts";
@@ -120,14 +125,19 @@ const make = Effect.gen(function* () {
    * sets the alarm for the next cron. workerd drops work a returned request
    * left running.
    */
-  const flush = Effect.gen(function* () {
+  const drainAndPush = Effect.gen(function* () {
     yield* engine.drain;
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
-    yield* alarm.arm(yield* runs.nextCronAt);
   });
+  const flush = drainAndPush.pipe(Effect.andThen(runs.nextCronAt), Effect.flatMap(alarm.arm));
 
-  /** Who the spans are about: the owner, never anything they wrote. */
-  const annotateOwner = owner.pipe(
+  /** Who the spans are about: the owner, never anything they wrote. The id never changes, so it's read once. */
+  let ownerId: string | undefined;
+  const annotateOwner = Effect.suspend(() =>
+    ownerId === undefined
+      ? owner.pipe(Effect.tap((actor) => Effect.sync(() => (ownerId = actor.userId))))
+      : Effect.succeed({ userId: ownerId }),
+  ).pipe(
     Effect.flatMap((actor) => Effect.annotateCurrentSpan({ "person.id": actor.userId })),
     Effect.ignore,
   );
@@ -135,20 +145,24 @@ const make = Effect.gen(function* () {
   const storageError = (cause: unknown) =>
     new AutomationError({ message: "Automation storage failed.", cause });
 
-  const hostCall = (call: AutomationHostCall): Effect.Effect<unknown, AutomationError> => {
-    switch (call.method) {
-      case "step":
-        return runs.step(call.runId, call.request, call.marks);
-      case "settled":
-        return runs.settled(call.runId, call.key);
-      case "timedOut":
-        return runs.timedOut(call.runId, call.key);
-      case "failed":
-        return runs.failed(call.runId, call.key, call.error);
-      case "finish":
-        return runs.finish(call.runId, call.end, call.marks);
-    }
+  /** `AutomationRunHost`'s methods on the engine's handlers. */
+  const handlers: {
+    readonly [M in AutomationHostRequest["method"]]: (
+      ...args: Extract<AutomationHostRequest, { readonly method: M }>["args"]
+    ) => Effect.Effect<unknown, AutomationError>;
+  } = {
+    step: runs.step,
+    settled: (runId, key) => runs.settled(runId, key),
+    timedOut: runs.timedOut,
+    failed: runs.failed,
+    finish: runs.finish,
   };
+  const hostCall = (call: AutomationHostCall) =>
+    (
+      handlers[call.method] as (
+        ...args: ReadonlyArray<unknown>
+      ) => Effect.Effect<unknown, AutomationError>
+    )(...call.args);
 
   return CloudAutomations.of({
     threadEvents: ({ threadId, events }) =>
@@ -188,27 +202,29 @@ const make = Effect.gen(function* () {
           attributes: { "thread.id": caller.threadId },
         }),
       ),
-    host: (call) =>
-      Effect.gen(function* () {
-        const run = yield* runs.runOf(call.runId);
+    host: (call) => {
+      const runId = call.args[0];
+      return Effect.gen(function* () {
+        const run = yield* runs.runOf(runId);
         if (run?.automationId !== call.automationId || run.version !== call.version)
           return yield* new AutomationError({ message: "That run isn't this version's." });
         yield* annotateOwner;
-        yield* Effect.annotateCurrentSpan({ "folder.id": run.projectId });
         // A step that failed to start may still have started work (a thread, a notice).
+        // Host calls never change crons, so the alarm stays as it is.
         return yield* hostCall(call).pipe(
-          Effect.ensuring(flush.pipe(Effect.catchCause(Effect.logWarning))),
+          Effect.ensuring(drainAndPush.pipe(Effect.catchCause(Effect.logWarning))),
         );
       }).pipe(
         Effect.withSpan("CloudAutomations.host", {
           attributes: {
             "automation.id": call.automationId,
             "automation.version": call.version,
-            "automation.run_id": call.runId,
+            "automation.run_id": runId,
             "automation.host_call": call.method,
           },
         }),
-      ),
+      );
+    },
     workerModule: (automationId, version) =>
       runs.workerModule(automationId, version).pipe(
         Effect.flatMap((module) =>
@@ -224,6 +240,7 @@ const make = Effect.gen(function* () {
           attributes: { "automation.id": automationId, "automation.version": version },
         }),
       ),
+    start: runs.recover.pipe(Effect.andThen(flush), Effect.withSpan("CloudAutomations.start")),
     wake: annotateOwner.pipe(
       Effect.andThen(engine.tick),
       Effect.andThen(flush),

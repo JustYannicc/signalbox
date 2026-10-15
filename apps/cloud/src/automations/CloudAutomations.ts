@@ -1,7 +1,19 @@
 import type { AutomationError, OrchestrationV2DomainEvent } from "@t3tools/contracts";
-import type { HostStepRequest, Marks, RunEnd } from "@signalbox/automations/runner/hostedDriver";
+import type {
+  AutomationRunHost,
+  HostStepStart,
+  Settlement,
+} from "@signalbox/automations/workflow/hostProtocol";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+
+/** One `AutomationRunHost` method and its arguments, as a run's instance calls it. */
+export type AutomationHostRequest = {
+  [M in keyof AutomationRunHost]: {
+    readonly method: M;
+    readonly args: Parameters<AutomationRunHost[M]>;
+  };
+}[keyof AutomationRunHost];
 
 /**
  * A call from a run's Workflow instance, as its version's Dynamic Worker
@@ -9,17 +21,27 @@ import type * as Effect from "effect/Effect";
  * the automation and version the worker was loaded for; the object checks
  * the run belongs to them.
  */
-export type AutomationHostCall = {
+export type AutomationHostCall = AutomationHostRequest & {
   readonly automationId: string;
   readonly version: number;
-  readonly runId: string;
-} & (
-  | { readonly method: "step"; readonly request: HostStepRequest; readonly marks: Marks }
-  | { readonly method: "settled"; readonly key: string }
-  | { readonly method: "timedOut"; readonly key: string }
-  | { readonly method: "failed"; readonly key: string; readonly error: string }
-  | { readonly method: "finish"; readonly end: RunEnd; readonly marks: Marks }
-);
+};
+
+/** An `AutomationRunHost` that sends each call through `send`: the Worker's `HOST`, and tests' double. */
+export const hostOver = (
+  send: (request: AutomationHostRequest) => Promise<unknown>,
+): AutomationRunHost => ({
+  step: (...args) => send({ method: "step", args }) as Promise<HostStepStart>,
+  settled: async (...args) => {
+    await send({ method: "settled", args });
+  },
+  timedOut: (...args) => send({ method: "timedOut", args }) as Promise<Settlement>,
+  failed: async (...args) => {
+    await send({ method: "failed", args });
+  },
+  finish: async (...args) => {
+    await send({ method: "finish", args });
+  },
+});
 
 /**
  * The user's automation engine (`@signalbox/automations`), as the user
@@ -54,6 +76,11 @@ export interface CloudAutomationsShape {
     automationId: string,
     version: number,
   ) => Effect.Effect<string, AutomationError>;
+  /**
+   * The object started: gives runs whose instance a cut-off request never
+   * confirmed one, then flushes.
+   */
+  readonly start: Effect.Effect<void, AutomationError>;
   /** Starts due crons; the object's alarm calls it. */
   readonly wake: Effect.Effect<void, AutomationError>;
   /**

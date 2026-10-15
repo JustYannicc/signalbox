@@ -1,9 +1,4 @@
-import {
-  AutomationError,
-  workflowNodeIdForStepKey,
-  type AutomationErrorDetail,
-  type WorkflowStepVerb,
-} from "@t3tools/contracts";
+import { AutomationError, workflowNodeIdForStepKey } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -20,6 +15,9 @@ import { errorDetail } from "../runLog.ts";
 import { transientCause } from "../stepPolicy.ts";
 import { isoMs, nowIso } from "../time.ts";
 import type { AutomationRow, RunRow, StepRow } from "../WorkflowStore.ts";
+import { hash64 } from "../hash.ts";
+import type { StepRequest } from "../sandbox/replayWorkflow.ts";
+import type { HostStepStart, Marks, RunEnd } from "../workflow/hostProtocol.ts";
 import { AutomationRunner } from "./AutomationRunner.ts";
 
 /**
@@ -35,34 +33,9 @@ import { AutomationRunner } from "./AutomationRunner.ts";
  * again after a crash, and code outside steps replays.
  */
 
-/** What a step's first call answers the instance. */
-export type HostStepStart =
-  | { readonly type: "done"; readonly value: unknown }
-  | {
-      readonly type: "failed";
-      readonly error: string;
-      readonly detail?: AutomationErrorDetail | null;
-    }
-  /** Sleep until `until` (epoch ms), then call `settled`. */
-  | { readonly type: "sleep"; readonly until: number }
-  /** Wait for event `event`; `timeoutMs` null waits as long as the backend allows. On timeout, call `timedOut`. */
-  | { readonly type: "waiting"; readonly event: string; readonly timeoutMs: number | null };
-
-/** How the instance's code ended. */
-export type RunEnd =
-  | { readonly type: "completed"; readonly output: unknown }
-  | { readonly type: "restart"; readonly input: unknown }
-  | { readonly type: "failed"; readonly error: string };
-
-export interface HostStepRequest {
-  readonly key: string;
-  readonly verb: WorkflowStepVerb;
-  readonly label: string;
-  readonly args: ReadonlyArray<unknown>;
-}
-
-/** Branch answers and loop counts the code recorded since its last call, keyed like steps. */
-export type Marks = ReadonlyArray<readonly [string, unknown]>;
+export type { HostStepStart, Marks, RunEnd } from "../workflow/hostProtocol.ts";
+/** A step the instance's code reached. */
+export type HostStepRequest = StepRequest;
 
 /** The handlers an instance calls, by run id. */
 export interface HostedRunsShape {
@@ -88,14 +61,15 @@ export interface HostedRunsShape {
   ) => Effect.Effect<void, AutomationError>;
   /** When the next cron is due (epoch ms), for the host's alarm; null when none is. */
   readonly nextCronAt: Effect.Effect<number | null, AutomationError>;
-  /** The run's automation, version and project, for checking a caller; undefined when gone. */
+  /** The run's automation and version, for checking a caller; undefined when gone. */
   readonly runOf: (
     runId: string,
   ) => Effect.Effect<
-    | { readonly automationId: string; readonly version: number; readonly projectId: string }
-    | undefined,
+    { readonly automationId: string; readonly version: number } | undefined,
     AutomationError
   >;
+  /** Gives every running run whose instance was never confirmed one; the host calls it on start. */
+  readonly recover: Effect.Effect<void, AutomationError>;
   /** The version's code as the backend loads it; undefined for a version saved without it. */
   readonly workerModule: (
     automationId: string,
@@ -113,16 +87,7 @@ export class HostedRuns extends Context.Service<HostedRuns, HostedRunsShape>()(
  * keys hold `#[]./`, so it's a hash of the key: two FNV-1a passes with
  * different bases, 16 hex characters. Keys are unique within a run.
  */
-export const eventTypeFor = (key: string) => {
-  let a = 0x811c9dc5;
-  let b = 0x01000193;
-  for (let index = 0; index < key.length; index++) {
-    const code = key.charCodeAt(index);
-    a = Math.imul(a ^ code, 0x01000193) >>> 0;
-    b = Math.imul(b ^ code, 0x811c9dc5) >>> 0;
-  }
-  return `s_${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`;
-};
+export const eventTypeFor = (key: string) => `s_${hash64(key)}`;
 
 const settlementOf = (step: StepRow): Settlement | undefined =>
   step.status === "succeeded"
@@ -180,19 +145,20 @@ export const makeHostedDriver = (core: EngineInternals) =>
         }),
     });
 
-    const requireRunning = (runId: string) =>
+    /** The run and its automation while it runs; undefined once it ended, which is final. */
+    const runningRun = (runId: string) =>
       Effect.gen(function* () {
         const run = yield* store.getRun(runId);
-        if (!run || run.status !== "running") return yield* runEnded;
+        if (!run || run.status !== "running") return undefined;
         const automation = yield* store.getAutomation(run.automation_id);
-        if (!automation) return yield* fail("The automation behind this run is gone.", { runId });
+        if (!automation) return undefined;
         return { run, automation };
       });
 
-    /** Merges marks the code recorded into the run's, which run views show. */
+    /** Merges marks the code recorded into the run's, which run views show. True when any changed. */
     const saveMarks = (run: RunRow, marks: Marks) =>
       Effect.gen(function* () {
-        if (marks.length === 0) return;
+        if (marks.length === 0) return false;
         const current = (fromJson(run.marks_json) ?? {}) as Record<string, unknown>;
         let changed = false;
         for (const [key, value] of marks) {
@@ -200,9 +166,10 @@ export const makeHostedDriver = (core: EngineInternals) =>
           current[key] = value ?? null;
           changed = true;
         }
-        if (!changed) return;
+        if (!changed) return false;
         yield* store.saveReplay(run.run_id, toJson(current), run.logs_json ?? "[]");
         yield* core.runChanged(run.run_id, false);
+        return true;
       });
 
     /** What the instance does about a step that waits, from its stored row. */
@@ -275,7 +242,11 @@ export const makeHostedDriver = (core: EngineInternals) =>
 
     const step: HostedRunsShape["step"] = (runId, request, marks) =>
       Effect.gen(function* () {
-        const { run, automation } = yield* requireRunning(runId);
+        const running = yield* runningRun(runId);
+        // Retrying can't bring an ended run back, so the code sees it fail.
+        if (!running) return { type: "failed", error: runEnded.message } satisfies HostStepStart;
+        const { run, automation } = running;
+        yield* Effect.annotateCurrentSpan({ "folder.id": automation.project_id });
         yield* saveMarks(run, marks);
         const existing = yield* store.getStep(runId, request.key);
         if (existing) {
@@ -308,14 +279,18 @@ export const makeHostedDriver = (core: EngineInternals) =>
           started_at: yield* nowIso,
           finished_at: null,
         };
-        yield* store.insertStep(row);
+        const inserted = yield* store.insertStep(row);
         yield* core.changed({
           kind: "runs",
           automationId: run.automation_id,
           runId,
           summary: false,
         });
-        return yield* begin(automation, (yield* store.getStep(runId, request.key)) ?? row);
+        // A call racing this one inserted it first: start what it stored.
+        return yield* begin(
+          automation,
+          inserted ? row : ((yield* store.getStep(runId, request.key)) ?? row),
+        );
       }).pipe(
         Effect.withSpan("HostedRuns.step", {
           attributes: { "automation.run_id": runId, "automation.step_verb": request.verb },
@@ -346,8 +321,9 @@ export const makeHostedDriver = (core: EngineInternals) =>
       Effect.gen(function* () {
         const run = yield* store.getRun(runId);
         if (!run || run.status !== "running") return;
-        yield* saveMarks(run, marks);
-        const current = (yield* store.getRun(runId)) ?? run;
+        const current = (yield* saveMarks(run, marks))
+          ? ((yield* store.getRun(runId)) ?? run)
+          : run;
         finishing.add(runId);
         yield* Effect.gen(function* () {
           if (end.type === "completed")
@@ -373,6 +349,26 @@ export const makeHostedDriver = (core: EngineInternals) =>
         }).pipe(Effect.ensuring(Effect.sync(() => finishing.delete(runId))));
       });
 
+    /** Starts the run's instance, once its version has code the backend can load. */
+    const launch = (runId: string) =>
+      Effect.gen(function* () {
+        const run = yield* store.getRun(runId);
+        if (!run) return yield* fail("That run is gone.", { runId });
+        if ((yield* store.getVersionWorkerModule(run.automation_id, run.version)) === undefined)
+          return yield* fail(
+            `Version ${run.version} was saved without code the cloud can run. Save the automation again.`,
+            { runId },
+          );
+        yield* runner.create({
+          runId,
+          automationId: run.automation_id,
+          version: run.version,
+          input: fromJson(run.input_json),
+          trigger: fromJson(run.trigger_json) ?? { type: run.trigger },
+        });
+        yield* store.markInstance(runId, yield* nowIso);
+      });
+
     const runs: HostedRunsShape = {
       step,
       settled: (runId, key) => settleInline(runId, key, { ok: true, value: null }),
@@ -381,17 +377,25 @@ export const makeHostedDriver = (core: EngineInternals) =>
       finish,
       nextCronAt: timed.nextCronAt,
       runOf: (runId) =>
-        Effect.gen(function* () {
-          const run = yield* store.getRun(runId);
-          if (!run) return undefined;
-          const automation = yield* store.getAutomation(run.automation_id);
-          if (!automation) return undefined;
-          return {
-            automationId: run.automation_id,
-            version: run.version,
-            projectId: automation.project_id,
-          };
-        }),
+        store
+          .getRun(runId)
+          .pipe(
+            Effect.map((run) =>
+              run ? { automationId: run.automation_id, version: run.version } : undefined,
+            ),
+          ),
+      recover: store.runsWithoutInstance().pipe(
+        Effect.flatMap((runIds) =>
+          Effect.forEach(runIds, (runId) =>
+            launch(runId).pipe(
+              Effect.catch((error) =>
+                core.endRunById(runId, { status: "failed", error: error.message }),
+              ),
+            ),
+          ),
+        ),
+        Effect.asVoid,
+      ),
       workerModule: store.getVersionWorkerModule,
     };
 
@@ -400,18 +404,7 @@ export const makeHostedDriver = (core: EngineInternals) =>
         answering.has(id(runId, key))
           ? Effect.void
           : runner.sendEvent(runId, eventTypeFor(key), outcome),
-      launched: (runId) =>
-        Effect.gen(function* () {
-          const run = yield* store.getRun(runId);
-          if (!run) return yield* fail("That run is gone.", { runId });
-          yield* runner.create({
-            runId,
-            automationId: run.automation_id,
-            version: run.version,
-            input: fromJson(run.input_json),
-            trigger: fromJson(run.trigger_json) ?? { type: run.trigger },
-          });
-        }),
+      launched: launch,
       ended: (runId) => (finishing.has(runId) ? Effect.void : runner.terminate(runId)),
       settleThreadStep: timed.settleThreadStep,
       tick: timed.crons,

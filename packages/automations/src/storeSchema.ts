@@ -164,6 +164,7 @@ const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automations", "builtin_slug", "TEXT"],
   ["signalbox_automation_versions", "approved_by", "TEXT"],
   ["signalbox_automation_versions", "worker_module", "TEXT"],
+  ["signalbox_automation_runs", "instance_at", "TEXT"],
 ];
 
 /** Indexes go last: some cover added columns. */

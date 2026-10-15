@@ -2,7 +2,8 @@ import {
   createDynamicWorkflowEntrypoint,
   type WorkflowRunner,
 } from "@cloudflare/dynamic-workflows";
-import type { HostStepRequest, Marks, RunEnd } from "@signalbox/automations/runner/hostedDriver";
+import { hash64 } from "@signalbox/automations/hash";
+import type { AutomationRunHost } from "@signalbox/automations/workflow/hostProtocol";
 import {
   AUTOMATION_MODULE,
   RUNTIME_MAIN,
@@ -11,7 +12,8 @@ import {
 import { exports, WorkerEntrypoint } from "cloudflare:workers";
 
 import { userObjectStub, type UserObjectNamespace } from "../user/UserDirectory.ts";
-import type { AutomationHostCall } from "./CloudAutomations.ts";
+import { COMPATIBILITY_DATE } from "../../infra/stage.ts";
+import { hostOver } from "./CloudAutomations.ts";
 import type { RunMetadata } from "./workflowRunner.ts";
 
 /**
@@ -29,31 +31,16 @@ export interface AutomationWorkflowEnv {
   readonly LOCAL_WORKERD?: string;
 }
 
-/** The Dynamic Workers' date, kept with the Worker's own (`wrangler.jsonc`). */
-const COMPATIBILITY_DATE = "2026-09-30";
-
-/** Two FNV-1a passes over `text`, 16 hex characters. */
-const contentHash = (text: string) => {
-  let a = 0x811c9dc5;
-  let b = 0x01000193;
-  for (let index = 0; index < text.length; index++) {
-    const code = text.charCodeAt(index);
-    a = Math.imul(a ^ code, 0x01000193) >>> 0;
-    b = Math.imul(b ^ code, 0x811c9dc5) >>> 0;
-  }
-  return `${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`;
-};
-
 /** A new runtime is new code under the same version, so it gets its own worker. */
-const RUNTIME_ID = contentHash(RUNTIME_MODULE);
+const RUNTIME_ID = hash64(RUNTIME_MODULE);
 
 /**
  * One Dynamic Worker per version and runtime: Cloudflare bills each id once a
  * day and keeps its isolate warm between runs. Never `LOADER.load`, which
- * bills every call.
+ * bills every call. The user is in it because the isolate's `HOST` is theirs.
  */
 export const workerIdFor = (metadata: RunMetadata) =>
-  `${metadata.automationId}@${metadata.version}~${RUNTIME_ID}`;
+  `${metadata.userId}/${metadata.automationId}@${metadata.version}~${RUNTIME_ID}`;
 
 const userObject = (env: AutomationWorkflowEnv, userId: string) =>
   userObjectStub(env.USERS, userId, { localWorkerd: env.LOCAL_WORKERD === "1" });
@@ -98,34 +85,32 @@ export const AutomationWorkflow = createDynamicWorkflowEntrypoint<AutomationWork
  * What a version's Dynamic Worker calls as `HOST`. Its props say whose code
  * it runs; the user's object checks each run id against them.
  */
-export class AutomationHost extends WorkerEntrypoint<AutomationWorkflowEnv, RunMetadata> {
-  private call(call: AutomationHostCall) {
-    return userObject(this.env, this.ctx.props.userId).automationHost(call);
+export class AutomationHost
+  extends WorkerEntrypoint<AutomationWorkflowEnv, RunMetadata>
+  implements AutomationRunHost
+{
+  private readonly host = hostOver((request) => {
+    const { userId, automationId, version } = this.ctx.props;
+    return userObject(this.env, userId).automationHost({ ...request, automationId, version });
+  });
+
+  step(...args: Parameters<AutomationRunHost["step"]>) {
+    return this.host.step(...args);
   }
 
-  /** Whose run this is; the object checks the run id against it. */
-  private get version() {
-    const { automationId, version } = this.ctx.props;
-    return { automationId, version };
+  settled(...args: Parameters<AutomationRunHost["settled"]>) {
+    return this.host.settled(...args);
   }
 
-  step(runId: string, request: HostStepRequest, marks: Marks) {
-    return this.call({ ...this.version, method: "step", runId, request, marks });
+  timedOut(...args: Parameters<AutomationRunHost["timedOut"]>) {
+    return this.host.timedOut(...args);
   }
 
-  async settled(runId: string, key: string) {
-    await this.call({ ...this.version, method: "settled", runId, key });
+  failed(...args: Parameters<AutomationRunHost["failed"]>) {
+    return this.host.failed(...args);
   }
 
-  timedOut(runId: string, key: string) {
-    return this.call({ ...this.version, method: "timedOut", runId, key });
-  }
-
-  async failed(runId: string, key: string, error: string) {
-    await this.call({ ...this.version, method: "failed", runId, key, error });
-  }
-
-  async finish(runId: string, end: RunEnd, marks: Marks) {
-    await this.call({ ...this.version, method: "finish", runId, end, marks });
+  finish(...args: Parameters<AutomationRunHost["finish"]>) {
+    return this.host.finish(...args);
   }
 }

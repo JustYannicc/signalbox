@@ -34,6 +34,7 @@ const cloud = makeMemoryCloud({
       threadEvents: () => Effect.void,
       wake: Effect.void,
       flush: Effect.void,
+      start: Effect.void,
       host: () => Effect.die("not in these tests"),
       workerModule: () => Effect.die("not in these tests"),
       tool: (caller, name, input) =>

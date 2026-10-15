@@ -55,7 +55,7 @@ export interface VersionRow {
   readonly script: string;
   readonly run_module: string | null;
   /** `script` as a Dynamic Worker module, for hosts that run versions on a workflow backend. */
-  readonly worker_module?: string | null;
+  readonly worker_module: string | null;
   readonly graph_json: string;
   /** The compiled `meta`, so publishing a draft needn't compile again. Null before drafts. */
   readonly meta_json: string | null;
@@ -377,7 +377,7 @@ export const make = Effect.gen(function* () {
             meta_json, defaults_json, created_at, approved_by
           ) VALUES (
             ${row.automation_id}, ${row.version}, ${row.source}, ${row.script}, ${row.run_module},
-            ${row.worker_module ?? null}, ${row.graph_json}, ${row.meta_json}, ${row.defaults_json},
+            ${row.worker_module}, ${row.graph_json}, ${row.meta_json}, ${row.defaults_json},
             ${row.created_at}, ${row.approved_by ?? "agent"}
           )
         `,
@@ -494,6 +494,21 @@ export const make = Effect.gen(function* () {
           version: number;
         }>`SELECT run_id, automation_id, version FROM signalbox_automation_runs WHERE status = 'running'`,
       ),
+    /** A durable backend's instance for the run exists (runner/). */
+    markInstance: (runId: string, at: string) =>
+      run(
+        "markInstance",
+        sql`UPDATE signalbox_automation_runs SET instance_at = ${at} WHERE run_id = ${runId}`,
+      ),
+    /** Running runs whose backend instance was never confirmed: a launch cut off mid-request. */
+    runsWithoutInstance: () =>
+      run(
+        "runsWithoutInstance",
+        sql<{ run_id: string }>`
+          SELECT run_id FROM signalbox_automation_runs
+          WHERE status = 'running' AND instance_at IS NULL
+        `,
+      ).pipe(Effect.map((rows) => rows.map((row) => row.run_id))),
     runningRunsOf: (automationId: string) =>
       run(
         "runningRunsOf",

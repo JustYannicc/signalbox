@@ -74,6 +74,7 @@ const makeOwner = () => {
     tool: () => Effect.die("not in these tests"),
     wake: Effect.void,
     flush: Effect.void,
+    start: Effect.void,
     host: () => Effect.die("not in these tests"),
     workerModule: () => Effect.die("not in these tests"),
   });

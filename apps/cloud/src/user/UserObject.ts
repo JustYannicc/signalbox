@@ -240,11 +240,11 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       scripted: scriptedProviderEnabled(env),
     };
     this.runtime = makeRuntime(ctx.storage, env);
-    // Then automations set the alarm for their next cron.
+    // Then automations give cut-off launches their instance and set the alarm for the next cron.
     void ctx.blockConcurrencyWhile(() =>
       this.runtime.runPromise(
         UserStore.migrate.pipe(
-          Effect.andThen(CloudAutomations.use((automations) => automations.flush)),
+          Effect.andThen(CloudAutomations.use((automations) => automations.start)),
         ),
       ),
     );

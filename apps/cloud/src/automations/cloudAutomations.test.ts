@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
+import * as SqlClient from "effect/sql/SqlClient";
 
 // The machine compiles saves (oxc can't run in workerd); tests compile the same way it does.
 import { compileWorkflow } from "../../../server/src/workflows/compiler/compileWorkflow.ts";
@@ -228,6 +229,63 @@ export default workflow(async (w) => {
         "succeeded",
         "one: left",
       ]);
+    }),
+  );
+
+  it.effect("a version saved without cloud code fails its run with what to do", () =>
+    Effect.gen(function* () {
+      const { thread, tool, engine } = yield* setup;
+      const writer = yield* thread("thread-old", "An old save");
+      const source = `export const meta = { name: "Old save" } as const;
+export default workflow(async (w) => "done");`;
+      const compiled = compileWorkflow(source);
+      if (!compiled.ok) return expect.unreachable();
+      const { workerModule: _dropped, ...withoutModule } = compiled.workflow;
+      yield* tool(writer, "automation_save", { source, compiled: withoutModule });
+      const automation = (yield* engine((engine) => engine.list())).find(
+        (entry) => entry.name === "Old save",
+      );
+      // The agent that starts it hears why, and the run shows it too.
+      const started = yield* Effect.exit(
+        tool(writer, "automation_run", { automationId: automation?.id }),
+      );
+      expect(started._tag).toBe("Failure");
+      const { runs } = yield* engine((engine) => engine.get(automation!.id));
+      expect([runs[0]?.status, runs[0]?.error]).toEqual([
+        "failed",
+        expect.stringContaining("Save the automation again"),
+      ]);
+    }),
+  );
+
+  it.effect("a run whose launch was cut off gets its instance when the object starts", () =>
+    Effect.gen(function* () {
+      const { cloud, thread, save, engine, start } = yield* setup;
+      const writer = yield* thread("thread-cut", "Cut off");
+      yield* save(
+        writer,
+        `export const meta = { name: "Cut off" } as const;
+export default workflow(async (w) => w.ask("Still there?", { options: ["yes", "no"] }));`,
+      );
+      const runId = yield* start(writer, "Cut off");
+      // As if the request ended between recording the run and confirming its instance.
+      cloud.workflows.forget(runId);
+      const unconfirm = SqlClient.SqlClient.use(
+        (sql) =>
+          sql`UPDATE signalbox_automation_runs SET instance_at = NULL WHERE run_id = ${runId}`,
+      );
+      // The object's SQLite is behind every user object, though not in the engine's own types.
+      yield* cloud.inUser(userId, unconfirm as unknown as Effect.Effect<unknown>);
+      yield* cloud.inUser(
+        userId,
+        CloudAutomations.use((automations) => automations.start),
+      );
+      yield* cloud.settle;
+      expect(cloud.workflows.instance(runId)?.workflows.blocked()).toEqual([
+        expect.stringContaining("~wait"),
+      ]);
+      const waiting = yield* engine((engine) => engine.getRun(runId));
+      expect(waiting.steps.map((step) => [step.verb, step.status])).toEqual([["ask", "waiting"]]);
     }),
   );
 });

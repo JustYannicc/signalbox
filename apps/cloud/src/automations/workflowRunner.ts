@@ -3,6 +3,7 @@ import { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner
 import { AutomationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 
 import * as UserStore from "../user/UserStore.ts";
 
@@ -15,6 +16,9 @@ export interface RunMetadata {
   readonly automationId: string;
   readonly version: number;
 }
+
+/** About a second in all, inside the request that settled the step. */
+const RETRY_EVENT = Schedule.exponential("100 millis");
 
 const failed = (what: string) => (cause: unknown) =>
   new AutomationError({ message: `Couldn't ${what} the run's Workflow instance.`, cause });
@@ -84,17 +88,21 @@ export const layerWorkflows = (binding: Workflow | undefined) =>
                 catch: failed("wake"),
               }),
             ),
+            // The step is already settled in the object, so a lost event would strand the run.
+            Effect.retry({ schedule: RETRY_EVENT, times: 3 }),
             Effect.withSpan("AutomationRunner.sendEvent", {
               attributes: { "automation.run_id": runId },
             }),
           ),
-        // An instance that already ended can't be terminated, which is fine.
+        // An instance that already ended can't be terminated, which is fine; anything else is logged.
         terminate: (runId) =>
           instance(runId).pipe(
             Effect.flatMap((handle) =>
               Effect.tryPromise({ try: () => handle.terminate(), catch: failed("stop") }),
             ),
-            Effect.ignore,
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Couldn't stop a run's Workflow instance", cause),
+            ),
           ),
       });
     }),
