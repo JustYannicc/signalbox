@@ -41,7 +41,7 @@ const Action = Schema.Literals(
   ),
 );
 
-export const PullRequestActionTool = Tool.make("pull_request_action", {
+const PullRequestActionTool = Tool.make("pull_request_action", {
   description:
     "Run one action on a pull request linked to a thread: merge it, delete its branch after it merged, bring its base in, hand the merge to the host (enable-auto-merge), mark it ready, close or reopen it. Returns the pull request's state afterwards; a merge the host queued is still open.",
   parameters: Schema.Struct({
