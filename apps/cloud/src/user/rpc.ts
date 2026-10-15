@@ -19,7 +19,7 @@ import {
   RpcScopeAuthorization,
   type ProjectCloneListEvent,
   SectionsRpcError,
-  type ThreadId,
+  ThreadId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -66,6 +66,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
@@ -116,7 +117,7 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
-  // Images tools returned in a thread (`assets/CloudAssets.ts`).
+  // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
   // Drives, browsed without a machine (`driveBrowsing.ts`).
@@ -126,6 +127,9 @@ const SERVED = [
   WS_METHODS.reviewGetDiffPreview,
   ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
   ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
+  // Pasted screenshots and files (`attachments/CloudAttachments.ts`).
+  WS_METHODS.attachmentsCreateUploadUrl,
+  WS_METHODS.attachmentsDelete,
   // GitHub repositories as drives (`github/`): import, branch status, push and pull requests.
   WS_METHODS.serverDiscoverSourceControl,
   WS_METHODS.sourceControlLookupRepository,
@@ -183,6 +187,8 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
+  [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
+  [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
@@ -334,6 +340,7 @@ export const layerHandlers = (input: {
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
       const githubImport = yield* makeGitHubImport();
       const branches = yield* GitHubBranches.GitHubBranches;
+      const attachments = yield* CloudAttachments;
       /**
        * Fails with not-found once the user leaves a context and so can't see
        * the thread anymore. Only a context going away is worth asking the
@@ -523,6 +530,10 @@ export const layerHandlers = (input: {
             .pipe(
               Effect.mapError((message) => new OrchestrationGetFullThreadDiffError({ message })),
             ),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (request) =>
+          attachments.issueUpload(userId, request),
+        [WS_METHODS.attachmentsDelete]: (request) =>
+          attachments.deletePending(userId, request.attachmentId),
         [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
         [WS_METHODS.sourceControlLookupRepository]: (request) =>
           githubImport.lookup(request.repository),

@@ -13,6 +13,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
+import * as CloudAttachments from "../attachments/CloudAttachments.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
@@ -78,7 +80,8 @@ export interface UserObjectEnv
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
    */
   readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
-  readonly DRIVE_PACKS?: DrivePacks.PackBucket;
+  /** Also where pasted screenshots and files live (`attachments/`). */
+  readonly DRIVE_PACKS?: DrivePacks.PackBucket & AttachmentObjects;
   readonly DRIVE_PACKS_PREFIX?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
@@ -157,7 +160,13 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ),
       ),
       Layer.provideMerge(
-        Layer.mergeAll(ThreadContexts.layer, UserPools.layer, UserThreadKinds.layerTurns),
+        Layer.mergeAll(
+          ThreadContexts.layer,
+          UserPools.layer,
+          UserThreadKinds.layerTurns,
+          // Pasted screenshots and files, signed with the same keys as asset URLs.
+          CloudAttachments.layer(attachmentStorage(env)),
+        ),
       ),
       Layer.provideMerge(UserThreadKinds.layer),
       Layer.provideMerge(
@@ -232,6 +241,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       // Only machines run dev servers.
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
+      attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     void ctx.blockConcurrencyWhile(async () => {

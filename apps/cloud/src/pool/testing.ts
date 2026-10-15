@@ -51,8 +51,10 @@ const fakeCatalog = (): Record<string, Array<FakeModel>> => ({
 const OWNER_BY_TYPE: Record<string, string> = { claude: "anthropic", codex: "openai" };
 
 /**
- * The management API of a CLIProxyAPI. A login finishes when its redirect is
- * pasted back (`oauth-callback`), adding `<provider>-<n>@example.test`.
+ * The v8 management API of a CLIProxyAPI; anything else under a management
+ * path is a 404. A login finishes when its redirect is pasted back
+ * (`oauth/callback`), adding `<provider>-<n>@example.test`. `configPatches`
+ * records each config change.
  * `/v1/models` lists `catalog`'s models for the types of its enabled
  * accounts, as CLIProxyAPI registers models per loaded account. Other model
  * requests echo what they got.
@@ -61,6 +63,7 @@ export const makeFakeCliProxyApi = () => {
   const accounts = new Map<string, FakeAccount>();
   const catalog = fakeCatalog();
   const logins = new Map<string, { readonly type: string; done: boolean }>();
+  const configPatches: Array<unknown> = [];
   let counter = 0;
   const json = (body: unknown, status = 200) => Response.json(body, { status });
 
@@ -91,24 +94,31 @@ export const makeFakeCliProxyApi = () => {
         body: await request.text(),
       });
     }
-    const route = url.pathname.replace(/^\/v0\/management\//u, "");
+    if (!url.pathname.startsWith("/v8/management/")) {
+      return json({ error: `no route ${request.method} ${url.pathname}` }, 404);
+    }
+    const route = url.pathname.slice("/v8/management/".length);
     if (request.headers.get("authorization") === "Bearer wrong") return json({}, 401);
     switch (`${request.method} ${route}`) {
       case "GET config":
         return json({});
-      case "GET anthropic-auth-url":
-      case "GET codex-auth-url": {
+      case "PATCH config":
+        configPatches.push(await request.json());
+        return json({});
+      case "GET oauth/auth-url": {
+        const provider = url.searchParams.get("provider");
+        if (provider !== "claude" && provider !== "codex") return json({}, 404);
         counter += 1;
         const state = `state-${counter}`;
-        logins.set(state, { type: route.startsWith("codex") ? "codex" : "claude", done: false });
+        logins.set(state, { type: provider, done: false });
         return json({ url: `https://login.example.test/?state=${state}`, state });
       }
-      case "GET get-auth-status": {
+      case "GET oauth/status": {
         const login = logins.get(url.searchParams.get("state") ?? "");
         if (!login) return json({ status: "error", error: "unknown state" });
         return json({ status: login.done ? "ok" : "wait" });
       }
-      case "POST oauth-callback": {
+      case "POST oauth/callback": {
         const body = (await request.json()) as { readonly redirect_url: string };
         const state = new URL(body.redirect_url).searchParams.get("state") ?? "";
         const login = logins.get(state);
@@ -119,14 +129,14 @@ export const makeFakeCliProxyApi = () => {
         accounts.set(`${login.type}-${email}.json`, { type: login.type, email, disabled: false });
         return json({ status: "ok" });
       }
-      case "DELETE oauth-session":
+      case "DELETE oauth/session":
         logins.delete(url.searchParams.get("state") ?? "");
         return json({ status: "ok" });
-      case "GET auth-files":
+      case "GET credentials":
         return json({
           files: [...accounts].map(([name, account]) => ({ name, ...account })),
         });
-      case "PATCH auth-files/status": {
+      case "PATCH credentials/status": {
         const body = (await request.json()) as {
           readonly name: string;
           readonly disabled: boolean;
@@ -136,20 +146,20 @@ export const makeFakeCliProxyApi = () => {
         account.disabled = body.disabled;
         return json({ status: "ok" });
       }
-      case "POST auth-files": {
+      case "POST credentials": {
         const name = url.searchParams.get("name") ?? "";
         const body = (await request.json()) as { readonly type: string; readonly email?: string };
         if (body.email === "refused@example.test") return json({}, 500);
         accounts.set(name, { type: body.type, email: body.email ?? name, disabled: false });
         return json({ status: "ok" });
       }
-      case "DELETE auth-files":
+      case "DELETE credentials":
         return json({}, accounts.delete(url.searchParams.get("name") ?? "") ? 200 : 404);
       default:
         return json({ error: `no route ${request.method} ${route}` }, 404);
     }
   };
-  return { serve, accounts, catalog };
+  return { serve, accounts, catalog, configPatches };
 };
 
 /**

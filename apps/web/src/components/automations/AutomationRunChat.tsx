@@ -30,6 +30,7 @@ import { LoopMessage, StepMessage } from "./RunChatMessages";
 import { CancelRunButton, RetryRunButton } from "./RunControls";
 import { ErrorHelp, RunLogs } from "./RunDiagnostics";
 import { RunStatusMarker } from "./RunStatus";
+import { WatchedSources } from "./WatchedSources";
 
 /** The first and last messages: how the run started and how it ended. */
 function EdgeMessage(props: {
@@ -65,7 +66,9 @@ function EndMessage(props: { run: AutomationRunDetail }) {
   switch (run.run.status) {
     case "running":
       return run.run.waitingOnYou ? null : (
-        <EdgeMessage icon={CircleDashedIcon} title="Still running" />
+        <EdgeMessage icon={CircleDashedIcon} title="Still running">
+          <WatchedSources sources={run.watching} />
+        </EdgeMessage>
       );
     case "succeeded": {
       const output = resultLine(run.output);

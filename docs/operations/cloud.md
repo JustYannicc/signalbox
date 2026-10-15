@@ -84,7 +84,7 @@ servers it finds listening (upstream's port discovery, `lsof` in the image),
 and carries HTTP and WebSockets to them. The machine accepts no inbound
 connections.
 
-Each thread and port gets its own origin, `<label>.<PREVIEW_DOMAIN>`, because
+Each thread and port gets its own origin, under `PREVIEW_DOMAIN`, because
 dev servers expect to own one (absolute paths, HMR sockets, cookies). Clients
 ask for a link (`signalbox.previews.open`); the link carries a ticket that the
 origin trades for an HttpOnly cookie. Tickets and cookies are signed with the
@@ -97,23 +97,18 @@ Locally, add `PREVIEW_DOMAIN=localhost:8787` to `.dev.vars`: preview origins
 are `http://<label>.localhost:8787`, which browsers resolve to loopback. With
 the local Runner host, every thread sees the dev servers on your own machine.
 
-To turn previews on for a deployment, it needs a domain whose subdomains reach
-the Worker:
-
-1. Pick the domain. Use a registrable domain of its own (the way GitHub serves
-   user content from `githubusercontent.com`), so preview pages aren't
-   same-site with `app.signalbox.run`. Subdomains of `signalbox.run` also work,
-   but are same-site with the app.
-2. In its Cloudflare zone, add a proxied wildcard DNS record (`*`) and a
-   Worker route `*.<domain>/*` for `signalbox-cloud` (the Cloud Worker's
-   `routes` in `apps/cloud/alchemy.run.ts`, so deploys keep it). Universal SSL covers one level of
-   subdomains.
-3. Set the `PREVIEW_DOMAIN` variable in the `cloud-production` GitHub
-   environment. The deploy passes it; unset, previews are off and clients hide
-   the control.
-
-Pull request previews don't serve dev-server previews: each would need a
-wildcard domain of its own.
+Deployments serve previews from `signalbox-preview.dev`, a registrable domain
+of its own (the way GitHub serves user content from `githubusercontent.com`):
+preview pages are never same-site with `app.signalbox.run` and never get its
+cookies. Universal SSL covers one level of subdomains, so every stage's
+previews sit side by side in that zone, told apart after the label:
+`<label>-app.signalbox-preview.dev` for production and
+`<label>-pr<number>.signalbox-preview.dev` for a pull request's preview.
+`PREVIEW_DOMAIN` holds that pattern (`*-app.signalbox-preview.dev`; a plain
+domain means `*.<domain>`). `apps/cloud/infra/stage.ts` sets it per stage;
+`apps/cloud/alchemy.run.ts` keeps one proxied wildcard record for the zone and
+gives each stage's Worker a route for its own pattern only, so no route relies on being more specific
+than another.
 
 ### Machines on boat
 
@@ -248,6 +243,16 @@ A turn on a model its pool doesn't serve is refused at turn start
 (`thread/TurnModels.ts`). The scripted provider, a reply without a model, is
 offered only where `SCRIPTED_PROVIDER=1`: `wrangler dev` and tests, never
 production.
+
+#### Connectors in local harnesses
+
+The local harness setup (`apps/cloud/src/localKeys/localSetup.ts`) also adds
+an Executor as the MCP server `signalbox` in Codex and Claude Code when the
+`EXECUTOR_MCP_URL` variable is set in the GitHub environment (the Executor's
+MCP endpoint, e.g. `https://executor.example/mcp`). Unset, setup adds none and
+removes one an earlier run added. Each harness signs in to the Executor with its
+own MCP sign-in (`/mcp` in Claude Code, `codex mcp login signalbox`), and
+`--undo` removes the entry again. Previews use the same variable.
 
 #### CLIProxyAPI updates
 
@@ -393,6 +398,23 @@ uses. Threads from before kinds have no record and stay tasks. Previews and `wra
 with `{"asOf": "<ISO time>"}`: it runs the caller's sweep as if it were that
 time, so archiving can be tried without waiting a week. Everywhere else the
 route is a 404.
+
+### Attachments
+
+Pasted screenshots and files share the drives bucket, under
+`<preview prefix>attachments/` (`apps/cloud/src/attachments/`), so a preview's
+attachments go with its prefix. A client uploads to a signed URL and gets a
+`pending-…` id, stored under `attachments/pending/`; sending the message copies
+each upload under an id of the thread, derived from the command so a retry
+rewrites the same copy. Uploads nobody sent are swept after a day, beside the
+next upload; an R2 lifecycle rule on `attachments/pending/` would do the same
+without the sweep. Clients load a sent attachment through the same signed
+`/api/assets` URLs as tools' images (`apps/cloud/src/assets/`), issued only to
+its uploader and to people who can see its thread. Limits are the contract's (`chatAttachment.ts`): 10 MiB
+per image, 50 MiB per file, 80 MiB of images and 100 attachments per message.
+Before each turn the Runner downloads every attachment the thread's messages
+hold into the adapters' attachments directory with its session token, so a
+new machine after a sleep has the earlier ones too.
 
 ### Secrets
 

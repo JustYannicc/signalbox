@@ -17,6 +17,7 @@ import {
   launch,
   liveTurn,
   personal,
+  saveSession,
   snapshot,
   threadId,
   turnReport,
@@ -112,7 +113,7 @@ describe("machine classes", () => {
   it.effect("moves a light thread's build to a heavy machine mid-turn, losing nothing", () =>
     withObject(
       freshDatabase(),
-      (engine, runner) =>
+      (engine, runner, context) =>
         Effect.gen(function* () {
           yield* launch(engine);
           const machine = yield* connect(runner);
@@ -120,6 +121,7 @@ describe("machine classes", () => {
           const turn = yield* liveTurn(runner);
           const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
           // The reply so far, then the Runner saved everything and says the turn outgrew it.
+          yield* saveSession(context, "claude-session-1");
           expect(
             yield* runner.batch({
               generation: machine.generation,

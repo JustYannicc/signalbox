@@ -1,13 +1,15 @@
+import { PoolLinkInfo } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 /**
  * How a pool object talks to the CLIProxyAPI behind it: its own container,
- * or one the pool's admin runs. Both answer the same management API
- * (`/v0/management/*`), so nothing above this module knows which one it is.
- * Mirrors the self-hosted hub's calls in
- * `apps/server/src/accountHub/accountHubManagement.ts`.
+ * or one the pool's admin runs. Both answer the same v8 management API
+ * (`/v8/management/*`), so nothing above this module knows which one it is.
+ * A pool backed by another cloud's pool link reads that pool through the
+ * link's own API instead (`link`), which is versioned with Signalbox, not
+ * with CLIProxyAPI.
  */
 
 export class PoolBackendError extends Schema.TaggedError<PoolBackendError>()("PoolBackendError", {
@@ -27,26 +29,51 @@ export interface PoolEndpoint {
   readonly managementKey: string;
   /** One of its `access.api-keys`, which model requests carry. */
   readonly clientKey: string;
+  /**
+   * Another cloud's pool link (`POOL_LINK_PATH`) rather than a CLIProxyAPI:
+   * reads go to the link's own API, and both keys are its token.
+   */
+  readonly link: boolean;
 }
 
 /** The port the pool image's CLIProxyAPI listens on. */
 export const CLI_PROXY_API_PORT = 8317;
 
-/** Accounts a pool signs in through its CLIProxyAPI, by the login route that adds them. */
-const LOGIN_ROUTES = {
-  claude: "anthropic-auth-url",
-  codex: "codex-auth-url",
-} as const;
-export type PoolLoginProvider = keyof typeof LOGIN_ROUTES;
+/** Accounts a pool signs in through its CLIProxyAPI. */
+export type PoolLoginProvider = "claude" | "codex";
 
 const yamlString = (value: string) => JSON.stringify(value);
+
+/**
+ * What every managed pool's CLIProxyAPI runs with, in its v8 config tree:
+ * seeded into a new pool's config and patched into an older one's
+ * (`applyManagedConfig`). Usage statistics feed the pool's usage reads.
+ */
+export const MANAGED_CONFIG = {
+  routing: {
+    strategy: "round-robin",
+    // A thread keeps one account so cached prompts and encrypted reasoning stay valid.
+    "session-affinity": true,
+  },
+  observability: { usage: { "usage-statistics-enabled": true } },
+} as const;
+
+type ConfigTree = { readonly [key: string]: string | boolean | ConfigTree };
+
+const yamlTree = (tree: ConfigTree, indent = ""): ReadonlyArray<string> =>
+  Object.entries(tree).flatMap(([key, value]) =>
+    typeof value === "object"
+      ? [`${indent}${key}:`, ...yamlTree(value, `${indent}  `)]
+      : [`${indent}${key}: ${typeof value === "string" ? yamlString(value) : String(value)}`],
+  );
 
 /**
  * The config a managed pool's CLIProxyAPI starts with, written to its store
  * before the first start. CLIProxyAPI owns it from then on (it hashes the
  * management key in place, and keeps API keys added later), so it is only
- * ever seeded once. Management must allow remote calls: the pool object
- * reaches the container over its network, never its loopback.
+ * ever seeded once; later changes go through the management API. Management
+ * must allow remote calls: the pool object reaches the container over its
+ * network, never its loopback.
  */
 export const renderConfig = (keys: {
   readonly managementKey: string;
@@ -65,10 +92,7 @@ export const renderConfig = (keys: {
     "access:",
     "  api-keys:",
     `    - ${yamlString(keys.clientKey)}`,
-    "routing:",
-    '  strategy: "round-robin"',
-    // A thread keeps one account so cached prompts and encrypted reasoning stay valid.
-    "  session-affinity: true",
+    ...yamlTree(MANAGED_CONFIG),
     "",
   ].join("\n");
 
@@ -116,11 +140,21 @@ const readJson = (endpoint: PoolEndpoint, response: Response) =>
       new PoolBackendError({ detail: `${hostOf(endpoint)} broke off its answer.`, cause }),
   }).pipe(Effect.map((text) => Option.getOrNull(decodeJson(text))));
 
-const management = (endpoint: PoolEndpoint, method: string, path: string, body?: unknown) =>
+/**
+ * A call with the management key, its body as JSON (`null` when it isn't).
+ * A refused key fails with `refused`; any other status is the caller's.
+ */
+const call = (
+  endpoint: PoolEndpoint,
+  url: string,
+  refused: string,
+  options: { readonly method?: string; readonly body?: unknown } = {},
+) =>
   Effect.gen(function* () {
+    const { method = "GET", body } = options;
     const response = yield* send(
       endpoint,
-      new Request(`${endpoint.baseUrl}/v0/management/${path}`, {
+      new Request(url, {
         method,
         headers: {
           authorization: `Bearer ${endpoint.managementKey}`,
@@ -132,12 +166,26 @@ const management = (endpoint: PoolEndpoint, method: string, path: string, body?:
     // Not JSON: callers that need a body decode `null` and fail.
     const json = yield* readJson(endpoint, response);
     if (response.status === 401 || response.status === 403) {
-      return yield* new PoolBackendError({
-        detail: `${hostOf(endpoint)} refused the management key.`,
-      });
+      return yield* new PoolBackendError({ detail: `${hostOf(endpoint)} ${refused}` });
     }
     return { status: response.status, json };
   });
+
+const management = (endpoint: PoolEndpoint, method: string, path: string, body?: unknown) =>
+  call(endpoint, `${endpoint.baseUrl}/v8/management/${path}`, "refused the management key.", {
+    method,
+    body,
+  });
+
+/** Fails unless the call succeeded; `failed` says what didn't happen, after the host. */
+const expectOk =
+  (endpoint: PoolEndpoint, failed: (status: number) => string) =>
+  (response: { readonly status: number }) =>
+    response.status < 300
+      ? Effect.void
+      : Effect.fail(
+          new PoolBackendError({ detail: `${hostOf(endpoint)} ${failed(response.status)}` }),
+        );
 
 const decodeOr = <A>(schema: Schema.Decoder<A>, detail: string) => {
   const decode = Schema.decodeUnknownEffect(schema);
@@ -145,21 +193,33 @@ const decodeOr = <A>(schema: Schema.Decoder<A>, detail: string) => {
     decode(value).pipe(Effect.mapError((cause) => new PoolBackendError({ detail, cause })));
 };
 
-/** Confirms the management key works. */
-export const checkManagementKey = (endpoint: PoolEndpoint) =>
-  Effect.gen(function* () {
-    const config = yield* management(endpoint, "GET", "config");
-    if (config.status >= 300) {
-      return yield* new PoolBackendError({
-        detail: `${hostOf(endpoint)} answered ${config.status} to a management call.`,
-      });
-    }
-  });
+/** A pool link's own read: the pool's name and accounts (`PoolLinkInfo`). */
+const linkInfo = (endpoint: PoolEndpoint) =>
+  call(endpoint, endpoint.baseUrl, "refused the pool link.").pipe(
+    Effect.tap(expectOk(endpoint, (status) => `answered ${status} to the pool link.`)),
+    Effect.flatMap((response) =>
+      decodeOr(PoolLinkInfo, `${hostOf(endpoint)} returned an invalid pool.`)(response.json),
+    ),
+  );
 
-/** Confirms both keys work: management for admin calls, the client key for model requests. */
+/**
+ * Confirms both keys work: management for admin calls, the client key for
+ * model requests. A link is one key for both, and the pool behind it may be
+ * asleep: asking for its models would wake it just to answer what reading
+ * the pool has.
+ */
 export const checkKeys = (endpoint: PoolEndpoint) =>
   Effect.gen(function* () {
-    yield* checkManagementKey(endpoint);
+    if (endpoint.link) return yield* Effect.asVoid(linkInfo(endpoint));
+    yield* management(endpoint, "GET", "config").pipe(
+      Effect.flatMap(
+        expectOk(endpoint, (status) =>
+          status === 404
+            ? "has no v8 management API. Signalbox needs CLIProxyAPI 8 or later."
+            : `answered ${status} to a management call.`,
+        ),
+      ),
+    );
     const models = yield* send(
       endpoint,
       new Request(`${endpoint.baseUrl}/v1/models`, {
@@ -234,7 +294,7 @@ const LoginStart = Schema.Struct({
 export type LoginStart = typeof LoginStart.Type;
 
 export const startLogin = (endpoint: PoolEndpoint, provider: PoolLoginProvider) =>
-  management(endpoint, "GET", LOGIN_ROUTES[provider]).pipe(
+  management(endpoint, "GET", `oauth/auth-url?provider=${provider}`).pipe(
     Effect.flatMap((response) =>
       decodeOr(LoginStart, "The pool's CLIProxyAPI could not start sign-in.")(response.json),
     ),
@@ -254,7 +314,7 @@ export const loginStatus = (
   endpoint: PoolEndpoint,
   state: string,
 ): Effect.Effect<LoginStatus, PoolBackendError> =>
-  management(endpoint, "GET", `get-auth-status?state=${encodeURIComponent(state)}`).pipe(
+  management(endpoint, "GET", `oauth/status?state=${encodeURIComponent(state)}`).pipe(
     Effect.flatMap((response) =>
       decodeOr(LoginStatus, "The pool's CLIProxyAPI lost track of the sign-in.")(response.json),
     ),
@@ -269,7 +329,7 @@ export const loginStatus = (
 export const completeLogin = (endpoint: PoolEndpoint, redirectUrl: string) =>
   Effect.gen(function* () {
     // CLIProxyAPI reads the provider from the login's state, which the URL carries.
-    const response = yield* management(endpoint, "POST", "oauth-callback", {
+    const response = yield* management(endpoint, "POST", "oauth/callback", {
       redirect_url: redirectUrl,
     });
     const status =
@@ -284,7 +344,7 @@ export const completeLogin = (endpoint: PoolEndpoint, redirectUrl: string) =>
   });
 
 export const cancelLogin = (endpoint: PoolEndpoint, state: string) =>
-  management(endpoint, "DELETE", `oauth-session?state=${encodeURIComponent(state)}`).pipe(
+  management(endpoint, "DELETE", `oauth/session?state=${encodeURIComponent(state)}`).pipe(
     Effect.ignore,
   );
 
@@ -313,8 +373,8 @@ export interface BackendAccount {
   readonly signedOut: boolean;
 }
 
-export const listAccounts = (endpoint: PoolEndpoint) =>
-  management(endpoint, "GET", "auth-files").pipe(
+const listCredentials = (endpoint: PoolEndpoint) =>
+  management(endpoint, "GET", "credentials").pipe(
     Effect.flatMap((response) =>
       decodeOr(AuthFiles, `${hostOf(endpoint)} returned an invalid account list.`)(response.json),
     ),
@@ -331,16 +391,26 @@ export const listAccounts = (endpoint: PoolEndpoint) =>
     ),
   );
 
-const expectOk = (endpoint: PoolEndpoint, action: string) => (response: { status: number }) =>
-  response.status < 300
-    ? Effect.void
-    : Effect.fail(
-        new PoolBackendError({ detail: `${hostOf(endpoint)} could not ${action} the account.` }),
-      );
+export const listAccounts = (endpoint: PoolEndpoint) =>
+  endpoint.link
+    ? linkInfo(endpoint).pipe(
+        Effect.map((info) =>
+          info.accounts.map((account): BackendAccount => ({
+            name: account.name,
+            type: account.type,
+            email: account.email ?? null,
+            disabled: account.disabled,
+            signedOut: account.signedOut,
+          })),
+        ),
+      )
+    : listCredentials(endpoint);
 
 export const setAccountDisabled = (endpoint: PoolEndpoint, name: string, disabled: boolean) =>
-  management(endpoint, "PATCH", "auth-files/status", { name, disabled }).pipe(
-    Effect.flatMap(expectOk(endpoint, disabled ? "pause" : "resume")),
+  management(endpoint, "PATCH", "credentials/status", { name, disabled }).pipe(
+    Effect.flatMap(
+      expectOk(endpoint, () => `could not ${disabled ? "pause" : "resume"} the account.`),
+    ),
   );
 
 /** Saves a credential file into the CLIProxyAPI under `name`, as another hub stored it. */
@@ -349,11 +419,20 @@ export const uploadAccount = (
   name: string,
   credential: Readonly<Record<string, unknown>>,
 ) =>
-  management(endpoint, "POST", `auth-files?name=${encodeURIComponent(name)}`, credential).pipe(
-    Effect.flatMap(expectOk(endpoint, "save")),
+  management(endpoint, "POST", `credentials?name=${encodeURIComponent(name)}`, credential).pipe(
+    Effect.flatMap(expectOk(endpoint, () => "could not save the account.")),
   );
 
 export const removeAccount = (endpoint: PoolEndpoint, name: string) =>
-  management(endpoint, "DELETE", `auth-files?name=${encodeURIComponent(name)}`).pipe(
-    Effect.flatMap(expectOk(endpoint, "remove")),
+  management(endpoint, "DELETE", `credentials?name=${encodeURIComponent(name)}`).pipe(
+    Effect.flatMap(expectOk(endpoint, () => "could not remove the account.")),
   );
+
+/** Merges `MANAGED_CONFIG` into the CLIProxyAPI's config, which it saves to the pool's store. */
+export const applyManagedConfig = (endpoint: PoolEndpoint) =>
+  management(endpoint, "PATCH", "config", MANAGED_CONFIG).pipe(
+    Effect.flatMap(expectOk(endpoint, (status) => `answered ${status} to a config change.`)),
+  );
+
+/** `MANAGED_CONFIG` as JSON, which a pool records once it is applied. */
+export const MANAGED_CONFIG_JSON = encodeJson(MANAGED_CONFIG);
