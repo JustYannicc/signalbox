@@ -12,7 +12,7 @@ import {
   ProviderInstanceId,
   type ProviderInstanceConfig,
 } from "./providerInstance.ts";
-import { ServerProviderUsageWindow } from "./providerUsageLimits.ts";
+import { ServerProviderUsageLimits, ServerProviderUsageWindow } from "./providerUsageLimits.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
 export const ACCOUNT_HUB_SOURCE_ID = UsageLimitSourceId.make("signalbox-account-hub");
@@ -287,6 +287,8 @@ export const PoolLinkAccount = Schema.Struct({
   email: Schema.optional(Schema.String),
   disabled: Schema.Boolean,
   signedOut: Schema.Boolean,
+  /** The account's windows as the pool last read them; only for the pool's admins. */
+  usageLimits: Schema.optional(ServerProviderUsageLimits),
 });
 export type PoolLinkAccount = typeof PoolLinkAccount.Type;
 

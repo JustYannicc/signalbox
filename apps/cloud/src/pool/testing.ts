@@ -20,6 +20,12 @@ interface FakeAccount {
   readonly type: string;
   readonly email: string;
   disabled: boolean;
+  /** Headers of its last response, as CLIProxyAPI keeps them; none until set. */
+  signals?: Record<string, string>;
+  /** When those headers came, ISO. */
+  observedAt?: string;
+  /** What the provider's usage endpoint answers for it; 200 with no windows unless set. */
+  usage?: { readonly status: number; readonly body: string };
 }
 
 interface FakeModel {
@@ -64,6 +70,9 @@ export const makeFakeCliProxyApi = () => {
   const catalog = fakeCatalog();
   const logins = new Map<string, { readonly type: string; done: boolean }>();
   const configPatches: Array<unknown> = [];
+  /** The upstream URLs asked as each account (`requests/api-call`), by account name. */
+  const accountRequests: Array<{ readonly name: string; readonly url: string }> = [];
+  const authIndex = (name: string) => `idx-${name}`;
   let counter = 0;
   const json = (body: unknown, status = 200) => Response.json(body, { status });
 
@@ -134,8 +143,26 @@ export const makeFakeCliProxyApi = () => {
         return json({ status: "ok" });
       case "GET credentials":
         return json({
-          files: [...accounts].map(([name, account]) => ({ name, ...account })),
+          files: [...accounts].map(([name, { type, email, disabled, signals, observedAt }]) => ({
+            name,
+            auth_index: authIndex(name),
+            type,
+            email,
+            disabled,
+            quota: { signals: signals ?? {}, ...(observedAt ? { observed_at: observedAt } : {}) },
+          })),
         });
+      case "POST requests/api-call": {
+        const body = (await request.json()) as {
+          readonly auth_index: string;
+          readonly url: string;
+        };
+        const found = [...accounts].find(([name]) => authIndex(name) === body.auth_index);
+        if (!found) return json({ error: "auth not found" }, 404);
+        accountRequests.push({ name: found[0], url: body.url });
+        const usage = found[1].usage ?? { status: 200, body: "{}" };
+        return json({ status_code: usage.status, body: usage.body });
+      }
       case "PATCH credentials/status": {
         const body = (await request.json()) as {
           readonly name: string;
@@ -159,7 +186,7 @@ export const makeFakeCliProxyApi = () => {
         return json({ error: `no route ${request.method} ${route}` }, 404);
     }
   };
-  return { serve, accounts, catalog, configPatches };
+  return { serve, accounts, catalog, configPatches, accountRequests };
 };
 
 /**
