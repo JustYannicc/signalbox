@@ -29,6 +29,8 @@ interface FakeAccount {
   usage?: { readonly status: number; readonly body: string };
   /** Until when CLIProxyAPI keeps it cooling down after a 429, ISO; it routes nothing to it. */
   cooldownUntil?: string;
+  /** Set through `credentials/fields`: `<prefix>/<model>` routes to this account alone. */
+  prefix?: string;
 }
 
 interface FakeModel {
@@ -65,8 +67,11 @@ const OWNER_BY_TYPE: Record<string, string> = { claude: "anthropic", codex: "ope
  * (`oauth/callback`), adding `<provider>-<n>@example.test`. `configPatches`
  * records each config change.
  * `/v1/models` lists `catalog`'s models for the types of its enabled
- * accounts, as CLIProxyAPI registers models per loaded account. Other model
- * requests echo what they got.
+ * accounts, as CLIProxyAPI registers models per loaded account, and each
+ * model again under every account's prefix. Other model requests echo what
+ * they got. They go round robin over the accounts that aren't paused or
+ * cooling down, or to the one account a prefixed model names, and say which
+ * in `X-CPA-TRACE-ID` (its `auth_index`) and `X-Fake-Account` (its name).
  */
 export const makeFakeCliProxyApi = () => {
   const accounts = new Map<string, FakeAccount>();
@@ -75,13 +80,29 @@ export const makeFakeCliProxyApi = () => {
   const configPatches: Array<unknown> = [];
   /** The upstream URLs asked as each account (`requests/api-call`), by account name. */
   const accountRequests: Array<{ readonly name: string; readonly url: string }> = [];
-  const authIndex = (name: string) => `idx-${name}`;
+  // Hex, as CLIProxyAPI's are: `X-CPA-TRACE-ID` separates its parts with dashes.
+  const authIndex = (name: string) =>
+    [...name]
+      .reduce((hash, char) => Math.imul(hash ^ char.charCodeAt(0), 16_777_619) >>> 0, 2_166_136_261)
+      .toString(16)
+      .padStart(8, "0");
   /** Accounts whose cooldown was cleared (`routing/cooldown/reset`), in order. */
   const cooldownResets: Array<string> = [];
   const cooling = (account: FakeAccount) =>
     account.cooldownUntil !== undefined && Date.parse(account.cooldownUntil) > Date.now();
   let counter = 0;
+  let turn = 0;
   const json = (body: unknown, status = 200) => Response.json(body, { status });
+  const modelError = (status: number, message: string) =>
+    json({ type: "error", error: { type: "api_error", message } }, status);
+  const modelOf = (body: string) => {
+    try {
+      const model: unknown = (JSON.parse(body) as { readonly model?: unknown }).model;
+      return typeof model === "string" ? model : null;
+    } catch {
+      return null;
+    }
+  };
 
   const serve = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -89,16 +110,21 @@ export const makeFakeCliProxyApi = () => {
       const types = new Set(
         [...accounts.values()].filter((account) => !account.disabled).map((a) => a.type),
       );
+      const listed = (type: string, prefix?: string) =>
+        (catalog[type] ?? []).map((model) => ({
+          id: prefix === undefined ? model.id : `${prefix}/${model.id}`,
+          object: "model",
+          created: model.created,
+          owned_by: OWNER_BY_TYPE[type] ?? type,
+        }));
+      const prefixed = [...accounts.values()].flatMap((account) =>
+        account.disabled || account.prefix === undefined
+          ? []
+          : listed(account.type, account.prefix),
+      );
       return json({
         object: "list",
-        data: [...types].flatMap((type) =>
-          (catalog[type] ?? []).map((model) => ({
-            id: model.id,
-            object: "model",
-            created: model.created,
-            owned_by: OWNER_BY_TYPE[type] ?? type,
-          })),
-        ),
+        data: [...[...types].flatMap((type) => listed(type)), ...prefixed],
       });
     }
     // A model request: says what it got, so tests can check what the pool sent.
@@ -116,12 +142,35 @@ export const makeFakeCliProxyApi = () => {
           429,
         );
       }
-      return json({
-        path: `${url.pathname}${url.search}`,
-        authorization: request.headers.get("authorization"),
-        apiKey: request.headers.get("x-api-key"),
-        body: await request.text(),
-      });
+      const body = await request.text();
+      const model = modelOf(body);
+      const slash = model?.indexOf("/") ?? -1;
+      let served: readonly [string, FakeAccount] | undefined;
+      if (model !== null && slash > 0) {
+        served = [...accounts].find(([, account]) => account.prefix === model.slice(0, slash));
+        if (served === undefined) return modelError(400, `unknown provider for model ${model}`);
+        if (served[1].disabled) return modelError(503, "auth_unavailable: no auth available");
+        if (cooling(served[1])) {
+          return modelError(429, `All credentials for model ${model} are cooling down`);
+        }
+      } else {
+        const ready = [...accounts].filter(([, account]) => !account.disabled && !cooling(account));
+        served = ready[turn++ % Math.max(ready.length, 1)];
+      }
+      const headers = new Headers();
+      if (served !== undefined) {
+        headers.set("x-cpa-trace-id", `20261015120000-${authIndex(served[0])}-req-${turn}`);
+        headers.set("x-fake-account", served[0]);
+      }
+      return Response.json(
+        {
+          path: `${url.pathname}${url.search}`,
+          authorization: request.headers.get("authorization"),
+          apiKey: request.headers.get("x-api-key"),
+          body,
+        },
+        { headers },
+      );
     }
     if (!url.pathname.startsWith("/v8/management/")) {
       return json({ error: `no route ${request.method} ${url.pathname}` }, 404);
@@ -206,6 +255,15 @@ export const makeFakeCliProxyApi = () => {
         accountRequests.push({ name: found[0], url: body.url });
         const usage = found[1].usage ?? { status: 200, body: "{}" };
         return json({ status_code: usage.status, body: usage.body });
+      }
+      case "PATCH credentials/fields": {
+        const body = (await request.json()) as { readonly name: string; readonly prefix?: string };
+        const account = accounts.get(body.name);
+        if (!account) return json({ error: "auth file not found" }, 404);
+        // An empty prefix removes it.
+        if (body.prefix === "") delete account.prefix;
+        else if (body.prefix !== undefined) account.prefix = body.prefix;
+        return json({ status: "ok" });
       }
       case "PATCH credentials/status": {
         const body = (await request.json()) as {

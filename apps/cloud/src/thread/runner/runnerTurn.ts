@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type ProviderTurnId,
+  type RunId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
@@ -280,6 +281,26 @@ function itemEvents(
     case "machine.outgrown":
       return [];
   }
+}
+
+/**
+ * The pool moved `runId`'s thread off its account (`pool/threadAccounts.ts`):
+ * a notice in that run's transcript, while it's the live one.
+ */
+export function accountMovedEvents(
+  projection: Projection,
+  runId: RunId,
+  message: string,
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> {
+  const run = harnessRun(projection);
+  if (run === undefined || run.id !== runId) return [];
+  return systemNoticeEvents(
+    projection,
+    run,
+    { id: TurnItemId.make(`turn-item:${run.id}:account`), title: "Account", message },
+    ctx,
+  );
 }
 
 /**

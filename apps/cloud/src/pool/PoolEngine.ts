@@ -31,6 +31,7 @@ import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
 import * as PoolStore from "./poolStore.ts";
+import * as ThreadAccounts from "./threadAccounts.ts";
 
 /**
  * Everything one pool's Durable Object owns: the pool record, who may use it
@@ -194,13 +195,23 @@ export class PoolEngine extends Context.Service<
      * A model request from a turn `actor` runs, sent to the pool's
      * CLIProxyAPI. Checked against the grants on every request, so losing
      * access stops the next one. `upstreamMs`: from handing it to the
-     * CLIProxyAPI to its response headers.
+     * CLIProxyAPI to its response headers. A request naming its `thread`
+     * stays on that thread's account (`threadAccounts.ts`); `accountMoved`
+     * says when it had to leave it.
      */
     readonly forwardModel: (
       actor: PoolActor,
       path: string,
       request: Request,
-    ) => Effect.Effect<{ readonly response: Response; readonly upstreamMs: number }, Failure>;
+      thread?: string,
+    ) => Effect.Effect<
+      {
+        readonly response: Response;
+        readonly upstreamMs: number;
+        readonly accountMoved: string | null;
+      },
+      Failure
+    >;
     /** A request from the pool's container to its store. */
     readonly storeRequest: (request: Request) => Effect.Effect<Response, SqlError>;
   }
@@ -280,6 +291,7 @@ const migrations = Migrator.fromRecord({
     // The admins' `PoolRouting` as JSON; null runs `DEFAULT_POOL_ROUTING`.
     yield* sql`ALTER TABLE managed_config ADD COLUMN routing TEXT`;
   }),
+  "0008_thread_accounts": ThreadAccounts.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -546,6 +558,11 @@ const make = Effect.gen(function* () {
         contributedBy: row.contributed_by,
       })),
     };
+  });
+
+  const threadAccounts = ThreadAccounts.make({
+    sql,
+    audit: (detail) => audit(POOL_ITSELF, "move-thread", detail),
   });
 
   const readingLimits = yield* Semaphore.make(1);
@@ -1008,7 +1025,7 @@ const make = Effect.gen(function* () {
       return { imported, skipped };
     });
 
-  const forwardModel: PoolEngine["Service"]["forwardModel"] = (actor, path, request) =>
+  const forwardModel: PoolEngine["Service"]["forwardModel"] = (actor, path, request, thread) =>
     Effect.gen(function* () {
       // Said in the turn that fails, which is how someone removed from the pool finds out.
       const { row } = yield* access(actor, "member", {
@@ -1023,10 +1040,21 @@ const make = Effect.gen(function* () {
         },
       });
       yield* ensureManagedConfig(endpoint);
-      const response = yield* CliProxyApi.forwardModel(endpoint, path, request);
+      // An admin's own CLIProxyAPI keeps its accounts as its config says.
+      const managed = endpoint.baseUrl === PoolContainer.CONTAINER_ORIGIN;
+      const { response, accountMoved, limited } =
+        thread !== undefined && endpoint.link
+          ? yield* ThreadAccounts.forwardViaLink(endpoint, path, request, thread)
+          : thread !== undefined && managed
+            ? yield* threadAccounts.forward(endpoint, path, request, thread, yield* routingOf)
+            : {
+                response: yield* CliProxyApi.forwardModel(endpoint, path, request),
+                accountMoved: null,
+                limited: false,
+              };
       const upstreamMs = clock.currentTimeMillisUnsafe() - sent.at;
-      if (response.status === 429) yield* checkHeldAccounts(row);
-      return { response, upstreamMs };
+      if (response.status === 429 || limited) yield* checkHeldAccounts(row);
+      return { response, upstreamMs, accountMoved };
     });
 
   const storeRequest: PoolEngine["Service"]["storeRequest"] = (request) =>

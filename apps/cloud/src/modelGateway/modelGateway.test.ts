@@ -182,6 +182,20 @@ describe("ModelGateway", () => {
     expect(gateway.logs).toMatchObject([{ authMs: 5, upstreamHeadersMs: 30, addedMs: 15 }]);
   });
 
+  it("hands the thread the pool's word that it moved accounts", async () => {
+    const accountMoved = "This thread's account hit its usage limit.";
+    const gateway = makeGateway({
+      pool: () => ({
+        _tag: "forwarded",
+        response: new Response("ok"),
+        upstreamMs: 20,
+        accountMoved,
+      }),
+    });
+    await (await gateway.call("/anthropic/v1/messages", auth())).text();
+    expect(gateway.logs).toMatchObject([{ status: 200, runId, accountMoved }]);
+  });
+
   it("fails the request with the pool's reason when the requester lost the pool", async () => {
     const reason = "You no longer have access to this thread's pool. Pick another pool for it.";
     const gateway = makeGateway({ pool: () => ({ _tag: "denied", reason }) });

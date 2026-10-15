@@ -55,6 +55,11 @@ export const ModelGatewayRecord = Schema.Struct({
   totalMs: Schema.Number,
   /** How a forwarded response's body ended: read to the end, dropped by the caller, or broken. */
   outcome: Schema.optionalKey(Schema.Literals(["complete", "cancelled", "failed"])),
+  /**
+   * What the thread should say: the pool had to move it off its account for
+   * this request (`pool/threadAccounts.ts`).
+   */
+  accountMoved: Schema.optionalKey(Schema.String),
   /** The model the response says served it. */
   model: Schema.NullOr(Schema.String),
   /** Null when the response reports none, or could not be read. */
