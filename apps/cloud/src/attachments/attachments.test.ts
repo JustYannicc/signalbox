@@ -15,6 +15,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as HttpEffect from "effect/http/HttpEffect";
+import { HttpRouter } from "effect/http";
 
 import * as Environment from "../environment.ts";
 import { layerAttachments, layerThreadObject, makeMemoryCloud } from "../testing.ts";
@@ -24,6 +26,7 @@ import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as ThreadEngine from "../thread/ThreadEngine.ts";
 import { threadSegment } from "./attachmentIds.ts";
 import { makeMemoryObjects } from "./attachmentTesting.ts";
+import * as AttachmentRoutes from "./attachmentRoutes.ts";
 import { attachmentKey, CloudAttachments } from "./CloudAttachments.ts";
 import { serveRunnerAttachments } from "./runnerAttachments.ts";
 
@@ -230,6 +233,47 @@ describe("CloudAttachments", () => {
         // The sweep runs beside the upload; let it finish.
         for (let turn = 0; turn < 100 && objects.keys().length > 1; turn++) yield* Effect.yieldNow;
         expect(objects.keys()).toEqual([attachmentKey("", fresh.id)]);
+      }),
+    ),
+  );
+});
+
+describe("attachment URLs", () => {
+  // Live: the web handler checks token expiry against the real clock.
+  it.live("take the bytes and serve them back at the URLs the RPCs mint", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const objects = makeMemoryObjects();
+        const context = yield* Layer.build(layerAttachments(objects));
+        const service = Context.get(context, CloudAttachments);
+        // As the Worker serves them (`app.ts`): services come from the handler's context.
+        const httpEffect = yield* HttpRouter.toHttpEffect(AttachmentRoutes.layer);
+        const handler = HttpEffect.toWebHandler(httpEffect.pipe(Effect.provide(context)));
+        const call = (path: string, init?: RequestInit) =>
+          Effect.promise(() => handler(new Request(`https://cloud.test${path}`, init)));
+
+        const minted = yield* service.issueUpload(userId, {
+          name: "shot.png",
+          mimeType: "image/png",
+          sizeBytes: PNG.length,
+        });
+        // Signed tokens run to hundreds of characters, past the router's parameter limit.
+        expect(minted.relativeUrl.length).toBeGreaterThan(200);
+        const short = yield* call(minted.relativeUrl, { method: "POST", body: PNG.subarray(1) });
+        expect(short.status).toBe(400);
+        const stored = yield* call(minted.relativeUrl, { method: "POST", body: PNG.slice() });
+        expect(stored.status).toBe(204);
+
+        const link = yield* service.fileUrl(
+          userId,
+          { _tag: "attachment", attachmentId: minted.attachmentId },
+          () => Effect.succeed(false),
+        );
+        const file = yield* call(link.relativeUrl);
+        expect(file.status).toBe(200);
+        expect(file.headers.get("content-type")).toBe("image/png");
+        expect(new Uint8Array(yield* Effect.promise(() => file.arrayBuffer()))).toEqual(PNG);
+        expect((yield* call("/api/attachments/file/made.up")).status).toBe(404);
       }),
     ),
   );
