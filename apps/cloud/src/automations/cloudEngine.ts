@@ -129,7 +129,13 @@ const make = Effect.gen(function* () {
     yield* engine.drain;
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
   });
-  const flush = drainAndPush.pipe(Effect.andThen(runs.nextCronAt), Effect.flatMap(alarm.arm));
+  /** The alarm goes off for the next cron, or sooner to tell an instance an outcome again. */
+  const nextAlarmAt = Effect.all([runs.nextCronAt, runs.nextRedeliveryAt]).pipe(
+    Effect.map(([cron, redelivery]) =>
+      cron === null ? redelivery : redelivery === null ? cron : Math.min(cron, redelivery),
+    ),
+  );
+  const flush = drainAndPush.pipe(Effect.andThen(nextAlarmAt), Effect.flatMap(alarm.arm));
 
   /** Who the spans are about: the owner, never anything they wrote. The id never changes, so it's read once. */
   let ownerId: string | undefined;
@@ -240,9 +246,14 @@ const make = Effect.gen(function* () {
           attributes: { "automation.id": automationId, "automation.version": version },
         }),
       ),
-    start: runs.recover.pipe(Effect.andThen(flush), Effect.withSpan("CloudAutomations.start")),
+    start: runs.recover.pipe(
+      Effect.andThen(runs.redeliver),
+      Effect.andThen(flush),
+      Effect.withSpan("CloudAutomations.start"),
+    ),
     wake: annotateOwner.pipe(
       Effect.andThen(engine.tick),
+      Effect.andThen(runs.redeliver),
       Effect.andThen(flush),
       Effect.withSpan("CloudAutomations.wake"),
     ),

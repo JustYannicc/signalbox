@@ -81,7 +81,7 @@ export interface CloudAutomationsShape {
    * confirmed one, then flushes.
    */
   readonly start: Effect.Effect<void, AutomationError>;
-  /** Starts due crons; the object's alarm calls it. */
+  /** Starts due crons and tells instances outcomes they missed; the object's alarm calls it. */
   readonly wake: Effect.Effect<void, AutomationError>;
   /**
    * Waits for the work a request started here (an agent's turn, a thread

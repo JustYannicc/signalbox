@@ -13,8 +13,8 @@ import { fromJson, toJson } from "../json.ts";
 import type { EngineInternals, RunDriver } from "../runDriver.ts";
 import { errorDetail } from "../runLog.ts";
 import { transientCause } from "../stepPolicy.ts";
-import { isoMs, nowIso } from "../time.ts";
-import type { AutomationRow, RunRow, StepRow } from "../WorkflowStore.ts";
+import { isoAt, isoMs, nowIso } from "../time.ts";
+import type { AutomationRow, InstanceEventRow, RunRow, StepRow } from "../WorkflowStore.ts";
 import { hash64 } from "../hash.ts";
 import type { StepRequest } from "../sandbox/replayWorkflow.ts";
 import type { HostStepStart, Marks, RunEnd } from "../workflow/hostProtocol.ts";
@@ -61,6 +61,10 @@ export interface HostedRunsShape {
   ) => Effect.Effect<void, AutomationError>;
   /** When the next cron is due (epoch ms), for the host's alarm; null when none is. */
   readonly nextCronAt: Effect.Effect<number | null, AutomationError>;
+  /** Tells instances the outcomes they haven't taken yet; the host calls it on its alarm. */
+  readonly redeliver: Effect.Effect<void, AutomationError>;
+  /** When an untaken outcome is due to be told again (epoch ms), for the host's alarm. */
+  readonly nextRedeliveryAt: Effect.Effect<number | null, AutomationError>;
   /** The run's automation and version, for checking a caller; undefined when gone. */
   readonly runOf: (
     runId: string,
@@ -369,6 +373,39 @@ export const makeHostedDriver = (core: EngineInternals) =>
         yield* store.markInstance(runId, yield* nowIso);
       });
 
+    /** Waits between telling an instance again: 10 s, doubling, at most an hour. */
+    const redeliveryDelay = (attempts: number) => Math.min(10_000 * 2 ** attempts, 3_600_000);
+
+    /**
+     * Tells a run's instance an outcome it hasn't taken. Kept until the backend
+     * takes it, so an outage only delays the run; dropped once the run ended.
+     */
+    const deliver = (row: InstanceEventRow) =>
+      Effect.gen(function* () {
+        const run = yield* store.getRun(row.run_id);
+        if (run?.status !== "running")
+          return yield* store.instanceEventTaken(row.run_id, row.step_key);
+        const sent = yield* runner
+          .sendEvent(row.run_id, row.event_type, fromJson(row.payload_json))
+          .pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("A run's instance couldn't be told a step's outcome", {
+                runId: row.run_id,
+                attempts: row.attempts + 1,
+                error: error.message,
+              }).pipe(Effect.as(false)),
+            ),
+          );
+        if (sent) return yield* store.instanceEventTaken(row.run_id, row.step_key);
+        const now = (yield* DateTime.now).epochMilliseconds;
+        yield* store.instanceEventDeferred(
+          row.run_id,
+          row.step_key,
+          isoAt(now + redeliveryDelay(row.attempts)),
+        );
+      });
+
     const runs: HostedRunsShape = {
       step,
       settled: (runId, key) => settleInline(runId, key, { ok: true, value: null }),
@@ -376,6 +413,12 @@ export const makeHostedDriver = (core: EngineInternals) =>
       failed: (runId, key, error) => settleInline(runId, key, { ok: false, error, detail: null }),
       finish,
       nextCronAt: timed.nextCronAt,
+      redeliver: Effect.gen(function* () {
+        for (const row of yield* store.dueInstanceEvents(yield* nowIso)) yield* deliver(row);
+      }),
+      nextRedeliveryAt: store
+        .nextInstanceEventAt()
+        .pipe(Effect.map((at) => (at === null ? null : isoMs(at)))),
       runOf: (runId) =>
         store
           .getRun(runId)
@@ -400,10 +443,22 @@ export const makeHostedDriver = (core: EngineInternals) =>
     };
 
     const driver: RunDriver = {
+      // Recorded before the instance is told, so a lost call is told again.
       settled: (runId, key, outcome) =>
         answering.has(id(runId, key))
           ? Effect.void
-          : runner.sendEvent(runId, eventTypeFor(key), outcome),
+          : Effect.gen(function* () {
+              const row: InstanceEventRow = {
+                run_id: runId,
+                step_key: key,
+                event_type: eventTypeFor(key),
+                payload_json: toJson(outcome),
+                attempts: 0,
+                next_at: yield* nowIso,
+              };
+              yield* store.queueInstanceEvent(row);
+              yield* deliver(row);
+            }),
       launched: launch,
       ended: (runId) => (finishing.has(runId) ? Effect.void : runner.terminate(runId)),
       settleThreadStep: timed.settleThreadStep,

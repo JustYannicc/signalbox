@@ -77,6 +77,16 @@ export interface VersionRow {
 
 export type VersionApproval = "signalbox" | "person" | "agent";
 
+/** An outcome waiting for its run's backend instance to take it. */
+export interface InstanceEventRow {
+  readonly run_id: string;
+  readonly step_key: string;
+  readonly event_type: string;
+  readonly payload_json: string;
+  readonly attempts: number;
+  readonly next_at: string;
+}
+
 export interface RunRow {
   readonly run_id: string;
   readonly automation_id: string;
@@ -509,6 +519,54 @@ export const make = Effect.gen(function* () {
           started_at: string;
         }>`SELECT run_id, automation_id, version, started_at FROM signalbox_automation_runs WHERE status = 'running'`,
       ),
+    /** Records an outcome for the run's backend instance to take (runner/). */
+    queueInstanceEvent: (row: InstanceEventRow) =>
+      run(
+        "queueInstanceEvent",
+        sql`
+          INSERT INTO signalbox_automation_instance_events (
+            run_id, step_key, event_type, payload_json, attempts, next_at
+          ) VALUES (
+            ${row.run_id}, ${row.step_key}, ${row.event_type}, ${row.payload_json},
+            ${row.attempts}, ${row.next_at}
+          )
+          ON CONFLICT (run_id, step_key) DO UPDATE SET
+            event_type = excluded.event_type, payload_json = excluded.payload_json
+        `,
+      ),
+    /** The instance took it. */
+    instanceEventTaken: (runId: string, key: string) =>
+      run(
+        "instanceEventTaken",
+        sql`DELETE FROM signalbox_automation_instance_events WHERE run_id = ${runId} AND step_key = ${key}`,
+      ),
+    /** The instance couldn't be told; try again at `nextAt`. */
+    instanceEventDeferred: (runId: string, key: string, nextAt: string) =>
+      run(
+        "instanceEventDeferred",
+        sql`
+          UPDATE signalbox_automation_instance_events
+          SET attempts = attempts + 1, next_at = ${nextAt}
+          WHERE run_id = ${runId} AND step_key = ${key}
+        `,
+      ),
+    /** Outcomes due to be told to their instance again, oldest first. */
+    dueInstanceEvents: (now: string) =>
+      run(
+        "dueInstanceEvents",
+        sql<InstanceEventRow>`
+          SELECT * FROM signalbox_automation_instance_events
+          WHERE next_at <= ${now} ORDER BY next_at LIMIT 100
+        `,
+      ),
+    /** When the next outcome is due to be told again; null when none waits. */
+    nextInstanceEventAt: () =>
+      run(
+        "nextInstanceEventAt",
+        sql<{ readonly at: string | null }>`
+          SELECT MIN(next_at) AS at FROM signalbox_automation_instance_events
+        `,
+      ).pipe(Effect.map((rows) => rows[0]?.at ?? null)),
     /** A durable backend's instance for the run exists (runner/). */
     markInstance: (runId: string, at: string) =>
       run(

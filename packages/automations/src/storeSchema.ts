@@ -118,6 +118,20 @@ const TABLES = [
    * What a run is bound to beyond its row: the thread it's attached to, and
    * the run it continues after `w.restart`. Only runs with either get a row.
    */
+  /**
+   * Outcomes a durable backend's instance hasn't taken yet (runner/): a step
+   * settled from outside is recorded before its instance is told, and stays
+   * until the backend takes it, so an outage never strands a waiting run.
+   */
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_instance_events (
+    run_id TEXT NOT NULL,
+    step_key TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, step_key)
+  )`,
   `CREATE TABLE IF NOT EXISTS signalbox_automation_run_links (
     run_id TEXT PRIMARY KEY,
     thread_id TEXT,

@@ -7,6 +7,7 @@ import {
   type LoadAutomation,
 } from "@signalbox/automations/workflow/runtime";
 import { FakeWorkflows, payload } from "@signalbox/automations/workflow/testing";
+import { AutomationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { vi } from "@effect/vitest";
@@ -42,6 +43,8 @@ interface Instance {
 
 export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Service"]) => {
   const instances = new Map<string, Instance>();
+  /** How many of the next events the backend refuses, as in an outage. */
+  let refusing = 0;
   /** Host calls in flight; `idle` waits for them. */
   const pending = new Set<Promise<unknown>>();
 
@@ -81,11 +84,21 @@ export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Se
             instances.set(run.runId, { workflows, done, terminated: false });
           }),
         sendEvent: (runId, type, payload) =>
-          Effect.sync(() => {
-            const instance = instances.get(runId);
-            if (instance && !instance.terminated)
-              instance.workflows.sendEvent(type, payload as Settlement);
-          }),
+          (refusing > 0
+            ? Effect.suspend(() => {
+                refusing--;
+                return Effect.fail(new AutomationError({ message: "The backend is down." }));
+              })
+            : Effect.void
+          ).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                const instance = instances.get(runId);
+                if (instance && !instance.terminated)
+                  instance.workflows.sendEvent(type, payload as Settlement);
+              }),
+            ),
+          ),
         terminate: (runId) =>
           Effect.sync(() => {
             const instance = instances.get(runId);
@@ -118,6 +131,10 @@ export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Se
     layerFor,
     idle,
     advance,
+    /** The backend refuses the next `count` events. */
+    refuseEvents: (count: number) => {
+      refusing = count;
+    },
     /** Drops a run's instance, as if it was never created. */
     forget: (runId: string) => {
       instances.get(runId)?.workflows.evict();

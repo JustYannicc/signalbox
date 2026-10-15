@@ -288,4 +288,40 @@ export default workflow(async (w) => w.ask("Still there?", { options: ["yes", "n
       expect(waiting.steps.map((step) => [step.verb, step.status])).toEqual([["ask", "waiting"]]);
     }),
   );
+
+  it.effect("an answer while the backend is down reaches the run once it's back", () =>
+    Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const { cloud, thread, save, rpc, engine, start } = yield* setup;
+      const writer = yield* thread("thread-outage", "Outage");
+      yield* save(
+        writer,
+        `export const meta = { name: "Outage" } as const;
+export default workflow(async (w) => w.ask("Go on?", { options: ["yes", "no"] }));`,
+      );
+      const runId = yield* start(writer, "Outage");
+      const ask = (yield* engine((engine) => engine.getRun(runId))).steps.find(
+        (step) => step.verb === "ask",
+      );
+
+      // The answer is taken even though the backend refuses its event.
+      cloud.workflows.refuseEvents(1);
+      yield* rpc[AUTOMATION_WS_METHODS.automationsAnswer]({
+        runId,
+        stepKey: ask!.key,
+        choice: "yes",
+      });
+      yield* cloud.settle;
+      expect((yield* engine((engine) => engine.getRun(runId))).run.status).toBe("running");
+      const retryAt = cloud.alarmAt(userId);
+      expect(retryAt).toBeDefined();
+
+      // The object's alarm tells the instance again, and the run finishes.
+      vi.setSystemTime(retryAt! + 1_000);
+      yield* cloud.fireAlarm(userId);
+      yield* cloud.settle;
+      const done = yield* engine((engine) => engine.getRun(runId));
+      expect([done.run.status, done.output]).toEqual(["succeeded", "yes"]);
+    }),
+  );
 });
