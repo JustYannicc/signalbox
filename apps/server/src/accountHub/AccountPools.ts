@@ -264,9 +264,9 @@ const make = Effect.gen(function* () {
       .withPermit(
         Effect.gen(function* () {
           const taken = new Set((yield* Ref.get(entries)).map((pool) => pool.id));
-          const newId = crypto.randomUUIDv4.pipe(
-            Effect.map((uuid) => AccountPoolId.make(uuid.slice(0, 8))),
-          );
+          const newId = crypto
+            .randomUUIDv4()
+            .pipe(Effect.map((uuid) => AccountPoolId.make(uuid.slice(0, 8))));
           let id = yield* newId;
           while (taken.has(id)) id = yield* newId;
           const placement = placementFor(id);

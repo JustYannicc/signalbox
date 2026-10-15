@@ -69,7 +69,7 @@ const connectRoute = HttpRouter.add(
       if (Option.isNone(session)) return SIGN_IN_FIRST;
       const url = yield* requestUrl;
       const crypto = yield* Crypto.Crypto;
-      const grantId = (yield* Effect.orDie(crypto.randomUUIDv4)).replaceAll("-", "");
+      const grantId = (yield* Effect.orDie(crypto.randomUUIDv4())).replaceAll("-", "");
       const state = yield* (yield* CloudTokens.CloudTokens).sign({
         _tag: "github-connect",
         u: session.value.userId,

@@ -9,6 +9,7 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as Sqlite from "../../persistence/Sqlite.ts";
 import * as Sections from "../../sections/Sections.ts";
@@ -22,6 +23,7 @@ import * as PullRequestReviewGuideService from "../../pullRequest/PullRequestRev
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsStatusBroadcaster from "../../vcs/VcsStatusBroadcaster.ts";
 import { WorkflowEngine } from "../WorkflowEngine.ts";
 import * as BuiltinTools from "./layer.ts";
@@ -42,6 +44,8 @@ const stubs = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ServerEnvironment.ServerEnvironment)({
     getEnvironmentId: Effect.succeed("environment-test" as never),
   }),
