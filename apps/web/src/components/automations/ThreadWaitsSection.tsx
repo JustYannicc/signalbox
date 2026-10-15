@@ -60,8 +60,12 @@ export function ThreadWaitsSection(props: {
               }
             >
               <HourglassIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-              <span className={`min-w-0 flex-1 truncate ${THREAD_DETAILS_PANEL_LABEL_CLASS}`}>
-                {wait.label}
+              {/* Under "Waiting on", an agent's "Waiting for …" reads as just the thing. */}
+              <span
+                title={wait.label}
+                className={`min-w-0 flex-1 truncate ${THREAD_DETAILS_PANEL_LABEL_CLASS}`}
+              >
+                {wait.label.replace(/^Waiting for /, "")}
               </span>
             </ThreadDetailsControl>
             <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
