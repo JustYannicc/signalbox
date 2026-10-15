@@ -88,13 +88,19 @@ export interface HostedRunsShape {
   ) => Effect.Effect<void, AutomationError>;
   /** When the next cron is due (epoch ms), for the host's alarm; null when none is. */
   readonly nextCronAt: Effect.Effect<number | null, AutomationError>;
-  /** The run and its version, for the backend loading its code; undefined when gone. */
+  /** The run's automation, version and project, for checking a caller; undefined when gone. */
   readonly runOf: (
     runId: string,
   ) => Effect.Effect<
-    { readonly automationId: string; readonly version: number } | undefined,
+    | { readonly automationId: string; readonly version: number; readonly projectId: string }
+    | undefined,
     AutomationError
   >;
+  /** The version's code as the backend loads it; undefined for a version saved without it. */
+  readonly workerModule: (
+    automationId: string,
+    version: number,
+  ) => Effect.Effect<string | undefined, AutomationError>;
 }
 
 export class HostedRuns extends Context.Service<HostedRuns, HostedRunsShape>()(
@@ -190,8 +196,8 @@ export const makeHostedDriver = (core: EngineInternals) =>
         const current = (fromJson(run.marks_json) ?? {}) as Record<string, unknown>;
         let changed = false;
         for (const [key, value] of marks) {
-          if (toJson(current[key]) === toJson(value)) continue;
-          current[key] = value;
+          if (key in current && toJson(current[key]) === toJson(value ?? null)) continue;
+          current[key] = value ?? null;
           changed = true;
         }
         if (!changed) return;
@@ -375,13 +381,18 @@ export const makeHostedDriver = (core: EngineInternals) =>
       finish,
       nextCronAt: timed.nextCronAt,
       runOf: (runId) =>
-        store
-          .getRun(runId)
-          .pipe(
-            Effect.map((run) =>
-              run ? { automationId: run.automation_id, version: run.version } : undefined,
-            ),
-          ),
+        Effect.gen(function* () {
+          const run = yield* store.getRun(runId);
+          if (!run) return undefined;
+          const automation = yield* store.getAutomation(run.automation_id);
+          if (!automation) return undefined;
+          return {
+            automationId: run.automation_id,
+            version: run.version,
+            projectId: automation.project_id,
+          };
+        }),
+      workerModule: store.getVersionWorkerModule,
     };
 
     const driver: RunDriver = {

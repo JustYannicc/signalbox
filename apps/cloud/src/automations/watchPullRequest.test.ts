@@ -191,6 +191,7 @@ describe("cloud automations watch a cloud thread's pull request", () => {
         ),
       );
       expect(watched).toMatchObject({ number: 1, repository: "owner/repo", watching: true });
+      yield* cloud.settle;
 
       // CI passes; the next sync's event reaches the watch, which wakes the agent.
       github.update(1, {

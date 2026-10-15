@@ -33,7 +33,9 @@ const cloud = makeMemoryCloud({
     CloudAutomations.of({
       threadEvents: () => Effect.void,
       wake: Effect.void,
-      settle: Effect.void,
+      flush: Effect.void,
+      host: () => Effect.die("not in these tests"),
+      workerModule: () => Effect.die("not in these tests"),
       tool: (caller, name, input) =>
         Effect.gen(function* () {
           engineCalls.push({ threadId: caller.threadId, name, input });

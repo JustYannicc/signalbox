@@ -73,7 +73,9 @@ const makeOwner = () => {
           }),
     tool: () => Effect.die("not in these tests"),
     wake: Effect.void,
-    settle: Effect.void,
+    flush: Effect.void,
+    host: () => Effect.die("not in these tests"),
+    workerModule: () => Effect.die("not in these tests"),
   });
   const cloud = makeMemoryCloud({
     automations: Layer.succeed(CloudAutomations.CloudAutomations, automations),

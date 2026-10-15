@@ -6,6 +6,8 @@ import {
   AutomationRunLogSink,
   AutomationThreads,
 } from "@signalbox/automations/host";
+import * as HostedEngine from "@signalbox/automations/runner/layer";
+import { HostedRuns } from "@signalbox/automations/runner/hostedDriver";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,17 +22,21 @@ import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
-import { AutomationAlarm, CloudAutomations } from "./CloudAutomations.ts";
+import { AutomationAlarm, CloudAutomations, type AutomationHostCall } from "./CloudAutomations.ts";
 import { makeCloudBuiltinTools } from "./cloudBuiltinTools.ts";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
 import * as CloudThreads from "./cloudThreads.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
 
 /**
- * The user's automations on their Durable Object (#434): today's engine on
- * the object's SQLite, its clock on the object's alarm, its agents in the
- * user's cloud threads. Hooks, Executor calls and `w.run` aren't here yet;
- * they fail with a clear message instead of hanging.
+ * The user's automations on their Durable Object (#434). Each run is a
+ * Cloudflare Workflow instance running its version as a Dynamic Worker
+ * (`automationWorkflow.ts`); Cloudflare journals, replays, sleeps and waits.
+ * The object keeps the engine's records on its SQLite, starts steps when an
+ * instance asks, runs agents in the user's cloud threads, and sends a waiting
+ * step's outcome to its instance as an event. Its alarm only starts crons.
+ * Hooks, Executor calls and `w.run` aren't here yet; they fail with a clear
+ * message instead of hanging.
  */
 
 const unavailable = (what: string) =>
@@ -85,6 +91,7 @@ const ensureCursors = SqlClient.SqlClient.use(
 
 const make = Effect.gen(function* () {
   const engine = yield* WorkflowEngine.WorkflowEngine;
+  const runs = yield* HostedRuns;
   const threads = yield* AutomationThreads;
   const feed = yield* CloudThreads.ThreadEventFeed;
   const compiler = yield* CloudCompilerModule.CloudCompiler;
@@ -109,14 +116,14 @@ const make = Effect.gen(function* () {
   ).pipe(Effect.forkScoped);
 
   /**
-   * Drives the runs this request touched until they park, pushes what they
-   * raised, and sets the alarm for what's due next. workerd drops work a
-   * returned request left running.
+   * Waits for the work this request started here, pushes what it raised, and
+   * sets the alarm for the next cron. workerd drops work a returned request
+   * left running.
    */
-  const settle = Effect.gen(function* () {
+  const flush = Effect.gen(function* () {
     yield* engine.drain;
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
-    yield* alarm.arm(yield* engine.nextWakeAt);
+    yield* alarm.arm(yield* runs.nextCronAt);
   });
 
   /** Who the spans are about: the owner, never anything they wrote. */
@@ -127,6 +134,21 @@ const make = Effect.gen(function* () {
 
   const storageError = (cause: unknown) =>
     new AutomationError({ message: "Automation storage failed.", cause });
+
+  const hostCall = (call: AutomationHostCall): Effect.Effect<unknown, AutomationError> => {
+    switch (call.method) {
+      case "step":
+        return runs.step(call.runId, call.request, call.marks);
+      case "settled":
+        return runs.settled(call.runId, call.key);
+      case "timedOut":
+        return runs.timedOut(call.runId, call.key);
+      case "failed":
+        return runs.failed(call.runId, call.key, call.error);
+      case "finish":
+        return runs.finish(call.runId, call.end, call.marks);
+    }
+  };
 
   return CloudAutomations.of({
     threadEvents: ({ threadId, events }) =>
@@ -145,7 +167,7 @@ const make = Effect.gen(function* () {
         `;
         yield* annotateOwner;
         yield* feed.publish(fresh.map((entry) => entry.event));
-        yield* settle;
+        yield* flush;
       }).pipe(
         Effect.mapError(storageError),
         Effect.withSpan("CloudAutomations.threadEvents", {
@@ -159,25 +181,61 @@ const make = Effect.gen(function* () {
         if (shell === null)
           return yield* new AutomationError({ message: "The calling thread is gone." });
         const result = yield* callTool(tools, shell, name, input);
-        yield* settle;
+        yield* flush;
         return result;
       }).pipe(
         Effect.withSpan("CloudAutomations.toolCall", {
           attributes: { "thread.id": caller.threadId },
         }),
       ),
+    host: (call) =>
+      Effect.gen(function* () {
+        const run = yield* runs.runOf(call.runId);
+        if (run?.automationId !== call.automationId || run.version !== call.version)
+          return yield* new AutomationError({ message: "That run isn't this version's." });
+        yield* annotateOwner;
+        yield* Effect.annotateCurrentSpan({ "folder.id": run.projectId });
+        // A step that failed to start may still have started work (a thread, a notice).
+        return yield* hostCall(call).pipe(
+          Effect.ensuring(flush.pipe(Effect.catchCause(Effect.logWarning))),
+        );
+      }).pipe(
+        Effect.withSpan("CloudAutomations.host", {
+          attributes: {
+            "automation.id": call.automationId,
+            "automation.version": call.version,
+            "automation.run_id": call.runId,
+            "automation.host_call": call.method,
+          },
+        }),
+      ),
+    workerModule: (automationId, version) =>
+      runs.workerModule(automationId, version).pipe(
+        Effect.flatMap((module) =>
+          module === undefined
+            ? Effect.fail(
+                new AutomationError({
+                  message: `Version ${version} was saved before the cloud ran automations; save it again.`,
+                }),
+              )
+            : Effect.succeed(module),
+        ),
+        Effect.withSpan("CloudAutomations.workerModule", {
+          attributes: { "automation.id": automationId, "automation.version": version },
+        }),
+      ),
     wake: annotateOwner.pipe(
       Effect.andThen(engine.tick),
-      Effect.andThen(settle),
+      Effect.andThen(flush),
       Effect.withSpan("CloudAutomations.wake"),
     ),
-    settle,
+    flush,
   });
 });
 
-/** The engine on the user object: give it the object's SQLite, threads, pushes and the sandbox. */
+/** The engine on the user object: give it the object's SQLite, threads, pushes and its runner. */
 export const layer = Layer.effect(CloudAutomations, make).pipe(
-  Layer.provideMerge(WorkflowEngine.layer),
+  Layer.provideMerge(HostedEngine.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudThreads.layer,

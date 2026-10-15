@@ -163,6 +163,7 @@ const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automations", "webhook_secret_set", "INTEGER NOT NULL DEFAULT 0"],
   ["signalbox_automations", "builtin_slug", "TEXT"],
   ["signalbox_automation_versions", "approved_by", "TEXT"],
+  ["signalbox_automation_versions", "worker_module", "TEXT"],
 ];
 
 /** Indexes go last: some cover added columns. */

@@ -54,6 +54,8 @@ export interface VersionRow {
   readonly source: string;
   readonly script: string;
   readonly run_module: string | null;
+  /** `script` as a Dynamic Worker module, for hosts that run versions on a workflow backend. */
+  readonly worker_module?: string | null;
   readonly graph_json: string;
   /** The compiled `meta`, so publishing a draft needn't compile again. Null before drafts. */
   readonly meta_json: string | null;
@@ -371,12 +373,12 @@ export const make = Effect.gen(function* () {
         "insertVersion",
         sql`
           INSERT INTO signalbox_automation_versions (
-            automation_id, version, source, script, run_module, graph_json, meta_json,
-            defaults_json, created_at, approved_by
+            automation_id, version, source, script, run_module, worker_module, graph_json,
+            meta_json, defaults_json, created_at, approved_by
           ) VALUES (
             ${row.automation_id}, ${row.version}, ${row.source}, ${row.script}, ${row.run_module},
-            ${row.graph_json}, ${row.meta_json}, ${row.defaults_json}, ${row.created_at},
-            ${row.approved_by ?? "agent"}
+            ${row.worker_module ?? null}, ${row.graph_json}, ${row.meta_json}, ${row.defaults_json},
+            ${row.created_at}, ${row.approved_by ?? "agent"}
           )
         `,
       ),
@@ -415,6 +417,15 @@ export const make = Effect.gen(function* () {
           WHERE automation_id = ${automationId} AND version = ${version}
         `,
       ).pipe(Effect.map((rows) => rows[0]?.script)),
+    /** The Dynamic Worker module a hosted run loads; undefined for a version saved without one. */
+    getVersionWorkerModule: (automationId: string, version: number) =>
+      run(
+        "getVersionWorkerModule",
+        sql<{ worker_module: string | null }>`
+          SELECT worker_module FROM signalbox_automation_versions
+          WHERE automation_id = ${automationId} AND version = ${version}
+        `,
+      ).pipe(Effect.map((rows) => rows[0]?.worker_module ?? undefined)),
     /** The highest version ever saved, live or draft; new versions go above it. */
     latestVersion: (automationId: string) =>
       run(

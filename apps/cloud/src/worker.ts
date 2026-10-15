@@ -20,12 +20,14 @@ import {
 } from "./previewSetup/previewCleanup.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
+import type { AutomationWorkflowEnv } from "./automations/automationWorkflow.ts";
 
 export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
 export { PreviewLinkRegistry } from "./pool/PreviewLinkRegistryDO.ts";
 export { DriveObject } from "./drive/DriveObject.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
 export { UserObject } from "./user/UserObject.ts";
+export { AutomationHost, AutomationWorkflow } from "./automations/automationWorkflow.ts";
 
 /**
  * Signalbox Cloud: an environment that runs on Cloudflare. Clients connect to
@@ -34,7 +36,8 @@ export { UserObject } from "./user/UserObject.ts";
  * list the Vite dev proxy forwards) reach this Worker.
  */
 
-export interface CloudEnv extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv, PreviewCleanupEnv {
+export interface CloudEnv
+  extends UserObjectEnv, ThreadObjectEnv, PoolObjectEnv, PreviewCleanupEnv, AutomationWorkflowEnv {
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
 }
 

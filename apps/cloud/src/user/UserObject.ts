@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
-import { layerSandbox } from "../automations/quickJs.ts";
+import { layerWorkflows } from "../automations/workflowRunner.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
@@ -84,6 +84,8 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.Git
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
+  /** Automation runs, one Workflow instance each (`automations/automationWorkflow.ts`). */
+  readonly AUTOMATION_RUNS?: Workflow;
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
@@ -147,7 +149,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   return ManagedRuntime.make(
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
-      Layer.provide(Layer.mergeAll(layerSandbox, layerAlarm(storage))),
+      Layer.provide(Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAlarm(storage))),
       // Building it only touches the object's own SQLite, which the object can't run without either.
       Layer.orDie,
       Layer.provideMerge(
@@ -238,17 +240,17 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       scripted: scriptedProviderEnabled(env),
     };
     this.runtime = makeRuntime(ctx.storage, env);
-    // Then automations pick up what a restart or deploy cut off, and park it before anything else runs.
+    // Then automations set the alarm for their next cron.
     void ctx.blockConcurrencyWhile(() =>
       this.runtime.runPromise(
         UserStore.migrate.pipe(
-          Effect.andThen(CloudAutomations.use((automations) => automations.settle)),
+          Effect.andThen(CloudAutomations.use((automations) => automations.flush)),
         ),
       ),
     );
   }
 
-  /** Automations' due work: timers, crons, retries. It re-arms itself for what's due next. */
+  /** Starts due crons; automations re-arm it for the next one. */
   override async alarm() {
     await this.runtime.runPromise(CloudAutomations.use((automations) => automations.wake));
   }
@@ -415,6 +417,14 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   automationTool(threadId: string, name: string, input: unknown) {
     return this.api.automationTool(threadId, name, input);
+  }
+
+  automationHost(call: Parameters<UserObjectApi["automationHost"]>[0]) {
+    return this.api.automationHost(call);
+  }
+
+  automationWorkerModule(automationId: string, version: number) {
+    return this.api.automationWorkerModule(automationId, version);
   }
 
   override async fetch(request: Request): Promise<Response> {

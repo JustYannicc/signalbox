@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import type { AutomationHostCall } from "../automations/CloudAutomations.ts";
 import type { ConnectionLink, CreatedLink } from "../connections/ConnectionLinks.ts";
 import type {
   LinkedConnections,
@@ -190,6 +191,13 @@ export interface UserObjectApi {
    * thread (`drive/automationRoutes.ts`). The engine's refusal is an answer.
    */
   readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
+  /**
+   * A run's Workflow instance calling back (`automations/automationWorkflow.ts`).
+   * Rejects for the instance to retry when the step can't start yet.
+   */
+  readonly automationHost: (call: AutomationHostCall) => Promise<unknown>;
+  /** A version's code, for the dispatcher loading it as a Dynamic Worker. */
+  readonly automationWorkerModule: (automationId: string, version: number) => Promise<string>;
 }
 
 type Method = keyof UserObjectApi;
@@ -258,6 +266,8 @@ const METHODS = Object.keys({
   readableDrives: true,
   publishBranch: true,
   automationTool: true,
+  automationHost: true,
+  automationWorkerModule: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** Results that cross RPC encoded, decoded on arrival. */

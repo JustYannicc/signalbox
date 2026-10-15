@@ -15,8 +15,8 @@ import { CloudAutomations } from "./CloudAutomations.ts";
 /**
  * The automation RPCs a client calls on the user's object: the same contract
  * the self-hosted server serves (`apps/server/src/workflows/rpcHandlers.ts`),
- * each calling one engine method and then settling, so what it started
- * parks before the request ends. Executor connections and webhooks aren't
+ * each calling one engine method and then flushing, so what it started
+ * here is done before the request ends. Executor connections and webhooks aren't
  * in the cloud yet and say so.
  */
 
@@ -45,8 +45,8 @@ export const makeAutomationHandlers = Effect.gen(function* () {
   const engine = yield* WorkflowEngine.WorkflowEngine;
   const automations = yield* CloudAutomations;
   const threads = yield* AutomationThreads;
-  const settled = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(Effect.tap(() => automations.settle));
+  const flushed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(Effect.tap(() => automations.flush));
   /** Spans name the automation or run, never what's in them. */
   const about = (attributes: Readonly<Record<string, string>>) =>
     Effect.annotateCurrentSpan(attributes);
@@ -63,10 +63,10 @@ export const makeAutomationHandlers = Effect.gen(function* () {
       engine.subscribeRun(input.runId),
     [METHODS.automationsSetEnabled]: (input: Payload<typeof METHODS.automationsSetEnabled>) =>
       about({ "automation.id": input.automationId }).pipe(
-        Effect.andThen(settled(engine.setEnabled(input.automationId, input.enabled))),
+        Effect.andThen(flushed(engine.setEnabled(input.automationId, input.enabled))),
       ),
     [METHODS.automationsDelete]: (input: Payload<typeof METHODS.automationsDelete>) =>
-      settled(engine.remove(input.automationId)).pipe(Effect.as({})),
+      flushed(engine.remove(input.automationId)).pipe(Effect.as({})),
     [METHODS.automationsRotateWebhook]: (
       _input: Payload<typeof METHODS.automationsRotateWebhook>,
     ) => notYet("Webhooks"),
@@ -74,7 +74,7 @@ export const makeAutomationHandlers = Effect.gen(function* () {
       _input: Payload<typeof METHODS.automationsSetWebhookSecret>,
     ) => notYet("Webhooks"),
     [METHODS.automationsRunNow]: (input: Payload<typeof METHODS.automationsRunNow>) =>
-      settled(
+      flushed(
         Effect.gen(function* () {
           // A person starting a built-in on a thread runs it with that thread's model and modes.
           const shell = input.attach
@@ -101,23 +101,23 @@ export const makeAutomationHandlers = Effect.gen(function* () {
     [METHODS.automationsCustomize]: (_input: Payload<typeof METHODS.automationsCustomize>) =>
       notYet("Customizing built-ins from the app (an agent's automation_customize works)"),
     [METHODS.automationsStopAttached]: (input: Payload<typeof METHODS.automationsStopAttached>) =>
-      settled(engine.cancelAttached(input.threadId)).pipe(
+      flushed(engine.cancelAttached(input.threadId)).pipe(
         Effect.map((cancelled) => ({ cancelled })),
       ),
     [METHODS.automationsCancelRun]: (input: Payload<typeof METHODS.automationsCancelRun>) =>
       about({ "automation.run_id": input.runId }).pipe(
-        Effect.andThen(settled(engine.cancelRun(input.runId))),
+        Effect.andThen(flushed(engine.cancelRun(input.runId))),
         Effect.as({}),
       ),
     [METHODS.automationsRetryRun]: (input: Payload<typeof METHODS.automationsRetryRun>) =>
-      settled(engine.retryRun({ runId: input.runId, version: input.version })),
+      flushed(engine.retryRun({ runId: input.runId, version: input.version })),
     [METHODS.automationsPublish]: (input: Payload<typeof METHODS.automationsPublish>) =>
-      settled(engine.publish(input.automationId)),
+      flushed(engine.publish(input.automationId)),
     [METHODS.automationsDiscardDraft]: (input: Payload<typeof METHODS.automationsDiscardDraft>) =>
-      settled(engine.discardDraft(input.automationId)),
+      flushed(engine.discardDraft(input.automationId)),
     [METHODS.automationsAnswer]: (input: Payload<typeof METHODS.automationsAnswer>) =>
       about({ "automation.run_id": input.runId }).pipe(
-        Effect.andThen(settled(engine.answer(input))),
+        Effect.andThen(flushed(engine.answer(input))),
         Effect.as({}),
       ),
     [METHODS.automationsConnectionStatus]: (

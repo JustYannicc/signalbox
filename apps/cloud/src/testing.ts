@@ -67,9 +67,8 @@ import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LocalKeys from "./localKeys/LocalKeys.ts";
 import * as LegacySections from "./user/legacySections.ts";
 import * as CloudEngine from "./automations/cloudEngine.ts";
-import { AutomationSandbox } from "@signalbox/automations/host";
-import { makeQuickJsReplay, wallClockBudget } from "@signalbox/automations/sandbox/replayWorkflow";
-import { newQuickJSWASMModuleFromVariant } from "quickjs-emscripten-core";
+import type { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
+import { makeMemoryWorkflows } from "./automations/memoryWorkflows.ts";
 import * as UserFolders from "./user/UserFolders.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 import * as UserDrives from "./user/UserDrives.ts";
@@ -209,17 +208,6 @@ const layerUserObjectTokens = CloudTokens.layerSessionSecret.pipe(
 /** GitHub with no App and no network, for tests that never reach it. */
 const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.layer));
 
-/** QuickJS from its wasm file, as Node loads it; the Worker imports the wasm as a module instead. */
-const layerTestSandbox = Layer.succeed(
-  AutomationSandbox,
-  AutomationSandbox.of({
-    replay: makeQuickJsReplay({
-      load: () => newQuickJSWASMModuleFromVariant(import("@jitl/quickjs-wasmfile-release-sync")),
-      budget: wallClockBudget,
-    }),
-  }),
-);
-
 /** A user object's alarm, recorded: `alarms.get(userId)` is when it would fire next. */
 const layerRecordedAlarm = (alarms: Map<string, number>, userId: string) =>
   Layer.succeed(
@@ -242,13 +230,14 @@ const makeUserRuntime = (
   github: Layer.Layer<GitHub.GitHub>,
   observe: Layer.Layer<never>,
   alarm: Layer.Layer<CloudAutomations.AutomationAlarm>,
+  runner: Layer.Layer<AutomationRunner>,
   /** Replaces the real automations, for tests that watch what they're handed. */
   automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
     CloudEngine.layer.pipe(
-      Layer.provide(Layer.mergeAll(layerTestSandbox, alarm)),
+      Layer.provide(Layer.mergeAll(runner, alarm)),
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
@@ -350,6 +339,8 @@ export const makeMemoryCloud = (
   const people = layerTestPeople(options.people ?? []);
   /** When each user object's alarm would fire next, as its automations armed it. */
   const alarms = new Map<string, number>();
+  /** Every user's automation runs, as Workflow instances of the real runtime. */
+  const workflows = makeMemoryWorkflows(() => userDirectory);
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
@@ -362,6 +353,7 @@ export const makeMemoryCloud = (
       options.github ?? layerNoGitHub,
       options.observe ?? Layer.empty,
       layerRecordedAlarm(alarms, userId),
+      workflows.layerFor(userId),
       options.automations ?? Layer.empty,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
@@ -427,7 +419,7 @@ export const makeMemoryCloud = (
     ),
     Layer.provideMerge(Platform.layerCrypto),
   );
-  const settle = Effect.promise(async () => {
+  const settleThreads = Effect.promise(async () => {
     for (const { run } of threads.values()) {
       await run(
         Effect.gen(function* () {
@@ -441,6 +433,17 @@ export const makeMemoryCloud = (
       );
     }
   });
+  /**
+   * Turns run to their end and automation runs until they block, twice over:
+   * a turn's events start runs, and a run's steps start turns.
+   */
+  const settle = Effect.gen(function* () {
+    for (let round = 0; round < 3; round++) {
+      yield* workflows.idle;
+      yield* settleThreads;
+    }
+    yield* workflows.idle;
+  });
   return {
     userDirectory,
     threadDirectory,
@@ -449,6 +452,8 @@ export const makeMemoryCloud = (
       userId: string,
       effect: Effect.Effect<A, E, Layer.Success<typeof CloudEngine.layer>>,
     ) => Effect.promise(() => userFor(userId).runtime.runPromise(effect)),
+    /** The runs' Workflow instances: `idle` lets them run until they block, `advance` moves time. */
+    workflows,
     /** When a user object's alarm would fire next; what fired clears it. */
     alarmAt: (userId: string) => alarms.get(userId),
     /** Fires a user object's alarm, as workerd does when it's due. */

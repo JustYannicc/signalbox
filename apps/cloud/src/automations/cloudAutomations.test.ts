@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDateInEffect:off - these tests fake `Date` for the Workflow instances' clock.
 import {
   AUTOMATION_WS_METHODS,
   AuthOrchestrationOperateScope,
@@ -9,11 +10,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
-import * as TestClock from "effect/testing/TestClock";
 
 // The machine compiles saves (oxc can't run in workerd); tests compile the same way it does.
 import { compileWorkflow } from "../../../server/src/workflows/compiler/compileWorkflow.ts";
@@ -24,10 +24,15 @@ import * as CloudRpc from "../user/rpc.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
 
 /**
- * #434: a user's automations run on their own object, with no client
- * connected. Thread events arrive from the thread objects, timers fire on
- * the object's alarm, and asks wait for the person.
+ * #434: a user's automations run with no client connected, each run a
+ * Workflow instance of the real runtime (`memoryWorkflows.ts`). Thread events
+ * arrive from the thread objects, sleeps and waits are the instance's, crons
+ * fire on the object's alarm, and asks wait for the person.
  */
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
@@ -73,7 +78,19 @@ const setup = Effect.gen(function* () {
   };
   const engine = <A, E>(use: (engine: WorkflowEngine.WorkflowEngineShape) => Effect.Effect<A, E>) =>
     cloud.inUser(userId, WorkflowEngine.WorkflowEngine.use(use));
-  return { cloud, rpc, thread, tool, save, engine };
+  /** Starts the automation called `name` from `threadId`, and lets its run go until it blocks. */
+  const start = (threadId: string, name: string) =>
+    Effect.gen(function* () {
+      const automation = (yield* engine((engine) => engine.list())).find(
+        (entry) => entry.name === name,
+      );
+      const started = (yield* tool(threadId, "automation_run", {
+        automationId: automation?.id,
+      })) as { readonly run: { readonly runId: string } };
+      yield* cloud.settle;
+      return started.run.runId;
+    });
+  return { cloud, rpc, thread, tool, save, engine, start };
 });
 
 describe("cloud automations", () => {
@@ -99,29 +116,25 @@ export default workflow(async (w, event: { threadId: string }) => {
     }),
   );
 
-  it.effect("a wait wakes its thread from the object's alarm", () =>
+  it.effect("a timed wait sleeps in its instance and wakes its thread", () =>
     Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["Date"] });
       const { cloud, thread, tool, rpc } = yield* setup;
       const agent = yield* thread("thread-agent", "Check back later");
-      const atIso = "2030-01-01T10:00:00.000Z";
-      const at = Date.parse(atIso);
+      const at = Date.now() + 3_600_000;
       const wait = (yield* tool(agent, "wait_for", {
-        until: "ten o'clock",
-        at: atIso,
+        until: "an hour from now",
+        at: new Date(at).toISOString(),
         message: "Look at the build again.",
       })) as { readonly waitId: string };
-      expect(wait.waitId).toBeTruthy();
-      // The alarm is set for it.
-      expect(cloud.alarmAt(userId)).toBe(at);
+      yield* cloud.settle;
+      // The instance sleeps; the object's alarm is only for crons.
+      expect(cloud.workflows.instance(wait.waitId)?.workflows.blocked()).toEqual([
+        expect.stringContaining("~sleep"),
+      ]);
+      expect(cloud.alarmAt(userId)).toBeUndefined();
 
-      // The alarm fires once the time comes, and the agent gets its message.
-      yield* cloud.inUser(
-        userId,
-        TestClock.setTime(at + 1_000).pipe(
-          Effect.andThen(CloudAutomations.use((automations) => automations.wake)),
-          Effect.provide(TestClock.layer()),
-        ),
-      );
+      yield* cloud.workflows.advance(3_600_000 + 1_000);
       yield* cloud.settle;
       const projection = yield* rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
         threadId: agent,
@@ -132,9 +145,36 @@ export default workflow(async (w, event: { threadId: string }) => {
     }),
   );
 
+  it.effect("a cron fires on the object's alarm", () =>
+    Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const { cloud, thread, save, engine } = yield* setup;
+      const writer = yield* thread("thread-cron", "Every minute");
+      const saved = (yield* save(
+        writer,
+        `export const meta = { name: "Tick", triggers: [{ cron: "*/5 * * * *" }] } as const;
+export default workflow(async (w) => {
+  await w.notify("Tick", "Five minutes passed");
+  return "ticked";
+});`,
+      )) as { readonly ok: boolean; readonly automation: { readonly automationId: string } };
+      expect(saved.ok).toBe(true);
+      const due = cloud.alarmAt(userId);
+      expect(due).toBeDefined();
+
+      vi.setSystemTime(due! + 1_000);
+      yield* cloud.fireAlarm(userId);
+      yield* cloud.settle;
+      const { runs } = yield* engine((engine) => engine.get(saved.automation.automationId));
+      expect(runs.map((run) => [run.trigger, run.status])).toEqual([["cron", "succeeded"]]);
+      // And the alarm is set for the next one.
+      expect(cloud.alarmAt(userId)).toBeGreaterThan(due!);
+    }),
+  );
+
   it.effect("an ask waits on the person, and their answer from the app carries the run on", () =>
     Effect.gen(function* () {
-      const { thread, save, tool, rpc, engine } = yield* setup;
+      const { cloud, thread, save, rpc, engine, start } = yield* setup;
       const writer = yield* thread("thread-asker", "Ask me something");
       yield* save(
         writer,
@@ -144,23 +184,50 @@ export default workflow(async (w) => {
   return answer;
 });`,
       );
-      const automation = (yield* engine((engine) => engine.list())).find(
-        (entry) => entry.name === "Ask first",
-      );
-      const started = (yield* tool(writer, "automation_run", {
-        automationId: automation?.id,
-      })) as { readonly run: { readonly runId: string } };
-      const waiting = yield* engine((engine) => engine.getRun(started.run.runId));
+      const runId = yield* start(writer, "Ask first");
+      const waiting = yield* engine((engine) => engine.getRun(runId));
       const ask = waiting.steps.find((step) => step.verb === "ask");
       expect(ask?.status).toBe("waiting");
 
       yield* rpc[AUTOMATION_WS_METHODS.automationsAnswer]({
-        runId: started.run.runId,
+        runId,
         stepKey: ask!.key,
         choice: "ship",
       });
-      const done = yield* engine((engine) => engine.getRun(started.run.runId));
+      yield* cloud.settle;
+      const done = yield* engine((engine) => engine.getRun(runId));
       expect([done.run.status, done.output]).toEqual(["succeeded", "ship"]);
+    }),
+  );
+
+  it.effect("a run finishes on the version it started on after a new one is saved", () =>
+    Effect.gen(function* () {
+      const { cloud, thread, save, rpc, engine, start } = yield* setup;
+      const writer = yield* thread("thread-versions", "Version me");
+      const version = (answer: string) => `export const meta = { name: "Pinned" } as const;
+export default workflow(async (w) => {
+  const choice = await w.ask("Which way?", { options: ["left", "right"] });
+  return \`${answer}: \${choice}\`;
+});`;
+      yield* save(writer, version("one"));
+      const runId = yield* start(writer, "Pinned");
+      const waiting = yield* engine((engine) => engine.getRun(runId));
+      const ask = waiting.steps.find((step) => step.verb === "ask");
+
+      // Version 2 is saved while version 1's run waits.
+      yield* save(writer, version("two"));
+      yield* rpc[AUTOMATION_WS_METHODS.automationsAnswer]({
+        runId,
+        stepKey: ask!.key,
+        choice: "left",
+      });
+      yield* cloud.settle;
+      const done = yield* engine((engine) => engine.getRun(runId));
+      expect([done.run.version, done.run.status, done.output]).toEqual([
+        1,
+        "succeeded",
+        "one: left",
+      ]);
     }),
   );
 });
