@@ -32,8 +32,20 @@ closed="$(gh api --paginate --jq '.[] | "\(.number) \(.closed_at) \(.user.login)
   'repos/JustYannicc/signalbox/pulls?state=closed&per_page=100')"
 closed_numbers="$(cut -d' ' -f1 <<< "$closed")"
 
+# Pull requests with a Runner image left, listed once for every deletion below.
+# Without the list, the rest still gets swept.
+if RUNNER_IMAGE_VERSIONS="$(bash .github/scripts/runner-pr-images.sh list)"; then
+  export RUNNER_IMAGE_VERSIONS
+  image_numbers="$(bash .github/scripts/runner-pr-images.sh numbers)"
+else
+  echo "::error::Could not list pull request Runner images."
+  image_numbers=''
+  failed=1
+fi
+
 candidate_numbers="$(
   sed -nE 's/^signalbox-(cloud|model-gateway)-pr-([1-9][0-9]*)$/\2/p' <<< "$worker_names"
+  printf '%s\n' "$image_numbers"
   jq -r '.[]?.name | try capture("^signalbox-cloud-pr-(?<number>[1-9][0-9]*)-(pools|threads)$").number catch empty' \
     <<< "$containers"
   jq -r '.prNumbers[]?' <<< "$assets"

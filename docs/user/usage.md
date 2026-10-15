@@ -225,6 +225,25 @@ cloud. Manage its accounts in Signalbox Cloud from then on.
 Signalbox Cloud pools take Claude and ChatGPT accounts for now. A pool that also holds API keys or
 other accounts can't move until you remove them from it.
 
+### Use your pool on your computer
+
+In Signalbox Cloud, Claude Code and the Codex CLI and desktop app on your own computer can run on
+your pool. They connect straight to your pool with a personal key; the Signalbox apps don't need to
+be open or installed on that computer.
+
+In Signalbox on the web, open **Settings → Pools**, choose **Set up a computer** and run the command
+it shows in a terminal there (it needs Node.js 22 or later). The command checks the key with your
+pool before it changes anything, then points both harnesses at Signalbox; their own settings stay as
+they were otherwise. Run the same command with `--undo` in place of the key to go back.
+
+Each harness stays signed in to its own account, so going back needs no new sign-in. Codex needs to
+be signed in once (with ChatGPT or an API key) before it uses the pool. The Claude desktop app isn't
+covered.
+
+The computer uses the pool your top level runs on, and stops the moment you **Revoke** its key. Its
+requests count toward that pool's accounts like any thread's, and each key shows when it was last
+used and how many tokens it has used.
+
 ## Connect a CLIProxyAPI hub
 
 To see the accounts of a CLIProxyAPI hub you run yourself, open **Settings → Providers → Usage

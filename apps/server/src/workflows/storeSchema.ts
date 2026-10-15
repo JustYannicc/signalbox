@@ -43,6 +43,7 @@ const TABLES = [
     created_at TEXT NOT NULL,
     meta_json TEXT,
     defaults_json TEXT,
+    approved_by TEXT,
     PRIMARY KEY (automation_id, version)
   )`,
   `CREATE TABLE IF NOT EXISTS signalbox_automation_runs (
@@ -161,6 +162,7 @@ const TABLES = [
 const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automations", "webhook_secret_set", "INTEGER NOT NULL DEFAULT 0"],
   ["signalbox_automations", "builtin_slug", "TEXT"],
+  ["signalbox_automation_versions", "approved_by", "TEXT"],
 ];
 
 /** Indexes go last: some cover added columns. */
