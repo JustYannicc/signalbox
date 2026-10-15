@@ -1360,7 +1360,9 @@ function UsageEnvironmentFilter({
         ) : null}
         {showUsageStatus && isPartial ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">
-            Totals are partial while selected environments scan.
+            {showsEnvironmentUi // signalbox: one environment
+              ? "Totals are partial while selected environments scan."
+              : "Totals are partial while usage loads."}
           </p>
         ) : null}
         {showUsageStatus ? (

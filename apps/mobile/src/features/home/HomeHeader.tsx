@@ -19,6 +19,8 @@ import {
 } from "../sections/SectionNavigationToggle";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { withFolderFilterMenuCopy } from "../folders/folder-copy"; // signalbox: folders
+import { useFolderCopy } from "../folders/use-folder-copy"; // signalbox: folders
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -61,7 +63,11 @@ export function HomeHeader(props: HomeHeaderProps) {
   }, [primaryColumn, panes.primarySidebarVisible, togglePrimarySidebar]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const showsEnvironments = useShowsEnvironmentUi(); // signalbox
-  const filterMenu = buildHomeListFilterMenu({ ...props, showsEnvironments });
+  const folderCopy = useFolderCopy(); // signalbox: folders
+  const filterMenu = withFolderFilterMenuCopy(
+    buildHomeListFilterMenu({ ...props, showsEnvironments }),
+    folderCopy,
+  ); // signalbox: folders
 
   if (props.usesWorkspaceToolbar) {
     return null;
@@ -212,14 +218,16 @@ export function HomeHeader(props: HomeHeaderProps) {
             ) : null}
 
             {props.projects.length > 0 ? (
-              <NativeHeaderToolbar.Menu title="Project">
-                <NativeHeaderToolbar.Label>Project</NativeHeaderToolbar.Label>
+              <NativeHeaderToolbar.Menu title={folderCopy("Project")}>
+                <NativeHeaderToolbar.Label>{folderCopy("Project")}</NativeHeaderToolbar.Label>
                 <NativeHeaderToolbar.MenuAction
                   isOn={props.selectedProjectKey === null}
                   onPress={() => props.onProjectChange(null)}
-                  subtitle="Show threads from every project"
+                  subtitle={folderCopy("Show threads from every project")}
                 >
-                  <NativeHeaderToolbar.Label>All projects</NativeHeaderToolbar.Label>
+                  <NativeHeaderToolbar.Label>
+                    {folderCopy("All projects")}
+                  </NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
                 {props.projects.map((project) => (
                   <NativeHeaderToolbar.MenuAction

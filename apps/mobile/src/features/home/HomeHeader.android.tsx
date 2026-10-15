@@ -6,6 +6,8 @@ import type { HomeHeaderProps } from "./HomeHeader.types";
 import { SectionNavigationToggle } from "../sections/SectionNavigationToggle";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import { withoutEnvironmentFilter } from "./environmentFilter"; // signalbox
+import { withFolderFilterActionsCopy } from "../folders/folder-copy"; // signalbox: folders
+import { useFolderCopy } from "../folders/use-folder-copy"; // signalbox: folders
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -62,9 +64,14 @@ export function HomeHeader(props: HomeHeaderProps) {
   );
   // signalbox: one environment needs no environment filter.
   const showsEnvironments = useShowsEnvironmentUi();
+  const folderCopy = useFolderCopy(); // signalbox: folders
   const menuActions = useMemo(
-    () => withoutEnvironmentFilter(allMenuActions, showsEnvironments),
-    [allMenuActions, showsEnvironments],
+    () =>
+      withFolderFilterActionsCopy(
+        withoutEnvironmentFilter(allMenuActions, showsEnvironments),
+        folderCopy,
+      ),
+    [allMenuActions, folderCopy, showsEnvironments],
   );
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {

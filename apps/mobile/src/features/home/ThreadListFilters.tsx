@@ -3,6 +3,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { useFolderCopy } from "../folders/use-folder-copy"; // signalbox: folders
 
 export function ThreadListFilters(
   props: Pick<
@@ -22,6 +23,7 @@ export function ThreadListFilters(
     (project) => project.key === props.selectedProjectKey,
   );
   const showsEnvironments = useShowsEnvironmentUi(); // signalbox
+  const folderCopy = useFolderCopy(); // signalbox: folders
   return (
     <ScrollView
       horizontal
@@ -60,13 +62,13 @@ export function ThreadListFilters(
         />
       ) : null}
       <ListFilterMenu
-        label={selectedProject?.label ?? "All projects"}
-        accessibilityLabel="Filter threads by project"
+        label={selectedProject?.label ?? folderCopy("All projects")}
+        accessibilityLabel={folderCopy("Filter threads by project")}
         active={selectedProject !== undefined}
         actions={[
           {
             id: "all",
-            title: "All projects",
+            title: folderCopy("All projects"),
             state: props.selectedProjectKey === null ? "on" : "off",
           },
           ...props.projects.map((project) => ({

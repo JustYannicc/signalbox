@@ -40,6 +40,7 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { ThreadPreviewsControl } from "./ThreadPreviewsControl"; // signalbox: previews
 import { useFolderBreadcrumb } from "../sidebar/folders/useFolderBreadcrumb"; // signalbox: folders
+import { readProjectSettingsLabel } from "../sidebar/folders/useFolderCopy"; // signalbox: folder words
 import { useClientSettings } from "../../hooks/useSettings";
 
 interface ChatHeaderProps {
@@ -278,8 +279,9 @@ export const ChatHeader = memo(function ChatHeader({
       if (!isServerThread) {
         const api = readLocalApi();
         if (!api) return;
+        const label = readProjectSettingsLabel(activeThreadEnvironmentId); // signalbox: folder words
         void api.contextMenu
-          .show([{ id: "project-settings", label: "Project settings", icon: "settings" }], {
+          .show([{ id: "project-settings", label, icon: "settings" }], {
             x: event.clientX,
             y: event.clientY,
           })
@@ -290,7 +292,14 @@ export const ChatHeader = memo(function ChatHeader({
       }
       openMenu({ x: event.clientX, y: event.clientY });
     },
-    [cancelPendingTitleMenu, isServerThread, onOpenProjectSettings, openMenu, renamingTitle],
+    [
+      activeThreadEnvironmentId,
+      cancelPendingTitleMenu,
+      isServerThread,
+      onOpenProjectSettings,
+      openMenu,
+      renamingTitle,
+    ],
   );
   const handleRenameKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {

@@ -27,6 +27,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 import { withoutEnvironmentFilter } from "../home/environmentFilter"; // signalbox
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
@@ -362,6 +363,7 @@ export function ArchivedThreadsScreen(props: {
   }, []);
   const isInitialLoad = props.isLoading && props.groups.length === 0 && props.error === null;
   const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const renderListItem = useCallback(
     ({ item }: { item: ArchivedThreadListItem }) => {
       if (item.kind === "project") {
@@ -412,13 +414,13 @@ export function ArchivedThreadsScreen(props: {
       <EmptyState
         detail={
           isFiltered
-            ? "Try another search or environment."
+            ? environmentCopy("Try another search or environment.")
             : "Threads you archive will appear here."
         }
         title={isFiltered ? "No matching threads" : "No archived threads"}
       />
     );
-  }, [isFiltered, isInitialLoad]);
+  }, [environmentCopy, isFiltered, isInitialLoad]);
 
   return (
     // Keep the list inside this native container. Form-sheet resizing otherwise

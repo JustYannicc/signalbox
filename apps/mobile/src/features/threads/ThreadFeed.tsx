@@ -232,6 +232,7 @@ import {
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // Native iOS blockquotes and adjacent selectable text are separate layout
@@ -1674,6 +1675,7 @@ function ThreadFeedPlaceholder(props: {
   readonly title: string;
   readonly topInset: number;
 }) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   return (
     <View
       style={{
@@ -1689,7 +1691,7 @@ function ThreadFeedPlaceholder(props: {
       <View className="max-w-[320px] items-center gap-2">
         <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
         <Text className="text-center text-sm leading-normal text-foreground-secondary">
-          {props.detail}
+          {environmentCopy(props.detail)}
         </Text>
       </View>
     </View>

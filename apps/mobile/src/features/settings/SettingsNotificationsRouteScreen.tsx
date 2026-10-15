@@ -41,6 +41,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -103,6 +104,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
 
   const connections = useMemo(() => Object.values(savedConnectionsById), [savedConnectionsById]);
   const environmentCount = connections.length;
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
 
   const refreshNotifications = useCallback(async () => {
     if (Platform.OS !== "ios" && Platform.OS !== "android") {
@@ -290,7 +292,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           Platform.OS === "android"
             ? "Ongoing activity unavailable"
             : "Live Activities unavailable",
-          error instanceof Error ? error.message : "Could not enable agent activity updates.",
+          error instanceof Error
+            ? environmentCopy(error.message) // signalbox
+            : "Could not enable agent activity updates.",
         );
       }
       return;
@@ -305,9 +309,11 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     if (getAgentAwarenessRegistrationStatus() === "registered") {
       Alert.alert(
         Platform.OS === "android" ? "Ongoing activity enabled" : "Live Activities enabled",
-        environmentCount > 0
-          ? "Agent activity updates are enabled for environments this connection can configure."
-          : "Agent activity updates are enabled. Add an environment to start receiving updates.",
+        environmentCopy(
+          environmentCount > 0
+            ? "Agent activity updates are enabled for environments this connection can configure."
+            : "Agent activity updates are enabled. Add an environment to start receiving updates.",
+        ),
       );
     } else {
       Alert.alert(
@@ -317,6 +323,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
   }, [
     connections,
+    environmentCopy,
     environmentCount,
     getToken,
     isSignedIn,
