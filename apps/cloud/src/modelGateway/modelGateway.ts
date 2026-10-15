@@ -51,14 +51,31 @@ const SERVED_PATHS: Readonly<Record<ModelGatewayProvider, ReadonlyArray<string>>
 
 const PROVIDERS = Object.keys(MODEL_GATEWAY_PATHS) as ReadonlyArray<ModelGatewayProvider>;
 
-/** Headers that carry the caller's credential, or describe the hop rather than the request. The pool adds its own key. */
-const DROPPED_REQUEST_HEADERS = new Set([
+/**
+ * Where a local key travels when the harness keeps its own sign-in in
+ * `Authorization` (Codex with `requires_openai_auth`, `localKeys/localSetup.ts`).
+ */
+export const LOCAL_KEY_HEADER = "x-signalbox-key";
+
+/**
+ * Headers that say who the caller is: their credentials, and the ChatGPT
+ * account a signed-in Codex names. None reaches the pool, which adds its own
+ * key and runs on its own accounts.
+ */
+const CALLER_HEADERS = [
   "authorization",
   "x-api-key",
-  "host",
+  LOCAL_KEY_HEADER,
+  "chatgpt-account-id",
   "cookie",
-  "content-length",
-]);
+] as const;
+
+/** The caller's headers, and those that describe the hop rather than the request. */
+const DROPPED_REQUEST_HEADERS = new Set<string>([...CALLER_HEADERS, "host", "content-length"]);
+
+/** Which caller headers a request carried, by name only, for its record. */
+export const callerHeadersOf = (headers: Headers) =>
+  CALLER_HEADERS.filter((name) => headers.has(name));
 /** The runtime decodes the upstream body, so its encoding and length no longer apply. */
 const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfer-encoding"];
 
@@ -90,6 +107,9 @@ export function errorResponse(
 }
 
 export function bearerOrKey(headers: Headers): string | null {
+  // A local key in its own header wins: `Authorization` then holds the harness's own sign-in.
+  const localKey = headers.get(LOCAL_KEY_HEADER);
+  if (localKey !== null && localKey !== "") return localKey;
   const key = headers.get("x-api-key");
   if (key !== null && key !== "") return key;
   const authorization = headers.get("authorization");
@@ -133,6 +153,7 @@ export async function handleModelRequest(
       provider,
       method: request.method,
       path,
+      droppedHeaders: callerHeadersOf(request.headers),
       threadId,
       runId: null,
       traceId: null,
