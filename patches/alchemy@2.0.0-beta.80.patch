@@ -1,5 +1,5 @@
 diff --git a/lib/Cloudflare/Containers/ContainerProvider.js b/lib/Cloudflare/Containers/ContainerProvider.js
-index 690f7a48..a0ba80f9 100644
+index 690f7a48..0ddc2529 100644
 --- a/lib/Cloudflare/Containers/ContainerProvider.js
 +++ b/lib/Cloudflare/Containers/ContainerProvider.js
 @@ -635,7 +635,16 @@ export const LiveContainerProvider = () => Provider.effect(ContainerPlatform, Ef
@@ -20,6 +20,20 @@ index 690f7a48..a0ba80f9 100644
          const scaling = scalingDefaults(news);
          const configurationHash = yield* applicationConfigurationHash(scaling, news.affinities, configuration);
          if (existing.hash?.configuration === configurationHash) {
+@@ -736,7 +745,12 @@ export const LiveContainerProvider = () => Provider.effect(ContainerPlatform, Ef
+             const hasDurableObjects = (yield* getDurableObjects(newBindings)) !== undefined;
+             const hasUnresolvedAttachment = !hasDurableObjects &&
+                 newBindings.some((binding) => binding.data.durableObjects !== undefined);
+-            const hadDurableObjects = (yield* getDurableObjects(oldBindings)) !== undefined;
++            // The application's observed attachment outranks the recorded
++            // bindings: an adopted application whose first reconcile failed has
++            // its attachment in `output` but no bindings recorded yet, and reading
++            // only the bindings would replace (delete) the live application.
++            const hadDurableObjects = output?.durableObjects !== undefined ||
++                (yield* getDurableObjects(oldBindings)) !== undefined;
+             if (!hasUnresolvedAttachment &&
+                 hasDurableObjects !== hadDurableObjects) {
+                 return { action: "replace" };
 diff --git a/lib/Drizzle/Postgres.d.ts b/lib/Drizzle/Postgres.d.ts
 index ddba2e1e..31335e20 100644
 --- a/lib/Drizzle/Postgres.d.ts
@@ -81,7 +95,7 @@ index bada5420..f135b00d 100644
  export { executeWhenReady, getWhenReady, guardContentType, guardedFetchLayer, rpcClientLayer, WorkerNotReady, } from "./Http.js";
  export const defaultStage = Core.defaultStage;
 diff --git a/src/Cloudflare/Containers/ContainerProvider.ts b/src/Cloudflare/Containers/ContainerProvider.ts
-index 41dc9d18..60368ce8 100644
+index 41dc9d18..29d16bd0 100644
 --- a/src/Cloudflare/Containers/ContainerProvider.ts
 +++ b/src/Cloudflare/Containers/ContainerProvider.ts
 @@ -982,11 +982,18 @@ export const LiveContainerProvider = () =>
@@ -108,6 +122,19 @@ index 41dc9d18..60368ce8 100644
          const scaling = scalingDefaults(news);
          const configurationHash = yield* applicationConfigurationHash(
            scaling,
+@@ -1139,7 +1146,12 @@ export const LiveContainerProvider = () =>
+             newBindings.some(
+               (binding) => binding.data.durableObjects !== undefined,
+             );
++          // The application's observed attachment outranks the recorded
++          // bindings: an adopted application whose first reconcile failed has
++          // its attachment in `output` but no bindings recorded yet, and reading
++          // only the bindings would replace (delete) the live application.
+           const hadDurableObjects =
++            output?.durableObjects !== undefined ||
+             (yield* getDurableObjects(oldBindings)) !== undefined;
+           if (
+             !hasUnresolvedAttachment &&
 diff --git a/src/Drizzle/Postgres.ts b/src/Drizzle/Postgres.ts
 index 2d138914..61ae549d 100644
 --- a/src/Drizzle/Postgres.ts
