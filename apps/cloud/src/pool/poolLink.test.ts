@@ -97,7 +97,7 @@ describe("pool link", () => {
       });
       const info = yield* onLink(received.token, "");
       // The link acts for the pool's admin, who sees each account's email.
-      expect(info.body.accounts).toEqual([
+      expect(info.body.accounts).toMatchObject([
         {
           name: "claude-a@x.test.json",
           type: "claude",
@@ -113,6 +113,8 @@ describe("pool link", () => {
           signedOut: false,
         },
       ]);
+      // Moved accounts show windows once the pool next reads them, not during the move.
+      expect(info.body.accounts[0].usageLimits).toBeUndefined();
 
       // Model requests reach the pool's CLIProxyAPI with the pool's own key, never the link's.
       const answer = yield* onLink(received.token, "/v1/messages?beta=true", {

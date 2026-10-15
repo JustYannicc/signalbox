@@ -136,7 +136,10 @@ the pool's logins of the same provider: an Anthropic key and a Claude subscripti
 take Claude conversations. Keys never report usage limits, and their menu only offers **Remove**.
 
 In Signalbox Cloud, pools take Claude and ChatGPT sign-ins for now. API keys, imported accounts,
-Cursor and OpenCode come later, and Limits lists each account without its usage bars.
+Cursor and OpenCode come later. Limits shows each account's windows from its latest request, or
+checks with the provider at most every ten minutes while the pool is running. A pool that's asleep
+shows what it last read. The pool's admins see each account; members see only how much the pool
+has left and when it next resets.
 
 In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
 cannot load; copy that page's full address and paste it into Signalbox to finish.

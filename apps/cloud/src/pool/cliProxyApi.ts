@@ -1,3 +1,4 @@
+import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import { PoolLinkInfo } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -352,6 +353,7 @@ const AuthFiles = Schema.Struct({
   files: Schema.Array(
     Schema.Struct({
       name: Schema.String,
+      auth_index: Schema.optional(Schema.String),
       type: Schema.optional(Schema.String),
       provider: Schema.optional(Schema.String),
       email: Schema.optional(Schema.String),
@@ -359,6 +361,15 @@ const AuthFiles = Schema.Struct({
       status: Schema.optional(Schema.String),
       unavailable: Schema.optional(Schema.Boolean),
       next_retry_after: Schema.optional(Schema.Unknown),
+      quota: Schema.optional(
+        Schema.Struct({
+          observed_at: Schema.optional(Schema.String),
+          signals: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.String))),
+        }),
+      ),
+      id_token: Schema.optional(
+        Schema.Struct({ chatgpt_account_id: Schema.optional(Schema.String) }),
+      ),
     }),
   ),
 });
@@ -373,13 +384,40 @@ export interface BackendAccount {
   readonly signedOut: boolean;
 }
 
+/**
+ * What a backend says of an account's usage as it lists it. A CLIProxyAPI
+ * keeps the rate-limit headers of the account's last response (`signals`,
+ * empty until it has answered one since starting); another cloud's pool
+ * link hands over the limits that pool read.
+ */
+export type ListedUsage =
+  | {
+      readonly _tag: "observed";
+      /** What `requests/api-call` names the account by; null on a CLIProxyAPI too old to say. */
+      readonly authIndex: string | null;
+      readonly signals: Readonly<Record<string, string>>;
+      /** Epoch millis of the response the signals came from, or null. */
+      readonly observedAt: number | null;
+      readonly chatgptAccountId: string | null;
+    }
+  | { readonly _tag: "reported"; readonly limits: ServerProviderUsageLimits | null };
+
+export interface ListedAccount extends BackendAccount {
+  readonly usage: ListedUsage;
+}
+
+const epochMillis = (iso: string | undefined) => {
+  const at = iso === undefined ? Number.NaN : Date.parse(iso);
+  return Number.isFinite(at) && at > 0 ? at : null;
+};
+
 const listCredentials = (endpoint: PoolEndpoint) =>
   management(endpoint, "GET", "credentials").pipe(
     Effect.flatMap((response) =>
       decodeOr(AuthFiles, `${hostOf(endpoint)} returned an invalid account list.`)(response.json),
     ),
     Effect.map((decoded) =>
-      decoded.files.map((file): BackendAccount => ({
+      decoded.files.map((file): ListedAccount => ({
         name: file.name,
         type: file.type ?? file.provider ?? "unknown",
         email: file.email ?? null,
@@ -387,6 +425,13 @@ const listCredentials = (endpoint: PoolEndpoint) =>
         // The hub marks a dead refresh token as an error with no retry time.
         signedOut:
           file.status === "error" && file.unavailable === true && file.next_retry_after == null,
+        usage: {
+          _tag: "observed",
+          authIndex: file.auth_index ?? null,
+          signals: file.quota?.signals ?? {},
+          observedAt: epochMillis(file.quota?.observed_at),
+          chatgptAccountId: file.id_token?.chatgpt_account_id ?? null,
+        },
       })),
     ),
   );
@@ -395,12 +440,13 @@ export const listAccounts = (endpoint: PoolEndpoint) =>
   endpoint.link
     ? linkInfo(endpoint).pipe(
         Effect.map((info) =>
-          info.accounts.map((account): BackendAccount => ({
+          info.accounts.map((account): ListedAccount => ({
             name: account.name,
             type: account.type,
             email: account.email ?? null,
             disabled: account.disabled,
             signedOut: account.signedOut,
+            usage: { _tag: "reported", limits: account.usageLimits ?? null },
           })),
         ),
       )
@@ -436,3 +482,32 @@ export const applyManagedConfig = (endpoint: PoolEndpoint) =>
 
 /** `MANAGED_CONFIG` as JSON, which a pool records once it is applied. */
 export const MANAGED_CONFIG_JSON = encodeJson(MANAGED_CONFIG);
+
+const ApiCallResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
+
+/**
+ * A GET the CLIProxyAPI makes upstream as the account (`requests/api-call`),
+ * with `$TOKEN$` in `headers` standing for its access token. Answers the
+ * upstream status and body, or fails when the CLIProxyAPI couldn't send it.
+ */
+export const accountGet = (
+  endpoint: PoolEndpoint,
+  authIndex: string,
+  url: string,
+  headers: Readonly<Record<string, string>>,
+) =>
+  management(endpoint, "POST", "requests/api-call", {
+    auth_index: authIndex,
+    method: "GET",
+    url,
+    header: headers,
+  }).pipe(
+    Effect.tap(expectOk(endpoint, (status) => `answered ${status} to an account request.`)),
+    Effect.flatMap((response) =>
+      decodeOr(
+        ApiCallResponse,
+        `${hostOf(endpoint)} returned an invalid account request answer.`,
+      )(response.json),
+    ),
+    Effect.map((response) => ({ status: response.status_code, body: response.body })),
+  );

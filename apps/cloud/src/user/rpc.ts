@@ -4,6 +4,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
+  AuthStandardClientScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -48,6 +49,10 @@ import {
   SIGNALBOX_PUSH_WS_METHODS,
 } from "@t3tools/contracts/signalboxPush";
 import {
+  SIGNALBOX_KEYS_REQUIRED_SCOPES,
+  SIGNALBOX_KEYS_WS_METHODS,
+} from "@t3tools/contracts/signalboxKeys";
+import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
@@ -76,6 +81,7 @@ import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { makePushHandlers } from "../push/pushRpc.ts";
+import { makeKeysHandlers } from "./keysRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -148,6 +154,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...Object.values(SIGNALBOX_THREAD_KINDS_WS_METHODS),
+  ...Object.values(SIGNALBOX_KEYS_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
 ] as const;
@@ -206,6 +213,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_PUSH_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
+  ...SIGNALBOX_KEYS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -319,6 +327,8 @@ export const layerHandlers = (input: {
   readonly userId: string;
   /** The socket's session; phones it registers get pushes while it lives. */
   readonly sid: string;
+  /** What the connection's credential holds; new keys get no more. Defaults to an app's. */
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -378,9 +388,14 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
+      const keys = yield* makeKeysHandlers({
+        userId,
+        scopes: input.scopes ?? AuthStandardClientScopes,
+      });
       return {
         ...pools.handlers,
         ...pushes,
+        ...keys,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),

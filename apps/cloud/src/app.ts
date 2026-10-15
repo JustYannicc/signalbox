@@ -44,6 +44,7 @@ import * as EnvironmentApi from "./http/environmentApi.ts";
 import * as Platform from "./platform.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PreviewSetupRoutes from "./previewSetup/previewSetupRoutes.ts";
+import { handleApiRequest } from "./api/apiRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
@@ -189,6 +190,8 @@ export interface CloudApp {
   readonly webSocket: (request: Request) => Promise<Response>;
   /** The ModelGateway's check of a local key's signature (`ModelGrants` in `worker.ts`). */
   readonly verifyLocalKey: LocalKeyVerifier;
+  /** `/api/v1/`: the public API (`api/apiRoutes.ts`), streams and all. */
+  readonly api: (request: Request) => Promise<Response>;
 }
 
 export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp => {
@@ -221,5 +224,6 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
     http: (request) => http.then((handler) => handler(request)),
     webSocket: (request) => runtime.runPromise(openSocket(request)),
     verifyLocalKey: (token) => runtime.runPromise(verifyLocalKey(token)),
+    api: (request) => runtime.runPromise(handleApiRequest(request)),
   };
 };

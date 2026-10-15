@@ -54,6 +54,35 @@ export interface ThreadWorktree {
 export const unsupported = (commandType: string) =>
   `${commandType} is not available in the cloud yet.`;
 
+const CLOUD_COMMAND_TYPES = [
+  "thread.create",
+  "message.dispatch",
+  "run.interrupt",
+  "queue.resume",
+  "thread.visit",
+  "thread.metadata.update",
+  "thread.model-selection.set",
+  "thread.runtime-mode.set",
+  "thread.interaction-mode.set",
+  "thread.pull-request.link",
+  "thread.pull-request.unlink",
+  "thread.pull-request-link.sync",
+  "thread.archive",
+  "thread.unarchive",
+] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
+type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
+
+/**
+ * The commands `decide` serves; its switch is exhaustive over them. The public
+ * API lists the rest as gaps (`api/cloudCoverage.ts`).
+ */
+export const CLOUD_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set(
+  CLOUD_COMMAND_TYPES,
+);
+
+const isCloudCommand = (command: OrchestrationV2Command): command is CloudCommand =>
+  CLOUD_COMMANDS.has(command.type);
+
 /** The thread a command addresses. Commands without a single target thread are not served. */
 export function commandThreadId(command: OrchestrationV2Command) {
   return "threadId" in command ? command.threadId : null;
@@ -197,6 +226,7 @@ export function decide(
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
   expected: { readonly idleSinceMs?: number } = {},
 ): Decision {
+  if (!isCloudCommand(command)) return reject(unsupported(command.type));
   if (command.type === "thread.create") {
     return projection === null ? createThread(command, ctx) : reject("This thread already exists.");
   }
@@ -293,7 +323,7 @@ export function decide(
     case "thread.pull-request-link.sync":
       return accept(pullRequestLinkEvents(projection, command, ctx));
     default:
-      return reject(unsupported(command.type));
+      return command satisfies never;
   }
 }
 

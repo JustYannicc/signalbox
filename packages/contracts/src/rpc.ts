@@ -54,6 +54,7 @@ import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: 
 import { SIGNALBOX_PUSH_RPCS } from "./signalboxPush.ts"; // signalbox: push devices
 import { SIGNALBOX_REPOSITORIES_RPCS } from "./signalboxRepositories.ts"; // signalbox: repositories
 import { SIGNALBOX_THREAD_KINDS_RPCS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
+import { SIGNALBOX_KEYS_RPCS } from "./signalboxKeys.ts"; // signalbox: personal keys
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -2039,6 +2040,7 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_PUSH_RPCS,
   ...SIGNALBOX_REPOSITORIES_RPCS,
   ...SIGNALBOX_THREAD_KINDS_RPCS,
+  ...SIGNALBOX_KEYS_RPCS,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(

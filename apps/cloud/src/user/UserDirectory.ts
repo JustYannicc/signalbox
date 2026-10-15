@@ -21,7 +21,8 @@ import type {
   LinkedToken,
 } from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
-import type { CreatedKey } from "../localKeys/LocalKeys.ts";
+import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiObject.ts";
+import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
 import type { LocalKeysView, LocalModelAuthorization } from "../localKeys/localModelAccess.ts";
 import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
@@ -126,7 +127,7 @@ export interface UserObjectApi {
     readonly provider: LinkedProvider;
   }) => Promise<LinkedToken>;
   /** A new key for the harnesses on one of the user's computers (`localKeys/LocalKeys.ts`). */
-  readonly createLocalKey: (label: string) => Promise<CreatedKey>;
+  readonly createLocalKey: (label: string, options?: KeyOptions) => Promise<CreatedKey>;
   readonly localKeys: () => Promise<LocalKeysView>;
   readonly revokeLocalKey: (id: string) => Promise<void>;
   /** A ModelGateway request with a local key: which pool it may use (`localKeys/localModelAccess.ts`). */
@@ -204,6 +205,15 @@ export class UserDirectory extends Context.Service<
     readonly connect: (
       session: { readonly userId: string; readonly sessionId: string },
       request: Request,
+    ) => Effect.Effect<Response, UserObjectError>;
+    /**
+     * Hands a public API call to the user's object (`api/apiObject.ts`). The
+     * Worker checked only the credential's signature; the object checks the rest.
+     */
+    readonly callApi: (
+      userId: string,
+      request: Request,
+      credential: ApiCredential,
     ) => Effect.Effect<Response, UserObjectError>;
   }
 >()("@signalbox/cloud/user/UserDirectory") {}
@@ -313,10 +323,21 @@ export const layerDurableObjects = (
         Effect.tryPromise({
           try: () => {
             const headers = new Headers(request.headers);
+            // Only `callApi` may say a request is an API call; a client can't.
+            headers.delete(API_HEADER);
             headers.set(CONNECTION_HEADER, encodeConnectionInfo({ sid: session.sessionId }));
             return stubFor(session.userId).fetch(new Request(request, { headers }));
           },
           catch: (cause) => new UserObjectError({ operation: "connect", cause }),
+        }),
+      callApi: (userId, request, credential) =>
+        Effect.tryPromise({
+          try: () => {
+            const headers = new Headers(request.headers);
+            headers.set(API_HEADER, encodeApiCredential(credential));
+            return stubFor(userId).fetch(new Request(request, { headers }));
+          },
+          catch: (cause) => new UserObjectError({ operation: "callApi", cause }),
         }),
     }),
   );

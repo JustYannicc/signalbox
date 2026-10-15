@@ -8,8 +8,8 @@ need a separate branch and working directory.
 The icon rail on the left edge of the sidebar switches between two views of your
 threads. **Home** groups them by where they live. **Pipeline** orders them by what
 needs your attention, and is the view the rest of this page describes. Collapsing the
-sidebar hides the view but keeps the rail. The back and forward arrows beside the
-sidebar toggle step through where you've been.
+sidebar hides the view but keeps the rail. **New**, pinned above both views, starts a
+thread. The back and forward arrows beside the sidebar toggle step through where you've been.
 
 To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
 **Settings**.
