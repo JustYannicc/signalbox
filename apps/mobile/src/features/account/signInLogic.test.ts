@@ -5,13 +5,12 @@ import * as NodeCrypto from "node:crypto";
 import { buildAccountAuthorizeUrl, parseAccountReturn } from "@t3tools/client-runtime/account";
 import { describe, expect, it } from "vite-plus/test";
 
+import { SIGNALBOX_APP_URL } from "@t3tools/shared/signalboxAppUrl";
+
 import {
   accountReturnUrl,
   createPkcePair,
-  normalizeServerUrl,
   pkceChallenge,
-  resolveDefaultServerUrl,
-  serverDisplayHost,
   signInFailureCopy,
   socialProviders,
   type PkceCrypto,
@@ -23,66 +22,21 @@ const nodeCrypto: PkceCrypto = {
     Promise.resolve(new Uint8Array(NodeCrypto.createHash("sha256").update(data).digest())),
 };
 
-describe("resolveDefaultServerUrl", () => {
-  it("signs a fresh install in to Signalbox Cloud", () => {
-    expect(resolveDefaultServerUrl(undefined)).toBe("https://app.signalbox.run");
-    expect(resolveDefaultServerUrl("  ")).toBe("https://app.signalbox.run");
-  });
-
-  it("prefers the server a build names", () => {
-    expect(resolveDefaultServerUrl("box.example.com")).toBe("https://box.example.com");
-  });
-});
-
-describe("normalizeServerUrl", () => {
-  it("defaults a bare hostname to https", () => {
-    expect(normalizeServerUrl("box.example.com")).toBe("https://box.example.com");
-  });
-
-  it("defaults IPs and localhost to http, keeping the port", () => {
-    expect(normalizeServerUrl("192.168.1.5:3773/")).toBe("http://192.168.1.5:3773");
-    expect(normalizeServerUrl("localhost:3773")).toBe("http://localhost:3773");
-    expect(normalizeServerUrl("[::1]:3773")).toBe("http://[::1]:3773");
-  });
-
-  it("keeps an explicit scheme and reduces everything else to the origin", () => {
-    // The server rejects an `origin` with a path.
-    expect(normalizeServerUrl("  http://box.example.com/base//?x=1#token=abc ")).toBe(
-      "http://box.example.com",
-    );
-    expect(normalizeServerUrl("HTTPS://Box.Example.com")).toBe("https://box.example.com");
-  });
-
-  it("rejects empty, non-http and credentialed input", () => {
-    expect(normalizeServerUrl("")).toBeNull();
-    expect(normalizeServerUrl(undefined)).toBeNull();
-    expect(normalizeServerUrl("ftp://box.example.com")).toBeNull();
-    expect(normalizeServerUrl("signalbox://account-return")).toBeNull();
-    expect(normalizeServerUrl("https://user:pw@box.example.com")).toBeNull();
-    expect(normalizeServerUrl("not a host")).toBeNull();
-  });
-
-  it("produces an origin the authorize URL can be built from", () => {
-    const origin = normalizeServerUrl("box.example.com")!;
+describe("sign-in server", () => {
+  // The server builds its own redirect URIs from `origin` and rejects one with a path.
+  it("is Signalbox Cloud's bare origin, which the authorize URL is built from", () => {
     const url = new URL(
       buildAccountAuthorizeUrl({
         provider: "github",
         mode: "native",
-        origin,
+        origin: SIGNALBOX_APP_URL,
         returnUrl: "signalbox://account-return",
         challenge: "abc",
       }),
     );
-    expect(url.origin).toBe("https://box.example.com");
+    expect(url.origin).toBe(SIGNALBOX_APP_URL);
     expect(url.pathname).toBe("/api/account/authorize");
-    expect(url.searchParams.get("origin")).toBe(origin);
-  });
-});
-
-describe("serverDisplayHost", () => {
-  it("shows host and port", () => {
-    expect(serverDisplayHost("https://box.example.com")).toBe("box.example.com");
-    expect(serverDisplayHost("http://192.168.1.5:3773")).toBe("192.168.1.5:3773");
+    expect(url.searchParams.get("origin")).toBe(SIGNALBOX_APP_URL);
   });
 });
 

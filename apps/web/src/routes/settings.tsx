@@ -27,6 +27,7 @@ import {
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
 } from "../components/settings/settingsSearch";
+import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
@@ -151,11 +152,12 @@ function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   return (
     <SettingsScopeProvider
       search={rawSearch}
       singleEnvironment={
-        pathname === "/settings/providers" || pathname === "/settings/pools" // signalbox: pools
+        !showsEnvironmentUi || pathname === "/settings/providers" || pathname === "/settings/pools" // signalbox: pools
       }
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target

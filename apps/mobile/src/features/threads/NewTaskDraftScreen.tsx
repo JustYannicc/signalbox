@@ -136,7 +136,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
+import { useEnvironmentSupports, useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
 import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 
@@ -204,6 +204,7 @@ export function NewTaskDraftScreen(props: {
   const projects = useProjects();
   const flow = useNewTaskFlow();
   const supportsWorktrees = useEnvironmentSupports(flow.selectedEnvironmentId, "worktrees"); // signalbox
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   const navigation = useNavigation();
   const {
     consumeShare,
@@ -482,8 +483,8 @@ export function NewTaskDraftScreen(props: {
     switchingToEnvironmentId,
   ]);
   const cycleEnvironmentCommands = useMemo(
-    () => (environments.length > 1 ? (["cycleHost"] as const) : []),
-    [environments.length],
+    () => (showsEnvironments && environments.length > 1 ? (["cycleHost"] as const) : []),
+    [environments.length, showsEnvironments],
   );
   useHardwareKeyboardCommand(cycleEnvironmentCommands, cycleEnvironment);
   // Also guard while a submit is in flight: an Android back press or iOS
@@ -1529,7 +1530,8 @@ export function NewTaskDraftScreen(props: {
     navigation.dispatch(StackActions.push(routeName));
   };
 
-  const environmentControl = (
+  // signalbox: one environment, nothing to say where it runs.
+  const environmentControl = !showsEnvironments ? null : (
     <ComposerInlineControl
       accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
       chevronDirection="right"

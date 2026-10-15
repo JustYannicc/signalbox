@@ -1,6 +1,5 @@
 import { parseAccountReturn } from "@t3tools/client-runtime/account";
 import type { AccountProvider, AccountSignInError } from "@t3tools/contracts/account";
-import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { APP_BASE_NAME } from "../branding";
@@ -204,19 +203,10 @@ export function SignInScreen({
     <SignInFrame title={`Sign in to ${APP_BASE_NAME}`}>
       {notice ? <SignInNotice error={notice} /> : null}
       {desktop ? (
-        <>
-          <DesktopSignInOptions
-            pending={desktopPending}
-            onStart={(screenHint) => void startDesktop(screenHint)}
-          />
-          {cloudOrigin ? (
-            <div className="mt-4 flex justify-center">
-              <Button size="sm" variant="ghost-muted" render={<Link to="/settings/connections" />}>
-                Use a different server
-              </Button>
-            </div>
-          ) : null}
-        </>
+        <DesktopSignInOptions
+          pending={desktopPending}
+          onStart={(screenHint) => void startDesktop(screenHint)}
+        />
       ) : (
         <WebSignInOptions
           providers={session?.providers ?? []}

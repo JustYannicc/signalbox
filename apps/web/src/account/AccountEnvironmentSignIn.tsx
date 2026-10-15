@@ -70,10 +70,16 @@ export function useFinishEnvironmentSignIn() {
         const cancelled = error instanceof AccountFlowError && error.code === "cancelled";
         toastManager.add({
           type: cancelled ? "info" : "error",
-          title: cancelled ? "Sign-in cancelled" : "Could not add the environment",
-          description: cancelled
-            ? "The environment was not added."
-            : "Signing in didn't finish. Try again.",
+          title: cancelled
+            ? "Sign-in cancelled"
+            : startedOnSignIn
+              ? "Couldn't sign in"
+              : "Could not add the environment",
+          description: startedOnSignIn
+            ? "Signing in didn't finish. Try again."
+            : cancelled
+              ? "The environment was not added."
+              : "Signing in didn't finish. Try again.",
         });
         void navigate({
           to: startedOnSignIn ? "/sign-in" : "/settings/connections",

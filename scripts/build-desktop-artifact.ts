@@ -942,8 +942,9 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslRuntime: string | undefined;
-  // signalbox: false (the default) builds the thin client for Signalbox Cloud,
-  // without the local server, its runtime dependencies or the WSL runtime.
+  // signalbox: false (the default) builds the desktop gateway to Signalbox Cloud,
+  // without the local server, its runtime dependencies or the WSL runtime. True
+  // keeps upstream's full app buildable for merges; Signalbox doesn't ship it.
   readonly localServer: boolean;
 }
 
@@ -4184,7 +4185,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   localServer: Flag.Boolean("local-server").pipe(
     Flag.withDescription(
-      "Bundle the local server so the app can run agents on this computer. Without it the app is a thin client for Signalbox Cloud (env: T3CODE_DESKTOP_LOCAL_SERVER).",
+      "Bundle upstream's local server. Kept buildable for upstream compatibility; Signalbox ships the gateway build without it (env: T3CODE_DESKTOP_LOCAL_SERVER).",
     ),
     Flag.optional,
   ),

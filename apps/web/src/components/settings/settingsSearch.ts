@@ -1213,7 +1213,9 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.capability || !availability.unsupportedCapabilities?.has(item.capability)),
+      (!item.capability || !availability.unsupportedCapabilities?.has(item.capability)) &&
+      (!availability.unsupportedCapabilities ||
+        isSettingsPathAvailable(item.to, availability.unsupportedCapabilities)),
   );
 }
 
@@ -1263,6 +1265,8 @@ export function unsupportedSettingsCapabilities(
 /** signalbox: settings pages that only exist where an environment can do something. */
 const SETTINGS_PATH_CAPABILITIES: Partial<Record<SettingsPath, SignalboxEnvironmentCapability>> = {
   "/settings/scheduled-tasks": "scheduledTasks",
+  // Connections manages other environments; the cloud is the only one.
+  "/settings/connections": "otherEnvironments",
 };
 
 export function isSettingsPathAvailable(

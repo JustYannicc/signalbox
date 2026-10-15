@@ -6,6 +6,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { isLocalEnvironmentAvailable } from "~/account/cloudDefault";
+import { useShowsEnvironmentUi } from "~/state/environmentCapabilities";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
 import {
   useEnvironments,
@@ -27,17 +28,20 @@ import {
 export function useUnsupportedSettingsCapabilities(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
-  return useMemo(
-    () =>
-      unsupportedSettingsCapabilities(
-        environments.filter(
-          (environment) =>
-            scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine,
-        ),
-        primaryEnvironment,
+  const showsEnvironmentUi = useShowsEnvironmentUi();
+  return useMemo(() => {
+    const unsupported = unsupportedSettingsCapabilities(
+      environments.filter(
+        (environment) =>
+          scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine,
       ),
-    [environments, primaryEnvironment, scopeSearch.machine],
-  );
+      primaryEnvironment,
+    );
+    // The same rule as everywhere else, including a desktop gateway before it signs in.
+    return showsEnvironmentUi
+      ? unsupported
+      : new Set([...unsupported, "otherEnvironments" as const]);
+  }, [environments, primaryEnvironment, scopeSearch.machine, showsEnvironmentUi]);
 }
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {

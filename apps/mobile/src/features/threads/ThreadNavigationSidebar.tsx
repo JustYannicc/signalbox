@@ -41,6 +41,8 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { NO_ENVIRONMENTS, withoutEnvironmentFilter } from "../home/environmentFilter"; // signalbox
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { SectionNavigationPanel } from "../sections/SectionNavigationPanel";
 import { SectionNavigationToggle } from "../sections/SectionNavigationToggle";
@@ -182,8 +184,10 @@ function ThreadNavigationSidebarPane(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
-  const { options, setSelectedEnvironmentId, setSelectedProjectKey } =
-    useHomeListOptions(availableEnvironmentIds);
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
+  const { options, setSelectedEnvironmentId, setSelectedProjectKey } = useHomeListOptions(
+    showsEnvironments ? availableEnvironmentIds : NO_ENVIRONMENTS, // signalbox: hidden filter
+  );
   const searchEnvironmentIds = useMemo(
     () =>
       options.selectedEnvironmentId === null
@@ -494,7 +498,7 @@ function ThreadNavigationSidebarPane(
     threadListV2Layout,
     workingShelfExpanded,
   ]);
-  const listMenuActions = useMemo<MenuAction[]>(
+  const allListMenuActions = useMemo<MenuAction[]>(
     () => [
       {
         id: "environment",
@@ -539,6 +543,11 @@ function ThreadNavigationSidebarPane(
           ] satisfies MenuAction[])),
     ],
     [environments, options, projectFilterOptions, selectedProjectKey],
+  );
+  // signalbox: one environment needs no environment filter.
+  const listMenuActions = useMemo(
+    () => withoutEnvironmentFilter(allListMenuActions, showsEnvironments),
+    [allListMenuActions, showsEnvironments],
   );
   const handleListMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -868,8 +877,10 @@ function ThreadNavigationSidebarPane(
         selectedProjectKey,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
+        showsEnvironments, // signalbox
       }),
     [
+      showsEnvironments,
       environments,
       options,
       projectFilterOptions,
@@ -910,7 +921,7 @@ function ThreadNavigationSidebarPane(
     >
       {catalogState.isLoadingConnections
         ? "Loading threads…"
-        : Platform.OS === "android" && !catalogState.hasConnections
+        : Platform.OS === "android" && !catalogState.hasConnections && showsEnvironments
           ? "No environments connected"
           : props.searchQuery.trim().length > 0
             ? threadSearch.isPending

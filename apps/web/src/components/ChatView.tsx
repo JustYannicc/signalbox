@@ -413,7 +413,11 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
-import { readEnvironmentSupports, useEnvironmentSupports } from "~/state/environmentCapabilities";
+import {
+  readEnvironmentSupports,
+  useEnvironmentSupports,
+  useShowsEnvironmentUi,
+} from "~/state/environmentCapabilities";
 import {
   environmentServerConfigsAtom,
   primaryServerAvailableEditorsAtom,
@@ -2847,10 +2851,13 @@ export default function ChatView(props: ChatViewProps) {
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
     ) ?? null;
-  const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
-  });
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
+  const showComposerEnvironmentIndicator =
+    showsEnvironmentUi &&
+    shouldShowEnvironmentIndicator({
+      activeEnvironment: activeEnvironmentOption,
+      canPickEnvironment: hasMultipleEnvironments,
+    });
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
       if (!canCheckoutPullRequestIntoThread) {

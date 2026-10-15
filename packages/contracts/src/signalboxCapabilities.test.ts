@@ -3,7 +3,11 @@ import * as Schema from "effect/Schema";
 
 import { ExecutionEnvironmentCapabilities } from "./environment.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
-import { environmentImportsFrom, environmentSupports } from "./signalboxCapabilities.ts";
+import {
+  environmentImportsFrom,
+  environmentSupports,
+  showsEnvironmentUi,
+} from "./signalboxCapabilities.ts";
 
 describe("environmentSupports", () => {
   it("treats servers that never send a capability as supporting it", () => {
@@ -39,5 +43,22 @@ describe("environmentImportsFrom", () => {
     });
     expect(environmentImportsFrom(capabilities, GITHUB)).toBe(true);
     expect(environmentImportsFrom(capabilities, GITLAB)).toBe(false);
+  });
+});
+
+describe("showsEnvironmentUi", () => {
+  const cloud = { otherEnvironments: false };
+
+  it("hides environments when the cloud is the only environment", () => {
+    expect(showsEnvironmentUi([cloud])).toBe(false);
+  });
+
+  it("keeps them for T3 Code and self-hosted servers, and before anything reports", () => {
+    expect(showsEnvironmentUi([{}])).toBe(true);
+    expect(showsEnvironmentUi([])).toBe(true);
+  });
+
+  it("keeps them while another connected server still allows more, as in development", () => {
+    expect(showsEnvironmentUi([cloud, null])).toBe(true);
   });
 });

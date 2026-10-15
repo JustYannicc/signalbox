@@ -10,6 +10,7 @@ import type {
   AccountSessionState,
   AccountSignInError,
 } from "@t3tools/contracts/account";
+import { SIGNALBOX_APP_URL } from "@t3tools/shared/signalboxAppUrl";
 import { AsyncResult } from "effect/reactivity";
 import Constants from "expo-constants";
 import * as ExpoCrypto from "expo-crypto";
@@ -24,17 +25,12 @@ import { checkServerAccounts } from "./accountApi";
 import {
   accountReturnUrl,
   createPkcePair,
-  normalizeServerUrl,
-  resolveDefaultServerUrl,
-  serverDisplayHost,
   signInFailureCopy,
   type PkceCrypto,
 } from "./signInLogic";
 
-/** The server a fresh install signs in to; see `resolveDefaultServerUrl`. */
-export const DEFAULT_SERVER_URL = resolveDefaultServerUrl(
-  process.env.EXPO_PUBLIC_SIGNALBOX_SERVER_URL,
-);
+/** Mobile signs in to Signalbox Cloud only; dev builds pair with their server by deep link. */
+const SERVER_URL = SIGNALBOX_APP_URL;
 
 const expoPkceCrypto: PkceCrypto = {
   randomBytes: ExpoCrypto.getRandomBytes,
@@ -46,20 +42,16 @@ const expoPkceCrypto: PkceCrypto = {
 };
 
 export type AccountServerState =
-  | { readonly _tag: "choose" }
-  | { readonly _tag: "checking"; readonly serverUrl: string }
-  | { readonly _tag: "unreachable"; readonly serverUrl: string }
-  | { readonly _tag: "pairing"; readonly serverUrl: string }
-  | {
-      readonly _tag: "ready";
-      readonly serverUrl: string;
-      readonly session: AccountSessionState;
-    };
+  | { readonly _tag: "checking" }
+  | { readonly _tag: "unreachable" }
+  /** The server answers but doesn't sign in with accounts. Nothing to do here but retry. */
+  | { readonly _tag: "unavailable" }
+  | { readonly _tag: "ready"; readonly session: AccountSessionState };
 
-function describeError(error: unknown, serverUrl: string): string {
+function describeError(error: unknown): string {
   // RN reports DNS, TLS and refused connections as a bare TypeError.
   if (error instanceof TypeError || (error instanceof Error && error.name === "AbortError")) {
-    return `Couldn't reach ${serverDisplayHost(serverUrl)}. Check your connection and try again.`;
+    return "Couldn't reach Signalbox. Check your connection and try again.";
   }
   return error instanceof Error && error.message
     ? error.message
@@ -71,20 +63,13 @@ function notifyError() {
 }
 
 /**
- * Drives native account sign-in against one server: check that it signs in
- * with accounts, run the provider in the system browser with PKCE, redeem the
+ * Drives native account sign-in to Signalbox: check that it signs in with
+ * accounts, run the provider in the system browser with PKCE, redeem the
  * handoff, and register the environment through the normal pairing path.
  */
-export function useAccountSignIn(options: {
-  /** The server only pairs with codes. Called when the person picked that server themselves. */
-  readonly onPairingRequired: (serverUrl: string) => void;
-  readonly onSignedIn?: () => void;
-}) {
+export function useAccountSignIn(options: { readonly onSignedIn?: () => void }) {
   const connectPairing = useAtomCommand(connectPairingUrl, { reportFailure: false });
-  const [server, setServer] = useState<AccountServerState>(() => ({
-    _tag: "checking",
-    serverUrl: DEFAULT_SERVER_URL,
-  }));
+  const [server, setServer] = useState<AccountServerState>({ _tag: "checking" });
   const [pendingProvider, setPendingProvider] = useState<AccountProvider | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const checkIdRef = useRef(0);
@@ -95,67 +80,41 @@ export function useAccountSignIn(options: {
   });
 
   // Settles a check that the caller already put into "checking".
-  const settleCheck = useCallback((serverUrl: string, chosenByUser: boolean) => {
+  const settleCheck = useCallback(() => {
     const id = ++checkIdRef.current;
-    checkServerAccounts(serverUrl).then(
+    checkServerAccounts(SERVER_URL).then(
       (result) => {
         if (id !== checkIdRef.current) return;
-        if (result._tag === "pairing") {
-          setServer({ _tag: "pairing", serverUrl });
-          if (chosenByUser) optionsRef.current.onPairingRequired(serverUrl);
-          return;
-        }
-        setServer({ _tag: "ready", serverUrl, session: result.session });
+        setServer(
+          result._tag === "pairing"
+            ? { _tag: "unavailable" }
+            : { _tag: "ready", session: result.session },
+        );
       },
       () => {
-        if (id === checkIdRef.current) setServer({ _tag: "unreachable", serverUrl });
+        if (id === checkIdRef.current) setServer({ _tag: "unreachable" });
       },
     );
   }, []);
 
-  const check = useCallback(
-    (serverUrl: string, chosenByUser: boolean) => {
-      setServer({ _tag: "checking", serverUrl });
-      setFailure(null);
-      settleCheck(serverUrl, chosenByUser);
-    },
-    [settleCheck],
-  );
-
-  // The default server starts out "checking" (see the initial state).
+  // The server starts out "checking" (see the initial state).
   useEffect(() => {
-    settleCheck(DEFAULT_SERVER_URL, false);
+    settleCheck();
   }, [settleCheck]);
 
-  /** Returns false when the input isn't a server address. */
-  const submitServer = useCallback(
-    (input: string) => {
-      const serverUrl = normalizeServerUrl(input);
-      if (serverUrl === null) return false;
-      check(serverUrl, true);
-      return true;
-    },
-    [check],
-  );
-
-  const changeServer = useCallback(() => {
-    if (pendingRef.current) return;
-    checkIdRef.current += 1;
-    setFailure(null);
-    setServer({ _tag: "choose" });
-  }, []);
-
   const retry = useCallback(() => {
-    if (server._tag !== "choose") check(server.serverUrl, false);
-  }, [check, server]);
+    setServer({ _tag: "checking" });
+    setFailure(null);
+    settleCheck();
+  }, [settleCheck]);
 
   const signIn = useCallback(
     async (provider: AccountProvider, loginHint?: string) => {
       if (server._tag !== "ready" || pendingRef.current) return;
-      const serverUrl = server.serverUrl;
+      const serverUrl = SERVER_URL;
       const returnUrl = accountReturnUrl(Constants.expoConfig?.scheme);
       if (returnUrl === null) {
-        setFailure("This build can't receive sign-in results. Pair with a code instead.");
+        setFailure("This build can't receive sign-in results.");
         return;
       }
       pendingRef.current = true;
@@ -203,7 +162,7 @@ export function useAccountSignIn(options: {
         if (error instanceof AccountHandoffError) {
           report(error.code);
         } else {
-          setFailure(describeError(error, serverUrl));
+          setFailure(describeError(error));
           notifyError();
         }
       } finally {
@@ -218,8 +177,6 @@ export function useAccountSignIn(options: {
     server,
     pendingProvider,
     failure,
-    submitServer,
-    changeServer,
     retry,
     signIn,
   };

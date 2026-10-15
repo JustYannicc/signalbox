@@ -101,10 +101,17 @@ connect. This is possible because the desktop renderer is not served by the back
 scheme serves the bundled client from disk (Vite in development) and API traffic always goes to the
 environment's own URL.
 
-Signalbox's default desktop artifact is built on this mode: `scripts/build-desktop-artifact.ts`
-leaves out the server bundle and its dependencies unless `--local-server` is passed. The packaged
-app does not trust a flag for this; it checks whether the server entry exists
-(`apps/desktop/src/signalbox/DesktopThinClient.ts`) and keeps the local environment off without
-writing that to the settings file, so the same settings work in a build that has the server. With
-no local environment and nothing connected, desktop sign-in targets Signalbox Cloud and adds it as
-an environment (`apps/web/src/account/cloudDefault.ts`), reusing the "Add environment" sign-in.
+Signalbox's desktop app is a gateway to Signalbox Cloud built on this mode:
+`scripts/build-desktop-artifact.ts` leaves out the server bundle and its dependencies
+(`--local-server` only keeps upstream's full app buildable). The packaged app does not trust a
+flag for this; it checks whether the server entry exists
+(`apps/desktop/src/signalbox/DesktopThinClient.ts`) and keeps the local environment off. With
+nothing connected, desktop sign-in targets Signalbox Cloud and adds it as an environment
+(`apps/web/src/account/cloudDefault.ts`), reusing the "Add environment" sign-in.
+
+There is one environment, so clients show no environment UI. The cloud advertises
+`otherEnvironments: false`, and web, desktop and mobile hide pickers, lists, pairing and
+Connections through `showsEnvironmentUi` (`packages/contracts/src/signalboxCapabilities.ts`).
+The catalog, pairing and per-environment state stay underneath unchanged, so upstream merges
+apply and servers that don't send the capability (T3 Code, self-hosted, development) keep
+everything.

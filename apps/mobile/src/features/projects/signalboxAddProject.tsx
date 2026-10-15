@@ -15,6 +15,7 @@ import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 /** Whether Add project can start, is waiting on a connection, or needs one connected. */
 export function useAddProjectAvailability(): AddProjectAvailability {
@@ -32,12 +33,27 @@ export function useAddProjectAvailability(): AddProjectAvailability {
 
 /** Shown in place of the environment picker until one connects; the screen continues on its own. */
 export function ConnectingEnvironmentState() {
+  const showsEnvironments = useShowsEnvironmentUi();
   return (
     <View className="items-center gap-3 rounded-2xl bg-grouped-card px-5 py-8">
       <AppActivityIndicator colorClassName="accent-icon-muted" />
       <Text className="text-center text-lg font-t3-bold">Connecting</Text>
       <Text className="text-center text-sm leading-normal text-foreground-muted">
-        Your environment is on its way. Add project continues once it connects.
+        {showsEnvironments
+          ? "Your environment is on its way. Add project continues once it connects."
+          : "Signalbox is connecting. Add project continues once it does."}
+      </Text>
+    </View>
+  );
+}
+
+/** Signalbox Cloud is the only environment and it isn't reachable: nothing to add, just wait. */
+export function SignalboxUnavailableState() {
+  return (
+    <View className="items-center gap-3 rounded-2xl bg-grouped-card px-5 py-8">
+      <Text className="text-center text-lg font-t3-bold">Can't reach Signalbox</Text>
+      <Text className="text-center text-sm leading-normal text-foreground-muted">
+        Check your connection. Add project continues once Signalbox is back.
       </Text>
     </View>
   );

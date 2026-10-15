@@ -67,70 +67,18 @@ macOS, an `.exe` for Windows, and an AppImage or `.deb` for Linux
 (`sudo apt install ./Signalbox-*.deb`). Signalbox installs next to
 [T3 Code](https://github.com/pingdotgg/t3code) and keeps its own data in `~/.signalbox`.
 
-The desktop app is a window onto Signalbox Cloud: a fresh install opens the sign-in, and
-your agents run in the cloud, not on this computer. To run agents on your own machine,
-install the [command line](#command-line) server there and add it under **Settings →
-Connections**, or choose **Use a different server** on the sign-in screen.
+The desktop app is a gateway to Signalbox Cloud: it opens on sign-in, everything runs in the
+cloud, and the app keeps you signed in, shows notifications and opens Signalbox links.
 
 The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
-The rest of this section applies when the desktop app runs agents on this computer.
-
-### Importing existing data
-
-If [T3 Code](https://github.com/pingdotgg/t3code) is installed, the first launch offers
-to import its projects, threads, and settings. The import copies them and leaves the
-originals in the `.t3` folder of your home directory unchanged, so both apps keep working
-side by side. Provider settings and keys come along. Paired devices, saved remote
-connections, and Connect sign-in do not, so pair your phone and other browsers again and
-reconnect remotes in Signalbox.
-
-Imported threads keep using their existing worktrees, which still belong to the other app,
-so Signalbox never deletes them. Continue each imported thread in only one of the two apps:
-both apps save that thread's checkpoints in the same repository, and working in it from
-both makes them overwrite each other's restore points.
-
-The command line asks the same question the first time you start `signalbox` in a
-terminal. To import from a script, run `signalbox import-t3` before the first start. The
-import only fills a fresh Signalbox home and refuses once Signalbox has data of its own.
-
-### The `signalbox` command
-
-The desktop app includes the `signalbox` command-line tool. To run it from any
-terminal, open **Settings → General → About** and choose **Install** next to
-**signalbox command**. On macOS and Linux it adds a `signalbox` link to a folder on your
-`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If you already have `signalbox`
-from npm, it stays as it is.
-
-### Windows Subsystem for Linux
-
-Choose a WSL distro in **Settings → Connections** to run agents and projects
-there. Install the provider CLIs inside that distro. Signalbox installs its own
-server runtime there automatically; the first launch after an app update can
-take longer.
-
-### Open a project from a terminal
-
-With the desktop app already running on the same machine:
-
-```bash
-signalbox app
-```
-
-This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `signalbox app ../my-project`, to open another directory. It requires
-the desktop app, so a standalone server or an SSH session is not enough. If the
-command cannot reach the app, start or update the desktop app and try again.
-
 ## Mobile app
 
 The Signalbox mobile app is not in the App Store or Google Play yet. Build it from
-source with the [mobile README](../../apps/mobile/README.md). The phone connects to a
-server on another machine. Follow [remote access](./remote-access.md) to link it
-through Signalbox Connect or a pairing URL.
+source with the [mobile README](../../apps/mobile/README.md). Like the desktop app, it
+signs in to Signalbox Cloud.
 
 If the app crashes during launch, open Settings → Diagnostics on the next launch
 that succeeds. It lists startup crashes from the last 7 days with the error and

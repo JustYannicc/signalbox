@@ -13,11 +13,8 @@ code to confirm your address.
 - **Desktop**: choose **Sign up** or **Sign in**. Signalbox opens your browser,
   so your password manager and saved logins work there. If you are already
   signed in in that browser, it sends you straight back. When the browser asks
-  to open Signalbox, allow it. Without a server of its own, the app signs in to
-  Signalbox Cloud; **Use a different server** connects your own instead.
-- **Mobile**: the app signs in to Signalbox Cloud. To use your own server,
-  choose **Use a different server** and enter its address. A server without
-  accounts sends you to pairing instead.
+  to open Signalbox, allow it.
+- **Mobile**: pick an option.
 
 ## Signing out
 

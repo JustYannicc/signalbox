@@ -11,8 +11,15 @@ import { isDesktop } from "./accountPlatform";
  * own origin, and a desktop running its local server signs in to that.
  */
 export function cloudDefaultOrigin(): string | null {
-  return isDesktop() && isLocalEnvironmentDisabled() ? SIGNALBOX_APP_URL : null;
+  // Fixed for the life of the renderer (changing it relaunches desktop), and each read is a sync IPC.
+  if (cachedCloudDefaultOrigin === undefined) {
+    cachedCloudDefaultOrigin =
+      isDesktop() && isLocalEnvironmentDisabled() ? SIGNALBOX_APP_URL : null;
+  }
+  return cachedCloudDefaultOrigin;
 }
+
+let cachedCloudDefaultOrigin: string | null | undefined;
 
 /** False on the thin cloud desktop build, which has no local server to turn on. */
 export function isLocalEnvironmentAvailable(): boolean {
