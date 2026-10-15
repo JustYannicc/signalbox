@@ -32,6 +32,12 @@ export { COMMAND_REACH };
 /** The version in the API's paths; it changes only when an operation breaks its callers. */
 export const API_VERSION = "v1";
 
+/** A contract schema: no services to decode or encode, like every RPC schema. */
+export type WireSchema = Schema.Codec<unknown, unknown>;
+
+/** Contract schemas need no services; the RPC group's types just don't say so. */
+const wire = (schema: Schema.Top): WireSchema => schema as WireSchema;
+
 export interface Operation {
   /** `<resource>.<verb>`, unique. The CLI's command path and the MCP name. */
   readonly name: string;
@@ -44,11 +50,11 @@ export interface Operation {
   readonly humanOnly: boolean;
   readonly destructive: boolean;
   readonly summary: string | undefined;
-  readonly input: Schema.Top;
+  readonly input: WireSchema;
   /** A stream's item schema, not the stream's. */
-  readonly output: Schema.Top;
+  readonly output: WireSchema;
   /** Everything a call can fail with: the RPC's, its stream's and its middleware's errors. */
-  readonly error: Schema.Top;
+  readonly error: WireSchema;
 }
 
 export interface Exemption {
@@ -144,9 +150,9 @@ const derive = () => {
             rpc: rpcTag,
             command: type,
             stream: undefined,
-            input: commandInput(type),
-            output: rpc.successSchema,
-            error,
+            input: wire(commandInput(type)),
+            output: wire(rpc.successSchema),
+            error: wire(error),
           }),
         );
       }
@@ -162,9 +168,9 @@ const derive = () => {
         stream: isStream
           ? (reach.stream ?? (reach.access === "read" ? "snapshot" : "final"))
           : undefined,
-        input: rpc.payloadSchema,
-        output: isStream ? success.success : success,
-        error,
+        input: wire(rpc.payloadSchema),
+        output: wire(isStream ? success.success : success),
+        error: wire(error),
       }),
     );
   }
@@ -176,6 +182,10 @@ const derived = derive();
 
 export const operations: ReadonlyArray<Operation> = derived.operations;
 export const exemptions: ReadonlyArray<Exemption> = derived.exemptions;
+
+const byName = new Map(operations.map((operation) => [operation.name, operation]));
+
+export const findOperation = (name: string): Operation | undefined => byName.get(name);
 
 type JsonSchemaDocument = ReturnType<typeof Schema.toJsonSchemaDocument>;
 

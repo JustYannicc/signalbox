@@ -51,6 +51,7 @@ export const serveConnection = (input: {
             identity: input.identity,
             userId: input.userId,
             sid: input.sid,
+            scopes: input.scopes,
           }),
           CloudRpc.layerScopeAuthorization(input.scopes),
         ),

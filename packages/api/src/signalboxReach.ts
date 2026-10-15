@@ -109,4 +109,13 @@ export const SIGNALBOX_RPC_REACH = {
   ),
 
   "signalbox.repositories.list": read(),
+
+  "signalbox.keys.list": read({ name: "keys.list", summary: "Your personal keys." }),
+  // An agent never mints a credential for its person.
+  "signalbox.keys.create": write({
+    name: "keys.create",
+    humanOnly: true,
+    summary: "Make a personal key for a script or a computer's harnesses.",
+  }),
+  "signalbox.keys.revoke": write({ name: "keys.revoke", summary: "Revoke a personal key." }),
 } as const satisfies Partial<Record<WsRpcMethod, Reach>>;

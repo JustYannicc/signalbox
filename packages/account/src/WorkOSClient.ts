@@ -82,6 +82,8 @@ export class WorkOSEmailVerificationRequired extends Schema.TaggedError<WorkOSEm
 
 export type WorkOSGrant =
   | { readonly kind: "authorization-code"; readonly code: string; readonly codeVerifier: string }
+  /** A CLI's device code (RFC 8628) the person approved in their browser. */
+  | { readonly kind: "device-code"; readonly deviceCode: string }
   | {
       readonly kind: "email-verification";
       readonly code: string;
@@ -108,18 +110,27 @@ export const classifyEmailVerificationFailure = (
     : "invalid-code";
 };
 
-const grantBody = (grant: WorkOSGrant) =>
-  grant.kind === "authorization-code"
-    ? {
+const grantBody = (grant: WorkOSGrant) => {
+  switch (grant.kind) {
+    case "authorization-code":
+      return {
         grant_type: "authorization_code",
         code: grant.code,
         code_verifier: grant.codeVerifier,
-      }
-    : {
+      };
+    case "device-code":
+      return {
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: grant.deviceCode,
+      };
+    case "email-verification":
+      return {
         grant_type: "urn:workos:oauth:grant-type:email-verification:code",
         code: grant.code,
         pending_authentication_token: Redacted.value(grant.pendingToken),
       };
+  }
+};
 
 const nonEmpty = (value: string | null | undefined) =>
   value === null || value === undefined || value.length === 0 ? undefined : value;
@@ -172,6 +183,62 @@ export const authenticate = Effect.fn("WorkOS.authenticate")(function* (
     ),
   );
   return toUser(user);
+});
+
+const DeviceAuthorizationBody = Schema.Struct({
+  device_code: Schema.String,
+  user_code: Schema.String,
+  verification_uri: Schema.String,
+  verification_uri_complete: Schema.String,
+  expires_in: Schema.Number,
+  interval: Schema.Number,
+});
+
+export interface WorkOSDeviceAuthorization {
+  /** What the CLI polls with. Never shown to the person. */
+  readonly deviceCode: string;
+  /** What the person checks in their browser. */
+  readonly userCode: string;
+  readonly verificationUri: string;
+  readonly verificationUriComplete: string;
+  readonly expiresIn: number;
+  readonly interval: number;
+}
+
+/**
+ * `POST /user_management/authorize/device`: starts WorkOS's CLI Auth
+ * (https://workos.com/docs/authkit/cli-auth). Exchange the device code with
+ * `authenticate` and a `device-code` grant; until the person approves, that
+ * fails with `error: "authorization_pending"` (or `"slow_down"`).
+ */
+export const authorizeDevice = Effect.fn("WorkOS.authorizeDevice")(function* (
+  config: WorkOSConfig,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const response = yield* httpClient
+    .execute(
+      HttpClientRequest.post(new URL("/user_management/authorize/device", config.apiBaseUrl)).pipe(
+        HttpClientRequest.acceptJson,
+        HttpClientRequest.bodyUrlParams({ client_id: config.clientId }),
+      ),
+    )
+    .pipe(Effect.mapError(() => new WorkOSAuthenticateError({})));
+  if (response.status < 200 || response.status >= 300) {
+    return yield* new WorkOSAuthenticateError({ status: response.status });
+  }
+  const body = yield* HttpClientResponse.schemaBodyJson(DeviceAuthorizationBody)(response).pipe(
+    Effect.mapError(
+      () => new WorkOSAuthenticateError({ status: response.status, error: "invalid_response" }),
+    ),
+  );
+  return {
+    deviceCode: body.device_code,
+    userCode: body.user_code,
+    verificationUri: body.verification_uri,
+    verificationUriComplete: body.verification_uri_complete,
+    expiresIn: body.expires_in,
+    interval: body.interval,
+  } satisfies WorkOSDeviceAuthorization;
 });
 
 const toUser = (user: typeof WorkOSUserBody.Type): WorkOSUser => {
