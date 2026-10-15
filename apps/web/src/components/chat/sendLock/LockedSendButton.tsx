@@ -1,8 +1,9 @@
 /**
- * The send button while a draft's sending is locked. It keeps Send's place and
- * shape but shows a padlock, and a click explains the lock and offers Unlock
- * instead of silently doing nothing. Locking itself lives in the `/lock`
- * command, away from Send's hit area, so a click aimed at Send never locks.
+ * The send button while a draft's sending is locked. It keeps Send's place,
+ * shape and hue, muted, with a padlock, and a click explains the lock and
+ * offers Unlock instead of silently doing nothing. Locking itself lives in the
+ * `/lock` command, away from Send's hit area, so a click aimed at Send never
+ * locks.
  */
 import { LockIcon } from "lucide-react";
 
@@ -27,7 +28,7 @@ export function LockedSendButton(props: { onUnlock: () => void }) {
             type="button"
             aria-label={SEND_LOCKED_REASON}
             data-chat-composer-send-locked="true"
-            className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-secondary text-secondary-foreground outline-none transition-colors duration-150 hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-secondary/80 sm:size-8 [&_svg]:pointer-events-none"
+            className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-message-action/12 text-message-action outline-none ring-1 ring-message-action/30 ring-inset transition-colors duration-150 hover:bg-message-action/20 focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-message-action/20 sm:size-8 [&_svg]:pointer-events-none"
           />
         }
       >
