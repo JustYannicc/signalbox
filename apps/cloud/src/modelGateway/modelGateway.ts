@@ -210,6 +210,7 @@ export async function handleModelRequest(
     return errorResponse(provider, 502, `The pool is unavailable: ${reply.reason}`);
   }
   const { response } = reply;
+  const moved = reply.accountMoved === undefined ? {} : { accountMoved: reply.accountMoved };
   const headersMs = deps.now() - startedAt;
   const upstreamHeadersMs = headersMs - authMs;
   // Everything before the pool's CLIProxyAPI answered that it did not spend itself:
@@ -219,7 +220,7 @@ export async function handleModelRequest(
   for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name);
   const init = { status: response.status, statusText: response.statusText, headers };
   if (response.body === null) {
-    record({ status: response.status, ...grant, authMs, upstreamHeadersMs, addedMs });
+    record({ status: response.status, ...grant, ...moved, authMs, upstreamHeadersMs, addedMs });
     return new Response(null, init);
   }
 
@@ -240,6 +241,7 @@ export async function handleModelRequest(
     record({
       status: response.status,
       ...grant,
+      ...moved,
       authMs,
       upstreamHeadersMs,
       firstChunkMs,

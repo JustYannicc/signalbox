@@ -205,7 +205,9 @@ two places refreshing the same account sign each other out.
 
 In Signalbox Cloud, a pool's admins choose how it spreads turns under **Load balancing** in the
 pool's menu: each account in turn (the default), or one account until it runs out. **Keep each thread on one account** (on by default) keeps cached prompts valid; a thread
-then moves to another account only when its own fails, on quota or sign-in errors or on any error.
+then moves to another account only when its own fails, on quota or sign-in errors or on any error,
+or is paused or removed. The thread says so when it moves, since its next reply starts without the
+cached prompt.
 Each choice applies to the pool right away. A pool that runs on your own CLIProxyAPI uses that
 CLIProxyAPI's routing settings.
 
