@@ -79,6 +79,13 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
           pools.addApiKey(input).pipe(Effect.mapError(hubFailure)),
         [WS_METHODS.accountPoolSetOpenCode]: (input) =>
           pools.setOpenCode(input).pipe(Effect.mapError(hubFailure)),
+        // Self-hosted hubs keep the routing their config file sets.
+        [WS_METHODS.accountPoolSetRouting]: () =>
+          Effect.fail(
+            new AccountHubRpcError({
+              detail: "Only Signalbox Cloud pools can change load balancing.",
+            }),
+          ),
         [WS_METHODS.accountPoolMoveNativeLogins]: (input) =>
           pools.moveNativeLogins(input).pipe(Effect.mapError(hubFailure)),
         [WS_METHODS.accountPoolMoveToCloud]: (input) =>

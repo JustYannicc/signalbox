@@ -42,6 +42,7 @@ export const makePoolObjectApi = (
     create: (actor, input) => reply((engine) => engine.create(actor, input)),
     info: (actor) => reply((engine) => engine.info(actor)),
     rename: (actor, name) => reply((engine) => engine.rename(actor, name)),
+    setRouting: (actor, change) => reply((engine) => engine.setRouting(actor, change)),
     setBacking: (actor, backing) => reply((engine) => engine.setBacking(actor, backing)),
     delete: async (actor) => {
       const result = await reply((engine) => done(engine.prepareDelete(actor)));

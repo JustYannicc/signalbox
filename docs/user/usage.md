@@ -203,6 +203,12 @@ To bring accounts from a CLIProxyAPI you run into a pool, choose **Import from C
 pool's menu. Leave **Remove them from that CLIProxyAPI** on unless you stop using that instance:
 two places refreshing the same account sign each other out.
 
+In Signalbox Cloud, a pool's admins choose how it spreads turns under **Load balancing** in the
+pool's menu: each account in turn (the default), or one account until it runs out. **Keep each thread on one account** (on by default) keeps cached prompts valid; a thread
+then moves to another account only when its own fails, on quota or sign-in errors or on any error.
+Each choice applies to the pool right away. A pool that runs on your own CLIProxyAPI uses that
+CLIProxyAPI's routing settings.
+
 Deleting a pool removes its providers from the model picker. In Signalbox Cloud, folders that ran on
 it move to the pool above them; on your own server, threads on it stop working. The
 accounts Signalbox keeps for it are removed; a pool that keeps its logins in your CLIProxyAPI leaves

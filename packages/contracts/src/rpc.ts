@@ -13,6 +13,7 @@ import {
   AccountPoolMoveNativeLoginsInput,
   AccountPoolMoveNativeLoginsResult,
   AccountPoolSetOpenCodeInput,
+  AccountPoolSetRoutingInput,
   AccountPoolReceiveInput,
   AccountPoolReceiveResult,
   AccountPoolMoveToCloudInput,
@@ -454,6 +455,7 @@ export const WS_METHODS = {
   accountPoolAddApiKey: "accountPool.addApiKey",
   accountPoolMoveNativeLogins: "accountPool.moveNativeLogins",
   accountPoolSetOpenCode: "accountPool.setOpenCode",
+  accountPoolSetRouting: "accountPool.setRouting",
   accountPoolReceive: "accountPool.receive",
   accountPoolMoveToCloud: "accountPool.moveToCloud",
   providerAuthComplete: "provider.auth.complete",
@@ -751,6 +753,11 @@ const WsAccountPoolAddApiKeyRpc = Rpc.make(WS_METHODS.accountPoolAddApiKey, {
   payload: AccountPoolAddApiKeyInput,
   error: AccountPoolRpcFailure,
 });
+const WsAccountPoolSetRoutingRpc = Rpc.make(WS_METHODS.accountPoolSetRouting, {
+  payload: AccountPoolSetRoutingInput,
+  success: AccountPool,
+  error: AccountPoolRpcFailure,
+});
 const WsAccountPoolSetOpenCodeRpc = Rpc.make(WS_METHODS.accountPoolSetOpenCode, {
   payload: AccountPoolSetOpenCodeInput,
   error: AccountPoolRpcFailure,
@@ -787,6 +794,7 @@ const ACCOUNT_POOL_RPCS = [
   WsAccountPoolAddApiKeyRpc,
   WsAccountPoolMoveNativeLoginsRpc,
   WsAccountPoolSetOpenCodeRpc,
+  WsAccountPoolSetRoutingRpc,
   WsAccountPoolReceiveRpc,
   WsAccountPoolMoveToCloudRpc,
 ] as const;
