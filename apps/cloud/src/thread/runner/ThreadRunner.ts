@@ -31,6 +31,8 @@ import { traceIdOf } from "../diagnostics/traceId.ts";
 import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
+import { holdsNativeSession } from "../session/nativeSession.ts";
+import { SessionRows } from "../session/SessionRows.ts";
 import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import { applyEvents } from "../threadProjection.ts";
@@ -40,6 +42,7 @@ import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend } from "./MachineBackend.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
+import { freshSessionTurn } from "./freshSession.ts";
 import { recoverRunEvents } from "./runRecovery.ts";
 import {
   failRunEvents,
@@ -352,6 +355,7 @@ const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
   const store = yield* ThreadStore.ThreadStore;
+  const sessionRows = yield* SessionRows;
   const crypto = yield* Crypto.Crypto;
   const backends = yield* MachineBackend;
   const classOf = (lease: ThreadStore.MachineLease): MachineClass => lease.machineClass ?? "heavy";
@@ -672,9 +676,26 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * The turn to hand the Runner, on a new harness session when there is none
+   * to resume: no session ref, or one the store never got a row of (#465).
+   * When the store can't be read, the turn resumes as the thread says.
+   */
+  const turnFor = (projection: OrchestrationV2ThreadProjection) =>
+    Effect.gen(function* () {
+      const turn = runnerTurnFor(projection);
+      if (turn === null) return null;
+      const held = yield* holdsNativeSession(sessionRows, turn.providerThread).pipe(
+        Effect.catch((error) =>
+          Effect.as(Effect.logWarning("reading the harness session failed", { error }), true),
+        ),
+      );
+      return held ? turn : freshSessionTurn(projection, turn);
+    });
+
   const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }) =>
     Effect.gen(function* () {
-      const untraced = projection === null ? null : runnerTurnFor(projection);
+      const untraced = projection === null ? null : yield* turnFor(projection);
       const turn =
         untraced === null
           ? null

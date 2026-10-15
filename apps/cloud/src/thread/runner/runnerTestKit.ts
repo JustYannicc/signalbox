@@ -8,6 +8,7 @@ import {
   RUNNER_PROTOCOL_VERSION,
   type RunnerItem,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import { CLAUDE_STREAM_PREFIX } from "@signalbox/runner-protocol/SessionProtocol";
 import {
   CommandId,
   MessageId,
@@ -33,6 +34,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { layerThreadObject } from "../../testing.ts";
+import * as SessionRows from "../session/SessionRows.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
 import * as ThreadRunner from "./ThreadRunner.ts";
 
@@ -127,6 +129,33 @@ export const launch = (
     },
     creation,
   );
+
+/** The user sends message `n` of the thread, to start right away. */
+export const send = (engine: ThreadEngine.ThreadEngine["Service"], n: number, text: string) =>
+  engine.dispatch(
+    owner,
+    {
+      type: "message.dispatch",
+      commandId: CommandId.make(`send-${n}`),
+      createdBy: "user",
+      creationSource: "web",
+      threadId,
+      messageId: MessageId.make(`message-${n}`),
+      text,
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      deliveryIntent: "auto",
+    },
+    personal,
+  );
+
+/** Stores a row of Claude's session `nativeId`, as a machine's session store does. */
+export const saveSession = (context: Context.Context<SessionRows.SessionRows>, nativeId: string) =>
+  Context.get(context, SessionRows.SessionRows).append({
+    stream: `${CLAUDE_STREAM_PREFIX}${nativeId}`,
+    offset: 0,
+    rows: [JSON.stringify({ type: "user", uuid: "row-1" })],
+  });
 
 export const hello = (generation: number, token: string) => ({
   type: "hello" as const,

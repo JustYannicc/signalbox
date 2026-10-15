@@ -6,57 +6,13 @@ import {
 import * as Base64Url from "effect/encoding/Base64Url";
 
 /**
- * Pure pieces of mobile account sign-in: which server, where WorkOS sends the
- * user back, PKCE, and what to say when it fails. The hook in
+ * Pure pieces of mobile account sign-in: where WorkOS sends the user back,
+ * PKCE, and what to say when it fails. The hook in
  * useAccountSignIn.ts owns the side effects.
  */
 
 /** Path of the deep link the server hands off to after native sign-in. */
 export const ACCOUNT_RETURN_PATH = "account-return";
-
-function isLocalHost(hostname: string): boolean {
-  const bare = hostname.replace(/^\[|\]$/g, "");
-  if (bare === "localhost" || bare.includes(":")) return true;
-  const octets = bare.split(".");
-  return (
-    octets.length === 4 && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
-  );
-}
-
-/**
- * Turns what someone typed ("box.example.com", "192.168.1.5:3773/",
- * "https://x.ts.net/anything") into the origin the account routes hang off. Bare
- * IPs and localhost default to http, everything else to https, matching how
- * pairing fills in a schemeless host. Returns null when it isn't a usable
- * http(s) address.
- */
-export function normalizeServerUrl(input: string | undefined | null): string | null {
-  const trimmed = input?.trim() ?? "";
-  if (!trimmed) return null;
-  try {
-    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
-    const probe = new URL(hasScheme ? trimmed : `http://${trimmed}`);
-    const url = hasScheme
-      ? probe
-      : new URL(`${isLocalHost(probe.hostname) ? "http" : "https"}://${trimmed}`);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    if (!url.hostname || url.username || url.password) return null;
-    // The server only accepts a bare origin (it builds its own redirect URIs
-    // from it), so a pasted path or a pairing link's hash is dropped.
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
-
-/** Host shown under the headline, e.g. "box.example.com". */
-export function serverDisplayHost(serverUrl: string): string {
-  try {
-    return new URL(serverUrl).host;
-  } catch {
-    return serverUrl;
-  }
-}
 
 /**
  * The deep link WorkOS returns through, built from the app's own scheme

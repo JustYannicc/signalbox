@@ -55,11 +55,6 @@ export function useAutomationLists(): ReadonlyArray<EnvironmentAutomations> {
   }, [environments, lists]);
 }
 
-/** How many automations wait on an answer; a number, so badges only redraw when it changes. */
-export function useWaitingAutomationCount(): number {
-  return useAtomValue(automationState.waitingCount(listKey(useAutomationEnvironments())));
-}
-
 /** Automations with questions waiting on you, with their longest-waiting question, oldest first. */
 export function waitingAutomations(lists: ReadonlyArray<EnvironmentAutomations>) {
   return lists

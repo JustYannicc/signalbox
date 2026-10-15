@@ -7,7 +7,14 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
-import { fakeThreads, PROJECT, saveOk, withEngine } from "./WorkflowEngine.testkit.ts";
+import {
+  fakeThreads,
+  PROJECT,
+  pullRequestLink,
+  pullRequestLinkUpdated,
+  saveOk,
+  withEngine,
+} from "./WorkflowEngine.testkit.ts";
 
 const AT = DateTime.makeUnsafe("2026-10-06T10:00:00.000Z");
 let sequence = 0;
@@ -111,6 +118,76 @@ it.effect("a finished turn starts each automation listening for it, once per tur
       yield* engine.drain;
       expect(yield* runsOf(failures.id)).toHaveLength(1);
       expect(yield* runsOf(finished.id)).toHaveLength(2);
+    }),
+  );
+});
+
+it.effect("a pull request's periodic sync starts pr.* automations, like a full sync", () => {
+  const threads = fakeThreads();
+  // The projection already holds the link; the sync event carries only the updated link.
+  threads.state.shells["thread-9"] = {
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-6-astra" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    pullRequests: [pullRequestLink({ state: "open" })],
+  };
+  threads.state.shells["thread-other"] = {
+    ...threads.state.shells["thread-9"],
+    projectId: "project-other",
+  };
+  return withEngine(
+    { threads },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const merged = yield* saveOk(automation("On merge", `[{ on: "pr.merged" }]`));
+      const green = yield* saveOk(automation("On green", `[{ on: "pr.checks.passed" }]`));
+      const updated = yield* saveOk(automation("On update", `[{ on: "pr.updated" }]`));
+
+      yield* threads.emit(
+        pullRequestLinkUpdated("thread-9", { state: "open", checksState: "pending" }),
+      );
+      yield* threads.emit(
+        pullRequestLinkUpdated("thread-9", { state: "open", checksState: "passing" }),
+      );
+      yield* threads.emit(
+        pullRequestLinkUpdated("thread-9", { state: "merged", checksState: "passing" }),
+      );
+      // Another project's merge isn't this project's business.
+      yield* threads.emit(pullRequestLinkUpdated("thread-other", { state: "merged" }));
+      // Seen again on the next poll: a merge happens once.
+      yield* threads.emit(
+        pullRequestLinkUpdated("thread-9", { state: "merged", checksState: "passing" }),
+      );
+      yield* engine.drain;
+
+      const [mergeRun, ...extraMerges] = yield* runsOf(merged.id);
+      expect(extraMerges).toEqual([]);
+      expect((yield* engine.getRun(mergeRun!.id)).input).toMatchObject({
+        event: "pr.merged",
+        id: "pr.merged:thread-9:github.com/acme/app#12",
+        projectId: PROJECT,
+        threadId: "thread-9",
+        repository: "acme/app",
+        number: 12,
+        url: "https://github.com/acme/app/pull/12",
+        state: "merged",
+        checksState: "passing",
+      });
+      expect(yield* runsOf(green.id)).toHaveLength(1);
+      const updates = yield* runsOf(updated.id);
+      expect(updates).toHaveLength(4);
+      const states = yield* Effect.forEach(updates, (run) =>
+        engine.getRun(run.id).pipe(Effect.map((detail) => detail.input)),
+      );
+      // Each update carries the thread's pull requests with this sync's link folded in.
+      expect(states).toContainEqual(
+        expect.objectContaining({
+          event: "pr.updated",
+          projectId: PROJECT,
+          pullRequests: [expect.objectContaining({ number: 12, state: "merged", source: "agent" })],
+        }),
+      );
     }),
   );
 });

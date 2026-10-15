@@ -107,7 +107,8 @@ export const makeUserObjectApi = (
       run(ConnectionLinks.ConnectionLinks.use((links) => links.revoke(id))),
     linkedConnections: (secret) => run(linkedConnections(secret)),
     linkedToken: (input) => run(linkedToken(input)),
-    createLocalKey: (label) => run(LocalKeys.LocalKeys.use((keys) => keys.create(label))),
+    createLocalKey: (label, options) =>
+      run(LocalKeys.LocalKeys.use((keys) => keys.create(label, options))),
     localKeys: () => run(localKeysView),
     revokeLocalKey: (id) => run(LocalKeys.LocalKeys.use((keys) => keys.revoke(id))),
     authorizeLocalModel: (secret) => run(authorizeLocalModel(secret)),

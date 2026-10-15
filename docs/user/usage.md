@@ -136,7 +136,10 @@ the pool's logins of the same provider: an Anthropic key and a Claude subscripti
 take Claude conversations. Keys never report usage limits, and their menu only offers **Remove**.
 
 In Signalbox Cloud, pools take Claude and ChatGPT sign-ins for now. API keys, imported accounts,
-Cursor and OpenCode come later, and Limits lists each account without its usage bars.
+Cursor and OpenCode come later. Limits shows each account's windows from its latest request, or
+checks with the provider at most every ten minutes while the pool is running. A pool that's asleep
+shows what it last read. The pool's admins see each account; members see only how much the pool
+has left and when it next resets.
 
 In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
 cannot load; copy that page's full address and paste it into Signalbox to finish.
@@ -224,6 +227,10 @@ In Signalbox on the web, open **Settings → Pools**, choose **Set up a computer
 it shows in a terminal there (it needs Node.js 22 or later). The command checks the key with your
 pool before it changes anything, then points both harnesses at Signalbox; their own settings stay as
 they were otherwise. Run the same command with `--undo` in place of the key to go back.
+
+Where Signalbox offers connectors, setup also adds them to both harnesses as the MCP server
+`signalbox`. Sign in to it once in each: in Claude Code run `/mcp`, choose `signalbox` and
+Authenticate; for Codex run `codex mcp login signalbox`.
 
 Each harness stays signed in to its own account, so going back needs no new sign-in. Codex needs to
 be signed in once (with ChatGPT or an API key) before it uses the pool. The Claude desktop app isn't

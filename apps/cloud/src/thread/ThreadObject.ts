@@ -18,6 +18,11 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
+import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
+import {
+  isRunnerAttachmentsPath,
+  serveRunnerAttachments,
+} from "../attachments/runnerAttachments.ts";
 import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
@@ -87,7 +92,9 @@ export interface ThreadObjectEnv
   readonly SCRIPTED_PROVIDER?: string;
   /** Drives' objects and packs (`drive/`). Turns work in a drive only when both are bound. */
   readonly DRIVES?: DriveObjectNamespace;
-  readonly DRIVE_PACKS?: PackBucket;
+  /** Also where the thread's attachments live (`attachments/`), under `DRIVE_PACKS_PREFIX`. */
+  readonly DRIVE_PACKS?: PackBucket & AttachmentObjects;
+  readonly DRIVE_PACKS_PREFIX?: string;
 }
 
 /** Time between streamed chunks of a scripted reply. */
@@ -354,13 +361,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   /**
    * HTTP into the object, all routed by the Worker: requests to the thread's
    * preview origins, the Runner's preview tunnel, its session API
-   * (`session/sessionRoutes.ts`), and the Runner's socket.
+   * (`session/sessionRoutes.ts`) and attachments (`attachments/runnerAttachments.ts`),
+   * and the Runner's socket.
    */
   override async fetch(request: Request) {
     const preview = this.gateway.serve(request);
     if (preview !== null) return preview;
     const { pathname } = new URL(request.url);
     if (pathname === PREVIEW_TUNNEL_PATH) return this.gateway.acceptTunnel();
+    if (isRunnerAttachmentsPath(pathname)) {
+      return this.runtime.runPromise(serveRunnerAttachments(request, attachmentStorage(this.env)));
+    }
     if (isSessionApiPath(pathname)) {
       return handleSessionRequest(request, (effect) => this.runtime.runPromise(effect));
     }

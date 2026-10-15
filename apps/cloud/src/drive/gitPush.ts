@@ -212,6 +212,11 @@ export const packForPush = Effect.fn("gitPush.packForPush")(function* (input: {
   }
 
   const located = yield* drive.locate([...objects.keys()]);
+  // Files the remote keeps for the drive (#406) are on the remote already: they never travel.
+  const stored = new Set(located.map((found) => found.oid));
+  for (const file of yield* drive.promised([...objects.keys()].filter((oid) => !stored.has(oid)))) {
+    objects.delete(file.oid);
+  }
   const total = located.reduce((sum, location) => sum + location.size, 0);
   if (total > MAX_PUSH_BYTES) {
     return yield* new PushRefused({

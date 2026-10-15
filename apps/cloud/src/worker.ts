@@ -6,8 +6,9 @@ import * as Schema from "effect/Schema";
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
 import { isPoolLinkPath, routePoolLink } from "./pool/poolLink.ts";
 import type { PoolObjectEnv } from "./pool/PoolObject.ts";
-import { labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
+import { isPreviewHost, labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
 import { routePreview } from "./thread/preview/previewRoute.ts";
+import { attachmentStorage } from "./attachments/attachmentObjects.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
 import { ModelGatewayRecord } from "./modelGateway/modelGatewayRecord.ts";
 import { reportModelRequest, serveModel } from "./thread/runner/modelGrants.ts";
@@ -21,6 +22,7 @@ import {
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 import type { AutomationWorkflowEnv } from "./automations/automationWorkflow.ts";
+import { isApiPath } from "./api/apiPaths.ts";
 
 export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
 export { PreviewLinkRegistry } from "./pool/PreviewLinkRegistryDO.ts";
@@ -62,6 +64,7 @@ const appFor = (env: CloudEnv) => {
       users: env.USERS,
       threads: env.THREADS,
       localWorkerd: env.LOCAL_WORKERD === "1",
+      attachments: attachmentStorage(env),
     }),
   );
   return app;
@@ -78,8 +81,10 @@ export default {
     }
     // A preview origin serves the thread's dev server and nothing of the app.
     const previews = previewSettings(env);
-    if (previews !== null && labelOfHost(previews, hostname) !== null) {
-      return routePreview(env.THREADS, request, { localWorkerd });
+    if (previews !== null && isPreviewHost(previews, hostname)) {
+      return labelOfHost(previews, hostname) === null
+        ? new Response("Not found", { status: 404 })
+        : routePreview(env.THREADS, request, { localWorkerd });
     }
     const app = appFor(env);
     if (pathname === "/ws") return app.webSocket(request);
@@ -98,6 +103,7 @@ export default {
             { localWorkerd },
           );
     }
+    if (isApiPath(pathname)) return app.api(request);
     if (isDevProxiedPath(pathname)) return app.http(request);
     return env.ASSETS.fetch(request);
   },

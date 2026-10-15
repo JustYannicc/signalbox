@@ -28,7 +28,8 @@ export const isSessionApiPath = (pathname: string) => pathname.startsWith(`${SES
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 
-const bearer = (request: Request) => {
+/** The bearer token a Runner's request carries, or "". */
+export const bearer = (request: Request) => {
   const header = request.headers.get("authorization") ?? "";
   return header.startsWith("Bearer ") ? header.slice(7) : "";
 };

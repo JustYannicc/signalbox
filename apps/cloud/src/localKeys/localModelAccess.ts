@@ -43,7 +43,7 @@ export const authorizeLocalModel = (secret: string) =>
     const keyId = yield* (yield* LocalKeys).check(secret);
     if (keyId === null) {
       return denied(
-        "This Signalbox key was revoked. Set this computer up again in Settings › Pools.",
+        "This Signalbox key was revoked or isn't one for harnesses. Set this computer up again in Settings › Pools.",
       );
     }
     const profile = yield* (yield* UserStore).profile;

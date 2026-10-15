@@ -16,6 +16,7 @@ import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import * as DesktopThinClient from "../signalbox/DesktopThinClient.ts"; // signalbox: thin cloud build
 import type { OtlpProtocol } from "@t3tools/shared/observability";
 
 export interface MakeDesktopEnvironmentInput {
@@ -28,6 +29,9 @@ export interface MakeDesktopEnvironmentInput {
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
   readonly runningUnderArm64Translation: boolean;
+  // signalbox: whether a packaged build ships the local server (see DesktopThinClient).
+  // Omitted means it does.
+  readonly probeLocalServer?: (backendEntryPath: string) => boolean;
 }
 
 export class DesktopEnvironment extends Context.Service<
@@ -62,6 +66,8 @@ export class DesktopEnvironment extends Context.Service<
     // extracts on demand (see DesktopWslServerTree).
     readonly serverRoot: string;
     readonly backendEntryPath: string;
+    // signalbox: false in the thin cloud build, which has no local server to start.
+    readonly localServerBundled: boolean;
     // Built web client the packaged renderer is served from over signalbox://app.
     readonly clientAssetsDir: string;
     readonly backendCwd: string;
@@ -175,6 +181,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
     input.isPackaged && input.platform === "win32"
       ? path.join(input.resourcesPath, "server.asar")
       : appRoot;
+  const backendEntryPath = path.join(serverRoot, "apps/server/dist/bin.mjs");
+  const localServerBundled =
+    !input.isPackaged || (input.probeLocalServer?.(backendEntryPath) ?? true);
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
@@ -215,8 +224,13 @@ const make = Effect.fn("desktop.environment.make")(function* (
     rootDir,
     appRoot,
     serverRoot,
-    backendEntryPath: path.join(serverRoot, "apps/server/dist/bin.mjs"),
-    clientAssetsDir: path.join(serverRoot, "apps/server/dist/client"),
+    backendEntryPath,
+    localServerBundled,
+    // The thin build has no Windows server.asar sidecar, so its client ships in app.asar.
+    clientAssetsDir: path.join(
+      localServerBundled ? serverRoot : appRoot,
+      "apps/server/dist/client",
+    ),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),
@@ -242,7 +256,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     linuxWmClass: isDevelopment ? "signalbox-dev" : "signalbox",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
-    defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
+    defaultDesktopSettings: DesktopThinClient.withLocalServerAvailability(
+      DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
+      localServerBundled,
+    ),
     runtimeInfo: resolveDesktopRuntimeInfo({
       platform: input.platform,
       processArch: input.processArch,

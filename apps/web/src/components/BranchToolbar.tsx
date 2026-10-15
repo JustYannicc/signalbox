@@ -3,7 +3,7 @@ import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { readWorkspacePathLocation } from "./workspacePathLocation";
-import { useEnvironmentSupports } from "../state/environmentCapabilities";
+import { useEnvironmentSupports, useShowsEnvironmentUi } from "../state/environmentCapabilities";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
@@ -727,10 +727,13 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: showEnvironmentPicker,
-  });
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
+  const showEnvironmentIndicator =
+    showsEnvironmentUi &&
+    shouldShowEnvironmentIndicator({
+      activeEnvironment: activeEnvironmentOption,
+      canPickEnvironment: showEnvironmentPicker,
+    });
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
 
@@ -751,7 +754,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             environmentId={environmentId}
             availableEnvironments={availableEnvironments}
             showEnvironmentPicker={showEnvironmentPicker}
-            showEnvironmentIndicator={activeEnvironmentOption !== null}
+            showEnvironmentIndicator={showsEnvironmentUi && activeEnvironmentOption !== null}
             onEnvironmentChange={onEnvironmentChange}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}

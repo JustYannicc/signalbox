@@ -16,6 +16,8 @@ import * as CloudAssets from "../assets/CloudAssets.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
+import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
+import * as CloudAttachments from "../attachments/CloudAttachments.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
@@ -25,6 +27,7 @@ import * as GitHub from "../github/GitHub.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
+import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -77,7 +80,8 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.Git
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
    */
   readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
-  readonly DRIVE_PACKS?: DrivePacks.PackBucket;
+  /** Also where pasted screenshots and files live (`attachments/`). */
+  readonly DRIVE_PACKS?: DrivePacks.PackBucket & AttachmentObjects;
   readonly DRIVE_PACKS_PREFIX?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
@@ -160,12 +164,20 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               CloudThreadService.layer,
               PoolSignIns.layer,
               drives.services,
-              GitHubConnection.layer,
               ConnectionLinks.layer,
               LocalKeys.layer,
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
+          // Below the drive services: the files panel reads promised files with it (#406).
+          Layer.provideMerge(GitHubConnection.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ThreadContexts.layer,
+              UserPools.layer,
+              // Pasted screenshots and files, signed with the same keys as asset URLs.
+              CloudAttachments.layer(attachmentStorage(env)),
+            ),
+          ),
           Layer.provideMerge(
             PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
               Layer.provide(
@@ -238,6 +250,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       // Only machines run dev servers.
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
+      attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     // Then automations give cut-off launches their instance and set the alarm for the next cron.
@@ -307,10 +320,6 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.recordThreadSummary(summary);
   }
 
-  threadEvents(input: Parameters<UserObjectApi["threadEvents"]>[0]) {
-    return this.api.threadEvents(input);
-  }
-
   rebuildThreadIndex() {
     return this.api.rebuildThreadIndex();
   }
@@ -355,8 +364,8 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.linkedToken(input);
   }
 
-  createLocalKey(label: string) {
-    return this.api.createLocalKey(label);
+  createLocalKey(label: string, options?: LocalKeys.KeyOptions) {
+    return this.api.createLocalKey(label, options);
   }
 
   localKeys() {
@@ -415,6 +424,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.publishBranch(input);
   }
 
+  threadEvents(input: Parameters<UserObjectApi["threadEvents"]>[0]) {
+    return this.api.threadEvents(input);
+  }
+
   automationTool(threadId: string, name: string, input: unknown) {
     return this.api.automationTool(threadId, name, input);
   }
@@ -428,6 +441,18 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   override async fetch(request: Request): Promise<Response> {
+    const apiCredential = decodeApiCredential(request.headers.get(API_HEADER));
+    if (apiCredential._tag === "Some") {
+      const profile = await this.profile();
+      if (!profile) return new Response("Unauthorized", { status: 401 });
+      return this.runtime.runPromise(
+        serveApiRequest(request, {
+          identity: this.identity,
+          userId: profile.id,
+          credential: apiCredential.value,
+        }),
+      );
+    }
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
     }

@@ -15,8 +15,12 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import { serveApiRequest } from "./api/apiObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
+import type { AttachmentObjects } from "./attachments/attachmentObjects.ts";
+import { makeMemoryObjects } from "./attachments/attachmentTesting.ts";
+import * as CloudAttachments from "./attachments/CloudAttachments.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -86,10 +90,21 @@ export const CLOUD_TEST_ENV = {
   SESSION_SECRET: "test-session-secret-0123456789abcdef",
 } as const;
 
+/** The environment the in-memory cloud's API calls act in. */
+const API_TEST_IDENTITY = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
+
 /** Fresh per call: Effect shares a layer built once, which would pin the first env. */
 export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_ENV) =>
   Layer.mergeAll(Layer.fresh(CloudConfig.layer), Layer.fresh(PreviewSetup.layerConfig)).pipe(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
+
+/** Attachments over `objects`, with links signed by the test config. */
+export const layerAttachments = (objects: AttachmentObjects) =>
+  CloudAttachments.layer({ objects, prefix: "" }).pipe(
+    Layer.provide(CloudTokens.layer),
+    Layer.provide(Layer.mergeAll(layerConfig(), Platform.layerCrypto)),
+    Layer.orDie,
   );
 
 /** A user object's storage services on a fresh in-memory database, migrated. */
@@ -228,6 +243,7 @@ const makeUserRuntime = (
   drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
   people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
+  attachments: Layer.Layer<CloudAttachments.CloudAttachments>,
   observe: Layer.Layer<never>,
   alarm: Layer.Layer<CloudAutomations.AutomationAlarm>,
   runner: Layer.Layer<AutomationRunner>,
@@ -254,7 +270,9 @@ const makeUserRuntime = (
               CloudThreadService.layer,
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto)),
+          Layer.provideMerge(
+            Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto, attachments),
+          ),
           // No push credentials, so phones are recorded and every push is skipped.
           Layer.provideMerge(
             PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
@@ -330,6 +348,13 @@ export const makeMemoryCloud = (
   const userDirectory: UserDirectory.UserDirectory["Service"] = {
     forUser: (userId) => UserDirectory.handleFor(userFor(userId).api),
     connect: () => Effect.die("Sockets are not part of these tests"),
+    // The object's own API handler, against its in-memory services.
+    callApi: (userId, request, credential) =>
+      Effect.promise(() =>
+        userFor(userId).runtime.runPromise(
+          serveApiRequest(request, { identity: API_TEST_IDENTITY, userId, credential }),
+        ),
+      ),
   };
   const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
     forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),
@@ -337,6 +362,8 @@ export const makeMemoryCloud = (
   const pools = makeMemoryPools(options.poolFetch);
   const drives = makeMemoryDrives({ users: () => userDirectory });
   const people = layerTestPeople(options.people ?? []);
+  const attachmentObjects = makeMemoryObjects();
+  const attachments = layerAttachments(attachmentObjects);
   /** When each user object's alarm would fire next, as its automations armed it. */
   const alarms = new Map<string, number>();
   /** Every user's automation runs, as Workflow instances of the real runtime. */
@@ -351,6 +378,7 @@ export const makeMemoryCloud = (
       drives.layer,
       people,
       options.github ?? layerNoGitHub,
+      attachments,
       options.observe ?? Layer.empty,
       layerRecordedAlarm(alarms, userId),
       workflows.layerFor(userId),
@@ -415,6 +443,7 @@ export const makeMemoryCloud = (
       Layer.mergeAll(
         Layer.succeed(UserDirectory.UserDirectory, userDirectory),
         Layer.succeed(ThreadDirectory.ThreadDirectory, threadDirectory),
+        attachments,
       ),
     ),
     Layer.provideMerge(Platform.layerCrypto),
@@ -470,6 +499,8 @@ export const makeMemoryCloud = (
     pools,
     /** The drives' objects and packs, shared by every user and thread here. */
     drives,
+    /** The attachments bucket, shared by every user and thread here. */
+    attachmentObjects,
     /** Who owns a thread, and the context and drive it was created in. */
     threadOwner: (threadId: string) =>
       Effect.promise(() =>

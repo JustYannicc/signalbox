@@ -4,6 +4,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { MaterialThreadListToolbar } from "./MaterialThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 import { SectionNavigationToggle } from "../sections/SectionNavigationToggle";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { withoutEnvironmentFilter } from "./environmentFilter"; // signalbox
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -17,7 +19,7 @@ export function HomeHeader(props: HomeHeaderProps) {
   // keys off those alone.
   const hasCustomListOptions =
     props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
-  const menuActions = useMemo<MenuAction[]>(
+  const allMenuActions = useMemo<MenuAction[]>(
     () => [
       {
         id: "environment",
@@ -57,6 +59,12 @@ export function HomeHeader(props: HomeHeaderProps) {
           ] satisfies MenuAction[])),
     ],
     [props.environments, props.projects, props.selectedEnvironmentId, props.selectedProjectKey],
+  );
+  // signalbox: one environment needs no environment filter.
+  const showsEnvironments = useShowsEnvironmentUi();
+  const menuActions = useMemo(
+    () => withoutEnvironmentFilter(allMenuActions, showsEnvironments),
+    [allMenuActions, showsEnvironments],
   );
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {

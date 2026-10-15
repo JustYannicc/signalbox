@@ -3,7 +3,12 @@ import type { OrchestrationV2TurnItem, RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
+import * as Schema from "effect/Schema";
+
 import type { DriveOutcome, RunnerDrive } from "./RunnerDrive.ts";
+import { DriveTooLargeError } from "./RunnerDriveClient.ts";
+
+const isTooLarge = Schema.is(DriveTooLargeError);
 
 /**
  * How a turn that works in a drive ends (#131): its files are committed and
@@ -80,13 +85,19 @@ export const finishDriveTurn = (input: {
       );
     }
   }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logError("saving the turn's files failed", Cause.pretty(cause)).pipe(
+    Effect.catchCause((cause) => {
+      const error = Cause.squash(cause);
+      return Effect.logError("saving the turn's files failed", Cause.pretty(cause)).pipe(
         Effect.andThen(
           input.emit(
-            notice(input.runId, "Saving this turn's files failed; the last auto-save is kept."),
+            notice(
+              input.runId,
+              isTooLarge(error)
+                ? `Saving this turn's files failed: ${error.message}`
+                : "Saving this turn's files failed; the last auto-save is kept.",
+            ),
           ),
         ),
-      ),
-    ),
+      );
+    }),
   );
