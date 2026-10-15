@@ -1,6 +1,6 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import { FolderId } from "@t3tools/contracts/signalboxFolders";
+import { FolderId, OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -9,6 +9,7 @@ import {
   instructionsOf,
   isWithin,
   poolResolver,
+  secretsOf,
   type Tree,
   type TreeFolder,
   withSoundParents,
@@ -29,6 +30,7 @@ const folder = (
   position: 0,
   driveId: null,
   instructions: null,
+  secrets: null,
   ...extra,
 });
 
@@ -41,6 +43,7 @@ const tree = (overrides: Partial<Tree> = {}): Tree => ({
     folder("Payments", null, { ownerId: ACME }),
   ],
   topInstructions: "Be brief.",
+  topSecrets: null,
   bindings: [
     { level: { _tag: "top" }, poolId: "personal", reach: "below" },
     { level: { _tag: "folder", folderId: id("work") }, poolId: "work", reach: "below" },
@@ -97,6 +100,21 @@ describe("folderTree", () => {
     ]);
     expect(instructionsOf(tree(), null)).toEqual([{ label: "Top level", text: "Be brief." }]);
     expect(instructionsOf(tree({ topInstructions: null }), id("payments"))).toEqual([]);
+  });
+
+  it("gives a home every 1Password Environment up its chain, the top level first", () => {
+    const env = OnePasswordEnvironmentId.make;
+    const named = tree({
+      topSecrets: env("top"),
+      folders: tree().folders.map((each) =>
+        each.name === "Work" || each.name === "Northwind"
+          ? { ...each, secrets: env(each.name.toLowerCase()) }
+          : each,
+      ),
+    });
+    expect(secretsOf(named, id("northwind"))).toEqual(["top", "work", "northwind"]);
+    expect(secretsOf(named, id("clients"))).toEqual(["top", "work"]);
+    expect(secretsOf(tree(), id("northwind"))).toEqual([]);
   });
 
   it("runs every folder on the nearest pool up its chain, at any depth", () => {
