@@ -19,6 +19,10 @@ import {
   saveResult,
 } from "@signalbox/automations/tools/summaries";
 import type { WorkflowEngineShape } from "@signalbox/automations/WorkflowEngine";
+import {
+  normalizeThreadPullRequestKey,
+  threadPullRequestKeysEqual,
+} from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 
 import type { CloudCompiler } from "./cloudCompiler.ts";
@@ -63,9 +67,15 @@ const withinCaller =
           `That automation runs with ${current.runtimeMode} access, more than this thread's ${caller.runtimeMode}.`,
         );
 
-/** A pull request named by its web URL, or by number on a repository the thread links. */
+/**
+ * A pull request named by its web URL, or by number on a repository the
+ * thread links. Hosts and repositories ignore case, and the thread stores
+ * links by their normalized key, which is what `pr.*` events carry; so a
+ * target is always the thread's own link when it has one, else the key.
+ */
 const pullRequestTarget = (caller: OrchestrationV2ThreadShell, input: Input) =>
   Effect.gen(function* () {
+    const links = caller.pullRequests ?? [];
     const url = text(input, "url");
     if (url) {
       const match = /^https?:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(url);
@@ -73,14 +83,23 @@ const pullRequestTarget = (caller: OrchestrationV2ThreadShell, input: Input) =>
         return yield* refuse(
           "Pass the pull request's web URL, like https://github.com/owner/repo/pull/12.",
         );
-      return { host: match[1]!, repository: match[2]!, number: Number(match[3]), url };
+      const key = normalizeThreadPullRequestKey({
+        host: match[1]!,
+        repository: match[2]!,
+        number: Number(match[3]),
+        url,
+      });
+      const own = links.find((link) => threadPullRequestKeysEqual(link, key));
+      return own
+        ? { host: own.host, repository: own.repository, number: own.number, url: own.url }
+        : { ...key, url };
     }
     const number = typeof input.number === "number" ? input.number : undefined;
-    const repository = text(input, "repository");
-    const linked = (caller.pullRequests ?? []).find(
+    const repository = text(input, "repository")?.toLowerCase();
+    const linked = links.find(
       (link) =>
         (number === undefined || link.number === number) &&
-        (repository === undefined || link.repository === repository),
+        (repository === undefined || link.repository.toLowerCase() === repository),
     );
     if (!linked)
       return yield* refuse("Pass the pull request's URL, or the number of one this thread links.");

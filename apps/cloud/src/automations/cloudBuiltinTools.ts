@@ -10,7 +10,10 @@ import type {
   BuiltinToolHandler,
 } from "@signalbox/automations/builtinTools/runner";
 import type { AutomationThreadsShape } from "@signalbox/automations/host";
-import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import {
+  threadPullRequestKeysEqual,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 
 import type * as CloudThreadService from "../thread/CloudThreadService.ts";
@@ -85,11 +88,8 @@ export const makeCloudBuiltinTools = (deps: {
           );
         const target = { host: match[1]!, repository: match[2]!, number: Number(match[3]), url };
         const shell = yield* shellOf(threadId);
-        const alreadyLinked = (shell.pullRequests ?? []).some(
-          (link) =>
-            link.host === target.host &&
-            link.repository === target.repository &&
-            link.number === target.number,
+        const alreadyLinked = (shell.pullRequests ?? []).some((link) =>
+          threadPullRequestKeysEqual(link, target),
         );
         if (!alreadyLinked)
           yield* deps.owner.pipe(

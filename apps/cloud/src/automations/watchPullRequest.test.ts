@@ -183,11 +183,14 @@ describe("cloud automations watch a cloud thread's pull request", () => {
       yield* cloud.syncPullRequests(threadId);
       yield* cloud.settle;
 
-      // The agent asks Signalbox to watch it, from its machine.
+      // The agent asks Signalbox to watch it, from its machine, by a URL cased the way it
+      // was typed: links (and their pr.* events) use the lowercased key.
       const watched = yield* cloud.inUser(
         userId,
         CloudAutomations.use((automations) =>
-          automations.tool({ threadId }, "watch_pull_request", { number: 1 }),
+          automations.tool({ threadId }, "watch_pull_request", {
+            url: "https://github.test/Owner/Repo/pull/1",
+          }),
         ),
       );
       expect(watched).toMatchObject({ number: 1, repository: "owner/repo", watching: true });
