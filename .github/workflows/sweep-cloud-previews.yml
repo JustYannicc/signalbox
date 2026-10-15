@@ -19,6 +19,8 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  # Deletes closed pull requests' Runner images (pr-<number>).
+  packages: write
 
 jobs:
   sweep:
