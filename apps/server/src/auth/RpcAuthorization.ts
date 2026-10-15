@@ -45,7 +45,7 @@ import { SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES } from "@t3tools/contracts/signa
 import { SECTIONS_RPC_REQUIRED_SCOPES } from "../sections/rpcScopes.ts"; // signalbox: sections
 import { ACCOUNT_POOL_RPC_SCOPES } from "../accountHub/poolRpcScopes.ts"; // signalbox: account pools
 
-import { AUTOMATION_RPC_SCOPES } from "../workflows/rpcScopes.ts"; // signalbox: automations
+import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes"; // signalbox: automations
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 

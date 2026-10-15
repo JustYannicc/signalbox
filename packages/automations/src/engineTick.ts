@@ -23,7 +23,7 @@ import type { RunLinkStore } from "./runLinkStore.ts";
 import type { RunLogs } from "./runLog.ts";
 import { describeDuration, retries, stepOptions, stepTimeoutMs } from "./stepPolicy.ts";
 import { agentResult } from "./steps.ts";
-import { isoAt } from "./time.ts";
+import { isoAt, isoMs } from "./time.ts";
 import { nextRunAt } from "./views.ts";
 import type { AutomationRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
 
@@ -295,5 +295,23 @@ export const makeTimedWork = (core: EngineCore) =>
       }
     }).pipe(tickLock.withPermits(1));
 
-    return { settleThreadStep, tick };
+    /**
+     * When the tick next has work, in epoch ms, for hosts that wake on a
+     * timer instead of ticking every few seconds. Null when nothing is due.
+     */
+    const nextWakeAt: Effect.Effect<number | null, AutomationError> = Effect.gen(function* () {
+      const due = yield* store.nextDueAt();
+      const retry = yield* core.replays.nextRetryAt;
+      // Agent threads settle from their events; the sweep catches what was missed.
+      const sweep =
+        (yield* store.threadSteps()).length > 0
+          ? Math.max(lastThreadSweep, 0) + THREAD_SWEEP_INTERVAL_MS
+          : null;
+      const times = [due === null ? null : isoMs(due), retry, sweep].filter(
+        (time): time is number => time !== null,
+      );
+      return times.length === 0 ? null : Math.min(...times);
+    });
+
+    return { settleThreadStep, tick, nextWakeAt };
   });

@@ -162,6 +162,8 @@ export interface WorkflowEngineShape extends CatalogShape {
    * blocks the rest.
    */
   readonly tick: Effect.Effect<void, AutomationError>;
+  /** When `tick` next has work, in epoch ms; null when nothing is due. For hosts that wake on a timer. */
+  readonly nextWakeAt: Effect.Effect<number | null, AutomationError>;
   /** Waits until no replay is queued and no step is running. Waiting steps don't count. */
   readonly drain: Effect.Effect<void>;
 }
@@ -881,7 +883,7 @@ const make = Effect.gen(function* () {
     cancel: (runId) => endRunById(runId, { status: "cancelled" }),
   });
 
-  const { settleThreadStep, tick } = yield* makeTimedWork({
+  const { settleThreadStep, tick, nextWakeAt } = yield* makeTimedWork({
     store,
     links,
     threads,
@@ -999,6 +1001,7 @@ const make = Effect.gen(function* () {
     subscribeRun: (runId) => feed.watch(`run:${runId}`, catalog.getRun(runId), runShows(runId)),
     subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
     tick,
+    nextWakeAt,
     drain: replays.drain,
   } satisfies WorkflowEngineShape;
 });

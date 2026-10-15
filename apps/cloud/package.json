@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@effect/sql-sqlite-do": "catalog:",
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "@signalbox/account": "workspace:*",
+    "@signalbox/automations": "workspace:*",
     "@signalbox/runner-protocol": "workspace:*",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
@@ -19,7 +21,8 @@
     "@t3tools/source-control-github": "workspace:*",
     "diff": "8.0.3",
     "effect": "catalog:",
-    "jose": "catalog:"
+    "jose": "catalog:",
+    "quickjs-emscripten-core": "0.32.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",

@@ -1,5 +1,13 @@
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
-import type { RelayAgentAwarenessPreferences } from "@t3tools/contracts/relay";
+import type {
+  AutomationNotice,
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@t3tools/contracts";
+import {
+  automationRunDeepLink,
+  type RelayAgentAwarenessPreferences,
+} from "@t3tools/contracts/relay";
 import { type AgentAwarenessPhase, projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as DateTime from "effect/DateTime";
 
@@ -30,7 +38,10 @@ export type PushPhase = Extract<
 export interface PushMessage {
   readonly phase: PushPhase;
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
+  /** The thread it's about; null for an automation run without one. */
+  readonly threadId: ThreadId | null;
+  /** What a phone stacks and replaces it with: the thread, or the automation run. */
+  readonly group: string;
   readonly title: string;
   readonly body: string;
   /** Where tapping it goes: the thread, on the phone. */
@@ -66,6 +77,7 @@ export function pushFor(input: {
     phase,
     environmentId: input.environmentId,
     threadId: next.id,
+    group: next.id,
     title: next.title,
     body: BODY[phase],
     deepLink: state.deepLink,
@@ -93,6 +105,33 @@ export function pushFor(input: {
     default:
       return null;
   }
+}
+
+/**
+ * The push an automation notice earns: a question waiting on the person
+ * (`w.ask`) like a thread waiting for an answer, a failed run like a failed
+ * turn, and a `w.notify` like a finished turn. Low-importance notices stay
+ * quiet. Tapping it opens the run.
+ */
+export function pushForNotice(
+  environmentId: EnvironmentId,
+  notice: AutomationNotice,
+): PushMessage | null {
+  if (notice.importance === "low") return null;
+  return {
+    phase:
+      notice.kind === "ask"
+        ? "waiting_for_input"
+        : notice.kind === "failed"
+          ? "failed"
+          : "completed",
+    environmentId,
+    threadId: null,
+    group: notice.runId,
+    title: notice.kind === "failed" ? `${notice.title} failed` : notice.title,
+    body: notice.body,
+    deepLink: automationRunDeepLink(environmentId, notice.runId),
+  };
 }
 
 /** Whether a phone with `preferences` wants `phase`. */

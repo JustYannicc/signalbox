@@ -639,6 +639,27 @@ export const make = Effect.gen(function* () {
             AND r.status = 'running'
         `,
       ),
+    /**
+     * The earliest stored time something is due: a waiting step's wake, a
+     * cron, or a run's deadline. Null when nothing waits on the clock.
+     */
+    nextDueAt: () =>
+      run(
+        "nextDueAt",
+        sql<{ readonly at: string | null }>`
+          SELECT MIN(at) AS at FROM (
+            SELECT MIN(s.wake_at) AS at FROM signalbox_automation_steps s
+            JOIN signalbox_automation_runs r ON r.run_id = s.run_id
+            WHERE s.status = 'waiting' AND s.wake_at IS NOT NULL AND r.status = 'running'
+            UNION ALL
+            SELECT MIN(next_run_at) FROM signalbox_automations
+            WHERE enabled = 1 AND next_run_at IS NOT NULL
+            UNION ALL
+            SELECT MIN(deadline_at) FROM signalbox_automation_runs
+            WHERE status = 'running' AND deadline_at IS NOT NULL
+          )
+        `,
+      ).pipe(Effect.map((rows) => rows[0]?.at ?? null)),
     /** Waiting steps of running runs that wait on an agent thread. */
     threadSteps: () =>
       run(

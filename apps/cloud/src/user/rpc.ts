@@ -69,6 +69,8 @@ import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
+import { AUTOMATION_METHODS, makeAutomationHandlers } from "../automations/automationRpc.ts";
+import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -138,6 +140,8 @@ const SERVED = [
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
+  // The user's automations (`automations/`), run on this object.
+  ...AUTOMATION_METHODS,
 ] as const;
 type ServedTag = (typeof SERVED)[number];
 type WsRpcs = RpcGroup.Rpcs<typeof WsRpcGroup>;
@@ -198,6 +202,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.sectionsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.sectionsMoveProject]: AuthOrchestrationOperateScope,
   ...POOL_REQUIRED_SCOPES,
+  ...AUTOMATION_RPC_SCOPES,
 } as const satisfies Record<ServedTag, AuthEnvironmentScope>;
 
 /** Authorizes every RPC on one connection against that connection's session scopes. */
@@ -343,9 +348,11 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
+      const automations = yield* makeAutomationHandlers;
       return {
         ...pools.handlers,
         ...pushes,
+        ...automations,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
