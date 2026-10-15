@@ -43,7 +43,7 @@ export interface RunnerSecrets {
  * Credentials that would take a harness off the ModelGateway: Claude Code
  * prefers any of them over the gateway token its `apiKeyHelper` reads.
  */
-export const HARNESS_CREDENTIALS: ReadonlyArray<string> = [
+const HARNESS_CREDENTIALS: ReadonlyArray<string> = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
   "CLAUDE_CODE_OAUTH_TOKEN",

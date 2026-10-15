@@ -22,7 +22,7 @@ export interface SecretMask {
   readonly json: (text: string) => string;
 }
 
-export const MIN_MASKED_LENGTH = 7;
+const MIN_MASKED_LENGTH = 7;
 
 const isPlainObject = (value: object): value is Record<string, unknown> => {
   const proto = Object.getPrototypeOf(value);
