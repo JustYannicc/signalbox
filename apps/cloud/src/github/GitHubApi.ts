@@ -82,6 +82,16 @@ const toPull = (body: typeof PullBody.Type): GitHubPullRequest => ({
 });
 
 const RefBody = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
+const TreeBody = Schema.Struct({
+  tree: Schema.Array(
+    Schema.Struct({
+      sha: Schema.String,
+      type: Schema.String,
+      size: Schema.optional(Schema.Number),
+    }),
+  ),
+  truncated: Schema.Boolean,
+});
 const DefaultHeadBody = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.NullOr(
@@ -125,6 +135,17 @@ export const makeGitHubApi = (
       ),
     );
 
+  /** `request` as `token`, asking for `accept`. */
+  const asUser = (
+    request: HttpClientRequest.HttpClientRequest,
+    token: string,
+    accept = "application/vnd.github+json",
+  ) =>
+    request.pipe(
+      HttpClientRequest.bearerToken(token),
+      HttpClientRequest.setHeaders({ accept, "x-github-api-version": "2022-11-28" }),
+    );
+
   /** A REST or GraphQL call as `token`. Null on 404; any other non-2xx fails with GitHub's message. */
   const json = <A>(
     operation: string,
@@ -132,17 +153,34 @@ export const makeGitHubApi = (
     request: HttpClientRequest.HttpClientRequest,
     token: string,
   ) =>
-    send(
-      operation,
-      request.pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          accept: "application/vnd.github+json",
-          "x-github-api-version": "2022-11-28",
-        }),
-      ),
-    ).pipe(
+    send(operation, asUser(request, token)).pipe(
       Effect.flatMap((response) => decodeOrFail(operation, schema, response)),
+      Effect.scoped,
+    );
+
+  /** Like `json`, answering the raw body. */
+  const raw = (operation: string, request: HttpClientRequest.HttpClientRequest, token: string) =>
+    send(operation, asUser(request, token, "application/vnd.github.raw+json")).pipe(
+      Effect.flatMap((response) =>
+        response.status === 404
+          ? Effect.succeed(null)
+          : response.status < 200 || response.status >= 300
+            ? // Fails with GitHub's message.
+              Effect.flatMap(decodeOrFail(operation, Schema.Unknown, response), () =>
+                Effect.succeed(null),
+              )
+            : response.arrayBuffer.pipe(
+                Effect.map((bytes) => new Uint8Array(bytes)),
+                Effect.mapError(
+                  () =>
+                    new GitHubError({
+                      operation,
+                      status: response.status,
+                      message: "GitHub's answer was cut off.",
+                    }),
+                ),
+              ),
+      ),
       Effect.scoped,
     );
 
@@ -295,6 +333,33 @@ export const makeGitHubApi = (
           ),
         ),
         Effect.scoped,
+      ),
+    /** A file's bytes by id, or null when `repository` doesn't have it (#406). */
+    blob: (token: string, repository: string, sha: string) =>
+      raw("blob", HttpClientRequest.get(`${api}/repos/${repository}/git/blobs/${sha}`), token),
+    /**
+     * Every file's size under commit or tree `sha`, by id. GitHub lists at most
+     * 100,000 entries; a bigger tree answers what it listed.
+     */
+    fileSizes: (token: string, repository: string, sha: string) =>
+      json(
+        "fileSizes",
+        TreeBody,
+        HttpClientRequest.get(`${api}/repos/${repository}/git/trees/${sha}`).pipe(
+          HttpClientRequest.setUrlParams({ recursive: "1" }),
+        ),
+        token,
+      ).pipe(
+        Effect.map(
+          (body) =>
+            new Map(
+              (body?.tree ?? []).flatMap((entry) =>
+                entry.type === "blob" && entry.size !== undefined
+                  ? [[entry.sha, entry.size] as const]
+                  : [],
+              ),
+            ),
+        ),
       ),
     /** Where git's smart HTTP for `repository` lives, for the drive's fetch proxy. */
     gitUrl: (repository: string, path: string) => `${web}/${repository}.git/${path}`,

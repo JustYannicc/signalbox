@@ -27,6 +27,7 @@ export const makeDriveObjectApi = (
     refs: (threadId, packsAfter) => run(store.use((s) => s.refs(threadId, packsAfter))),
     ref: (name) => run(store.use((s) => s.ref(name))),
     missing: (oids) => run(store.use((s) => s.missing(oids))),
+    promised: (oids) => run(store.use((s) => s.promised(oids))),
     registerPack: (pack) => run(store.use((s) => s.registerPack(pack))),
     updateRefs: (writer, updates) => run(store.use((s) => s.updateRefs(writer, updates))),
     reconcile: (writer, request) => run(store.use((s) => s.reconcile(writer, request))),

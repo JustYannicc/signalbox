@@ -34,6 +34,7 @@ import type {
 import type { DriveOutcome, PreparedDrive, RunnerDrive } from "./RunnerDrive.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
+import { DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -646,6 +647,35 @@ describe("RunnerTurns", () => {
           "turn failed to start: Error: login refused: token=[REDACTED]",
         );
         expect(JSON.stringify(reported)).not.toContain("sk-live-start-secret");
+      }),
+    ),
+  );
+
+  it.effect("tells the thread when its repository is too big for the drive", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reported: Array<RunnerItem> = [];
+        const tooBig = new DriveTooLargeError({
+          message: "Signalbox can't save owner/repo to its drive: big.bin is 80 MB.",
+        });
+        const adapter = {
+          instanceId,
+          driver,
+          openSession: () => Effect.fail(tooBig),
+        } as unknown as ProviderAdapterV2["Service"];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+        });
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* settle;
+
+        const failed = reported.find((item) => item.kind === "turn.failed");
+        expect(failed?.kind === "turn.failed" && failed.message).toBe(tooBig.message);
       }),
     ),
   );

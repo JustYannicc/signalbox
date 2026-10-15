@@ -12,8 +12,12 @@ import type { RunnerGit } from "./RunnerGit.ts";
  * last seen, and only ever name commits the drive has, so a pack of what a
  * commit reaches `^` those refs is closed: everything it points at is in the
  * pack or already in the drive. A remote-backed drive's `main` is the
- * remote's head, fetched one commit deep (the repository is shallow there),
- * so a pack of it holds its whole tree and leaves its parents on the remote.
+ * remote's head, fetched one commit deep (the repository is shallow there).
+ * A pack of it holds the commit and its folders, never its files (#406): the
+ * remote has those, and the drive records them as promised. The repository
+ * here is a partial clone with the cloud's fetch proxy as its promisor, so git
+ * fetches a promised file when it needs one; the drive's packs are promisor
+ * packs.
  */
 
 const REF_ATTEMPTS = 3;
@@ -21,13 +25,16 @@ const REF_ATTEMPTS = 3;
 /**
  * Puts a drive's `packs` into the repository at `gitDir` with `download`,
  * lists `shallow` commits in `.git/shallow`, and indexes every pack. Answers
- * the highest pack sequence stored, or null when there were none.
+ * the highest pack sequence stored, or null when there were none. A
+ * remote-backed drive's packs are `promisor` packs: what they leave out, the
+ * remote has.
  */
 export const storePacks = Effect.fn("storePacks")(function* (input: {
   readonly gitDir: string;
   readonly git: RunnerGit;
   readonly packs: DriveState["packs"];
   readonly shallow: DriveState["shallow"];
+  readonly promisor: boolean;
   readonly download: (name: string, packDir: string) => Effect.Effect<void, DriveClientError>;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -37,6 +44,13 @@ export const storePacks = Effect.fn("storePacks")(function* (input: {
     concurrency: 8,
     discard: true,
   });
+  if (input.promisor) {
+    yield* Effect.forEach(
+      input.packs,
+      (pack) => fs.writeFileString(path.join(packDir, `pack-${pack.name}.promisor`), ""),
+      { discard: true },
+    );
+  }
   if (input.shallow.length > 0) {
     // Commits whose parents stay on the remote, so git never looks for them.
     const file = path.join(input.gitDir, "shallow");
@@ -74,6 +88,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         git,
         packs: state.packs,
         shallow: state.shallow,
+        promisor: state.remote !== null,
         download: client.downloadPack,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
@@ -94,10 +109,16 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
       if (Number(fresh.trim()) === 0) return;
       const tmp = yield* fs.makeTempDirectory({ directory: gitDir, prefix: "drive-pack-" });
       yield* Effect.gen(function* () {
-        const stdin = [commit, ...have.map((oid) => `^${oid}`), ""].join("\n");
+        // `^<ref>^{tree}`: the remote's head is cut from its parents, so it doesn't
+        // reach the drive's commits; their folders are excluded by name instead.
+        const stdin = [commit, ...have.flatMap((oid) => [`^${oid}`, `^${oid}^{tree}`]), ""].join(
+          "\n",
+        );
         const args = [
           "pack-objects",
           "--revs",
+          // The remote's files stay on the remote: the drive holds them as promised.
+          ...(options.remoteHead === true ? ["--filter=blob:none"] : []),
           "--delta-base-offset",
           "-q",
           path.join(tmp, "pack"),

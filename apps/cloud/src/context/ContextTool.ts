@@ -17,7 +17,9 @@ import * as Schema from "effect/Schema";
 
 import { DriveDirectory, type DriveObjectError } from "../drive/DriveDirectory.ts";
 import { type DrivePackError, DrivePacks } from "../drive/DrivePacks.ts";
-import { makeDriveReader, pathSegments } from "../drive/DriveReader.ts";
+import { pathSegments } from "../drive/DriveReader.ts";
+import { remoteDriveReader } from "../drive/remoteFiles.ts";
+import { GitHub } from "../github/GitHub.ts";
 import { MAIN_REF } from "../drive/DriveStore.ts";
 import type { Bytes, Oid } from "../drive/git/gitObjects.ts";
 import { ThreadDirectory, type ThreadObjectError } from "../thread/ThreadDirectory.ts";
@@ -99,10 +101,14 @@ const make = Effect.gen(function* () {
   const directory = yield* DriveDirectory;
   const packs = yield* DrivePacks;
 
-  const readerOf = (driveId: string) =>
-    makeDriveReader(driveId).pipe(
+  const github = yield* Effect.serviceOption(GitHub);
+
+  /** `driveId`'s reader; a remote-backed drive's promised files come from GitHub as `userId` (#406). */
+  const readerOf = (driveId: string, userId: string) =>
+    remoteDriveReader(driveId, users.forUser(userId).githubAccessToken()).pipe(
       Effect.provideService(DriveDirectory, directory),
       Effect.provideService(DrivePacks, packs),
+      Option.isSome(github) ? Effect.provideService(GitHub, github.value) : (effect) => effect,
     );
 
   const actorOf = (reader: ContextReader) =>
@@ -163,7 +169,7 @@ const make = Effect.gen(function* () {
       yield* readable(reader, request.driveId);
       const segments = pathSegments(request.path);
       if (segments === null) return { _tag: "missing" } as const;
-      const drive = yield* readerOf(request.driveId);
+      const drive = yield* readerOf(request.driveId, reader.userId);
       const entry = yield* drive.treeOf(request.commit).pipe(
         Effect.flatMap((root) => drive.entryAt(root, segments)),
         // A commit this drive doesn't have reads as nothing at all.
@@ -179,16 +185,21 @@ const make = Effect.gen(function* () {
       if (listed === null) return { _tag: "missing" } as const;
       const visible = listed.filter((child) => child.kind !== "submodule");
       const blobs = visible.filter((child) => child.kind !== "directory").map((child) => child.oid);
-      const sizes = new Map(
-        (blobs.length === 0 ? [] : yield* drive.drive.locate(blobs)).map((found) => [
-          found.oid,
-          found.size,
-        ]),
+      const sizes = yield* drive.sizes(blobs);
+      // A promised file GitHub didn't list a size for (a huge tree) is read to learn it.
+      const unknown = [...sizes].flatMap(([oid, size]) => (size === null ? [oid] : []));
+      yield* Effect.forEach(
+        unknown,
+        (oid) =>
+          Effect.map(drive.blob(oid).pipe(Effect.option), (read) =>
+            read._tag === "Some" ? sizes.set(oid, read.value.length) : sizes.delete(oid),
+          ),
+        { concurrency: 8, discard: true },
       );
       // A file whose object the drive can't find is left out rather than shown empty.
       const entries = visible.flatMap((child): ReadonlyArray<ContextEntry> => {
         const size = child.kind === "directory" ? 0 : sizes.get(child.oid);
-        if (size === undefined) return [];
+        if (size === undefined || size === null) return [];
         const kind =
           child.kind === "directory" ? "directory" : child.mode === "120000" ? "symlink" : "file";
         return [{ name: child.name, kind, oid: child.oid, size }];
@@ -202,12 +213,16 @@ const make = Effect.gen(function* () {
   const blob: ContextTool["Service"]["blob"] = (reader, request) =>
     Effect.gen(function* () {
       yield* readable(reader, request.driveId);
-      const drive = yield* readerOf(request.driveId);
-      const [location] = yield* drive.drive.locate([request.oid]);
-      if (location === undefined || location.type !== "blob") return { _tag: "missing" } as const;
-      if (location.size > MAX_CONTEXT_BLOB_BYTES) return { _tag: "too_large" } as const;
-      return yield* drive.object(request.oid).pipe(
-        Effect.map((found) => ({ _tag: "blob", bytes: found.content }) as const),
+      const drive = yield* readerOf(request.driveId, reader.userId);
+      const size = (yield* drive.sizes([request.oid])).get(request.oid);
+      if (size === undefined) return { _tag: "missing" } as const;
+      if (size !== null && size > MAX_CONTEXT_BLOB_BYTES) return { _tag: "too_large" } as const;
+      return yield* drive.blob(request.oid).pipe(
+        Effect.map((bytes) =>
+          bytes.length > MAX_CONTEXT_BLOB_BYTES
+            ? ({ _tag: "too_large" } as const)
+            : ({ _tag: "blob", bytes } as const),
+        ),
         Effect.catchTags({ DriveReadError: () => Effect.succeed({ _tag: "missing" } as const) }),
       );
     });
@@ -215,7 +230,7 @@ const make = Effect.gen(function* () {
   const diff: ContextTool["Service"]["diff"] = (reader, request) =>
     Effect.gen(function* () {
       yield* readable(reader, request.driveId);
-      const drive = yield* readerOf(request.driveId);
+      const drive = yield* readerOf(request.driveId, reader.userId);
       return yield* drive.diff(request.from, request.to, { ignoreWhitespace: false }).pipe(
         Effect.map((patch): DiffResult => {
           const truncated = patch.length > MAX_PATCH_CHARS;

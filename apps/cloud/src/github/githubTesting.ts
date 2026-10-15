@@ -140,6 +140,26 @@ export const makeFakeGitHub = (options: {
         },
       });
     }
+    const blobPrefix = `/repos/${options.repository}/git/blobs/`;
+    if (method === "GET" && path.startsWith(blobPrefix)) {
+      try {
+        return new Response(git(["cat-file", "blob", path.slice(blobPrefix.length)]));
+      } catch {
+        return json({ message: "Not Found" }, 404);
+      }
+    }
+    const treePrefix = `/repos/${options.repository}/git/trees/`;
+    if (method === "GET" && path.startsWith(treePrefix)) {
+      const listing = git(["ls-tree", "-r", "-l", path.slice(treePrefix.length)]).toString();
+      const tree = listing
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => {
+          const [mode, type, sha, size] = line.split(/\s+/);
+          return { mode, type, sha, size: Number(size) };
+        });
+      return json({ tree, truncated: false });
+    }
     const refPrefix = `/repos/${options.repository}/git/ref/heads/`;
     if (method === "GET" && path.startsWith(refPrefix)) {
       const oid = head(decodeURIComponent(path.slice(refPrefix.length)));

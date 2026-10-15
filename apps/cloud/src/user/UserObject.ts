@@ -129,10 +129,11 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           CloudThreadService.layer,
           PoolSignIns.layer,
           drives.services,
-          GitHubConnection.layer,
           ConnectionLinks.layer,
         ),
       ),
+      // Below the drive services: the files panel reads promised files with it (#406).
+      Layer.provideMerge(GitHubConnection.layer),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
       Layer.provideMerge(LegacySections.layer),
       Layer.provideMerge(UserFolders.layer),

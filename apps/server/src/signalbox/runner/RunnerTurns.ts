@@ -43,6 +43,7 @@ import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOu
 import type { HarnessStderr } from "./harnessStderr.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive } from "./RunnerDrive.ts";
+import { DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
@@ -129,7 +130,8 @@ interface Turn {
 
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
 
-const isInstructionsError = Schema.is(RunnerInstructionsError);
+/** Failures that say what's wrong in the user's terms, shown as they are. */
+const isUserFacing = Schema.is(Schema.Union([RunnerInstructionsError, DriveTooLargeError]));
 
 /**
  * The failure text a thread may store: bounded and with credentials redacted.
@@ -137,7 +139,7 @@ const isInstructionsError = Schema.is(RunnerInstructionsError);
  */
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
-  return isInstructionsError(error) ? error.message : makeProviderFailure({ cause: error }).message;
+  return isUserFacing(error) ? error.message : makeProviderFailure({ cause: error }).message;
 };
 
 const USAGE_INTERVAL = "30 seconds";

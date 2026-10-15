@@ -35,6 +35,8 @@ import { threadRef, wipRef } from "../drive/DriveStore.ts";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
 import type { Bytes } from "../drive/git/gitObjects.ts";
+import { makeDriveReader } from "../drive/DriveReader.ts";
+import { makeRemoteFiles } from "../drive/remoteFiles.ts";
 import { remoteHead } from "../drive/remoteRoutes.ts";
 import * as Platform from "../platform.ts";
 import { makeMemoryCloud } from "../testing.ts";
@@ -42,6 +44,7 @@ import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
 import * as UserStore from "../user/UserStore.ts";
 import * as CloudRpc from "../user/rpc.ts";
+import { GitHub } from "./GitHub.ts";
 import * as GitHubConnection from "./GitHubConnection.ts";
 import { makeFakeGitHub } from "./githubTesting.ts";
 
@@ -85,11 +88,21 @@ const setup = () => {
   git(bare, ["clone", "-q", "--bare", upstream.dir, "."]);
   const machine = tempDir("github-machine-");
   git(machine, ["clone", "-q", "--depth=1", `file://${bare}`, "."]);
-  const pack = (include: ReadonlyArray<string>, exclude: ReadonlyArray<string> = []) => {
+  const pack = (
+    include: ReadonlyArray<string>,
+    exclude: ReadonlyArray<string> = [],
+    filter?: string,
+  ) => {
     const out = tempDir("github-pack-");
     const name = git(
       machine,
-      ["pack-objects", "--revs", "--delta-base-offset", NodePath.join(out, "pack")],
+      [
+        "pack-objects",
+        "--revs",
+        ...(filter === undefined ? [] : [`--filter=${filter}`]),
+        "--delta-base-offset",
+        NodePath.join(out, "pack"),
+      ],
       [...include, ...exclude.map((oid) => `^${oid}`)].join("\n") + "\n",
     );
     const read = (ext: string): Bytes =>
@@ -476,6 +489,64 @@ describe("GitHub-backed drives", () => {
         reason: "not_connected",
         message: "Connect GitHub first: Settings › Source Control.",
       });
+    }).pipe(
+      Effect.provide(Layer.mergeAll(cloud.drives.layer, github.layer)),
+      Effect.provideService(UserDirectory, cloud.userDirectory),
+    );
+  });
+
+  it.effect("reads a drive's promised files from GitHub as the reader, with their sizes", () => {
+    const remote = setup();
+    const github = makeFakeGitHub({
+      bare: remote.bare,
+      repository: "owner/repo",
+      defaultBranch: "main",
+    });
+    const cloud = makeMemoryCloud({ github: github.layer });
+    return Effect.gen(function* () {
+      const driveId = "shared/personal/0123456789abcdef0123456789abcdef";
+      const handle = (yield* DriveDirectory).forDrive(driveId);
+      yield* handle.setRemote({
+        provider: "github",
+        repository: "owner/repo",
+        defaultBranch: "main",
+      });
+      const api = (yield* GitHub).api;
+      const sizes = yield* api.fileSizes("gho_user_1", "owner/repo", remote.head);
+      const readme = git(remote.machine, ["rev-parse", `${remote.head}:README.md`]);
+      const app = git(remote.machine, ["rev-parse", `${remote.head}:src/app.ts`]);
+      expect(sizes).toEqual(
+        new Map([
+          [readme, 6],
+          [app, 10],
+        ]),
+      );
+      yield* uploadPack({
+        driveId,
+        threadId,
+        ...remote.pack([remote.head], [], "blob:none"),
+        remoteHead: remote.head,
+        promisedSizes: Effect.succeed(sizes),
+      });
+
+      // Not connected: the file says where it's kept, rather than failing blind.
+      const offline = yield* makeDriveReader(
+        driveId,
+        yield* makeRemoteFiles(driveId, Effect.succeed(null)),
+      );
+      expect((yield* offline.blob(app).pipe(Effect.flip)).message).toMatch(/owner\/repo/);
+      const reader = yield* makeDriveReader(
+        driveId,
+        yield* makeRemoteFiles(driveId, Effect.succeed("gho_user_1")),
+      );
+      expect(new TextDecoder().decode(yield* reader.blob(readme))).toBe("hello\n");
+      expect(yield* reader.sizes([readme, app])).toEqual(
+        new Map([
+          [readme, 6],
+          [app, 10],
+        ]),
+      );
+      expect(github.calls.filter((call) => call.includes("/git/blobs/"))).toHaveLength(1);
     }).pipe(
       Effect.provide(Layer.mergeAll(cloud.drives.layer, github.layer)),
       Effect.provideService(UserDirectory, cloud.userDirectory),

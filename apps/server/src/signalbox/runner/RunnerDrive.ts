@@ -14,9 +14,13 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 
-import type { DriveClient, DriveClientError } from "./RunnerDriveClient.ts";
+import {
+  type DriveClient,
+  type DriveClientError,
+  DriveTooLargeError,
+} from "./RunnerDriveClient.ts";
 import { type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
-import { EMPTY_TREE, makeRunnerGit, RunnerGitError } from "./RunnerGit.ts";
+import { EMPTY_TREE, makeRunnerGit, remoteCredentialFile, RunnerGitError } from "./RunnerGit.ts";
 import { makeRunnerInstructions, type RunnerInstructionsError } from "./RunnerInstructions.ts";
 import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
 
@@ -64,7 +68,11 @@ export type DriveOutcome =
   | { readonly _tag: "conflict"; readonly files: ReadonlyArray<string> }
   | { readonly _tag: "not_landed"; readonly reason: string };
 
-export type RunnerDriveError = RunnerGitError | DriveClientError | PlatformError.PlatformError;
+export type RunnerDriveError =
+  | RunnerGitError
+  | DriveClientError
+  | DriveTooLargeError
+  | PlatformError.PlatformError;
 
 export type SavedBranch =
   | { readonly _tag: "saved"; readonly head: string }
@@ -346,6 +354,12 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       }
       const mirrored = yield* drive.mirrorMain(fetched.head).pipe(Effect.result);
       if (mirrored._tag === "Success" && mirrored.success === null) return;
+      if (mirrored._tag === "Failure" && mirrored.failure._tag === "DriveTooLargeError") {
+        // Retrying won't shrink it: say what's too big.
+        return yield* new DriveTooLargeError({
+          message: `Signalbox can't save ${remote?.repository ?? "this repository"} to its drive: ${mirrored.failure.message}`,
+        });
+      }
       const reason =
         mirrored._tag === "Success" ? mirrored.success : Cause.pretty(Cause.fail(mirrored.failure));
       // GitHub may still be catching up on a merge; the drive's copy is the next best start.
@@ -375,14 +389,33 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         // A drive backed by a remote brings `main` up to it before opening pins the branch's base.
         // Unknown until read once; a drive with none never gets one.
         if (remote !== null && remoteToken !== null) remote = yield* drive.refresh;
-        if (remote !== null && remote !== undefined && remoteToken !== null)
+        if (remote !== null && remote !== undefined && remoteToken !== null) {
+          // The drive keeps the remote's files on the remote; git fetches them as it needs them.
+          const credentials = remoteCredentialFile(input.cwd);
+          yield* fs.writeFileString(credentials, `username=signalbox\npassword=${remoteToken}\n`, {
+            mode: 0o600,
+          });
+          yield* git.usePromisor(input.client.remoteUrl, credentials);
           yield* syncRemote(remoteToken);
+        }
         const state = yield* drive.open;
         if (!existed || localThread !== state.thread) {
           conflicted = [];
           // The branch may still have files where a shortcut is mounted read-only.
           yield* shortcuts.release;
-          yield* checkout(state);
+          yield* checkout(state).pipe(
+            Effect.catchTags({
+              RunnerGitError: (error) =>
+                remote === null || remote === undefined
+                  ? Effect.fail(error)
+                  : // A remote-backed drive keeps the remote's files on the remote (#406).
+                    Effect.fail(
+                      new RunnerGitError({
+                        message: `Checking this thread out needs files ${remote.repository} keeps on GitHub, and GitHub can't be reached through Signalbox right now. ${error.message}`,
+                      }),
+                    ),
+            }),
+          );
         }
         turnStart = yield* git.resolve("HEAD");
         const mounts = yield* shortcuts.mount(remoteToken);
