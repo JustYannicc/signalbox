@@ -3,27 +3,22 @@ import {
   ProjectId,
   resolveAutomationAskAnswer,
   ThreadId,
-  workflowNodeIdForStepKey,
   type Automation,
   type AutomationAskAnswerInput,
   type AutomationBuiltIn,
   type AutomationDefaults,
   type AutomationDetail,
   type AutomationError,
-  type AutomationErrorDetail,
   type AutomationNotice,
   type AutomationRunDetail,
   type AutomationRunAttach,
-  type AutomationRunLog,
   type AutomationRunSummary,
   type AutomationRunTrigger,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -34,7 +29,7 @@ import * as Stream from "effect/Stream";
 import { makeAttachments } from "./attachments.ts";
 import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
 import { makeCatalog, type AuthorizeAutomation, type CatalogShape } from "./catalog.ts";
-import { automationDefaults, errorDetailOf, runLogLines, stepArgs, stepAsk } from "./columns.ts";
+import { automationDefaults, runLogLines, stepAsk } from "./columns.ts";
 import { makeConnections } from "./connections.ts";
 import type {
   EndRun,
@@ -44,7 +39,7 @@ import type {
   RunOutcome,
   Settlement,
 } from "./engineTypes.ts";
-import { automationError, causeText, fail, isAutomationError, logFailure } from "./errors.ts";
+import { automationError, fail, logFailure } from "./errors.ts";
 import { makeBuiltIns, type BuiltInPlace } from "./defaults/builtIns.ts";
 import * as HostStore from "./defaults/hostStore.ts";
 import { BUILT_IN_AUTOMATIONS, builtInSummary } from "./defaults/registry.ts";
