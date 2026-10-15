@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deletes one closed pull request's preview. Cloudflare resources go first and
+# Deletes one closed pull request's preview, and its Runner image. Cloudflare resources go first and
 # never wait on production: its cleanup route may be down, not deployed yet, or
 # reject the token. Production's part is best effort; any failure exits non-zero
 # at the end so the job shows red and the weekly sweep retries.
@@ -7,6 +7,7 @@ set -euo pipefail
 
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+: "${GH_TOKEN:?GH_TOKEN is required}"
 pr_number="${PR_NUMBER:?PR_NUMBER is required}"
 worker_names=''
 page=1
@@ -48,6 +49,12 @@ done
 # Production drops the preview's pool links (from its registry) and R2 prefix.
 if ! bash .github/scripts/call-preview-cleanup.sh delete "$pr_number"; then
   echo "::error::Production could not clean up PR #$pr_number's drive packs and pool links."
+  failed=1
+fi
+
+# The preview's Runner image, when the pull request changed the Runner.
+if ! bash .github/scripts/runner-pr-images.sh delete "$pr_number"; then
+  echo "::error::Could not delete PR #$pr_number's Runner image."
   failed=1
 fi
 
