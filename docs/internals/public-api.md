@@ -39,6 +39,14 @@ There's one credential kind, the personal key (`sbk_…`, `localKeys/LocalKeys.t
 - **Scripts** get keys from `keys.create`, which never grants more than its caller holds. Agents can't create keys.
 - **MCP clients** are agents. They sign in through WorkOS AuthKit as the authorization server, and their calls never reach human-only or destructive operations.
 
+## MCP
+
+MCP is two tools over the same list (`packages/api/src/mcpTools.ts`): `signalbox_search` ranks operations by intent and returns their input schemas, and `signalbox_call` calls one. The tool count stays the same however many RPCs there are. That's the search-then-call shape of #335, Cloudflare's API server and Executor.
+
+- The cloud's `/mcp` runs inside each person's user object, because Effect's MCP sessions need a long-lived host. The object is one per person and outlives any Worker isolate. Effect's request-scoped transport only speaks the sessionless 2026-07-28 protocol, which current clients don't all use yet.
+- The Worker only verifies the AuthKit token, checking its issuer and that its audience is this origin's `/mcp`, against the JWKS. `/.well-known/oauth-protected-resource` points clients at AuthKit.
+- `signalbox mcp` serves the same toolkit over stdio with the CLI's key. Its calls carry `x-signalbox-caller: agent`, which can only narrow what the key may do.
+
 ## People and agents
 
 Calls act as the person whose credential they carry, and follow the folder rules (#225). `humanOnly` operations (approvals, secret requests, decision gates, finishing a provider sign-in) are never offered to agents. Neither are `destructive` ones, until decision gates exist (#335 decisions 4 and 5).

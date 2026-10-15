@@ -25,6 +25,7 @@ import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
+import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -226,6 +227,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
 export class UserObject extends DurableObject<UserObjectEnv> implements UserObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
   private readonly identity: Environment.CloudEnvironmentIdentity;
+  /** The person's MCP server (`api/mcpObject.ts`), made on first use. */
+  private mcp: ReturnType<typeof makeMcpHandler> | undefined;
   /** Open sockets per session, so revoking a session also disconnects it. */
   private readonly connections = new Map<string, Set<Fiber.Fiber<void>>>();
 
@@ -430,6 +433,15 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     if (apiCredential._tag === "Some") {
       const profile = await this.profile();
       if (!profile) return new Response("Unauthorized", { status: 401 });
+      if (new URL(request.url).pathname === MCP_PATH) {
+        // One MCP server per object: its sessions last as long as the object does.
+        this.mcp ??= makeMcpHandler({
+          identity: this.identity,
+          userId: profile.id,
+          context: await this.runtime.runPromise(Effect.context()),
+        });
+        return this.mcp.handler(request);
+      }
       return this.runtime.runPromise(
         serveApiRequest(request, {
           identity: this.identity,

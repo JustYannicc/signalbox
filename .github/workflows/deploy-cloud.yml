@@ -69,6 +69,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       STAGE: production
       T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+      # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
+      WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
       # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
@@ -218,6 +220,8 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       STAGE: pr-${{ github.event.pull_request.number }}
       T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+      # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
+      WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
       # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
