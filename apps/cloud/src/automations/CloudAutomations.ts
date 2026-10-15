@@ -10,14 +10,16 @@ import type * as Effect from "effect/Effect";
  */
 export interface CloudAutomationsShape {
   /**
-   * Domain events of one of the user's threads, in order and at least once;
-   * `through` is the last one's sequence. Events at or before a sequence
-   * already taken are dropped.
+   * Domain events of one of the user's threads with their sequence, in order
+   * and at least once. Events at or before a sequence already taken from that
+   * thread are dropped, so a redelivered batch repeats nothing.
    */
   readonly threadEvents: (input: {
     readonly threadId: string;
-    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly through: number;
+    readonly events: ReadonlyArray<{
+      readonly sequence: number;
+      readonly event: OrchestrationV2DomainEvent;
+    }>;
   }) => Effect.Effect<void, AutomationError>;
   /** An automation tool an agent calls from its thread's machine (`automation_save`, `wait_for`, …). */
   readonly tool: (
