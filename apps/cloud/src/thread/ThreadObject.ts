@@ -644,6 +644,16 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       ),
     );
     this.stepFailures = step.ok ? 0 : this.stepFailures + 1;
+    // Before the summary goes out: a synced pull request changes the summary too.
+    const pullRequestsWakeAt = await this.runtime.runPromise(
+      PullRequestSync.PullRequestSync.use((sync) => sync.sync).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("pull request sync failed", Cause.pretty(cause)).pipe(
+            Effect.as(now + retryDelay(1)),
+          ),
+        ),
+      ),
+    );
     if (now >= this.nextDeliveryAt) {
       const delivered = await this.runtime.runPromise(
         deliverPendingSummary.pipe(
@@ -662,15 +672,6 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       return now + retryDelay(1);
     });
     const diagnosticsWakeAt = await this.tendDiagnostics(now);
-    const pullRequestsWakeAt = await this.runtime.runPromise(
-      PullRequestSync.PullRequestSync.use((sync) => sync.sync).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError("pull request sync failed", Cause.pretty(cause)).pipe(
-            Effect.as(now + retryDelay(1)),
-          ),
-        ),
-      ),
-    );
     const due = [
       step.more ? now + (step.ok ? STEP_INTERVAL_MS : retryDelay(this.stepFailures)) : null,
       this.nextDeliveryAt > 0 ? this.nextDeliveryAt : null,
