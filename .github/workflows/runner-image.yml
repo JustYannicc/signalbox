@@ -5,10 +5,7 @@
 #
 # - nightly: every night from main, as `nightly` and `nightly-<date>-<sha>`.
 # - stable: every `vX.Y.Z` tag, as `X.Y.Z` and `stable`.
-# - Pull requests build it. Ones from this repository publish it as
-#   `pr-<number>`, which their preview cloud's heavy machines run
-#   (deploy-cloud.yml), so a preview tests its own Runner. Every pull request
-#   builds: the bundle reaches far beyond the Runner's own folder.
+# - Pull requests that change the Runner build the image without publishing it.
 name: Runner image
 
 on:
@@ -20,6 +17,12 @@ on:
       - "!v*-nightly.*"
       - "!v*-preview.*"
   pull_request:
+    paths:
+      - apps/server/src/signalbox/runner/**
+      - apps/server/src/preview/ServerBrowser*.ts
+      - apps/server/src/orchestration-v2/Adapters/**
+      - packages/runner-protocol/**
+      - .github/workflows/runner-image.yml
   workflow_dispatch:
     inputs:
       channel:
@@ -77,12 +80,10 @@ jobs:
           EVENT: ${{ github.event_name }}
           CHANNEL: ${{ inputs.channel }}
           REF_NAME: ${{ github.ref_name }}
-          # Dependabot's token can't write packages.
-          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
         run: |
           short_sha="${GITHUB_SHA::12}"
           if [ "$EVENT" = "pull_request" ]; then
-            echo "push=$SAME_REPO" >> "$GITHUB_OUTPUT"
+            echo "push=false" >> "$GITHUB_OUTPUT"
             echo "tags=$IMAGE:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
           elif [ "$EVENT" = "push" ] || [ "$CHANNEL" = "stable" ]; then
             if [ "$EVENT" = "push" ]; then version="${REF_NAME#v}"; else version="$(jq -r .version apps/server/package.json)"; fi
@@ -112,9 +113,8 @@ jobs:
           platforms: linux/amd64
           load: true
           # Unchanged apt and npm layers keep their digests, so machines only pull what changed.
-          # Pull requests read main's cache without writing theirs, which would evict it.
           cache-from: type=gha
-          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max' || '' }}
+          cache-to: type=gha,mode=max
           build-args: |
             SIGNALBOX_RUNNER_REVISION=${{ github.sha }}
           tags: ${{ steps.tags.outputs.tags }}

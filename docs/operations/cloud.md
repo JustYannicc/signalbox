@@ -213,10 +213,8 @@ agents check their own dev servers with (the server's pinned Chrome for
 Testing headless shell, plus Playwright). It publishes
 `ghcr.io/justyannicc/signalbox-runner` as `nightly` (and
 `nightly-<date>-<sha>`) every night from `main`, and as `X.Y.Z` and `stable`
-for every `vX.Y.Z` tag. Run it by hand to publish one now. Pull requests
-from this repository publish `pr-<number>`, and their preview's heavy
-machines run it; a machine started before that build lands fails to pull and
-works once started again.
+for every `vX.Y.Z` tag. Run it by hand to publish one now. Pull requests that
+change the Runner build the image without publishing it.
 
 Machines pull the image anonymously, so the package must be public: after its
 first publish, set its visibility once under the package's settings on GitHub.
