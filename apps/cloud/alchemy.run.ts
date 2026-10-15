@@ -107,6 +107,11 @@ function workerEnv(target: CloudStage) {
       T3CODE_WORKOS_API_KEY: yield* Config.Redacted("T3CODE_WORKOS_API_KEY"),
       // Optional: Claude and Codex on boat VMs.
       BOAT_API_KEY: yield* optionalSecret("BOAT_API_KEY"),
+      // Optional: pushes to phones (`src/push/`).
+      APNS_TEAM_ID: yield* optionalSecret("APNS_TEAM_ID"),
+      APNS_KEY_ID: yield* optionalSecret("APNS_KEY_ID"),
+      APNS_PRIVATE_KEY: yield* optionalSecret("APNS_PRIVATE_KEY"),
+      FCM_SERVICE_ACCOUNT: yield* optionalSecret("FCM_SERVICE_ACCOUNT"),
     };
     const stageEnv = target.production
       ? {
