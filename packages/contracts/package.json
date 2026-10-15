@@ -59,6 +59,10 @@
       "types": "./src/signalboxPreviews.ts",
       "import": "./src/signalboxPreviews.ts"
     },
+    "./signalboxPush": {
+      "types": "./src/signalboxPush.ts",
+      "import": "./src/signalboxPush.ts"
+    },
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"

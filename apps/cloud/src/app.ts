@@ -22,6 +22,8 @@ import {
 } from "effect/http";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as AssetRoutes from "./assets/assetRoutes.ts";
+import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -71,12 +73,15 @@ export const layerServices = (input: {
   readonly threads: ThreadDirectory.ThreadObjectNamespace;
   readonly localWorkerd: boolean;
 }) =>
-  Layer.mergeAll(
-    CloudAccounts.layer,
-    CloudThreadService.layer,
-    PreviewSetup.layer,
-    ThreadKindRoutes.layerTestClock,
-  ).pipe(
+  CloudAssets.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        CloudAccounts.layer,
+        CloudThreadService.layer,
+        PreviewSetup.layer,
+        ThreadKindRoutes.layerTestClock,
+      ),
+    ),
     Layer.provideMerge(PreviewSetup.layerSourceHttp),
     // The Worker only reads threads; they are created in their user's object.
     Layer.provideMerge(Layer.mergeAll(ThreadContexts.layerWorker, ThreadKindTurns.layerNone)),
@@ -111,6 +116,7 @@ const routes = Layer.mergeAll(
   GitHubRoutes.layer,
   ConnectionRoutes.layer,
   PreviewSetupRoutes.layer,
+  AssetRoutes.layer,
 ).pipe(Layer.provide(layerCors));
 
 const json = (body: unknown, status: number) =>
