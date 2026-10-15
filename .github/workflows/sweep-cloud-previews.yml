@@ -43,5 +43,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Each closed preview's Alchemy stage is destroyed through the stack.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+
       - name: Sweep closed pull request previews
         run: bash .github/scripts/sweep-cloud-previews.sh

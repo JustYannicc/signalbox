@@ -3,12 +3,30 @@
 # never wait on production: its cleanup route may be down, not deployed yet, or
 # reject the token. Production's part is best effort; any failure exits non-zero
 # at the end so the job shows red and the weekly sweep retries.
+#
+# Needs apps/cloud's dependencies installed: the preview's Alchemy stage is
+# destroyed first. The checks after it catch previews wrangler deployed before
+# the stack existed, and anything a failed destroy left.
 set -euo pipefail
 
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${GH_TOKEN:?GH_TOKEN is required}"
 pr_number="${PR_NUMBER:?PR_NUMBER is required}"
+failed=0
+
+# The shared preview bucket is retained, so this only drops it from the stage.
+# Destroy evaluates the stack, which reads the Worker's config; nothing is
+# uploaded, so placeholders do.
+if ! (cd apps/cloud && ALCHEMY_TELEMETRY_DISABLED=1 T3CODE_WORKOS_CLIENT_ID=destroy-only \
+  SESSION_SECRET=destroy-only T3CODE_WORKOS_API_KEY=destroy-only \
+  ./node_modules/.bin/alchemy destroy --stage "pr-$pr_number" --yes --no-input); then
+  echo "::error::Could not destroy the Alchemy stage pr-$pr_number."
+  failed=1
+fi
+
+# Names as apps/cloud/infra/stage.ts gives them to a preview.
+wrangler=apps/cloud/node_modules/.bin/wrangler
 worker_names=''
 page=1
 while true; do
@@ -23,13 +41,12 @@ while true; do
   ((page += 1))
 done
 
-containers="$(npx --yes wrangler@4 containers list --json)"
-failed=0
+containers="$("$wrangler" containers list --json)"
 
 for name in "signalbox-model-gateway-pr-$pr_number" "signalbox-cloud-pr-$pr_number"; do
   if ! grep -Fxq "$name" <<< "$worker_names"; then
     echo "No preview Worker $name to delete."
-  elif ! npx --yes wrangler@4 delete --name "$name" --force; then
+  elif ! "$wrangler" delete --name "$name" --force; then
     echo "::error::Could not delete preview Worker $name."
     failed=1
   fi
@@ -40,7 +57,7 @@ for app in pools threads; do
     '.[] | select(.name == $name) | .id' <<< "$containers")"
   if [[ -z "$id" ]]; then
     echo "No preview container signalbox-cloud-pr-$pr_number-$app to delete."
-  elif ! npx --yes wrangler@4 containers delete "$id"; then
+  elif ! "$wrangler" containers delete "$id"; then
     echo "::error::Could not delete preview container signalbox-cloud-pr-$pr_number-$app."
     failed=1
   fi
