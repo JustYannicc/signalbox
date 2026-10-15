@@ -114,6 +114,8 @@ function workerEnv(target: CloudStage) {
     const shared = {
       T3CODE_WORKOS_CLIENT_ID: yield* Config.String("T3CODE_WORKOS_CLIENT_ID"),
       MACHINE_BACKEND: yield* optional("MACHINE_BACKEND"),
+      // Optional: the Executor local harness setup adds as an MCP server (`src/localKeys/`).
+      EXECUTOR_MCP_URL: yield* optional("EXECUTOR_MCP_URL"),
       SESSION_SECRET: yield* Config.Redacted("SESSION_SECRET"),
       T3CODE_WORKOS_API_KEY: yield* Config.Redacted("T3CODE_WORKOS_API_KEY"),
       // Optional: Claude and Codex on boat VMs.

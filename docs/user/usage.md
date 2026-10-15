@@ -225,6 +225,10 @@ it shows in a terminal there (it needs Node.js 22 or later). The command checks 
 pool before it changes anything, then points both harnesses at Signalbox; their own settings stay as
 they were otherwise. Run the same command with `--undo` in place of the key to go back.
 
+Where Signalbox offers connectors, setup also adds them to both harnesses as the MCP server
+`signalbox`. Sign in to it once in each: in Claude Code run `/mcp`, choose `signalbox` and
+Authenticate; for Codex run `codex mcp login signalbox`.
+
 Each harness stays signed in to its own account, so going back needs no new sign-in. Codex needs to
 be signed in once (with ChatGPT or an API key) before it uses the pool. The Claude desktop app isn't
 covered.
