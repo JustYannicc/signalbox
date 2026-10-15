@@ -1,5 +1,41 @@
+diff --git a/lib/Cloudflare/Containers/ContainerProvider.js b/lib/Cloudflare/Containers/ContainerProvider.js
+index 690f7a48..0ddc2529 100644
+--- a/lib/Cloudflare/Containers/ContainerProvider.js
++++ b/lib/Cloudflare/Containers/ContainerProvider.js
+@@ -635,7 +635,16 @@ export const LiveContainerProvider = () => Provider.effect(ContainerPlatform, Ef
+                     : published.imageRef;
+             imageDigest = published.digest;
+         }
+-        const configuration = desiredConfiguration(news, env, deploymentImageRef);
++        // An application whose logs are set at its top level (`observability`,
++        // what wrangler writes) rejects `configuration.observability` as well:
++        // "cannot define both observability and configuration.observability".
++        // Only an application that already keeps them in its configuration gets
++        // them sent there; the others keep their top-level setting.
++        const desired = desiredConfiguration(news, env, deploymentImageRef);
++        const { observability: _observability, ...withoutObservability } = desired;
++        const configuration = existing.configuration.observability === undefined
++            ? withoutObservability
++            : desired;
+         const scaling = scalingDefaults(news);
+         const configurationHash = yield* applicationConfigurationHash(scaling, news.affinities, configuration);
+         if (existing.hash?.configuration === configurationHash) {
+@@ -736,7 +745,12 @@ export const LiveContainerProvider = () => Provider.effect(ContainerPlatform, Ef
+             const hasDurableObjects = (yield* getDurableObjects(newBindings)) !== undefined;
+             const hasUnresolvedAttachment = !hasDurableObjects &&
+                 newBindings.some((binding) => binding.data.durableObjects !== undefined);
+-            const hadDurableObjects = (yield* getDurableObjects(oldBindings)) !== undefined;
++            // The application's observed attachment outranks the recorded
++            // bindings: an adopted application whose first reconcile failed has
++            // its attachment in `output` but no bindings recorded yet, and reading
++            // only the bindings would replace (delete) the live application.
++            const hadDurableObjects = output?.durableObjects !== undefined ||
++                (yield* getDurableObjects(oldBindings)) !== undefined;
+             if (!hasUnresolvedAttachment &&
+                 hasDurableObjects !== hadDurableObjects) {
+                 return { action: "replace" };
 diff --git a/lib/Drizzle/Postgres.d.ts b/lib/Drizzle/Postgres.d.ts
-index ddba2e1..31335e2 100644
+index ddba2e1e..31335e20 100644
 --- a/lib/Drizzle/Postgres.d.ts
 +++ b/lib/Drizzle/Postgres.d.ts
 @@ -4,6 +4,11 @@ import type { EffectPgDatabase } from "drizzle-orm/effect-postgres";
@@ -25,7 +61,7 @@ index ddba2e1..31335e2 100644
  //# sourceMappingURL=Postgres.d.ts.map
 \ No newline at end of file
 diff --git a/lib/Drizzle/Postgres.js b/lib/Drizzle/Postgres.js
-index fdd0942..e745228 100644
+index fdd0942f..e7452288 100644
 --- a/lib/Drizzle/Postgres.js
 +++ b/lib/Drizzle/Postgres.js
 @@ -38,13 +38,13 @@ import { proxyChain } from "../Util/proxy-chain.js";
@@ -46,7 +82,7 @@ index fdd0942..e745228 100644
  //# sourceMappingURL=Postgres.js.map
 \ No newline at end of file
 diff --git a/lib/Test/Vitest.js b/lib/Test/Vitest.js
-index bada542..f135b00 100644
+index bada5420..f135b00d 100644
 --- a/lib/Test/Vitest.js
 +++ b/lib/Test/Vitest.js
 @@ -3,7 +3,7 @@ import { it } from "@effect/vitest";
@@ -58,8 +94,49 @@ index bada542..f135b00 100644
  import * as Core from "./Core.js";
  export { executeWhenReady, getWhenReady, guardContentType, guardedFetchLayer, rpcClientLayer, WorkerNotReady, } from "./Http.js";
  export const defaultStage = Core.defaultStage;
+diff --git a/src/Cloudflare/Containers/ContainerProvider.ts b/src/Cloudflare/Containers/ContainerProvider.ts
+index 41dc9d18..29d16bd0 100644
+--- a/src/Cloudflare/Containers/ContainerProvider.ts
++++ b/src/Cloudflare/Containers/ContainerProvider.ts
+@@ -982,11 +982,18 @@ export const LiveContainerProvider = () =>
+               : published.imageRef;
+           imageDigest = published.digest;
+         }
+-        const configuration = desiredConfiguration(
+-          news,
+-          env,
+-          deploymentImageRef,
+-        );
++        // An application whose logs are set at its top level (`observability`,
++        // what wrangler writes) rejects `configuration.observability` as well:
++        // "cannot define both observability and configuration.observability".
++        // Only an application that already keeps them in its configuration gets
++        // them sent there; the others keep their top-level setting.
++        const desired = desiredConfiguration(news, env, deploymentImageRef);
++        const { observability: _observability, ...withoutObservability } =
++          desired;
++        const configuration: ContainerApplication.Configuration =
++          existing.configuration.observability === undefined
++            ? withoutObservability
++            : desired;
+         const scaling = scalingDefaults(news);
+         const configurationHash = yield* applicationConfigurationHash(
+           scaling,
+@@ -1139,7 +1146,12 @@ export const LiveContainerProvider = () =>
+             newBindings.some(
+               (binding) => binding.data.durableObjects !== undefined,
+             );
++          // The application's observed attachment outranks the recorded
++          // bindings: an adopted application whose first reconcile failed has
++          // its attachment in `output` but no bindings recorded yet, and reading
++          // only the bindings would replace (delete) the live application.
+           const hadDurableObjects =
++            output?.durableObjects !== undefined ||
+             (yield* getDurableObjects(oldBindings)) !== undefined;
+           if (
+             !hasUnresolvedAttachment &&
 diff --git a/src/Drizzle/Postgres.ts b/src/Drizzle/Postgres.ts
-index 2d13891..61ae549 100644
+index 2d138914..61ae549d 100644
 --- a/src/Drizzle/Postgres.ts
 +++ b/src/Drizzle/Postgres.ts
 @@ -48,6 +48,15 @@ import { proxyChain } from "../Util/proxy-chain.ts";
@@ -96,7 +173,7 @@ index 2d13891..61ae549 100644
          return yield* PgDrizzle.makeWithDefaults(config).pipe(
            Effect.provideContext(pgCtx),
 diff --git a/src/Test/Vitest.ts b/src/Test/Vitest.ts
-index 7dd3576..0bcfc4d 100644
+index 7dd35766..0bcfc4db 100644
 --- a/src/Test/Vitest.ts
 +++ b/src/Test/Vitest.ts
 @@ -8,7 +8,7 @@ import {

@@ -25,6 +25,11 @@ export const ModelGatewayRecord = Schema.Struct({
   method: Schema.String,
   path: Schema.String,
   status: Schema.Number,
+  /**
+   * The caller's identity headers the gateway dropped before forwarding, by
+   * name (`Authorization`, a signed-in Codex's `ChatGPT-Account-ID`, …). Never values.
+   */
+  droppedHeaders: Schema.optionalKey(Schema.Array(Schema.String)),
   /** As the model token names it, unchecked. */
   threadId: Schema.NullOr(Schema.String),
   runId: Schema.NullOr(RunId),

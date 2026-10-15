@@ -174,7 +174,7 @@ function LocalKeysSection({
     >
       <SettingsRow
         title="Claude Code and Codex on your pool"
-        description={`Your computer's Claude Code and Codex use your pool instead of your own logins. ${poolText}`}
+        description={`Your computer's Claude Code and Codex use your pool, and stay signed in to their own accounts. ${poolText}`}
         status={error === null ? undefined : <span className="text-destructive">{error}</span>}
       >
         {command === null ? null : (

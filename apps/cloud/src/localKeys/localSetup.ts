@@ -7,17 +7,21 @@
  *
  * `localKeyRoutes.ts` serves `localSetup` as that script. It checks the key
  * with the ModelGateway first and writes nothing if the pool doesn't answer.
- * Then it configures each harness the way its docs describe, as the cloud's
- * own machines do (`apps/server/src/signalbox/runner/RunnerModelAccess.ts`):
+ * Then it configures each harness the way its docs describe, with the key in
+ * the harness's own config so apps launched from the Dock (no shell
+ * environment) get it too, and without touching either harness's login:
  *
- * - Claude Code: `ANTHROPIC_BASE_URL` in `settings.json`, and an
- *   `apiKeyHelper` that reads the key.
- * - Codex: a `signalbox` model provider in `config.toml` whose `auth.command`
- *   reads the key, chosen as `model_provider`.
+ * - Claude Code: `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` in the `env`
+ *   of `settings.json`. The token outranks a claude.ai login, which stays
+ *   signed in underneath.
+ * - Codex (CLI and desktop app): OpenAI's gateway pattern, a `signalbox`
+ *   model provider in `config.toml` with `requires_openai_auth = true` and the
+ *   key in `http_headers`, chosen as `model_provider`. Codex keeps its own
+ *   ChatGPT sign-in in `auth.json`, which setup never opens; the gateway takes
+ *   the key from its header and drops the ChatGPT credentials.
  *
- * Both read the key from a file beside their config, so they honor
- * `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. What it replaced is kept beside them,
- * and `--undo` puts it back.
+ * It honors `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. What it replaced is kept
+ * beside each config, and `--undo` puts it back.
  *
  * It reads both configs and works out every change before writing any, so a
  * config it can't take leaves the computer as it was.
@@ -33,6 +37,8 @@ export interface LocalSetupConfig {
   readonly openaiUrl: string;
   /** What every local key starts with. */
   readonly keyPrefix: string;
+  /** The header the ModelGateway reads a key from (`LOCAL_KEY_HEADER`). */
+  readonly keyHeader: string;
 }
 
 export async function localSetup(
@@ -42,17 +48,15 @@ export async function localSetup(
 ): Promise<number> {
   const fs = process.getBuiltinModule("node:fs");
   const path = process.getBuiltinModule("node:path");
-  const home = env.HOME ?? "";
+  const home = env.HOME ?? env.USERPROFILE ?? "";
   const claudeDir = env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
   const codexDir = env.CODEX_HOME || path.join(home, ".codex");
-  const KEY_FILE = "signalbox-key";
   const PREVIOUS_FILE = "signalbox-previous.json";
   const BEGIN = "# >>> signalbox: written by Signalbox setup; remove with its --undo";
   const END = "# <<< signalbox";
-  const CLAUDE_ENV = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
+  const CLAUDE_ENV = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
   const shown = (file: string) =>
     home && file.startsWith(home) ? `~${file.slice(home.length)}` : file;
-  const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
   const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
@@ -104,8 +108,7 @@ export async function localSetup(
   // Claude Code: settings.json, keeping everything it doesn't own.
   const claudeSettings = path.join(claudeDir, "settings.json");
   const claudePrevious = path.join(claudeDir, PREVIOUS_FILE);
-  const claudeKey = path.join(claudeDir, KEY_FILE);
-  const setUpClaude = (): ReadonlyArray<Change> => {
+  const setUpClaude = (key: string): ReadonlyArray<Change> => {
     const settings = readJson(claudeSettings) ?? {};
     const envBlock = (settings.env ?? {}) as Record<string, unknown>;
     // A second run keeps what the first one replaced.
@@ -115,35 +118,27 @@ export async function localSetup(
           [
             claudePrevious,
             json({
-              apiKeyHelper: settings.apiKeyHelper ?? null,
               env: Object.fromEntries(CLAUDE_ENV.map((name) => [name, envBlock[name] ?? null])),
             }),
           ],
         ];
-    // A key in settings would win over the helper.
-    const { ANTHROPIC_AUTH_TOKEN: _token, ANTHROPIC_API_KEY: _key, ...keptEnv } = envBlock;
+    // The token outranks an API key, an `apiKeyHelper` and a claude.ai login,
+    // so all of those stay as they are.
     const next = {
       ...settings,
-      apiKeyHelper: `cat ${shellQuote(claudeKey)}`,
-      env: { ...keptEnv, ANTHROPIC_BASE_URL: config.anthropicUrl },
+      env: { ...envBlock, ANTHROPIC_BASE_URL: config.anthropicUrl, ANTHROPIC_AUTH_TOKEN: key },
     };
     return [...previous, [claudeSettings, json(next)]];
   };
   const undoClaude = (): ReadonlyArray<Change> => {
     const settings = readJson(claudeSettings);
-    const cleanup: ReadonlyArray<Change> = [
-      [claudePrevious, null],
-      [claudeKey, null],
-    ];
+    const cleanup: ReadonlyArray<Change> = [[claudePrevious, null]];
     if (settings === null) return cleanup;
     // Without the record of what it replaced, setup's own values still go.
     const previous = readJson(claudePrevious) ?? {
-      apiKeyHelper: null,
       env: Object.fromEntries(CLAUDE_ENV.map((name) => [name, null])),
     };
     const restored: Record<string, unknown> = { ...settings };
-    if (previous.apiKeyHelper === null) delete restored.apiKeyHelper;
-    else restored.apiKeyHelper = previous.apiKeyHelper;
     const envBlock = { ...((settings.env ?? {}) as Record<string, unknown>) };
     const before = (previous.env ?? {}) as Record<string, unknown>;
     for (const name of CLAUDE_ENV) {
@@ -160,8 +155,7 @@ export async function localSetup(
   // Codex: config.toml, edited as text so its comments and layout stay.
   const codexConfig = path.join(codexDir, "config.toml");
   const codexPrevious = path.join(codexDir, PREVIOUS_FILE);
-  const codexKey = path.join(codexDir, KEY_FILE);
-  const setUpCodex = (): ReadonlyArray<Change> => {
+  const setUpCodex = (key: string): ReadonlyArray<Change> => {
     const lines = withoutBlock(read(codexConfig) ?? "").split("\n");
     if (lines.some((line) => /^\s*\[?\s*model_providers\.signalbox\b/.test(line))) {
       throw new Error(`${shown(codexConfig)} already has a "signalbox" model provider.`);
@@ -181,22 +175,17 @@ export async function localSetup(
       'name = "Signalbox"',
       `base_url = ${JSON.stringify(config.openaiUrl)}`,
       'wire_api = "responses"',
-      "requires_openai_auth = false",
+      // Codex keeps sending its own sign-in; the gateway authenticates the key header.
+      "requires_openai_auth = true",
       "supports_websockets = false",
-      "",
-      "[model_providers.signalbox.auth]",
-      'command = "cat"',
-      `args = [${JSON.stringify(codexKey)}]`,
+      `http_headers = { ${JSON.stringify(config.keyHeader)} = ${JSON.stringify(key)} }`,
       END,
       "",
     ].join("\n");
     return [...previous, [codexConfig, `${body.trim() === "" ? "" : `${body}\n`}${block}`]];
   };
   const undoCodex = (): ReadonlyArray<Change> => {
-    const cleanup: ReadonlyArray<Change> = [
-      [codexPrevious, null],
-      [codexKey, null],
-    ];
+    const cleanup: ReadonlyArray<Change> = [[codexPrevious, null]];
     const text = read(codexConfig);
     if (text === null) return cleanup;
     const before = readJson(codexPrevious)?.modelProvider;
@@ -240,22 +229,10 @@ export async function localSetup(
       return 1;
     }
     // Both configs are read and checked before anything is written.
-    const changes = [...setUpClaude(), ...setUpCodex()];
-    for (const file of [claudeKey, codexKey]) {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, key, { mode: 0o600 });
-      // `mode` only applies to a new file.
-      fs.chmodSync(file, 0o600);
-    }
-    apply(changes);
+    apply([...setUpClaude(key), ...setUpCodex(key)]);
     console.log("Your Signalbox pool answered. Claude Code and Codex now run on it:");
     console.log(`  Claude Code  ${shown(claudeSettings)}`);
     console.log(`  Codex        ${shown(codexConfig)}`);
-    if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) {
-      console.log(
-        "Your shell sets ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN, which Claude Code prefers. Unset it to use the pool.",
-      );
-    }
     console.log(`Undo: curl -fsSL ${config.setupUrl} | node - --undo`);
     return 0;
   } catch (error) {

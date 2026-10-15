@@ -172,7 +172,7 @@
       "rpc": "automations.customize",
       "access": "write",
       "input": "91eb786d",
-      "output": "95128526"
+      "output": "de208150"
     },
     {
       "name": "automations.delete",
@@ -187,7 +187,7 @@
       "rpc": "automations.discardDraft",
       "access": "write",
       "input": "e4926bda",
-      "output": "95128526"
+      "output": "de208150"
     },
     {
       "name": "automations.disconnect",
@@ -202,7 +202,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "e4926bda",
-      "output": "a29c5d8f"
+      "output": "6cfec324"
     },
     {
       "name": "automations.list",
@@ -210,7 +210,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "79edab6a"
+      "output": "a1386d18"
     },
     {
       "name": "automations.notices",
@@ -224,15 +224,15 @@
       "name": "automations.publish",
       "rpc": "automations.publish",
       "access": "write",
-      "input": "e4926bda",
-      "output": "95128526"
+      "input": "b3f469e7",
+      "output": "de208150"
     },
     {
       "name": "automations.rotateWebhook",
       "rpc": "automations.rotateWebhook",
       "access": "write",
       "input": "e4926bda",
-      "output": "95128526"
+      "output": "de208150"
     },
     {
       "name": "automations.run",
@@ -254,7 +254,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "022882a6"
+      "output": "b013495f"
     },
     {
       "name": "automations.runs.retry",
@@ -268,14 +268,14 @@
       "rpc": "automations.setEnabled",
       "access": "write",
       "input": "a3f5fcc8",
-      "output": "95128526"
+      "output": "de208150"
     },
     {
       "name": "automations.setWebhookSecret",
       "rpc": "automations.setWebhookSecret",
       "access": "write",
       "input": "2af82751",
-      "output": "95128526"
+      "output": "de208150"
     },
     {
       "name": "automations.stopAttached",

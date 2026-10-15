@@ -62,7 +62,7 @@ import { BUILT_IN_AUTOMATIONS, builtInSummary } from "./defaults/registry.ts";
 import { makeEventTriggers } from "./events/eventTriggers.ts";
 import { makePullRequestTracker } from "./events/pullRequestFacts.ts";
 import type { PullRequestReads } from "./events/pullRequestReads.ts";
-import { makeRunWaits } from "./events/runWaits.ts";
+import { makeRunWaits, stepWatch } from "./events/runWaits.ts";
 import * as ExecutorSettings from "./executorSettings.ts";
 import { fromJson, toJson } from "./json.ts";
 import { automationShows, listShows, makeLiveFeed, runShows, type Change } from "./liveFeed.ts";
@@ -82,6 +82,10 @@ import { runSummary, runTitle } from "./views.ts";
 import { makeWebhooks } from "./webhooks.ts";
 import { makeCallbacks } from "./callbacks.ts";
 import { makeWaits, type Waits } from "./waits.ts";
+import * as SourceStore from "./sources/sourceStore.ts";
+import { makeSourceWatches } from "./sources/sourceWatches.ts";
+import { scopeOf, sourceIdOf } from "./sources/watch.ts";
+import { watchersOf } from "./sources/watchers.ts";
 import { setPullRequestWatchHandler } from "./pullRequestWatchHook.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
@@ -121,6 +125,7 @@ export interface WorkflowEngineShape extends CatalogShape {
   readonly listWaits: Waits["list"];
   readonly stopWait: Waits["stop"];
   readonly watchPullRequest: Waits["watchPullRequest"];
+  readonly requestMerge: Waits["requestMerge"];
   /** The MCP server hands over Signalbox's tools for `w.call("…", "signalbox.<tool>")`. */
   readonly registerBuiltinTools: (handler: BuiltinToolHandler) => Effect.Effect<void>;
   /** The server registers pull request reads once its pull request service exists. */
@@ -193,7 +198,15 @@ const make = Effect.gen(function* () {
   const store: Store = yield* WorkflowStore.make;
   const links = yield* RunLinkStore.make;
   const hosts = yield* HostStore.make;
-  const builtinTools = makeBuiltinTools();
+  const builtinTools = makeBuiltinTools({
+    approvalOf: (runId) =>
+      Effect.gen(function* () {
+        const run = yield* store.getRun(runId);
+        const version = run ? yield* store.getVersion(run.automation_id, run.version) : undefined;
+        return version?.approved_by ?? null;
+      }),
+    projectOfThread: (threadId) => projectOfThread(threadId),
+  });
   const crypto = yield* Crypto.Crypto;
   const threads = yield* ThreadManagementService;
   const scheduler = yield* Scheduler;
@@ -256,6 +269,53 @@ const make = Effect.gen(function* () {
       runWaits
         .deliver(envelope, [{ runId, projectId: envelope.projectId, patterns: ["hook.called"] }])
         .pipe(logFailure("Automation callback delivery failed")),
+  });
+
+  const sourceStore = yield* SourceStore.make;
+  const sourceWatchers = watchersOf({
+    triggers: events.watchingTriggers,
+    runs: runWaits.watching,
+  });
+  const sources = makeSourceWatches({
+    store: sourceStore,
+    watchers: sourceWatchers,
+    read: connections.call,
+    publish: events.sourceEvent,
+    notify: (notice) => PubSub.publish(notices, notice).pipe(Effect.asVoid),
+    checked: (watchers) =>
+      Effect.forEach(
+        new Map(
+          watchers.map((watcher) => [
+            `${watcher.automation.automation_id}/${watcher.runId ?? ""}`,
+            watcher,
+          ]),
+        ).values(),
+        (watcher) =>
+          changed({
+            kind: "sources",
+            automationId: watcher.automation.automation_id,
+            ...(watcher.runId ? { runId: watcher.runId } : {}),
+          }),
+        { discard: true },
+      ),
+    paused: (sourceId, watchers, error) =>
+      Effect.forEach(
+        new Set(watchers.flatMap((watcher) => (watcher.runId ? [watcher.runId] : []))),
+        (runId) =>
+          Effect.gen(function* () {
+            const run = yield* store.getRunMeta(runId);
+            const automation = run ? yield* store.getAutomation(run.automation_id) : undefined;
+            if (!automation) return;
+            for (const step of yield* store.listSteps(runId)) {
+              const watch = step.status === "waiting" ? stepWatch(step) : undefined;
+              if (watch && sourceIdOf(scopeOf(automation), watch) === sourceId)
+                yield* complete(runId, step.step_key, { ok: false, error });
+            }
+          }).pipe(ignoreFailure("source pause")),
+        { discard: true },
+      ),
+    adjustBusy: replays.adjustBusy,
+    scope,
   });
 
   const changed = (change: Change) =>
@@ -879,10 +939,12 @@ const make = Effect.gen(function* () {
     changed,
     requireAutomation,
     relayHookBaseUrl: webhookOrigin.pipe(Effect.map((origin) => origin.relayHookBaseUrl)),
+    watching: sources.statusOf,
   });
   const builtIns = makeBuiltIns({ store, hosts, catalog, changed, requireAutomation });
   const waits = makeWaits({
     store,
+    threads,
     links,
     attachments,
     newId,
@@ -893,7 +955,7 @@ const make = Effect.gen(function* () {
   setPullRequestWatchHandler(waits.watchPullRequest);
   yield* Effect.addFinalizer(() => Effect.sync(() => setPullRequestWatchHandler(undefined)));
 
-  const { settleThreadStep, tick } = yield* makeTimedWork({
+  const timed = yield* makeTimedWork({
     store,
     links,
     threads,
@@ -911,6 +973,9 @@ const make = Effect.gen(function* () {
     automationOfRun,
     ignoreFailure,
   });
+  const { settleThreadStep } = timed;
+  // One failing doesn't hold up the other.
+  const tick = timed.tick.pipe(Effect.ensuring(sources.tick));
 
   const feed = yield* makeLiveFeed(changes);
   yield* forkParked(events.worker);
@@ -992,6 +1057,7 @@ const make = Effect.gen(function* () {
     listWaits: waits.list,
     stopWait: waits.stop,
     watchPullRequest: waits.watchPullRequest,
+    requestMerge: waits.requestMerge,
     registerBuiltinTools: builtinTools.register,
     registerPullRequestReads: (reads) =>
       Effect.sync(() => {

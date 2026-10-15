@@ -141,6 +141,8 @@ export default workflow(async (w) => {
           tool: "t3_thread_send",
           args: { threadId: "thread-9", message: "Go", mode: "queue" },
           automationId: automation.id,
+          projectId: PROJECT,
+          runId: run.id,
           automationName: "Nudge",
           runtimeMode: DEFAULTS.runtimeMode,
           requestKey: `${run.id}/${detail.steps[0]!.key}`,
