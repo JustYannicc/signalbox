@@ -9,9 +9,11 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@cloudflare/dynamic-workflows": "0.1.1",
     "@effect/sql-sqlite-do": "catalog:",
     "@signalbox/account": "workspace:*",
     "@signalbox/api": "workspace:*",
+    "@signalbox/automations": "workspace:*",
     "@signalbox/runner-protocol": "workspace:*",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",

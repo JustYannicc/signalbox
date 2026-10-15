@@ -72,6 +72,7 @@ import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { McpAppFullscreenScreen } from "./features/threads/McpAppFullscreenScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
+import { environmentUiOnly } from "./features/connection/environmentUiOnly"; // signalbox
 import { accountSignInStackScreen } from "./features/account/AccountSignInRoutes"; // signalbox: accounts
 import {
   AUTOMATION_OVERLAY_ROUTES,
@@ -238,7 +239,7 @@ const SettingsContentStack = createV5SheetStackNavigator({
       },
     }),
     SettingsEnvironments: createNativeStackScreen({
-      screen: SettingsEnvironmentsRouteScreen,
+      screen: environmentUiOnly(SettingsEnvironmentsRouteScreen), // signalbox
       linking: "environments",
       options: {
         title: "Environments",
@@ -290,7 +291,7 @@ const SettingsContentStack = createV5SheetStackNavigator({
       options: { title: "About Signalbox" },
     }),
     SettingsEnvironmentNew: createNativeStackScreen({
-      screen: ConnectionsNewRouteScreen,
+      screen: environmentUiOnly(ConnectionsNewRouteScreen), // signalbox
       linking: "environment-new",
       options: {
         title: "Add Environment",
@@ -508,7 +509,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
       },
     }),
     NewTaskEnvironment: createNativeStackScreen({
-      screen: NewTaskEnvironmentPickerRouteScreen,
+      screen: environmentUiOnly(NewTaskEnvironmentPickerRouteScreen), // signalbox
       linking: "draft/environment",
       options: {
         title: "Environment",
@@ -979,7 +980,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       },
     }),
     Connections: createNativeStackScreen({
-      screen: ConnectionsRouteScreen,
+      screen: environmentUiOnly(ConnectionsRouteScreen), // signalbox
       linking: "connections",
       options: {
         title: "Environments",

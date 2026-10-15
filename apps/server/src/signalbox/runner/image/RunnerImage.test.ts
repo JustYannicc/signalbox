@@ -16,7 +16,7 @@ import { previewBrowserRelease } from "../../../preview/PreviewBrowser.ts";
 const dockerfile = NodeFS.readFileSync(NodePath.join(import.meta.dirname, "Dockerfile"), "utf8");
 const arg = (name: string) => new RegExp(`^ARG ${name}=(\\S+)$`, "m").exec(dockerfile)?.[1];
 
-describe("Runner image browser pins", () => {
+describe("Runner image pins", () => {
   it("fetches the headless shell PreviewBrowser pins, by its checksums", () => {
     for (const arch of ["x64", "arm64"] as const) {
       const release = previewBrowserRelease("linux", arch)!;
@@ -31,6 +31,11 @@ describe("Runner image browser pins", () => {
     expect(arg("PLAYWRIGHT_CORE_VERSION")).toBe(packageJson.dependencies["playwright-core"]);
   });
 
+  it("installs the oxc the automation compiler pins", () => {
+    expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-parser"]);
+    expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-transform"]);
+  });
+
   // A second `npm install --no-save` into the same prefix prunes what the
   // first one put there, which shipped an image without playwright-core.
   it("installs everything beside the Runner in one npm install", () => {
@@ -38,5 +43,6 @@ describe("Runner image browser pins", () => {
     expect(installs).toHaveLength(1);
     expect(installs[0]).toContain('"playwright-core@${PLAYWRIGHT_CORE_VERSION}"');
     expect(installs[0]).toContain('"@1password/sdk@${ONEPASSWORD_SDK_VERSION}"');
+    expect(installs[0]).toContain('"oxc-parser@${OXC_VERSION}"');
   });
 });

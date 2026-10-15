@@ -2,7 +2,10 @@ import { WorkflowStepVerb, type WorkflowDetailValue } from "@t3tools/contracts";
 import type { CallExpression, Node } from "oxc-parser";
 
 import { readAskDetail } from "./ask.ts";
-import { sourceWatchProblem, waitForEventProblem } from "./eventTriggers.ts";
+import {
+  sourceWatchProblem,
+  waitForEventProblem,
+} from "@signalbox/automations/compiler/eventTriggers";
 import { detailValue, evaluateLiteral, objectProperties, readString, unwrap } from "./literals.ts";
 import type { WorkflowSource } from "./source.ts";
 

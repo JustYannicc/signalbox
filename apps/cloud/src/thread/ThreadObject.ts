@@ -48,6 +48,7 @@ import {
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
 import * as SessionRows from "./session/SessionRows.ts";
 import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.ts";
+import { deliverPendingEvents } from "./eventOutbox.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -64,11 +65,12 @@ import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
  * in over a WebSocket (see `runner/`).
  *
  * Work after a commit runs from the object's alarm: one scripted step per
- * firing, the summary outbox, the machine lease, then its linked pull
- * requests' sync (`pullRequests/PullRequestSync.ts`). Alarms are durable and
- * retried, and the object re-arms one whenever it wakes with work
- * outstanding, so neither an eviction nor a deploy strands a turn, a sidebar
- * update or a machine.
+ * firing, the summary outbox, the event outbox to the owner's automations
+ * (`eventOutbox.ts`), the machine lease, then its linked pull requests' sync
+ * (`pullRequests/PullRequestSync.ts`). Alarms are durable and retried, and
+ * the object re-arms one whenever it wakes with work outstanding, so neither
+ * an eviction nor a deploy strands a turn, a sidebar update, an automation's
+ * event or a machine.
  *
  * It is also the PreviewGateway's brain (`preview/PreviewGateway.ts`): the
  * Runner's tunnel lands here, and so does every request to the thread's
@@ -314,6 +316,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.api.contextTurns(...args);
   }
 
+  setMonitors(...args: Parameters<ThreadObjectApi["setMonitors"]>) {
+    return this.api.setMonitors(...args);
+  }
+
   /** The ModelGateway reporting a request it served for this thread (see `modelGrants.ts`). */
   async recordModelRequest(record: ModelGatewayRecord) {
     await this.runtime.runPromise(
@@ -396,6 +402,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private stepFailures = 0;
   private deliveryFailures = 0;
   private nextDeliveryAt = 0;
+  private eventFailures = 0;
+  private nextEventsAt = 0;
   private machineFailures = 0;
   private analyticsFailures = 0;
   private nextAnalyticsAt = 0;
@@ -411,8 +419,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   /**
-   * Arms the alarm now when there is work: a scripted step, a summary to
-   * deliver, or lease upkeep. `work` is the Runner's state when the caller
+   * Arms the alarm now when there is work: a scripted step, a summary or
+   * events to deliver, or lease upkeep. `work` is the Runner's state when the caller
    * just read it.
    */
   private async armAlarm(work?: ThreadRunner.RunnerWork) {
@@ -424,6 +432,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
           runner.needsUpkeep ||
           (yield* engine.hasTurnWork) ||
           (yield* engine.hasPendingSummary) ||
+          (yield* engine.hasPendingEvents) ||
           (yield* Effect.forEach(
             MachineBackend.distinctBackends(yield* MachineBackend.MachineBackend),
             (backend) => backend.pending,
@@ -630,6 +639,25 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       : Math.min(analyticsAt, finalizeAt);
   }
 
+  /**
+   * The event outbox (`eventOutbox.ts`), unless it is backing off: committed
+   * events to the owner's automations, retried after the usual backoff.
+   */
+  private async deliverEvents(now: number) {
+    if (now < this.nextEventsAt) return;
+    const delivered = await this.runtime.runPromise(
+      deliverPendingEvents.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("thread event delivery failed", Cause.pretty(cause)).pipe(
+            Effect.as(false),
+          ),
+        ),
+      ),
+    );
+    this.eventFailures = delivered ? 0 : this.eventFailures + 1;
+    this.nextEventsAt = delivered ? 0 : now + retryDelay(this.eventFailures);
+  }
+
   /** The thread's id: its object is named by it. */
   private threadId() {
     const name = this.ctx.id.name;
@@ -638,7 +666,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   /**
-   * One provider step, then the summary outbox. Failures back off instead of
+   * One provider step, then the outboxes and upkeep. Failures back off instead of
    * throwing: Cloudflare stops retrying a failing alarm after a few attempts,
    * and a turn must not stop for good because one step failed.
    */
@@ -678,14 +706,25 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.deliveryFailures = delivered ? 0 : this.deliveryFailures + 1;
       this.nextDeliveryAt = delivered ? 0 : now + retryDelay(this.deliveryFailures);
     }
+    await this.deliverEvents(now);
     const machineWakeAt = await this.tendMachine(now).catch(async (cause: unknown) => {
       await this.runtime.runPromise(Effect.logError("machine upkeep failed", String(cause)));
       return now + retryDelay(1);
     });
     const diagnosticsWakeAt = await this.tendDiagnostics(now);
+    // Machine upkeep may have committed events since; they go out on the next firing.
+    const eventsAt =
+      this.nextEventsAt > 0
+        ? this.nextEventsAt
+        : (await this.runtime.runPromise(
+              ThreadEngine.ThreadEngine.use((engine) => engine.hasPendingEvents),
+            ))
+          ? now
+          : null;
     const due = [
       step.more ? now + (step.ok ? STEP_INTERVAL_MS : retryDelay(this.stepFailures)) : null,
       this.nextDeliveryAt > 0 ? this.nextDeliveryAt : null,
+      eventsAt,
       machineWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,

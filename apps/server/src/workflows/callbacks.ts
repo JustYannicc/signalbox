@@ -6,11 +6,12 @@ import type {
   WebhookTriggerResult,
 } from "../scheduledTasks/ScheduledTaskService.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
-import type { Envelope } from "./events/eventTriggers.ts";
-import { nowIso } from "./time.ts";
-import { hookEndpoint } from "./views.ts";
+import type { Envelope } from "@signalbox/automations/events/eventTriggers";
+import type { CallbackLink } from "@signalbox/automations/host";
+import { nowIso } from "@signalbox/automations/time";
+import { hookEndpoint } from "@signalbox/automations/views";
 import { bodyInput, requestKeys, runHeaders, runQuery } from "./webhooks.ts";
-import type { WorkflowStore } from "./WorkflowStore.ts";
+import type { WorkflowStore } from "@signalbox/automations/WorkflowStore";
 
 /**
  * `w.hook(label)`: a callback link a run hands to someone else, such as a
@@ -25,13 +26,6 @@ import type { WorkflowStore } from "./WorkflowStore.ts";
 
 /** Callback link ids are `callback_<uuid>`; automation and scheduled task ids never start this way. */
 export const CALLBACK_HOOK_PREFIX = "callback_";
-
-/** What `w.hook` returns: `url` once the server has a public address, else the path on it. */
-export interface CallbackLink {
-  readonly hookId: string;
-  readonly url: string | null;
-  readonly path: string;
-}
 
 export const makeCallbacks = (deps: {
   readonly store: WorkflowStore;

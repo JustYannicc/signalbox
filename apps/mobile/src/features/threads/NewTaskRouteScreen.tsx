@@ -37,6 +37,7 @@ import { usePromptLinkResolver } from "../prompt-links/usePromptLinkResolver";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { useFolderStartRedirect } from "../folders/use-folder-start-redirect"; // signalbox: folders
+import { useFolderCopy, useScratchCopy } from "../folders/use-folder-copy"; // signalbox: folders
 import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
 
 type NewTaskRouteParams = {
@@ -113,6 +114,7 @@ function NewTaskHeader(props: {
 }) {
   const navigation = useNavigation();
   const { layout } = useAdaptiveWorkspaceLayout();
+  const folderCopy = useFolderCopy(); // signalbox: folders
   return (
     <ScreenHeader
       title={props.title}
@@ -139,7 +141,7 @@ function NewTaskHeader(props: {
       search={{
         value: props.searchText,
         onChangeText: props.onSearchTextChange,
-        placeholder: "Search projects",
+        placeholder: folderCopy("Search projects"),
       }}
     />
   );
@@ -156,18 +158,23 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const { getShare, releaseShareReservation } = useIncomingShare();
   usePromptLinkResolver(route.params);
   useFolderStartRedirect(route.params); // signalbox: folders
+  const folderCopy = useFolderCopy(); // signalbox: folders
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
     : route.params?.incomingShareId;
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
-      ? "Choose a project for what you shared"
+      ? folderCopy("Choose a project for what you shared")
       : incomingShare.attachments.length === 1
-        ? `Choose a project for the ${incomingShare.attachments[0]?.type === "image" ? "image" : "file"} you shared`
-        : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
+        ? folderCopy(
+            `Choose a project for the ${incomingShare.attachments[0]?.type === "image" ? "image" : "file"} you shared`,
+          )
+        : folderCopy(
+            `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`,
+          )
     : null;
-  const screenTitle = incomingShare ? "Start a task" : "Choose project";
+  const screenTitle = incomingShare ? "Start a task" : folderCopy("Choose project");
   // signalbox: one environment reads as Signalbox and has no other environment to go and add.
   const showsEnvironments = useShowsEnvironmentUi();
   const projectEmptyState = showsEnvironments
@@ -214,6 +221,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     ) ??
     scratchEnvironments[0] ??
     null;
+  const scratch = useScratchCopy(scratchEnvironment?.environmentId ?? null); // signalbox: folders
   const canStartScratch = scratchEnvironment !== null && reservedDestinationProject === null;
   const scratchStartInFlightRef = useRef(false);
 
@@ -259,7 +267,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           Alert.alert(
-            "Could not start without a project",
+            scratch.failed,
             error instanceof Error
               ? error.message
               : "The folder for threads without a project could not be created.",
@@ -335,8 +343,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <View collapsable={false} className="overflow-hidden rounded-[28px] bg-grouped-card">
                 <MaterialListRow
                   className="bg-grouped-card"
-                  title="No project"
-                  subtitle="Start a task without a project"
+                  title={scratch.title}
+                  subtitle={scratch.subtitle}
                   onPress={() => void startScratch()}
                   leading={
                     <SymbolView
@@ -352,7 +360,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="No project"
+                  accessibilityLabel={scratch.title}
                   onPress={() => void startScratch()}
                   className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
                 >
@@ -365,9 +373,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     />
                   </View>
                   <View className="min-w-0 flex-1">
-                    <Text className="text-base font-t3-bold leading-snug">No project</Text>
+                    <Text className="text-base font-t3-bold leading-snug">{scratch.title}</Text>
                     <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
-                      Start a task without a project
+                      {scratch.subtitle}
                     </Text>
                   </View>
                   <SymbolView
@@ -414,7 +422,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   ) : null}
                   {canStartScratch ? (
                     <MaterialButton
-                      label="Start without a project"
+                      label={scratch.start}
                       tone="secondary"
                       onPress={() => void startScratch()}
                     />
@@ -444,9 +452,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       className="rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
                       onPress={() => void startScratch()}
                     >
-                      <Text className="text-sm font-t3-bold text-foreground">
-                        Start without a project
-                      </Text>
+                      <Text className="text-sm font-t3-bold text-foreground">{scratch.start}</Text>
                     </Pressable>
                   ) : null}
                 </>
@@ -455,10 +461,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           ) : visibleScopes.length === 0 ? (
             <View className="items-center gap-2 px-6 py-8">
               <Text className="text-center text-lg font-t3-bold text-foreground">
-                No matching projects
+                {folderCopy("No matching projects")}
               </Text>
               <Text className="text-center text-sm leading-normal text-foreground-muted">
-                Try a different project name or workspace path.
+                {folderCopy("Try a different project name or workspace path.")}
               </Text>
             </View>
           ) : (

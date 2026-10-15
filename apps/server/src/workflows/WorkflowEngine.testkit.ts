@@ -39,10 +39,19 @@ import type {
   WebhookTriggerResult,
 } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import type { BuiltinToolCall } from "./builtinTools/runner.ts";
-import { automationError } from "./errors.ts";
-import { fromJson, toJson } from "./json.ts";
-import { WorkflowEngine, layer as engineLayer } from "./WorkflowEngine.ts";
+import type { BuiltinToolCall } from "@signalbox/automations/builtinTools/runner";
+import { automationError } from "@signalbox/automations/errors";
+import { fromJson, toJson } from "@signalbox/automations/json";
+import { AutomationHooks, layer as engineLayer } from "./serverHost.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
+
+/** A request to an automation webhook, through the server's hook route. */
+export const receiveWebhook = (request: WebhookTriggerRequest) =>
+  AutomationHooks.use((hooks) => hooks.receiveWebhook(request));
+
+/** A request to a run's `w.hook` callback link, through the server's hook route. */
+export const receiveCallback = (request: WebhookTriggerRequest) =>
+  AutomationHooks.use((hooks) => hooks.receiveCallback(request));
 
 /** Shared fakes for the engine tests: threads, HTTP and Executor, and a real in-memory database. */
 
@@ -297,7 +306,11 @@ const makeDependencies = (options: EngineOptions) =>
 /** Runs `body` with a real engine over the fakes, and the services under it for direct checks. */
 export function withEngine<A, E>(
   options: EngineOptions,
-  body: Effect.Effect<A, E, WorkflowEngine | Layer.Success<ReturnType<typeof makeDependencies>>>,
+  body: Effect.Effect<
+    A,
+    E,
+    WorkflowEngine | AutomationHooks | Layer.Success<ReturnType<typeof makeDependencies>>
+  >,
 ) {
   return body.pipe(Effect.provide(engineLayer.pipe(Layer.provideMerge(makeDependencies(options)))));
 }

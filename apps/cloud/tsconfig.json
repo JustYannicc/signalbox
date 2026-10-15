@@ -2,7 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023", "WebWorker"],
+    // ES2024 for Map.groupBy, which workerd has and @signalbox/automations uses.
+    "lib": ["ES2024", "WebWorker"],
     "types": ["@cloudflare/workers-types", "node"]
   },
   "include": ["src/**/*.ts"]

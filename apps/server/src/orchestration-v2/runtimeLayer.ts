@@ -51,7 +51,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as WorkflowEngine from "../workflows/WorkflowEngine.ts"; // signalbox: automations
+import * as ServerAutomations from "../workflows/serverHost.ts"; // signalbox: automations
 import * as AutomationConnections from "../workflows/connectionSettings.ts"; // signalbox: automations
 
 /** The shared application event log and its command receipts. */
@@ -358,7 +358,7 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,
-  WorkflowEngine.layer.pipe(
+  ServerAutomations.layer.pipe(
     Layer.provide(
       Layer.mergeAll(layerThreadLaunchProvided, layerThreadManagementProvided, layerProjectService),
     ),

@@ -42,6 +42,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { draftModelSelection, useProjectPoolModelSelection } from "../../state/projectPool"; // signalbox
+import { useDraftHeroCopy } from "../sidebar/folders/useFolderCopy"; // signalbox
 
 // Picker value for the "Add project" row; real entries are keyed by logical
 // project key.
@@ -177,6 +178,7 @@ export function DraftHeroHeadline({
     activeProjectRef?.environmentId ?? primaryEnvironmentId,
   );
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
+  const copy = useDraftHeroCopy(activeProjectRef?.environmentId ?? scratchTargetEnvironmentId); // signalbox: folder words
   const isScratchDraft =
     activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
 
@@ -186,9 +188,9 @@ export function DraftHeroHeadline({
   const pickerItems = useMemo<readonly PickerItem[]>(
     () => [
       ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
-      { value: ADD_PROJECT_VALUE, label: "Add project" },
+      { value: ADD_PROJECT_VALUE, label: copy.addRow },
     ],
-    [menuEntries],
+    [copy.addRow, menuEntries],
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
@@ -269,7 +271,7 @@ export function DraftHeroHeadline({
       return false;
     }
     const requested = { draftId, activeProjectKey, scratchTargetEnvironmentId };
-    const project = await openScratchProject(scratchTargetEnvironmentId);
+    const project = await openScratchProject(scratchTargetEnvironmentId, copy.startWithoutFailed);
     const latest = latestTargetRef.current;
     if (
       !project ||
@@ -325,7 +327,7 @@ export function DraftHeroHeadline({
           }
         >
           <span className="min-w-0 truncate">
-            {isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a project")}
+            {isScratchDraft ? copy.scratchLabel : (activeProjectDisplayName ?? copy.choose)}
           </span>
         </TooltipTrigger>
         {activeProjectDisplayName && !isScratchDraft ? (
@@ -334,12 +336,12 @@ export function DraftHeroHeadline({
       </Tooltip>
       <ComboboxPopup align="center" className="w-72 overflow-hidden">
         <ComboboxSearchInput
-          aria-label="Search projects"
-          placeholder="Search projects..."
+          aria-label={copy.search}
+          placeholder={copy.searchPlaceholder}
           value={pickerQuery}
           onChange={(event) => setPickerQuery(event.target.value)}
         />
-        <ComboboxEmpty>No matching projects.</ComboboxEmpty>
+        <ComboboxEmpty>{copy.noMatches}</ComboboxEmpty>
         <ComboboxList>
           {(item: PickerItem) => {
             const entry = projectEntryByKey.get(item.value);
@@ -375,7 +377,7 @@ export function DraftHeroHeadline({
       onClick={openAddProject}
       className="pointer-events-auto inline cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
-      {activeProjectTitle ?? "Add a project"}
+      {activeProjectTitle ?? copy.add}
     </button>
   );
 
@@ -388,8 +390,8 @@ export function DraftHeroHeadline({
     : hasResolvedProject
       ? `What should we build in ${activeProjectDisplayName}?`
       : canChooseProject
-        ? `${activeProjectDisplayName ?? "Choose a project"} to start`
-        : "Add a project to start";
+        ? `${activeProjectDisplayName ?? copy.choose} to start`
+        : copy.addToStart;
 
   // One click out of the project, phrased as the alternative to the question
   // above it. Focus moves to the project picker once this line has gone.
@@ -412,7 +414,7 @@ export function DraftHeroHeadline({
             />
           }
         >
-          or start without a project
+          {copy.startWithout}
         </TooltipTrigger>
         {noProjectShortcut ? <TooltipPopup side="bottom">{noProjectShortcut}</TooltipPopup> : null}
       </Tooltip>
@@ -431,7 +433,7 @@ export function DraftHeroHeadline({
         ) : canChooseProject ? (
           <>{projectSelector} to start</>
         ) : (
-          <>Add a project to start</>
+          <>{copy.addToStart}</>
         )}
       </h1>
       {/* Reserved whenever threads can skip a project, so the heading does not

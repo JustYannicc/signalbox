@@ -62,6 +62,7 @@ import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayo
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox: one environment
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -699,6 +700,7 @@ export function ProviderInstanceCard({
   acpProjects = EMPTY_ACP_PROJECTS,
   projectOverride,
 }: ProviderInstanceCardProps) {
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
@@ -1322,8 +1324,9 @@ export function ProviderInstanceCard({
         <SettingsSection title="Models">
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
-              Model preferences and custom models are saved on the selected environment and shared
-              across connected devices.
+              {showsEnvironmentUi // signalbox: one environment
+                ? "Model preferences and custom models are saved on the selected environment and shared across connected devices."
+                : "Model preferences and custom models are saved to your account and shared across your devices."}
             </p>
             <ProviderModelsSection
               canManageCustomModels={!readOnly}

@@ -19,7 +19,7 @@ import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { makeSectionsWsHandlers } from "../sections/rpc.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import { automationRpcHandlers } from "../workflows/rpcHandlers.ts";
-import * as WorkflowEngine from "../workflows/WorkflowEngine.ts";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import { makeSignalboxAnalyticsWsHandlers } from "./analytics/rpc.ts";
 import { signalboxContextsWsHandlers } from "./contexts/rpc.ts";
 import { signalboxDrivesWsHandlers } from "./drives/rpc.ts";

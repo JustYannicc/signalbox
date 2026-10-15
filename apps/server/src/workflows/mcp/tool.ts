@@ -6,7 +6,7 @@ import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as WorkflowEngine from "../WorkflowEngine.ts";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 /** How every automation tool is declared: its services, failure and annotations. */
 

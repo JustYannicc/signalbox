@@ -70,6 +70,7 @@ const setup = (
         previewLink: async () => ({ _tag: "unavailable", message: "none" }),
         contextMatch: async () => null,
         contextTurns: async () => null,
+        setMonitors: async () => ({ _tag: "ok", value: undefined }),
       }),
   });
   const recordedAlarm = Layer.succeed(

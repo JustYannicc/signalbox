@@ -1,5 +1,9 @@
+import { AutomationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
+import { automationTool } from "../automations/automationTool.ts";
+import * as CloudAutomations from "../automations/CloudAutomations.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
 import { publishBranch } from "../github/branchPublishing.ts";
@@ -57,6 +61,15 @@ export const makeUserObjectApi = (
   const github = <A, E>(
     f: (service: GitHubConnection.GitHubConnection["Service"]) => Effect.Effect<A, E>,
   ) => run(GitHubConnection.GitHubConnection.use(f));
+  /** A run's instance calling in; a rejection is its cue to retry. */
+  const withAutomations = <A>(
+    f: (automations: CloudAutomations.CloudAutomationsShape) => Effect.Effect<A, AutomationError>,
+  ) =>
+    Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
+      Option.isNone(automations)
+        ? Effect.fail(new AutomationError({ message: "Automations aren't running in this cloud." }))
+        : f(automations.value),
+    );
   return {
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
     profile: () => use((store) => store.profile),
@@ -79,6 +92,18 @@ export const makeUserObjectApi = (
         ),
       );
     },
+    // An object without automations yet takes the events and drops them.
+    threadEvents: ({ threadId, events }) =>
+      run(
+        Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
+          Option.isNone(automations)
+            ? Effect.void
+            : automations.value.threadEvents({ threadId, events: wire.events.decode(events) }),
+        ).pipe(
+          // Ids only, never what happened (#284).
+          Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
+        ),
+      ),
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
     beginGitHubConnect: (input) => github((service) => service.begin(input)),
     completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),
@@ -119,6 +144,10 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
+    automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
+    automationHost: (call) => run(withAutomations((automations) => automations.host(call))),
+    automationWorkerModule: (automationId, version) =>
+      run(withAutomations((automations) => automations.workerModule(automationId, version))),
     sweepThreadKinds: async (asOfMs) => {
       const { archived } = await run(
         UserThreadKinds.UserThreadKinds.use((kinds) => kinds.sweep(asOfMs)),

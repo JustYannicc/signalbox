@@ -42,6 +42,7 @@ import {
   wipRef,
   machineRef,
 } from "./DriveStore.ts";
+import { isAutomationApiPath, serveAutomationRequest } from "./automationRoutes.ts";
 import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
 import {
   type DirectUploads,
@@ -232,6 +233,11 @@ async function route(
   if (isBranchApiPath(new URL(request.url).pathname)) {
     if (request.method !== "POST") return text("Method not allowed.", 405);
     return await runtime!.runPromise(serveBranchRequest(auth, await request.text()));
+  }
+  // The thread's agent using automations, which run in its owner's object (#434).
+  if (isAutomationApiPath(new URL(request.url).pathname)) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    return await runtime!.runPromise(serveAutomationRequest(auth, await request.text()));
   }
   const packsAfter = Number(request.headers.get(PACKS_AFTER_HEADER) ?? 0);
   const writer: DriveWriter = {

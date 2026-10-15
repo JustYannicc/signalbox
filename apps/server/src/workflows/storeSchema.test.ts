@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Sqlite from "../persistence/Sqlite.ts";
-import { ensureAutomationTables } from "./storeSchema.ts";
+import { ensureAutomationTables } from "@signalbox/automations/storeSchema";
 
 const AT = "2026-10-06T09:00:00.000Z";
 

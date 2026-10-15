@@ -60,7 +60,8 @@ describe("public API routes", () => {
         ),
       );
       expect(byName.get("folders.create")?.cloud).toEqual({ served: true });
-      expect(byName.get("automations.list")?.cloud).toEqual({ served: false, issue: "#434" });
+      expect(byName.get("automations.list")?.cloud).toEqual({ served: true });
+      expect(byName.get("settings.get")?.cloud).toEqual({ served: false, issue: "#440" });
       const detail = yield* request("operations/folders.create");
       expect(detail.body).toMatchObject({ input: { type: "object" } });
     }),

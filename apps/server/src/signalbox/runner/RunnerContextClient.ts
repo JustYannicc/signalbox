@@ -1,4 +1,10 @@
 import {
+  AUTOMATION_PATHS,
+  automationJson,
+  type ToolRequest,
+  type ToolResult,
+} from "@signalbox/runner-protocol/AutomationProtocol";
+import {
   BRANCH_PATHS,
   branchJson,
   type PublishRequest,
@@ -31,6 +37,10 @@ import { HttpClient, HttpClientRequest } from "effect/http";
  * the cloud to push the thread's branch (`BranchProtocol.ts`). It is safe to
  * retry: pushing a branch that's there and opening a pull request that's open
  * do nothing.
+ *
+ * `automationTool` forwards an automation tool call (`AutomationProtocol.ts`).
+ * Only a read is retried: a write the cloud may have done already would
+ * happen twice.
  */
 
 export class ContextClientError extends Schema.TaggedError<ContextClientError>()(
@@ -67,6 +77,10 @@ export interface ContextClient {
     readonly turn: number | null;
   }) => Effect.Effect<ThreadResult, ContextClientError>;
   readonly publish: (request: PublishRequest) => Effect.Effect<PublishResult, ContextClientError>;
+  readonly automationTool: (
+    request: ToolRequest,
+    options: { readonly retry: boolean },
+  ) => Effect.Effect<ToolResult, ContextClientError>;
 }
 
 class Retryable extends Schema.TaggedError<Retryable>()("Retryable", { message: Schema.String }) {}
@@ -80,7 +94,7 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
   const origin = input.cloudUrl.replace(/\/+$/, "");
 
   /** POSTs `body`, answering the status and body bytes; retries what may pass on a second try. */
-  const post = (path: string, body: string) =>
+  const post = (path: string, body: string, retry = true) =>
     Effect.gen(function* () {
       const response = yield* http
         .execute(
@@ -100,7 +114,7 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
       );
       return { status: response.status, bytes };
     }).pipe(
-      Effect.retry({ times: 4, schedule: Schedule.exponential("250 millis") }),
+      Effect.retry({ times: retry ? 4 : 0, schedule: Schedule.exponential("250 millis") }),
       Effect.mapError(
         (error) =>
           new ContextClientError({ message: `The drives are unreachable: ${error.message}` }),
@@ -108,10 +122,15 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
     );
 
   const json =
-    <I, A>(path: string, encode: (request: I) => string, decode: (text: string) => A) =>
+    <I, A>(
+      path: string,
+      encode: (request: I) => string,
+      decode: (text: string) => A,
+      retry = true,
+    ) =>
     (request: I) =>
       Effect.gen(function* () {
-        const answer = yield* post(path, encode(request));
+        const answer = yield* post(path, encode(request), retry);
         const text = new TextDecoder().decode(answer.bytes);
         if (answer.status !== 200) {
           return yield* new ContextClientError({
@@ -121,7 +140,9 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
         }
         return yield* Effect.try({
           try: () => decode(text),
-          catch: () => new ContextClientError({ message: "The drives sent a malformed answer." }),
+          // It answered, so whatever it was asked to do happened.
+          catch: () =>
+            new ContextClientError({ message: "The drives sent a malformed answer.", status: 200 }),
         });
       });
 
@@ -143,6 +164,16 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
       }
     });
 
+  const automationTool = (retry: boolean) =>
+    json(
+      AUTOMATION_PATHS.tool,
+      automationJson.toolRequest.encode,
+      automationJson.tool.decode,
+      retry,
+    );
+  const automationRead = automationTool(true);
+  const automationWrite = automationTool(false);
+
   return {
     view: json(CONTEXT_PATHS.view, () => "{}", contextJson.view.decode)(undefined),
     tree: json(CONTEXT_PATHS.tree, contextJson.treeRequest.encode, contextJson.tree.decode),
@@ -155,5 +186,6 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
       branchJson.publishRequest.encode,
       branchJson.publish.decode,
     ),
+    automationTool: (request, { retry }) => (retry ? automationRead : automationWrite)(request),
   } satisfies ContextClient;
 });

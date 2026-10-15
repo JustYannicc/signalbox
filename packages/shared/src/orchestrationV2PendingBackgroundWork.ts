@@ -235,6 +235,8 @@ export function derivePendingBackgroundWork(input: {
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
   /** Adds the thread's registered monitors (see `setThreadMonitorSource`). Stop pickers leave it out. */
   readonly threadId?: string | undefined;
+  /** Monitors the caller keeps itself, where a per-process source can't: a cloud thread's object. */
+  readonly monitors?: ReadonlyArray<PendingBackgroundWorkTask> | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
   const hasActiveRun =
     input.hasActiveRun ??
@@ -247,7 +249,7 @@ export function derivePendingBackgroundWork(input: {
   }
   // A thread that never ran waits on nothing else, but a watch started on it still wakes it.
   if (input.latestRun == null) {
-    return [...pullRequestWatchTasks(input.pullRequests), ...threadMonitors(input.threadId)];
+    return [...pullRequestWatchTasks(input.pullRequests), ...threadMonitors(input)];
   }
   if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
     return [];
@@ -284,7 +286,7 @@ export function derivePendingBackgroundWork(input: {
   }
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
-  for (const task of threadMonitors(input.threadId)) byTaskId.set(task.taskId, task);
+  for (const task of threadMonitors(input)) byTaskId.set(task.taskId, task);
 
   return Array.from(byTaskId.values());
 }
@@ -303,8 +305,12 @@ export function setThreadMonitorSource(
   threadMonitorSource = source;
 }
 
-function threadMonitors(threadId: string | undefined): ReadonlyArray<PendingBackgroundWorkTask> {
-  return threadId === undefined ? [] : threadMonitorSource(threadId);
+function threadMonitors(input: {
+  readonly threadId?: string | undefined;
+  readonly monitors?: ReadonlyArray<PendingBackgroundWorkTask> | undefined;
+}): ReadonlyArray<PendingBackgroundWorkTask> {
+  const registered = input.threadId === undefined ? [] : threadMonitorSource(input.threadId);
+  return input.monitors === undefined ? registered : [...registered, ...input.monitors];
 }
 
 function pullRequestWatchTasks(

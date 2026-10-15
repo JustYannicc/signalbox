@@ -3,7 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import { fakeHttp, jsonResponse, saveOk, withEngine } from "./WorkflowEngine.testkit.ts";
 
 /** Counts calls per URL; `b.example` hangs the first time and answers after. */
@@ -31,12 +31,14 @@ it.effect("a retry reuses the steps that went well and runs the rest again", () 
       { http },
       Effect.gen(function* () {
         const engine = yield* WorkflowEngine;
-        // The label depends on the clock and randomness, which a retry replays as they were.
+        // The label depends on when the run started, which a retry keeps.
         const saved = yield* saveOk(
-          automation(`const stamp = \`\${Date.now()} \${Math.random()}\`;
-  const a = await w.http(\`Fetch A \${stamp}\`, "https://a.example/");
+          `export const meta = { name: "Fetcher" } as const;
+export default workflow(async (w, input, trigger: { at: string }) => {
+  const a = await w.http(\`Fetch A \${trigger.at}\`, "https://a.example/");
   await w.http("Fetch B", "https://b.example/");
-  return a.body;`),
+  return a.body;
+});`,
         );
         const original = yield* engine.startRun({ automationId: saved.id, trigger: "manual" });
         yield* Deferred.await(hanging);

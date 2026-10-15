@@ -11,9 +11,10 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as ServerConfig from "../config.ts";
 import { AutomationConnections, layer, normalizeExecutorUrl } from "./connectionSettings.ts";
-import { LIST_CONNECTIONS_CODE, makeConnections } from "./connections.ts";
+import { LIST_CONNECTIONS_CODE, makeConnections } from "@signalbox/automations/connections";
+import type { ExecutorSettingsStore } from "@signalbox/automations/executorConnection";
 import * as ExecutorSettings from "./executorSettings.ts";
-import { fromJson, toJson } from "./json.ts";
+import { fromJson, toJson } from "@signalbox/automations/json";
 
 const GOOD_KEY = "exec_live_secret";
 
@@ -68,9 +69,7 @@ function run<A, E>(
   body: Effect.Effect<
     A,
     E,
-    | AutomationConnections
-    | ExecutorSettings.ExecutorSettingsStore
-    | Layer.Success<ReturnType<typeof baseLayer>>
+    AutomationConnections | ExecutorSettingsStore | Layer.Success<ReturnType<typeof baseLayer>>
   >,
   options: { readonly env?: NodeJS.ProcessEnv } = {},
 ) {

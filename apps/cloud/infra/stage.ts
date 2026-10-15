@@ -47,6 +47,17 @@ export const DURABLE_OBJECT_BINDINGS = {
   PREVIEW_LINKS: "PreviewLinkRegistry",
 } as const;
 
+/**
+ * The automation engine: one Workflow instance per run, hosted by the cloud
+ * Worker's exported `AutomationWorkflow`, which loads each automation version
+ * as a Dynamic Worker through the `LOADER` Worker Loader binding.
+ */
+export const AUTOMATION_BINDINGS = {
+  workflow: "AUTOMATION_RUNS",
+  workflowClass: "AutomationWorkflow",
+  loader: "LOADER",
+} as const;
+
 export interface CloudStage {
   readonly production: boolean;
   readonly cloudWorker: string;
@@ -59,6 +70,8 @@ export interface CloudStage {
   readonly threadContainer: { readonly name: string; readonly maxInstances: number };
   /** The bucket the Worker's `DRIVE_PACKS` reads and writes. */
   readonly drivePacksBucket: string;
+  /** The automation runs' Workflow. Workflow names are account-global. */
+  readonly automationWorkflow: string;
   /** Plain-text vars fixed by the stage. CI adds the rest. */
   readonly vars: Readonly<Record<string, string>>;
 }
@@ -99,6 +112,7 @@ export const cloudStage = (stage: string): CloudStage => {
       poolContainer: { name: "signalbox-cloud-poolobject", maxInstances: 100 },
       threadContainer: { name: "signalbox-cloud-threadobject", maxInstances: 200 },
       drivePacksBucket: "signalbox-drives",
+      automationWorkflow: "signalbox-cloud-automations",
       vars: {
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
@@ -128,6 +142,7 @@ export const cloudStage = (stage: string): CloudStage => {
     threadContainer: { name: `signalbox-cloud-pr-${number}-threads`, maxInstances: 2 },
     // Previews never touch production's packs; each keeps its own prefix.
     drivePacksBucket: PREVIEW_DRIVE_PACKS_BUCKET,
+    automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,

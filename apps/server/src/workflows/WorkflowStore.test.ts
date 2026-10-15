@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import * as Sqlite from "../persistence/Sqlite.ts";
-import * as WorkflowStore from "./WorkflowStore.ts";
+import * as WorkflowStore from "@signalbox/automations/WorkflowStore";
 
 const AT = "2026-10-06T09:00:00.000Z";
 

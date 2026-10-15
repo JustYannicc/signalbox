@@ -4,6 +4,7 @@ import {
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
+import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
 import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import type { AccountProfile } from "@t3tools/contracts/account";
@@ -14,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import type { AutomationHostCall } from "../automations/CloudAutomations.ts";
 import type { ConnectionLink, CreatedLink } from "../connections/ConnectionLinks.ts";
 import type {
   LinkedConnections,
@@ -103,6 +105,16 @@ export interface UserObjectApi {
   readonly shellSnapshot: () => Promise<unknown>;
   /** A thread object's summary outbox delivery, in its JSON encoding. */
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
+  /**
+   * A thread object's event outbox delivery (`thread/eventOutbox.ts`): the
+   * user's thread's next domain events with their sequence, in order and in
+   * their JSON encoding (`wire.events`), for the user's automations. Returns
+   * once they're taken; a throw has the thread send them again.
+   */
+  readonly threadEvents: (input: {
+    readonly threadId: string;
+    readonly events: unknown;
+  }) => Promise<void>;
   /** Drops the thread index and rebuilds it from the user's thread objects. */
   readonly rebuildThreadIndex: () => Promise<number>;
   /** Starts connecting GitHub (`github/GitHubConnection.ts`); WorkOS comes back to `returnTo`. */
@@ -176,6 +188,18 @@ export interface UserObjectApi {
     readonly request: PublishRequest;
   }) => Promise<PublishResult>;
   /**
+   * An automation tool a thread's agent called from its machine, for that
+   * thread (`drive/automationRoutes.ts`). The engine's refusal is an answer.
+   */
+  readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
+  /**
+   * A run's Workflow instance calling back (`automations/automationWorkflow.ts`).
+   * Rejects for the instance to retry when the step can't start yet.
+   */
+  readonly automationHost: (call: AutomationHostCall) => Promise<unknown>;
+  /** A version's code, for the dispatcher loading it as a Dynamic Worker. */
+  readonly automationWorkerModule: (automationId: string, version: number) => Promise<string>;
+  /**
    * The idle-chat sweep as of `asOfMs` instead of now, for previews' test
    * clock (`http/threadKindRoutes.ts`). What it archived.
    */
@@ -231,6 +255,7 @@ const METHODS = Object.keys({
   syncOrganizations: true,
   shellSnapshot: true,
   recordThreadSummary: true,
+  threadEvents: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,
@@ -257,6 +282,9 @@ const METHODS = Object.keys({
   driveAccess: true,
   readableDrives: true,
   publishBranch: true,
+  automationTool: true,
+  automationHost: true,
+  automationWorkerModule: true,
   sweepThreadKinds: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 

@@ -77,17 +77,21 @@ RUN npm install --global --no-fund --no-audit --allow-scripts=bun "bun@${BUN_VER
   && bun --version
 
 # What the Runner loads from disk beside itself, at the versions apps/server
-# pins: Playwright, which drives the browser, and 1Password's SDK, which reads a
+# pins: Playwright, which drives the browser; 1Password's SDK, which reads a
 # folder's secrets (RunnerOnePassword.ts) and loads its WebAssembly core from
-# beside itself. One install: a second `--no-save` install into the same prefix
-# prunes the first one's packages, so the build checks both still load.
+# beside itself; and oxc's native parser and transformer, which compile the
+# automations agents save (`RunnerAutomationTools.ts`). One install: a second
+# `--no-save` install into the same prefix prunes the first one's packages, so
+# the build checks they all still load.
 ARG PLAYWRIGHT_CORE_VERSION=1.60.0
 ARG ONEPASSWORD_SDK_VERSION=0.5.0
+ARG OXC_VERSION=0.148.0
 RUN install -d /opt/signalbox \
   && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save \
     "playwright-core@${PLAYWRIGHT_CORE_VERSION}" "@1password/sdk@${ONEPASSWORD_SDK_VERSION}" \
+    "oxc-parser@${OXC_VERSION}" "oxc-transform@${OXC_VERSION}" \
   && npm cache clean --force \
-  && cd /opt/signalbox && node -e 'require("playwright-core"); require("@1password/sdk")'
+  && cd /opt/signalbox && node -e 'require("playwright-core"); require("@1password/sdk"); require("oxc-parser"); require("oxc-transform")'
 
 COPY main.mjs /opt/signalbox/runner.mjs
 

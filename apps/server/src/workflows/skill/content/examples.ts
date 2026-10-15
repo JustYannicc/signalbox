@@ -1,6 +1,6 @@
-import { MERGE_GATE } from "../../defaults/mergeGate.ts";
-import { WAIT_FOR } from "../../defaults/waitFor.ts";
-import { WATCH_PULL_REQUEST } from "../../defaults/watchPullRequest.ts";
+import { MERGE_GATE } from "@signalbox/automations/defaults/mergeGate";
+import { WAIT_FOR } from "@signalbox/automations/defaults/waitFor";
+import { WATCH_PULL_REQUEST } from "@signalbox/automations/defaults/watchPullRequest";
 
 /**
  * Complete automations agents start from, installed as `references/examples/<name>`.
@@ -91,8 +91,8 @@ export default workflow(async (w, email: { from: string; subject: string; body: 
 
 const SHEET = "1AbCdEfGhIjKlMnOpQrStUvWxYz";
 
-export default workflow(async (w) => {
-  const since: number = (await w.recall("Last payment time", "since")) ?? Math.floor(Date.now() / 1000) - 3600;
+export default workflow(async (w, _input, trigger: { at: string }) => {
+  const since: number = (await w.recall("Last payment time", "since")) ?? Math.floor(Date.parse(trigger.at) / 1000) - 3600;
   const payments: Array<{ id: string; amount: number; currency: string; created: number; description: string | null }> = [];
   let startingAfter: string | null = null;
   // More pages?

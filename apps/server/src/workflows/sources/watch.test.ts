@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { diffSnapshots, everyMsOf, listOf, snapshotOf, sourceIdOf, watchCares } from "./watch.ts";
+import {
+  diffSnapshots,
+  everyMsOf,
+  listOf,
+  snapshotOf,
+  sourceIdOf,
+  watchCares,
+} from "@signalbox/automations/sources/watch";
 
 const watch = { operation: "github.actions.listWorkflowRunsForRepo", key: "id" } as const;
 

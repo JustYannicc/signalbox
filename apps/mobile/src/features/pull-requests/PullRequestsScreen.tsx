@@ -39,6 +39,7 @@ import {
 import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 
 function PullRequestScrollView(props: ScrollViewProps) {
   const insets = useSafeAreaInsets();
@@ -65,6 +66,7 @@ export function PullRequestsScreen(
   const workspace = useWorkspaceTabs()!;
   const { environments } = useWorkspaceState();
   const configs = useAtomValue(environmentServerConfigsAtom);
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const insets = useSafeAreaInsets();
   const [initialOffset] = useState(() => workspace.getScrollOffset("pullRequests"));
   const [initialAnchor] = useState(() => workspace.getScrollAnchor("pullRequests"));
@@ -342,7 +344,7 @@ export function PullRequestsScreen(
           ) : (
             <View className="px-8 py-12">
               <EmptyState
-                title={
+                title={environmentCopy(
                   result.error
                     ? "Couldn't load pull requests"
                     : targets.length && connectedTargets.length === 0
@@ -351,16 +353,16 @@ export function PullRequestsScreen(
                         ? query
                           ? "No results"
                           : "No matching pull requests"
-                        : "Connect an environment"
-                }
-                detail={
+                        : "Connect an environment",
+                )}
+                detail={environmentCopy(
                   result.error ??
-                  (targets.length && connectedTargets.length === 0
-                    ? "Reconnect to load pull requests that aren't saved on this device."
-                    : targets.length
-                      ? "Pull requests from the selected environments' projects appear here."
-                      : "Add an environment in Settings to browse its pull requests.")
-                }
+                    (targets.length && connectedTargets.length === 0
+                      ? "Reconnect to load pull requests that aren't saved on this device."
+                      : targets.length
+                        ? "Pull requests from the selected environments' projects appear here."
+                        : "Add an environment in Settings to browse its pull requests."),
+                )}
                 variant="plain"
               />
             </View>

@@ -52,7 +52,7 @@ const ci = await w.repeat("Wait for CI", { max: 24 }, async (w) => {
 });
 \`\`\`
 
-For days-long waits, \`w.sleep\` between checks costs nothing.
+Don't sleep between checks: a loop that sleeps is rejected, because every pass is billed as a step. For days-long waits, wait on an event with \`w.waitFor\` and a \`timeout\`, or check on a schedule (\`triggers: [{ cron: … }]\`) and keep what you've seen with \`w.remember\`.
 
 ## Only handle what's new
 

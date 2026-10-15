@@ -11,8 +11,13 @@ import * as Path from "effect/Path";
 import { ServerConfig } from "../config.ts";
 import { ProcessRunner } from "../processRunner.ts";
 import { parseSync } from "./compiler/oxc.ts";
-import { automationError, errorMessage, fail, isAutomationError } from "./errors.ts";
-import { fromJson, toJson } from "./json.ts";
+import {
+  automationError,
+  errorMessage,
+  fail,
+  isAutomationError,
+} from "@signalbox/automations/errors";
+import { fromJson, toJson } from "@signalbox/automations/json";
 import { findPackageRunner } from "./packageRunner.ts";
 
 /**

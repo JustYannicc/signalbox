@@ -1,4 +1,8 @@
-import type { EnvironmentId, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import type {
+  AutomationNotice,
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -6,13 +10,14 @@ import * as Layer from "effect/Layer";
 
 import * as UserStore from "../user/UserStore.ts";
 import * as PushDevices from "./PushDevices.ts";
-import { pushFor, wants } from "./pushRules.ts";
+import { pushFor, pushForNotice, type PushMessage, wants } from "./pushRules.ts";
 import * as PushSender from "./PushSender.ts";
 
 /**
- * Pushes a person's thread changes to their phones. The user's object calls it
- * with each thread summary it indexes, so pushes come from the cloud whether
- * or not any client is open. A push that can't be sent is logged and dropped:
+ * Pushes a person's thread changes and automation notices to their phones.
+ * The user's object calls it with each thread summary it indexes and each
+ * notice its automations raise, so pushes come from the cloud whether or not
+ * any client is open. A push that can't be sent is logged and dropped:
  * the summary is indexed either way, and a retried delivery is the same
  * revision, which never pushes twice.
  */
@@ -23,6 +28,8 @@ export class PushNotifier extends Context.Service<
       readonly previous: OrchestrationV2ThreadShell | null;
       readonly next: OrchestrationV2ThreadShell;
     }) => Effect.Effect<void>;
+    /** An automation asks, notifies or failed (see `pushForNotice`). */
+    readonly automationNotice: (notice: AutomationNotice) => Effect.Effect<void>;
   }
 >()("@signalbox/cloud/push/PushNotifier") {}
 
@@ -33,18 +40,9 @@ const make = (environmentId: EnvironmentId) =>
     const sender = yield* PushSender.PushSender;
     const store = yield* UserStore.UserStore;
 
-    const threadChanged: PushNotifier["Service"]["threadChanged"] = Effect.fn(
-      "PushNotifier.threadChanged",
-    )(
-      function* ({ previous, next }) {
-        const message = pushFor({
-          environmentId,
-          previous,
-          next,
-          now: yield* Clock.currentTimeMillis,
-        });
-        if (message === null) return;
-        yield* Effect.annotateCurrentSpan({ "push.phase": message.phase, "thread.id": next.id });
+    /** Sends `message` to every phone that wants its phase. */
+    const deliver = Effect.fn("PushNotifier.deliver")(
+      function* (message: PushMessage) {
         const targets = (yield* devices.list).filter((device) =>
           wants(device.preferences, message.phase),
         );
@@ -85,11 +83,38 @@ const make = (environmentId: EnvironmentId) =>
           ),
         );
       },
-      // Any trouble loses this push, never the summary.
+      // Any trouble loses this push, never the summary or the run.
       Effect.catchCause((cause) => Effect.logWarning("push skipped", { cause })),
     );
 
-    return PushNotifier.of({ threadChanged });
+    const threadChanged: PushNotifier["Service"]["threadChanged"] = Effect.fn(
+      "PushNotifier.threadChanged",
+    )(function* ({ previous, next }) {
+      const message = pushFor({
+        environmentId,
+        previous,
+        next,
+        now: yield* Clock.currentTimeMillis,
+      });
+      if (message === null) return;
+      yield* Effect.annotateCurrentSpan({ "push.phase": message.phase, "thread.id": next.id });
+      yield* deliver(message);
+    });
+
+    const automationNotice: PushNotifier["Service"]["automationNotice"] = Effect.fn(
+      "PushNotifier.automationNotice",
+    )(function* (notice) {
+      const message = pushForNotice(environmentId, notice);
+      if (message === null) return;
+      yield* Effect.annotateCurrentSpan({
+        "push.phase": message.phase,
+        "automation.id": notice.automationId,
+        "automation.run_id": notice.runId,
+      });
+      yield* deliver(message);
+    });
+
+    return PushNotifier.of({ threadChanged, automationNotice });
   });
 
 /**

@@ -8,6 +8,7 @@ import type { AssetUrlFailureReason } from "../../state/asset-url-state";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 
 /**
  * Terminal state for a preview whose signed asset URL will not arrive. A dead
@@ -22,6 +23,7 @@ export function WorkspaceFilePreviewError(props: {
   const { environmentId, onRetry } = props;
   const environment = useEnvironmentPresentation(environmentId);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const retryConnection = useCallback(() => {
     if (environmentId !== null) void retryEnvironment(environmentId);
     onRetry();
@@ -50,7 +52,9 @@ export function WorkspaceFilePreviewError(props: {
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <EmptyState
         title="Preview unavailable"
-        detail="This file may be missing, unsupported, or unavailable on this environment."
+        detail={environmentCopy(
+          "This file may be missing, unsupported, or unavailable on this environment.",
+        )}
         actionLabel="Try again"
         onAction={props.onRetry}
       />
