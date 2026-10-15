@@ -195,10 +195,10 @@ const placed = (
   place: place === null ? null : { contextId: place.contextId, driveId: place.driveId },
   worktree: place?.remote === true ? remoteThreadWorktree(place.driveId, threadId) : null,
   pools: turn?.pools ?? null,
-  ...(turn === null ? {} : { instructions: turn.instructions }),
+  ...(turn === null ? {} : { instructions: turn.instructions, secrets: turn.secrets }),
 });
 
-/** Commands that can start a turn or pick a model: they carry the resolved pools and instructions. */
+/** Commands that can start a turn or pick a model: they carry the resolved pools, instructions and secrets. */
 const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.create",
   "message.dispatch",

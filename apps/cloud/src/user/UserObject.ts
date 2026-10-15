@@ -45,6 +45,7 @@ import {
 import * as DrivePeople from "./DrivePeople.ts";
 import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
+import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -181,7 +182,12 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       ),
       Layer.provideMerge(UserDrives.layer),
       Layer.provideMerge(
-        Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives, ResourceBindings.layer),
+        Layer.mergeAll(
+          UserStore.layer,
+          UserContexts.layerWithDrives,
+          ResourceBindings.layer,
+          OnePasswordAccount.layer,
+        ),
       ),
       Layer.provideMerge(drives.store),
       Layer.provideMerge(
@@ -355,6 +361,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   githubCommitAuthor() {
     return this.api.githubCommitAuthor();
+  }
+
+  onePasswordToken() {
+    return this.api.onePasswordToken();
   }
 
   contextIds() {

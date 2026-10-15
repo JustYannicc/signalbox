@@ -99,6 +99,11 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     starting && work.drive !== null
       ? await host.run(runner.use((service) => service.commitAuthor))
       : null;
+  // Asked the same way, and only when the chain names an Environment.
+  const secretsToken =
+    starting && work.secrets.length > 0
+      ? await host.run(runner.use((service) => service.secretsToken))
+      : null;
   const drive: DriveAccess | null =
     work.drive === null || author === null ? work.drive : { ...work.drive, author };
   for (const socket of host.ctx.getWebSockets(RUNNER_TAG)) {
@@ -121,6 +126,10 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         modelToken: work.modelToken,
         drive,
         sessions: work.sessions,
+        // The owner's 1Password token rides only in this frame; never log it.
+        ...(work.secrets.length === 0
+          ? {}
+          : { secrets: { token: secretsToken, environments: work.secrets } }),
       });
       sentRunId = work.turn.runId;
     }

@@ -5,13 +5,14 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { poolInstanceId } from "@t3tools/contracts/accountHub";
+import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 
 import { poolKindOfInstance } from "./providerCatalog.ts";
 
 /**
- * What a thread's turns run on and follow: its pool, and its chain's
- * `AGENTS.md`. The owner's object resolves both from the tree
+ * What a thread's turns run on and follow: its pool, its chain's `AGENTS.md`
+ * and its chain's secrets. The owner's object resolves them from the tree
  * (`user/folderTree.ts`) and sends them with each command: for the thread's
  * own home when it knows the thread, and for each project's home, so the
  * thread object can pick by the project it knows. A selection names only a
@@ -32,6 +33,8 @@ export interface ByHome<A> {
 export type TurnPools = ByHome<string | null>;
 /** Top level first. */
 export type TurnInstructions = ByHome<ReadonlyArray<FolderInstructions>>;
+/** The 1Password Environments on the chain, top level first (#395). */
+export type TurnSecrets = ByHome<ReadonlyArray<OnePasswordEnvironmentId>>;
 
 /** The value for a thread in `projectId`. */
 export const forThread = <A>(byHome: ByHome<A>, projectId: string): A =>

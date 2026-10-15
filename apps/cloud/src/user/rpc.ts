@@ -634,6 +634,10 @@ export const layerHandlers = (input: {
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.setKind]: (request) => kindsCall(kinds.setKind(request)),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: (request) =>
           kindsCall(kinds.setArchiveChatsAfterDays(request.days)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: (request) =>
+          folderCall(folders.setSecrets(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: (request) =>
+          folderCall(folders.setOnePassword(request)),
         [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),

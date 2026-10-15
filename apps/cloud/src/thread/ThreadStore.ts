@@ -6,6 +6,7 @@ import {
   OrchestrationV2DomainEventJson,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -130,6 +131,8 @@ export class ThreadStore extends Context.Service<
         readonly runId: string;
         readonly levels: ReadonlyArray<FolderInstructions>;
       };
+      /** The 1Password Environments of the thread's chain as of the run these events start. */
+      readonly secrets?: ReadonlyArray<OnePasswordEnvironmentId>;
     }) => Effect.Effect<number, SqlError>;
     readonly recordRejection: (input: {
       readonly command: { readonly id: CommandId; readonly type: string };
@@ -146,6 +149,12 @@ export class ThreadStore extends Context.Service<
     readonly instructions: (
       runId: string,
     ) => Effect.Effect<ReadonlyArray<FolderInstructions>, SqlError>;
+    /**
+     * The 1Password Environments of the thread's chain, top level first, as
+     * of its latest turn started from its owner's object: a continuation run
+     * keeps its thread's. Empty when none.
+     */
+    readonly secrets: Effect.Effect<ReadonlyArray<OnePasswordEnvironmentId>, SqlError>;
   }
 >()("@signalbox/cloud/thread/ThreadStore") {}
 
@@ -205,6 +214,15 @@ const migrations = Migrator.fromRecord({
       levels TEXT NOT NULL
     )`;
   }),
+  // The thread's folder chain's 1Password Environments (#395), references only.
+  // Per thread, not per run, so a continuation run on a new machine keeps them.
+  "0007_secrets": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE thread_secrets (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      environments TEXT NOT NULL
+    )`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -214,6 +232,12 @@ const InstructionsJson = Schema.fromJsonString(Schema.Array(FolderInstructions))
 const encodeInstructions = Schema.encodeSync(InstructionsJson);
 const decodeInstructionRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ levels: InstructionsJson })),
+);
+
+const SecretsJson = Schema.fromJsonString(Schema.Array(OnePasswordEnvironmentId));
+const encodeSecrets = Schema.encodeSync(SecretsJson);
+const decodeSecretRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ environments: SecretsJson })),
 );
 
 const EventJson = Schema.fromJsonString(OrchestrationV2DomainEventJson);
@@ -358,12 +382,22 @@ const make = Effect.gen(function* () {
           VALUES (${input.instructions.runId}, ${encodeInstructions(input.instructions.levels)})
           ON CONFLICT (run_id) DO NOTHING`;
     }
+    if (input.secrets) {
+      yield* sql`INSERT INTO thread_secrets (id, environments)
+          VALUES (1, ${encodeSecrets(input.secrets)})
+          ON CONFLICT (id) DO UPDATE SET environments = excluded.environments`;
+    }
     return sequence;
   }, sql.withTransaction);
 
   const instructions: ThreadStore["Service"]["instructions"] = (runId) =>
     sql`SELECT levels FROM run_instructions WHERE run_id = ${runId}`.pipe(
       Effect.map((rows) => decodeInstructionRows(rows)[0]?.levels ?? []),
+    );
+
+  const secrets: ThreadStore["Service"]["secrets"] =
+    sql`SELECT environments FROM thread_secrets WHERE id = 1`.pipe(
+      Effect.map((rows) => decodeSecretRows(rows)[0]?.environments ?? []),
     );
 
   const recordRejection: ThreadStore["Service"]["recordRejection"] = Effect.fn(
@@ -402,6 +436,7 @@ const make = Effect.gen(function* () {
     saveMachine,
     machineRecord,
     instructions,
+    secrets,
     saveMachineRecord,
   });
 });
