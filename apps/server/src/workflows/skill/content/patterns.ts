@@ -17,6 +17,10 @@ For processes where agents do the work and something has to decide order, qualit
 
 \`examples/work-through-tickets.ts\` does all of this for GitHub issues in blocker order.
 
+## Wait for something, as an agent
+
+An agent that needs to wait for one thing (CI, another thread, a reply, a payment, tomorrow) calls the \`wait_for\` tool and ends its turn, instead of polling, sleeping or writing its own automation: \`wait_for({ until: "checks on #12 to finish", on: ["pr.checks.passed", "pr.checks.failed"], where: { number: 12 } })\`. It runs the built-in "Wait for" (\`examples/wait-for.ts\`) attached to the thread, which sends one message when it happens. \`callback: true\` returns a link to hand out; \`at\` waits for a time. \`list_waits\` and \`stop_waiting\` manage them. For a pull request the agent owns, \`watch_pull_request\` runs "Watch pull request" instead, which keeps waking it on every check, comment and review until it merges.
+
 ## Supervise a thread or pull request
 
 To keep an eye on one thread's work after its agent's turn ends (CI on its pull request, a deploy, a review), start a run attached to the thread:

@@ -587,6 +587,10 @@ export const layerHandlers = (input: {
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
           folderCall(folders.setInstructions(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: (request) =>
+          folderCall(folders.setSecrets(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: (request) =>
+          folderCall(folders.setOnePassword(request)),
         [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),

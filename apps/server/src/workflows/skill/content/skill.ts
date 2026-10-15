@@ -80,6 +80,7 @@ The validator enforces each one; breaking it fails with the quoted message.
 | Supervising a long process yourself, turn by turn | an automation that encodes the process |
 | Polling \`gh pr checks\` in a loop to watch CI | \`w.waitFor("…", { on: ["pr.checks.failed", "pr.checks.passed"], where: { number } })\` |
 | A loop that runs for days | \`return w.restart(input)\` every few passes |
+| As an agent, polling, sleeping or babysitting until something happens | the \`wait_for\` tool, then end your turn: one message wakes you when it happens |
 
 ## References
 

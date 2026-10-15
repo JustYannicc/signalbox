@@ -34,10 +34,18 @@ import { makeDriveClient } from "./RunnerDriveClient.ts";
 import { machineLayout, writeModelToken } from "./RunnerModelAccess.ts";
 import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
 import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.ts";
+import { onePasswordSdk, type OnePassword } from "./RunnerOnePassword.ts";
+import { makeRunnerSecrets } from "./RunnerSecrets.ts";
 import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
 import { makeRunnerSessions } from "./RunnerSessions.ts";
-import { runnerConnectUrl, threadSocketUrl, webSocketTransport } from "./runnerSocket.ts";
+import {
+  maskingTransport,
+  runnerConnectUrl,
+  threadSocketUrl,
+  webSocketTransport,
+} from "./runnerSocket.ts";
 import { makeRunnerAttachments } from "./RunnerAttachments.ts";
+import type { SecretMask } from "./secretMask.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
 
@@ -52,6 +60,10 @@ import { makeRunnerUsage } from "./RunnerUsage.ts";
  *
  * Each Runner also runs the PreviewGateway's tunnel for its thread, which
  * starts and stops with that generation.
+ *
+ * A thread's secrets (`RunnerSecrets.ts`) reach only its own harness
+ * sessions, and the host's one mask (`secretMask.ts`) covers everything its
+ * Runners send and log.
  *
  * Two fronts use it: `runRunnerHost`, a development machine backend serving
  * every thread that asks over HTTP, and `runRunnerMachine`, the Runner on a
@@ -70,6 +82,10 @@ export interface RunnerHostConfig {
    * where one Runner runs at a time. Absent: the context tool alone reads it.
    */
   readonly drivesMountPoint?: string;
+  /** Masks every secret a Runner here loaded; the host's logger uses it too. */
+  readonly secretMask: SecretMask;
+  /** Reads 1Password Environments. Absent: 1Password's SDK. */
+  readonly onePassword?: OnePassword;
 }
 
 interface HostedRunner {
@@ -92,6 +108,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
   const lock = yield* Semaphore.make(1);
   const previewPorts = yield* makeDiscoveredPorts;
   const caches = yield* makeMachineCaches(config.home);
+  const mask = config.secretMask;
 
   const stop = (threadId: ThreadId, runner: HostedRunner) =>
     Effect.suspend(() => {
@@ -120,21 +137,31 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           const sessions = yield* makeRunnerSessions({
             cloudUrl,
             codexHome: machineLayout(path, root).codexHome,
+            mask,
           }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(driveServices));
           // Every drive the user can read, for the harnesses (#141).
           const context = yield* startContextServer({
             mountPoint: config.drivesMountPoint ?? null,
           });
-          const { adapters, layout, stderr, environment, attachmentsDir } =
-            yield* makeRunnerAdapters({
-              root,
-              gatewayUrl: request.modelGatewayUrl,
-              claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
-                withContextServer(runner, context.mcpServers),
-              ),
-              mcpServers: context.mcpServers,
-              caches: caches.environment,
-            });
+          // What the harness environment sets itself; known once the adapters are made.
+          let harnessVariables: ReadonlySet<string> = new Set();
+          const secrets = makeRunnerSecrets({
+            onePassword: config.onePassword ?? onePasswordSdk,
+            mask,
+            reserved: () => harnessVariables,
+          });
+          const made = yield* makeRunnerAdapters({
+            root,
+            gatewayUrl: request.modelGatewayUrl,
+            claudeQueryRunner: layerSessionQueryRunner(sessions.claude, (runner) =>
+              withContextServer(runner, context.mcpServers),
+            ),
+            mcpServers: context.mcpServers,
+            caches: caches.environment,
+            sessionEnvironment: secrets.environment,
+          });
+          const { adapters, layout, stderr, environment, attachmentsDir } = made;
+          harnessVariables = made.harnessVariables;
           const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
           const attachments = yield* makeRunnerAttachments({ cloudUrl, attachmentsDir }).pipe(
             Effect.provide(FetchHttpClient.layer),
@@ -148,7 +175,10 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             machineId: config.machineId,
             imageVersion: config.imageVersion,
             build: config.build,
-            transport: webSocketTransport(runnerConnectUrl(cloudUrl, request.threadId)),
+            transport: maskingTransport(
+              webSocketTransport(runnerConnectUrl(cloudUrl, request.threadId)),
+              mask,
+            ),
             makeTurns: (emit) =>
               makeRunnerTurns({
                 threadId: request.threadId,
@@ -162,6 +192,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 usage: usage.sample,
                 emit,
                 dependencies,
+                secrets,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
                     makeRunnerDrive({ cwd, client }),

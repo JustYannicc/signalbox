@@ -30,6 +30,7 @@ import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
  * being woken, the thread settling.
  */
 
+/** `automation-run:<automationId>:<runId>`, so clients can open the run (see client-runtime's attached.ts). */
 const TASK_PREFIX = "automation-run:";
 
 /** Whether a pending task is an attached automation run, for clients that show their own. */
@@ -53,14 +54,17 @@ export interface AttachmentDependencies {
 
 export const makeAttachments = (deps: AttachmentDependencies) => {
   const { store, links } = deps;
-  /** threadId → runId → what the thread shows. */
-  const monitors = new Map<string, Map<string, string>>();
+  /** threadId → runId → its automation and what the thread shows. */
+  const monitors = new Map<
+    string,
+    Map<string, { readonly automationId: string; readonly label: string }>
+  >();
 
   setThreadMonitorSource((threadId) =>
-    [...(monitors.get(threadId) ?? [])].map(([runId, description]) => ({
-      taskId: `${TASK_PREFIX}${runId}`,
+    [...(monitors.get(threadId) ?? [])].map(([runId, { automationId, label }]) => ({
+      taskId: `${TASK_PREFIX}${automationId}:${runId}`,
       kind: "monitor" as const,
-      description,
+      description: label,
     })),
   );
 
@@ -81,8 +85,10 @@ export const makeAttachments = (deps: AttachmentDependencies) => {
       const automation = yield* store.getAutomation(run.automation_id);
       const label =
         waiting.at(-1)?.label.trim() || link.label || automation?.name || "Automation running";
-      const runs = monitors.get(link.thread_id) ?? new Map<string, string>();
-      runs.set(runId, label);
+      const runs =
+        monitors.get(link.thread_id) ??
+        new Map<string, { readonly automationId: string; readonly label: string }>();
+      runs.set(runId, { automationId: run.automation_id, label });
       monitors.set(link.thread_id, runs);
     });
 
@@ -134,7 +140,10 @@ export const makeAttachments = (deps: AttachmentDependencies) => {
       ? cancelAttached(event.threadId).pipe(Effect.asVoid)
       : Effect.void;
 
-  return { launchFor, refresh, recover, cancelAttached, onDomainEvent };
+  /** What a thread's attached run shows, while it runs. */
+  const shownOn = (threadId: string, runId: string) => monitors.get(threadId)?.get(runId)?.label;
+
+  return { launchFor, refresh, recover, cancelAttached, onDomainEvent, shownOn };
 };
 
 export type Attachments = ReturnType<typeof makeAttachments>;

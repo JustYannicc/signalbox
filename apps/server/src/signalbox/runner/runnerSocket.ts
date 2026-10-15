@@ -16,6 +16,7 @@ import type * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
 
 import { RunnerConnectionError, type RunnerTransport } from "./RunnerSession.ts";
+import type { SecretMask } from "./secretMask.ts";
 
 /**
  * The Runner's outbound WebSockets to its thread: the Runner connection at
@@ -113,4 +114,15 @@ export const webSocketTransport = (url: string): RunnerTransport => ({
       close: socket.close,
     }),
   ),
+});
+
+/** `transport` with the folder's secrets masked in every frame it sends (`secretMask.ts`). */
+export const maskingTransport = (
+  transport: RunnerTransport,
+  mask: SecretMask,
+): RunnerTransport => ({
+  connect: Effect.map(transport.connect, (connection) => ({
+    ...connection,
+    send: (message) => connection.send(mask.value(message)),
+  })),
 });

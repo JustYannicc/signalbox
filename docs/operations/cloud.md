@@ -344,9 +344,10 @@ home is the folder it was filed in, else the folder whose files it works in,
 else the top level. Filing a thread moves only its home: it keeps working in
 the drive it started in, but its next turn runs on the new home's chain.
 
-The chain decides two things per turn, both resolved in the user object when a
-command can start a turn and handed to the thread object with it: the nearest
-pool (`poolChain.ts`), and every level's instructions, top level first. The
+The chain decides three things per turn, all resolved in the user object when
+a command can start a turn and handed to the thread object with it: the
+nearest pool (`poolChain.ts`), every level's instructions, top level first, and
+every level's secrets (below). The
 thread object keeps each run's instructions (`run_instructions`) and
 sends them with the drive access; the Runner puts them first in the generated
 `AGENTS.md` above the checkout, before the shortcuts' and the drive's own. They
@@ -387,6 +388,37 @@ per image, 50 MiB per file, 80 MiB of images and 100 attachments per message.
 Before each turn the Runner downloads every attachment the thread's messages
 hold into the adapters' attachments directory with its session token, so a
 new machine after a sleep has the earlier ones too.
+
+### Secrets
+
+A level can name a 1Password Environment (#395): the threads on its chain get
+its variables as environment variables. The user object stores only the
+Environment ids and the user's 1Password service account token. The thread
+object keeps the chain's ids per thread and reads the token from the user
+object each time it hands a turn out, so a replaced token needs no restart.
+`turn.start` carries both (`SecretsProtocol.ts`).
+
+The Runner reads the Environments, because 1Password's SDK only runs in Node:
+it loads a WebAssembly core from beside itself. So it stays out of the Runner's
+bundle and the Runner image installs it next to `runner.mjs`. Bump
+`ONEPASSWORD_SDK_VERSION` in the Dockerfile with the version `apps/server`
+pins. The Runner reads when a harness session starts and what the turn names
+changed (or the last read fell short). Changed variables restart the harness
+session, resumed natively, like changed instructions. A value changed in
+1Password reaches a thread on its next machine.
+
+Values never leave the machine as they are. The host's mask
+(`apps/server/src/signalbox/runner/secretMask.ts`) replaces every value
+1Password hides by default, and the token, with `***` in every frame, every
+session row and the Runner's own log. Values of 6 characters or fewer stay
+unmasked. Spans and wide events carry counts, never names or values. A
+variable the harness environment sets, or one that would take Claude Code off
+the ModelGateway (`ANTHROPIC_API_KEY` and the like), is skipped, and the turn
+says so.
+
+Service accounts are rate limited per 1Password account: 1,000 requests a day
+on Individual and Families, 5,000 on Teams, 50,000 on Business. Each read is a
+sign-in plus one request per Environment.
 
 ### What an agent reads beyond its drive
 
@@ -667,8 +699,10 @@ request builds: production lists the origins it answers in
   links pools new since.
 - **Copied once:** folders with their instructions, the pool placed at each
   level (from a production from before folders: its sections, read into
-  folders), and the GitHub connection (Pipes keeps the tokens under your WorkOS
-  user, which both share). Changes on the preview stick.
+  folders), the GitHub connection (Pipes keeps the tokens under your WorkOS
+  user, which both share), each level's 1Password Environment and your
+  1Password service account token, unless the preview has one already.
+  Changes on the preview stick.
 - **Not copied:** threads, sessions, grants, the thread index, drives, Executor
   connection links (they're bound to the cloud that issued them) and anything
   running. Folders keep no files the preview doesn't have; import a GitHub
