@@ -370,16 +370,78 @@ const save = (name: string, next: Omit<Stored, "json">, before: Stored | undefin
   });
 
 /** What one account's read did, for the span. */
-type Outcome = "skipped" | "signals" | "probed" | "probeFailed" | "reported";
+type Outcome = "skipped" | "signals" | "probed" | "probeFailed" | "reported" | "cleared";
 
-/** One account's read; `stored` is what the cache held for it. */
+/** A cooldown the pool ended because the provider had room again. */
+export interface ClearedCooldown {
+  readonly name: string;
+  readonly type: string;
+  /** Says what the provider reported and how long the account would have waited. */
+  readonly reason: string;
+  /** How much longer the CLIProxyAPI would have held the account, in millis. */
+  readonly heldForMs: number;
+}
+
+/** How often an account the CLIProxyAPI holds is checked with its provider. */
+export const HELD_CHECK_MS = 30_000;
+
+/** A hold ending sooner than this is waited out: checking would cost about as much. */
+const HELD_WORTH_CHECKING_MS = 5 * 60_000;
+
+/** Which reads a refresh may make beyond the free ones. */
+export type ReadMode =
+  /** No provider calls: signals and linked pools only. */
+  | "free"
+  /** Probe accounts due one, and check held accounts. */
+  | "probe"
+  /** Check held accounts only: after a rate-limited request. */
+  | "held";
+
+type Read =
+  | { readonly outcome: Exclude<Outcome, "cleared"> }
+  | { readonly outcome: "cleared"; readonly cleared: ClearedCooldown };
+
+/** Asks the provider and stores the answer; a failure keeps the windows read before. */
+const probeAndSave = (
+  endpoint: CliProxyApi.PoolEndpoint,
+  account: CliProxyApi.ListedAccount,
+  read: Parameters<typeof probe>[1],
+  stored: Stored | undefined,
+  now: number,
+) =>
+  probe(endpoint, read, now).pipe(
+    Effect.tap((limits) => save(account.name, { limits, readAt: now, probedAt: now }, stored)),
+    Effect.catchTags({
+      // Says why only when there are no windows; with none, older signals may still fill in.
+      LimitsProbeError: (error) => {
+        const kept = stored !== undefined && stored.limits.windows.length > 0;
+        const limits = kept
+          ? stored.limits
+          : makeUnavailableUsageLimits({
+              checkedAt: isoAt(now),
+              reason: "probeFailed",
+              message: error.detail,
+            });
+        const readAt = kept ? stored.readAt : 0;
+        return Effect.as(save(account.name, { limits, readAt, probedAt: now }, stored), null);
+      },
+    }),
+  );
+
+/**
+ * One account's read; `stored` is what the cache held for it. An account
+ * the CLIProxyAPI holds after a rate limit is checked with its provider
+ * every `HELD_CHECK_MS`, and let go once every window has room again: the
+ * CLIProxyAPI otherwise waits out the reset time the rate limit announced,
+ * even when the provider reset the window early (#447).
+ */
 const readAccount = (
   endpoint: CliProxyApi.PoolEndpoint,
   account: CliProxyApi.ListedAccount,
   stored: Stored | undefined,
   now: number,
-  options: { readonly probe: boolean },
-): Effect.Effect<Outcome, SqlError, SqlClient.SqlClient> =>
+  mode: ReadMode,
+): Effect.Effect<Read, SqlError, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const usage = account.usage;
     if (usage._tag === "reported") {
@@ -396,65 +458,82 @@ const readAccount = (
         { limits, readAt: Date.parse(limits.checkedAt), probedAt: 0 },
         stored,
       );
-      return "reported";
+      return { outcome: "reported" };
     }
     if (!READS_LIMITS.has(account.type) || account.disabled || account.signedOut) {
-      return "skipped";
+      return { outcome: "skipped" };
     }
-    const { observedAt, authIndex } = usage;
+    const { observedAt, authIndex, heldUntil } = usage;
+    const read =
+      authIndex === null
+        ? null
+        : { type: account.type, authIndex, chatgptAccountId: usage.chatgptAccountId };
+    const probedAt = stored?.probedAt ?? 0;
+    if (
+      mode !== "free" &&
+      read !== null &&
+      heldUntil !== null &&
+      heldUntil - now > HELD_WORTH_CHECKING_MS
+    ) {
+      // A check from before the rate limit says nothing about it.
+      const checkedSince = probedAt >= (observedAt ?? 0);
+      if (!checkedSince || now - probedAt >= HELD_CHECK_MS) {
+        const limits = yield* probeAndSave(endpoint, account, read, stored, now);
+        if (limits === null) return { outcome: "probeFailed" };
+        if (limits.windows.length === 0 || limits.windows.some((w) => w.usedPercent >= 100)) {
+          return { outcome: "probed" };
+        }
+        const reset = yield* CliProxyApi.resetCooldown(endpoint, read.authIndex).pipe(
+          Effect.as(true),
+          Effect.catchTags({
+            PoolBackendError: (error) =>
+              Effect.as(Effect.logWarning("pool cooldown reset failed", error.detail), false),
+          }),
+        );
+        if (!reset) return { outcome: "probed" };
+        const used = limits.windows
+          .map((window) => `${window.label} ${Math.round(window.usedPercent)}%`)
+          .join(" and ");
+        return {
+          outcome: "cleared",
+          cleared: {
+            name: account.name,
+            type: account.type,
+            reason: `${providerName(account.type)} reports ${used} used, but it was held until ${isoAt(heldUntil)}.`,
+            heldForMs: heldUntil - now,
+          },
+        };
+      }
+    }
+    if (mode === "held") return { outcome: "skipped" };
     const signalled =
       observedAt === null ? null : fromSignals(account.type, usage.signals, observedAt);
     if (signalled !== null && observedAt !== null && observedAt > (stored?.readAt ?? 0)) {
-      const probedAt = stored?.probedAt ?? 0;
       yield* save(account.name, { limits: signalled, readAt: observedAt, probedAt }, stored);
-      return "signals";
+      return { outcome: "signals" };
     }
     // Spaced from the last read of either kind: fresh signals need no probe.
-    const lastRead = Math.max(stored?.readAt ?? 0, stored?.probedAt ?? 0);
-    if (!options.probe || authIndex === null || now - lastRead < PROBE_INTERVAL_MS) {
-      return "skipped";
+    const lastRead = Math.max(stored?.readAt ?? 0, probedAt);
+    if (mode !== "probe" || read === null || now - lastRead < PROBE_INTERVAL_MS) {
+      return { outcome: "skipped" };
     }
-    const read = { type: account.type, authIndex, chatgptAccountId: usage.chatgptAccountId };
-    return yield* probe(endpoint, read, now).pipe(
-      Effect.flatMap((limits) =>
-        Effect.as(
-          save(account.name, { limits, readAt: now, probedAt: now }, stored),
-          "probed" as const,
-        ),
-      ),
-      Effect.catchTags({
-        // Keeps the windows read before; says why only when there are none.
-        LimitsProbeError: (error) => {
-          const kept = stored !== undefined && stored.limits.windows.length > 0;
-          const limits = kept
-            ? stored.limits
-            : makeUnavailableUsageLimits({
-                checkedAt: isoAt(now),
-                reason: "probeFailed",
-                message: error.detail,
-              });
-          // With nothing read yet, older signals may still fill it in.
-          const readAt = kept ? stored.readAt : 0;
-          return Effect.as(
-            save(account.name, { limits, readAt, probedAt: now }, stored),
-            "probeFailed" as const,
-          );
-        },
-      }),
-    );
+    const limits = yield* probeAndSave(endpoint, account, read, stored, now);
+    return { outcome: limits === null ? "probeFailed" : "probed" };
   });
 
 /**
  * Reads the windows of `live`'s accounts into the cache: a linked pool's
  * as its pool reported them, a CLIProxyAPI's from newer signals, or, with
  * `probe`, by asking the provider once `PROBE_INTERVAL_MS` has passed.
- * Callers run one refresh at a time, so an account is never probed twice.
+ * Lets go of accounts the CLIProxyAPI holds when their provider has room
+ * again, and answers which. Callers run one refresh at a time, so an
+ * account is never probed twice.
  */
 export const refresh = (
   endpoint: CliProxyApi.PoolEndpoint,
   live: ReadonlyArray<CliProxyApi.ListedAccount>,
   now: number,
-  options: { readonly probe: boolean },
+  mode: ReadMode,
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -463,18 +542,20 @@ export const refresh = (
     for (const name of before.keys()) {
       if (!names.has(name)) yield* sql`DELETE FROM account_limits WHERE name = ${name}`;
     }
-    const outcomes = yield* Effect.forEach(
+    const reads = yield* Effect.forEach(
       live,
-      (account) => readAccount(endpoint, account, before.get(account.name), now, options),
+      (account) => readAccount(endpoint, account, before.get(account.name), now, mode),
       { concurrency: PROBE_CONCURRENCY },
     );
-    const count = (outcome: Outcome) => outcomes.filter((each) => each === outcome).length;
+    const count = (outcome: Outcome) => reads.filter((each) => each.outcome === outcome).length;
     yield* Effect.annotateCurrentSpan({
       "pool.accounts": live.length,
       "pool.limits.signals": count("signals"),
       "pool.limits.probed": count("probed"),
       "pool.limits.probe_failed": count("probeFailed"),
+      "pool.cooldowns.cleared": count("cleared"),
     });
+    return reads.flatMap((each) => (each.outcome === "cleared" ? [each.cleared] : []));
   }).pipe(Effect.withSpan("PoolLimits.refresh"));
 
 /** Forgets every account's windows, as when the pool switches to another CLIProxyAPI. */
