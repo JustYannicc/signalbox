@@ -82,6 +82,21 @@ const PreviewSetupClaims = Schema.TaggedStruct("preview-setup", {
   exp: ExpiresAt,
 });
 
+/**
+ * One image a tool returned in a thread (`assets/CloudAssets.ts`), for the
+ * user it was issued to: the URL a client loads it from carries this.
+ */
+const ToolOutputImageClaims = Schema.TaggedStruct("tool-output-image", {
+  u: UserId,
+  /** Thread id. */
+  t: Schema.String,
+  /** Turn item id. */
+  i: Schema.String,
+  /** The image's index in the item's output. */
+  n: Schema.Number,
+  exp: ExpiresAt,
+});
+
 const SignedClaims = Schema.Union([
   SessionClaims,
   TicketClaims,
@@ -91,6 +106,7 @@ const SignedClaims = Schema.Union([
   ConnectionLinkClaims,
   LocalKeyClaims,
   PreviewSetupClaims,
+  ToolOutputImageClaims,
 ]);
 export type SignedClaims = typeof SignedClaims.Type;
 type SignedKind = SignedClaims["_tag"];
@@ -215,9 +231,8 @@ async function deriveKeys(secret: string) {
   return { hmac, aes };
 }
 
-const make = Effect.gen(function* () {
-  const config = yield* CloudConfig.CloudConfig;
-  const keys = yield* Effect.promise(() => deriveKeys(Redacted.value(config.sessionSecret)));
+const make = Effect.fnUntraced(function* (sessionSecret: Redacted.Redacted<string>) {
+  const keys = yield* Effect.promise(() => deriveKeys(Redacted.value(sessionSecret)));
   const subtle = globalThis.crypto.subtle;
 
   const sign: CloudTokens["Service"]["sign"] = (claims) =>
@@ -289,4 +304,19 @@ const make = Effect.gen(function* () {
   return CloudTokens.of({ sign, verify, seal, open });
 });
 
-export const layer = Layer.effect(CloudTokens, make);
+export const layer = Layer.effect(
+  CloudTokens,
+  Effect.gen(function* () {
+    return yield* make((yield* CloudConfig.CloudConfig).sessionSecret);
+  }),
+);
+
+/**
+ * The same keys from `SESSION_SECRET` alone, read from the ambient
+ * `ConfigProvider`: for user objects, which sign asset URLs but read none of
+ * the Worker's other settings.
+ */
+export const layerSessionSecret = Layer.effect(
+  CloudTokens,
+  Effect.flatMap(CloudConfig.readSessionSecret, make),
+);

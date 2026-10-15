@@ -79,7 +79,7 @@ export class LocalKeys extends Context.Service<
   }
 >()("@signalbox/cloud/localKeys/LocalKeys") {}
 
-/** `UserStore`'s `0014` migration. */
+/** `UserStore`'s `0015` migration. */
 export const createTables = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE TABLE local_keys (

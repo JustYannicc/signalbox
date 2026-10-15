@@ -19,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
+import * as PushDevices from "../push/PushDevices.ts";
 import * as Migrations from "../storage/migrations.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
@@ -106,11 +107,16 @@ export class UserStore extends Context.Service<
     /**
      * Records a thread's summary unless the index already holds that revision
      * or a newer one, so redelivery and reordering change nothing. Returns the
-     * index's new sequence when the row changed, null otherwise.
+     * index's new sequence and the row it replaced when the row changed, null
+     * otherwise.
      */
-    readonly recordThreadSummary: (
-      summary: ThreadSummary,
-    ) => Effect.Effect<number | null, SqlError>;
+    readonly recordThreadSummary: (summary: ThreadSummary) => Effect.Effect<
+      {
+        readonly sequence: number;
+        readonly previous: OrchestrationV2ThreadShell | null;
+      } | null,
+      SqlError
+    >;
     /** Every indexed thread with the context it acts as; the shell shows current contexts' only. */
     readonly threadIndex: Effect.Effect<
       {
@@ -198,7 +204,8 @@ const migrations = Migrator.fromRecord({
   "0011_github_name": GitHubConnection.addName,
   "0012_resource_bindings": ResourceBindings.createTables,
   "0013_folders": FolderTables.createTables,
-  "0014_local_keys": LocalKeys.createTables,
+  "0014_push_devices": PushDevices.createTables,
+  "0015_local_keys": LocalKeys.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -231,6 +238,7 @@ const GrantRow = Schema.Struct({
 
 const ShellJson = Schema.fromJsonString(OrchestrationV2ThreadShellJson);
 const encodeShell = Schema.encodeSync(ShellJson);
+const decodeShell = Schema.decodeUnknownSync(ShellJson);
 const IndexRow = Schema.Struct({ context_id: SignalboxContextId, shell: ShellJson });
 const decodeIndexRows = Schema.decodeUnknownSync(Schema.Array(IndexRow));
 const decodeMemberRows = Schema.decodeUnknownSync(
@@ -390,6 +398,9 @@ const make = Effect.gen(function* () {
     "UserStore.recordThreadSummary",
   )(function* (summary) {
     const now = yield* Clock.currentTimeMillis;
+    // Only a row this summary replaces; decoded once it has.
+    const before = yield* sql<{ readonly shell: string }>`SELECT shell FROM thread_index
+      WHERE thread_id = ${summary.threadId} AND revision < ${summary.revision}`;
     yield* sql`INSERT INTO thread_members (thread_id, added_at) VALUES (${summary.threadId}, ${now})
       ON CONFLICT (thread_id) DO NOTHING`;
     const written = yield* sql`INSERT INTO thread_index
@@ -400,7 +411,9 @@ const make = Effect.gen(function* () {
         revision = excluded.revision, shell = excluded.shell, updated_at = excluded.updated_at
       WHERE excluded.revision > thread_index.revision
       RETURNING thread_id`;
-    return written.length > 0 ? yield* bumpIndexSequence : null;
+    if (written.length === 0) return null;
+    const previous = before[0] === undefined ? null : decodeShell(before[0].shell);
+    return { sequence: yield* bumpIndexSequence, previous };
   }, sql.withTransaction);
 
   const threadIndex: UserStore["Service"]["threadIndex"] = Effect.all({
@@ -425,8 +438,8 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM thread_index`;
     const recorded: Array<{ readonly summary: ThreadSummary; readonly sequence: number }> = [];
     for (const summary of summaries) {
-      const sequence = yield* recordThreadSummary(summary);
-      if (sequence !== null) recorded.push({ summary, sequence });
+      const written = yield* recordThreadSummary(summary);
+      if (written !== null) recorded.push({ summary, sequence: written.sequence });
     }
     return recorded;
   }, sql.withTransaction);

@@ -38,6 +38,14 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@clerk/electron-passkeys",
   "node-gyp-build",
   "node-addon-api",
+  // napi-rs loaders: each requires `@oxc-*/binding-<platform>` beside itself
+  // and throws at import when it is missing. @oxc-project/types is type-only
+  // and never loaded; it is listed because it is oxc-parser's one dependency.
+  "oxc-parser",
+  "@oxc-parser/",
+  "oxc-transform",
+  "@oxc-transform/",
+  "@oxc-project/types",
   // ws's optional accelerators. Nothing in this repo declares them, so they are
   // not in the staged production install and the packaged app does not ship
   // them either way -- ws wraps the require in try/catch and falls back to its
