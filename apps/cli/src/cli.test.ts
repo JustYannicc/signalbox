@@ -138,7 +138,8 @@ describe("signalbox CLI", () => {
       const fiber = yield* run(["login", "--url", "https://cloud.test"], signalbox).pipe(
         Effect.forkChild,
       );
-      yield* TestClock.adjust("10 seconds");
+      // Step until the login ends: one jump can land before the first poll sleeps.
+      while (fiber.pollUnsafe() === undefined) yield* TestClock.adjust("1 second");
       const configDir = yield* Fiber.join(fiber);
       expect(polls).toBe(2);
       expect((yield* TestConsole.logLines).join("\n")).toContain("ABCD-EFGH");
