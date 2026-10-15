@@ -3,8 +3,18 @@ import * as Effect from "effect/Effect";
 
 import { request } from "../rpc/client.ts";
 
-/** Automation runs attached to a thread, as the server lists them among the thread's background tasks. */
+/**
+ * Automation runs attached to a thread, as the server lists them among the
+ * thread's background tasks: `automation-run:<automationId>:<runId>`.
+ */
 const ATTACHED_TASK_PREFIX = "automation-run:";
+
+/** The run behind an attached task, or null for any other task. */
+export const attachedRunOf = (taskId: string) => {
+  if (!taskId.startsWith(ATTACHED_TASK_PREFIX)) return null;
+  const [automationId, runId] = taskId.slice(ATTACHED_TASK_PREFIX.length).split(":");
+  return automationId && runId ? { automationId, runId } : null;
+};
 
 /**
  * The attached automation runs among a thread shell's background tasks. Only

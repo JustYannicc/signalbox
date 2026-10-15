@@ -17,7 +17,11 @@ import {
   TERMINAL_ITEMS,
   type Candidate,
 } from "./candidate.ts";
-import { PULL_REQUEST_FACT_EVENTS, pullRequestFacts } from "./pullRequestFacts.ts";
+import {
+  PULL_REQUEST_FACT_EVENTS,
+  PULL_REQUEST_REMARK_EVENTS,
+  pullRequestFacts,
+} from "./pullRequestFacts.ts";
 import { itemCandidates } from "./turnItems.ts";
 import { requestCandidates, runCandidates } from "./turns.ts";
 
@@ -238,7 +242,7 @@ export function candidatesFor(event: DomainEvent): ReadonlyArray<Candidate> {
   return [...(mapper?.(event) ?? []), rawCandidate(event)];
 }
 
-/** Public names the table can produce, so a test can hold it to the catalog. */
+/** Public names the engine can produce, so a test can hold it to the catalog. */
 export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   ...Object.values(THREAD_EVENTS),
   "thread.created",
@@ -263,4 +267,7 @@ export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   "checkpoint.captured",
   "checkpoint.restore-requested",
   ...PULL_REQUEST_FACT_EVENTS,
+  ...PULL_REQUEST_REMARK_EVENTS,
+  // A run's callback link was called (callbacks.ts).
+  "hook.called",
 ] satisfies ReadonlyArray<AutomationEventName>);
