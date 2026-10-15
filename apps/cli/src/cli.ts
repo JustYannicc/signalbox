@@ -7,6 +7,7 @@ import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 
 import { loginCommand, logoutCommand, poolsUseCommand } from "./accountCommands.ts";
+import { mcpCommand } from "./mcpCommand.ts";
 import { operationCommands } from "./operationCommands.ts";
 
 /**
@@ -31,6 +32,7 @@ export const cli: Command.Command<"signalbox", {}, {}, Error, CliServices> = Com
   Command.withSubcommands([
     loginCommand,
     logoutCommand,
+    mcpCommand,
     ...operationCommands([{ path: ["pools", "use"], command: poolsUseCommand }]),
   ]),
 ) as Command.Command<"signalbox", {}, {}, Error, CliServices>;

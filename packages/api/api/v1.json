@@ -264,6 +264,13 @@
       "output": "775208a7"
     },
     {
+      "name": "automations.save",
+      "rpc": "automations.save",
+      "access": "write",
+      "input": "e2698ed3",
+      "output": "e9ad0c58"
+    },
+    {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
@@ -283,6 +290,13 @@
       "access": "write",
       "input": "1276a316",
       "output": "78961bd6"
+    },
+    {
+      "name": "automations.validate",
+      "rpc": "automations.validate",
+      "access": "read",
+      "input": "9df3bde6",
+      "output": "7c407bde"
     },
     {
       "name": "backgroundPolicy.subscribe",
