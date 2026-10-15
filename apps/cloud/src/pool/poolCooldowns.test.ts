@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off globalDateInEffect:off - the fake CLIProxyAPI holds accounts on the wall clock.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

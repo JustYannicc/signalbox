@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off - the fake CLIProxyAPI holds accounts on the wall clock, as CLIProxyAPI does.
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
