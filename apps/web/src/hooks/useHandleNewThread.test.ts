@@ -5,6 +5,8 @@ const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
   let projectFileRead = Promise.resolve<null>(null);
   let projectRemoved = false;
+  // signalbox: threads filed in a folder away from their project's home.
+  const filedAway = new Set<string>();
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree",
     newWorktreesStartFromOrigin: false,
@@ -40,6 +42,7 @@ const testState = vi.hoisted(() => {
   return {
     completeProjectFileRead: (value: null) => completeProjectFileRead(value),
     draftStore,
+    filedAway,
     get projectFileRead() {
       return projectFileRead;
     },
@@ -61,6 +64,7 @@ const testState = vi.hoisted(() => {
     ) {
       storedDraft = nextStoredDraft;
       projectRemoved = false;
+      filedAway.clear();
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
@@ -138,6 +142,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("react", () => ({
   useCallback: <T>(callback: T) => callback,
   useMemo: <T>(factory: () => T) => factory(),
+}));
+vi.mock("../components/sidebar/folders/draftFiling", () => ({
+  useDraftFiledAway: () => (draft: { readonly threadId: string }) =>
+    testState.filedAway.has(draft.threadId),
 }));
 vi.mock("../components/Sidebar.logic", () => ({ orderItemsByPreferredIds: () => [] }));
 vi.mock("../composerDraftStore", () => {
@@ -321,4 +329,29 @@ describe.each([
       );
     },
   );
+});
+
+describe("useNewThreadHandler with folders", () => {
+  it("starts a fresh draft instead of reusing an empty one filed in a folder", async () => {
+    testState.reset({
+      draftId: "draft-in-folder",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-in-folder",
+    });
+    testState.filedAway.add("thread-in-folder");
+    const pendingOpen = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toEqual({
+      draftId: "draft-delayed",
+      threadId: "thread-delayed",
+    });
+    expect(testState.router.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { draftId: "draft-delayed" } }),
+    );
+  });
 });

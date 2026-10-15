@@ -39,6 +39,7 @@ import {
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
 import { draftModelSelection, useProjectPoolModelSelection } from "../state/projectPool"; // signalbox
+import { useDraftFiledAway } from "../components/sidebar/folders/draftFiling"; // signalbox
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -67,6 +68,7 @@ export function useNewThreadHandler() {
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
   const projectPool = useProjectPoolModelSelection(); // signalbox
+  const draftFiledAway = useDraftFiledAway(); // signalbox: plain New never reuses a folder's draft
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
     return resolveThreadRouteTarget(currentRouteParams);
@@ -228,6 +230,7 @@ export function useNewThreadHandler() {
       const emptyStoredDraftThread =
         options?.freshDraft !== true && // signalbox: folders
         reusableStoredDraftThread !== null &&
+        !draftFiledAway(reusableStoredDraftThread) && // signalbox: folders
         !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
           ? reusableStoredDraftThread
           : null;
@@ -370,6 +373,7 @@ export function useNewThreadHandler() {
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
         latestActiveDraftThread.promotedTo == null &&
+        !draftFiledAway(latestActiveDraftThread) && // signalbox: folders
         // Same content rule as above: a new-thread request while viewing an
         // invested draft mints a fresh one instead of repurposing it.
         !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
@@ -470,7 +474,14 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router, projectPool],
+    [
+      environmentServerConfigs,
+      getCurrentRouteTarget,
+      projectGroupingSettings,
+      router,
+      projectPool,
+      draftFiledAway,
+    ],
   );
 }
 
