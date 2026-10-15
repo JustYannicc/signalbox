@@ -22,6 +22,7 @@ vi.mock("../../state/server", async () => {
   };
 });
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
+vi.mock("../../state/environmentCapabilities", () => ({ useShowsEnvironmentUi: () => true }));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => {
     const environment = {
