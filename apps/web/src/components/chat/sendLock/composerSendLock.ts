@@ -1,12 +1,14 @@
 /**
- * The composer send lock's hooks into ChatComposer and ChatView. A padlock on
- * the send button: while a draft is locked nothing sends from it and Enter adds
- * a line. Answering the agent is never locked: a pending question or a proposed
- * plan's Refine/Implement follow-up. Approvals answer through their own buttons.
+ * The composer send lock's hooks into ChatComposer and ChatView. `/lock` locks
+ * the open draft: nothing sends from it, Enter adds a line, and Send turns into
+ * a padlock that explains itself and unlocks. Answering the agent is never
+ * locked: a pending question or a proposed plan's Refine/Implement follow-up.
+ * Approvals answer through their own buttons.
  */
 import { useCallback, useMemo } from "react";
 
 import { composerTargetKey, type ComposerThreadTarget } from "../../../composerDraftStore";
+import type { ComposerCommandItem } from "../ComposerCommandMenu";
 import { stackedThreadToast, toastManager } from "../../ui/toast";
 import {
   isComposerSendLocked,
@@ -15,27 +17,56 @@ import {
 } from "./composerSendLockStore";
 
 export interface ComposerSendLock {
-  /** The lock's own state, which the shackle shows. */
+  /** The lock's own state, which picks `/lock` or `/unlock`. */
   on: boolean;
   /** The lock holds right now: free-text sends are refused and Enter adds a line. */
   locked: boolean;
   /** Why sending is disabled, while the lock holds. */
   disabledReason: string | null;
-  toggle: () => void;
+  setLocked: (locked: boolean) => void;
 }
 
 /** ChatComposer's lock for the open draft. `answeringAgent` lifts the hold, not the lock. */
 export function useComposerSendLock(targetKey: string, answeringAgent: boolean): ComposerSendLock {
   const on = useComposerSendLockStore((state) => state.lockedTargetKeys[targetKey] === true);
   const locked = on && !answeringAgent;
-  const toggle = useCallback(
-    () => useComposerSendLockStore.getState().toggleSendLocked(targetKey),
+  const setLocked = useCallback(
+    (next: boolean) => useComposerSendLockStore.getState().setSendLocked(targetKey, next),
     [targetKey],
   );
   return useMemo(
-    () => ({ on, locked, disabledReason: locked ? SEND_LOCKED_REASON : null, toggle }),
-    [on, locked, toggle],
+    () => ({ on, locked, disabledReason: locked ? SEND_LOCKED_REASON : null, setLocked }),
+    [on, locked, setLocked],
   );
+}
+
+/** ChatComposer's built-in slash command: `/lock`, or `/unlock` once the draft is locked. */
+export function sendLockSlashCommandItem(
+  on: boolean,
+): Extract<ComposerCommandItem, { type: "slash-command" }> {
+  return on
+    ? {
+        id: "slash:unlock",
+        type: "slash-command",
+        command: "unlock",
+        label: "/unlock",
+        description: "Let this draft send again",
+      }
+    : {
+        id: "slash:lock",
+        type: "slash-command",
+        command: "lock",
+        label: "/lock",
+        description: "Lock sending for this draft: Enter adds a line",
+      };
+}
+
+/** The lock state a slash item asks for: true for `/lock`, false for `/unlock`, null otherwise. */
+export function sendLockSlashCommandTarget(item: ComposerCommandItem): boolean | null {
+  if (item.type !== "slash-command") return null;
+  if (item.command === "lock") return true;
+  if (item.command === "unlock") return false;
+  return null;
 }
 
 /** ChatView's `composer.toggleSendLock` shortcut. */

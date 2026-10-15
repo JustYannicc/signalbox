@@ -282,16 +282,18 @@ import {
 import { sendBlamesEnvironment } from "../accountPool/needsPoolCopy"; // signalbox
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
-import {
-  type ComposerCommandItem,
-  ComposerCommandMenu,
-  composerSuggestionOptionId,
-} from "./ComposerCommandMenu";
+import { type ComposerCommandItem, composerSuggestionOptionId } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { type ComposerSendLock, useComposerSendLock } from "./sendLock/composerSendLock"; // signalbox: send lock
+import {
+  type ComposerSendLock,
+  sendLockSlashCommandItem,
+  sendLockSlashCommandTarget,
+  useComposerSendLock,
+} from "./sendLock/composerSendLock"; // signalbox: send lock
+import { SendLockComposerCommandMenu } from "./sendLock/SendLockComposerCommandMenu"; // signalbox: send lock
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -2801,6 +2803,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               },
             ] as const)
           : []),
+        sendLockSlashCommandItem(sendLock.on), // signalbox: send lock
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
@@ -2924,6 +2927,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderSkills,
     selectedProviderSlashCommands,
     selectedProviderStatus,
+    sendLock.on, // signalbox: send lock
     settings.showSkillsInSlashMenu,
     workspaceEntries.entries,
   ]);
@@ -4632,6 +4636,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: command key
   // ------------------------------------------------------------------
+  // signalbox: send lock
+  /** `/lock` or `/unlock` picked from the slash menu. Returns false for every other item. */
+  const selectSendLockSlashCommand = (item: ComposerCommandItem): boolean => {
+    const locked = sendLockSlashCommandTarget(item);
+    if (locked === null) return false;
+    const { snapshot, trigger } = resolveActiveComposerTrigger();
+    if (!trigger) return true;
+    const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+      expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+    });
+    if (applied) {
+      setComposerHighlightedItemId(null);
+      sendLock.setLocked(locked);
+    }
+    return true;
+  };
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem = false) => {
     const submissionIntent = composerSubmissionIntentForKey({
       event,
@@ -4669,6 +4689,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return true;
       }
       if ((key === "Enter" || key === "Tab") && selectedItem) {
+        if (selectSendLockSlashCommand(selectedItem)) return true; // signalbox: send lock
         onSelectComposerItem(selectedItem);
         return true;
       }
@@ -7274,7 +7295,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </div>
               {composerSuggestionsVisible && (
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
-                  <ComposerCommandMenu
+                  <SendLockComposerCommandMenu // signalbox: send lock
+                    onSendLockCommand={selectSendLockSlashCommand} // signalbox: send lock
                     listId={composerSuggestionListId}
                     items={composerMenuItems}
                     resolvedTheme={resolvedTheme}
