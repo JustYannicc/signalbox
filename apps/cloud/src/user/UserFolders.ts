@@ -329,7 +329,7 @@ const make = Effect.gen(function* () {
 
   const create: UserFolders["Service"]["create"] = (input) =>
     Effect.gen(function* () {
-      const id = FolderId.make(yield* Effect.orDie(crypto.randomUUIDv4));
+      const id = FolderId.make(yield* Effect.orDie(crypto.randomUUIDv4()));
       return yield* mutate((current) =>
         Effect.gen(function* () {
           const parent =

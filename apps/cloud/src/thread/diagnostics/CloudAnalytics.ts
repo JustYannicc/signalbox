@@ -92,7 +92,7 @@ export const layerOn = (settings: AnalyticsSettings) =>
       const enqueue: CloudAnalytics["Service"]["enqueue"] = (event) =>
         Effect.gen(function* () {
           yield* store.enqueue({
-            uuid: yield* Effect.orDie(crypto.randomUUIDv4),
+            uuid: yield* Effect.orDie(crypto.randomUUIDv4()),
             event: event.event,
             distinctId: event.distinctId,
             at: event.at,

@@ -266,7 +266,7 @@ const make = Effect.gen(function* () {
 
   const stamp = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
     Effect.forEach(events, (event) =>
-      Effect.map(Effect.orDie(crypto.randomUUIDv4), (id) => ({ ...event, id: EventId.make(id) })),
+      Effect.map(Effect.orDie(crypto.randomUUIDv4()), (id) => ({ ...event, id: EventId.make(id) })),
     );
 
   /** Commits decided events and publishes them. Callers hold the lock. */

@@ -302,8 +302,14 @@ the workspace. These scopes control direct file access from the client.
 To remove an environment from Signalbox Connect, open your account menu's **Signalbox Connect**
 page, or **Settings → Signalbox Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is
-offline or has been wiped. Removing an environment from a device's connection
-settings only forgets it on that device; it stays registered to your account.
+offline or has been wiped. When Signalbox Connect rejects a host's link, the host
+shows that it was removed from Signalbox Connect. To link it again, turn on
+**Signalbox Connect** in **Settings → Connections** on a desktop host, or run
+`signalbox connect link` on a command-line host and then restart Signalbox there. A
+command-line host that released its tunnel when it last stopped may link itself
+again on its next start; run `signalbox connect unlink` on that host to keep it off.
+Removing an environment from a device's connection settings only forgets it on
+that device; it stays registered to your account.
 
 When idle tunnel cleanup is enabled, Signalbox Connect removes a linked environment's
 tunnel after it stays offline for several minutes. The environment stays linked
