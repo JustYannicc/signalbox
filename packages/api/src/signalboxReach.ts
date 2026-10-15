@@ -20,6 +20,7 @@ export const SIGNALBOX_RPC_REACH = {
   "accountPool.rename": write({ name: "pools.rename" }),
   "accountPool.delete": write({ name: "pools.delete", destructive: true }),
   "accountPool.setBacking": write({ name: "pools.setBacking" }),
+  "accountPool.setRouting": write({ name: "pools.setRouting" }),
   "accountPool.importAccounts": write({ name: "pools.importAccounts" }),
   // An API key is a secret the person types; agents never hold one (#335 decision 4).
   "accountPool.addApiKey": write({ name: "pools.addApiKey", humanOnly: true }),
