@@ -56,7 +56,8 @@ export interface EngineCore {
   readonly runLogs: RunLogs;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly runChanged: (runId: string, summary: boolean) => Effect.Effect<void, AutomationError>;
-  readonly replays: ReplayQueue;
+  /** Failed replays to retry; hosts without a replay core have none. */
+  readonly replays: Pick<ReplayQueue, "retryDue">;
   readonly complete: (
     runId: string,
     key: string,
@@ -296,22 +297,24 @@ export const makeTimedWork = (core: EngineCore) =>
     }).pipe(tickLock.withPermits(1));
 
     /**
-     * When the tick next has work, in epoch ms, for hosts that wake on a
-     * timer instead of ticking every few seconds. Null when nothing is due.
+     * Due crons and cleanup only, for hosts whose backend runs every step's
+     * timer itself (see runner/): the rest of `tick` is the replay core's.
      */
-    const nextWakeAt: Effect.Effect<number | null, AutomationError> = Effect.gen(function* () {
-      const due = yield* store.nextDueAt();
-      const retry = yield* core.replays.nextRetryAt;
-      // Agent threads settle from their events; the sweep catches what was missed.
-      const sweep =
-        (yield* store.threadSteps()).length > 0
-          ? Math.max(lastThreadSweep, 0) + THREAD_SWEEP_INTERVAL_MS
-          : null;
-      const times = [due === null ? null : isoMs(due), retry, sweep].filter(
-        (time): time is number => time !== null,
-      );
-      return times.length === 0 ? null : Math.min(...times);
-    });
+    const crons: Effect.Effect<void, AutomationError> = Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      for (const automation of yield* store.dueAutomations(DateTime.formatIso(now))) {
+        yield* fireCron(automation, now).pipe(core.ignoreFailure("cron"));
+      }
+      if (now.epochMilliseconds - lastPrune >= RETENTION_INTERVAL_MS) {
+        lastPrune = now.epochMilliseconds;
+        yield* prune(now).pipe(core.ignoreFailure("cleanup"));
+      }
+    }).pipe(tickLock.withPermits(1));
 
-    return { settleThreadStep, tick, nextWakeAt };
+    /** When the next cron is due, in epoch ms; null when none is scheduled. */
+    const nextCronAt = store
+      .nextCronAt()
+      .pipe(Effect.map((due) => (due === null ? null : isoMs(due))));
+
+    return { settleThreadStep, wakeStep, tick, crons, nextCronAt };
   });

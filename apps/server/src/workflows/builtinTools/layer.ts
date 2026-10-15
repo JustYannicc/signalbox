@@ -28,6 +28,8 @@ import * as ThreadHandlers from "../../mcp/toolkits/thread/handlers.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { automationError, errorMessage } from "@signalbox/automations/errors";
 import * as PullRequestReads from "../events/pullRequestReads.ts";
+import * as PullRequestAction from "./pullRequestAction.ts";
+import { PullRequestActionToolkit } from "./pullRequestAction.ts";
 import { asRecord } from "@signalbox/automations/json";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import type { BuiltinToolCall } from "@signalbox/automations/builtinTools/runner";
@@ -100,6 +102,8 @@ const register = Effect.gen(function* () {
     (yield* PullRequestsToolkit) as unknown as HandledToolkit,
     (yield* EnvironmentToolkit) as unknown as HandledToolkit,
     (yield* SectionsToolkit) as unknown as HandledToolkit,
+    // Automations only: agents merge through the merge gate.
+    (yield* PullRequestActionToolkit) as unknown as HandledToolkit,
   ];
   const routes = new Map<string, HandledToolkit>();
   for (const toolkit of toolkits)
@@ -153,6 +157,7 @@ const toolsLayer = Layer.effectDiscard(register).pipe(
       McpToolAccess.HandlersLayer.layer(PullRequestsHandlers.layer),
       McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer),
       McpToolAccess.HandlersLayer.layer(SectionsHandlers.layer),
+      McpToolAccess.HandlersLayer.layer(PullRequestAction.layer),
     ),
   ),
   Layer.provide(Layer.mergeAll(OrchestratorMcpService.layer, ThreadMetadataMcpService.layer)),

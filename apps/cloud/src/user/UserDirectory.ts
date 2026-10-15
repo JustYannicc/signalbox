@@ -22,6 +22,9 @@ import type {
   LinkedToken,
 } from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
+import type { CreatedKey } from "../localKeys/LocalKeys.ts";
+import type { LocalKeysView, LocalModelAuthorization } from "../localKeys/localModelAccess.ts";
+import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type {
   PreviewSetupApplied,
@@ -133,6 +136,16 @@ export interface UserObjectApi {
     readonly secret: string;
     readonly provider: LinkedProvider;
   }) => Promise<LinkedToken>;
+  /** A new key for the harnesses on one of the user's computers (`localKeys/LocalKeys.ts`). */
+  readonly createLocalKey: (label: string) => Promise<CreatedKey>;
+  readonly localKeys: () => Promise<LocalKeysView>;
+  readonly revokeLocalKey: (id: string) => Promise<void>;
+  /** A ModelGateway request with a local key: which pool it may use (`localKeys/localModelAccess.ts`). */
+  readonly authorizeLocalModel: (secret: string) => Promise<LocalModelAuthorization>;
+  readonly recordLocalModelRequest: (input: {
+    readonly keyId: string;
+    readonly usage: ModelUsage | null;
+  }) => Promise<void>;
   /** Production: a one-time claim on this user's setup for a preview (`previewSetup/`). */
   readonly issuePreviewSetupCode: (input: {
     readonly origin: string;
@@ -228,6 +241,11 @@ const METHODS = Object.keys({
   connectionLinks: true,
   revokeConnectionLink: true,
   linkedConnections: true,
+  createLocalKey: true,
+  localKeys: true,
+  revokeLocalKey: true,
+  authorizeLocalModel: true,
+  recordLocalModelRequest: true,
   linkedToken: true,
   issuePreviewSetupCode: true,
   redeemPreviewSetup: true,
@@ -283,12 +301,20 @@ export interface UserObjectNamespace {
  * `localWorkerd`: local workerd has no jurisdictions, so `wrangler dev` names
  * objects in the plain namespace. Deployments always use the EU one.
  */
+export const userObjectStub = (
+  namespace: UserObjectNamespace,
+  userId: string,
+  options: { readonly localWorkerd: boolean },
+) => {
+  const ids = options.localWorkerd ? namespace : namespace.jurisdiction(USER_OBJECT_JURISDICTION);
+  return namespace.get(ids.idFromName(userId));
+};
+
 export const layerDurableObjects = (
   namespace: UserObjectNamespace,
   options: { readonly localWorkerd: boolean },
 ) => {
-  const ids = options.localWorkerd ? namespace : namespace.jurisdiction(USER_OBJECT_JURISDICTION);
-  const stubFor = (userId: string) => namespace.get(ids.idFromName(userId));
+  const stubFor = (userId: string) => userObjectStub(namespace, userId, options);
   return Layer.succeed(
     UserDirectory,
     UserDirectory.of({

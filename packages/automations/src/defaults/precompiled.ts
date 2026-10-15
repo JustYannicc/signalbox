@@ -530,4 +530,310 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
       'export const meta = {\n\tname: "Wait for",\n\tdescription: "Waits for one thing on behalf of a thread\'s agent (an event, a call to a callback link, or a time), then tells the agent once what happened.",\n\tintent: "wait for this and wake me when it happens"\n};\nconst SHOWN = 2e3;\n/** "5 minutes", "2 hours", for the message that says nothing happened. */\nfunction describe(duration) {\n\tconst seconds = (duration.seconds ?? 0) + (duration.minutes ?? 0) * 60 + (duration.hours ?? 0) * 3600 + (duration.days ?? 0) * 86400;\n\tconst [amount, unit] = seconds >= 172800 ? [seconds / 86400, "days"] : seconds >= 7200 ? [seconds / 3600, "hours"] : seconds >= 120 ? [seconds / 60, "minutes"] : [seconds, "seconds"];\n\treturn `${Math.round(amount * 10) / 10} ${unit}`;\n}\nconst shown = (value) => {\n\tconst text = typeof value === "string" ? value : JSON.stringify(value);\n\treturn text.length > SHOWN ? `${text.slice(0, SHOWN)}…` : text;\n};\n/** An event as the agent reads it: its name, then its own fields. */\nfunction describeEvent(event) {\n\tconst { event: name, id, at, projectId, ...fields } = event;\n\treturn `${String(name)} happened at ${String(at)}: ${shown(fields)}`;\n}\n/** What the agent reads when the wait ends; it doesn\'t see the automation. */\nfunction wakeMessage(input, news) {\n\treturn [\n\t\t`You were waiting for ${input.until}.`,\n\t\tnews,\n\t\t...input.message ? ["", input.message] : []\n\t].join("\\n");\n}\nexport default workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the thread to wake.");\n\tconst waited = input.timeout ? `within ${describe(input.timeout)}` : "";\n\tlet news = "";\n\tif (input.at) {\n\t\tw.$arm("s1", 0);\n\t\tawait w.sleep("s2", `Waiting for ${input.until}`, { until: input.at });\n\t\tnews = `It\'s ${input.at}.`;\n\t} else if (input.callback) {\n\t\tw.$arm("s1", 1);\n\t\t// A literal "on" keeps the call from the run\'s start, so one racing this step isn\'t lost.\n\t\tconst call = await w.waitFor("s3", `Waiting for ${input.until}`, {\n\t\t\ton: "hook.called",\n\t\t\twhere: { hookId: input.callback },\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = call === null ? `Nobody called the callback link ${waited}, so I stopped waiting.` : `The callback link was called (${call.method}) with: ${shown(call.body)}`;\n\t} else if (input.on) {\n\t\tw.$arm("s1", 2);\n\t\tconst event = await w.waitFor("s4", `Waiting for ${input.until}`, {\n\t\t\ton: input.on,\n\t\t\twhere: input.where,\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = event === null ? `It didn\'t happen ${waited}, so I stopped waiting.` : describeEvent(event);\n\t} else {\n\t\tw.$arm("s1", 3);\n\t\tthrow new Error("Say what to wait for: on, callback or at.");\n\t}\n\tawait w.call("s5", "Wake the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage: wakeMessage(input, news)\n\t});\n\treturn news;\n});\n',
     runModule: null,
   },
+  "merge-gate": {
+    meta: {
+      name: "Merge gate",
+      description:
+        "Decides whether a thread's pull request merges: asks you, then merges it, deletes its branch and tells the agent.",
+      intent: "ask me before an agent merges its pull request",
+    },
+    graph: {
+      nodes: [
+        {
+          type: "step",
+          id: "s1",
+          line: 24,
+          verb: "call",
+          label: {
+            text: "Read the pull request",
+            dynamic: false,
+          },
+          service: "signalbox",
+          detail: {
+            operation: {
+              literal: "signalbox.pull_request_read",
+            },
+            args: {
+              expression: "{ threadId, url: input.url }",
+            },
+          },
+        },
+        {
+          type: "step",
+          id: "s2",
+          line: 33,
+          verb: "ask",
+          label: {
+            text: "Merge …#…?",
+            dynamic: true,
+          },
+          detail: {
+            question: {
+              expression:
+                '[pr.title, input.url, pinned, input.note].filter(Boolean).join("\\n\\n")',
+            },
+            fields: {
+              literal: {
+                reason: {
+                  type: "longText",
+                  label: "Anything to do first?",
+                },
+              },
+            },
+          },
+          outcomes: ["merge", "not yet"],
+        },
+        {
+          type: "branch",
+          id: "s6",
+          line: 38,
+          source: "outcome",
+          label: {
+            text: "Merge …#…?",
+            dynamic: true,
+          },
+          decidedBy: "s2",
+          arms: [
+            {
+              label: "not yet",
+              body: [
+                {
+                  type: "step",
+                  id: "s3/s4",
+                  line: 17,
+                  verb: "call",
+                  label: {
+                    text: "Tell the agent",
+                    dynamic: false,
+                  },
+                  service: "signalbox",
+                  detail: {
+                    operation: {
+                      literal: "signalbox.t3_thread_send",
+                    },
+                    args: {
+                      expression: '{ threadId, mode: "queue", message }',
+                    },
+                  },
+                },
+                {
+                  type: "end",
+                  id: "s5",
+                  line: 43,
+                  exit: "workflow",
+                },
+              ],
+            },
+            {
+              label: "merge",
+              body: [],
+            },
+          ],
+        },
+        {
+          type: "try",
+          id: "s7",
+          line: 47,
+          label: {
+            text: "If something fails",
+            dynamic: false,
+          },
+          body: [
+            {
+              type: "step",
+              id: "s8",
+              line: 48,
+              verb: "call",
+              label: {
+                text: "Merge it",
+                dynamic: false,
+              },
+              service: "signalbox",
+              detail: {
+                operation: {
+                  literal: "signalbox.pull_request_action",
+                },
+                args: {
+                  expression:
+                    '{ threadId, url: input.url, action: "merge", ...(pr.headSha ? { expectedHeadSha: pr.headSha } : {}), }',
+                },
+              },
+            },
+          ],
+          failure: [
+            {
+              type: "step",
+              id: "s9/s4",
+              line: 17,
+              verb: "call",
+              label: {
+                text: "Tell the agent",
+                dynamic: false,
+              },
+              service: "signalbox",
+              detail: {
+                operation: {
+                  literal: "signalbox.t3_thread_send",
+                },
+                args: {
+                  expression: '{ threadId, mode: "queue", message }',
+                },
+              },
+            },
+            {
+              type: "end",
+              id: "s10",
+              line: 56,
+              exit: "workflow",
+            },
+          ],
+        },
+        {
+          type: "branch",
+          id: "s11",
+          line: 58,
+          source: "condition",
+          label: {
+            text: "merged.moved",
+            dynamic: false,
+          },
+          arms: [
+            {
+              label: "Yes",
+              body: [
+                {
+                  type: "step",
+                  id: "s12/s4",
+                  line: 17,
+                  verb: "call",
+                  label: {
+                    text: "Tell the agent",
+                    dynamic: false,
+                  },
+                  service: "signalbox",
+                  detail: {
+                    operation: {
+                      literal: "signalbox.t3_thread_send",
+                    },
+                    args: {
+                      expression: '{ threadId, mode: "queue", message }',
+                    },
+                  },
+                },
+                {
+                  type: "end",
+                  id: "s13",
+                  line: 60,
+                  exit: "workflow",
+                },
+              ],
+            },
+            {
+              label: "No",
+              body: [],
+            },
+          ],
+        },
+        {
+          type: "branch",
+          id: "s14",
+          line: 63,
+          source: "condition",
+          label: {
+            text: "A host with a merge queue takes it in instead of merging; the branch stays until it lands.",
+            dynamic: false,
+          },
+          arms: [
+            {
+              label: "Yes",
+              body: [
+                {
+                  type: "step",
+                  id: "s15/s4",
+                  line: 17,
+                  verb: "call",
+                  label: {
+                    text: "Tell the agent",
+                    dynamic: false,
+                  },
+                  service: "signalbox",
+                  detail: {
+                    operation: {
+                      literal: "signalbox.t3_thread_send",
+                    },
+                    args: {
+                      expression: '{ threadId, mode: "queue", message }',
+                    },
+                  },
+                },
+                {
+                  type: "end",
+                  id: "s16",
+                  line: 65,
+                  exit: "workflow",
+                },
+              ],
+            },
+            {
+              label: "No",
+              body: [],
+            },
+          ],
+        },
+        {
+          type: "try",
+          id: "s17",
+          line: 68,
+          label: {
+            text: "If something fails",
+            dynamic: false,
+          },
+          body: [
+            {
+              type: "step",
+              id: "s18",
+              line: 69,
+              verb: "call",
+              label: {
+                text: "Delete its branch",
+                dynamic: false,
+              },
+              service: "signalbox",
+              detail: {
+                operation: {
+                  literal: "signalbox.pull_request_action",
+                },
+                args: {
+                  expression: '{ threadId, url: input.url, action: "delete-branch" }',
+                },
+              },
+            },
+          ],
+          failure: [],
+        },
+        {
+          type: "step",
+          id: "s19/s4",
+          line: 17,
+          verb: "call",
+          label: {
+            text: "Tell the agent",
+            dynamic: false,
+          },
+          service: "signalbox",
+          detail: {
+            operation: {
+              literal: "signalbox.t3_thread_send",
+            },
+            args: {
+              expression: '{ threadId, mode: "queue", message }',
+            },
+          },
+        },
+      ],
+    },
+    script:
+      'export const meta = {\n\tname: "Merge gate",\n\tdescription: "Decides whether a thread\'s pull request merges: asks you, then merges it, deletes its branch and tells the agent.",\n\tintent: "ask me before an agent merges its pull request"\n};\n/** Tells the agent how it went; it doesn\'t see the automation. */\nasync function tell(w, threadId, message) {\n\tawait w.call("s4", "Tell the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage\n\t});\n}\nexport default workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the pull request\'s thread.");\n\t// What the person sees comes from the host, never from the input.\n\tconst pr = await w.call("s1", "Read the pull request", "signalbox.pull_request_read", {\n\t\tthreadId,\n\t\turl: input.url\n\t});\n\tconst name = `${pr.repository}#${pr.number} (${input.url})`;\n\tconst commit = pr.headSha ? pr.headSha.slice(0, 7) : "its current head";\n\t// Without a head commit from the host there\'s nothing to pin the approval to; say so.\n\tconst pinned = pr.headSha ? `At ${commit}.` : "The host didn\'t report a head commit, so this approval isn\'t pinned to one: whatever is the head when you choose merge, merges.";\n\t// The approval is for this commit; anything pushed later needs its own.\n\tconst answer = await w.ask("s2", `Merge ${pr.repository}#${pr.number}?`, {\n\t\tquestion: [\n\t\t\tpr.title,\n\t\t\tinput.url,\n\t\t\tpinned,\n\t\t\tinput.note\n\t\t].filter(Boolean).join("\\n\\n"),\n\t\toptions: ["merge", "not yet"],\n\t\tfields: { reason: {\n\t\t\ttype: "longText",\n\t\t\tlabel: "Anything to do first?"\n\t\t} }\n\t});\n\tif (answer.choice !== "merge") {\n\t\tw.$arm("s6", 0);\n\t\tconst asked = answer.values.reason ? ` They said: ${answer.values.reason} Do that, then call merge_pull_request again.` : " Ask them what\'s missing before calling merge_pull_request again.";\n\t\tawait tell(w.$frame("s3"), threadId, `Not merging ${name} yet.${asked}`);\n\t\treturn "not yet";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tlet merged;\n\ttry {\n\t\tw.$arm("s7", 0);\n\t\tmerged = await w.call("s8", "Merge it", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "merge",\n\t\t\t...pr.headSha ? { expectedHeadSha: pr.headSha } : {}\n\t\t});\n\t} catch (error) {\n\t\tw.$arm("s7", 1);\n\t\tawait tell(w.$frame("s9"), threadId, `Merging ${name} failed: ${String(error)}. Fix what it says, then call merge_pull_request again.`);\n\t\treturn "failed";\n\t}\n\tif (merged.moved) {\n\t\tw.$arm("s11", 0);\n\t\tawait tell(w.$frame("s12"), threadId, `Not merging ${name}: new commits landed after it was approved at ${commit}. Call merge_pull_request again so they can approve what\'s there now.`);\n\t\treturn "moved";\n\t} else {\n\t\tw.$arm("s11", 1);\n\t}\n\t// A host with a merge queue takes it in instead of merging; the branch stays until it lands.\n\tif (merged.state !== "merged") {\n\t\tw.$arm("s14", 0);\n\t\tawait tell(w.$frame("s15"), threadId, `${name} is approved and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`);\n\t\treturn "queued";\n\t} else {\n\t\tw.$arm("s14", 1);\n\t}\n\tlet cleanedUp = true;\n\ttry {\n\t\tw.$arm("s17", 0);\n\t\tawait w.call("s18", "Delete its branch", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "delete-branch"\n\t\t});\n\t} catch {\n\t\tw.$arm("s17", 1);\n\t\tcleanedUp = false;\n\t}\n\tawait tell(w.$frame("s19"), threadId, `Merged ${name}${cleanedUp ? " and deleted its branch" : ""}. Wrap up and hand the work back.`);\n\treturn "merged";\n});\n',
+    runModule: null,
+  },
 };

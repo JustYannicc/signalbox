@@ -2,7 +2,7 @@ import * as Toolkit from "effect/ai/Toolkit";
 
 import { AUTOMATION_TOOLS } from "@signalbox/automations/tools/declarations";
 import { tool } from "./tool.ts";
-import { ListWaitsTool, StopWaitingTool, WaitForTool } from "./waitTools.ts";
+import { ListWaitsTool, MergePullRequestTool, StopWaitingTool, WaitForTool } from "./waitTools.ts";
 
 /**
  * Agent tools for automations, declared in the package
@@ -59,4 +59,5 @@ export const AutomationToolkit = Toolkit.make(
   WaitForTool,
   ListWaitsTool,
   StopWaitingTool,
+  MergePullRequestTool,
 );

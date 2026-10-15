@@ -98,11 +98,6 @@ export const makeReplayQueue = Effect.gen(function* () {
       }),
     /** Forgets a run's failed replays: it replayed, or it ended. */
     forget: (runId: string) => Effect.sync(() => retries.delete(runId)),
-    /** When the next failed replay's backoff ends; null when none waits. */
-    nextRetryAt: Effect.sync(() => {
-      const times = [...retries.values()].map((retry) => retry.at);
-      return times.length === 0 ? null : Math.min(...times);
-    }),
     /** Queues the failed replays whose backoff ended by `now`. */
     retryDue: (now: number) =>
       Effect.forEach(

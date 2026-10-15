@@ -165,6 +165,8 @@ export const makeStartStep =
             .call(String(first), {
               args: args[1] ?? {},
               automationId: automation.automation_id,
+              projectId: automation.project_id,
+              runId: step.run_id,
               automationName: automation.name,
               runtimeMode: defaults().runtimeMode,
               requestKey: `${step.run_id}/${step.step_key}`,
@@ -253,3 +255,4 @@ const startChild = (
     const run = yield* deps.launchChild({ automation: target, input, parent });
     return { type: "done", value: { runId: run.id } } satisfies StepStart;
   });
+export type StartStep = ReturnType<typeof makeStartStep>;

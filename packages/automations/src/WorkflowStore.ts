@@ -60,7 +60,14 @@ export interface VersionRow {
   /** The defaults of the thread that saved it, which apply once it's live. Null before drafts. */
   readonly defaults_json: string | null;
   readonly created_at: string;
+  /**
+   * Who stands behind this code: `signalbox` for a built-in's own, `person` once someone
+   * published it in the app, else `agent` (null for versions saved before this was recorded).
+   */
+  readonly approved_by?: VersionApproval | null;
 }
+
+export type VersionApproval = "signalbox" | "person" | "agent";
 
 export interface RunRow {
   readonly run_id: string;
@@ -365,11 +372,21 @@ export const make = Effect.gen(function* () {
         sql`
           INSERT INTO signalbox_automation_versions (
             automation_id, version, source, script, run_module, graph_json, meta_json,
-            defaults_json, created_at
+            defaults_json, created_at, approved_by
           ) VALUES (
             ${row.automation_id}, ${row.version}, ${row.source}, ${row.script}, ${row.run_module},
-            ${row.graph_json}, ${row.meta_json}, ${row.defaults_json}, ${row.created_at}
+            ${row.graph_json}, ${row.meta_json}, ${row.defaults_json}, ${row.created_at},
+            ${row.approved_by ?? "agent"}
           )
+        `,
+      ),
+    /** A person published this version in the app: they stand behind it. */
+    approveVersion: (automationId: string, version: number) =>
+      run(
+        "approveVersion",
+        sql`
+          UPDATE signalbox_automation_versions SET approved_by = 'person'
+          WHERE automation_id = ${automationId} AND version = ${version}
         `,
       ),
     getVersion: (automationId: string, version: number) =>
@@ -639,25 +656,13 @@ export const make = Effect.gen(function* () {
             AND r.status = 'running'
         `,
       ),
-    /**
-     * The earliest stored time something is due: a waiting step's wake, a
-     * cron, or a run's deadline. Null when nothing waits on the clock.
-     */
-    nextDueAt: () =>
+    /** When the next enabled cron is due; null when none is scheduled. */
+    nextCronAt: () =>
       run(
-        "nextDueAt",
+        "nextCronAt",
         sql<{ readonly at: string | null }>`
-          SELECT MIN(at) AS at FROM (
-            SELECT MIN(s.wake_at) AS at FROM signalbox_automation_steps s
-            JOIN signalbox_automation_runs r ON r.run_id = s.run_id
-            WHERE s.status = 'waiting' AND s.wake_at IS NOT NULL AND r.status = 'running'
-            UNION ALL
-            SELECT MIN(next_run_at) FROM signalbox_automations
-            WHERE enabled = 1 AND next_run_at IS NOT NULL
-            UNION ALL
-            SELECT MIN(deadline_at) FROM signalbox_automation_runs
-            WHERE status = 'running' AND deadline_at IS NOT NULL
-          )
+          SELECT MIN(next_run_at) AS at FROM signalbox_automations
+          WHERE enabled = 1 AND next_run_at IS NOT NULL
         `,
       ).pipe(Effect.map((rows) => rows[0]?.at ?? null)),
     /** Waiting steps of running runs that wait on an agent thread. */

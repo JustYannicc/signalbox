@@ -64,6 +64,7 @@ import * as GitHub from "./github/GitHub.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
+import * as LocalKeys from "./localKeys/LocalKeys.ts";
 import * as LegacySections from "./user/legacySections.ts";
 import * as CloudEngine from "./automations/cloudEngine.ts";
 import { AutomationSandbox } from "@signalbox/automations/host";
@@ -259,6 +260,7 @@ const makeUserRuntime = (
               DriveFiles.layer,
               GitHubConnection.layer,
               ConnectionLinks.layer,
+              LocalKeys.layer,
               PoolSignIns.layer,
               CloudThreadService.layer,
             ),

@@ -38,12 +38,10 @@ import {
   AutomationIngress,
   AutomationModels,
   AutomationRunLogSink,
-  AutomationSandbox,
   AutomationThreads,
   type ThreadMonitor,
 } from "@signalbox/automations/host";
 import { setPullRequestWatchHandler } from "./pullRequestWatchHook.ts";
-import { replayWorkflow } from "./quickJs.ts";
 import { makeRunFunction } from "./runFunction.ts";
 import { makeWebhooks } from "./webhooks.ts";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
@@ -274,7 +272,6 @@ const layerHost = Layer.mergeAll(
   layerActivation,
   ExecutorSettings.layer,
   Layer.succeed(AutomationCompiler, AutomationCompiler.of({ compile: compileWorkflow })),
-  Layer.succeed(AutomationSandbox, AutomationSandbox.of({ replay: replayWorkflow })),
 );
 
 /** The engine with the server as its host. */

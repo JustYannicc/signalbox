@@ -25,6 +25,7 @@ import * as GitHub from "../github/GitHub.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
+import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
@@ -159,6 +160,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               drives.services,
               GitHubConnection.layer,
               ConnectionLinks.layer,
+              LocalKeys.layer,
             ),
           ),
           Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
@@ -349,6 +351,26 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   linkedToken(input: Parameters<UserObjectApi["linkedToken"]>[0]) {
     return this.api.linkedToken(input);
+  }
+
+  createLocalKey(label: string) {
+    return this.api.createLocalKey(label);
+  }
+
+  localKeys() {
+    return this.api.localKeys();
+  }
+
+  revokeLocalKey(id: string) {
+    return this.api.revokeLocalKey(id);
+  }
+
+  authorizeLocalModel(secret: string) {
+    return this.api.authorizeLocalModel(secret);
+  }
+
+  recordLocalModelRequest(input: Parameters<UserObjectApi["recordLocalModelRequest"]>[0]) {
+    return this.api.recordLocalModelRequest(input);
   }
 
   issuePreviewSetupCode(input: Parameters<UserObjectApi["issuePreviewSetupCode"]>[0]) {

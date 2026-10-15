@@ -45,11 +45,13 @@ export function AutomationDraftCard(props: {
   const discard = useAtomCommand(automationState.discardDraft, options);
   const [busy, setBusy] = useState(false);
   const input = { automationId: automation.id };
+  // Publishing vouches for exactly the version shown here; a newer draft is refused.
+  const publishInput = { automationId: automation.id, version: draft.version };
 
   const runPublish = async () => {
     setBusy(true);
     void Haptics.selectionAsync();
-    const result = await publish({ environmentId, input });
+    const result = await publish({ environmentId, input: publishInput });
     setBusy(false);
     if (result._tag === "Success") {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

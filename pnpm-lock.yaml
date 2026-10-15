@@ -694,9 +694,6 @@ importers:
       '@ff-labs/fff-node':
         specifier: 0.11.0
         version: 0.11.0(patch_hash=8956d6ed6938a1bce69b2d0b067ff258dd9ca753c5bbe7006f7b68f760ea3ad2)
-      '@jitl/quickjs-wasmfile-release-sync':
-        specifier: 0.32.0
-        version: 0.32.0
       '@muse-code/sdk':
         specifier: 1.4.6
         version: 1.4.6(@types/node@24.12.4)
@@ -775,9 +772,6 @@ importers:
       proper-lockfile:
         specifier: 4.1.2
         version: 4.1.2
-      quickjs-emscripten-core:
-        specifier: 0.32.0
-        version: 0.32.0
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5
@@ -1200,6 +1194,9 @@ importers:
 
   packages/automations:
     dependencies:
+      '@jitl/quickjs-wasmfile-release-sync':
+        specifier: 0.32.0
+        version: 0.32.0
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
