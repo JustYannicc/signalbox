@@ -72,7 +72,6 @@ jobs:
       # previews never mix test turns into the cost data.
       SIGNALBOX_POSTHOG_KEY: ${{ vars.SIGNALBOX_POSTHOG_KEY }}
       SIGNALBOX_POSTHOG_HOST: ${{ vars.SIGNALBOX_POSTHOG_HOST }}
-      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
       SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
       # Optional: membership changes from WorkOS at once (docs/operations/cloud.md).

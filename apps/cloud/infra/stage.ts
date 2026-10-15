@@ -11,6 +11,22 @@
 /** Signalbox's zone, pinned so custom domains never need a zone lookup. */
 export const SIGNALBOX_ZONE_ID = "e817cf0e17e849a0aab7a0bf92c0a053";
 
+/**
+ * Threads' dev servers (`src/thread/preview/`), on a registrable domain of
+ * their own so preview pages are never same-site with the app and never get
+ * signalbox.run's cookies. Universal SSL covers one level of subdomains, so
+ * every stage's previews sit side by side, told apart after the label:
+ * `<label>-app.` for production, `<label>-pr<number>.` for a pull request.
+ * Each stage's route only matches its own, so no route depends on another
+ * being more specific.
+ */
+export const PREVIEW_ZONE = {
+  id: "fcbe785375d3014f110caab2e4a95bdd",
+  name: "signalbox-preview.dev",
+};
+
+const previewHost = (tag: string) => `*-${tag}.${PREVIEW_ZONE.name}`;
+
 /** Same as wrangler.jsonc, so `wrangler dev` runs what deploys. */
 export const COMPATIBILITY_DATE = "2026-09-30";
 
@@ -32,6 +48,8 @@ export interface CloudStage {
   readonly gatewayWorker: string;
   readonly cloudDomain: string;
   readonly gatewayDomain: string;
+  /** Preview hosts in route pattern syntax, `*` standing for the label. Also `PREVIEW_DOMAIN`. */
+  readonly previewHost: string;
   readonly poolContainer: { readonly name: string; readonly maxInstances: number };
   readonly threadContainer: { readonly name: string; readonly maxInstances: number };
   /** The bucket the Worker's `DRIVE_PACKS` reads and writes. */
@@ -58,12 +76,14 @@ const urls = (cloudDomain: string, gatewayDomain: string) => ({
 
 export const cloudStage = (stage: string): CloudStage => {
   if (stage === PRODUCTION_STAGE) {
+    const previews = previewHost("app");
     return {
       production: true,
       cloudWorker: "signalbox-cloud",
       gatewayWorker: "signalbox-model-gateway",
       cloudDomain: "app.signalbox.run",
       gatewayDomain: "gateway.signalbox.run",
+      previewHost: previews,
       // wrangler's default names: `<worker>-<class, lowercased>`.
       poolContainer: { name: "signalbox-cloud-poolobject", maxInstances: 10 },
       threadContainer: { name: "signalbox-cloud-threadobject", maxInstances: 50 },
@@ -73,6 +93,7 @@ export const cloudStage = (stage: string): CloudStage => {
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
         ...urls("app.signalbox.run", "gateway.signalbox.run"),
+        PREVIEW_DOMAIN: previews,
         // Previews that may take a signed-in user's setup (`src/previewSetup/`).
         PREVIEW_SETUP_ORIGINS: "https://preview-*.signalbox.run",
       },
@@ -84,12 +105,14 @@ export const cloudStage = (stage: string): CloudStage => {
   }
   const cloudDomain = `preview-${number}.signalbox.run`;
   const gatewayDomain = `gateway-preview-${number}.signalbox.run`;
+  const previews = previewHost(`pr${number}`);
   return {
     production: false,
     cloudWorker: `signalbox-cloud-pr-${number}`,
     gatewayWorker: `signalbox-model-gateway-pr-${number}`,
     cloudDomain,
     gatewayDomain,
+    previewHost: previews,
     poolContainer: { name: `signalbox-cloud-pr-${number}-pools`, maxInstances: 2 },
     threadContainer: { name: `signalbox-cloud-pr-${number}-threads`, maxInstances: 2 },
     // Previews never touch production's packs; each keeps its own prefix.
@@ -98,6 +121,7 @@ export const cloudStage = (stage: string): CloudStage => {
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       ...urls(cloudDomain, gatewayDomain),
+      PREVIEW_DOMAIN: previews,
       DRIVE_PACKS_PREFIX: `pr-${number}/`,
       // Where a preview takes each user's setup from (`src/previewSetup/`).
       PREVIEW_SETUP_SOURCE: "https://app.signalbox.run",
