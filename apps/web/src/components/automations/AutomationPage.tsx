@@ -24,6 +24,7 @@ import { AutomationDraftBar, type DraftSide } from "./AutomationDraftBar";
 import { AutomationView, automationRoute } from "./automationFormat";
 import { AutomationRunChat } from "./AutomationRunChat";
 import { AutomationsPageShell } from "./AutomationsPageShell";
+import { WatchedSources } from "./WatchedSources";
 import { AutomationSourceView } from "./AutomationSourceView";
 import { AutomationWorkspace } from "./AutomationWorkspace";
 
@@ -158,6 +159,7 @@ export function AutomationPage(props: {
           {triggerSummary(automation.triggers)}
         </span>
         {nextRun ? <span className="text-muted-foreground">{nextRun}</span> : null}
+        <WatchedSources sources={detail.watching} />
         {automation.description ? (
           <span className="line-clamp-2 min-w-0 flex-1 text-muted-foreground">
             {automation.description}

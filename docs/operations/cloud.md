@@ -249,6 +249,16 @@ A turn on a model its pool doesn't serve is refused at turn start
 offered only where `SCRIPTED_PROVIDER=1`: `wrangler dev` and tests, never
 production.
 
+#### Connectors in local harnesses
+
+The local harness setup (`apps/cloud/src/localKeys/localSetup.ts`) also adds
+an Executor as the MCP server `signalbox` in Codex and Claude Code when the
+`EXECUTOR_MCP_URL` variable is set in the GitHub environment (the Executor's
+MCP endpoint, e.g. `https://executor.example/mcp`). Unset, setup adds none and
+removes one an earlier run added. Each harness signs in to the Executor with its
+own MCP sign-in (`/mcp` in Claude Code, `codex mcp login signalbox`), and
+`--undo` removes the entry again. Previews use the same variable.
+
 #### CLIProxyAPI updates
 
 The `CLIProxyAPI release sync` workflow checks upstream daily. The shared
@@ -375,6 +385,23 @@ workflow manually with `cleanup_legacy_preview_packs` enabled once, after every
 preview that was open when prefixes landed has closed (a redeploy isn't enough:
 it still reads the old keys). It deletes only unprefixed keys in
 `signalbox-drives-preview`.
+
+### Attachments
+
+Pasted screenshots and files share the drives bucket, under
+`<preview prefix>attachments/` (`apps/cloud/src/attachments/`), so a preview's
+attachments go with its prefix. A client uploads to a signed URL and gets a
+`pending-…` id, stored under `attachments/pending/`; sending the message copies
+each upload under an id of the thread, derived from the command so a retry
+rewrites the same copy. Uploads nobody sent are swept after a day, beside the
+next upload; an R2 lifecycle rule on `attachments/pending/` would do the same
+without the sweep. Clients load a sent attachment through the same signed
+`/api/assets` URLs as tools' images (`apps/cloud/src/assets/`), issued only to
+its uploader and to people who can see its thread. Limits are the contract's (`chatAttachment.ts`): 10 MiB
+per image, 50 MiB per file, 80 MiB of images and 100 attachments per message.
+Before each turn the Runner downloads every attachment the thread's messages
+hold into the adapters' attachments directory with its session token, so a
+new machine after a sleep has the earlier ones too.
 
 ### Secrets
 

@@ -12,10 +12,11 @@ import * as Stream from "effect/Stream";
 
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 
+import { makeMemoryObjects } from "../attachments/attachmentTesting.ts";
 import * as Environment from "../environment.ts";
 import * as Platform from "../platform.ts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
-import { layerPersonalThreadContexts, makeMemoryCloud } from "../testing.ts";
+import { layerAttachments, layerPersonalThreadContexts, makeMemoryCloud } from "../testing.ts";
 import * as CloudThreadService from "./CloudThreadService.ts";
 import { scriptedModelSelection } from "./scriptedProvider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
@@ -50,6 +51,7 @@ describe("CloudThreadService", () => {
             Layer.provide(Layer.succeed(ThreadDirectory.ThreadDirectory, flaky)),
             Layer.provide(layerPersonalThreadContexts("user_1")),
             Layer.provide(Platform.layerCrypto),
+            Layer.provide(layerAttachments(makeMemoryObjects())),
           ),
         ),
       );
