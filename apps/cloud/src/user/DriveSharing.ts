@@ -129,7 +129,7 @@ const make = Effect.gen(function* () {
         return yield* refuse("Shared drives belong to a work organization.");
       }
       const owner = yield* me;
-      const key = (yield* Effect.orDie(crypto.randomUUIDv4)).replaceAll("-", "");
+      const key = (yield* Effect.orDie(crypto.randomUUIDv4())).replaceAll("-", "");
       const driveId = sharedDriveId(context.id, key);
       yield* directory
         .forDrive(driveId)

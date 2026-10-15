@@ -9,10 +9,14 @@ import * as ServerConfig from "../../config.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   ClaudeAdapterV2Driver,
+  ClaudeAgentSdkQueryRunner,
+  type ClaudeAgentSdkQueryRunnerShape,
   layerQueryRunner as layerClaudeQueryRunner,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import {
   CodexAdapterV2Driver,
+  CodexAppServerClientFactory,
+  type CodexAppServerClientFactoryShape,
   layerAppServerClientFactory as layerCodexClientFactory,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -24,6 +28,7 @@ import {
   harnessEnvironment,
   machineLayout,
   prepareMachine,
+  type RunnerMcpServers,
 } from "./RunnerModelAccess.ts";
 
 /**
@@ -36,9 +41,55 @@ import {
  * database, and an upstream change to an adapter reaches the Runner through a
  * normal merge. The Claude query runner can be swapped, which is how its
  * session reaches the thread (`RunnerClaudeSessions.ts`).
+ *
+ * Each harness session also gets `sessionEnvironment` as it opens, under the
+ * machine's own environment: the folder's secrets (`RunnerSecrets.ts`). Both
+ * harness CLIs live as long as their session, so a session started after the
+ * secrets change sees the new ones.
  */
 
 type ClaudeQueryRunnerLayer = typeof layerClaudeQueryRunner;
+type SessionEnvironment = () => Readonly<Record<string, string>>;
+
+/** Claude Code's CLI, spawned per query, with the session environment under the machine's. */
+export const claudeWithSessionEnvironment = (
+  inner: ClaudeAgentSdkQueryRunnerShape,
+  extra: SessionEnvironment,
+): ClaudeAgentSdkQueryRunnerShape => ({
+  ...inner,
+  open: (input) =>
+    inner.open({
+      ...input,
+      options: { ...input.options, env: { ...extra(), ...input.options.env } },
+    }),
+});
+
+/** Codex's app-server, spawned per session, the same way. */
+export const codexWithSessionEnvironment = (
+  inner: CodexAppServerClientFactoryShape,
+  extra: SessionEnvironment,
+): CodexAppServerClientFactoryShape => ({
+  open: (input) => inner.open({ ...input, environment: { ...extra(), ...input.environment } }),
+});
+
+const layerClaudeSessionEnvironment = (
+  queryRunner: ClaudeQueryRunnerLayer,
+  extra: SessionEnvironment,
+): ClaudeQueryRunnerLayer =>
+  Layer.effect(
+    ClaudeAgentSdkQueryRunner,
+    Effect.map(ClaudeAgentSdkQueryRunner, (inner) =>
+      ClaudeAgentSdkQueryRunner.of(claudeWithSessionEnvironment(inner, extra)),
+    ),
+  ).pipe(Layer.provide(queryRunner));
+
+const layerCodexSessionEnvironment = (extra: SessionEnvironment) =>
+  Layer.effect(
+    CodexAppServerClientFactory,
+    Effect.map(CodexAppServerClientFactory, (inner) =>
+      CodexAppServerClientFactory.of(codexWithSessionEnvironment(inner, extra)),
+    ),
+  ).pipe(Layer.provide(layerCodexClientFactory));
 
 /**
  * What the adapter constructors need. The server config only supplies paths
@@ -50,10 +101,11 @@ const layerAdapterServices = (
   environment: NodeJS.ProcessEnv,
   claudeQueryRunner: ClaudeQueryRunnerLayer,
   stderr: HarnessStderr,
+  sessionEnvironment: SessionEnvironment,
 ) =>
   Layer.mergeAll(
-    claudeQueryRunner,
-    layerCodexClientFactory,
+    layerClaudeSessionEnvironment(claudeQueryRunner, sessionEnvironment),
+    layerCodexSessionEnvironment(sessionEnvironment),
     IdAllocator.layer,
     ServerConfig.layerTest(home, home),
     Layer.succeed(HostProcess.Environment, environment),
@@ -80,14 +132,16 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   readonly gatewayUrl: string;
   /** Claude's query runner; upstream's own by default. */
   readonly claudeQueryRunner?: ClaudeQueryRunnerLayer;
-  /** The Runner's context server, which Codex is configured with (Claude's query runner adds it). */
-  readonly contextMcpUrl?: string;
+  /** The Runner's MCP servers, which Codex is configured with (Claude's query runner adds them). */
+  readonly mcpServers?: RunnerMcpServers;
   /** The machine's cache variables (`RunnerCaches.ts`), for the harnesses and what they run. */
   readonly caches?: Readonly<Record<string, string>>;
+  /** Variables each harness session gets as it opens, under the machine's own. */
+  readonly sessionEnvironment?: SessionEnvironment;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
   const stderr = makeHarnessStderr();
-  yield* prepareMachine(layout, machine.gatewayUrl, machine.contextMcpUrl ?? null);
+  yield* prepareMachine(layout, machine.gatewayUrl, machine.mcpServers);
   const environment = harnessEnvironment(
     yield* HostProcess.Environment,
     layout,
@@ -100,6 +154,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
       environment,
       machine.claudeQueryRunner ?? layerClaudeQueryRunner,
       stderr,
+      machine.sessionEnvironment ?? (() => ({})),
     ),
   );
   const common = { displayName: undefined, environment: [], enabled: true } as const;
@@ -117,6 +172,12 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
     layout,
     stderr,
     environment,
+    /** What the harnesses' environment sets, each adapter's own config home included. */
+    harnessVariables: new Set([
+      ...Object.keys(environment),
+      "CLAUDE_CONFIG_DIR",
+      "CODEX_HOME",
+    ]) as ReadonlySet<string>,
     adapters: new Map<ProviderInstanceId, ProviderAdapterV2["Service"]>([
       [claude.instanceId, claude],
       [codex.instanceId, codex],

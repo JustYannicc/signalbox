@@ -22,6 +22,7 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadPoolRow } from "../accountPool/ThreadPoolRow"; // signalbox
+import { ThreadWaitsSection } from "../automations/ThreadWaitsSection"; // signalbox
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -182,6 +183,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
           {density === "full" && !props.draftId ? (
             <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
+          ) : null}
+          {/* signalbox: what the thread waits on (#366) */}
+          {!props.draftId ? (
+            <ThreadWaitsSection environmentId={props.environmentId} threadId={props.threadId} />
           ) : null}
 
           {density === "full" && !props.draftId ? (

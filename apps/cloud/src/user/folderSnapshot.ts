@@ -10,7 +10,10 @@ import {
 } from "./folderTree.ts";
 import type { FolderState } from "./UserFolders.ts";
 
-/** The tree as `signalbox.folders.*` sends it: every folder, filed thread, project home and pool. */
+/**
+ * The tree as `signalbox.folders.*` sends it: every folder, filed thread,
+ * project home, pool and secrets reference.
+ */
 export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
   const { tree } = current;
   const resolve = poolResolver(tree);
@@ -19,7 +22,14 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
   const folderIds = new Set(tree.folders.map((folder) => folder.id));
   return {
     revision: current.revision,
-    top: tree.topInstructions === null ? {} : { instructions: tree.topInstructions },
+    top: {
+      ...(tree.topInstructions === null ? {} : { instructions: tree.topInstructions }),
+      ...(tree.topSecrets === null ? {} : { secrets: { environmentId: tree.topSecrets } }),
+    },
+    // When it was connected, never the token.
+    ...(current.onePasswordConnectedAt === null
+      ? {}
+      : { onePassword: { connectedAt: current.onePasswordConnectedAt } }),
     folders: byPosition(tree.folders).map((folder): Folder => {
       const files = filesProjectOf(folder, given);
       const poolId = placed.get(folder.id);
@@ -32,6 +42,7 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
         ...(files === null ? {} : { files: { projectId: files } }),
         ...(poolId === undefined ? {} : { poolId }),
         ...(folder.instructions === null ? {} : { instructions: folder.instructions }),
+        ...(folder.secrets === null ? {} : { secrets: { environmentId: folder.secrets } }),
       };
     }),
     threadHomes: [...tree.filed].flatMap(([threadId, folderId]) =>

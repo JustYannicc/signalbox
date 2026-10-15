@@ -101,6 +101,8 @@ vi.mock("./agentLiveActivity", () => ({
   startAgentLiveActivity: widgetMocks.start,
 }));
 
+vi.mock("./signalboxCloudPush", () => ({ registerWithSignalboxClouds: async () => {} })); // signalbox
+
 // The state modules pull the whole connection stack (and native expo modules)
 // into the import graph; the arming gate only needs the configs map.
 vi.mock("../../state/atom-registry", () => ({

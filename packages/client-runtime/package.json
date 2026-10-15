@@ -7,6 +7,10 @@
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
     },
+    "./image-attachment-size": {
+      "types": "./src/imageAttachmentSize.ts",
+      "default": "./src/imageAttachmentSize.ts"
+    },
     "./handoff": {
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
@@ -270,6 +274,10 @@
     "./state/signalboxPreviews": {
       "types": "./src/state/signalboxPreviews.ts",
       "default": "./src/state/signalboxPreviews.ts"
+    },
+    "./state/signalboxPush": {
+      "types": "./src/state/signalboxPush.ts",
+      "default": "./src/state/signalboxPush.ts"
     },
     "./state/signalboxRepositories": {
       "types": "./src/state/signalboxRepositories.ts",

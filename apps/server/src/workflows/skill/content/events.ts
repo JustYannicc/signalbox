@@ -27,7 +27,9 @@ export const EVENTS_SECTION = `\`{ on: "turn.finished" }\` starts a run every ti
 
 ${EVENT_TABLE}
 
-Pull request events come from the pull requests linked to a thread, as Signalbox syncs them from the host: \`pr.updated\` on every sync, and \`pr.merged\`, \`pr.closed\`, \`pr.checks.passed\`, \`pr.checks.failed\`, \`pr.conflicted\` when that becomes true, with the pull request's facts at the top level so \`where: { number: 12 }\` works. Comments and reviews aren't events; read them with \`gh\` in a \`w.run\` function.
+Pull request events come from the pull requests linked to a thread, as Signalbox syncs them from the host: \`pr.updated\` on every sync, and \`pr.merged\`, \`pr.closed\`, \`pr.checks.passed\`, \`pr.checks.failed\`, \`pr.conflicted\` when that becomes true, with the pull request's facts at the top level so \`where: { number: 12 }\` works. \`pr.checks.failed\` also lists the \`failedChecks\`. \`pr.commented\` and \`pr.reviewed\` carry the \`remarks\` written since the last sync by anyone but the account Signalbox uses on the host, so an agent's own replies never trigger them.
+
+\`hook.called\` is a request to a callback link a run made with \`w.hook\`. Only that run gets it, so it isn't a trigger; wait for it with \`where: { hookId }\`.
 
 \`\`\`ts
 export const meta = {

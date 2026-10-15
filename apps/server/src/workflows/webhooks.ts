@@ -48,7 +48,7 @@ const webhookOptions = (
 };
 
 /** The run's input: the body parsed as JSON or a form when it is one, else its text; null when empty. */
-const bodyInput = (request: WebhookTriggerRequest): unknown => {
+export const bodyInput = (request: WebhookTriggerRequest): unknown => {
   if (request.bodyText === "") return null;
   if ((request.headers["content-type"] ?? "").includes("application/x-www-form-urlencoded")) {
     return Object.fromEntries(new URLSearchParams(request.bodyText));
@@ -57,10 +57,23 @@ const bodyInput = (request: WebhookTriggerRequest): unknown => {
 };
 
 /** Headers as the run sees them: credentials redacted, the relay's own headers dropped. */
-const runHeaders = (headers: Readonly<Record<string, string>>) =>
+export const runHeaders = (headers: Readonly<Record<string, string>>) =>
   redactHeaders(
     Object.fromEntries(Object.entries(headers).filter(([name]) => !name.startsWith("x-t3-"))),
   );
+
+/** What identifies a request across a sender's retries and the relay's redeliveries. */
+export const requestKeys = (request: WebhookTriggerRequest) => {
+  const requestKey = request.headers["idempotency-key"] ?? request.headers["x-request-id"];
+  return [
+    ...(requestKey ? [requestKey] : []),
+    ...(request.relayDeliveryId ? [`relay:${request.relayDeliveryId}`] : []),
+  ];
+};
+
+/** Query parameters as the run sees them, credentials redacted. */
+export const runQuery = (request: WebhookTriggerRequest) =>
+  Object.fromEntries(new URLSearchParams(redactQuery(request.query)));
 
 interface RateWindow {
   readonly accepted: ReadonlyArray<number>;
@@ -193,12 +206,8 @@ export const makeWebhooks = (deps: {
       }
 
       // A sender's retry and the relay's redelivery of a held request start one run.
-      const requestKey = request.headers["idempotency-key"] ?? request.headers["x-request-id"];
-      const keys = [
-        ...(requestKey ? [requestKey] : []),
-        ...(request.relayDeliveryId ? [`relay:${request.relayDeliveryId}`] : []),
-      ];
-      const query = Object.fromEntries(new URLSearchParams(redactQuery(request.query)));
+      const keys = requestKeys(request);
+      const query = runQuery(request);
       // From the claim to the queued replay nothing may interrupt, or a hung-up
       // relay request could leave a claimed run that never replays.
       const started = yield* Effect.uninterruptible(

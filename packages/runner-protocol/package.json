@@ -30,6 +30,10 @@
     "./drivePaths": {
       "types": "./src/drivePaths.ts",
       "import": "./src/drivePaths.ts"
+    },
+    "./SecretsProtocol": {
+      "types": "./src/SecretsProtocol.ts",
+      "import": "./src/SecretsProtocol.ts"
     }
   },
   "scripts": {
