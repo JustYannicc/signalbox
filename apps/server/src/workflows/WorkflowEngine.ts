@@ -200,7 +200,7 @@ const make = Effect.gen(function* () {
   const replays = yield* makeReplayQueue;
   const notices = yield* PubSub.unbounded<AutomationNotice>();
   const newId = (prefix: string) =>
-    crypto.randomUUIDv4.pipe(
+    crypto.randomUUIDv4().pipe(
       Effect.map((uuid) => `${prefix}_${uuid}`),
       Effect.mapError((cause) => automationError("Couldn't create an id.", { cause })),
     );

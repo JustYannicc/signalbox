@@ -118,7 +118,7 @@ export const makeBoatMachineBackend = ({
   records,
   crypto,
 }: BoatMachineBackendInput): MachineBackendShape => {
-  const newKey = Effect.orDie(crypto.randomUUIDv4);
+  const newKey = Effect.orDie(crypto.randomUUIDv4());
   const failed = (cause: BoatApiError) =>
     new MachineBackendError({
       message: `boat ${cause.operation} failed: ${cause.message}`,
