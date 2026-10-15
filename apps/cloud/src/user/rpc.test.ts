@@ -8,6 +8,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ThreadId,
+  TurnItemId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -332,6 +333,27 @@ describe("cloud RPC", () => {
       const readOnly = yield* client([AuthOrchestrationReadScope]);
       const send = yield* launch(readOnly).pipe(Effect.flip);
       expect(send).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("serves URLs for tool output images in the user's threads, and nothing else", () =>
+    Effect.gen(function* () {
+      const rpc = yield* client();
+      yield* launch(rpc);
+      const image = { _tag: "tool-output-image", threadId, index: 0 } as const;
+      const missing = yield* rpc[WS_METHODS.assetsCreateUrl]({
+        resource: { ...image, itemId: TurnItemId.make("item-without-images") },
+      }).pipe(Effect.flip);
+      expect(missing._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      const file = yield* rpc[WS_METHODS.assetsCreateUrl]({
+        resource: { _tag: "workspace-file", threadId, path: "README.md" },
+      }).pipe(Effect.flip);
+      expect(file._tag).toBe("AssetWorkspaceContextNotFoundError");
+      const unscoped = yield* client([]);
+      const denied = yield* unscoped[WS_METHODS.assetsCreateUrl]({
+        resource: { ...image, itemId: TurnItemId.make("item") },
+      }).pipe(Effect.flip);
+      expect(denied).toMatchObject({ requiredScope: AuthOrchestrationReadScope });
     }).pipe(Effect.scoped),
   );
 });

@@ -85,14 +85,17 @@ describe("RunnerModelAccess", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("points Codex at the Runner's context server (#141)", () =>
+  it.effect("points Codex at the Runner's MCP servers (#141, #402)", () =>
     Effect.gen(function* () {
       const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-machine-"));
       const layout = machineLayout(yield* Path.Path, root);
-      yield* prepareMachine(layout, GATEWAY, "http://127.0.0.1:41234/mcp");
-      expect(NodeFS.readFileSync(NodePath.join(layout.codexHome, "config.toml"), "utf8")).toContain(
-        '[mcp_servers.signalbox]\nurl = "http://127.0.0.1:41234/mcp"',
-      );
+      yield* prepareMachine(layout, GATEWAY, {
+        signalbox: "http://127.0.0.1:41234/mcp",
+        "t3-code": "http://127.0.0.1:41234/browser",
+      });
+      const config = NodeFS.readFileSync(NodePath.join(layout.codexHome, "config.toml"), "utf8");
+      expect(config).toContain('[mcp_servers."signalbox"]\nurl = "http://127.0.0.1:41234/mcp"');
+      expect(config).toContain('[mcp_servers."t3-code"]\nurl = "http://127.0.0.1:41234/browser"');
       NodeFS.rmSync(root, { recursive: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

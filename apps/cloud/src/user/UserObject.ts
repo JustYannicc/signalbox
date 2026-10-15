@@ -12,6 +12,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
+import * as CloudAssets from "../assets/CloudAssets.ts";
+import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
@@ -122,7 +124,7 @@ const layerDrives = (env: UserObjectEnv) => {
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
   return ManagedRuntime.make(
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer).pipe(
+    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           UserShell.layer,
@@ -156,6 +158,13 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ),
       ),
       Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+      // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
+      Layer.provideMerge(
+        CloudTokens.layerSessionSecret.pipe(
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
+          Layer.orDie,
+        ),
+      ),
     ),
   );
 };

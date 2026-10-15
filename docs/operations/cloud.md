@@ -206,9 +206,11 @@ container can reach that still arrive at `wrangler dev` as `localhost`.
 ### The Runner image
 
 `.github/workflows/runner-image.yml` builds the image every VM runs: Node, git,
-the bundled Runner (`vp run runner:bundle` in `apps/server`), and the `claude`
+the bundled Runner (`vp run runner:bundle` in `apps/server`), the `claude`
 and `codex` versions pinned in
-`apps/server/src/signalbox/runner/image/Dockerfile`. It publishes
+`apps/server/src/signalbox/runner/image/Dockerfile`, and the headless browser
+agents check their own dev servers with (the server's pinned Chrome for
+Testing headless shell, plus Playwright). It publishes
 `ghcr.io/justyannicc/signalbox-runner` as `nightly` (and
 `nightly-<date>-<sha>`) every night from `main`, and as `X.Y.Z` and `stable`
 for every `vX.Y.Z` tag. Run it by hand to publish one now. Pull requests that
