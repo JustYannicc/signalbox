@@ -44,6 +44,10 @@ import {
   SignalboxPreviewsUnavailableError,
 } from "@t3tools/contracts/signalboxPreviews";
 import {
+  SIGNALBOX_PUSH_REQUIRED_SCOPES,
+  SIGNALBOX_PUSH_WS_METHODS,
+} from "@t3tools/contracts/signalboxPush";
+import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
@@ -64,6 +68,7 @@ import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
+import { makePushHandlers } from "../push/pushRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -126,6 +131,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
+  ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
@@ -177,6 +183,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
+  ...SIGNALBOX_PUSH_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
@@ -272,6 +279,8 @@ const storageFailed = (cause: unknown) =>
 export const layerHandlers = (input: {
   readonly identity: Environment.CloudEnvironmentIdentity;
   readonly userId: string;
+  /** The socket's session; phones it registers get pushes while it lives. */
+  readonly sid: string;
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -327,8 +336,10 @@ export const layerHandlers = (input: {
       const sharingCall = withDrives(sharing);
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
+      const pushes = yield* makePushHandlers(input.sid);
       return {
         ...pools.handlers,
+        ...pushes,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),

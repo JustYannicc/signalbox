@@ -84,6 +84,7 @@ describe("serveConnection", () => {
         scopes,
         identity,
         userId: "u",
+        sid: "test-session",
       }).pipe(Effect.provide(cloud.layerFor("u")), Effect.forkScoped);
 
       // Built into the test's scope, the way the client session builds it.

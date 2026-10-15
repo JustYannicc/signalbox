@@ -224,6 +224,9 @@ importers:
       effect:
         specifier: 4.0.2
         version: 4.0.2(patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688)
+      jose:
+        specifier: 'catalog:'
+        version: 6.2.2
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260604.1

@@ -510,6 +510,29 @@ deploy passes both variables from the `cloud-production` environment only, so
 previews send nothing. CPU, memory, disk and egress are measured in the
 Runner's container on the VM, so a local Runner host on a Mac reports none.
 
+### Push notifications
+
+The cloud pushes to phones itself, straight to APNs and FCM, not through the
+T3 Connect relay: the relay keys devices to its own Clerk accounts, and cloud
+people are WorkOS users. A phone registers over its cloud socket
+(`signalbox.push.registerDevice`, the relay's registration payload) and the
+person's object keeps it for that session; signing out silences it. The
+person's object decides on each thread summary it indexes
+(`apps/cloud/src/push/pushRules.ts`), so pushes go out whether or not any
+client is open.
+
+| Name                  | Kind   | What                                                     |
+| --------------------- | ------ | -------------------------------------------------------- |
+| `APNS_TEAM_ID`        | var    | The Apple team that signs the app                        |
+| `APNS_KEY_ID`         | var    | The APNs auth key's id                                   |
+| `APNS_PRIVATE_KEY`    | secret | The APNs auth key (`AuthKey_<id>.p8`), PEM               |
+| `FCM_SERVICE_ACCOUNT` | secret | Optional. A Firebase service account's JSON, for Android |
+
+The deploy passes all four from the GitHub environment (`cloud-production`,
+`cloud-preview`). Without them that platform's pushes are skipped and logged
+as `push not delivered`. One APNs key serves sandbox and production builds of
+every bundle id in its team. The topic is the bundle id the phone reports.
+
 ### Dependency and build caches
 
 A machine's caches live on its disk next to the checkouts, never in a drive.
