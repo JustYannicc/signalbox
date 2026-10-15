@@ -52,6 +52,30 @@ folder's menu, or in the menu beside Personal for the top level. Agents follow t
 first, then each folder's on the way down to the thread's own folder. Leave them empty to remove
 them.
 
+### Secrets
+
+Each level can load secrets from a 1Password Environment, so threads there get them as environment
+variables for things like `vp run dev` or tests. Signalbox never shows their values.
+
+1. In the 1Password desktop app, create an Environment under **Developer › View Environments**. You
+   can import a `.env` file there. Copy its ID from **Manage environment › Copy environment ID**.
+2. On 1Password.com, create a service account with read access to that Environment. 1Password shows
+   its token (`ops_…`) only once.
+3. Choose **Secrets…** in a folder's menu, or in the menu beside Personal for the top level, and
+   paste the Environment ID and the token.
+
+You add the token once; it covers all your folders. **Disconnect** in any folder's Secrets stops
+secrets loading everywhere.
+
+- Secrets load when a thread starts. New threads get a change right away; a running thread gets it
+  the next time it starts up again.
+- A thread gets the secrets of every level from the top level down to its folder. When two levels
+  set the same name, the nearer folder wins.
+- Variables the agent needs for its own model access (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `CLAUDE_CODE_OAUTH_TOKEN`) and ones Signalbox sets itself, such as `HOME` or `PATH`, are skipped.
+- Values show as `***` in transcripts, unless the variable is set to show its value by default in
+  1Password. Values of 6 characters or fewer aren't hidden.
+
 ### Sections on your own server
 
 On a server you run yourself, Home organizes projects into sections instead. On web and desktop,

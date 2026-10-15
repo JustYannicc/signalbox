@@ -30,6 +30,8 @@ import * as CloudConfig from "./CloudConfig.ts";
 import * as GitHub from "./github/GitHub.ts";
 import * as GitHubRoutes from "./github/githubRoutes.ts";
 import * as ConnectionRoutes from "./connections/connectionRoutes.ts";
+import { verifyLocalKey } from "./localKeys/LocalKeys.ts";
+import * as LocalKeyRoutes from "./localKeys/localKeyRoutes.ts";
 import * as AccountRoutes from "./http/accountRoutes.ts";
 import * as WorkOSWebhook from "./http/workosWebhook.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
@@ -40,6 +42,7 @@ import * as Platform from "./platform.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PreviewSetupRoutes from "./previewSetup/previewSetupRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
+import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
@@ -115,6 +118,7 @@ const routes = Layer.mergeAll(
   WorkOSWebhook.layer,
   GitHubRoutes.layer,
   ConnectionRoutes.layer,
+  LocalKeyRoutes.layer,
   PreviewSetupRoutes.layer,
   AssetRoutes.layer,
 ).pipe(Layer.provide(layerCors));
@@ -176,6 +180,8 @@ const openSocket = (request: Request) =>
 export interface CloudApp {
   readonly http: (request: Request) => Promise<Response>;
   readonly webSocket: (request: Request) => Promise<Response>;
+  /** The ModelGateway's check of a local key's signature (`ModelGrants` in `worker.ts`). */
+  readonly verifyLocalKey: LocalKeyVerifier;
 }
 
 export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp => {
@@ -207,5 +213,6 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
   return {
     http: (request) => http.then((handler) => handler(request)),
     webSocket: (request) => runtime.runPromise(openSocket(request)),
+    verifyLocalKey: (token) => runtime.runPromise(verifyLocalKey(token)),
   };
 };

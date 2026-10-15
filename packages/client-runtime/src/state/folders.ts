@@ -46,5 +46,13 @@ export function createSignalboxFoldersAtoms<R, E>(
       label: "signalbox-folders:set-instructions",
       tag: SIGNALBOX_FOLDERS_WS_METHODS.setInstructions,
     }),
+    setSecrets: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-folders:set-secrets",
+      tag: SIGNALBOX_FOLDERS_WS_METHODS.setSecrets,
+    }),
+    setOnePassword: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-folders:set-one-password",
+      tag: SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword,
+    }),
   };
 }

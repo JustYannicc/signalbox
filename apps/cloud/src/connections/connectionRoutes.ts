@@ -5,7 +5,12 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { NO_STORE_HEADERS, requestCredentials } from "../http/credentials.ts";
-import { guarded, pageUser } from "../http/pageRoutes.ts";
+import {
+  guarded,
+  pageFailure,
+  pageJson,
+  withPageUser as sharedWithPageUser,
+} from "../http/pageRoutes.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { signLinkToken, verifyLinkToken } from "./ConnectionLinks.ts";
 import { isLinkedProvider } from "./linkedConnections.ts";
@@ -21,10 +26,8 @@ import { isLinkedProvider } from "./linkedConnections.ts";
  *   revokes links, from Signalbox's own pages.
  */
 
-const json = (body: unknown, status = 200) =>
-  HttpServerResponse.jsonUnsafe(body, { status, headers: NO_STORE_HEADERS });
-const failure = (status: number, error: string, message: string) =>
-  json({ error, message }, status);
+const json = pageJson;
+const failure = pageFailure;
 
 const INTERNAL = failure(500, "internal", "Something went wrong. Try again.");
 const INVALID_LINK = failure(401, "invalid_link", "This Signalbox link no longer works.");
@@ -84,20 +87,7 @@ const linkedTokenRoute = HttpRouter.add(
   ),
 );
 
-/** Signalbox's own pages: the signed-in user, or why there isn't one. */
-const withPageUser = <E, R>(
-  handler: (userId: string) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-) =>
-  Effect.flatMap(pageUser, (user) => {
-    switch (user._tag) {
-      case "user":
-        return handler(user.userId);
-      case "cross_site":
-        return Effect.succeed(failure(403, "forbidden", "Use Signalbox to manage links."));
-      case "signed_out":
-        return Effect.succeed(failure(401, "unauthorized", "Sign in to Signalbox first."));
-    }
-  });
+const withPageUser = sharedWithPageUser("Use Signalbox to manage links.");
 
 const CreateLink = Schema.Struct({ label: Schema.String.check(Schema.isMaxLength(200)) });
 
