@@ -16,7 +16,7 @@ import { previewBrowserRelease } from "../../../preview/PreviewBrowser.ts";
 const dockerfile = NodeFS.readFileSync(NodePath.join(import.meta.dirname, "Dockerfile"), "utf8");
 const arg = (name: string) => new RegExp(`^ARG ${name}=(\\S+)$`, "m").exec(dockerfile)?.[1];
 
-describe("Runner image browser pins", () => {
+describe("Runner image pins", () => {
   it("fetches the headless shell PreviewBrowser pins, by its checksums", () => {
     for (const arch of ["x64", "arm64"] as const) {
       const release = previewBrowserRelease("linux", arch)!;
@@ -29,5 +29,10 @@ describe("Runner image browser pins", () => {
 
   it("installs the Playwright the server pins", () => {
     expect(arg("PLAYWRIGHT_CORE_VERSION")).toBe(packageJson.dependencies["playwright-core"]);
+  });
+
+  it("installs the oxc the automation compiler pins", () => {
+    expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-parser"]);
+    expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-transform"]);
   });
 });
