@@ -73,7 +73,7 @@ function servedByAnEnvironment(): boolean {
   return cachedServedByAnEnvironment;
 }
 
-export const environmentUiStateAtom = Atom.make((get): EnvironmentUiState => {
+const environmentUiStateAtom = Atom.make((get): EnvironmentUiState => {
   const primary = get(primaryServerConfigAtom);
   const configs = [...(primary ? [primary] : []), ...get(environmentServerConfigsAtom).values()];
   return resolveEnvironmentUiState({
