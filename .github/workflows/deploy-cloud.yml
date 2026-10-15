@@ -280,6 +280,24 @@ jobs:
       - *plan
       - *deploy
 
+      # Production runs main as it is now, which can be ahead of this checkout:
+      # merge it in, and rebuild when it brought anything.
+      - name: Merge main for the production plan
+        id: merge_main
+        run: |
+          git fetch --no-tags --filter=blob:none --unshallow origin +refs/heads/main:refs/remotes/origin/main
+          bash apps/cloud/infra/merge-main.sh origin/main
+
+      - name: Rebuild with main for the production plan
+        if: steps.merge_main.outputs.merged == 'true'
+        run: |
+          vp install --filter=@signalbox/cloud... --filter=@t3tools/web... --filter=t3...
+          vp run --filter @t3tools/web build
+          (cd apps/server && vp run runner:bundle)
+        env:
+          T3CODE_WEB_SOURCEMAP: "false"
+          VITE_T3CODE_FEEDBACK_DSN: ${{ vars.VITE_T3CODE_FEEDBACK_DSN }}
+
       # What merging this pull request would do to production. Placeholder
       # secrets: a plan uploads nothing. The production deploy plans again
       # with the real values, and that plan is what stops a bad deploy.

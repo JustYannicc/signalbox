@@ -509,7 +509,7 @@ export function format(report: Report) {
   return lines.join("\n");
 }
 
-function gitTree(root: string, rev: string): Tree {
+export function gitTree(root: string, rev: string): Tree {
   const git = (...args: string[]) =>
     NodeChildProcess.execFileSync("git", args, {
       cwd: root,

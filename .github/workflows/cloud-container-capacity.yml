@@ -1,0 +1,55 @@
+name: Watch Signalbox Cloud container capacity
+
+# Opens an issue once production's pool or thread containers reach 80% of
+# their cap (apps/cloud/infra/check-container-capacity.ts). Cloudflare has no
+# alert for this, and at the cap pools stop answering and turns fail.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check container capacity
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: cloud-container-capacity
+      cancel-in-progress: true
+    # Production's Cloudflare token, without logging a deployment every run.
+    environment:
+      name: cloud-production
+      deployment: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      ALERT_TITLE: Production containers are near their cap
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: apps/cloud/infra
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      # One open alert at a time: a busy hour shouldn't file one issue a run.
+      - name: Check capacity
+        run: |
+          alert="$RUNNER_TEMP/capacity-alert.md"
+          node apps/cloud/infra/check-container-capacity.ts "$alert"
+          [[ -s "$alert" ]] || exit 0
+          open="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$ALERT_TITLE\"" \
+            --json title --jq "map(select(.title == env.ALERT_TITLE)) | length")"
+          if [[ "$open" == "0" ]]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ALERT_TITLE" --label area:cloud --body-file "$alert"
+          fi
