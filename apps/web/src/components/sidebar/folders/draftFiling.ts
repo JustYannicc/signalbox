@@ -9,22 +9,30 @@ import { isFiledAway } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useContext } from "react";
 
-import { environmentFoldersAtom } from "../../../state/signalboxFolders";
+import { type EnvironmentFolders, environmentFoldersAtom } from "../../../state/signalboxFolders";
+
+interface DraftPlace {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+}
+
+/**
+ * `folders`: the draft's environment's, undefined where it keeps none. Until
+ * they arrive (opening the app runs "/" first) the draft may be filed, so it
+ * counts as filed and New starts a fresh one.
+ */
+export function draftFiledAway(folders: EnvironmentFolders | undefined, draft: DraftPlace) {
+  if (folders === undefined) return false;
+  if (folders.snapshot === null) return true;
+  return isFiledAway(folders.snapshot, { id: draft.threadId, projectId: draft.projectId });
+}
 
 export function useDraftFiledAway() {
   const registry = useContext(RegistryContext);
   return useCallback(
-    (draft: {
-      readonly environmentId: EnvironmentId;
-      readonly threadId: ThreadId;
-      readonly projectId: ProjectId;
-    }) => {
-      const snapshot = registry.get(environmentFoldersAtom).get(draft.environmentId)?.snapshot;
-      return (
-        snapshot != null &&
-        isFiledAway(snapshot, { id: draft.threadId, projectId: draft.projectId })
-      );
-    },
+    (draft: DraftPlace) =>
+      draftFiledAway(registry.get(environmentFoldersAtom).get(draft.environmentId), draft),
     [registry],
   );
 }
