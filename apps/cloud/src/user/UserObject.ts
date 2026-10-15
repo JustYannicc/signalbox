@@ -24,6 +24,7 @@ import * as GitHub from "../github/GitHub.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
+import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -137,11 +138,12 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           CloudThreadService.layer,
           PoolSignIns.layer,
           drives.services,
-          GitHubConnection.layer,
           ConnectionLinks.layer,
           LocalKeys.layer,
         ),
       ),
+      // Below the drive services: the files panel reads promised files with it (#406).
+      Layer.provideMerge(GitHubConnection.layer),
       Layer.provideMerge(
         Layer.mergeAll(
           ThreadContexts.layer,
@@ -320,8 +322,8 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.linkedToken(input);
   }
 
-  createLocalKey(label: string) {
-    return this.api.createLocalKey(label);
+  createLocalKey(label: string, options?: LocalKeys.KeyOptions) {
+    return this.api.createLocalKey(label, options);
   }
 
   localKeys() {
@@ -381,6 +383,18 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   override async fetch(request: Request): Promise<Response> {
+    const apiCredential = decodeApiCredential(request.headers.get(API_HEADER));
+    if (apiCredential._tag === "Some") {
+      const profile = await this.profile();
+      if (!profile) return new Response("Unauthorized", { status: 401 });
+      return this.runtime.runPromise(
+        serveApiRequest(request, {
+          identity: this.identity,
+          userId: profile.id,
+          credential: apiCredential.value,
+        }),
+      );
+    }
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade", { status: 426 });
     }

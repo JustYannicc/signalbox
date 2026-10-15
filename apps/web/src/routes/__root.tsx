@@ -89,6 +89,7 @@ import {
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -149,6 +150,7 @@ function RootRouteNotFoundView() {
 }
 
 function RootRouteView() {
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
@@ -260,9 +262,14 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
           {primaryEnvironmentAuthenticated ? <DesktopWebLinkCoordinator /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
-          <RelayClientInstallDialog />
-          <ConnectOnboardingDialog />
-          <SshPasswordPromptDialog />
+          {/* signalbox: these connect other environments; the cloud is the only one. */}
+          {showsEnvironmentUi ? (
+            <>
+              <RelayClientInstallDialog />
+              <ConnectOnboardingDialog />
+              <SshPasswordPromptDialog />
+            </>
+          ) : null}
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />

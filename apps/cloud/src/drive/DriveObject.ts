@@ -104,6 +104,10 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.missing(...args);
   }
 
+  promised(...args: Parameters<DriveObjectApi["promised"]>) {
+    return this.api.promised(...args);
+  }
+
   registerPack(...args: Parameters<DriveObjectApi["registerPack"]>) {
     return this.api.registerPack(...args);
   }

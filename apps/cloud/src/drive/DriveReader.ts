@@ -9,6 +9,7 @@ import type { ObjectLocation } from "./DriveStore.ts";
 import {
   type Commit,
   inflate,
+  objectId,
   type ObjectType,
   type Oid,
   parseCommit,
@@ -23,7 +24,17 @@ import type { Bytes } from "./git/gitObjects.ts";
  * (one ranged read each, located through the drive's object index), and on
  * top of them directories, files and diffs between commits. Objects never
  * change, so they are cached by drive and id for the life of the isolate.
+ *
+ * A remote-backed drive keeps the remote's files on the remote (#406): a file
+ * the drive is promised comes from `remote`, as whoever reads, and is checked
+ * against its id like any object. Without `remote` it can't be read.
  */
+
+/** Where a remote-backed drive's promised files come from: the remote, as the reader. */
+export interface RemoteFiles {
+  /** The file's bytes, or null when the remote doesn't answer with them. */
+  readonly blob: (oid: Oid) => Effect.Effect<Bytes | null, DriveReadError>;
+}
 
 export class DriveReadError extends Schema.TaggedError<DriveReadError>()("DriveReadError", {
   message: Schema.String,
@@ -70,7 +81,10 @@ export interface ChangedFile {
   readonly after: TreeEntry | null;
 }
 
-export const makeDriveReader = Effect.fn("makeDriveReader")(function* (driveId: string) {
+export const makeDriveReader = Effect.fn("makeDriveReader")(function* (
+  driveId: string,
+  remote?: RemoteFiles,
+) {
   const drive = (yield* DriveDirectory).forDrive(driveId);
   const packs = yield* DrivePacks;
 
@@ -110,12 +124,37 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (driveId: 
       if (cached !== undefined) return cached;
       if (oid === EMPTY_TREE) return { type: "tree", content: new Uint8Array() } as const;
       const [location] = yield* drive.locate([oid]);
-      if (location === undefined) {
-        return yield* new DriveReadError({ message: `The drive has no object ${oid}.` });
-      }
-      const found = yield* readAt(location);
+      const found = location !== undefined ? yield* readAt(location) : yield* fromRemote(oid);
       remember(key, found);
       return found;
+    });
+
+  /** A file the drive is promised, from the remote. */
+  const fromRemote = (oid: Oid) =>
+    Effect.gen(function* () {
+      const fail = (message: string) => new DriveReadError({ message });
+      if (remote === undefined || (yield* drive.promised([oid])).length === 0) {
+        return yield* fail(`The drive has no object ${oid}.`);
+      }
+      const content = yield* remote.blob(oid);
+      if (content === null) return yield* fail(`The remote didn't send file ${oid}.`);
+      if ((yield* Effect.promise(() => objectId("blob", content))) !== oid) {
+        return yield* fail(`The remote's copy of ${oid} doesn't match it.`);
+      }
+      return { type: "blob", content } as const satisfies GitObject;
+    });
+
+  /** Each of `oids`' size, stored or promised; a promised file's may be unknown. */
+  const sizes = (oids: ReadonlyArray<Oid>) =>
+    Effect.gen(function* () {
+      const out = new Map<Oid, number | null>();
+      if (oids.length === 0) return out;
+      for (const found of yield* drive.locate(oids)) out.set(found.oid, found.size);
+      const rest = oids.filter((oid) => !out.has(oid));
+      if (rest.length > 0) {
+        for (const file of yield* drive.promised(rest)) out.set(file.oid, file.size);
+      }
+      return out;
     });
 
   const typed = (oid: Oid, type: ObjectType) =>
@@ -129,6 +168,7 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (driveId: 
     Effect.map(typed(oid, "commit"), parseCommit);
 
   const tree = (oid: Oid) => Effect.map(typed(oid, "tree"), parseTree);
+  const blob = (oid: Oid) => typed(oid, "blob");
 
   /** The entry at `segments` under `root`, or null when there is none. */
   const entryAt = (root: Oid, segments: ReadonlyArray<string>) =>
@@ -208,17 +248,13 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (driveId: 
         [file.before, file.after].flatMap((entry) => (entry === null ? [] : [entry.oid])),
       );
       // A file too big to diff is never read: it shows as changed, without lines.
-      const sizes = new Map(
-        (blobs.length === 0 ? [] : yield* drive.locate(blobs)).map((found) => [
-          found.oid,
-          found.size,
-        ]),
-      );
+      const known = yield* sizes(blobs);
       const side = (entry: TreeEntry | null, path: string) =>
         entry === null
           ? Effect.succeed(null)
           : Effect.map(
-              (sizes.get(entry.oid) ?? 0) > MAX_DIFF_BYTES
+              // A promised file of unknown size isn't fetched just to diff it.
+              (known.get(entry.oid) ?? MAX_DIFF_BYTES + 1) > MAX_DIFF_BYTES
                 ? Effect.succeed(null)
                 : typed(entry.oid, "blob"),
               (content) => ({
@@ -240,7 +276,7 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (driveId: 
       return patches.join("");
     });
 
-  return { object, commit, tree, entryAt, files, changes, treeOf, diff, drive };
+  return { object, commit, tree, blob, sizes, entryAt, files, changes, treeOf, diff, drive };
 });
 
 export type DriveReader = Effect.Success<ReturnType<typeof makeDriveReader>>;

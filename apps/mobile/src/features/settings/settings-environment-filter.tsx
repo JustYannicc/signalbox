@@ -6,6 +6,8 @@ import { useEnvironments, type EnvironmentPresentation } from "../../state/envir
 import { useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { toggleSettingsEnvironment } from "./settings-environment-filter.logic";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { visibleEnvironmentSelection } from "../home/environmentFilter"; // signalbox
 
 export type SettingsTarget = EnvironmentPresentation & {
   readonly serverConfig: NonNullable<EnvironmentPresentation["serverConfig"]>;
@@ -35,7 +37,9 @@ export function SettingsEnvironmentFilterProvider(props: { readonly children: Re
   const projects = useProjects();
   const groupingSettings = useMobileProjectGroupingSettings();
   const groupingMode = groupingSettings.sidebarProjectGroupingMode;
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId> | null>(null);
+  const [chosenIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId> | null>(null);
+  // signalbox: a hidden environment scope can't narrow settings.
+  const selectedIds = visibleEnvironmentSelection(chosenIds, useShowsEnvironmentUi());
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectGroups = useMemo(
     () =>

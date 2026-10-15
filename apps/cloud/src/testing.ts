@@ -15,6 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import { serveApiRequest } from "./api/apiObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import type { AttachmentObjects } from "./attachments/attachmentObjects.ts";
 import { makeMemoryObjects } from "./attachments/attachmentTesting.ts";
@@ -83,6 +84,9 @@ export const CLOUD_TEST_ENV = {
   ENVIRONMENT_ID: "cloud-test",
   SESSION_SECRET: "test-session-secret-0123456789abcdef",
 } as const;
+
+/** The environment the in-memory cloud's API calls act in. */
+const API_TEST_IDENTITY = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 
 /** Fresh per call: Effect shares a layer built once, which would pin the first env. */
 export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_ENV) =>
@@ -311,6 +315,13 @@ export const makeMemoryCloud = (
   const userDirectory: UserDirectory.UserDirectory["Service"] = {
     forUser: (userId) => UserDirectory.handleFor(userFor(userId).api),
     connect: () => Effect.die("Sockets are not part of these tests"),
+    // The object's own API handler, against its in-memory services.
+    callApi: (userId, request, credential) =>
+      Effect.promise(() =>
+        userFor(userId).runtime.runPromise(
+          serveApiRequest(request, { identity: API_TEST_IDENTITY, userId, credential }),
+        ),
+      ),
   };
   const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
     forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),

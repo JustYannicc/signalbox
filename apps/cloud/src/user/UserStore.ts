@@ -208,6 +208,7 @@ const migrations = Migrator.fromRecord({
   "0014_push_devices": PushDevices.createTables,
   "0015_folder_secrets": Effect.andThen(FolderTables.addSecrets, OnePasswordAccount.createTables),
   "0016_local_keys": LocalKeys.createTables,
+  "0017_api_keys": LocalKeys.addApiScopes,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

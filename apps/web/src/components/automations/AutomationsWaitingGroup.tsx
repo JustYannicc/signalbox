@@ -1,7 +1,7 @@
 /**
  * Automations with a run waiting on the user, each with its question
- * and answer buttons inline. Shown first in the Automations rail and on top of
- * Pipeline, so approving or rejecting never needs the diagram.
+ * and answer buttons inline. Shown on top of Pipeline, so approving or
+ * rejecting never needs the diagram.
  */
 import {
   entryKey,
@@ -16,20 +16,11 @@ import { StatusIcon } from "./RunStatus";
 import { useAllAutomations } from "./useAutomations";
 import { useOpenAutomation } from "./useOpenAutomation";
 
-export function RailSectionHeader(props: { children: ReactNode; accent?: boolean }) {
+function RailSectionHeader(props: { children: ReactNode }) {
   return (
-    <h3
-      className={
-        props.accent
-          ? "flex h-8 items-center gap-2 px-2 text-xs font-medium text-warning-foreground"
-          : "flex h-8 items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground/60"
-      }
-    >
+    <h3 className="flex h-8 items-center gap-2 px-2 text-xs font-medium text-warning-foreground">
       <span className="shrink-0">{props.children}</span>
-      <span
-        aria-hidden
-        className={props.accent ? "h-px flex-1 bg-warning/24" : "h-px flex-1 bg-sidebar-border/60"}
-      />
+      <span aria-hidden className="h-px flex-1 bg-warning/24" />
     </h3>
   );
 }
@@ -62,7 +53,7 @@ const WaitingAutomation = memo(function WaitingAutomation(props: { entry: Automa
   );
 });
 
-export function WaitingAutomationList(props: { entries: ReadonlyArray<AutomationEntry> }) {
+function WaitingAutomationList(props: { entries: ReadonlyArray<AutomationEntry> }) {
   return (
     <ul className="flex flex-col gap-1.5 px-0.5">
       {props.entries.map((entry) => (
@@ -82,7 +73,7 @@ export function AutomationsWaitingGroup() {
       aria-label="Automations waiting on you"
       className="max-h-[45%] shrink-0 overflow-y-auto px-2 pb-2"
     >
-      <RailSectionHeader accent>Automations waiting on you</RailSectionHeader>
+      <RailSectionHeader>Automations waiting on you</RailSectionHeader>
       <WaitingAutomationList entries={waiting} />
     </section>
   );
