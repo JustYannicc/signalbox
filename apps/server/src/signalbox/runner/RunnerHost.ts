@@ -44,6 +44,7 @@ import {
   threadSocketUrl,
   webSocketTransport,
 } from "./runnerSocket.ts";
+import { makeRunnerAttachments } from "./RunnerAttachments.ts";
 import type { SecretMask } from "./secretMask.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 import { makeRunnerUsage } from "./RunnerUsage.ts";
@@ -159,9 +160,13 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             caches: caches.environment,
             sessionEnvironment: secrets.environment,
           });
-          const { adapters, layout, stderr, environment } = made;
+          const { adapters, layout, stderr, environment, attachmentsDir } = made;
           harnessVariables = made.harnessVariables;
           const dependencies = yield* makeRunnerDependencies({ cwd, caches, environment });
+          const attachments = yield* makeRunnerAttachments({ cloudUrl, attachmentsDir }).pipe(
+            Effect.provide(FetchHttpClient.layer),
+            Effect.provide(driveServices),
+          );
           const usage = yield* makeRunnerUsage(config.home);
           const session = yield* makeRunnerSession({
             threadId: request.threadId,
@@ -198,6 +203,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                     Effect.provide(driveServices),
                   ),
                 sessions,
+                attachments,
                 // Each generation's class, as the thread asked for it.
                 machineClass: request.machineClass ?? "heavy",
                 pinDrives: (access) =>

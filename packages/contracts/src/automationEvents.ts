@@ -44,6 +44,13 @@ const REMARKS = {
   remarks:
     "[{ id, kind: issue-comment | review-comment | review, author, body (up to 4k chars), path, reviewState, url, at }] new since the last sync, oldest first; null when they couldn't be read",
 } as const;
+/** An item of a watched source (see `WorkflowSourceWatch`). */
+const SOURCE = {
+  sourceId: "the watched source's id, the same for everyone watching it",
+  source: "{ operation, connection }: what's read, and with which account (null for the only one)",
+  key: "the item's key",
+  item: "the item as the operation returns it",
+} as const;
 const AUTOMATION = {
   automationId: "the automation's id",
   automationName: "its meta.name",
@@ -378,6 +385,38 @@ export const AUTOMATION_EVENTS = [
       headers: "request headers, credentials redacted",
     },
   },
+  ...(
+    [
+      [
+        "source.item.added",
+        "When something new shows up in a source",
+        "A watched source lists an item it didn't list before.",
+      ],
+      [
+        "source.item.changed",
+        "When something in a source changes",
+        "An item a watched source lists changed (only its watch's fields count, when it names them).",
+      ],
+      [
+        "source.item.removed",
+        "When something leaves a source",
+        "A watched source stopped listing an item.",
+      ],
+    ] as const
+  ).map(([name, when, description]) => ({
+    name,
+    when,
+    description,
+    fields: {
+      ...SOURCE,
+      ...(name === "source.item.changed"
+        ? {
+            before: "the item as it was",
+            changed: "the top-level fields that changed",
+          }
+        : {}),
+    },
+  })),
   {
     name: "automation.run.started",
     when: "When an automation starts",
@@ -417,6 +456,14 @@ export const AUTOMATION_EVENTS = [
 ] as const satisfies ReadonlyArray<AutomationEventSpec>;
 
 export type AutomationEventName = (typeof AUTOMATION_EVENTS)[number]["name"];
+
+/** Changes in a watched source (`WorkflowSourceWatch`); triggers and waits on them need a `watch`. */
+export const SOURCE_ITEM_EVENTS = [
+  "source.item.added",
+  "source.item.changed",
+  "source.item.removed",
+] as const satisfies ReadonlyArray<AutomationEventName>;
+export const ANY_SOURCE_ITEM_EVENT = "source.item.*";
 
 /** Every internal orchestration event also arrives raw as `orchestration.<type>`, payload under `data`. */
 export const AUTOMATION_RAW_EVENT_PREFIX = "orchestration.";

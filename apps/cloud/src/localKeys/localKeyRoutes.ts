@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { NO_STORE_HEADERS, requestUrl } from "../http/credentials.ts";
+import { LOCAL_KEY_HEADER } from "../modelGateway/modelGateway.ts";
 import {
   guarded,
   pageFailure,
@@ -119,6 +120,7 @@ const setupRoute = HttpRouter.add(
       anthropicUrl: `${origin}${MODEL_GATEWAY_PATHS.anthropic}`,
       openaiUrl: `${origin}${MODEL_GATEWAY_PATHS.openai}/v1`,
       keyPrefix: LOCAL_KEY_PREFIX,
+      keyHeader: LOCAL_KEY_HEADER,
     });
     return HttpServerResponse.text(script, {
       contentType: "text/javascript; charset=utf-8",

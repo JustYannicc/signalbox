@@ -131,6 +131,50 @@ describe("ModelGateway", () => {
     ]);
   });
 
+  it("takes a signed-in Codex's key from its header and drops its ChatGPT credentials", async () => {
+    const gateway = makeGateway({});
+    const response = await gateway.call("/openai/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer chatgpt-access-token",
+        "chatgpt-account-id": "acct-user",
+        "x-signalbox-key": LOCAL,
+        originator: "codex_cli_rs",
+      },
+      body: "{}",
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(gateway.asked).toEqual([[LOCAL, "openai"]]);
+    const upstream = gateway.forwarded[0]?.request.headers;
+    expect(upstream?.get("authorization")).toBeNull();
+    expect(upstream?.get("chatgpt-account-id")).toBeNull();
+    expect(upstream?.get("x-signalbox-key")).toBeNull();
+    expect(upstream?.get("originator")).toBe("codex_cli_rs");
+    expect(gateway.logs).toMatchObject([
+      {
+        status: 200,
+        local: { userId: "user_1", keyId: "key-1" },
+        droppedHeaders: ["authorization", "x-signalbox-key", "chatgpt-account-id"],
+      },
+    ]);
+  });
+
+  it("refuses a revoked key in its own header without blaming the harness's sign-in", async () => {
+    const gateway = makeGateway({});
+    const response = await gateway.call("/openai/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer chatgpt-access-token", "x-signalbox-key": "sbk_old" },
+      body: "{}",
+    });
+    // 403, not 401: Codex refreshes its own ChatGPT token on a 401.
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: { message: "This token is not for the running turn." },
+    });
+    expect(gateway.forwarded).toEqual([]);
+  });
+
   it("records the time to first token it adds, apart from the pool's own", async () => {
     const gateway = makeGateway({});
     await (await gateway.call("/anthropic/v1/messages", auth())).text();

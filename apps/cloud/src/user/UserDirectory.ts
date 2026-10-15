@@ -315,6 +315,8 @@ export const layerDurableObjects = (
         Effect.tryPromise({
           try: () => {
             const headers = new Headers(request.headers);
+            // Only `callApi` may say a request is an API call; a client can't.
+            headers.delete(API_HEADER);
             headers.set(CONNECTION_HEADER, encodeConnectionInfo({ sid: session.sessionId }));
             return stubFor(session.userId).fetch(new Request(request, { headers }));
           },

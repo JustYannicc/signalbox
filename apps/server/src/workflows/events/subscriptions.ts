@@ -1,6 +1,7 @@
 import {
   automationEventMatches,
   type WorkflowEventTrigger,
+  type WorkflowSourceWatch,
   type WorkflowTrigger,
 } from "@t3tools/contracts";
 
@@ -32,6 +33,11 @@ const patternsOf = (trigger: WorkflowEventTrigger): ReadonlyArray<string> =>
 export function buildIndex(rows: ReadonlyArray<AutomationRow>) {
   const exact = new Map<string, Subscription[]>();
   const wildcards: Array<{ readonly pattern: string; readonly sub: Subscription }> = [];
+  /** Sources the triggers watch, for the source poller. */
+  const watches: Array<{
+    readonly automation: AutomationRow;
+    readonly watch: WorkflowSourceWatch;
+  }> = [];
   for (const automation of rows) {
     if (automation.enabled !== 1 || automation.version === 0) continue;
     const triggers = automationTriggers(automation).filter(isEventTrigger);
@@ -41,6 +47,7 @@ export function buildIndex(rows: ReadonlyArray<AutomationRow>) {
     const limit = limits.length > 0 ? Math.max(...limits) : DEFAULT_MAX_EVENT_RUNS_PER_MINUTE;
     for (const trigger of triggers) {
       const sub = { automation, trigger, limit };
+      if (trigger.watch) watches.push({ automation, watch: trigger.watch });
       for (const pattern of patternsOf(trigger)) {
         if (pattern === "*" || pattern.endsWith(".*")) wildcards.push({ pattern, sub });
         else exact.set(pattern, [...(exact.get(pattern) ?? []), sub]);
@@ -49,6 +56,7 @@ export function buildIndex(rows: ReadonlyArray<AutomationRow>) {
   }
   return {
     empty: exact.size === 0 && wildcards.length === 0,
+    watches,
     lookup: (name: string): ReadonlyArray<Subscription> => [
       ...(exact.get(name) ?? []),
       ...wildcards.filter((entry) => automationEventMatches(entry.pattern, name)).map((e) => e.sub),

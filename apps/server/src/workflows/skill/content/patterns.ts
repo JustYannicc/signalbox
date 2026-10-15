@@ -19,7 +19,11 @@ For processes where agents do the work and something has to decide order, qualit
 
 ## Wait for something, as an agent
 
-An agent that needs to wait for one thing (CI, another thread, a reply, a payment, tomorrow) calls the \`wait_for\` tool and ends its turn, instead of polling, sleeping or writing its own automation: \`wait_for({ until: "checks on #12 to finish", on: ["pr.checks.passed", "pr.checks.failed"], where: { number: 12 } })\`. It runs the built-in "Wait for" (\`examples/wait-for.ts\`) attached to the thread, which sends one message when it happens. \`callback: true\` returns a link to hand out; \`at\` waits for a time. \`list_waits\` and \`stop_waiting\` manage them. For a pull request the agent owns, \`watch_pull_request\` runs "Watch pull request" instead, which keeps waking it on every check, comment and review until it merges.
+An agent that needs to wait for one thing (CI, another thread, a reply, a payment, tomorrow) calls the \`wait_for\` tool and ends its turn, instead of polling, sleeping or writing its own automation: \`wait_for({ until: "checks on #12 to finish", on: ["pr.checks.passed", "pr.checks.failed"], where: { number: 12 } })\`. It runs the built-in "Wait for" (\`examples/wait-for.ts\`) attached to the thread, which sends one message when it happens. \`watch\` waits for a change in anything a connection lists, with an optional \`condition\` in words each change is judged against (\`wait_for({ until: "the invoice to be paid", watch: { operation: "stripe.invoices.list", key: "id" }, on: "source.item.changed", condition: "its status is paid" })\`); \`callback: true\` returns a link to hand out; \`at\` waits for a time. \`list_waits\` and \`stop_waiting\` manage them. For a pull request the agent owns, \`watch_pull_request\` runs "Watch pull request" instead, which keeps waking it on every check, comment and review until it merges.
+
+## Merge through the folder's gate
+
+An agent doesn't merge its own pull request. It calls \`merge_pull_request({ url, note })\` and ends its turn; that runs the built-in "Merge gate" (\`examples/merge-gate.ts\`) attached to the thread. By default it asks the person about the pull request's current head commit, merges only that commit, deletes the branch and wakes the agent with the outcome. Only Signalbox's own automations and ones a person published in the app can merge, so to change who decides in a project (merge on green, a reviewer agent first), \`automation_customize\` the gate, save the change with \`draft: true\`, and ask the user to publish it.
 
 ## Supervise a thread or pull request
 
@@ -52,7 +56,7 @@ For days-long waits, \`w.sleep\` between checks costs nothing.
 
 ## Only handle what's new
 
-Keep a cursor or the handled ids in memory:
+When the items come from a connected service, watch the list instead: a \`source.item.added\` trigger with \`watch\` (\`triggers.md\`) starts one run per new item, and Signalbox keeps track of what it has seen. Otherwise keep a cursor or the handled ids in memory:
 
 \`\`\`ts
 const seen: string[] = (await w.recall("Handled items", "seen")) ?? [];

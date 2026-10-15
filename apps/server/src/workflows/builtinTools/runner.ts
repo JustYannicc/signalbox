@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 
 import { explained } from "../runLog.ts";
 import { TransientFailure } from "../stepPolicy.ts";
+import type { VersionApproval } from "../WorkflowStore.ts";
 
 /**
  * `w.call(label, "signalbox.<tool>", args)`: Signalbox's own MCP tools as
@@ -24,6 +25,9 @@ export interface BuiltinToolCall {
   readonly tool: string;
   readonly args: unknown;
   readonly automationId: string;
+  /** The automation's project, and the run calling. */
+  readonly projectId: string;
+  readonly runId: string;
   readonly automationName: string;
   /** The automation's runtime mode: the most the call may do, as for any MCP client. */
   readonly runtimeMode: RuntimeMode;
@@ -36,8 +40,47 @@ export interface BuiltinToolHandler {
   readonly call: (input: BuiltinToolCall) => Effect.Effect<unknown, AutomationError>;
 }
 
-export const makeBuiltinTools = () => {
+/**
+ * Tools only code a person or Signalbox stands behind may call, and only on
+ * threads of the automation's own project. Agents can save and run their own
+ * automations, so without this an agent could merge by writing a two-line
+ * automation instead of asking the merge gate.
+ */
+const VOUCHED_TOOLS: ReadonlySet<string> = new Set(["pull_request_action"]);
+
+export interface BuiltinToolGuards {
+  /** Who stands behind the code of the run's version. */
+  readonly approvalOf: (runId: string) => Effect.Effect<VersionApproval | null, AutomationError>;
+  readonly projectOfThread: (
+    threadId: string,
+  ) => Effect.Effect<string | undefined, AutomationError>;
+}
+
+export const makeBuiltinTools = (guards: BuiltinToolGuards) => {
   let handler: BuiltinToolHandler | null = null;
+
+  const vouched = (tool: string, input: Omit<BuiltinToolCall, "tool">) =>
+    Effect.gen(function* () {
+      const approval = yield* guards.approvalOf(input.runId);
+      if (approval !== "signalbox" && approval !== "person")
+        return yield* explained(
+          `Only Signalbox's own automations, or one a person published, can use signalbox.${tool}.`,
+          {
+            why: "An agent saved this version, and agents ask for merges through the merge gate rather than make them.",
+            fix: "Save it as a draft and have the user publish it in Signalbox, or call merge_pull_request.",
+          },
+        );
+      const threadId = (input.args as { readonly threadId?: unknown } | null)?.threadId;
+      const projectId =
+        typeof threadId === "string" ? yield* guards.projectOfThread(threadId) : undefined;
+      if (projectId !== input.projectId)
+        return yield* explained(
+          `signalbox.${tool} only acts on threads in the automation's own project.`,
+          {
+            fix: "Pass the threadId of a thread in this project.",
+          },
+        );
+    });
 
   const register = (next: BuiltinToolHandler) =>
     Effect.sync(() => {
@@ -64,7 +107,8 @@ export const makeBuiltinTools = () => {
           }),
         );
       }
-      return handler.call({ ...input, tool });
+      const call = handler.call({ ...input, tool });
+      return VOUCHED_TOOLS.has(tool) ? vouched(tool, input).pipe(Effect.andThen(call)) : call;
     });
 
   return { register, call };

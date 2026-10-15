@@ -73,7 +73,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Pull requests, linked and followed (`pr.*` for automations).
   "pullRequests.*": gap("#397"),
-  "threads.pullRequest.*": gap("#397"),
+  "threads.pullRequest.watch": gap("#397"),
   "git.preparePullRequestThread": gap("#397"),
   "git.resolvePullRequest": gap("#397"),
 
@@ -88,7 +88,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
-  "attachments.*": gap("#399"),
   "assets.persistChatAttachments": gap("#399"),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.

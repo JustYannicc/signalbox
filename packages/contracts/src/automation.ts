@@ -151,6 +151,20 @@ export const AutomationRunLog = Schema.Struct({
 });
 export type AutomationRunLog = typeof AutomationRunLog.Type;
 
+/** A source an automation or run watches (`watch` on a trigger or `w.waitFor`), and how reading it goes. */
+export const AutomationSourceStatus = Schema.Struct({
+  sourceId: TrimmedNonEmptyString,
+  operation: TrimmedNonEmptyString,
+  connection: Schema.NullOr(Schema.String),
+  /** starting: not read yet; failing: backing off after failed reads; paused: stopped after too many. */
+  status: Schema.Literals(["starting", "watching", "failing", "paused"]),
+  lastCheckedAt: Schema.NullOr(IsoDateTime),
+  lastChangedAt: Schema.NullOr(IsoDateTime),
+  nextCheckAt: Schema.NullOr(IsoDateTime),
+  error: Schema.NullOr(Schema.String),
+});
+export type AutomationSourceStatus = typeof AutomationSourceStatus.Type;
+
 export const AutomationRunDetail = Schema.Struct({
   run: AutomationRunSummary,
   graph: WorkflowGraph,
@@ -161,6 +175,8 @@ export const AutomationRunDetail = Schema.Struct({
   marks: Schema.Record(Schema.String, Schema.Unknown),
   /** What the code logged with `console`, up to where the run got. */
   logs: Schema.Array(AutomationRunLog),
+  /** Sources its waiting steps watch. */
+  watching: Schema.optional(Schema.Array(AutomationSourceStatus)),
 });
 export type AutomationRunDetail = typeof AutomationRunDetail.Type;
 
@@ -194,6 +210,8 @@ export const AutomationDetail = Schema.Struct({
   draft: Schema.NullOr(AutomationDraft),
   /** Recent webhook requests that didn't start a run, newest first. Accepted ones are runs. */
   webhookRejections: Schema.Array(AutomationWebhookRejection),
+  /** Sources its triggers watch. */
+  watching: Schema.optional(Schema.Array(AutomationSourceStatus)),
 });
 export type AutomationDetail = typeof AutomationDetail.Type;
 
