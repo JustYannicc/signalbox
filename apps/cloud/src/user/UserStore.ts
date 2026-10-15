@@ -257,7 +257,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
   // Randomness failing is a defect, not a storage error.
-  const randomUuid = Effect.orDie(crypto.randomUUIDv4);
+  const randomUuid = Effect.orDie(crypto.randomUUIDv4());
 
   const recordSignIn: UserStore["Service"]["recordSignIn"] = Effect.fn("UserStore.recordSignIn")(
     function* (profile) {
