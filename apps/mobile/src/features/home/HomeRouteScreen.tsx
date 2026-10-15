@@ -35,6 +35,8 @@ import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { NO_ENVIRONMENTS } from "./environmentFilter"; // signalbox
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
@@ -126,11 +128,12 @@ export function HomeRouteScreen() {
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox: a hidden filter can't narrow
   const {
     options: listOptions,
     setSelectedEnvironmentId,
     setSelectedProjectKey,
-  } = useHomeListOptions(availableEnvironmentIds);
+  } = useHomeListOptions(showsEnvironments ? availableEnvironmentIds : NO_ENVIRONMENTS);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const projectScopeKey = listOptions.selectedProjectKey;
   const resolvedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects, {

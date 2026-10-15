@@ -28,6 +28,7 @@ import {
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
 } from "./settingsScopeAxis";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 /** Pages whose every row is saved on this client; they have no scope to pick. */
 export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
@@ -54,6 +55,7 @@ export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
   const props: SettingsScopeMenuProps = {
     value: scope.search,
@@ -69,13 +71,15 @@ export function SettingsScopeSentence() {
         <span className="shrink-0">Applying settings for</span>
         <ProjectScopeMenu {...props} />
       </span>
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">
-          {/* A legacy checkout link names one environment without `machine`. */}
-          {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
+      {showsEnvironmentUi ? (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0">
+            {/* A legacy checkout link names one environment without `machine`. */}
+            {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
+          </span>
+          <EnvironmentScopeMenu {...props} />
         </span>
-        <EnvironmentScopeMenu {...props} />
-      </span>
+      ) : null}
     </p>
   );
 }

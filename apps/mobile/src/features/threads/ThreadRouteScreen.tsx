@@ -49,7 +49,7 @@ import {
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { uuidv4 } from "../../lib/uuid";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
+import { useEnvironmentSupports, useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
@@ -203,6 +203,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   const routeEnvironmentShellState = useEnvironmentShellReadiness(environmentId);
   const { onReconnectEnvironment } = useRemoteConnections();
   const navigation = useNavigation();
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeThreadKey =
@@ -240,6 +241,20 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
 
   if (stillHydrating) {
     return <OpeningThreadLoadingScreen />;
+  }
+
+  // signalbox: no environments to manage; reconnect, or go back to the threads there are.
+  if (!showsEnvironments) {
+    return (
+      <ThreadUnavailableScreen
+        actionLabel={routeEnvironmentRuntime === null ? "Show threads" : "Reconnect"}
+        onAction={() =>
+          routeEnvironmentRuntime === null
+            ? navigation.navigate("Home")
+            : onReconnectEnvironment(environmentId)
+        }
+      />
+    );
   }
 
   return (

@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { isLocalEnvironmentAvailable } from "../../account/cloudDefault";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import {
   AlertDialog,
@@ -21,10 +22,12 @@ import { searchableSetting } from "./settingsSearch";
 export function LocalEnvironmentSetting() {
   const setEnabled = window.desktopBridge?.setLocalEnvironmentEnabled;
   const [enabled] = useState(() => !isLocalEnvironmentDisabled());
+  const [available] = useState(isLocalEnvironmentAvailable);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!setEnabled) return null;
+  // signalbox: the thin cloud build has no local server to turn on.
+  if (!setEnabled || !available) return null;
 
   const applyChange = async () => {
     setIsUpdating(true);

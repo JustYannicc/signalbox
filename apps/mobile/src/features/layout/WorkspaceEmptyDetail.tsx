@@ -5,11 +5,13 @@ import { AppText as Text } from "../../components/AppText";
 import { MaterialNewThreadButton } from "../../components/MaterialNewThreadButton";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import { EmptyState } from "../../components/EmptyState";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 
 export function WorkspaceEmptyDetail(props: {
   readonly onStartNewTask?: () => void;
   readonly onAddConnection?: () => void;
 }) {
+  const onAddConnection = useShowsEnvironmentUi() ? props.onAddConnection : undefined; // signalbox
   return (
     <View
       className={
@@ -18,7 +20,7 @@ export function WorkspaceEmptyDetail(props: {
           : "flex-1 items-center justify-center bg-screen px-10"
       }
     >
-      {props.onAddConnection ? (
+      {onAddConnection ? (
         <View className="w-full max-w-[430px]">
           <EmptyState
             title="No environments connected"
@@ -30,7 +32,7 @@ export function WorkspaceEmptyDetail(props: {
                 icon="plus"
                 variant="extended"
                 tone="primary"
-                onPress={props.onAddConnection}
+                onPress={onAddConnection}
               />
             }
           />

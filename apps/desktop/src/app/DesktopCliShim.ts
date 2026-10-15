@@ -140,7 +140,8 @@ export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment[
  */
 export const install = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  if (!environment.isPackaged) return Option.none<string>();
+  // signalbox: the thin cloud build has no server for the launcher to run.
+  if (!environment.isPackaged || !environment.localServerBundled) return Option.none<string>();
   const fs = yield* FileSystem.FileSystem;
   const path = environment.path;
   const windows = environment.platform === "win32";
