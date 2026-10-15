@@ -45,7 +45,7 @@ export function SidebarNewButton() {
   );
 
   return (
-    <div className="shrink-0 px-2 pt-1">
+    <div className="shrink-0 px-2 pt-2">
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton className="group/new-chat" onClick={handleNew}>
