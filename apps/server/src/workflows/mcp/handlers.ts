@@ -161,12 +161,12 @@ export const layer = McpToolAccess.toLayer(
       automation_emit: McpToolAccess.writes((input) =>
         asCaller(() => engine.emit(input)).pipe(Effect.map((woke) => ({ woke }))),
       ),
-      wait_for: McpToolAccess.writes(({ until, on, where, callback, at, timeout, message }) =>
+      wait_for: McpToolAccess.writes((input) =>
         asCaller((caller) =>
           Effect.gen(function* () {
             const thread = yield* callingThread(caller);
             const started = yield* engine.startWait(
-              { threadId: thread.id, until, on, where, callback, at, timeout, message },
+              { ...input, threadId: thread.id },
               {
                 authorize: withinLimits(caller.limits),
                 builtInDefaults: yield* callerDefaults(caller, thread.projectId),

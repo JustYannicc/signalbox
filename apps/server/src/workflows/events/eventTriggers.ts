@@ -20,6 +20,8 @@ import { candidatesFor, type Actor, type Candidate, type EventReads } from "./no
 import type { PullRequestTracker } from "./pullRequestFacts.ts";
 import type { PullRequestReads } from "./pullRequestReads.ts";
 import type { RunWaitListener, RunWaits } from "./runWaits.ts";
+import type { SourceEnvelope } from "../sources/sourceWatches.ts";
+import { sourceIdOf, watchMatches } from "../sources/watch.ts";
 import {
   ACTORS,
   buildIndex,
@@ -196,6 +198,31 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
         });
       }).pipe(logged("publishing"));
 
+    /** A watched source changed (sources/sourceWatches.ts). */
+    const sourceEvent = (envelope: SourceEnvelope) =>
+      Effect.gen(function* () {
+        const current = yield* currentIndex;
+        const subs = current.empty ? [] : current.lookup(envelope.event);
+        const waiting = (yield* deps.runWaits.lookup(envelope.event)).filter(
+          (listener) =>
+            listener.projectId === envelope.projectId &&
+            (listener.watches ?? []).some(
+              (watch) => sourceIdOf(listener.projectId, watch) === envelope.sourceId,
+            ),
+        );
+        if (subs.length === 0 && waiting.length === 0) return;
+        yield* enqueue({
+          type: "ready",
+          envelope,
+          subs,
+          waiting,
+          context: { fromAutomation: Effect.succeed(false), depth: 0 },
+        });
+      }).pipe(logged("publishing"));
+
+    /** Every live automation trigger that watches a source. */
+    const watchingTriggers = currentIndex.pipe(Effect.map((current) => current.watches));
+
     /** A turn or thread automations started: the thread's first message, or this turn's, was theirs. */
     const automationCaused = (event: OrchestrationV2DomainEvent, reads: EventReads) =>
       Effect.gen(function* () {
@@ -221,6 +248,12 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
           if (!context.actor || !allowed.includes(context.actor)) return false;
         }
         if (!whereMatches(trigger.where, envelope)) return false;
+        // A trigger watching a source takes only that source's changes, and only to its fields.
+        // Only a trigger watching a source gets its changes, so nobody sees another's sources.
+        if (envelope.sourceId !== undefined || trigger.watch) {
+          if (!trigger.watch || !watchMatches(automation.project_id, trigger.watch, envelope))
+            return false;
+        }
         if (trigger.includeAutomationThreads !== true && (yield* context.fromAutomation))
           return false;
         return true;
@@ -343,7 +376,7 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.forever,
     );
 
-    return { offer, automationEvent, invalidate, worker };
+    return { offer, automationEvent, sourceEvent, watchingTriggers, invalidate, worker };
   });
 
 export type EventTriggers = Effect.Success<ReturnType<typeof makeEventTriggers>>;

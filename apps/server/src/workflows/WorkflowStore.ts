@@ -699,13 +699,14 @@ export const make = Effect.gen(function* () {
         sql`DELETE FROM signalbox_automation_callbacks WHERE run_id = ${runId}`,
       ),
     /** `waitFor` steps of running runs that are waiting now, for patterns computed at run time. */
-    waitingWaitForSteps: () =>
+    /** Every `waitFor` step running runs reached, waiting or done: a computed `on` keeps listening until its run ends. */
+    runningWaitForSteps: () =>
       run(
-        "waitingWaitForSteps",
+        "runningWaitForSteps",
         sql<Pick<StepRow, "run_id" | "verb" | "args_json">>`
-          SELECT s.run_id, s.verb, s.args_json FROM signalbox_automation_steps s
+          SELECT DISTINCT s.run_id, s.verb, s.args_json FROM signalbox_automation_steps s
           JOIN signalbox_automation_runs r ON r.run_id = s.run_id
-          WHERE s.verb = 'waitFor' AND s.status = 'waiting' AND r.status = 'running'
+          WHERE s.verb = 'waitFor' AND r.status = 'running'
         `,
       ),
     getStep: (runId: string, key: string) =>

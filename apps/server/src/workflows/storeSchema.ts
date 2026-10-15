@@ -150,6 +150,26 @@ const TABLES = [
     token TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  /**
+   * Watched sources (sources/sourceWatches.ts): one row per thing read, however
+   * many automations and runs watch it, with its last read so a restart picks
+   * up where it left off instead of replaying.
+   */
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_sources (
+    source_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    watch_json TEXT NOT NULL,
+    snapshot_json TEXT,
+    interval_ms INTEGER NOT NULL,
+    next_check_at TEXT NOT NULL,
+    last_checked_at TEXT,
+    last_changed_at TEXT,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    paused_at TEXT,
+    wanted_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
 ];
 
 /**

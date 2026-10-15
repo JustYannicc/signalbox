@@ -1,8 +1,13 @@
 import {
   AUTOMATION_EVENTS,
   AUTOMATION_RAW_EVENT_PREFIX,
+  automationEventMatches,
   isAutomationEventPattern,
+  SOURCE_ITEM_EVENTS,
 } from "@t3tools/contracts";
+
+import { durationMs } from "../stepPolicy.ts";
+import { isSourceWatch, MIN_EVERY_MS } from "../sources/watch.ts";
 
 /**
  * Checks `{ on: … }` triggers before the schema does, so a typo gets the
@@ -51,8 +56,47 @@ function closestEventNames(name: string): ReadonlyArray<string> {
     .map((entry) => entry.candidate);
 }
 
+const OPERATION = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_$-]+)+$/;
+
+const WATCH_EXAMPLE =
+  '{ on: "source.item.added", watch: { operation: "github.actions.listWorkflowRunsForRepo", args: { owner, repo }, key: "id" } }';
+
+/** What's wrong with a `watch` and the `on` it comes with, or null. `on` is only checked when known. */
+export function sourceWatchProblem(watch: unknown, on: unknown): TriggerProblem | null {
+  if (!isSourceWatch(watch))
+    return {
+      message: "`watch` needs an `operation` and the `key` that identifies an item.",
+      hint: WATCH_EXAMPLE,
+    };
+  if (!OPERATION.test(watch.operation))
+    return {
+      message: `"${watch.operation}" isn't an operation name; use the one w.call takes, like "stripe.invoices.list".`,
+      hint: WATCH_EXAMPLE,
+    };
+  const every = watch.every === undefined ? null : durationMs(watch.every);
+  if (every !== null && every < MIN_EVERY_MS)
+    return {
+      message: "A source is checked at most once a minute.",
+      hint: "every: { minutes: 1 } or more.",
+    };
+  const patterns = typeof on === "string" ? [on] : Array.isArray(on) ? on : null;
+  const sourceEvent = (pattern: unknown) =>
+    typeof pattern === "string" &&
+    SOURCE_ITEM_EVENTS.some((name) => automationEventMatches(pattern.trim(), name));
+  if (patterns !== null && !patterns.every(sourceEvent))
+    return {
+      message: "`watch` goes with source.item.* events, which say what changed in it.",
+      hint: WATCH_EXAMPLE,
+    };
+  return null;
+}
+
 /** The first problem with the literal `triggers` array's event triggers, or null. */
-export function eventTriggerProblem(triggers: unknown): TriggerProblem | null {
+export function eventTriggerProblem(
+  triggers: unknown,
+  /** A `w.waitFor` with a `watch` beside its `on`, checked on its own. */
+  options: { readonly watched?: boolean } = {},
+): TriggerProblem | null {
   if (!Array.isArray(triggers)) return null;
   for (const trigger of triggers) {
     if (!trigger || typeof trigger !== "object" || !("on" in trigger)) continue;
@@ -70,6 +114,20 @@ export function eventTriggerProblem(triggers: unknown): TriggerProblem | null {
         hint: 'e.g. { on: "turn.finished" } or { on: ["message.sent", "thread.created"] }',
       };
     }
+    if ("watch" in trigger) {
+      const problem = sourceWatchProblem((trigger as { readonly watch: unknown }).watch, on);
+      if (problem) return { ...problem, message: `meta.triggers: ${problem.message}` };
+    } else if (
+      !options.watched &&
+      (patterns as ReadonlyArray<unknown>).some(
+        (pattern) => typeof pattern === "string" && pattern.trim().startsWith("source."),
+      )
+    ) {
+      return {
+        message: "source.item.* events need a `watch` saying which source.",
+        hint: WATCH_EXAMPLE,
+      };
+    }
     for (const pattern of patterns as ReadonlyArray<string>) {
       if (isAutomationEventPattern(pattern.trim())) continue;
       const close = closestEventNames(pattern.trim());
@@ -85,8 +143,8 @@ export function eventTriggerProblem(triggers: unknown): TriggerProblem | null {
 }
 
 /** What's wrong with a \`w.waitFor\` \`on\`, checked at compile time when literal and at run time when computed. */
-export function waitForEventProblem(on: unknown): TriggerProblem | null {
-  const problem = eventTriggerProblem([{ on }]);
+export function waitForEventProblem(on: unknown, watched = false): TriggerProblem | null {
+  const problem = eventTriggerProblem([{ on }], { watched });
   return (
     problem && {
       ...problem,

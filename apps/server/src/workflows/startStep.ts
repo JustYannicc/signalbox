@@ -15,7 +15,7 @@ import type { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchServic
 import type { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import type { ProjectService } from "../project/ProjectService.ts";
 import { isBuiltinToolOperation, type BuiltinTools } from "./builtinTools/runner.ts";
-import { waitForEventProblem } from "./compiler/eventTriggers.ts";
+import { sourceWatchProblem, waitForEventProblem } from "./compiler/eventTriggers.ts";
 import type { CallbackLink } from "./callbacks.ts";
 import { automationDefaults, stepArgs } from "./columns.ts";
 import type { makeConnections } from "./connections.ts";
@@ -112,13 +112,15 @@ export const makeStartStep =
           Effect.map((at): StepOutcome => ({ type: "waiting", wakeAt: at })),
         );
       case "waitFor": {
-        const { event, timeout, on } = asRecord(first);
+        const { event, timeout, on, watch } = asRecord(first);
         // `on` steps wait without a name; runWaits.ts hands them matching events.
         const named = typeof event === "string" ? { event } : {};
         if (!waitsOnEvents(step) && !named.event)
-          return fail("w.waitFor needs `on` or an event name.");
-        // A computed `on` skipped the compiler's check.
-        const problem = on === undefined ? null : waitForEventProblem(on);
+          return fail("w.waitFor needs `on`, `watch` or an event name.");
+        // A computed `on` or `watch` skipped the compiler's check.
+        const problem =
+          (on === undefined ? null : waitForEventProblem(on, watch !== undefined)) ??
+          (watch === undefined ? null : sourceWatchProblem(watch, on));
         if (problem) return Effect.fail(explained(problem.message, { fix: problem.hint }));
         return Effect.gen(function* () {
           const at = timeout === undefined ? undefined : yield* wakeAt(timeout);

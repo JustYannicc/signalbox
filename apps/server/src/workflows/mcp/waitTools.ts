@@ -1,4 +1,4 @@
-import { WorkflowDuration } from "@t3tools/contracts";
+import { WorkflowDuration, WorkflowSourceWatch } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { tool } from "./tool.ts";
@@ -12,7 +12,7 @@ const WaitId = Schema.String.annotate({
 export const WaitForTool = tool("wait_for", {
   title: "Wait for something",
   description:
-    'Wait for something to happen, then end your turn: Signalbox wakes this thread with one message saying what happened. Use it instead of polling, sleeping or running a watcher. Meanwhile the thread stays in the user\'s Working list. Give `until` and exactly one of: `on` (+ `where`) for any Signalbox event, with the same names and matching as automation event triggers, e.g. on: "pr.checks.failed", where: { number: 12 }; on: "turn.finished", where: { threadId } to wait for another thread or a delegated task; on: "automation.run.succeeded", where: { automationRunId }; `callback: true` for a link to hand to someone else (a payment provider, a form, a person): a request to it wakes you with its body; or `at` for a time ("check back tomorrow"). `timeout` ends the wait early and wakes you saying nothing happened. The wait ends when it fires, on stop_waiting, or when the thread is settled, archived or stopped. For a pull request you own, watch_pull_request keeps watching through every check and review instead of waking once.',
+    'Wait for something to happen, then end your turn: Signalbox wakes this thread with one message saying what happened. Use it instead of polling, sleeping or running a watcher. Meanwhile the thread stays in the user\'s Working list. Give `until` and exactly one of: `on` (+ `where`) for any Signalbox event, with the same names and matching as automation event triggers, e.g. on: "pr.checks.failed", where: { number: 12 }; on: "turn.finished", where: { threadId } to wait for another thread or a delegated task; on: "automation.run.succeeded", where: { automationRunId }; `watch` for a change in anything a connection reads, e.g. watch: { operation: "stripe.invoices.list", key: "id" } with an optional `condition` in words that each change is judged against ("its status is paid"), and `on` to narrow it to source.item.added, source.item.changed or source.item.removed; Signalbox reads the source every few minutes for everyone watching it; `callback: true` for a link to hand to someone else (a payment provider, a form, a person): a request to it wakes you with its body; or `at` for a time ("check back tomorrow"). `timeout` ends the wait early and wakes you saying nothing happened. The wait ends when it fires, on stop_waiting, or when the thread is settled, archived or stopped. For a pull request you own, watch_pull_request keeps watching through every check and review instead of waking once.',
   parameters: Schema.Struct({
     until: Schema.String.annotate({
       description:
@@ -24,6 +24,14 @@ export const WaitForTool = tool("wait_for", {
     where: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
       description:
         "Top-level event fields that must equal these values (or one of an array's). Narrow it, or any matching event in the project wakes you.",
+    }),
+    watch: Schema.optional(WorkflowSourceWatch).annotate({
+      description:
+        "Something a connection lists (an Executor operation, as w.call names it), watched for changes by `key`.",
+    }),
+    condition: Schema.optional(Schema.String).annotate({
+      description:
+        "With watch: what a change has to show, in words. Without it, any change wakes you.",
     }),
     callback: Schema.optional(Schema.Boolean),
     at: Schema.optional(Schema.String).annotate({ description: "An ISO time to wake at." }),
