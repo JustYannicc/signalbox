@@ -61,6 +61,7 @@ import * as HostStore from "./defaults/hostStore.ts";
 import { BUILT_IN_AUTOMATIONS, builtInSummary } from "./defaults/registry.ts";
 import { makeEventTriggers } from "./events/eventTriggers.ts";
 import { makePullRequestTracker } from "./events/pullRequestFacts.ts";
+import type { PullRequestReads } from "./events/pullRequestReads.ts";
 import { makeRunWaits } from "./events/runWaits.ts";
 import * as ExecutorSettings from "./executorSettings.ts";
 import { fromJson, toJson } from "./json.ts";
@@ -79,6 +80,9 @@ import { afterMs } from "./steps.ts";
 import { isoAt, nowIso } from "./time.ts";
 import { runSummary, runTitle } from "./views.ts";
 import { makeWebhooks } from "./webhooks.ts";
+import { makeCallbacks } from "./callbacks.ts";
+import { makeWaits, type Waits } from "./waits.ts";
+import { setPullRequestWatchHandler } from "./pullRequestWatchHook.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 type Store = WorkflowStore.WorkflowStore;
@@ -112,8 +116,19 @@ export interface WorkflowEngineShape extends CatalogShape {
   ) => Effect.Effect<Automation, AutomationError>;
   /** Stop on a thread: cancels the runs attached to it; returns how many. */
   readonly cancelAttached: (threadId: string) => Effect.Effect<number, AutomationError>;
+  /** An agent's waits: built-in runs attached to its thread (see waits.ts). */
+  readonly startWait: Waits["start"];
+  readonly listWaits: Waits["list"];
+  readonly stopWait: Waits["stop"];
+  readonly watchPullRequest: Waits["watchPullRequest"];
   /** The MCP server hands over Signalbox's tools for `w.call("…", "signalbox.<tool>")`. */
   readonly registerBuiltinTools: (handler: BuiltinToolHandler) => Effect.Effect<void>;
+  /** The server registers pull request reads once its pull request service exists. */
+  readonly registerPullRequestReads: (reads: PullRequestReads) => Effect.Effect<void>;
+  /** A request to a run's `w.hook` callback link, from upstream's webhook route. */
+  readonly receiveCallback: (
+    request: WebhookTriggerRequest,
+  ) => Effect.Effect<WebhookTriggerResult, AutomationError>;
   /** Takes a request to `/api/hooks/<automationId>/<token>` (see webhooks.ts). */
   readonly receiveWebhook: (
     request: WebhookTriggerRequest,
@@ -218,6 +233,7 @@ const make = Effect.gen(function* () {
     threads,
     cancel: (runId) => endRunById(runId, { status: "cancelled" }),
   });
+  let pullRequestReads: PullRequestReads | undefined;
   const webhookOrigin = yield* ScheduledTaskWebhookOrigin;
   // Called only once requests arrive, after launchRun below exists.
   const webhooks = yield* makeWebhooks({ store, launchRun: (launch) => launchRun(launch) });
@@ -230,6 +246,16 @@ const make = Effect.gen(function* () {
     launchRun: (launch) => launchRun(launch),
     runWaits,
     pullRequests: makePullRequestTracker((yield* DateTime.now).epochMilliseconds),
+    pullRequestReads: () => pullRequestReads,
+  });
+  const callbacks = makeCallbacks({
+    store,
+    newId,
+    relayHookBaseUrl: webhookOrigin.pipe(Effect.map((origin) => origin.relayHookBaseUrl)),
+    deliverTo: (runId, envelope) =>
+      runWaits
+        .deliver(envelope, [{ runId, projectId: envelope.projectId, patterns: ["hook.called"] }])
+        .pipe(logFailure("Automation callback delivery failed")),
   });
 
   const changed = (change: Change) =>
@@ -359,6 +385,7 @@ const make = Effect.gen(function* () {
     runFunction,
     connections,
     builtinTools,
+    callback: (runId) => callbacks.create(runId),
     resolveBuiltIn: (name, automation) =>
       builtIns.resolveName(name, {
         projectId: automation.project_id,
@@ -386,10 +413,13 @@ const make = Effect.gen(function* () {
                 moved
                   ? runLogs.step(step, { status: "waiting" }).pipe(
                       Effect.andThen(runChanged(step.run_id, step.verb === "ask")),
-                      // An event may have arrived before the step started waiting.
+                      // An event may have arrived before the step started waiting. A computed
+                      // `on` starts listening only now, so the listeners are rebuilt first.
                       Effect.andThen(
                         step.verb === "waitFor"
-                          ? runWaits.deliverPending(step.run_id)
+                          ? runWaits
+                              .stepWaiting(step)
+                              .pipe(Effect.andThen(runWaits.deliverPending(step.run_id)))
                           : Effect.void,
                       ),
                       Effect.andThen(attachments.refresh(step.run_id)),
@@ -463,6 +493,7 @@ const make = Effect.gen(function* () {
       if (!ended) return false;
       yield* replays.forget(run.run_id);
       yield* runWaits.ended(run.run_id);
+      yield* callbacks.ended(run.run_id);
       yield* attachments.refresh(run.run_id);
       yield* interruptSteps(run.run_id);
       const automation = yield* store.getAutomation(run.automation_id);
@@ -850,6 +881,17 @@ const make = Effect.gen(function* () {
     relayHookBaseUrl: webhookOrigin.pipe(Effect.map((origin) => origin.relayHookBaseUrl)),
   });
   const builtIns = makeBuiltIns({ store, hosts, catalog, changed, requireAutomation });
+  const waits = makeWaits({
+    store,
+    links,
+    attachments,
+    newId,
+    start: (input) => startRun({ ...input, trigger: "manual" }),
+    callback: (runId, hookId) => callbacks.create(runId, hookId),
+    cancel: (runId) => endRunById(runId, { status: "cancelled" }),
+  });
+  setPullRequestWatchHandler(waits.watchPullRequest);
+  yield* Effect.addFinalizer(() => Effect.sync(() => setPullRequestWatchHandler(undefined)));
 
   const { settleThreadStep, tick } = yield* makeTimedWork({
     store,
@@ -946,8 +988,17 @@ const make = Effect.gen(function* () {
     builtIns: Effect.sync(() => BUILT_IN_AUTOMATIONS.map(builtInSummary)),
     customize: builtIns.customize,
     cancelAttached: attachments.cancelAttached,
+    startWait: waits.start,
+    listWaits: waits.list,
+    stopWait: waits.stop,
+    watchPullRequest: waits.watchPullRequest,
     registerBuiltinTools: builtinTools.register,
+    registerPullRequestReads: (reads) =>
+      Effect.sync(() => {
+        pullRequestReads = reads;
+      }),
     receiveWebhook: webhooks.receive,
+    receiveCallback: callbacks.receive,
     setWebhookSecret,
     cancelRun,
     retryRun,

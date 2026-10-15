@@ -30,11 +30,18 @@ function automationWebhook(
   row: Pick<AutomationRow, "automation_id" | "webhook_token" | "webhook_secret_set">,
   relayHookBaseUrl: string | null,
 ): ScheduledTaskWebhookEndpoint {
-  const hook = `${encodeURIComponent(row.automation_id)}/${row.webhook_token}`;
+  return {
+    ...hookEndpoint(row.automation_id, row.webhook_token, relayHookBaseUrl),
+    hasSecret: row.webhook_secret_set === 1,
+  };
+}
+
+/** A hook on upstream's webhook route: its path on this server, and its public URL when there is one. */
+export function hookEndpoint(hookId: string, token: string, relayHookBaseUrl: string | null) {
+  const hook = `${encodeURIComponent(hookId)}/${token}`;
   return {
     path: `${WEBHOOK_ROUTE_PREFIX}/${hook}`,
     url: relayHookBaseUrl === null ? null : `${relayHookBaseUrl}/${hook}`,
-    hasSecret: row.webhook_secret_set === 1,
   };
 }
 

@@ -677,6 +677,37 @@ export const make = Effect.gen(function* () {
           WHERE s.event = ${event} AND s.status = 'waiting' AND r.status = 'running'
         `,
       ),
+    /** A run's `w.hook` callback link (see callbacks.ts). */
+    insertCallback: (row: { hookId: string; runId: string; token: string; now: string }) =>
+      run(
+        "insertCallback",
+        sql`
+          INSERT INTO signalbox_automation_callbacks (hook_id, run_id, token, created_at)
+          VALUES (${row.hookId}, ${row.runId}, ${row.token}, ${row.now})
+        `,
+      ),
+    getCallback: (hookId: string) =>
+      run(
+        "getCallback",
+        sql<{ run_id: string; token: string }>`
+          SELECT run_id, token FROM signalbox_automation_callbacks WHERE hook_id = ${hookId}
+        `,
+      ).pipe(Effect.map((rows) => rows[0])),
+    deleteCallbacks: (runId: string) =>
+      run(
+        "deleteCallbacks",
+        sql`DELETE FROM signalbox_automation_callbacks WHERE run_id = ${runId}`,
+      ),
+    /** `waitFor` steps of running runs that are waiting now, for patterns computed at run time. */
+    waitingWaitForSteps: () =>
+      run(
+        "waitingWaitForSteps",
+        sql<Pick<StepRow, "run_id" | "verb" | "args_json">>`
+          SELECT s.run_id, s.verb, s.args_json FROM signalbox_automation_steps s
+          JOIN signalbox_automation_runs r ON r.run_id = s.run_id
+          WHERE s.verb = 'waitFor' AND s.status = 'waiting' AND r.status = 'running'
+        `,
+      ),
     getStep: (runId: string, key: string) =>
       run(
         "getStep",

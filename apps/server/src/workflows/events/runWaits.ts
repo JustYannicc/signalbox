@@ -20,11 +20,12 @@ import { whereMatches } from "./subscriptions.ts";
  * `w.waitFor(label, { on, where?, timeout? })`: a step that waits for an
  * event from the same catalog event triggers use, matched the same way.
  *
- * The compiler requires `on` to be a literal, so the patterns a run can wait
- * for are known from its version's diagram when it starts. From then on every
- * matching event in the run's project goes into the run's inbox, whether or
- * not a step is waiting yet, so one that arrives between two steps isn't
- * lost. A waiting step takes the oldest inbox event that matches its `on` and
+ * A literal `on` is known from the run's diagram when it starts. From then on
+ * every matching event in the run's project goes into the run's inbox,
+ * whether or not a step is waiting yet, so one that arrives between two steps
+ * isn't lost. A computed `on` (the built-in "Wait for" waits on whatever its
+ * caller named) is only known once its step starts waiting, so it collects
+ * from then on. A waiting step takes the oldest inbox event that matches its `on` and
  * `where`; each event goes to one step. A step only ever starts waiting and
  * then looks in the inbox, so an event racing the step's start is still
  * found.
@@ -128,15 +129,28 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
       return patterns;
     });
 
-  /** Running runs that wait for events, rebuilt only after a run starts or ends. */
+  /** Running runs that wait for events, rebuilt only after a run starts or ends or a step starts waiting. */
   const current = Effect.suspend(() => {
     if (listeners) return Effect.succeed(listeners);
     const seen = generation;
     return Effect.gen(function* () {
       const built: RunWaitListener[] = [];
       const projects = new Map<string, string | undefined>();
+      // A computed `on` isn't in the diagram; its step's arguments say what it waits for.
+      const computed = new Map<string, string[]>();
+      for (const step of yield* store.waitingWaitForSteps()) {
+        computed.set(step.run_id, [
+          ...(computed.get(step.run_id) ?? []),
+          ...stepListens(step).patterns,
+        ]);
+      }
       for (const run of yield* store.runningRuns()) {
-        const patterns = yield* versionPatterns(run.automation_id, run.version);
+        const patterns = [
+          ...new Set([
+            ...(yield* versionPatterns(run.automation_id, run.version)),
+            ...(computed.get(run.run_id) ?? []),
+          ]),
+        ];
         if (patterns.length === 0) continue;
         if (!projects.has(run.automation_id))
           projects.set(
@@ -156,6 +170,13 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
     listeners = null;
     generation += 1;
   };
+
+  /** A `waitFor` step started waiting: listen for a computed `on` its run's listener lacks. */
+  const stepWaiting = (step: Pick<StepRow, "run_id" | "verb" | "args_json">) =>
+    Effect.sync(() => {
+      const known = listeners?.find((listener) => listener.runId === step.run_id)?.patterns ?? [];
+      if (stepListens(step).patterns.some((pattern) => !known.includes(pattern))) invalidate();
+    });
 
   /** Runs whose code waits for `name`; cheap enough to ask for every event. */
   const lookup = (name: string) =>
@@ -217,7 +238,7 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
   const ended = (runId: string) =>
     Effect.sync(invalidate).pipe(Effect.andThen(links.trimInbox(runId, 0)));
 
-  return { lookup, deliver, deliverPending, invalidate, ended };
+  return { lookup, deliver, deliverPending, invalidate, stepWaiting, ended };
 };
 
 export type RunWaits = ReturnType<typeof makeRunWaits>;

@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import { watchWithAutomation } from "../../../workflows/pullRequestWatchHook.ts"; // signalbox: #366
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
@@ -286,6 +287,13 @@ const make = Effect.gen(function* () {
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
+    const automated = yield* watchWithAutomation(
+      thread,
+      target,
+      watching,
+      before?.watch !== undefined,
+    ); // signalbox: #366
+    if (automated) return automated;
     yield* engine
       .dispatch({
         type: "thread.pull-request.watch",
