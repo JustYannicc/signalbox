@@ -89,8 +89,8 @@ export default workflow(async (w, email: { from: string; subject: string; body: 
 
 const SHEET = "1AbCdEfGhIjKlMnOpQrStUvWxYz";
 
-export default workflow(async (w) => {
-  const since: number = (await w.recall("Last payment time", "since")) ?? Math.floor(Date.now() / 1000) - 3600;
+export default workflow(async (w, _input, trigger: { at: string }) => {
+  const since: number = (await w.recall("Last payment time", "since")) ?? Math.floor(Date.parse(trigger.at) / 1000) - 3600;
   const payments: Array<{ id: string; amount: number; currency: string; created: number; description: string | null }> = [];
   let startingAfter: string | null = null;
   // More pages?

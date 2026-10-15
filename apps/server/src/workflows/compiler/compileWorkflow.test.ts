@@ -276,7 +276,7 @@ describe("compileWorkflow", () => {
       // Retry until the export is ready
       while (!ready) {
         ready = (await w.http("Check the export", { url: \`https://api.example.com/exports/\${input.id}\` })).ready;
-        if (!ready) await w.sleep("Wait a minute", { minutes: 1 });
+        if (!ready) await w.waitFor("Wait a minute", { event: "export.ready", timeout: { minutes: 1 } });
       }
       try {
         await w.call("Post to Slack", "slack.chat.postMessage", {});
@@ -294,7 +294,7 @@ describe("compileWorkflow", () => {
       "  http(api.example.com) Check the export",
       "  ? !ready",
       "    [Yes]",
-      "      sleep Wait a minute",
+      "      waitFor Wait a minute",
       "    [No]",
       "try If something fails",
       "  call(slack) Post to Slack",
@@ -318,7 +318,7 @@ describe("compileWorkflow", () => {
       let total = 0;
       for (const item of items) total += item;
       if (total > 5) total = 5;
-      const stamp = new Date().toISOString() + Math.random();
+      const stamp = new Date(input.at).toISOString() + Math.max(1, 2);
       await w.notify("Report", \`Total \${total} \${stamp}\`);
     `);
     expect(outline(graph.nodes)).toEqual(["notify Report"]);
@@ -468,10 +468,10 @@ export default workflow(async (w) => {
   });
 
   it("hints at a replacement for globals the sandbox lacks", () => {
-    const result = compile(`await w.notify("N", String(performance.now()));`);
+    const result = compile(`await w.notify("N", String(performance.timeOrigin));`);
     expect(!result.ok && result.diagnostics[0]).toMatchObject({
       message: "performance isn't available in automation code.",
-      hint: "Use Date.now().",
+      hint: "Use trigger.at (when the run started, an ISO string) or a time a step returned.",
     });
   });
 

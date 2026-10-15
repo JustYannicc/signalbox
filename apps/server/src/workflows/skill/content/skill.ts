@@ -64,8 +64,10 @@ The validator enforces each one; breaking it fails with the quoted message.
 | No steps inside \`.map\`/\`.forEach\`/other callbacks; use \`w.each\`, \`w.parallel\`, \`w.repeat\` or a \`for\` loop | Steps need a stable place in the diagram | "Steps can't run inside a callback" |
 | Inside \`each\`/\`parallel\`/\`repeat\`, use the receiver the callback gets | Each iteration is tracked on its own | "Pass w, the receiver this callback gets" |
 | \`concurrency\` and \`max\` are literal numbers; \`meta\` is a plain literal | The diagram and scheduler read them without running code | "must be a literal" |
+| No \`Date.now()\`, \`new Date()\`, \`Math.random()\`, \`crypto.randomUUID()\` or \`performance.now()\` in workflow code; use \`trigger.at\`, a step's result, or a \`w.run\` function | Workflow code re-runs on every wake and has to compute the same thing each time | "Date.now() changes every time the code replays" |
+| No \`w.sleep\` in a loop or \`w.repeat\`; repeats are a cron trigger, waits are \`w.waitFor\` with a \`timeout\` | Every pass of a reminder loop is billed as a step | "A loop that sleeps is a reminder loop" |
 
-\`Date.now()\`, \`new Date()\`, \`Math.random()\` and \`crypto.randomUUID()\` are safe: they replay identically. Plain promises, closures, \`Map\`s and \`Promise.all\` work too, so you can coordinate concurrent work in ordinary code.
+The run's start time is \`trigger.at\` (an ISO string), the same on every replay: \`new Date(trigger.at)\` and \`Date.parse(trigger.at)\` are fine. Plain promises, closures, \`Map\`s and \`Promise.all\` work too, so you can coordinate concurrent work in ordinary code.
 
 ## Habits that are wrong here
 
@@ -73,7 +75,9 @@ The validator enforces each one; breaking it fails with the quoted message.
 |---|---|
 | \`step.run("id", async () => …)\`, \`ctx.run\`, \`step.do\` | a verb: \`await w.http("Fetch the page", url)\` or \`await w.run("Parse it", parse, url)\` |
 | \`await fetch(url)\` in the workflow | \`await w.http("Fetch …", url)\` |
-| \`setTimeout\`, or polling an agent in a loop | \`await w.sleep(…)\`; \`w.agent\` already waits for the thread to finish |
+| \`setTimeout\`, or polling an agent in a loop | one \`await w.sleep(…)\`; \`w.agent\` already waits for the thread to finish |
+| \`w.sleep\` in a loop to check again later | a cron trigger, or \`w.waitFor\` with a \`timeout\` |
+| \`Date.now()\` or \`new Date()\` in the workflow | \`trigger.at\`, the run's start time |
 | \`items.map(async (item) => w.agent(…))\` | \`await w.each("Each item", items, { concurrency: 3 }, async (w, item) => { … })\` |
 | Reading an agent's text to find its branch or PR | \`const built = await w.agent(…)\`; use \`built.branch\`, \`built.pullRequest\` |
 | A new agent to fix what the last one did | \`w.agent("Fix it", { prompt, thread: built.threadId })\` continues the same thread |
