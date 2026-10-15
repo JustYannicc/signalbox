@@ -198,7 +198,6 @@ const migrations = Migrator.fromRecord({
   "0004_contexts_sections": Effect.andThen(UserContexts.createTables, UserSections.createTables),
   "0005_drives": UserDriveIndex.createTables,
   "0006_github": GitHubConnection.createTables,
-  "0007_pools": UserPools.createTables,
   "0008_github_pipes": GitHubConnection.moveToPipes,
   "0009_connection_links": ConnectionLinks.createTables,
   "0010_preview_setup": UserPreviewSetup.createTables,
