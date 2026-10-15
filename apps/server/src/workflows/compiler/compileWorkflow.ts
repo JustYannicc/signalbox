@@ -1,10 +1,10 @@
 import type { WorkflowDiagnostic, WorkflowGraph, WorkflowMeta } from "@t3tools/contracts";
-import { parseSync, type Node } from "oxc-parser";
-import { transformSync } from "oxc-transform";
+import type { Node } from "oxc-parser";
 
 import { WorkflowAnalyzer, type Edit, type FunctionNode } from "./analyze.ts";
 import { unwrap } from "./literals.ts";
 import { readMeta } from "./meta.ts";
+import { parseSync, transformSync } from "./oxc.ts";
 import { WorkflowSource } from "./source.ts";
 import { SDK_MODULE } from "./verbs.ts";
 import { declaredNames, isFunctionNode, someNode } from "./walk.ts";

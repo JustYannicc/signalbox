@@ -104,7 +104,9 @@ export default mergeConfig(
         // dependency would still be bundled — which silently inlined native
         // loaders such as node-gyp-build, losing native acceleration.
         alwaysBundle: shouldBundleCliDependency,
-        neverBundle: (id: string) => isExternalCliDependency(id),
+        // signalbox: 1Password's SDK loads its WebAssembly from beside itself; only the
+        // Runner loads it, from its image (src/signalbox/runner/RunnerOnePassword.ts).
+        neverBundle: (id: string) => isExternalCliDependency(id) || id.startsWith("@1password/"),
         onlyBundle: false,
       },
       banner: {

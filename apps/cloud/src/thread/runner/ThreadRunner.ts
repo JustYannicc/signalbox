@@ -1,5 +1,6 @@
 import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
+import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import {
   type MachineClass,
   type ModelGatewayProvider,
@@ -146,6 +147,20 @@ export class ThreadDrives extends Context.Service<
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner/ThreadDrives") {}
 
+/**
+ * The thread owner's 1Password service account token (#395), asked of their
+ * own object each time a turn is handed out, so a token they replaced or
+ * removed applies from the next turn without anything restarting. Without
+ * it, turns get no token and so no secrets.
+ */
+export class ThreadSecrets extends Context.Service<
+  ThreadSecrets,
+  {
+    /** `userId`'s token, or null when they have none connected. Never log it. */
+    readonly token: (userId: string) => Effect.Effect<string | null, UserObjectError>;
+  }
+>()("@signalbox/cloud/thread/runner/ThreadRunner/ThreadSecrets") {}
+
 /** What a remote token lets its holder fetch right now. */
 export type RemoteAuthorization =
   | {
@@ -205,6 +220,11 @@ export interface RunnerWork {
   readonly drive: DriveAccess | null;
   /** The machine's token for the thread's session rows. */
   readonly sessions: SessionAccess | null;
+  /**
+   * The 1Password Environments `turn`'s chain names, top level first; empty
+   * without a turn. The owner's token to read them is `secretsToken`.
+   */
+  readonly secrets: ReadonlyArray<OnePasswordEnvironmentId>;
   readonly activeRunId: RunId | null;
 }
 
@@ -258,11 +278,18 @@ export class ThreadRunner extends Context.Service<
      * the Runner then commits as `DRIVE_COMMIT_AUTHOR`.
      */
     readonly commitAuthor: Effect.Effect<CommitAuthor | null>;
+    /**
+     * The owner's 1Password service account token, for a turn being handed
+     * out (`ThreadSecrets`); null without one, or when their object didn't answer.
+     */
+    readonly secretsToken: Effect.Effect<string | null>;
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
 /** How long a turn start waits for its owner's commit author before going without. */
 const COMMIT_AUTHOR_TIMEOUT = "5 seconds";
+/** How long handing out a turn waits for its owner's 1Password token before going without. */
+const SECRETS_TOKEN_TIMEOUT = "5 seconds";
 
 const IDLE: MachinePlan = {
   ensure: null,
@@ -332,6 +359,7 @@ const make = Effect.gen(function* () {
   const withCrypto = <A>(effect: Effect.Effect<A, never, Crypto.Crypto>) =>
     Effect.provideService(effect, Crypto.Crypto, crypto);
   const drives = yield* Effect.serviceOption(ThreadDrives);
+  const secretTokens = yield* Effect.serviceOption(ThreadSecrets);
   const drivesEnabled = drives._tag === "Some" && drives.value.enabled;
   const driveIdOf = (owner: ThreadStore.ThreadOwner) =>
     owner.driveId ?? myDriveId(owner.contextId, owner.userId);
@@ -356,7 +384,7 @@ const make = Effect.gen(function* () {
       );
     });
   const newToken = Effect.orDie(
-    Effect.map(Effect.all([crypto.randomUUIDv4, crypto.randomUUIDv4]), (parts) =>
+    Effect.map(Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]), (parts) =>
       parts.join("").replaceAll("-", ""),
     ),
   );
@@ -622,6 +650,28 @@ const make = Effect.gen(function* () {
       lease.status === "none" || lease.ensuredAt !== null ? null : { ...lease, ensuredAt: now },
     );
 
+  /**
+   * The owner's 1Password token, asked of their object outside the thread's
+   * lock. A turn starts without it rather than wait: the Runner then reports
+   * the secrets it couldn't load. Logged without the token or the cause's
+   * details beyond the operation.
+   */
+  const secretsToken: ThreadRunner["Service"]["secretsToken"] = Effect.gen(function* () {
+    const userId = yield* ownerId;
+    if (secretTokens._tag === "None" || userId === null) return null;
+    return yield* secretTokens.value.token(userId).pipe(
+      Effect.timeout(SECRETS_TOKEN_TIMEOUT),
+      Effect.catch((error) =>
+        Effect.as(
+          Effect.logWarning("reading the owner's 1Password token failed", {
+            reason: error._tag,
+          }),
+          null,
+        ),
+      ),
+    );
+  });
+
   const work: ThreadRunner["Service"]["work"] = withLease(({ projection, lease }) =>
     Effect.gen(function* () {
       const untraced = projection === null ? null : runnerTurnFor(projection);
@@ -655,6 +705,7 @@ const make = Effect.gen(function* () {
           turn === null || lease.token === null || projection === null
             ? null
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
+        secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
         activeRunId: run?.id ?? null,
       });
     }),
@@ -950,6 +1001,7 @@ const make = Effect.gen(function* () {
     authorizeSession,
     authorizeRemote,
     commitAuthor,
+    secretsToken,
   });
 });
 

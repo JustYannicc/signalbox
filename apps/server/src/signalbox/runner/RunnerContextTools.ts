@@ -54,7 +54,13 @@ interface ToolSpec<S extends Schema.Top> {
   readonly name: string;
   readonly description: string;
   readonly parameters: S;
-  readonly handle: (input: S["Type"]) => Effect.Effect<string, ContextClientError | ToolError>;
+  /** The answer: text, or content blocks when it carries more than text (a screenshot). */
+  readonly handle: (
+    input: S["Type"],
+  ) => Effect.Effect<
+    string | ReadonlyArray<McpSchema.ContentBlock>,
+    ContextClientError | ToolError
+  >;
   /** What the tool does beyond reading what the user can read. Absent: it only reads. */
   readonly writes?: { readonly destructive: boolean; readonly openWorld: boolean };
 }
@@ -91,7 +97,14 @@ export const register = <S extends Schema.Top & { readonly DecodingServices: nev
         decode(payload).pipe(
           Effect.mapError((error) => new ToolError({ message: `Bad arguments: ${error.message}` })),
           Effect.flatMap(spec.handle),
-          Effect.map((text) => new McpSchema.CallToolResult({ content: [{ type: "text", text }] })),
+          // The tool and its outcome, never its arguments or answer.
+          Effect.withSpan("RunnerMcpTool", { attributes: { tool: spec.name } }),
+          Effect.map(
+            (answer) =>
+              new McpSchema.CallToolResult({
+                content: typeof answer === "string" ? [{ type: "text", text: answer }] : answer,
+              }),
+          ),
           Effect.catch((error) =>
             Effect.succeed(
               new McpSchema.CallToolResult({

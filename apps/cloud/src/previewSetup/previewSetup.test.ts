@@ -447,4 +447,37 @@ describe("preview setup", () => {
       expect(personal?.backing).toEqual({ mode: "managed" });
     }).pipe(Effect.scoped),
   );
+
+  it.effect(
+    "takes production's 1Password account whenever the preview has none, never over its own",
+    () =>
+      Effect.gen(function* () {
+        const { prod, preview, handed, handOff, inside } = yield* setup;
+        const connect = (cloud: typeof prod, token: string) =>
+          inside(
+            cloud,
+            UserFolders.UserFolders.use((service) => service.setOnePassword({ token })),
+          );
+        const tokenOf = (cloud: typeof prod) =>
+          cloud.userDirectory.forUser(userId).onePasswordToken();
+        yield* handOff();
+        expect(handed[0]!.onePassword).toBeUndefined();
+
+        // Connected on production after the first hand-off: the next one brings it.
+        yield* connect(prod, "ops_production");
+        yield* handOff();
+        expect(handed[1]!.onePassword).toEqual({ token: "ops_production" });
+        expect(yield* tokenOf(preview)).toBe("ops_production");
+        const previewFolders = yield* inside(
+          preview,
+          UserFolders.UserFolders.use((service) => service.snapshot),
+        );
+        expect(previewFolders.onePassword).toBeDefined();
+
+        // One the preview connected itself stays.
+        yield* connect(preview, "ops_preview");
+        yield* handOff();
+        expect(yield* tokenOf(preview)).toBe("ops_preview");
+      }).pipe(Effect.scoped),
+  );
 });

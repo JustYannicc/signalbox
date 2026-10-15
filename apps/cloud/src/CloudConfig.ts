@@ -30,6 +30,13 @@ import { DEFAULT_ENVIRONMENT_LABEL } from "./environment.ts";
 
 const MIN_SECRET_LENGTH = 32;
 
+/** A secret that may be unset. Deploys pass an unset secret as empty, which counts as unset. */
+export const optionalSecret = (name: string) =>
+  Config.Redacted(name).pipe(
+    Config.option,
+    Config.map(Option.filter((value) => Redacted.value(value).trim().length > 0)),
+  );
+
 export class CloudConfig extends Context.Service<
   CloudConfig,
   {
@@ -41,33 +48,38 @@ export class CloudConfig extends Context.Service<
   }
 >()("@signalbox/cloud/CloudConfig") {}
 
-const make = Effect.gen(function* () {
-  const environmentId = yield* Config.schema(EnvironmentId, "ENVIRONMENT_ID");
-  const label = yield* Config.String("ENVIRONMENT_LABEL").pipe(
-    Config.withDefault(DEFAULT_ENVIRONMENT_LABEL),
-  );
+/**
+ * `SESSION_SECRET` on its own, for user objects, which sign with it
+ * (`CloudTokens.layerSessionSecret`) but have no use for the rest.
+ */
+export const readSessionSecret = Effect.gen(function* () {
   const sessionSecret = yield* Config.Redacted("SESSION_SECRET");
   if (Redacted.value(sessionSecret).length < MIN_SECRET_LENGTH) {
     return yield* Effect.die(
       new Error(`SESSION_SECRET must be at least ${MIN_SECRET_LENGTH} characters`),
     );
   }
+  return sessionSecret;
+});
+
+const make = Effect.gen(function* () {
+  const environmentId = yield* Config.schema(EnvironmentId, "ENVIRONMENT_ID");
+  const label = yield* Config.String("ENVIRONMENT_LABEL").pipe(
+    Config.withDefault(DEFAULT_ENVIRONMENT_LABEL),
+  );
+  const sessionSecret = yield* readSessionSecret;
   const accounts = yield* AccountConfig.read;
   if (!accounts) {
     return yield* Effect.die(new Error("T3CODE_WORKOS_CLIENT_ID is required for the cloud"));
   }
-  const workosWebhookSecret = yield* Config.Redacted("T3CODE_WORKOS_WEBHOOK_SECRET").pipe(
-    Config.option,
-  );
+  const workosWebhookSecret = yield* optionalSecret("T3CODE_WORKOS_WEBHOOK_SECRET");
   return CloudConfig.of({
     environmentId,
     label,
     sessionSecret,
     accounts,
-    // Deploys pass an unset secret as empty; an empty key would sign anything.
-    workosWebhookSecret: Option.getOrUndefined(
-      Option.filter(workosWebhookSecret, (secret) => Redacted.value(secret).length > 0),
-    ),
+    // An empty key would sign anything.
+    workosWebhookSecret: Option.getOrUndefined(workosWebhookSecret),
   });
 });
 
