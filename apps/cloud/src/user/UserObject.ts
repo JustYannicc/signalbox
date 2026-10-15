@@ -147,6 +147,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
       Layer.provide(Layer.mergeAll(layerSandbox, layerAlarm(storage))),
+      // Building it only touches the object's own SQLite, which the object can't run without either.
+      Layer.orDie,
       Layer.provideMerge(
         Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
           Layer.provideMerge(

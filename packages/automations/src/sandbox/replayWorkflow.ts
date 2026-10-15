@@ -1,8 +1,7 @@
 import type { WorkflowStepVerb } from "@t3tools/contracts";
 import type { QuickJSContext, QuickJSHandle, QuickJSWASMModule } from "quickjs-emscripten-core";
 
-import { installGuestGlobals } from "./guestGlobals.ts";
-import { installGuestRuntime } from "./guestRuntime.ts";
+import { GUEST_RUNTIME } from "./guestSource.ts";
 
 /** What the journal knows about a step that finished; `at` is when it finished, in epoch ms. */
 export type JournalResult =
@@ -70,7 +69,6 @@ const MAX_LOGS = 200;
 const MAX_LOG_BYTES = 64 * 1024;
 const MAX_LOG_LENGTH = 2_000;
 const LOG_LEVELS = new Set<string>(["log", "info", "warn", "error", "debug"]);
-const GUEST_RUNTIME = `(${installGuestGlobals.toString()})();\n(${installGuestRuntime.toString()})();`;
 
 /** How a host runs QuickJS: the build it loads, and the budget that stops runaway code. */
 export interface QuickJsSandboxOptions {
@@ -82,6 +80,8 @@ export interface QuickJsSandboxOptions {
    * instructions; true stops the code.
    */
   readonly budget: (timeLimitMs: number) => () => boolean;
+  /** Memory one replay may use, unless the replay sets its own; 64 MB when absent. */
+  readonly memoryLimitBytes?: number;
 }
 
 /** A wall-clock budget, for hosts whose clock moves while code runs (not workerd's). */
@@ -130,7 +130,9 @@ async function replayIn(
   options: ReplayInput,
 ): Promise<ReplayOutcome> {
   const runtime = (await quickJS).newRuntime();
-  runtime.setMemoryLimit(options.memoryLimitBytes ?? DEFAULT_MEMORY_LIMIT_BYTES);
+  runtime.setMemoryLimit(
+    options.memoryLimitBytes ?? sandbox.memoryLimitBytes ?? DEFAULT_MEMORY_LIMIT_BYTES,
+  );
   // One replay's budget; it only guards against runaway code.
   runtime.setInterruptHandler(sandbox.budget(options.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS));
   const context = runtime.newContext();

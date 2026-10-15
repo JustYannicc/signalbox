@@ -2,6 +2,9 @@
   "name": "@signalbox/cloud",
   "private": true,
   "type": "module",
+  "imports": {
+    "#quickjs/emscripten-module.wasm": "@jitl/quickjs-wasmfile-release-sync/wasm"
+  },
   "scripts": {
     "dev": "mkdir -p ../web/dist && wrangler dev --env dev --port 8787 --var LOCAL_WORKERD:1 --var ENVIRONMENT_ID:cloud-dev --var 'ENVIRONMENT_LABEL:Signalbox Cloud (dev)'",
     "dev:gateway": "wrangler dev -c wrangler.model-gateway.jsonc --port 8788 --inspector-port 9230",
