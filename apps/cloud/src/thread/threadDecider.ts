@@ -193,6 +193,8 @@ export function decide(
   projection: Projection | null,
   command: OrchestrationV2Command,
   ctx: DecisionContext,
+  /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
+  expected: { readonly idleSinceMs?: number } = {},
 ): Decision {
   if (command.type === "thread.create") {
     return projection === null ? createThread(command, ctx) : reject("This thread already exists.");
@@ -250,6 +252,12 @@ export function decide(
       if (projection.thread.archivedAt !== null) return reject("This thread is already archived.");
       if (activeRun(projection) !== undefined) {
         return reject("This thread is still working. Stop it or let it finish, then archive it.");
+      }
+      if (
+        expected.idleSinceMs !== undefined &&
+        DateTime.toEpochMillis(projection.updatedAt) > expected.idleSinceMs
+      ) {
+        return reject("This thread changed since it went idle.");
       }
       return updateThread(projection, "thread.archived", { archivedAt: ctx.now }, ctx);
     case "thread.unarchive":

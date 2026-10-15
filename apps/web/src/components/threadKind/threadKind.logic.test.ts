@@ -1,8 +1,11 @@
+import { threadArchiveDueAtMs } from "@t3tools/client-runtime/state/signalboxThreadKinds";
+import { ProviderInstanceId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   archiveChatsAfterDaysChoices,
   chatArchiveRowLabel,
+  isThreadKindUndoAction,
   threadKindSummary,
   threadKindUndoText,
   threadLeaveLabel,
@@ -63,7 +66,51 @@ describe("threadKindUndoText", () => {
   it("names what the flip made of the threads", () => {
     expect(threadKindUndoText("Made a task", 1)).toBe("Made 1 thread a task");
     expect(threadKindUndoText("Made a chat", 3)).toBe("Made 3 threads chats");
-    expect(threadKindUndoText("Archived", 1)).toBeNull();
+  });
+
+  it("leaves every other undoable action to the notice", () => {
+    expect(isThreadKindUndoAction("Made a task")).toBe(true);
+    expect(isThreadKindUndoAction("Archived")).toBe(false);
+    expect(isThreadKindUndoAction("toString")).toBe(false);
+  });
+});
+
+describe("threadArchiveDueAtMs", () => {
+  const idle = {
+    updatedAt: new Date(NOW).toISOString(),
+    archivedAt: null,
+    pinnedAt: null,
+    runtime: null,
+  };
+  const runtime = {
+    status: "idle" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: null,
+    lastError: null,
+    updatedAt: new Date(NOW).toISOString(),
+  };
+
+  it("counts an idle chat from its last change", () => {
+    expect(threadArchiveDueAtMs(idle, "chat", 7)).toBe(NOW + 7 * DAY);
+    expect(threadArchiveDueAtMs({ ...idle, runtime }, "chat", 7)).toBe(NOW + 7 * DAY);
+  });
+
+  it("promises nothing the sweep won't do", () => {
+    expect(threadArchiveDueAtMs(idle, "task", 7)).toBeNull();
+    expect(threadArchiveDueAtMs(idle, "chat", null)).toBeNull();
+    expect(threadArchiveDueAtMs({ ...idle, pinnedAt: idle.updatedAt }, "chat", 7)).toBeNull();
+    expect(threadArchiveDueAtMs({ ...idle, archivedAt: idle.updatedAt }, "chat", 7)).toBeNull();
+    expect(
+      threadArchiveDueAtMs({ ...idle, runtime: { ...runtime, status: "running" } }, "chat", 7),
+    ).toBeNull();
+    expect(
+      threadArchiveDueAtMs(
+        { ...idle, runtime: { ...runtime, activeRunId: RunId.make("run") } },
+        "chat",
+        7,
+      ),
+    ).toBeNull();
   });
 });
 

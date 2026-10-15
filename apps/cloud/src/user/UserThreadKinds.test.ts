@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { layerMemoryStore } from "../testing.ts";
@@ -22,18 +23,24 @@ const T0 = Date.parse("2026-10-01T00:00:00.000Z");
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
 /**
- * A user's kinds with a scripted classifier, a recorded alarm, and thread
- * objects that record the archives they're sent (`failing` ones are down).
+ * A user's kinds with a scripted classifier, an alarm that keeps the earliest
+ * time it's armed by, and thread objects that record the archives they're
+ * sent (`failing` ones are down; `onArchive` runs while one is out).
  */
 const setup = (
-  options: { readonly answer?: ThreadKind | null; readonly failing?: string } = {},
+  options: {
+    readonly answer?: ThreadKind | null;
+    readonly failing?: string;
+    readonly onArchive?: () => void;
+  } = {},
 ) => {
   const asked: Array<KindClassifier.KindQuestion> = [];
-  const archived: Array<{ readonly threadId: string; readonly commandId: string }> = [];
-  const alarm: { armedBy: Array<number>; reset: Array<number | null> } = {
-    armedBy: [],
-    reset: [],
-  };
+  const archived: Array<{
+    readonly threadId: string;
+    readonly commandId: string;
+    readonly idleSinceMs: number | undefined;
+  }> = [];
+  const alarm: { armedBy: Array<number>; current: number | null } = { armedBy: [], current: null };
   const classifier = Layer.succeed(
     KindClassifier.KindClassifier,
     KindClassifier.KindClassifier.of({
@@ -47,10 +54,11 @@ const setup = (
   const directory = Layer.succeed(ThreadDirectory.ThreadDirectory, {
     forThread: (threadId) =>
       ThreadDirectory.handleFor({
-        dispatch: async (_actor, command) => {
+        dispatch: async (_actor, command, creation) => {
+          options.onArchive?.();
           if (threadId === options.failing) throw new Error("object down");
           const { commandId } = command as { readonly commandId: string };
-          archived.push({ threadId, commandId });
+          archived.push({ threadId, commandId, idleSinceMs: creation.idleSinceMs });
           return { _tag: "ok", value: { sequence: 1 } };
         },
         launch: async () => ({ _tag: "not_found" }),
@@ -67,8 +75,11 @@ const setup = (
   const recordedAlarm = Layer.succeed(
     ChatArchive.ChatArchiveAlarm,
     ChatArchive.ChatArchiveAlarm.of({
-      armBy: (atMs) => Effect.sync(() => void alarm.armedBy.push(atMs)),
-      reset: (atMs) => Effect.sync(() => void alarm.reset.push(atMs)),
+      armBy: (atMs) =>
+        Effect.sync(() => {
+          alarm.armedBy.push(atMs);
+          if (alarm.current === null || alarm.current > atMs) alarm.current = atMs;
+        }),
     }),
   );
   const layer = UserThreadKinds.layer.pipe(
@@ -122,6 +133,7 @@ describe("UserThreadKinds", () => {
     return Effect.gen(function* () {
       const { kinds } = yield* services;
       const chat = kindInstructions("chat");
+      yield* indexThread("t1", { updatedAtMs: T0, messaged: false });
       expect(
         yield* kinds.beforeTurn(thread("t1"), first("How do refunds work?", "Refunds")),
       ).toEqual(chat);
@@ -158,9 +170,10 @@ describe("UserThreadKinds", () => {
   });
 
   it.effect("the user's flip wins, and flipping back to what it is drops it", () => {
-    const { layer } = setup();
+    const { alarm, layer } = setup();
     return Effect.gen(function* () {
-      const { kinds } = yield* services;
+      const { kinds, sql } = yield* services;
+      yield* indexThread("t1", { updatedAtMs: T0, messaged: false });
       yield* kinds.beforeTurn(thread("t1"), first("What is X?"));
       const flipped = yield* kinds.setKind({ threadId: thread("t1"), kind: "task" });
       expect(flipped.threads[0]).toMatchObject({ classified: "chat", override: "task" });
@@ -173,6 +186,18 @@ describe("UserThreadKinds", () => {
       expect(yield* kinds.beforeTurn(thread("t2"), null)).toEqual(kindInstructions("chat"));
       yield* kinds.setKind({ threadId: thread("t2"), kind: "task" });
       expect(yield* kinds.beforeTurn(thread("t2"), null)).toBeNull();
+
+      // Setting what's already set stores nothing and arms nothing.
+      const rows = () =>
+        sql`SELECT thread_id, override, updated_at FROM thread_kinds ORDER BY thread_id`;
+      const before = yield* rows();
+      const armed = alarm.armedBy.length;
+      yield* kinds.setKind({ threadId: thread("t1"), kind: "chat" });
+      yield* kinds.setKind({ threadId: thread("t2"), kind: "task" });
+      yield* kinds.setKind({ threadId: thread("t3"), kind: "task" });
+      yield* kinds.setArchiveChatsAfterDays(7);
+      expect(yield* rows()).toEqual(before);
+      expect(alarm.armedBy).toHaveLength(armed);
     }).pipe(Effect.provide(layer));
   });
 
@@ -180,15 +205,38 @@ describe("UserThreadKinds", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const { kinds } = yield* services;
+      yield* indexThread("t1", { updatedAtMs: T0, messaged: false });
       yield* kinds.beforeTurn(thread("t1"), first("Should we use Postgres?"));
-      yield* kinds.workStarted(thread("t1"), T0);
-      yield* kinds.workStarted(thread("t1"), T0 + DAY);
+      const started = (atMs: number) =>
+        kinds.recordSummary(
+          { threadId: thread("t1"), workStartedAt: DateTime.makeUnsafe(atMs) },
+          Effect.void,
+        );
+      yield* started(T0);
+      yield* started(T0 + DAY);
       expect((yield* kinds.snapshot).threads[0]?.workStartedAt).toEqual(DateTime.makeUnsafe(T0));
       expect(yield* kinds.beforeTurn(thread("t1"), null)).toEqual(kindInstructions("task"));
       // Flipping it back to a chat is the user's call, and sticks.
       yield* kinds.setKind({ threadId: thread("t1"), kind: "chat" });
       expect(yield* kinds.beforeTurn(thread("t1"), null)).toEqual(kindInstructions("chat"));
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists only threads clients show, and a chat brought back gets its kind back", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const { kinds } = yield* services;
+      yield* indexThread("t1", { updatedAtMs: T0, messaged: false });
+      yield* kinds.beforeTurn(thread("t1"), first("What's new?"));
+      const pull = yield* Stream.toPull(kinds.changes);
+      const next = Effect.map(pull, (chunk) => chunk.at(-1)!.threads.map((row) => row.threadId));
+      expect(yield* next).toEqual(["t1"]);
+      const summary = { threadId: thread("t1") };
+      yield* kinds.recordSummary(summary, indexThread("t1", { updatedAtMs: T0, archived: true }));
+      expect(yield* next).toEqual([]);
+      yield* kinds.recordSummary(summary, indexThread("t1", { updatedAtMs: T0 + DAY }));
+      expect(yield* next).toEqual(["t1"]);
+    }).pipe(Effect.scoped, Effect.provide(layer));
   });
 });
 
@@ -224,8 +272,9 @@ describe("idle chats", () => {
         archived: ["chat-due"],
         nextDueAtMs: T0 + 8 * DAY,
       });
+      // Only if it's still as idle as the index saw it.
       expect(archived).toEqual([
-        { threadId: "chat-due", commandId: `thread-kind-archive:chat-due:${T0}` },
+        { threadId: "chat-due", commandId: `thread-kind-archive:chat-due:${T0}`, idleSinceMs: T0 },
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -280,9 +329,26 @@ describe("idle chats", () => {
       // Every change arms the alarm by its chat's time.
       expect(Math.min(...alarm.armedBy)).toBe(T0 + 7 * DAY);
       yield* TestClock.setTime(T0 + 7 * DAY);
+      // Going off, the alarm is no longer set.
+      alarm.current = null;
       yield* kinds.alarm;
       expect(archived.map((entry) => entry.threadId)).toEqual(["chat-due"]);
-      expect(alarm.reset).toEqual([T0 + 8 * DAY]);
+      expect(alarm.current).toBe(T0 + 8 * DAY);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("never lose an alarm a summary armed while the sweep was out", () => {
+    const sooner = T0 + 7 * DAY + 60_000;
+    // Another chat's summary lands mid-sweep and arms the alarm for itself.
+    const { alarm, archived, layer } = setup({ onArchive: () => void (alarm.current = sooner) });
+    return Effect.gen(function* () {
+      const { kinds } = yield* services;
+      yield* seed(kinds);
+      yield* TestClock.setTime(T0 + 7 * DAY);
+      alarm.current = null;
+      yield* kinds.alarm;
+      expect(archived.map((entry) => entry.threadId)).toEqual(["chat-due"]);
+      expect(alarm.current).toBe(sooner);
     }).pipe(Effect.provide(layer));
   });
 });

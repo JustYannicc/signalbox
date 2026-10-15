@@ -125,7 +125,7 @@ const layerDrives = (env: UserObjectEnv) => {
   };
 };
 
-/** The object's alarm, which only the idle-chat sweep uses (`UserThreadKinds`). */
+/** The object's alarm, which only the idle-chat sweep uses (`chatArchive.ts`). */
 const layerAlarm = (storage: DurableObjectStorage) =>
   Layer.succeed(
     ChatArchive.ChatArchiveAlarm,
@@ -135,8 +135,6 @@ const layerAlarm = (storage: DurableObjectStorage) =>
           const current = await storage.getAlarm();
           if (current === null || current > atMs) await storage.setAlarm(atMs);
         }),
-      reset: (atMs) =>
-        Effect.promise(() => (atMs === null ? storage.deleteAlarm() : storage.setAlarm(atMs))),
     }),
   );
 
@@ -228,20 +226,18 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       scripted: scriptedProviderEnabled(env),
     };
     this.runtime = makeRuntime(ctx.storage, env);
-    void ctx.blockConcurrencyWhile(() =>
-      this.runtime.runPromise(
-        UserStore.migrate.pipe(
-          // An alarm lost to a crash between sweeps is set again.
-          Effect.andThen(
-            UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logError("arming the idle-chat sweep failed", { cause }),
-              ),
-            ),
+    void ctx.blockConcurrencyWhile(async () => {
+      await this.runtime.runPromise(UserStore.migrate);
+      // An alarm lost to a crash between sweeps is set again; one that's set is enough.
+      if ((await ctx.storage.getAlarm()) !== null) return;
+      await this.runtime.runPromise(
+        UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("arming the idle-chat sweep failed", { cause }),
           ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   /** Idle chats archive themselves (`UserThreadKinds`). */

@@ -74,8 +74,9 @@ const command = (type: "thread.archive" | "thread.unarchive"): OrchestrationV2Co
 const rejection = (
   engine: ThreadEngine.ThreadEngine["Service"],
   type: "thread.archive" | "thread.unarchive",
+  creation: ThreadEngine.ThreadCreation = personal,
 ) =>
-  engine.dispatch(owner, command(type), personal).pipe(
+  engine.dispatch(owner, command(type), creation).pipe(
     Effect.flip,
     Effect.map((error) =>
       error._tag === "ThreadCommandRejectedError" ? error.reason : error._tag,
@@ -108,6 +109,26 @@ describe("cloud thread archive", () => {
         expect(back.archivedAt).toBeNull();
         // The idle wait counts from here.
         expect(back.updatedAt).toEqual(DateTime.makeUnsafe("2026-10-09T00:00:00Z"));
+      }),
+    ),
+  );
+
+  it.effect("archives an idle chat for the sweep only if nothing changed since it judged", () =>
+    withEngine((engine) =>
+      Effect.gen(function* () {
+        yield* launched(engine);
+        yield* toIdle(engine);
+        const idleSince = DateTime.toEpochMillis((yield* shellOf(engine)).updatedAt);
+        // The sweep saw an older index row: the thread moved on since.
+        expect(
+          yield* rejection(engine, "thread.archive", { ...personal, idleSinceMs: idleSince - 1 }),
+        ).toBe("This thread changed since it went idle.");
+        expect((yield* shellOf(engine)).archivedAt).toBeNull();
+        yield* engine.dispatch(owner, command("thread.archive"), {
+          ...personal,
+          idleSinceMs: idleSince,
+        });
+        expect((yield* shellOf(engine)).archivedAt).not.toBeNull();
       }),
     ),
   );

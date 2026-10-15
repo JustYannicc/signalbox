@@ -8,6 +8,10 @@ import { threadKindFlipLabel } from "./threadKind.logic";
 export type ThreadKindMenuId = "make-chat" | "make-task";
 
 const MENU_ID: Record<ThreadKind, ThreadKindMenuId> = { chat: "make-chat", task: "make-task" };
+const KIND_BY_MENU_ID: Record<ThreadKindMenuId, ThreadKind> = {
+  "make-chat": "chat",
+  "make-task": "task",
+};
 const ICON: Record<ThreadKind, string> = { chat: "message-circle", task: "list-todo" };
 
 /** The entry that flips a thread that is `kind` now. */
@@ -26,7 +30,11 @@ export function threadKindMenuItem(
 
 /** The kind a chosen entry makes the thread; null for every other entry. */
 export function threadKindFromMenuId(clicked: string): ThreadKind | null {
-  return clicked === "make-chat" ? "chat" : clicked === "make-task" ? "task" : null;
+  return isThreadKindMenuId(clicked) ? KIND_BY_MENU_ID[clicked] : null;
+}
+
+function isThreadKindMenuId(id: string): id is ThreadKindMenuId {
+  return Object.hasOwn(KIND_BY_MENU_ID, id);
 }
 
 /**

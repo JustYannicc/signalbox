@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Cookies from "effect/http/Cookies";
-import { HttpServerRequest } from "effect/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import { SESSION_COOKIE_NAME } from "../environment.ts";
@@ -86,3 +86,17 @@ export const traceId = Effect.currentParentSpan.pipe(
   Effect.map((span) => span.traceId),
   Effect.orElseSucceed(() => "unavailable"),
 );
+
+/** A JSON answer that's never cached; a string body is JSON already. */
+export const json = (body: string | object, status: number) =>
+  typeof body === "string"
+    ? HttpServerResponse.text(body, {
+        status,
+        contentType: "application/json",
+        headers: NO_STORE_HEADERS,
+      })
+    : HttpServerResponse.jsonUnsafe(body, { status, headers: NO_STORE_HEADERS });
+
+/** An error answer: its code and the trace id to find it by. */
+export const failure = (code: string, status: number) =>
+  Effect.map(traceId, (id) => json({ code, traceId: id }, status));

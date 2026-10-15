@@ -5,11 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerRequest } from "effect/http";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
-import { NO_STORE_HEADERS, requestCredentials, traceId } from "./credentials.ts";
+import { failure, json, requestCredentials } from "./credentials.ts";
 
 /**
  * A test clock for idle chats archiving themselves (#46), on previews only:
@@ -37,12 +37,6 @@ export const layerTestClock = Layer.effect(
 );
 
 const decodeBody = Schema.decodeUnknownOption(Schema.Struct({ asOf: Schema.String }));
-
-const json = (body: object, status: number) =>
-  HttpServerResponse.jsonUnsafe(body, { status, headers: NO_STORE_HEADERS });
-
-const failure = (code: string, status: number) =>
-  Effect.map(traceId, (id) => json({ code, traceId: id }, status));
 
 const sweep = Effect.gen(function* () {
   if (!(yield* ThreadKindTestClock).enabled) return yield* failure("not_found", 404);

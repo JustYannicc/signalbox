@@ -61,9 +61,10 @@ export const makeUserObjectApi = (
     recordThreadSummary: (encoded) => {
       const summary = wire.summary.decode(encoded);
       return run(
-        Effect.andThen(
-          UserShell.UserShell.use((service) => service.recordThreadSummary(summary)),
-          UserThreadKinds.UserThreadKinds.use((kinds) => kinds.summaryRecorded(summary)),
+        Effect.flatMap(UserShell.UserShell, (shell) =>
+          UserThreadKinds.UserThreadKinds.use((kinds) =>
+            kinds.recordSummary(summary, shell.recordThreadSummary(summary)),
+          ),
         ),
       );
     },

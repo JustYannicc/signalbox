@@ -114,6 +114,11 @@ export interface ThreadCreation {
    * `pools`; a turn it starts keeps them for the Runner. Absent: unresolved.
    */
   readonly instructions?: TurnInstructions;
+  /**
+   * Set by the idle-chat sweep on its `thread.archive`: the thread's
+   * `updatedAt` it judged idle at. A thread that changed since stays.
+   */
+  readonly idleSinceMs?: number;
 }
 
 const NO_CONTEXT =
@@ -479,6 +484,7 @@ const make = Effect.gen(function* () {
               }
             : onItsPool,
           ctx,
+          creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs },
         );
       },
     ).pipe(Effect.map(({ sequence }) => ({ sequence })));

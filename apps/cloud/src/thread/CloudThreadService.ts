@@ -221,11 +221,14 @@ const make = Effect.gen(function* () {
     projectId: ProjectId | null,
     message: Parameters<ThreadKindTurns["Service"]["beforeTurn"]>[1],
   ) =>
-    Effect.gen(function* () {
-      const turn = yield* threadContexts.turn(threadId, projectId);
-      const level = yield* kindTurns.beforeTurn(threadId, message);
-      return { ...turn, instructions: withLevel(turn.instructions, level) };
-    });
+    Effect.map(
+      // A first message waits on its classifier; the chain resolves meanwhile.
+      Effect.all(
+        [threadContexts.turn(threadId, projectId), kindTurns.beforeTurn(threadId, message)],
+        { concurrency: 2 },
+      ),
+      ([turn, level]) => ({ ...turn, instructions: withLevel(turn.instructions, level) }),
+    );
 
   const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) =>
     Effect.gen(function* () {

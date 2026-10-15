@@ -1218,7 +1218,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
-  const threadKind = useThreadKind(threadRef, thread.updatedAt); // signalbox: thread kinds
+  const threadKind = useThreadKind(threadRef, thread); // signalbox: thread kinds
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   useEffect(() => {
     if (!canOperateThread && isRenaming) onCancelRename();

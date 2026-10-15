@@ -6,8 +6,11 @@
  */
 import type { ThreadKind } from "@t3tools/contracts/signalboxThreadKinds";
 import { ArchiveIcon, CheckIcon, ListTodoIcon, MessageCircleIcon } from "lucide-react";
+import { chatArchiveLastDayStartsAtMs } from "@t3tools/client-runtime/state/signalboxThreadKinds";
 import {
   memo,
+  useEffect,
+  useState,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
@@ -109,13 +112,40 @@ export const ThreadKindButton = memo(function ThreadKindButton(props: {
   );
 });
 
-function ChatArchiveCountdown(props: { readonly dueAtMs: number; readonly children: ReactNode }) {
+/** On a chat's last idle day: "Archives in 5h", ticking with the shared minute clock. */
+function LastDayCountdown(props: { readonly dueAtMs: number; readonly children: ReactNode }) {
   return chatArchiveRowLabel(props.dueAtMs, useNowMs()) ?? props.children;
 }
 
+// setTimeout fires at once past this; longer waits re-arm.
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 /**
- * A row's age, or on a chat's last idle day when it archives itself. Only
- * chats that will archive keep a clock running.
+ * Shows the age until the chat's last idle day, then the countdown. Before
+ * that it holds one timer for the day boundary, not the minute clock.
+ */
+function ChatArchiveCountdown(props: { readonly dueAtMs: number; readonly children: ReactNode }) {
+  const lastDayFromMs = chatArchiveLastDayStartsAtMs(props.dueAtMs);
+  const [checkedAtMs, setCheckedAtMs] = useState(() => Date.now());
+  const lastDay = checkedAtMs > lastDayFromMs;
+  useEffect(() => {
+    if (lastDay) return;
+    const timer = setTimeout(
+      () => setCheckedAtMs(Date.now()),
+      Math.min(lastDayFromMs - checkedAtMs + 1, MAX_TIMEOUT_MS),
+    );
+    return () => clearTimeout(timer);
+  }, [checkedAtMs, lastDay, lastDayFromMs]);
+  return lastDay ? (
+    <LastDayCountdown dueAtMs={props.dueAtMs}>{props.children}</LastDayCountdown>
+  ) : (
+    props.children
+  );
+}
+
+/**
+ * A row's age, or on a chat's last idle day when it archives itself. Rows
+ * that won't archive render their age with no clock or timer at all.
  */
 export function ThreadKindAge(props: {
   readonly kind: ThreadKindState | null;
@@ -123,14 +153,21 @@ export function ThreadKindAge(props: {
 }) {
   const dueAtMs = props.kind?.archiveDueAtMs ?? null;
   if (dueAtMs === null) return props.children;
-  return <ChatArchiveCountdown dueAtMs={dueAtMs}>{props.children}</ChatArchiveCountdown>;
+  // A new due time (the chat was touched) starts the wait over.
+  return (
+    <ChatArchiveCountdown key={dueAtMs} dueAtMs={dueAtMs}>
+      {props.children}
+    </ChatArchiveCountdown>
+  );
 }
+
+const LEAVE_ICON = { Done: CheckIcon, Archive: ArchiveIcon } as const;
 
 /** The icon for how a thread leaves the list: Done for tasks, Archive otherwise. */
 export function ThreadLeaveIcon(props: {
   readonly kind: ThreadKindState | null;
   readonly className?: string;
 }) {
-  const Icon = threadLeaveLabel(props.kind?.kind ?? null) === "Done" ? CheckIcon : ArchiveIcon;
+  const Icon = LEAVE_ICON[threadLeaveLabel(props.kind?.kind ?? null)];
   return <Icon className={props.className} />;
 }

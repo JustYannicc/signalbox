@@ -54,6 +54,7 @@ import {
   type SectionRows,
 } from "./folderRows.ts";
 import { makeProfileId } from "./profileId.ts";
+import { makeTraced } from "./tracing.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
@@ -189,25 +190,8 @@ const make = Effect.gen(function* () {
 
   const bump = sql`UPDATE folders_state SET revision = revision + 1 WHERE id = 1`;
 
-  /**
-   * A span for one operation, with who did it and what it touched (#284):
-   * ids only, never a folder's name or instructions. Its duration is the
-   * operation's latency.
-   */
-  const traced =
-    (name: string, attributes: Readonly<Record<string, string | null | undefined>>) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(userId.pipe(Effect.orElseSucceed(() => null)), (person) =>
-        effect.pipe(
-          Effect.withSpan(name, {
-            attributes: Object.fromEntries(
-              Object.entries({ "person.id": person, ...attributes }).filter(
-                ([, value]) => value !== null && value !== undefined,
-              ),
-            ),
-          }),
-        ),
-      );
+  /** A span for one operation (`tracing.ts`): never a folder's name or instructions. */
+  const traced = makeTraced(userId);
   /** The tree a decided change was in, once known. */
   const annotateOwner = (ownerId: string) => Effect.annotateCurrentSpan("org.id", ownerId);
 

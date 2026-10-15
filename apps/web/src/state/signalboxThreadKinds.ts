@@ -11,14 +11,15 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   createSignalboxThreadKindsAtoms,
   otherThreadKind,
+  threadArchiveDueAtMs,
   threadKindLookup,
 } from "@t3tools/client-runtime/state/signalboxThreadKinds";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
-  chatArchiveDueAtMs,
   effectiveThreadKind,
   type ArchiveChatsAfterDays,
   type SignalboxThreadKindsSnapshot,
@@ -30,6 +31,10 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useMemo } from "react";
 import { create } from "zustand";
 
+import {
+  THREAD_KIND_FLIP_FAILURE,
+  THREAD_KIND_UNDO_ACTION,
+} from "../components/threadKind/threadKind.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { showThreadUndoNotice } from "../hooks/showThreadUndoNotice";
@@ -118,13 +123,20 @@ export interface ThreadKindState {
   readonly canChange: boolean;
 }
 
+/** The shell fields a row's kind reads: a chat's idle clock, and whether it waits to archive. */
+export type ThreadKindShell = Pick<
+  EnvironmentThreadShell,
+  "updatedAt" | "archivedAt" | "pinnedAt" | "runtime"
+>;
+
 /**
  * The kind of one thread, or null where its environment keeps none (no kind
- * UI at all there). `updatedAt` is the thread shell's: a chat's idle clock.
+ * UI at all there). The answer only changes when something it shows does, so
+ * a shell update that leaves the kind alone doesn't re-render the icon.
  */
 export function useThreadKind(
   threadRef: ScopedThreadRef,
-  updatedAt: string,
+  shell: ThreadKindShell,
 ): ThreadKindState | null {
   const threadKey = scopedThreadKey(threadRef);
   const view = useAtomValue(threadKindViewAtom(threadKey));
@@ -135,24 +147,28 @@ export function useThreadKind(
   useEffect(() => {
     if (pending !== undefined && view?.kind === pending) setPending(threadKey, null);
   }, [pending, threadKey, view?.kind]);
+  const kind = view === null ? null : (pending ?? view.kind);
+  const switchedByWork = view !== null && kind === view.kind && view.switchedByWork;
+  const workStartedAt = switchedByWork ? (view?.workStartedAt ?? null) : null;
+  const archiveDueAtMs =
+    view === null || kind === null
+      ? null
+      : threadArchiveDueAtMs(shell, kind, view.archiveChatsAfterDays);
   const { environmentId, threadId } = threadRef;
-  return useMemo(() => {
-    if (view === null) return null;
-    const kind = pending ?? view.kind;
-    const switchedByWork = kind === view.kind && view.switchedByWork;
-    const updatedAtMs = Date.parse(updatedAt);
-    return {
-      threadRef: { environmentId, threadId },
-      kind,
-      switchedByWork,
-      workStartedAt: switchedByWork ? view.workStartedAt : null,
-      archiveDueAtMs:
-        kind === "chat" && !Number.isNaN(updatedAtMs)
-          ? chatArchiveDueAtMs(updatedAtMs, view.archiveChatsAfterDays)
-          : null,
-      canChange,
-    };
-  }, [canChange, environmentId, pending, threadId, updatedAt, view]);
+  return useMemo(
+    () =>
+      kind === null
+        ? null
+        : {
+            threadRef: { environmentId, threadId },
+            kind,
+            switchedByWork,
+            workStartedAt,
+            archiveDueAtMs,
+            canChange,
+          },
+    [archiveDueAtMs, canChange, environmentId, kind, switchedByWork, threadId, workStartedAt],
+  );
 }
 
 /** A thread's kind right now, for menus built at open time; null where none is kept. */
@@ -199,7 +215,7 @@ export async function flipThreadKind(threadRef: ScopedThreadRef, from: ThreadKin
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: to === "task" ? "Could not make it a task" : "Could not make it a chat",
+          title: THREAD_KIND_FLIP_FAILURE[to],
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
@@ -207,7 +223,7 @@ export async function flipThreadKind(threadRef: ScopedThreadRef, from: ThreadKin
     return;
   }
   showThreadUndoNotice({
-    action: to === "task" ? "Made a task" : "Made a chat",
+    action: THREAD_KIND_UNDO_ACTION[to],
     claim,
     undo: () => setThreadKind(threadRef, from),
     failureTitle: "Failed to undo",

@@ -5,7 +5,7 @@ import { shortcutLabelForCommand } from "../../keybindings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { Alert, AlertDescription } from "../ui/alert";
 import { InlineButton } from "../ui/button";
-import { threadKindUndoText } from "../threadKind/threadKind.logic"; // signalbox: thread kinds
+import { isThreadKindUndoAction, threadKindUndoText } from "../threadKind/threadKind.logic"; // signalbox: thread kinds
 
 export function SidebarThreadUndoNotice() {
   const notice = useThreadUndoNotice((state) => state.notice);
@@ -18,8 +18,9 @@ export function SidebarThreadUndoNotice() {
   return (
     <Alert role="status" variant="sidebar">
       <AlertDescription>
-        {threadKindUndoText(notice.action, notice.count) ??
-          `${notice.action} ${notice.count} ${noun}`}
+        {isThreadKindUndoAction(notice.action) // signalbox: thread kinds
+          ? threadKindUndoText(notice.action, notice.count)
+          : `${notice.action} ${notice.count} ${noun}`}
         ,{" "}
         <InlineButton onClick={undoLatestThreadAction}>
           {shortcut ? `${shortcut} to undo` : "Undo"}

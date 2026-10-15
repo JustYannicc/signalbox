@@ -111,11 +111,11 @@ describe("KindClassifier", () => {
     }),
   );
 
-  it.effect("gives up after three seconds", () =>
+  it.effect("gives up after a second and a half", () =>
     Effect.gen(function* () {
       const silent = fakeProvider(null);
       const fiber = yield* Effect.forkChild(classify(openai, silent.http));
-      yield* TestClock.adjust(2999);
+      yield* TestClock.adjust(1499);
       expect(fiber.pollUnsafe()).toBeUndefined();
       yield* TestClock.adjust(1);
       expect(yield* Fiber.join(fiber)).toEqual(Option.none());

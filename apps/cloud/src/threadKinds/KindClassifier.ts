@@ -27,7 +27,7 @@ const CRITERIA: Record<ThreadKind, string> = {
   chat: "Non-committal thinking: a question, research, exploring options, brainstorming, discussing a design, or asking for an explanation or opinion, without asking for the work to be carried out yet. It is finished when the person understands.",
 };
 const MAX_CHARS = 4000;
-const TIMEOUT_MS = 3000;
+const TIMEOUT_MS = 1500;
 
 export const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 export const OPENAI_DECISIONS_URL = "https://api.openai.com/v1/decisions";

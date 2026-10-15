@@ -12,11 +12,30 @@ export const THREAD_KIND_LABEL: Record<ThreadKind, string> = { chat: "Chat", tas
 /** What the sidebar's Undo says after a flip (`showThreadUndoNotice`). */
 export type ThreadKindUndoAction = "Made a chat" | "Made a task";
 
-/** "Made 1 thread a task", "Made 3 threads chats"; null for every other undoable action. */
-export function threadKindUndoText(action: string, count: number): string | null {
-  const kind: ThreadKind | null =
-    action === "Made a task" ? "task" : action === "Made a chat" ? "chat" : null;
-  if (kind === null) return null;
+/** The undoable action a flip to each kind is. */
+export const THREAD_KIND_UNDO_ACTION: Record<ThreadKind, ThreadKindUndoAction> = {
+  chat: "Made a chat",
+  task: "Made a task",
+};
+
+const KIND_BY_UNDO_ACTION: Record<ThreadKindUndoAction, ThreadKind> = {
+  "Made a chat": "chat",
+  "Made a task": "task",
+};
+
+/** What a failed flip to each kind says. */
+export const THREAD_KIND_FLIP_FAILURE: Record<ThreadKind, string> = {
+  chat: "Could not make it a chat",
+  task: "Could not make it a task",
+};
+
+export function isThreadKindUndoAction(action: string): action is ThreadKindUndoAction {
+  return Object.hasOwn(KIND_BY_UNDO_ACTION, action);
+}
+
+/** "Made 1 thread a task", "Made 3 threads chats". */
+export function threadKindUndoText(action: ThreadKindUndoAction, count: number): string {
+  const kind = KIND_BY_UNDO_ACTION[action];
   return count === 1 ? `Made 1 thread a ${kind}` : `Made ${count} threads ${kind}s`;
 }
 
@@ -67,9 +86,11 @@ export function chatArchiveRowLabel(archiveDueAtMs: number | null, nowMs: number
   return countdown.lastDay ? `Archives ${countdown.remaining}` : null;
 }
 
+const LEAVE_LABEL: Record<ThreadKind, "Done" | "Archive"> = { chat: "Archive", task: "Done" };
+
 /** How a thread leaves the list: a task is Done, anything else is archived. Both archive. */
 export function threadLeaveLabel(kind: ThreadKind | null): "Done" | "Archive" {
-  return kind === "task" ? "Done" : "Archive";
+  return kind === null ? "Archive" : LEAVE_LABEL[kind];
 }
 
 const ARCHIVE_CHATS_AFTER_DAYS_CHOICES: ReadonlyArray<number> = [1, 3, 7, 14, 30];

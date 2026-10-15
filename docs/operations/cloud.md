@@ -379,7 +379,7 @@ classified once, before its turn starts, by a semantic decision model: Jev
 (`TYPESAFE_API_KEY`) or OpenAI's Decisions API (`OPENAI_API_KEY`). With both
 keys set, Jev is asked unless `THREAD_KIND_CLASSIFIER=openai`. Without either,
 nothing is classified and every thread stays a task. The call times out after
-3 seconds and its span carries no title or message text. The question is the
+1.5 seconds and its span carries no title or message text. The question is the
 one the classifier benchmark measured, so change it only with a new run.
 
 Idle chats archive themselves on the user object's alarm, which only this

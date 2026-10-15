@@ -43,7 +43,7 @@ export type ThreadKind = typeof ThreadKind.Type;
 
 /** Chats idle this long archive themselves unless the user picks another number. */
 export const DEFAULT_ARCHIVE_CHATS_AFTER_DAYS = 7;
-export const MAX_ARCHIVE_CHATS_AFTER_DAYS = 90;
+const MAX_ARCHIVE_CHATS_AFTER_DAYS = 90;
 
 /** Days a chat stays idle before it archives itself. Null: chats never archive themselves. */
 export const ArchiveChatsAfterDays = Schema.NullOr(
@@ -84,7 +84,7 @@ export const ArchiveChatsAfterDaysSetInput = Schema.Struct({
 export type ArchiveChatsAfterDaysSetInput = typeof ArchiveChatsAfterDaysSetInput.Type;
 
 /** What a thread is without the user's flip: a chat that started real work is a task. */
-export function naturalThreadKind(
+function naturalThreadKind(
   record: Pick<ThreadKindRecord, "classified" | "workStartedAt"> | undefined,
 ): ThreadKind {
   if (record === undefined || record.classified === null) return "task";
@@ -128,6 +128,20 @@ export function chatArchiveDueAtMs(
   days: ArchiveChatsAfterDays,
 ): number | null {
   return days === null ? null : lastChangedAtMs + days * DAY_MS;
+}
+
+/**
+ * Whether a thread waits to archive itself: only a chat that isn't already
+ * archived, pinned or busy with a turn. The sweep and every countdown use it,
+ * so a row never promises an archive the sweep won't make.
+ */
+export function chatWaitsToArchive(input: {
+  readonly kind: ThreadKind;
+  readonly archived: boolean;
+  readonly pinned: boolean;
+  readonly busy: boolean;
+}): boolean {
+  return input.kind === "chat" && !input.archived && !input.pinned && !input.busy;
 }
 
 export class SignalboxThreadKindsUnavailableError extends Schema.TaggedError<SignalboxThreadKindsUnavailableError>()(
