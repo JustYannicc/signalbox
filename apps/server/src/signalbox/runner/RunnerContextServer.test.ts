@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import type { BranchDrive } from "./RunnerBranchTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { startContextServer } from "./RunnerContextServer.ts";
+import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
 
 /**
  * The context server as the harnesses and `rclone mount` reach it: MCP and
@@ -178,7 +179,7 @@ const serve = Effect.gen(function* () {
   const server = yield* startContextServer({ mountPoint: null });
   yield* server.pin(fakeClient(calls));
   yield* server.attachDrive(fakeDrive(calls));
-  const origin = server.mcpUrl.replace(/\/mcp$/, "");
+  const origin = server.mcpServers[CONTEXT_SERVER_NAME]!.replace(/\/mcp$/, "");
   const dav = (method: string, path: string, headers: Record<string, string> = {}) =>
     Effect.promise(async () => {
       const response = await fetch(`${origin}/dav${path}`, { method, headers });
@@ -188,7 +189,7 @@ const serve = Effect.gen(function* () {
   let id = 0;
   const mcp = (method: string, params: unknown) =>
     Effect.promise(async () => {
-      const response = await fetch(server.mcpUrl, {
+      const response = await fetch(server.mcpServers[CONTEXT_SERVER_NAME]!, {
         method: "POST",
         headers: {
           "content-type": "application/json",

@@ -73,7 +73,18 @@ const optionalSecret = (name: string) =>
   Config.Redacted(name).pipe(Config.withDefault(Redacted.make("")));
 
 const drivePacks = (id: string, name: string) =>
-  Cloudflare.R2.Bucket(id, { name, jurisdiction: "eu" }).pipe(
+  Cloudflare.R2.Bucket(id, {
+    name,
+    jurisdiction: "eu",
+    // The rule Cloudflare gives new buckets, as `signalbox-drives` has it. The
+    // stack owns the whole list, so leaving it out would delete it.
+    lifecycleRules: [
+      {
+        id: "Default Multipart Abort Rule",
+        abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 7 * 24 * 60 * 60 } },
+      },
+    ],
+  }).pipe(
     // Shared across stages and full of drives: no stage ever deletes one.
     Alchemy.RemovalPolicy.retain(),
   );
@@ -108,6 +119,11 @@ function workerEnv(target: CloudStage) {
       T3CODE_WORKOS_API_KEY: yield* Config.Redacted("T3CODE_WORKOS_API_KEY"),
       // Optional: Claude and Codex on boat VMs.
       BOAT_API_KEY: yield* optionalSecret("BOAT_API_KEY"),
+      // Optional: pushes to phones (`src/push/`).
+      APNS_TEAM_ID: yield* optionalSecret("APNS_TEAM_ID"),
+      APNS_KEY_ID: yield* optionalSecret("APNS_KEY_ID"),
+      APNS_PRIVATE_KEY: yield* optionalSecret("APNS_PRIVATE_KEY"),
+      FCM_SERVICE_ACCOUNT: yield* optionalSecret("FCM_SERVICE_ACCOUNT"),
     };
     const stageEnv = target.production
       ? {
