@@ -193,6 +193,20 @@ export const layer = McpToolAccess.toLayer(
           ),
         ).pipe(Effect.map((stopped) => ({ stopped }))),
       ),
+      merge_pull_request: McpToolAccess.writes(({ url, note }) =>
+        asCaller((caller) =>
+          Effect.gen(function* () {
+            const thread = yield* callingThread(caller);
+            return yield* engine.requestMerge(
+              { threadId: thread.id, url, note },
+              {
+                authorize: withinLimits(caller.limits),
+                builtInDefaults: yield* callerDefaults(caller, thread.projectId),
+              },
+            );
+          }),
+        ),
+      ),
       automation_set_webhook_secret: McpToolAccess.writes(({ automationId, secretRef }) =>
         asCaller(({ limits }) =>
           Effect.gen(function* () {

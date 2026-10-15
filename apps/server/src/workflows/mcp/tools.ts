@@ -17,7 +17,7 @@ import {
   ValidateResult,
 } from "./summaries.ts";
 import { tool } from "./tool.ts";
-import { ListWaitsTool, StopWaitingTool, WaitForTool } from "./waitTools.ts";
+import { ListWaitsTool, MergePullRequestTool, StopWaitingTool, WaitForTool } from "./waitTools.ts";
 
 /**
  * Agent tools for automations. Each handler calls one engine method (see
@@ -235,4 +235,5 @@ export const AutomationToolkit = Toolkit.make(
   WaitForTool,
   ListWaitsTool,
   StopWaitingTool,
+  MergePullRequestTool,
 );

@@ -138,7 +138,10 @@ function workerEnv(target: CloudStage) {
           // Optional: membership changes from WorkOS at once.
           T3CODE_WORKOS_WEBHOOK_SECRET: yield* optionalSecret("T3CODE_WORKOS_WEBHOOK_SECRET"),
         }
-      : {};
+      : {
+          // A preview's own Runner image (deploy-cloud.yml's `runner_image`); empty means `nightly`.
+          RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
+        };
 
     return { ...target.vars, ...shared, ...stageEnv };
   });
