@@ -14,6 +14,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { contextAllows } from "../drive/driveAccess.ts";
 import * as Environment from "../environment.ts";
+import * as PushNotifier from "../push/PushNotifier.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 import { contextProjects } from "./contextProjects.ts";
@@ -24,7 +25,8 @@ import * as UserStore from "./UserStore.ts";
 /**
  * A user's sidebar, served from their object's thread index: the snapshot
  * `GET /api/orchestration/shell` and `subscribeShell` start from, and the
- * `thread.updated` items that follow as thread objects deliver summaries.
+ * `thread.updated` items that follow as thread objects deliver summaries,
+ * each of which may also push to the user's phones (`PushNotifier`).
  * Its projects are the drives of the user's contexts (see `contextProjects`);
  * when those change, open subscriptions get a fresh snapshot. Threads of a
  * context the user has left stay indexed but out of sight.
@@ -61,6 +63,9 @@ const make = Effect.gen(function* () {
   const driveIndex = yield* UserDriveIndex.UserDriveIndex;
   const { contextIds } = contexts;
   const directory = yield* ThreadDirectory.ThreadDirectory;
+  const pushes = yield* PushNotifier.PushNotifier;
+  // Pushes outlive the delivery that caused them, so a slow APNs never holds up the thread.
+  const scope = yield* Effect.scope;
   // Thread updates and project changes share one queue, so a subscriber sees
   // them in the order they happened.
   const updates = yield* PubSub.unbounded<ShellUpdate>();
@@ -113,9 +118,13 @@ const make = Effect.gen(function* () {
   /** Indexes the summary; open sidebars hear of it only while its context is the user's. */
   const record = (summary: ThreadSummary) =>
     Effect.gen(function* () {
-      const sequence = yield* store.recordThreadSummary(summary);
-      if (sequence === null || !contextAllows(yield* contextIds, summary.contextId)) return;
-      yield* publish(summary, sequence);
+      const written = yield* store.recordThreadSummary(summary);
+      if (written === null || !contextAllows(yield* contextIds, summary.contextId)) return;
+      yield* publish(summary, written.sequence);
+      yield* Effect.forkIn(
+        pushes.threadChanged({ previous: written.previous, next: summary.shell }),
+        scope,
+      );
     });
 
   const subscribe: UserShell["Service"]["subscribe"] = (input) =>
