@@ -602,6 +602,28 @@
       "output": "feaaef60"
     },
     {
+      "name": "keys.create",
+      "rpc": "signalbox.keys.create",
+      "access": "write",
+      "humanOnly": true,
+      "input": "5cb5d0a6",
+      "output": "0c7367c0"
+    },
+    {
+      "name": "keys.list",
+      "rpc": "signalbox.keys.list",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "2e0ff267"
+    },
+    {
+      "name": "keys.revoke",
+      "rpc": "signalbox.keys.revoke",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "2e0ff267"
+    },
+    {
       "name": "pools.addApiKey",
       "rpc": "accountPool.addApiKey",
       "access": "write",

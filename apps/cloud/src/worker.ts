@@ -20,6 +20,7 @@ import {
 } from "./previewSetup/previewCleanup.ts";
 import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
+import { isApiPath } from "./api/apiPaths.ts";
 
 export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
 export { PreviewLinkRegistry } from "./pool/PreviewLinkRegistryDO.ts";
@@ -95,6 +96,7 @@ export default {
             { localWorkerd },
           );
     }
+    if (isApiPath(pathname)) return app.api(request);
     if (isDevProxiedPath(pathname)) return app.http(request);
     return env.ASSETS.fetch(request);
   },
