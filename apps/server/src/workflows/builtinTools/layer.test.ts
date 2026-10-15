@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
+import { PullRequestOperationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -20,6 +21,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as PullRequestReviewGuideService from "../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -125,3 +127,104 @@ it.effect("hands the engine Signalbox's MCP handlers, calling as a thread-less c
     expect(listed).toEqual(created);
   }).pipe(Effect.scoped);
 });
+
+it.effect(
+  "pull_request_action is an automation step: it acts on the thread's project's pull request",
+  () => {
+    let registered: BuiltinToolHandler | undefined;
+    const ran: unknown[] = [];
+    let refuse = false;
+    const engine = Layer.mock(WorkflowEngine)({
+      validate: () => ({ ok: true, graph: { nodes: [] } }),
+      registerBuiltinTools: (handler) =>
+        Effect.sync(() => {
+          registered = handler;
+        }),
+      // A pull request service is here, so its reads register too.
+      registerPullRequestReads: () => Effect.void,
+    });
+    const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+      getThreadShell: (() =>
+        Effect.succeed({
+          id: "thread-9",
+          projectId: "project-1",
+          deletedAt: null,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          pullRequests: [
+            {
+              host: "github.com",
+              repository: "acme/app",
+              number: 12,
+              url: "https://github.com/acme/app/pull/12",
+              source: "agent",
+              snapshot: null,
+            },
+          ],
+        })) as never,
+    });
+    const pullRequests = Layer.mock(PullRequestService.PullRequestService)({
+      runAction: (input) =>
+        refuse
+          ? Effect.fail(
+              new PullRequestOperationError({
+                operation: "runAction",
+                detail: "already merged",
+              }),
+            )
+          : Effect.sync(() => {
+              ran.push(input);
+            }),
+      detail: () => Effect.succeed({ state: "merged" } as never),
+    });
+    return Effect.gen(function* () {
+      yield* Layer.build(
+        BuiltinTools.layer.pipe(
+          Layer.provide(Layer.mergeAll(stubs, engine, NodeServices.layer, threads, pullRequests)),
+        ),
+      );
+      const call = (args: Record<string, unknown>) =>
+        registered!.call({
+          tool: "pull_request_action",
+          args: { threadId: "thread-9", url: "https://github.com/acme/app/pull/12", ...args },
+          automationId: "automation-1",
+          automationName: "Merge gate",
+          runtimeMode: "full-access",
+          requestKey: "run-1/s2",
+        });
+      expect(yield* call({ action: "merge", mergeMethod: "squash" })).toEqual({ state: "merged" });
+      expect(yield* call({ action: "delete-branch" })).toEqual({ state: "merged" });
+      expect(ran).toEqual([
+        {
+          projectId: "project-1",
+          host: "github.com",
+          repository: "acme/app",
+          number: 12,
+          action: "merge",
+          mergeMethod: "squash",
+        },
+        {
+          projectId: "project-1",
+          host: "github.com",
+          repository: "acme/app",
+          number: 12,
+          action: "delete-branch",
+        },
+      ]);
+      const bad = yield* Effect.flip(
+        call({ url: "not a url", action: "merge" }).pipe(Effect.asVoid),
+      );
+      expect(bad.message).toContain("isn't a pull request URL");
+      // A merge step that runs again finds the host already merged it: that's done, not failed.
+      refuse = true;
+      expect(yield* call({ action: "merge" })).toEqual({ state: "merged" });
+      const closeAgain = yield* Effect.flip(call({ action: "close" }).pipe(Effect.asVoid));
+      expect(closeAgain.message).toContain("The host refused to close it");
+      refuse = false;
+      const unlinked = yield* Effect.flip(
+        call({ url: "https://github.com/acme/app/pull/13", action: "merge" }).pipe(Effect.asVoid),
+      );
+      expect(unlinked.message).toContain("isn't linked to this thread");
+    }).pipe(Effect.scoped);
+  },
+);

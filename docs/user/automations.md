@@ -76,6 +76,11 @@ tomorrow morning, and it ends its turn instead of sitting there polling. The thr
 keeps waking it on failed checks, other people's comments and reviews, and conflicts until it
 merges.
 
+When the work is done, the agent asks to merge instead of merging. You get a needs-you, "Merge
+pull request #12?": **merge** merges it and deletes its branch, **not yet** sends the agent your
+reason. To have a project merge on its own when checks pass, customize the built-in **Merge gate**
+there.
+
 **Thread details → Waiting on** lists what the thread waits for. Open a row to see the run behind
 it, or stop it there. Settling, archiving or stopping the thread ends its waits too. Each wait is a
 built-in automation ("Wait for", "Watch pull request"), so you can customize how it behaves in a

@@ -414,7 +414,12 @@ export const fakeTools = (answers: Record<string, unknown> = {}) => {
   return {
     calls,
     handler: {
-      tools: ["link_pull_request", "list_thread_pull_requests", "t3_thread_send"],
+      tools: [
+        "link_pull_request",
+        "list_thread_pull_requests",
+        "pull_request_action",
+        "t3_thread_send",
+      ],
       call: (input: BuiltinToolCall) =>
         Effect.suspend(() => {
           calls.push(input);

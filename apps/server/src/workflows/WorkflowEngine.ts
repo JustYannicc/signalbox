@@ -121,6 +121,7 @@ export interface WorkflowEngineShape extends CatalogShape {
   readonly listWaits: Waits["list"];
   readonly stopWait: Waits["stop"];
   readonly watchPullRequest: Waits["watchPullRequest"];
+  readonly requestMerge: Waits["requestMerge"];
   /** The MCP server hands over Signalbox's tools for `w.call("…", "signalbox.<tool>")`. */
   readonly registerBuiltinTools: (handler: BuiltinToolHandler) => Effect.Effect<void>;
   /** The server registers pull request reads once its pull request service exists. */
@@ -883,6 +884,7 @@ const make = Effect.gen(function* () {
   const builtIns = makeBuiltIns({ store, hosts, catalog, changed, requireAutomation });
   const waits = makeWaits({
     store,
+    threads,
     links,
     attachments,
     newId,
@@ -992,6 +994,7 @@ const make = Effect.gen(function* () {
     listWaits: waits.list,
     stopWait: waits.stop,
     watchPullRequest: waits.watchPullRequest,
+    requestMerge: waits.requestMerge,
     registerBuiltinTools: builtinTools.register,
     registerPullRequestReads: (reads) =>
       Effect.sync(() => {
