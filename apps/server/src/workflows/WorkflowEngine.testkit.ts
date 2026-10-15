@@ -12,6 +12,7 @@ import {
   type AutomationSaveResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -35,6 +36,8 @@ import type {
   WebhookTriggerResult,
 } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import type { BuiltinToolCall } from "./builtinTools/runner.ts";
+import { automationError } from "./errors.ts";
 import { fromJson, toJson } from "./json.ts";
 import { WorkflowEngine, layer as engineLayer } from "./WorkflowEngine.ts";
 
@@ -349,3 +352,85 @@ export const acceptedRun = (result: WebhookTriggerResult) =>
         duplicate: result.outcome === "duplicate",
       })
     : Effect.die(new Error(`The webhook wasn't accepted: ${result._tag}`));
+
+const SYNCED_AT = DateTime.makeUnsafe("2026-10-06T10:00:00.000Z");
+let sequence = 0;
+
+/** A thread's pull request sync, as upstream's sync reactor announces it. */
+export const pullRequestSynced = (
+  threadId: string,
+  snapshot: { state: string; checksState?: string; mergeability?: string; updatedAt?: string },
+) => ({
+  id: `pr-sync-${++sequence}`,
+  type: "thread.pull-request-synced",
+  threadId,
+  occurredAt: SYNCED_AT,
+  payload: {
+    id: threadId,
+    projectId: PROJECT,
+    title: "Fix login",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-6-astra" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: "fix-login",
+    worktreePath: null,
+    branchPullRequest: null,
+    pullRequests: [
+      {
+        host: "github.com",
+        repository: "acme/app",
+        number: 12,
+        url: "https://github.com/acme/app/pull/12",
+        source: "agent",
+        linkedAt: "2026-10-06T09:00:00.000Z",
+        stack: null,
+        snapshot: {
+          title: "Fix login",
+          headBranch: "fix-login",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          // Each sync is its own fact.
+          syncedAt: `2026-10-06T10:00:${String(sequence).padStart(2, "0")}.000Z`,
+          ...snapshot,
+        },
+      },
+    ],
+  },
+});
+
+export const threadEvent = (type: string, threadId: string) => ({
+  id: `thread-event-${++sequence}`,
+  type,
+  threadId,
+  occurredAt: SYNCED_AT,
+  payload: { id: threadId, projectId: PROJECT },
+});
+
+/** Records `signalbox.*` calls instead of running Signalbox's MCP handlers. */
+export const fakeTools = (answers: Record<string, unknown> = {}) => {
+  const calls: BuiltinToolCall[] = [];
+  return {
+    calls,
+    handler: {
+      tools: ["link_pull_request", "list_thread_pull_requests", "t3_thread_send"],
+      call: (input: BuiltinToolCall) =>
+        Effect.suspend(() => {
+          calls.push(input);
+          return input.tool in answers
+            ? Effect.succeed(answers[input.tool])
+            : Effect.fail(automationError("no answer"));
+        }),
+    },
+  };
+};
+
+/** The background tasks a thread's shell lists, as the attached runs' monitors put them there. */
+export const monitorsOf = (threadId: string) =>
+  derivePendingBackgroundWork({
+    latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+    providerThreads: [],
+    turnItems: [],
+    threadId,
+  });

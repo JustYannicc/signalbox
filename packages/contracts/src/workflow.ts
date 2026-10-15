@@ -140,6 +140,7 @@ export const WorkflowStepVerb = Schema.Literals([
   "notify",
   "sleep",
   "waitFor",
+  "hook",
   "recall",
   "remember",
   "start",

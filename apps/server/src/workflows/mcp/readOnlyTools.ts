@@ -9,4 +9,5 @@ export const AUTOMATION_READ_ONLY_TOOLS = [
   "automation_list",
   "automation_read",
   "automation_run_read",
+  "list_waits",
 ] as const;
