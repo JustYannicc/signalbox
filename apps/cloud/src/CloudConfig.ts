@@ -41,17 +41,26 @@ export class CloudConfig extends Context.Service<
   }
 >()("@signalbox/cloud/CloudConfig") {}
 
-const make = Effect.gen(function* () {
-  const environmentId = yield* Config.schema(EnvironmentId, "ENVIRONMENT_ID");
-  const label = yield* Config.String("ENVIRONMENT_LABEL").pipe(
-    Config.withDefault(DEFAULT_ENVIRONMENT_LABEL),
-  );
+/**
+ * `SESSION_SECRET` on its own, for user objects, which sign with it
+ * (`CloudTokens.layerSessionSecret`) but have no use for the rest.
+ */
+export const readSessionSecret = Effect.gen(function* () {
   const sessionSecret = yield* Config.Redacted("SESSION_SECRET");
   if (Redacted.value(sessionSecret).length < MIN_SECRET_LENGTH) {
     return yield* Effect.die(
       new Error(`SESSION_SECRET must be at least ${MIN_SECRET_LENGTH} characters`),
     );
   }
+  return sessionSecret;
+});
+
+const make = Effect.gen(function* () {
+  const environmentId = yield* Config.schema(EnvironmentId, "ENVIRONMENT_ID");
+  const label = yield* Config.String("ENVIRONMENT_LABEL").pipe(
+    Config.withDefault(DEFAULT_ENVIRONMENT_LABEL),
+  );
+  const sessionSecret = yield* readSessionSecret;
   const accounts = yield* AccountConfig.read;
   if (!accounts) {
     return yield* Effect.die(new Error("T3CODE_WORKOS_CLIENT_ID is required for the cloud"));

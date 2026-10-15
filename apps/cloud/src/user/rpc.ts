@@ -56,6 +56,7 @@ import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type { SqlError } from "effect/sql/SqlError";
 
+import * as CloudAssets from "../assets/CloudAssets.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
@@ -103,6 +104,8 @@ const SERVED = [
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+  // Images tools returned in a thread (`assets/CloudAssets.ts`).
+  WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
   // Drives, browsed without a machine (`driveBrowsing.ts`).
   WS_METHODS.projectsListEntries,
@@ -156,6 +159,8 @@ const REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  // A cloud serves only tool output images, which a self-hosted server gates on this scope.
+  [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
@@ -277,6 +282,7 @@ export const layerHandlers = (input: {
     Effect.gen(function* () {
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
+      const assets = yield* CloudAssets.CloudAssets;
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
@@ -410,6 +416,8 @@ export const layerHandlers = (input: {
             (message) =>
               new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message }),
           ),
+        [WS_METHODS.assetsCreateUrl]: ({ resource }) =>
+          Effect.flatMap(actorNow, (actor) => assets.createUrl(actor, resource)),
         // Scratch is the Personal context's project, always in the shell.
         [WS_METHODS.projectsEnsureScratch]: () =>
           Effect.succeed({ projectId: Environment.SCRATCH_PROJECT_ID }),

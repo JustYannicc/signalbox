@@ -14,6 +14,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -174,6 +175,12 @@ export const layerThreadObject = (
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
 
+/** A user object's signing keys, as `UserObject` reads them. */
+const layerUserObjectTokens = CloudTokens.layerSessionSecret.pipe(
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: CLOUD_TEST_ENV }))),
+  Layer.orDie,
+);
+
 /** GitHub with no App and no network, for tests that never reach it. */
 const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.layer));
 
@@ -187,7 +194,7 @@ const makeUserRuntime = (
 ) =>
   ManagedRuntime.make(
     // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer).pipe(
+    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           UserShell.layer,
@@ -209,6 +216,7 @@ const makeUserRuntime = (
           Layer.succeed(UserDirectory.UserDirectory, users),
           Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
           Layer.succeed(PoolDirectory.PoolDirectory, pools),
+          layerUserObjectTokens,
         ),
       ),
     ),

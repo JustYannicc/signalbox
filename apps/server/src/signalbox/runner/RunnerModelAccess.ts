@@ -93,11 +93,14 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 /** A TOML basic string. */
 const tomlString = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 
+/** The Runner's loopback MCP servers, by the name the harnesses know each as. */
+export type RunnerMcpServers = Readonly<Record<string, string>>;
+
 /**
  * Codex's model provider: the gateway's OpenAI endpoint, with the turn's token
- * as bearer; and the Runner's context server, when there is one.
+ * as bearer; and the Runner's MCP servers.
  */
-const codexConfig = (layout: MachineLayout, gatewayUrl: string, contextMcpUrl: string | null) =>
+const codexConfig = (layout: MachineLayout, gatewayUrl: string, mcpServers: RunnerMcpServers) =>
   [
     'model_provider = "signalbox"',
     `project_root_markers = [${tomlString(ROOT_MARKER)}]`,
@@ -114,9 +117,11 @@ const codexConfig = (layout: MachineLayout, gatewayUrl: string, contextMcpUrl: s
     'command = "cat"',
     `args = [${tomlString(layout.tokenFile)}]`,
     "",
-    ...(contextMcpUrl === null
-      ? []
-      : ["[mcp_servers.signalbox]", `url = ${tomlString(contextMcpUrl)}`, ""]),
+    ...Object.entries(mcpServers).flatMap(([name, url]) => [
+      `[mcp_servers.${tomlString(name)}]`,
+      `url = ${tomlString(url)}`,
+      "",
+    ]),
   ].join("\n");
 
 export const claudeSettings = (base: ClaudeSettings, layout: MachineLayout): ClaudeSettings => ({
@@ -147,13 +152,13 @@ const encodeClaudeUserSettings = Schema.encodeEffect(ClaudeUserSettingsJson);
 
 /**
  * Creates the machine's directories, Claude's `apiKeyHelper` and Codex's model
- * provider, and points Codex at the context server (#141). Claude gets the
- * context server per query (`withContextServer`).
+ * provider, and points Codex at the Runner's MCP servers: the context server
+ * (#141) and the browser (#402). Claude gets them per query (`withContextServer`).
  */
 export const prepareMachine = Effect.fn("prepareMachine")(function* (
   layout: MachineLayout,
   gatewayUrl: string,
-  contextMcpUrl: string | null = null,
+  mcpServers: RunnerMcpServers = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -170,7 +175,7 @@ export const prepareMachine = Effect.fn("prepareMachine")(function* (
   yield* fs.writeFileString(path.join(layout.claudeHome, "settings.json"), settings);
   yield* fs.writeFileString(
     path.join(layout.codexHome, "config.toml"),
-    codexConfig(layout, gatewayUrl, contextMcpUrl),
+    codexConfig(layout, gatewayUrl, mcpServers),
   );
   yield* writeModelToken(layout, "");
 });
