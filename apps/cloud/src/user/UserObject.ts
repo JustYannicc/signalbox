@@ -37,6 +37,7 @@ import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
+import * as KindClassifier from "../threadKinds/KindClassifier.ts";
 import { ClientSockets, PING, PONG } from "./clientSockets.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import {
@@ -59,6 +60,8 @@ import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as ChatArchive from "./chatArchive.ts";
 
 /**
  * One per WorkOS user, named by their user id, always in the EU jurisdiction.
@@ -71,7 +74,8 @@ import * as UserStore from "./UserStore.ts";
  * are only connected leaves memory and costs nothing until something happens.
  */
 
-export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv {
+export interface UserObjectEnv
+  extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv, KindClassifier.KindClassifierEnv {
   /**
    * Drives' objects and packs: clients browse and share them through this
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
@@ -127,6 +131,24 @@ const layerDrives = (env: UserObjectEnv) => {
   };
 };
 
+/**
+ * Makes the object's alarm go off no later than `atMs`. The idle-chat sweep
+ * (`chatArchive.ts`) and client sockets' session expiry share it, and each
+ * treats an early alarm as nothing to do yet.
+ */
+const armBy = async (storage: DurableObjectStorage, atMs: number) => {
+  const current = await storage.getAlarm();
+  if (current === null || current > atMs) await storage.setAlarm(atMs);
+};
+
+const layerAlarm = (storage: DurableObjectStorage) =>
+  Layer.succeed(
+    ChatArchive.ChatArchiveAlarm,
+    ChatArchive.ChatArchiveAlarm.of({
+      armBy: (atMs) => Effect.promise(() => armBy(storage, atMs)),
+    }),
+  );
+
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
@@ -148,16 +170,22 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         Layer.mergeAll(
           ThreadContexts.layer,
           UserPools.layer,
+          UserThreadKinds.layerTurns,
           // Pasted screenshots and files, signed with the same keys as asset URLs.
           CloudAttachments.layer(attachmentStorage(env)),
         ),
       ),
+      Layer.provideMerge(UserThreadKinds.layer),
       Layer.provideMerge(
-        PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              FetchHttpClient.layer,
-              ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+        Layer.mergeAll(
+          KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+          layerAlarm(storage),
+          PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                FetchHttpClient.layer,
+                ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+              ),
             ),
           ),
         ),
@@ -231,10 +259,19 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     });
     // Client keepalives are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
-    // Serves sockets that outlived the object's memory before anything else runs.
     void ctx.blockConcurrencyWhile(async () => {
       await this.runtime.runPromise(UserStore.migrate);
+      // Serves sockets that outlived the object's memory before anything else runs.
       await this.sockets.restore(await this.now());
+      // An alarm lost to a crash between sweeps is set again; one that's set is enough.
+      if ((await ctx.storage.getAlarm()) !== null) return;
+      await this.runtime.runPromise(
+        UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("arming the idle-chat sweep failed", { cause }),
+          ),
+        ),
+      );
     });
   }
 
@@ -397,6 +434,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.publishBranch(input);
   }
 
+  sweepThreadKinds(asOfMs: number) {
+    return this.api.sweepThreadKinds(asOfMs);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const apiCredential = decodeApiCredential(request.headers.get(API_HEADER));
     if (apiCredential._tag === "Some") {
@@ -431,9 +472,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     await this.sockets.accept(server, session, profile.id);
     // The alarm disconnects it when its session expires.
-    const alarm = await this.ctx.storage.getAlarm();
-    if (alarm === null || alarm > session.expiresAt)
-      await this.ctx.storage.setAlarm(session.expiresAt);
+    await armBy(this.ctx.storage, session.expiresAt);
     // A revoke that landed while the socket was being set up missed it.
     if (!(await this.findSession(sid))) await this.sockets.revoke(sid);
     return new Response(null, { status: 101, webSocket: client });
@@ -451,9 +490,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     await this.sockets.closed(socket);
   }
 
-  /** Only client sockets' session expiry sets the alarm. */
+  /** Idle chats archive themselves (`UserThreadKinds`), and expired sessions' sockets close. */
   override async alarm() {
     const next = await this.sockets.expire(await this.now());
-    if (next !== null) await this.ctx.storage.setAlarm(next);
+    if (next !== null) await armBy(this.ctx.storage, next);
+    await this.runtime.runPromise(UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm));
   }
 }

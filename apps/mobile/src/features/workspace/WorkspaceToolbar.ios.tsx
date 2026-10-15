@@ -10,6 +10,7 @@ import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-con
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
+import { useWorkspaceSectionsToggle } from "../sections/WorkspaceSectionsToggle"; // signalbox: sections
 
 /** Root actions stay in the header; UIKit owns the bottom compose button. */
 export function WorkspaceToolbar(props: {
@@ -27,6 +28,7 @@ export function WorkspaceToolbar(props: {
   const searchRef = useRef<SearchBarCommands>(null);
   const tab = workspace.state.tabs[workspace.state.selectedTab];
   const selectedTab = workspace.state.selectedTab;
+  const sectionsToggle = useWorkspaceSectionsToggle(selectedTab); // signalbox: sections
   const enterSearch = useCallback(() => {
     workspace.dispatch({
       type: "scroll",
@@ -112,6 +114,7 @@ export function WorkspaceToolbar(props: {
             })
           }
         />
+        {sectionsToggle.header}
         {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
           <NativeHeaderToolbar.Button
             accessibilityLabel={
@@ -123,6 +126,7 @@ export function WorkspaceToolbar(props: {
         )}
       </NativeHeaderToolbar>
       <NativeHeaderToolbar placement="bottom">
+        {sectionsToggle.toolbar}
         {nativeToolbarCompose ? <NativeHeaderToolbar.Spacer flexible /> : null}
         {nativeToolbarCompose ? (
           <NativeHeaderToolbar.Button

@@ -279,6 +279,10 @@
       "types": "./src/state/signalboxPreviews.ts",
       "default": "./src/state/signalboxPreviews.ts"
     },
+    "./state/signalboxThreadKinds": {
+      "types": "./src/state/signalboxThreadKinds.ts",
+      "default": "./src/state/signalboxThreadKinds.ts"
+    },
     "./state/signalboxPush": {
       "types": "./src/state/signalboxPush.ts",
       "default": "./src/state/signalboxPush.ts"

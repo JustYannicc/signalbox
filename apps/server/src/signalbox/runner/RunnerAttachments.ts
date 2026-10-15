@@ -19,7 +19,9 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
  * session points at, not just the turn's own.
  *
  * Only the turn's own attachments must arrive: an earlier one that is gone is
- * logged and skipped, so it never stops the thread from working.
+ * logged and skipped, so it never stops the thread from working. A request
+ * that stalls is given up on after `STALL` and retried twice, so a turn whose
+ * own file can't arrive fails saying which, instead of hanging.
  */
 
 export class RunnerAttachmentsError extends Schema.TaggedError<RunnerAttachmentsError>()(
@@ -35,8 +37,12 @@ export interface RunnerAttachments {
   ) => Effect.Effect<void, RunnerAttachmentsError>;
 }
 
+/** How long a request may wait for its answer, or a download for its next bytes. */
+const STALL = "30 seconds";
+const LISTING = "listing the files";
+
 const RETRY = {
-  times: 4,
+  times: 2,
   schedule: Schedule.exponential("250 millis"),
   while: (error: RunnerAttachmentsError) => error.retryable,
 };
@@ -54,6 +60,10 @@ export const makeRunnerAttachments = Effect.fn("makeRunnerAttachments")(function
 
   const failure = (label: string, retryable: boolean) => (error: { readonly message: string }) =>
     new RunnerAttachmentsError({ message: `${label}: ${error.message}`, retryable });
+  const stalled = (label: string) =>
+    new RunnerAttachmentsError({ message: `${label} stalled for ${STALL}`, retryable: true });
+  const withinStall = (label: string) =>
+    Effect.timeoutOrElse({ duration: STALL, orElse: () => Effect.fail(stalled(label)) });
 
   /** Runs `use` on a 2xx answer to an authorized GET, retrying network failures and 5xx. */
   const get = <A>(
@@ -76,18 +86,22 @@ export const makeRunnerAttachments = Effect.fn("makeRunnerAttachments")(function
           retryable: response.status >= 500 || response.status === 429,
         });
       }
-      return yield* use(response);
-    }).pipe(Effect.retry(RETRY));
+      return response;
+    }).pipe(withinStall(label), Effect.flatMap(use), Effect.retry(RETRY));
 
   /** Streams `attachment` to `target` through a staged file, checking its size before it lands. */
   const download = (attachment: ChatAttachment, target: string, token: string) => {
     const staged = `${target}.download`;
-    const label = `downloading attachment ${attachment.id}`;
+    const label = "the download";
     return get(`${origin}${SESSION_PATHS.attachments}/${attachment.id}`, token, label, (response) =>
-      Stream.run(response.stream, fs.sink(staged)).pipe(
-        Effect.mapError(failure(label, true)),
+      response.stream.pipe(
+        Stream.mapError(failure(label, true)),
+        Stream.timeoutOrElse({ duration: STALL, orElse: () => Stream.fail(stalled(label)) }),
+        Stream.run(fs.sink(staged)),
         Effect.andThen(fs.stat(staged)),
-        Effect.mapError(failure(label, true)),
+        Effect.catchTags({
+          PlatformError: (error) => Effect.fail(failure(label, false)(error)),
+        }),
         Effect.flatMap((info) =>
           Number(info.size) === attachment.sizeBytes
             ? fs.rename(staged, target).pipe(Effect.mapError(failure(label, false)))
@@ -102,34 +116,62 @@ export const makeRunnerAttachments = Effect.fn("makeRunnerAttachments")(function
     ).pipe(Effect.ensuring(fs.remove(staged, { force: true }).pipe(Effect.ignore)));
   };
 
+  /** The turn's failure for `files` that couldn't arrive: it names them, as the thread shows it. */
+  const notArrived = (files: ReadonlyArray<ChatAttachment>, error: RunnerAttachmentsError) =>
+    new RunnerAttachmentsError({
+      ...(error.status === undefined ? {} : { status: error.status }),
+      retryable: error.retryable,
+      message: `Signalbox couldn't get ${files.map((file) => `"${file.name}"`).join(", ")} onto this thread's machine: ${error.message}`,
+    });
+
   const bring: RunnerAttachments["bring"] = (token, required) =>
     Effect.gen(function* () {
-      const { attachments } = yield* get(
+      const listed = yield* get(
         `${origin}${SESSION_PATHS.attachments}`,
         token,
-        "listing attachments",
+        LISTING,
         (response) =>
           response.text.pipe(
-            Effect.mapError(failure("listing attachments", true)),
+            Effect.mapError(failure(LISTING, true)),
+            withinStall(LISTING),
             Effect.flatMap((text) =>
               Effect.try({
                 try: () => sessionJson.attachments.decode(text),
                 catch: () =>
                   new RunnerAttachmentsError({
-                    message: "The thread sent a malformed attachment list.",
+                    message: "the thread sent a malformed attachment list",
                     retryable: false,
                   }),
               }),
             ),
           ),
+      ).pipe(
+        Effect.map(({ attachments }) => attachments),
+        // A thread out of reach never stops a turn for earlier files alone; one that
+        // refuses still does, and the turn's own files can't arrive without the list.
+        Effect.catchTags({
+          RunnerAttachmentsError: (error) =>
+            required.length > 0
+              ? Effect.fail(notArrived(required, error))
+              : !error.retryable
+                ? Effect.fail(error)
+                : Effect.logWarning("the thread's attachments could not be listed", {
+                    error: error.message,
+                  }).pipe(Effect.as([])),
+        }),
       );
-      if (attachments.length === 0) return;
+      if (listed.length === 0) return;
       const mustArrive = new Set(required.map((attachment) => attachment.id));
+      // The turn's own first, so earlier files that stall never queue ahead of them.
+      const ordered = [
+        ...listed.filter((attachment) => mustArrive.has(attachment.id)),
+        ...listed.filter((attachment) => !mustArrive.has(attachment.id)),
+      ];
       yield* fs
         .makeDirectory(attachmentsDir, { recursive: true })
         .pipe(Effect.mapError(failure("attachments dir", false)));
       yield* Effect.forEach(
-        attachments,
+        ordered,
         (attachment) =>
           Effect.gen(function* () {
             const target = resolveAttachmentPath({ attachmentsDir, attachment });
@@ -139,7 +181,7 @@ export const makeRunnerAttachments = Effect.fn("makeRunnerAttachments")(function
               Effect.catchTags({
                 RunnerAttachmentsError: (error) =>
                   mustArrive.has(attachment.id)
-                    ? Effect.fail(error)
+                    ? Effect.fail(notArrived([attachment], error))
                     : Effect.logWarning("an earlier attachment did not arrive", {
                         attachmentId: attachment.id,
                         error: error.message,

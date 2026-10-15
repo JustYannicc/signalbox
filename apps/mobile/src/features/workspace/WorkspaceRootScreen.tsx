@@ -26,6 +26,7 @@ import { WorkspaceToolbar } from "./WorkspaceToolbar";
 import { WORKSPACE_DOCK, workspaceToolbarHeight } from "./workspace-tabs-state";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useSidebarWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
+import { useWorkspaceSectionsTitleInset } from "../sections/WorkspaceSectionsToggle"; // signalbox: sections
 
 const TAB_TITLES = {
   threads: "Threads",
@@ -70,10 +71,11 @@ function WorkspaceRootContent() {
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const workspace = useWorkspaceTabs()!;
   const { state } = workspace;
+  const sectionsTitleInset = useWorkspaceSectionsTitleInset(state.selectedTab); // signalbox: sections
   const renderHeaderTitle = useCallback(
     () => (
       <WorkspaceRootTitle
-        maxWidth={Math.max(0, width - 160)}
+        maxWidth={Math.max(0, width - 160 - sectionsTitleInset)} // signalbox: sections
         onOpenEnvironments={() =>
           navigation.navigate("SettingsSheet", {
             screen: "SettingsContent",
@@ -82,7 +84,7 @@ function WorkspaceRootContent() {
         }
       />
     ),
-    [width, navigation],
+    [width, navigation, sectionsTitleInset],
   );
   const tab = state.tabs[state.selectedTab];
   const bottomClearance =
@@ -104,7 +106,13 @@ function WorkspaceRootContent() {
       >
         {Platform.OS === "ios" ? (
           <NativeStackScreenOptions
-            optionsVersion={[state.selectedTab, state.selectionRevision, width, sidebarNavigation]}
+            optionsVersion={[
+              state.selectedTab,
+              state.selectionRevision,
+              width,
+              sidebarNavigation,
+              sectionsTitleInset, // signalbox: sections
+            ]}
             options={{
               title: TAB_TITLES[state.selectedTab],
               headerShown: true,

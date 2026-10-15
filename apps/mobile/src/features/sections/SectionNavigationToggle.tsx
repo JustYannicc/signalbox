@@ -1,10 +1,5 @@
-import { useLayoutEffect } from "react";
-import { useNavigation, type ParamListBase } from "@react-navigation/native";
-import type {
-  NativeStackHeaderItem,
-  NativeStackNavigationProp,
-} from "@react-navigation/native-stack";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
+import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { AndroidHeaderIconButton } from "../../components/AndroidScreenHeader";
 import { ControlPill } from "../../components/ControlPill";
 import type { AppSymbolName } from "../../components/AppSymbol";
@@ -14,7 +9,7 @@ function sectionToggleLabel(open: boolean): string {
   return open ? "Hide sections" : "Browse sections";
 }
 
-function sectionToggleSfSymbol(open: boolean): "folder.fill" | "folder" {
+export function sectionToggleSfSymbol(open: boolean): "folder.fill" | "folder" {
   return open ? "folder.fill" : "folder";
 }
 
@@ -74,33 +69,4 @@ export function createSectionNavigationHeaderItem(input: {
     onPress: input.onPress,
     ...(input.identifier === undefined ? {} : { identifier: input.identifier }),
   });
-}
-
-/**
- * The iOS workspace root leaves Home's header right slot empty, so the sections
- * toggle sits there while the Threads tab is showing and clears it on the way out.
- */
-export function WorkspaceSectionsHeaderItem(props: {
-  readonly open: boolean;
-  readonly onPress: () => void;
-}) {
-  const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
-  useLayoutEffect(
-    () => () => navigation.setOptions({ unstable_headerRightItems: () => [] }),
-    [navigation],
-  );
-  return (
-    <NativeStackScreenOptions
-      optionsVersion={props.open}
-      options={{
-        unstable_headerRightItems: () => [
-          createSectionNavigationHeaderItem({
-            open: props.open,
-            onPress: props.onPress,
-            identifier: "home-sections",
-          }),
-        ],
-      }}
-    />
-  );
 }

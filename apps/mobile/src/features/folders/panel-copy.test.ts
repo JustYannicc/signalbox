@@ -4,13 +4,17 @@ import { navigationPanelCopy } from "./panel-copy";
 
 describe("the navigation panel's name", () => {
   it("keeps the sections wording where no environment has folders", () => {
-    expect(navigationPanelCopy({ withFolders: 0, total: 2 }).title).toBe("Sections");
+    expect(navigationPanelCopy({ withFolders: 0, total: 2 })).toMatchObject({
+      title: "Sections",
+      show: "Browse sections",
+    });
   });
 
   it("says folders where every environment has them", () => {
     expect(navigationPanelCopy({ withFolders: 2, total: 2 })).toEqual({
       title: "Folders",
       subtitle: "Choose a folder to show its threads.",
+      show: "Browse folders",
       hide: "Hide folders",
     });
   });

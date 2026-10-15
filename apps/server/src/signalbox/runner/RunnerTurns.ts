@@ -710,7 +710,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         input.attachments === undefined || sessionAccess === null
           ? null
           : yield* Effect.forkChild(
-              input.attachments.bring(sessionAccess.token, turn.message.attachments),
+              input.attachments
+                .bring(sessionAccess.token, turn.message.attachments)
+                // Its message says why, naming the turn's own files when they're the reason.
+                .pipe(Effect.mapError((error) => new RunnerTurnError({ message: error.message }))),
             );
       const session = yield* sessionFor(adapter, turn, runtimePolicy, {
         instructions: prepared.drive?.instructions ?? "",
