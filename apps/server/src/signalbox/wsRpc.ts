@@ -26,6 +26,7 @@ import { signalboxDrivesWsHandlers } from "./drives/rpc.ts";
 import { signalboxFoldersWsHandlers } from "./folders/rpc.ts";
 import { signalboxPreviewsWsHandlers } from "./previews/rpc.ts";
 import { signalboxRepositoriesWsHandlers } from "./repositories/rpc.ts";
+import { signalboxThreadKindsWsHandlers } from "./threadKinds/rpc.ts";
 
 /**
  * Signalbox's RPCs. The middleware only shapes handler types like ws.ts's
@@ -60,6 +61,7 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
         ...signalboxFoldersWsHandlers,
         ...signalboxPreviewsWsHandlers,
         ...signalboxRepositoriesWsHandlers,
+        ...signalboxThreadKindsWsHandlers,
         [WS_METHODS.accountPoolSubscribe]: () => pools.changes,
         [WS_METHODS.accountPoolSubscribeViews]: () => PoolAccess.poolViews,
         [WS_METHODS.accountPoolSubscribeAdvice]: () => poolUsage.advice,
