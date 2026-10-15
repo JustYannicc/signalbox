@@ -63,20 +63,26 @@ export const AutomationWorkflow = createDynamicWorkflowEntrypoint<AutomationWork
     if (!isMetadata(metadata)) throw new Error("The run's instance has no automation metadata.");
     if (env.LOADER === undefined) throw new Error("This cloud has no Worker Loader binding.");
     const { userId, automationId, version } = metadata;
-    const worker = env.LOADER.get(workerIdFor(metadata), async () => ({
-      compatibilityDate: COMPATIBILITY_DATE,
-      mainModule: RUNTIME_MAIN,
-      modules: {
-        [RUNTIME_MAIN]: RUNTIME_MODULE,
-        [AUTOMATION_MODULE]: await userObject(env, userId).automationWorkerModule(
-          automationId,
-          version,
-        ),
-      },
-      env: { HOST: hostFor({ userId, automationId, version }) },
-      // Automation code reaches the world through its steps only.
-      globalOutbound: null,
-    }));
+    const workerId = workerIdFor(metadata);
+    const worker = env.LOADER.get(workerId, async () => {
+      // Only a cold id loads its code: one line per version per isolate, ids only (#284).
+      // @effect-diagnostics-next-line globalConsole:off - the dispatcher runs outside Effect.
+      console.log(JSON.stringify({ message: "automation worker loaded", workerId, version }));
+      return {
+        compatibilityDate: COMPATIBILITY_DATE,
+        mainModule: RUNTIME_MAIN,
+        modules: {
+          [RUNTIME_MAIN]: RUNTIME_MODULE,
+          [AUTOMATION_MODULE]: await userObject(env, userId).automationWorkerModule(
+            automationId,
+            version,
+          ),
+        },
+        env: { HOST: hostFor({ userId, automationId, version }) },
+        // Automation code reaches the world through its steps only.
+        globalOutbound: null,
+      };
+    });
     return worker.getEntrypoint("AutomationRun") as unknown as WorkflowRunner;
   },
 );
