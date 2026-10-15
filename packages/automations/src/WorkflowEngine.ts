@@ -51,7 +51,7 @@ import { BUILT_IN_AUTOMATIONS, builtInSummary } from "./defaults/registry.ts";
 import { makeEventTriggers } from "./events/eventTriggers.ts";
 import { makePullRequestTracker } from "./events/pullRequestFacts.ts";
 import type { PullRequestReads } from "./events/pullRequestDetails.ts";
-import { makeRunWaits } from "./events/runWaits.ts";
+import { makeRunWaits, stepWatch } from "./events/runWaits.ts";
 import {
   AutomationCompiler,
   AutomationFunctions,
@@ -74,6 +74,10 @@ import { makeRunLogs } from "./runLog.ts";
 import { isoAt, nowIso } from "./time.ts";
 import { runSummary, runTitle } from "./views.ts";
 import { makeWaits, type Waits } from "./waits.ts";
+import * as SourceStore from "./sources/sourceStore.ts";
+import { makeSourceWatches } from "./sources/sourceWatches.ts";
+import { scopeOf, sourceIdOf } from "./sources/watch.ts";
+import { watchersOf } from "./sources/watchers.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 type Store = WorkflowStore.WorkflowStore;
@@ -248,6 +252,53 @@ export const makeEngine = <R>(
         runWaits
           .deliver(envelope, [{ runId, projectId: envelope.projectId, patterns: ["hook.called"] }])
           .pipe(logFailure("Automation callback delivery failed")),
+    });
+
+    const sourceStore = yield* SourceStore.make;
+    const sourceWatchers = watchersOf({
+      triggers: events.watchingTriggers,
+      runs: runWaits.watching,
+    });
+    const sources = makeSourceWatches({
+      store: sourceStore,
+      watchers: sourceWatchers,
+      read: connections.call,
+      publish: events.sourceEvent,
+      notify: (notice) => PubSub.publish(notices, notice).pipe(Effect.asVoid),
+      checked: (watchers) =>
+        Effect.forEach(
+          new Map(
+            watchers.map((watcher) => [
+              `${watcher.automation.automation_id}/${watcher.runId ?? ""}`,
+              watcher,
+            ]),
+          ).values(),
+          (watcher) =>
+            changed({
+              kind: "sources",
+              automationId: watcher.automation.automation_id,
+              ...(watcher.runId ? { runId: watcher.runId } : {}),
+            }),
+          { discard: true },
+        ),
+      paused: (sourceId, watchers, error) =>
+        Effect.forEach(
+          new Set(watchers.flatMap((watcher) => (watcher.runId ? [watcher.runId] : []))),
+          (runId) =>
+            Effect.gen(function* () {
+              const run = yield* store.getRunMeta(runId);
+              const automation = run ? yield* store.getAutomation(run.automation_id) : undefined;
+              if (!automation) return;
+              for (const step of yield* store.listSteps(runId)) {
+                const watch = step.status === "waiting" ? stepWatch(step) : undefined;
+                if (watch && sourceIdOf(scopeOf(automation), watch) === sourceId)
+                  yield* complete(runId, step.step_key, { ok: false, error });
+              }
+            }).pipe(ignoreFailure("source pause")),
+          { discard: true },
+        ),
+      adjustBusy: (delta) => theDriver().adjustBusy(delta),
+      scope,
     });
 
     const changed = (change: Change) =>
@@ -649,6 +700,7 @@ export const makeEngine = <R>(
       requireAutomation,
       relayHookBaseUrl: ingress.hookBaseUrl,
       compile: compiler.compile,
+      watching: sources.statusOf,
     });
     const builtIns = makeBuiltIns({
       store,
@@ -770,7 +822,8 @@ export const makeEngine = <R>(
         ),
       subscribeRun: (runId) => feed.watch(`run:${runId}`, catalog.getRun(runId), runShows(runId)),
       subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
-      tick: built.tick,
+      // One failing doesn't hold up the other.
+      tick: built.tick.pipe(Effect.ensuring(sources.tick)),
       drain: built.drain,
     } satisfies WorkflowEngineShape;
   });

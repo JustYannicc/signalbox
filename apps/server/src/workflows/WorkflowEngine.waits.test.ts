@@ -227,14 +227,14 @@ it.effect("a wait needs exactly one thing to wait for, and a real event", () => 
       const neither = yield* Effect.flip(
         engine.startWait({ threadId: "thread-1", until: "something" }, access),
       );
-      expect(neither.message).toContain("exactly one of on, callback or at");
+      expect(neither.message).toContain("exactly one of on, watch, callback or at");
       const both = yield* Effect.flip(
         engine.startWait(
           { threadId: "thread-1", until: "something", on: "pr.merged", callback: true },
           access,
         ),
       );
-      expect(both.message).toContain("exactly one of on, callback or at");
+      expect(both.message).toContain("exactly one of on, watch, callback or at");
 
       // Mistakes come back to the agent before anything starts.
       const typo = yield* Effect.flip(

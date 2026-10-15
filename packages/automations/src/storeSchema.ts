@@ -31,6 +31,7 @@ const TABLES = [
     intent TEXT,
     webhook_secret_set INTEGER NOT NULL DEFAULT 0,
     builtin_slug TEXT,
+    live_since TEXT,
     UNIQUE (project_id, name)
   )`,
   `CREATE TABLE IF NOT EXISTS signalbox_automation_versions (
@@ -151,6 +152,28 @@ const TABLES = [
     token TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  /**
+   * Watched sources (sources/sourceWatches.ts): one row per thing read, however
+   * many automations and runs watch it, with its last read so a restart picks
+   * up where it left off instead of replaying.
+   */
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_sources (
+    source_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    watch_json TEXT NOT NULL,
+    snapshot_json TEXT,
+    interval_ms INTEGER NOT NULL,
+    next_check_at TEXT NOT NULL,
+    last_checked_at TEXT,
+    last_read_at TEXT,
+    last_changed_at TEXT,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    paused_at TEXT,
+    paused_watchers_json TEXT,
+    wanted_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
 ];
 
 /**
@@ -163,6 +186,9 @@ const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automations", "webhook_secret_set", "INTEGER NOT NULL DEFAULT 0"],
   ["signalbox_automations", "builtin_slug", "TEXT"],
   ["signalbox_automation_versions", "approved_by", "TEXT"],
+  ["signalbox_automation_sources", "paused_watchers_json", "TEXT"],
+  ["signalbox_automation_sources", "last_read_at", "TEXT"],
+  ["signalbox_automations", "live_since", "TEXT"],
   ["signalbox_automation_versions", "worker_module", "TEXT"],
   ["signalbox_automation_runs", "instance_at", "TEXT"],
 ];

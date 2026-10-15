@@ -414,7 +414,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
     meta: {
       name: "Wait for",
       description:
-        "Waits for one thing on behalf of a thread's agent (an event, a call to a callback link, or a time), then tells the agent once what happened.",
+        "Waits for one thing on behalf of a thread's agent (an event, a change in something a connection reads, a call to a callback link, or a time), then tells the agent once what happened.",
       intent: "wait for this and wake me when it happens",
     },
     graph: {
@@ -422,7 +422,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s1",
-          line: 53,
+          line: 68,
           source: "condition",
           label: {
             text: "Which case?",
@@ -435,7 +435,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s2",
-                  line: 54,
+                  line: 69,
                   verb: "sleep",
                   label: {
                     text: "Waiting for …",
@@ -455,7 +455,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s3",
-                  line: 58,
+                  line: 73,
                   verb: "waitFor",
                   label: {
                     text: "Waiting for …",
@@ -476,12 +476,103 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               ],
             },
             {
+              label: "input.watch",
+              body: [
+                {
+                  type: "try",
+                  id: "s4",
+                  line: 86,
+                  label: {
+                    text: "If something fails",
+                    dynamic: false,
+                  },
+                  body: [
+                    {
+                      type: "loop",
+                      id: "s5",
+                      line: 87,
+                      verb: "for",
+                      label: {
+                        text: "Loop",
+                        dynamic: false,
+                      },
+                      body: [
+                        {
+                          type: "step",
+                          id: "s6",
+                          line: 89,
+                          verb: "waitFor",
+                          label: {
+                            text: "Waiting for …",
+                            dynamic: true,
+                          },
+                          detail: {
+                            on: {
+                              expression: 'input.on ?? "source.item.*"',
+                            },
+                            watch: {
+                              expression: "input.watch",
+                            },
+                            where: {
+                              expression: "input.where",
+                            },
+                            timeout: {
+                              expression: "left",
+                            },
+                          },
+                        },
+                        {
+                          type: "branch",
+                          id: "s7",
+                          line: 99,
+                          source: "condition",
+                          label: {
+                            text: "input.condition",
+                            dynamic: false,
+                          },
+                          arms: [
+                            {
+                              label: "Yes",
+                              body: [
+                                {
+                                  type: "step",
+                                  id: "s8",
+                                  line: 100,
+                                  verb: "judge",
+                                  label: {
+                                    text: "Does the change show it?",
+                                    dynamic: false,
+                                  },
+                                  detail: {
+                                    input: {
+                                      expression:
+                                        "{ condition: input.condition, change: { event: change.event, item: change.item, before: change.before } }",
+                                    },
+                                  },
+                                  outcomes: ["yes", "no"],
+                                },
+                              ],
+                            },
+                            {
+                              label: "No",
+                              body: [],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                  failure: [],
+                },
+              ],
+            },
+            {
               label: "input.on",
               body: [
                 {
                   type: "step",
-                  id: "s4",
-                  line: 67,
+                  id: "s9",
+                  line: 117,
                   verb: "waitFor",
                   label: {
                     text: "Waiting for …",
@@ -509,8 +600,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "step",
-          id: "s5",
-          line: 77,
+          id: "s10",
+          line: 127,
           verb: "call",
           label: {
             text: "Wake the agent",
@@ -529,10 +620,10 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
       ],
     },
     script:
-      'export const meta = {\n\tname: "Wait for",\n\tdescription: "Waits for one thing on behalf of a thread\'s agent (an event, a call to a callback link, or a time), then tells the agent once what happened.",\n\tintent: "wait for this and wake me when it happens"\n};\nconst SHOWN = 2e3;\n/** "5 minutes", "2 hours", for the message that says nothing happened. */\nfunction describe(duration) {\n\tconst seconds = (duration.seconds ?? 0) + (duration.minutes ?? 0) * 60 + (duration.hours ?? 0) * 3600 + (duration.days ?? 0) * 86400;\n\tconst [amount, unit] = seconds >= 172800 ? [seconds / 86400, "days"] : seconds >= 7200 ? [seconds / 3600, "hours"] : seconds >= 120 ? [seconds / 60, "minutes"] : [seconds, "seconds"];\n\treturn `${Math.round(amount * 10) / 10} ${unit}`;\n}\nconst shown = (value) => {\n\tconst text = typeof value === "string" ? value : JSON.stringify(value);\n\treturn text.length > SHOWN ? `${text.slice(0, SHOWN)}…` : text;\n};\n/** An event as the agent reads it: its name, then its own fields. */\nfunction describeEvent(event) {\n\tconst { event: name, id, at, projectId, ...fields } = event;\n\treturn `${String(name)} happened at ${String(at)}: ${shown(fields)}`;\n}\n/** What the agent reads when the wait ends; it doesn\'t see the automation. */\nfunction wakeMessage(input, news) {\n\treturn [\n\t\t`You were waiting for ${input.until}.`,\n\t\tnews,\n\t\t...input.message ? ["", input.message] : []\n\t].join("\\n");\n}\nexport default workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the thread to wake.");\n\tconst waited = input.timeout ? `within ${describe(input.timeout)}` : "";\n\tlet news = "";\n\tif (input.at) {\n\t\tw.$arm("s1", 0);\n\t\tawait w.sleep("s2", `Waiting for ${input.until}`, { until: input.at });\n\t\tnews = `It\'s ${input.at}.`;\n\t} else if (input.callback) {\n\t\tw.$arm("s1", 1);\n\t\t// A literal "on" keeps the call from the run\'s start, so one racing this step isn\'t lost.\n\t\tconst call = await w.waitFor("s3", `Waiting for ${input.until}`, {\n\t\t\ton: "hook.called",\n\t\t\twhere: { hookId: input.callback },\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = call === null ? `Nobody called the callback link ${waited}, so I stopped waiting.` : `The callback link was called (${call.method}) with: ${shown(call.body)}`;\n\t} else if (input.on) {\n\t\tw.$arm("s1", 2);\n\t\tconst event = await w.waitFor("s4", `Waiting for ${input.until}`, {\n\t\t\ton: input.on,\n\t\t\twhere: input.where,\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = event === null ? `It didn\'t happen ${waited}, so I stopped waiting.` : describeEvent(event);\n\t} else {\n\t\tw.$arm("s1", 3);\n\t\tthrow new Error("Say what to wait for: on, callback or at.");\n\t}\n\tawait w.call("s5", "Wake the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage: wakeMessage(input, news)\n\t});\n\treturn news;\n});\n',
+      'export const meta = {\n\tname: "Wait for",\n\tdescription: "Waits for one thing on behalf of a thread\'s agent (an event, a change in something a connection reads, a call to a callback link, or a time), then tells the agent once what happened.",\n\tintent: "wait for this and wake me when it happens"\n};\nconst SHOWN = 2e3;\nconst seconds = (duration) => (duration.seconds ?? 0) + (duration.minutes ?? 0) * 60 + (duration.hours ?? 0) * 3600 + (duration.days ?? 0) * 86400;\n/** "5 minutes", "2 hours", for the message that says nothing happened. */\nfunction describe(duration) {\n\tconst total = seconds(duration);\n\tconst [amount, unit] = total >= 172800 ? [total / 86400, "days"] : total >= 7200 ? [total / 3600, "hours"] : total >= 120 ? [total / 60, "minutes"] : [total, "seconds"];\n\treturn `${Math.round(amount * 10) / 10} ${unit}`;\n}\nconst shown = (value) => {\n\tconst text = typeof value === "string" ? value : JSON.stringify(value);\n\treturn text.length > SHOWN ? `${text.slice(0, SHOWN)}…` : text;\n};\n/** An event as the agent reads it: its name, then its own fields. */\nfunction describeEvent(event) {\n\tconst { event: name, id, at, projectId, ...fields } = event;\n\treturn `${String(name)} happened at ${String(at)}: ${shown(fields)}`;\n}\n/** What the agent reads when the wait ends; it doesn\'t see the automation. */\nfunction wakeMessage(input, news) {\n\treturn [\n\t\t`You were waiting for ${input.until}.`,\n\t\tnews,\n\t\t...input.message ? ["", input.message] : []\n\t].join("\\n");\n}\nexport default workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the thread to wake.");\n\tconst waited = input.timeout ? `within ${describe(input.timeout)}` : "";\n\tlet news = "";\n\tif (input.at) {\n\t\tw.$arm("s1", 0);\n\t\tawait w.sleep("s2", `Waiting for ${input.until}`, { until: input.at });\n\t\tnews = `It\'s ${input.at}.`;\n\t} else if (input.callback) {\n\t\tw.$arm("s1", 1);\n\t\t// A literal "on" keeps the call from the run\'s start, so one racing this step isn\'t lost.\n\t\tconst call = await w.waitFor("s3", `Waiting for ${input.until}`, {\n\t\t\ton: "hook.called",\n\t\t\twhere: { hookId: input.callback },\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = call === null ? `Nobody called the callback link ${waited}, so I stopped waiting.` : `The callback link was called (${call.method}) with: ${shown(call.body)}`;\n\t} else if (input.watch) {\n\t\tw.$arm("s1", 2);\n\t\t// Every change counts unless a condition says what it has to show; the deadline holds across\n\t\t// changes. Time is the run\'s start, then each change\'s own: the code replays, so no clock.\n\t\tconst deadline = input.timeout ? Date.parse(trigger.at) + seconds(input.timeout) * 1e3 : null;\n\t\tlet now = Date.parse(trigger.at);\n\t\ttry {\n\t\t\tw.$arm("s4", 0);\n\t\t\tfor (;;) {\n\t\t\t\tw.$arm("s5", 0);\n\t\t\t\tconst left = deadline === null ? undefined : { seconds: Math.max(1, Math.ceil((deadline - now) / 1e3)) };\n\t\t\t\tconst change = await w.waitFor("s6", `Waiting for ${input.until}`, {\n\t\t\t\t\ton: input.on ?? "source.item.*",\n\t\t\t\t\twatch: input.watch,\n\t\t\t\t\twhere: input.where,\n\t\t\t\t\ttimeout: left\n\t\t\t\t});\n\t\t\t\tif (change === null) {\n\t\t\t\t\tnews = `It didn\'t happen ${waited}, so I stopped waiting.`;\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t\tif (input.condition) {\n\t\t\t\t\tw.$arm("s7", 0);\n\t\t\t\t\tconst verdict = await w.judge("s8", "Does the change show it?", {\n\t\t\t\t\t\tinput: {\n\t\t\t\t\t\t\tcondition: input.condition,\n\t\t\t\t\t\t\tchange: {\n\t\t\t\t\t\t\t\tevent: change.event,\n\t\t\t\t\t\t\t\titem: change.item,\n\t\t\t\t\t\t\t\tbefore: change.before\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t},\n\t\t\t\t\t\toutcomes: ["yes", "no"]\n\t\t\t\t\t});\n\t\t\t\t\tif (verdict !== "yes") {\n\t\t\t\t\t\tnow = Date.parse(String(change.at));\n\t\t\t\t\t\tcontinue;\n\t\t\t\t\t}\n\t\t\t\t} else {\n\t\t\t\t\tw.$arm("s7", 1);\n\t\t\t\t}\n\t\t\t\tnews = describeEvent(change);\n\t\t\t\tbreak;\n\t\t\t}\n\t\t} catch (error) {\n\t\t\tw.$arm("s4", 1);\n\t\t\t// Signalbox stopped watching it after failed reads; the agent decides what next.\n\t\t\tnews = `I stopped waiting: ${error instanceof Error ? error.message : String(error)}`;\n\t\t}\n\t} else if (input.on) {\n\t\tw.$arm("s1", 3);\n\t\tconst event = await w.waitFor("s9", `Waiting for ${input.until}`, {\n\t\t\ton: input.on,\n\t\t\twhere: input.where,\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = event === null ? `It didn\'t happen ${waited}, so I stopped waiting.` : describeEvent(event);\n\t} else {\n\t\tw.$arm("s1", 4);\n\t\tthrow new Error("Say what to wait for: on, watch, callback or at.");\n\t}\n\tawait w.call("s10", "Wake the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage: wakeMessage(input, news)\n\t});\n\treturn news;\n});\n',
     runModule: null,
     workerModule:
-      'export function load(workflow) {\nconst meta = {\n\tname: "Wait for",\n\tdescription: "Waits for one thing on behalf of a thread\'s agent (an event, a call to a callback link, or a time), then tells the agent once what happened.",\n\tintent: "wait for this and wake me when it happens"\n};\nconst SHOWN = 2e3;\n/** "5 minutes", "2 hours", for the message that says nothing happened. */\nfunction describe(duration) {\n\tconst seconds = (duration.seconds ?? 0) + (duration.minutes ?? 0) * 60 + (duration.hours ?? 0) * 3600 + (duration.days ?? 0) * 86400;\n\tconst [amount, unit] = seconds >= 172800 ? [seconds / 86400, "days"] : seconds >= 7200 ? [seconds / 3600, "hours"] : seconds >= 120 ? [seconds / 60, "minutes"] : [seconds, "seconds"];\n\treturn `${Math.round(amount * 10) / 10} ${unit}`;\n}\nconst shown = (value) => {\n\tconst text = typeof value === "string" ? value : JSON.stringify(value);\n\treturn text.length > SHOWN ? `${text.slice(0, SHOWN)}…` : text;\n};\n/** An event as the agent reads it: its name, then its own fields. */\nfunction describeEvent(event) {\n\tconst { event: name, id, at, projectId, ...fields } = event;\n\treturn `${String(name)} happened at ${String(at)}: ${shown(fields)}`;\n}\n/** What the agent reads when the wait ends; it doesn\'t see the automation. */\nfunction wakeMessage(input, news) {\n\treturn [\n\t\t`You were waiting for ${input.until}.`,\n\t\tnews,\n\t\t...input.message ? ["", input.message] : []\n\t].join("\\n");\n}\nconst __signalboxWorkflow = workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the thread to wake.");\n\tconst waited = input.timeout ? `within ${describe(input.timeout)}` : "";\n\tlet news = "";\n\tif (input.at) {\n\t\tw.$arm("s1", 0);\n\t\tawait w.sleep("s2", `Waiting for ${input.until}`, { until: input.at });\n\t\tnews = `It\'s ${input.at}.`;\n\t} else if (input.callback) {\n\t\tw.$arm("s1", 1);\n\t\t// A literal "on" keeps the call from the run\'s start, so one racing this step isn\'t lost.\n\t\tconst call = await w.waitFor("s3", `Waiting for ${input.until}`, {\n\t\t\ton: "hook.called",\n\t\t\twhere: { hookId: input.callback },\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = call === null ? `Nobody called the callback link ${waited}, so I stopped waiting.` : `The callback link was called (${call.method}) with: ${shown(call.body)}`;\n\t} else if (input.on) {\n\t\tw.$arm("s1", 2);\n\t\tconst event = await w.waitFor("s4", `Waiting for ${input.until}`, {\n\t\t\ton: input.on,\n\t\t\twhere: input.where,\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = event === null ? `It didn\'t happen ${waited}, so I stopped waiting.` : describeEvent(event);\n\t} else {\n\t\tw.$arm("s1", 3);\n\t\tthrow new Error("Say what to wait for: on, callback or at.");\n\t}\n\tawait w.call("s5", "Wake the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage: wakeMessage(input, news)\n\t});\n\treturn news;\n});\n\nreturn __signalboxWorkflow;\n}\n',
+      'export function load(workflow) {\nconst meta = {\n\tname: "Wait for",\n\tdescription: "Waits for one thing on behalf of a thread\'s agent (an event, a change in something a connection reads, a call to a callback link, or a time), then tells the agent once what happened.",\n\tintent: "wait for this and wake me when it happens"\n};\nconst SHOWN = 2e3;\nconst seconds = (duration) => (duration.seconds ?? 0) + (duration.minutes ?? 0) * 60 + (duration.hours ?? 0) * 3600 + (duration.days ?? 0) * 86400;\n/** "5 minutes", "2 hours", for the message that says nothing happened. */\nfunction describe(duration) {\n\tconst total = seconds(duration);\n\tconst [amount, unit] = total >= 172800 ? [total / 86400, "days"] : total >= 7200 ? [total / 3600, "hours"] : total >= 120 ? [total / 60, "minutes"] : [total, "seconds"];\n\treturn `${Math.round(amount * 10) / 10} ${unit}`;\n}\nconst shown = (value) => {\n\tconst text = typeof value === "string" ? value : JSON.stringify(value);\n\treturn text.length > SHOWN ? `${text.slice(0, SHOWN)}…` : text;\n};\n/** An event as the agent reads it: its name, then its own fields. */\nfunction describeEvent(event) {\n\tconst { event: name, id, at, projectId, ...fields } = event;\n\treturn `${String(name)} happened at ${String(at)}: ${shown(fields)}`;\n}\n/** What the agent reads when the wait ends; it doesn\'t see the automation. */\nfunction wakeMessage(input, news) {\n\treturn [\n\t\t`You were waiting for ${input.until}.`,\n\t\tnews,\n\t\t...input.message ? ["", input.message] : []\n\t].join("\\n");\n}\nconst __signalboxWorkflow = workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the thread to wake.");\n\tconst waited = input.timeout ? `within ${describe(input.timeout)}` : "";\n\tlet news = "";\n\tif (input.at) {\n\t\tw.$arm("s1", 0);\n\t\tawait w.sleep("s2", `Waiting for ${input.until}`, { until: input.at });\n\t\tnews = `It\'s ${input.at}.`;\n\t} else if (input.callback) {\n\t\tw.$arm("s1", 1);\n\t\t// A literal "on" keeps the call from the run\'s start, so one racing this step isn\'t lost.\n\t\tconst call = await w.waitFor("s3", `Waiting for ${input.until}`, {\n\t\t\ton: "hook.called",\n\t\t\twhere: { hookId: input.callback },\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = call === null ? `Nobody called the callback link ${waited}, so I stopped waiting.` : `The callback link was called (${call.method}) with: ${shown(call.body)}`;\n\t} else if (input.watch) {\n\t\tw.$arm("s1", 2);\n\t\t// Every change counts unless a condition says what it has to show; the deadline holds across\n\t\t// changes. Time is the run\'s start, then each change\'s own: the code replays, so no clock.\n\t\tconst deadline = input.timeout ? Date.parse(trigger.at) + seconds(input.timeout) * 1e3 : null;\n\t\tlet now = Date.parse(trigger.at);\n\t\ttry {\n\t\t\tw.$arm("s4", 0);\n\t\t\tfor (;;) {\n\t\t\t\tw.$arm("s5", 0);\n\t\t\t\tconst left = deadline === null ? undefined : { seconds: Math.max(1, Math.ceil((deadline - now) / 1e3)) };\n\t\t\t\tconst change = await w.waitFor("s6", `Waiting for ${input.until}`, {\n\t\t\t\t\ton: input.on ?? "source.item.*",\n\t\t\t\t\twatch: input.watch,\n\t\t\t\t\twhere: input.where,\n\t\t\t\t\ttimeout: left\n\t\t\t\t});\n\t\t\t\tif (change === null) {\n\t\t\t\t\tnews = `It didn\'t happen ${waited}, so I stopped waiting.`;\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t\tif (input.condition) {\n\t\t\t\t\tw.$arm("s7", 0);\n\t\t\t\t\tconst verdict = await w.judge("s8", "Does the change show it?", {\n\t\t\t\t\t\tinput: {\n\t\t\t\t\t\t\tcondition: input.condition,\n\t\t\t\t\t\t\tchange: {\n\t\t\t\t\t\t\t\tevent: change.event,\n\t\t\t\t\t\t\t\titem: change.item,\n\t\t\t\t\t\t\t\tbefore: change.before\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t},\n\t\t\t\t\t\toutcomes: ["yes", "no"]\n\t\t\t\t\t});\n\t\t\t\t\tif (verdict !== "yes") {\n\t\t\t\t\t\tnow = Date.parse(String(change.at));\n\t\t\t\t\t\tcontinue;\n\t\t\t\t\t}\n\t\t\t\t} else {\n\t\t\t\t\tw.$arm("s7", 1);\n\t\t\t\t}\n\t\t\t\tnews = describeEvent(change);\n\t\t\t\tbreak;\n\t\t\t}\n\t\t} catch (error) {\n\t\t\tw.$arm("s4", 1);\n\t\t\t// Signalbox stopped watching it after failed reads; the agent decides what next.\n\t\t\tnews = `I stopped waiting: ${error instanceof Error ? error.message : String(error)}`;\n\t\t}\n\t} else if (input.on) {\n\t\tw.$arm("s1", 3);\n\t\tconst event = await w.waitFor("s9", `Waiting for ${input.until}`, {\n\t\t\ton: input.on,\n\t\t\twhere: input.where,\n\t\t\ttimeout: input.timeout\n\t\t});\n\t\tnews = event === null ? `It didn\'t happen ${waited}, so I stopped waiting.` : describeEvent(event);\n\t} else {\n\t\tw.$arm("s1", 4);\n\t\tthrow new Error("Say what to wait for: on, watch, callback or at.");\n\t}\n\tawait w.call("s10", "Wake the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage: wakeMessage(input, news)\n\t});\n\treturn news;\n});\n\nreturn __signalboxWorkflow;\n}\n',
   },
   "merge-gate": {
     meta: {

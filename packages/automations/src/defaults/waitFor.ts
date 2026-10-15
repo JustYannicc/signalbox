@@ -7,7 +7,7 @@
  */
 export const WAIT_FOR = `export const meta = {
   name: "Wait for",
-  description: "Waits for one thing on behalf of a thread's agent (an event, a call to a callback link, or a time), then tells the agent once what happened.",
+  description: "Waits for one thing on behalf of a thread's agent (an event, a change in something a connection reads, a call to a callback link, or a time), then tells the agent once what happened.",
   intent: "wait for this and wake me when it happens",
 } as const;
 
@@ -20,6 +20,18 @@ type Input = {
   message?: string;
   on?: string | string[];
   where?: Record<string, unknown>;
+  /** Something a connection reads, watched for changes (source.item.* events). */
+  watch?: {
+    operation: string;
+    args?: Record<string, unknown>;
+    key: string;
+    items?: string;
+    fields?: string[];
+    every?: Duration;
+    connection?: string;
+  };
+  /** With watch: what a change has to show, in words; each change is judged against it. */
+  condition?: string;
   /** A callback link's id; its URL went back to the agent. */
   callback?: string;
   at?: string;
@@ -28,10 +40,13 @@ type Input = {
 
 const SHOWN = 2000;
 
+const seconds = (duration: Duration) =>
+  (duration.seconds ?? 0) + (duration.minutes ?? 0) * 60 + (duration.hours ?? 0) * 3600 + (duration.days ?? 0) * 86400;
+
 /** "5 minutes", "2 hours", for the message that says nothing happened. */
 function describe(duration: Duration) {
-  const seconds = (duration.seconds ?? 0) + (duration.minutes ?? 0) * 60 + (duration.hours ?? 0) * 3600 + (duration.days ?? 0) * 86400;
-  const [amount, unit] = seconds >= 172800 ? [seconds / 86400, "days"] : seconds >= 7200 ? [seconds / 3600, "hours"] : seconds >= 120 ? [seconds / 60, "minutes"] : [seconds, "seconds"];
+  const total = seconds(duration);
+  const [amount, unit] = total >= 172800 ? [total / 86400, "days"] : total >= 7200 ? [total / 3600, "hours"] : total >= 120 ? [total / 60, "minutes"] : [total, "seconds"];
   return \`\${Math.round(amount * 10) / 10} \${unit}\`;
 }
 
@@ -51,7 +66,7 @@ function wakeMessage(input: Input, news: string) {
   return [\`You were waiting for \${input.until}.\`, news, ...(input.message ? ["", input.message] : [])].join("\\n");
 }
 
-export default workflow(async (w, input: Input, trigger: { attach?: { threadId: string } }) => {
+export default workflow(async (w, input: Input, trigger: { at: string; attach?: { threadId: string } }) => {
   const threadId = input.threadId ?? trigger.attach?.threadId;
   if (!threadId) throw new Error("Pass threadId, or start the run attached to the thread to wake.");
   const waited = input.timeout ? \`within \${describe(input.timeout)}\` : "";
@@ -70,6 +85,41 @@ export default workflow(async (w, input: Input, trigger: { attach?: { threadId: 
     news = call === null
       ? \`Nobody called the callback link \${waited}, so I stopped waiting.\`
       : \`The callback link was called (\${call.method}) with: \${shown(call.body)}\`;
+  } else if (input.watch) {
+    // Every change counts unless a condition says what it has to show; the deadline holds across
+    // changes. Time is the run's start, then each change's own: the code replays, so no clock.
+    const deadline = input.timeout ? Date.parse(trigger.at) + seconds(input.timeout) * 1000 : null;
+    let now = Date.parse(trigger.at);
+    try {
+      for (;;) {
+        const left = deadline === null ? undefined : { seconds: Math.max(1, Math.ceil((deadline - now) / 1000)) };
+        const change = await w.waitFor(\`Waiting for \${input.until}\`, {
+          on: input.on ?? "source.item.*",
+          watch: input.watch,
+          where: input.where,
+          timeout: left,
+        });
+        if (change === null) {
+          news = \`It didn't happen \${waited}, so I stopped waiting.\`;
+          break;
+        }
+        if (input.condition) {
+          const verdict = await w.judge("Does the change show it?", {
+            input: { condition: input.condition, change: { event: change.event, item: change.item, before: change.before } },
+            outcomes: ["yes", "no"],
+          });
+          if (verdict !== "yes") {
+            now = Date.parse(String(change.at));
+            continue;
+          }
+        }
+        news = describeEvent(change);
+        break;
+      }
+    } catch (error) {
+      // Signalbox stopped watching it after failed reads; the agent decides what next.
+      news = \`I stopped waiting: \${error instanceof Error ? error.message : String(error)}\`;
+    }
   } else if (input.on) {
     const event = await w.waitFor(\`Waiting for \${input.until}\`, {
       on: input.on,
@@ -78,7 +128,7 @@ export default workflow(async (w, input: Input, trigger: { attach?: { threadId: 
     });
     news = event === null ? \`It didn't happen \${waited}, so I stopped waiting.\` : describeEvent(event);
   } else {
-    throw new Error("Say what to wait for: on, callback or at.");
+    throw new Error("Say what to wait for: on, watch, callback or at.");
   }
 
   await w.call("Wake the agent", "signalbox.t3_thread_send", {

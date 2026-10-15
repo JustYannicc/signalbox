@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 
 import { runtimeModeWithin } from "./access.ts";
 import { isBuiltinToolOperation, type BuiltinTools } from "./builtinTools/runner.ts";
-import { waitForEventProblem } from "./compiler/eventTriggers.ts";
+import { sourceWatchProblem, waitForEventProblem } from "./compiler/eventTriggers.ts";
 import { automationDefaults, stepArgs } from "./columns.ts";
 import type { makeConnections } from "./connections.ts";
 import type { EngineServices } from "./engineTypes.ts";
@@ -103,13 +103,15 @@ export const makeStartStep =
           Effect.map((at): StepOutcome => ({ type: "waiting", wakeAt: at })),
         );
       case "waitFor": {
-        const { event, timeout, on } = asRecord(first);
+        const { event, timeout, on, watch } = asRecord(first);
         // `on` steps wait without a name; runWaits.ts hands them matching events.
         const named = typeof event === "string" ? { event } : {};
         if (!waitsOnEvents(step) && !named.event)
-          return fail("w.waitFor needs `on` or an event name.");
-        // A computed `on` skipped the compiler's check.
-        const problem = on === undefined ? null : waitForEventProblem(on);
+          return fail("w.waitFor needs `on`, `watch` or an event name.");
+        // A computed `on` or `watch` skipped the compiler's check.
+        const problem =
+          (on === undefined ? null : waitForEventProblem(on, watch !== undefined)) ??
+          (watch === undefined ? null : sourceWatchProblem(watch, on));
         if (problem) return Effect.fail(explained(problem.message, { fix: problem.hint }));
         return Effect.gen(function* () {
           const at = timeout === undefined ? undefined : yield* wakeAt(timeout);
