@@ -3,6 +3,7 @@ import {
   type PublishRequest,
 } from "@signalbox/runner-protocol/BranchProtocol";
 import {
+  CommandId,
   type GitActionProgressEvent,
   GitManagerError,
   type GitRunStackedActionInput,
@@ -15,6 +16,7 @@ import {
   type VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -55,6 +57,10 @@ import { GitHubConnection } from "./GitHubConnection.ts";
  * `publish` is the push and pull request themselves, for the git panel
  * (`runAction`) and the thread's own agent (`drive/branchRoutes.ts`) alike,
  * failing with why in words for both.
+ *
+ * The pull request `publish` opens or finds is linked to the thread as
+ * upstream links the one a git action opened (`source: "created"`), so the
+ * thread syncs it (`thread/pullRequests/PullRequestSync.ts`).
  */
 
 /** How often a watched branch's status is recomputed. */
@@ -173,6 +179,7 @@ const make = Effect.gen(function* () {
   const connection = yield* GitHubConnection;
   const userDrives = yield* UserDrives.UserDrives;
   const threads = yield* CloudThreadService.CloudThreadService;
+  const crypto = yield* Crypto.Crypto;
   const directory = yield* Effect.serviceOption(DriveDirectory);
   const packs = yield* Effect.serviceOption(DrivePacks);
   const drives =
@@ -181,6 +188,38 @@ const make = Effect.gen(function* () {
       : null;
   // Working trees whose branch just moved, so every watcher recomputes at once.
   const moved = yield* PubSub.unbounded<string>();
+
+  /**
+   * Links the branch's pull request to its thread. Never fails: the push
+   * already succeeded, and a link that can't be made now is made by the next
+   * publish. A link the thread has is a no-op there.
+   */
+  const linkPullRequest = (
+    actor: Actor,
+    threadId: ThreadId,
+    pr: GitHubPullRequest,
+    repository: string,
+  ) =>
+    Effect.gen(function* () {
+      const uuid = yield* Effect.orDie(crypto.randomUUIDv4());
+      yield* threads.dispatchCommand(actor, {
+        type: "thread.pull-request.link",
+        commandId: CommandId.make(`cloud:pr-link:${threadId}:${uuid}`),
+        threadId,
+        host: github.api.host,
+        repository,
+        number: pr.number,
+        url: pr.url,
+        source: "created",
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("linking a thread's pull request failed", { threadId, cause }),
+      ),
+      Effect.withSpan("GitHubBranches.linkPullRequest", {
+        attributes: { "person.id": actor.userId, "thread.id": threadId },
+      }),
+    );
 
   const driveUnavailable = () => refusal("unavailable", "The drive is unavailable right now.");
 
@@ -480,6 +519,7 @@ const make = Effect.gen(function* () {
         ? yield* openPull(actor, target, thread, userToken, input.pullRequest)
         : null;
       if (pr?.created === true) yield* PubSub.publish(moved, input.cwd);
+      if (pr !== null) yield* linkPullRequest(actor, thread.id, pr.pr, target.remote.repository);
       return {
         branch: thread.branch,
         repository: target.remote.repository,
