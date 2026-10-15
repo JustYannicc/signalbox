@@ -9,6 +9,7 @@ import { DRIVE_PATHS } from "@signalbox/runner-protocol/DriveProtocol";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Layer from "effect/Layer";
 
 import { makeDriveClient } from "./RunnerDriveClient.ts";
 
@@ -106,7 +107,7 @@ describe("the drive client's uploads", () => {
           ["/storage/pack", "300000", 300000, undefined],
         ]);
         expect(cloud.seen.at(-1)?.path).toBe(DRIVE_PATHS.directCommit);
-      }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(FetchHttpClient.layer, NodeServices.layer))),
   );
 
   it.effect("uploads in a request's body to a cloud from before direct uploads", () =>
@@ -119,6 +120,6 @@ describe("the drive client's uploads", () => {
         path: DRIVE_PATHS.packs,
         bytes: 302_000,
       });
-    }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(FetchHttpClient.layer, NodeServices.layer))),
   );
 });
