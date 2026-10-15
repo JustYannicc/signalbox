@@ -83,3 +83,14 @@ export function eventTriggerProblem(triggers: unknown): TriggerProblem | null {
   }
   return null;
 }
+
+/** What's wrong with a \`w.waitFor\` \`on\`, checked at compile time when literal and at run time when computed. */
+export function waitForEventProblem(on: unknown): TriggerProblem | null {
+  const problem = eventTriggerProblem([{ on }]);
+  return (
+    problem && {
+      ...problem,
+      message: problem.message.replace("meta.triggers listens for", "w.waitFor waits for"),
+    }
+  );
+}

@@ -1,5 +1,6 @@
 import type { AutomationBuiltIn } from "@t3tools/contracts";
 
+import { WAIT_FOR } from "./waitFor.ts";
 import { WATCH_PULL_REQUEST } from "./watchPullRequest.ts";
 
 /**
@@ -29,8 +30,15 @@ export const BUILT_IN_AUTOMATIONS: ReadonlyArray<BuiltInAutomation> = [
     slug: "watch-pull-request",
     name: "Watch pull request",
     description:
-      "Watches a thread's pull request, wakes its agent when checks fail or pass or the branch conflicts, and stops when it merges or closes. Run it attached to the thread.",
+      "Watches a thread's pull request, wakes its agent when checks fail or pass, someone else comments or reviews, or the branch conflicts, and stops when it merges or closes. Run it attached to the thread; watch_pull_request does.",
     source: WATCH_PULL_REQUEST,
+  },
+  {
+    slug: "wait-for",
+    name: "Wait for",
+    description:
+      "Waits for one thing for a thread's agent (an event, a call to a callback link, or a time), then tells the agent once what happened. The wait_for tool runs it attached to the caller's thread.",
+    source: WAIT_FOR,
   },
 ];
 
