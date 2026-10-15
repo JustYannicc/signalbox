@@ -314,6 +314,16 @@ export const make = (state: DurableObjectState): Effect.Effect<Control, never, S
         }),
       scheduleClock: (workflow, options) =>
         Effect.suspend(() => {
+          // A replay re-schedules clocks it passes; one that already fired stays done.
+          const fired =
+            sql
+              .exec(
+                "SELECT 1 FROM wf_deferreds WHERE execution_id = ? AND name = ?",
+                options.executionId,
+                options.clock.deferred.name,
+              )
+              .toArray().length > 0;
+          if (fired) return Effect.void;
           sql.exec(
             "INSERT OR IGNORE INTO wf_clocks (execution_id, workflow, deferred, wake_at) VALUES (?, ?, ?, ?)",
             options.executionId,
@@ -370,7 +380,7 @@ export const make = (state: DurableObjectState): Effect.Effect<Control, never, S
       () =>
         sql
           .exec(
-            "SELECT execution_id, workflow, status, runs, created_at, updated_at FROM wf_executions ORDER BY created_at DESC LIMIT 50",
+            "SELECT execution_id, workflow, status, runs, result, created_at, updated_at FROM wf_executions ORDER BY created_at DESC LIMIT 50",
           )
           .toArray() as ReadonlyArray<Record<string, unknown>>,
     );

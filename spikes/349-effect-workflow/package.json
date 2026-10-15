@@ -13,6 +13,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",
+    "@effect/platform-node": "4.0.4",
     "@effect/vitest": "4.0.4",
     "@types/node": "^24.19.2",
     "typescript": "7.0.2",

@@ -1,0 +1,346 @@
+{
+  "deploy": "deploy-3",
+  "boot": "e745b187-9b28-4177-a348-07edc6b04483",
+  "automations": [
+    {
+      "slug": "wait-for",
+      "name": "Wait for",
+      "version": "26b2d13bc1fd"
+    },
+    {
+      "slug": "watch-pull-request",
+      "name": "Watch pull request",
+      "version": "0c510d628e44"
+    },
+    {
+      "slug": "merge-gate",
+      "name": "Merge gate",
+      "version": "e2887e53a424"
+    },
+    {
+      "slug": "fix-an-alert",
+      "name": "Fix an alert",
+      "version": "9d6f2c1d9973"
+    }
+  ],
+  "executions": [
+    {
+      "execution_id": "2123ee43ac69abfe00ce6d40c7017905",
+      "workflow": "SignalboxAutomation",
+      "status": "complete",
+      "runs": 5,
+      "result": "{\"_tag\":\"Success\",\"value\":\"fixed\"}",
+      "created_at": 1792056823393,
+      "updated_at": 1792056845759
+    },
+    {
+      "execution_id": "3068b0e007d2c0597aae8e5b60eb7db9",
+      "workflow": "SignalboxAutomation",
+      "status": "complete",
+      "runs": 2,
+      "result": "{\"_tag\":\"Success\",\"value\":\"It didn't happen within 2 minutes, so I stopped waiting.\"}",
+      "created_at": 1792056540561,
+      "updated_at": 1792056660561
+    },
+    {
+      "execution_id": "9ad3d578cae5a6c8a98f02cb355857f1",
+      "workflow": "SignalboxAutomation",
+      "status": "complete",
+      "runs": 2,
+      "result": "{\"_tag\":\"Success\",\"value\":\"merged\"}",
+      "created_at": 1792056540427,
+      "updated_at": 1792056768264
+    },
+    {
+      "execution_id": "1027272b6ad4b47c725424dd76f1eace",
+      "workflow": "SignalboxAutomation",
+      "status": "complete",
+      "runs": 4,
+      "result": "{\"_tag\":\"Success\",\"value\":\"Pull request #7: merged\"}",
+      "created_at": 1792056540183,
+      "updated_at": 1792056768264
+    }
+  ],
+  "alarm": 1792056965473,
+  "deploys": [
+    {
+      "deploy": "deploy-1",
+      "first_seen": 1792056524750
+    },
+    {
+      "deploy": "deploy-2",
+      "first_seen": 1792056567203
+    },
+    {
+      "deploy": "deploy-3",
+      "first_seen": 1792056879966
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "automation": "watch-pull-request",
+      "version": "0c510d628e44",
+      "execution_id": "1027272b6ad4b47c725424dd76f1eace",
+      "restarted_from": null,
+      "started_at": 1792056540183,
+      "deploy": "deploy-1"
+    },
+    {
+      "run_id": "509b5891-0ec1-474b-8c86-bab803212476",
+      "automation": "merge-gate",
+      "version": "e2887e53a424",
+      "execution_id": "9ad3d578cae5a6c8a98f02cb355857f1",
+      "restarted_from": null,
+      "started_at": 1792056540427,
+      "deploy": "deploy-1"
+    },
+    {
+      "run_id": "01c2b057-9696-43f8-abed-4a872638eb48",
+      "automation": "wait-for",
+      "version": "26b2d13bc1fd",
+      "execution_id": "3068b0e007d2c0597aae8e5b60eb7db9",
+      "restarted_from": null,
+      "started_at": 1792056540561,
+      "deploy": "deploy-1"
+    },
+    {
+      "run_id": "5e2395b4-e9eb-4c13-8f27-47cbc81a9035",
+      "automation": "fix-an-alert",
+      "version": "9d6f2c1d9973",
+      "execution_id": "2123ee43ac69abfe00ce6d40c7017905",
+      "restarted_from": null,
+      "started_at": 1792056823393,
+      "deploy": "deploy-2"
+    }
+  ],
+  "asks": [
+    {
+      "ask_id": 1,
+      "run_id": "509b5891-0ec1-474b-8c86-bab803212476",
+      "step_key": "s1",
+      "label": "Merge acme/app#7?",
+      "opened_at": 1792056540427,
+      "answered_at": 1792056768264,
+      "answer": "{\"choice\":\"merge\",\"values\":{\"reason\":null}}"
+    },
+    {
+      "ask_id": 2,
+      "run_id": "5e2395b4-e9eb-4c13-8f27-47cbc81a9035",
+      "step_key": "s11",
+      "label": "Merge the fix for Blank login page on Safari 18?",
+      "opened_at": 1792056833419,
+      "answered_at": 1792056845473,
+      "answer": "\"merge\""
+    }
+  ],
+  "listeners": [
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "step_key": "s3[0]/s4",
+      "events": "[\"pr.checks.failed\",\"pr.checks.passed\",\"pr.conflicted\",\"pr.commented\",\"pr.reviewed\",\"pr.merged\",\"pr.closed\"]",
+      "filter": "{\"threadId\":\"t1\",\"number\":7,\"repository\":\"acme/app\"}",
+      "since": 1792056540183,
+      "done_at": 1792056548548
+    },
+    {
+      "run_id": "01c2b057-9696-43f8-abed-4a872638eb48",
+      "step_key": "s4",
+      "events": "[\"deploy.finished\"]",
+      "filter": "{\"service\":\"api\"}",
+      "since": 1792056540561,
+      "done_at": 1792056660561
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "step_key": "s3[1]/s4",
+      "events": "[\"pr.checks.failed\",\"pr.checks.passed\",\"pr.conflicted\",\"pr.commented\",\"pr.reviewed\",\"pr.merged\",\"pr.closed\"]",
+      "filter": "{\"threadId\":\"t1\",\"number\":7,\"repository\":\"acme/app\"}",
+      "since": 1792056548548,
+      "done_at": 1792056768264
+    },
+    {
+      "run_id": "5e2395b4-e9eb-4c13-8f27-47cbc81a9035",
+      "step_key": "s15",
+      "events": "[\"hook.called\"]",
+      "filter": "{\"hookId\":\"callback_5e2395b4_s10\"}",
+      "since": 1792056845473,
+      "done_at": 1792056845759
+    }
+  ],
+  "events": [
+    {
+      "seq": 1,
+      "event": "pr.checks.passed",
+      "at": 1792056548548,
+      "woke": "[\"7c658ebc-0487-4131-94cf-ab21050269b2\"]"
+    },
+    {
+      "seq": 2,
+      "event": "pr.merged",
+      "at": 1792056768264,
+      "woke": "[\"7c658ebc-0487-4131-94cf-ab21050269b2\"]"
+    },
+    {
+      "seq": 3,
+      "event": "pr.merged",
+      "at": 1792056845473,
+      "woke": "[]"
+    },
+    {
+      "seq": 4,
+      "event": "hook.called",
+      "at": 1792056845759,
+      "woke": "[\"5e2395b4-e9eb-4c13-8f27-47cbc81a9035\"]"
+    }
+  ],
+  "messages": [
+    {
+      "seq": 1,
+      "thread_id": "t1",
+      "message": "Checks passed on pull request #7 (https://github.com/acme/app/pull/7). Check it's ready, then carry on with what you were asked to do with it.\n\nI keep watching and wake you on the next change, so end your turn when you're done. Call unwatch_pull_request when you hand the work back.",
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "step_key": "s3[0]/s21",
+      "at": 1792056548548
+    },
+    {
+      "seq": 2,
+      "thread_id": "t2",
+      "message": "You were waiting for the deploy to finish.\nIt didn't happen within 2 minutes, so I stopped waiting.",
+      "run_id": "01c2b057-9696-43f8-abed-4a872638eb48",
+      "step_key": "s5",
+      "at": 1792056660561
+    },
+    {
+      "seq": 3,
+      "thread_id": "t1",
+      "message": "Merged acme/app#7 (https://github.com/acme/app/pull/7) and deleted its branch. Wrap up and hand the work back.",
+      "run_id": "509b5891-0ec1-474b-8c86-bab803212476",
+      "step_key": "s15/s3",
+      "at": 1792056768264
+    }
+  ],
+  "pullRequests": [
+    {
+      "thread_id": "t1",
+      "url": "https://github.com/acme/app/pull/7",
+      "number": 7,
+      "repository": "acme/app",
+      "state": "merged",
+      "branch_deleted": 1
+    },
+    {
+      "thread_id": "thread-5e2395b4-s4",
+      "url": "https://github.com/acme/app/pull/12",
+      "number": 12,
+      "repository": "acme/app",
+      "state": "merged",
+      "branch_deleted": 0
+    }
+  ],
+  "agents": [
+    {
+      "thread_id": "thread-5e2395b4-s4",
+      "run_id": "5e2395b4-e9eb-4c13-8f27-47cbc81a9035",
+      "step_key": "s9",
+      "started_at": 1792056833275,
+      "finished_at": 1792056833419
+    }
+  ],
+  "notices": [
+    {
+      "seq": 1,
+      "run_id": "5e2395b4-e9eb-4c13-8f27-47cbc81a9035",
+      "title": "The fix is merged",
+      "message": "Blank login page on Safari 18 (1.4.2): it's live",
+      "at": 1792056845759
+    }
+  ],
+  "marks": [
+    {
+      "run_id": "01c2b057-9696-43f8-abed-4a872638eb48",
+      "mark_key": "s1",
+      "value": "2"
+    },
+    {
+      "run_id": "509b5891-0ec1-474b-8c86-bab803212476",
+      "mark_key": "s10",
+      "value": "1"
+    },
+    {
+      "run_id": "509b5891-0ec1-474b-8c86-bab803212476",
+      "mark_key": "s13",
+      "value": "0"
+    },
+    {
+      "run_id": "509b5891-0ec1-474b-8c86-bab803212476",
+      "mark_key": "s5",
+      "value": "1"
+    },
+    {
+      "run_id": "509b5891-0ec1-474b-8c86-bab803212476",
+      "mark_key": "s6",
+      "value": "0"
+    },
+    {
+      "run_id": "5e2395b4-e9eb-4c13-8f27-47cbc81a9035",
+      "mark_key": "s13",
+      "value": "1"
+    },
+    {
+      "run_id": "5e2395b4-e9eb-4c13-8f27-47cbc81a9035",
+      "mark_key": "s3",
+      "value": "1"
+    },
+    {
+      "run_id": "5e2395b4-e9eb-4c13-8f27-47cbc81a9035",
+      "mark_key": "s8",
+      "value": "1"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s1",
+      "value": "0"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s24",
+      "value": "0"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s3",
+      "value": "{\"attempts\":2,\"done\":true}"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s3[0]/s17",
+      "value": "1"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s3[0]/s19",
+      "value": "1"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s3[0]/s22",
+      "value": "1"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s3[0]/s5",
+      "value": "1"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s3[1]/s17",
+      "value": "0"
+    },
+    {
+      "run_id": "7c658ebc-0487-4131-94cf-ab21050269b2",
+      "mark_key": "s3[1]/s5",
+      "value": "1"
+    }
+  ]
+}

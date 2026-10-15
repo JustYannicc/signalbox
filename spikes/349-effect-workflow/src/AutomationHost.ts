@@ -10,9 +10,6 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { DEPLOY } from "./deploy.ts";
 import { makeHostForObject } from "./host.ts";
 
-/** Changes every time this isolate starts, so a status read shows a restart. */
-const BOOT = crypto.randomUUID();
-
 export default class AutomationHost extends Cloudflare.DurableObject<AutomationHost>()(
   "AutomationHost",
   Effect.gen(function* () {
@@ -22,7 +19,8 @@ export default class AutomationHost extends Cloudflare.DurableObject<AutomationH
     return Effect.gen(function* () {
       const host = yield* makeHostForObject(state.raw as unknown as DurableObjectState, {
         deploy: DEPLOY,
-        boot: BOOT,
+        // Changes every time the object starts, so a status read shows a restart.
+        boot: crypto.randomUUID(),
       });
 
       const route = Effect.gen(function* () {
