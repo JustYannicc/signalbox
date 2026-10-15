@@ -19,6 +19,7 @@ on:
   pull_request:
     paths:
       - apps/server/src/signalbox/runner/**
+      - apps/server/src/preview/ServerBrowser*.ts
       - apps/server/src/orchestration-v2/Adapters/**
       - packages/runner-protocol/**
       - .github/workflows/runner-image.yml
@@ -122,13 +123,15 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.description=Signalbox Runner: drives claude and codex on a thread's machine
 
-      # The Runner starts and waits for its machine config; the CLIs and pnpm answer.
+      # The Runner starts and waits for its machine config; the CLIs, pnpm and the browser answer.
       - name: Smoke test
         env:
           TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           image="${TAGS%%,*}"
-          docker run --rm --entrypoint sh --env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 "$image" -c 'git --version && claude --version && codex --version && pnpm --version'
+          docker run --rm --entrypoint sh --env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 "$image" -c 'git --version && claude --version && codex --version && pnpm --version && "$SIGNALBOX_BROWSER_EXECUTABLE" --version'
+          # 1Password's SDK loads its WebAssembly core from beside the Runner.
+          docker run --rm --entrypoint node --workdir /opt/signalbox "$image" -e 'require("@1password/sdk")'
           status=0
           timeout 10 docker run --rm --name runner-smoke "$image" machine --config /tmp/none.json || status=$?
           docker rm --force runner-smoke >/dev/null 2>&1 || true

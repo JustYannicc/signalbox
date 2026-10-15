@@ -637,6 +637,24 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
       }
+    },
+    {
+      "license": "MIT",
+      "name": "@1password/sdk",
+      "sourceUrl": "https://github.com/1Password/onepassword-sdk-js",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2024 1Password"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "@1password/sdk-core",
+      "sourceUrl": "https://github.com/1Password/onepassword-sdk-js",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2024 1Password"]
+      }
     }
   ]
 }

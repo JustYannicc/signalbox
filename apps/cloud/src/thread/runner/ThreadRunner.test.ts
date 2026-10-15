@@ -1,6 +1,7 @@
 import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import { CommandId, MessageId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -739,6 +740,101 @@ describe("ThreadRunner", () => {
       { drives: true },
     ),
   );
+
+  it.effect(
+    "hands the turn its folders' 1Password Environments with the owner's current token",
+    () => {
+      let token: string | null = "ops_first-token";
+      const asked: Array<string> = [];
+      const environments = [
+        OnePasswordEnvironmentId.make("env-top"),
+        OnePasswordEnvironmentId.make("env-work"),
+      ];
+      return withObject(
+        freshDatabase(),
+        (engine, runner) =>
+          Effect.gen(function* () {
+            // What the owner's object resolved for this thread's home (`UserFolders.turn`).
+            yield* launch(engine, "launch-1", {
+              ...personal,
+              secrets: { top: [], projects: {}, thread: environments },
+            });
+            const machine = yield* connect(runner);
+            expect((yield* runner.work).secrets).toEqual(environments);
+            // Only a turn's hand-out asks the owner's object, not every look at the work.
+            expect(asked).toEqual([]);
+            expect(yield* runner.secretsToken).toBe("ops_first-token");
+            // Replaced in the owner's object: the next hand-out has it, with no new run.
+            token = "ops_replaced-token";
+            expect(yield* runner.secretsToken).toBe("ops_replaced-token");
+            expect(asked).toEqual(["user_1", "user_1"]);
+            // Disconnected: the Environments still go, without a token to read them.
+            token = null;
+            expect(yield* runner.secretsToken).toBeNull();
+
+            // What the Runner couldn't load shows in the turn; once started, nothing is handed out.
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [
+                report.started,
+                {
+                  kind: "secrets.notice",
+                  runId: turn.runId,
+                  message:
+                    "No 1Password account is connected, so env-top and env-work weren't loaded.",
+                },
+              ],
+            });
+            expect((yield* runner.work).secrets).toEqual([]);
+            const notice = (yield* snapshot(engine)).projection.turnItems.find(
+              (item) => item.id === `turn-item:${turn.runId}:secrets`,
+            );
+            expect(notice).toMatchObject({
+              type: "system_notice",
+              title: "Secrets",
+              message: "No 1Password account is connected, so env-top and env-work weren't loaded.",
+            });
+          }),
+        {
+          drives: true,
+          secretsToken: (userId) =>
+            Effect.sync(() => {
+              asked.push(userId);
+              return token;
+            }),
+        },
+      );
+    },
+  );
+
+  it.effect("hands out no secrets when the chain names none", () => {
+    let asked = 0;
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine, "launch-1", {
+            ...personal,
+            secrets: { top: [], projects: {} },
+          });
+          yield* connect(runner);
+          const work = yield* runner.work;
+          expect(work.turn).not.toBeNull();
+          expect(work.secrets).toEqual([]);
+          expect(asked).toBe(0);
+        }),
+      {
+        secretsToken: () =>
+          Effect.sync(() => {
+            asked += 1;
+            return "ops_unused";
+          }),
+      },
+    );
+  });
 
   it.effect("gives each machine a drive token that acts only for its own generation and turn", () =>
     withObject(

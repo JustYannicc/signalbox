@@ -3,6 +3,7 @@ import type {
   FolderId,
   FolderLevel,
   FolderResolvedPool,
+  OnePasswordEnvironmentId,
 } from "@t3tools/contracts/signalboxFolders";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
@@ -32,12 +33,15 @@ export interface TreeFolder {
   readonly driveId: string | null;
   /** Never blank: no instructions is null. */
   readonly instructions: string | null;
+  /** The 1Password Environment its threads get, if any. */
+  readonly secrets: OnePasswordEnvironmentId | null;
 }
 
 export interface Tree {
   /** Folders of the user's current owners only. */
   readonly folders: ReadonlyArray<TreeFolder>;
   readonly topInstructions: string | null;
+  readonly topSecrets: OnePasswordEnvironmentId | null;
   readonly bindings: ReadonlyArray<PoolBinding>;
   /** Threads filed explicitly, by thread id. Null: the top level. */
   readonly filed: ReadonlyMap<ThreadId, FolderId | null>;
@@ -160,6 +164,24 @@ export const instructionsOf = (
     }
   }
   return found;
+};
+
+/**
+ * The 1Password Environment of every level on `home`'s chain that names one,
+ * the top level first, so a nearer folder's variable replaces one from above.
+ */
+export const secretsOf = (
+  tree: Tree,
+  home: FolderId | null,
+): ReadonlyArray<OnePasswordEnvironmentId> => {
+  const byId = indexed(tree.folders);
+  return chainOf(poolTreeOf(tree), levelOf(home))
+    .toReversed()
+    .flatMap((level) => {
+      const environmentId =
+        level._tag === "top" ? tree.topSecrets : (byId.get(level.folderId)?.secrets ?? null);
+      return environmentId === null ? [] : [environmentId];
+    });
 };
 
 /** Resolves pools per home, each home once: `turn` and snapshots ask for many. */

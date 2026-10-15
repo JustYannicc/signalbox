@@ -36,7 +36,7 @@ const client = (
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
         Layer.mergeAll(
-          CloudRpc.layerHandlers({ identity, userId }),
+          CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
           CloudRpc.layerScopeAuthorization(scopes),
         ).pipe(Layer.provide(cloud.layerFor(userId))),
       ),

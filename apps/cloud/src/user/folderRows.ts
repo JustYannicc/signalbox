@@ -1,6 +1,6 @@
 import { SectionId } from "@t3tools/contracts/sections";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import { FolderId } from "@t3tools/contracts/signalboxFolders";
+import { FolderId, OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import * as Schema from "effect/Schema";
 
 import * as ResourceBindings from "./ResourceBindings.ts";
@@ -14,12 +14,15 @@ export const FolderRow = Schema.Struct({
   position: Schema.Number,
   drive_id: Schema.NullOr(Schema.String),
   instructions: Schema.NullOr(Schema.String),
+  // Optional: a cloud from before folder secrets (#395) sends none.
+  secrets_environment_id: Schema.optionalKey(Schema.NullOr(OnePasswordEnvironmentId)),
 });
 export type FolderRow = typeof FolderRow.Type;
 export const FolderRows = Schema.Struct({
   folders: Schema.Array(FolderRow),
   bindings: Schema.Array(ResourceBindings.BindingRow),
   topInstructions: Schema.NullOr(Schema.String),
+  topSecrets: Schema.optionalKey(Schema.NullOr(OnePasswordEnvironmentId)),
 });
 export type FolderRows = typeof FolderRows.Type;
 export const decodeFolderRows = Schema.decodeUnknownSync(Schema.Array(FolderRow));
