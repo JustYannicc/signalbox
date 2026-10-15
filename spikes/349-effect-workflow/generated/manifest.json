@@ -1,0 +1,30 @@
+{
+  "wait-for": {
+    "name": "Wait for",
+    "origin": "origin/main apps/server/src/workflows/defaults/waitFor.ts",
+    "sourceSha256": "26b2d13bc1fde33693b2293adb54adc6032e1587eb8524da82d43ad9e3993c51",
+    "scriptSha256": "48dbb04a8d6d8ba9ca3d098c8280adcdceaa8f8e009f072d9e5faf5b213b76f4",
+    "graphNodes": 2
+  },
+  "watch-pull-request": {
+    "name": "Watch pull request",
+    "origin": "origin/main apps/server/src/workflows/defaults/watchPullRequest.ts",
+    "sourceSha256": "0c510d628e4422ec6fdb240f11ca47aa0659f2717a215c21ea5bbb2e0147d442",
+    "scriptSha256": "9857fe3594bf487064f0e293a5feeb977ebf5bfb1257916efdf526a3c25726dc",
+    "graphNodes": 4
+  },
+  "merge-gate": {
+    "name": "Merge gate",
+    "origin": "origin/feat/merge-gate apps/server/src/workflows/defaults/mergeGate.ts",
+    "sourceSha256": "e2887e53a424d907b573167e4c62367b674cdccbe3c0723a70aa0472463f9f46",
+    "scriptSha256": "566711620f484894fe58ecc04f5d5371357dfe1ec274de0ecd5ef2cb31a0483b",
+    "graphNodes": 6
+  },
+  "fix-an-alert": {
+    "name": "Fix an alert",
+    "origin": "spikes/349-effect-workflow/automations/fix-an-alert.ts (#294 shape)",
+    "sourceSha256": "77643bbebfd7a318bac2984bf6ae09c6830db1aba2532426f5bad18a50c5b3ae",
+    "scriptSha256": "f540ef7fe207fb386ebe5d4e1634f46b2d3e0e78db8e01e4fa4ad200106b5d73",
+    "graphNodes": 12
+  }
+}

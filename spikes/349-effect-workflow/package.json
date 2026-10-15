@@ -1,0 +1,21 @@
+{
+  "name": "signalbox-spike-349",
+  "private": true,
+  "description": "Throwaway spike for #349: Signalbox automations on effect/workflow on a Cloudflare Durable Object. Never merges.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "alchemy": "2.0.0-beta.80",
+    "effect": "4.0.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260604.1",
+    "@effect/vitest": "4.0.4",
+    "typescript": "7.0.2",
+    "vitest": "^5.0.0",
+    "wrangler": "^4.147.0"
+  }
+}

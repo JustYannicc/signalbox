@@ -1,0 +1,13 @@
+{
+  // Throwaway Worker for #349. Deleted when the spike is done.
+  "name": "signalbox-spike-349",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [{ "name": "AUTOMATIONS", "class_name": "AutomationHost" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AutomationHost"] }],
+  "observability": { "enabled": true },
+}

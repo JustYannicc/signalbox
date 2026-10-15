@@ -1,0 +1,4 @@
+# Standalone spike: keeps this directory out of the repo workspace.
+allowBuilds:
+  esbuild: true
+  workerd: true
