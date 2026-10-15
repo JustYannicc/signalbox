@@ -178,7 +178,11 @@ export const makeGitHubApi = (
     );
 
   /** Like `json`, answering the raw body as bytes. */
-  const rawBytes = (operation: string, request: HttpClientRequest.HttpClientRequest, token: string) =>
+  const rawBytes = (
+    operation: string,
+    request: HttpClientRequest.HttpClientRequest,
+    token: string,
+  ) =>
     send(operation, asUser(request, token, "application/vnd.github.raw+json")).pipe(
       Effect.flatMap((response) =>
         response.status === 404
