@@ -244,6 +244,17 @@ describe("sending attachments", () => {
       const service = yield* CloudAttachments.pipe(Effect.provide(layer));
       const threadId = ThreadId.make("thread-attachments");
       const shot = yield* upload(service, userId, PNG);
+      // A dropped thread arrives as a `.jsonl` file through the same path (`threadContextAttachment.ts`).
+      const transcript = yield* upload(
+        service,
+        userId,
+        new TextEncoder().encode('{"type":"x"}\n'),
+        {
+          type: "file",
+          name: "Earlier thread-0123456789abcdef.jsonl",
+          mimeType: "application/x-ndjson",
+        },
+      );
 
       const launched = yield* threads.launchThread(actor, {
         commandId: CommandId.make("launch-1"),
@@ -257,12 +268,16 @@ describe("sending attachments", () => {
         initialMessage: {
           messageId: MessageId.make("message-1"),
           text: "What's broken here?",
-          attachments: [shot],
+          attachments: [shot, transcript],
         },
       });
-      const [kept] = launched.projection.messages[0]?.attachments ?? [];
-      expect(kept?.id.startsWith(`${threadSegment(threadId)}-`)).toBe(true);
-      expect(cloud.attachmentObjects.keys()).toContain(attachmentKey("", kept!.id));
+      const kept = launched.projection.messages[0]?.attachments ?? [];
+      expect(kept.map((attachment) => attachment.type)).toEqual(["image", "file"]);
+      for (const attachment of kept) {
+        expect(attachment.id.startsWith(`${threadSegment(threadId)}-`)).toBe(true);
+        expect(cloud.attachmentObjects.keys()).toContain(attachmentKey("", attachment.id));
+      }
+      expect(kept[1]?.id).toMatch(/-jsonl$/);
 
       // A message the thread refuses leaves no copy behind.
       const before = cloud.attachmentObjects.keys().length;

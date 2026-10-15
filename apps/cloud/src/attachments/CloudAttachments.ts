@@ -200,7 +200,7 @@ export const layer = ({ objects, prefix }: AttachmentStorage) =>
     Effect.gen(function* () {
       const tokens = yield* CloudTokens.CloudTokens;
       const crypto = yield* Crypto.Crypto;
-      const uuid = Effect.orDie(crypto.randomUUIDv4);
+      const uuid = Effect.orDie(crypto.randomUUIDv4());
       const keyOf = (id: string) => attachmentKey(prefix, id);
       let lastSweep = Number.NEGATIVE_INFINITY;
 

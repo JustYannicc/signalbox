@@ -235,8 +235,9 @@ const withClaimed = <A, E>(
           ),
         );
 
-const isRefusal = (error: unknown) =>
-  Schema.is(ThreadCommandRejectedError)(error) || Schema.is(ThreadNotFoundError)(error);
+const isRejected = Schema.is(ThreadCommandRejectedError);
+const isNotFound = Schema.is(ThreadNotFoundError);
+const isRefusal = (error: unknown) => isRejected(error) || isNotFound(error);
 
 /** Commands that can start a turn or pick a model: they carry the resolved pools and instructions. */
 const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
