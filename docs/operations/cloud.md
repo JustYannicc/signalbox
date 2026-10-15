@@ -245,6 +245,15 @@ A turn on a model its pool doesn't serve is refused at turn start
 offered only where `SCRIPTED_PROVIDER=1`: `wrangler dev` and tests, never
 production.
 
+#### Connectors in local harnesses
+
+The local harness setup (`apps/cloud/src/localKeys/localSetup.ts`) also adds
+an Executor as the MCP server `signalbox` in Codex and Claude Code when the
+`EXECUTOR_MCP_URL` variable is set in the GitHub environment (the Executor's
+MCP endpoint, e.g. `https://executor.example/mcp`). Unset, setup leaves MCP
+alone. Each harness signs in to the Executor with its own MCP sign-in, and
+`--undo` removes the entry again.
+
 #### CLIProxyAPI updates
 
 The `CLIProxyAPI release sync` workflow checks upstream daily. The shared

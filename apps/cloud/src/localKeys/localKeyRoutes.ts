@@ -35,13 +35,20 @@ const failure = pageFailure;
 const INTERNAL = failure(500, "internal", "Something went wrong. Try again.");
 
 /** Where the cloud's harnesses send model requests; local ones use the same. */
-const gatewayUrl = Effect.gen(function* () {
-  const url = yield* Config.String("MODEL_GATEWAY_URL").pipe(Config.option);
-  return Option.filter(
-    Option.map(url, (value) => value.trim()),
-    (value) => value !== "",
-  );
-}).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+/** A URL var, or none when it is unset or empty (CI passes unset vars as ""). */
+const optionalUrl = (name: string) =>
+  Effect.gen(function* () {
+    const url = yield* Config.String(name).pipe(Config.option);
+    return Option.filter(
+      Option.map(url, (value) => value.trim()),
+      (value) => value !== "",
+    );
+  }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+const gatewayUrl = optionalUrl("MODEL_GATEWAY_URL");
+
+/** The Executor setup adds to both harnesses as an MCP server; none until it is deployed. */
+const executorUrl = optionalUrl("EXECUTOR_MCP_URL");
 
 const setupUrl = Effect.map(requestUrl, (url) => new URL(SETUP_PATH, url).href);
 
@@ -121,6 +128,7 @@ const setupRoute = HttpRouter.add(
       openaiUrl: `${origin}${MODEL_GATEWAY_PATHS.openai}/v1`,
       keyPrefix: LOCAL_KEY_PREFIX,
       keyHeader: LOCAL_KEY_HEADER,
+      executorUrl: Option.getOrNull(yield* executorUrl),
     });
     return HttpServerResponse.text(script, {
       contentType: "text/javascript; charset=utf-8",
