@@ -22,6 +22,8 @@ import {
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { selectThreadKindMenuItem } from "../components/threadKind/threadKindMenu"; // signalbox: thread kinds
+import { readThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thread kinds
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
@@ -162,6 +164,7 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           supports,
           snoozePresets,
+          threadKind: readThreadKind(threadRef), // signalbox: thread kinds
         });
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
@@ -181,6 +184,7 @@ export function useThreadActionMenu(input: {
           );
           return;
         }
+        if (selectThreadKindMenuItem(threadRef, action)) return; // signalbox: thread kinds
         if (action.startsWith("snooze:")) {
           const preset =
             action === "snooze:custom"

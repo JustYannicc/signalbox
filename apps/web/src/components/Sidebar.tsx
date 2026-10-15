@@ -296,6 +296,9 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../composerDraftStore";
+import { readThreadKind, useThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thread kinds
+import { ThreadKindAge, ThreadKindButton } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
+import { selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -1215,6 +1218,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const threadKind = useThreadKind(threadRef, thread.updatedAt); // signalbox: thread kinds
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   useEffect(() => {
     if (!canOperateThread && isRenaming) onCancelRename();
@@ -1837,6 +1841,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
             </span>
             {draftIndicator}
+            <ThreadKindButton kind={threadKind} className="-mx-1" /* signalbox: thread kinds */ />
             {title}
             {pinIndicator}
             {terminalStatusIcon}
@@ -1891,9 +1896,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     </Tooltip>
                   ) : (
                     <span className="text-xs">
-                      {variantAction === "unsettle"
-                        ? settledTimeLabel(thread)
-                        : threadTimeLabel(thread)}
+                      {variantAction === "unsettle" ? (
+                        settledTimeLabel(thread)
+                      ) : (
+                        <ThreadKindAge kind={threadKind} /* signalbox */>
+                          {threadTimeLabel(thread)}
+                        </ThreadKindAge>
+                      )}
                     </span>
                   )}
                 </span>
@@ -2093,7 +2102,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         </span>
                       )
                     ) : (
-                      threadTimeLabel(thread)
+                      <ThreadKindAge kind={threadKind} /* signalbox */>
+                        {threadTimeLabel(thread)}
+                      </ThreadKindAge>
                     )}
                   </span>
                   {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
@@ -2162,6 +2173,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             <div className="mt-1 flex min-w-0">
+              <ThreadKindButton
+                kind={threadKind}
+                className="-ml-0.5 mr-1" /* signalbox: thread kinds */
+              />
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
@@ -4699,6 +4714,7 @@ export default function Sidebar() {
                   titleRegeneration: supportsTitleRegeneration,
                 },
                 snoozePresets,
+                threadKind: readThreadKind(threadRef), // signalbox: thread kinds
               }),
               readWorkspacePathLocation(
                 threadRef.environmentId,
@@ -4710,6 +4726,7 @@ export default function Sidebar() {
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        if (selectThreadKindMenuItem(threadRef, clicked.value)) return; // signalbox: thread kinds
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"

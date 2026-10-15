@@ -1,6 +1,7 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { AccountSettingsSection } from "../../account/AccountSettingsSection"; // signalbox: accounts
 import { ProductAnalyticsSettingsSection } from "../../analytics/ProductAnalyticsSettingsSection"; // signalbox: analytics
+import { ArchiveIdleChatsSetting } from "../threadKind/ArchiveIdleChatsSetting"; // signalbox: thread kinds
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
@@ -2518,6 +2519,7 @@ export function GeneralSettingsPanel() {
             ) : null}
           </>
         ) : null}
+        <ArchiveIdleChatsSetting /* signalbox: thread kinds */ />
       </SettingsSection>
 
       <SettingsSection id="behavior" title="Behavior">

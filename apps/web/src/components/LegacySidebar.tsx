@@ -2,7 +2,6 @@ import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePull
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
 import {
-  ArchiveIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
   FolderClosedIcon,
@@ -238,6 +237,10 @@ import {
   SidebarProjectHeader,
   useSidebarThreadScope,
 } from "./sidebar/folders/threadScope"; // signalbox: folders
+import { useThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thread kinds
+import { threadLeaveLabel } from "./threadKind/threadKind.logic"; // signalbox: thread kinds
+import { ThreadKindAge, ThreadKindButton, ThreadLeaveIcon } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
+import { threadKindMenuItems, selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -414,6 +417,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const canOperatePreview = useEnvironmentScope(thread.environmentId, AuthPreviewOperateScope);
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const threadKind = useThreadKind(threadRef, thread.updatedAt); // signalbox: thread kinds
+  const leaveLabel = threadLeaveLabel(threadKind?.kind ?? null); // signalbox: tasks leave through Done
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = useMemo(
     () =>
@@ -764,6 +769,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+          <ThreadKindButton kind={threadKind} className="-mx-0.5" /* signalbox: thread kinds */ />
           {prStatus && pr && (
             <Tooltip>
               <TooltipTrigger
@@ -883,12 +889,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     type="button"
                     data-thread-selection-safe
                     data-testid={`thread-archive-${thread.id}`}
-                    aria-label={`Archive ${thread.title}`}
+                    aria-label={`${leaveLabel} ${thread.title}`}
                     className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
                     onPointerDown={stopPropagationOnPointerDown}
                     onClick={handleStartArchiveConfirmation}
                   >
-                    <ArchiveIcon className="size-3.5" />
+                    <ThreadLeaveIcon kind={threadKind} className="size-3.5" />
                   </button>
                 </div>
               ) : (
@@ -900,17 +906,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           type="button"
                           data-thread-selection-safe
                           data-testid={`thread-archive-${thread.id}`}
-                          aria-label={`Archive ${thread.title}`}
+                          aria-label={`${leaveLabel} ${thread.title}`}
                           className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
                           onPointerDown={stopPropagationOnPointerDown}
                           onClick={handleArchiveImmediateClick}
                         >
-                          <ArchiveIcon className="size-3.5" />
+                          <ThreadLeaveIcon kind={threadKind} className="size-3.5" />
                         </button>
                       </div>
                     }
                   />
-                  <TooltipPopup side="top">Archive</TooltipPopup>
+                  <TooltipPopup side="top">{leaveLabel}</TooltipPopup>
                 </Tooltip>
               )
             ) : null}
@@ -954,9 +960,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       isHighlighted ? "text-foreground" : "text-secondary-label"
                     }`}
                   >
-                    {formatRelativeTimeLabel(
-                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-                    )}
+                    <ThreadKindAge kind={threadKind} /* signalbox: thread kinds */>
+                      {formatRelativeTimeLabel(
+                        thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+                      )}
+                    </ThreadKindAge>
                   </span>
                 )}
               </span>
@@ -2339,6 +2347,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
+          ...threadKindMenuItems(threadRef), // signalbox: thread kinds
           ...(scopeMenu?.items ?? []),
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2356,6 +2365,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
 
       if (clicked && scopeMenu?.select(clicked)) return;
+      if (clicked && selectThreadKindMenuItem(threadRef, clicked)) return; // signalbox: thread kinds
       if (clicked === "project-settings") {
         if (isMobile) setOpenMobile(false);
         void router.navigate({
