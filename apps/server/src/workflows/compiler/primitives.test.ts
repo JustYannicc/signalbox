@@ -24,10 +24,11 @@ return [news, reply];`);
     ]);
   });
 
-  it("rejects computed or unknown events, with the closest names", () => {
-    expect(messages(`await w.waitFor("Wait", { on: input.event });`)[0]).toContain(
-      "`on` must be a literal",
-    );
+  it("accepts a computed event, checked when the step starts", () => {
+    expect(messages(`await w.waitFor("Wait", { on: input.event });`)).toEqual([]);
+  });
+
+  it("rejects unknown events, with the closest names", () => {
     expect(messages(`await w.waitFor("Wait", { on: "pr.merge" });`)[0]).toContain(
       'w.waitFor waits for an unknown event "pr.merge". Did you mean "pr.merged"',
     );

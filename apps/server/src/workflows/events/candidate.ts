@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import type { PullRequestReads } from "./pullRequestReads.ts";
 
 /** What the normalizer hands the trigger runtime for each public event. */
 export type Actor = "person" | "agent" | "system";
@@ -18,6 +19,8 @@ export type ReadError = Effect.Error<
 export interface EventReads {
   readonly shell: Effect.Effect<OrchestrationV2ThreadShell | null>;
   readonly threads: ThreadManagementService["Service"];
+  /** Host reads for pull request details; absent until the server registers them. */
+  readonly pullRequests?: PullRequestReads | undefined;
 }
 
 export interface Candidate {
