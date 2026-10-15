@@ -198,6 +198,60 @@ describe("turn pools", () => {
       }),
   );
 
+  it.effect("hands a moved thread its new home's AGENTS.md from its next turn", () =>
+    Effect.gen(function* () {
+      const { threads, folders, cloud, send } = yield* setup;
+      const work = (yield* folders.create({ name: "Work", parentId: null })).folders[0]!.id;
+      const clients = (yield* folders.create({ name: "Clients", parentId: work })).folders.find(
+        (folder) => folder.name === "Clients",
+      )!.id;
+      const home = (yield* folders.create({ name: "Home", parentId: null })).folders.find(
+        (folder) => folder.name === "Home",
+      )!.id;
+      yield* folders.setInstructions({ level: { _tag: "top" }, instructions: "Be brief." });
+      yield* folders.setInstructions({
+        level: { _tag: "folder", folderId: work },
+        instructions: "Use British spelling.",
+      });
+      yield* folders.setInstructions({
+        level: { _tag: "folder", folderId: clients },
+        instructions: "End every reply with BANANA.",
+      });
+      yield* folders.setInstructions({
+        level: { _tag: "folder", folderId: home },
+        instructions: "End every reply with APPLE.",
+      });
+      yield* folders.moveThread({ threadId, folderId: clients });
+      yield* threads.launchThread(actor, {
+        commandId: CommandId.make("launch-move"),
+        threadId,
+        projectId: SCRATCH,
+        title: "Hello",
+        modelSelection: claudeOn("claude_hub"),
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        initialMessage: { messageId: MessageId.make("message-0"), text: "Hi", attachments: [] },
+      });
+      yield* cloud.settle;
+
+      yield* folders.moveThread({ threadId, folderId: home });
+      yield* send(claudeOn("claude_hub"));
+      const { projection } = yield* threads.threadSnapshot(actor, threadId);
+      const [first, second] = projection.runs;
+      expect(yield* cloud.runInstructions(threadId, first!.id)).toEqual([
+        { label: "Top level", text: "Be brief." },
+        { label: "Work", text: "Use British spelling." },
+        { label: "Work / Clients", text: "End every reply with BANANA." },
+      ]);
+      expect(yield* cloud.runInstructions(threadId, second!.id)).toEqual([
+        { label: "Top level", text: "Be brief." },
+        { label: "Home", text: "End every reply with APPLE." },
+      ]);
+      yield* cloud.settle;
+    }),
+  );
+
   it.effect(
     "hands a thread its chain's 1Password Environments, and its new home's after a move",
     () =>
