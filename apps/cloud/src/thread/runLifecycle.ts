@@ -7,7 +7,7 @@ import type {
   OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
 
-import { driverFor } from "./providerCatalog.ts";
+import { driverFor, runnerInstanceFor } from "./providerCatalog.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -65,8 +65,21 @@ export const providerThreadFor = (
 ): OrchestrationV2ProviderThread => {
   const id = ids.providerThread(projection.thread.id);
   const current = projection.providerThreads.find((candidate) => candidate.id === id);
-  if (current?.providerInstanceId === run.providerInstanceId) {
-    return { ...current, status, lastRunOrdinal: run.ordinal, updatedAt: ctx.now };
+  // A record stored on the harness's own instance (`claudeAgent` for a pool's
+  // `claude_hub`) is the same provider: threads saved before the instance was
+  // kept keep their session.
+  const sameProvider =
+    current !== undefined &&
+    (current.providerInstanceId === run.providerInstanceId ||
+      current.providerInstanceId === runnerInstanceFor(run.providerInstanceId));
+  if (current !== undefined && sameProvider) {
+    return {
+      ...current,
+      providerInstanceId: run.providerInstanceId,
+      status,
+      lastRunOrdinal: run.ordinal,
+      updatedAt: ctx.now,
+    };
   }
   return {
     id,

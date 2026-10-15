@@ -11,8 +11,10 @@ import {
 } from "./sectionProjectTree";
 import { ProjectPlacementMenu, SectionMoveMenu } from "./SectionPlacementMenus";
 import { ContextSectionGroups } from "../contexts/ContextSectionGroups"; // signalbox: contexts
+import { FoldersSidebarTree } from "../folders/FoldersSidebarTree"; // signalbox: folders
+import type { FoldersSidebar } from "../folders/useFoldersSidebar"; // signalbox: folders
 
-type RenderProject = (
+export type RenderProject = (
   environmentId: EnvironmentId,
   project: SectionSidebarProject,
   sectionId: string | null,
@@ -127,9 +129,14 @@ export function SectionsProjectTree(props: {
   collapsedSections: ReadonlySet<string>;
   onToggleSection: (environmentId: EnvironmentId, sectionId: string) => void;
   renderProject: RenderProject;
+  /** signalbox: environments with folders, drawn before the rest (`sidebar/folders`). */
+  folders?: FoldersSidebar;
 }) {
   return (
     <div className="flex flex-col gap-2">
+      {props.folders ? (
+        <FoldersSidebarTree sidebar={props.folders} renderProject={props.renderProject} />
+      ) : null}
       {props.environments.map((environment) => {
         const rootRows = [...environment.tree.rootProjects, ...environment.tree.unplacedProjects];
         if (rootRows.length === 0 && environment.tree.roots.length === 0) return null;

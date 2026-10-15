@@ -210,6 +210,13 @@ export const ShortcutsRequest = Schema.Struct({
 
 export const ShortcutsAnswer = Schema.Struct({ shortcuts: Schema.Array(DriveShortcut) });
 
+/**
+ * One level's `AGENTS.md` on a thread's chain (its top level, then each
+ * folder down to its home), labeled with the level it's from.
+ */
+export const FolderInstructions = Schema.Struct({ label: Schema.String, text: Schema.String });
+export type FolderInstructions = typeof FolderInstructions.Type;
+
 /** What a thread's machine gets with each turn: its drive and the token for it. */
 export const DriveAccess = Schema.Struct({
   driveId: Schema.String,
@@ -226,6 +233,12 @@ export const DriveAccess = Schema.Struct({
    * connected, or from a cloud older than this field: `DRIVE_COMMIT_AUTHOR`.
    */
   author: Schema.optionalKey(CommitAuthor),
+  /**
+   * The instructions of the thread's chain, top level first, which agents
+   * follow before the drive's own `AGENTS.md`. Absent from a cloud older than
+   * this field: none.
+   */
+  instructions: Schema.optionalKey(Schema.Array(FolderInstructions)),
 });
 export type DriveAccess = typeof DriveAccess.Type;
 

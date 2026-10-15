@@ -62,7 +62,7 @@ export const make = Effect.gen(function* () {
         ...(yield* relayEnvironmentProofClaims({
           relayIssuer: input.link.issuer,
           environmentId: input.environmentId,
-          jti: yield* crypto.randomUUIDv4,
+          jti: yield* crypto.randomUUIDv4(),
         })),
         notification: input.notification,
       } satisfies RelayAutomationNotificationProofPayload;

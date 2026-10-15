@@ -623,7 +623,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         Effect.gen(function* () {
           const drive =
             opened !== null && access !== null
-              ? yield* opened.prepare(access.remoteToken, access.author)
+              ? yield* opened.prepare(access.remoteToken, access.author, access.instructions)
               : null;
           if (input.dependencies !== undefined) {
             yield* input.dependencies.prepare((message) =>

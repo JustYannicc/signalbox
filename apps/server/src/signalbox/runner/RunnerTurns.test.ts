@@ -827,7 +827,7 @@ describe("RunnerTurns", () => {
           const fake = yield* makeFakeAdapter;
           const reported: Array<RunnerItem> = [];
           const message =
-            "This drive's instructions come to 80.0 KiB, over the 64.0 KiB agents can load: code/AGENTS.md 80.0 KiB. Shorten them or remove a shortcut, then send the message again.";
+            "This thread's instructions come to 80.0 KiB, over the 64.0 KiB agents can load: code/AGENTS.md 80.0 KiB. Shorten a folder's instructions or remove a shortcut, then send the message again.";
           const turns = yield* makeRunnerTurns({
             threadId,
             adapters: new Map([[instanceId, fake.adapter]]),

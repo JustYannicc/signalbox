@@ -33,6 +33,11 @@ import {
   SignalboxDrivesUnavailableError,
 } from "@t3tools/contracts/signalboxDrives";
 import {
+  SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
+  SIGNALBOX_FOLDERS_WS_METHODS,
+  SignalboxFolderError,
+} from "@t3tools/contracts/signalboxFolders";
+import {
   SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   SIGNALBOX_PREVIEWS_WS_METHODS,
   SignalboxPreviewError,
@@ -49,6 +54,7 @@ import type * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
+import type { SqlError } from "effect/sql/SqlError";
 
 import * as Environment from "../environment.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
@@ -61,13 +67,14 @@ import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
-import * as UserSections from "./UserSections.ts";
+import * as LegacySections from "./legacySections.ts";
+import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
- * for a client to connect, render the user's sidebar with its contexts and
- * sections (see `UserContexts` and `UserSections`), work in threads, and
+ * for a client to connect, render the user's sidebar with its folders (see
+ * `UserFolders`, and `legacySections.ts` for older clients), work in threads, and
  * manage their account pools (see `poolRpc.ts`). The
  * group is `WsRpcGroup` itself with everything else omitted, so every payload
  * and stream item is the contract's own schema. A client calling anything
@@ -75,7 +82,7 @@ import * as UserShell from "./UserShell.ts";
  * connection.
  */
 
-/** `WS_METHODS`' sections RPCs (`sectionsRpc.ts`), all served from the user's `UserSections`. */
+/** `WS_METHODS`' sections RPCs (`sectionsRpc.ts`), served from the user's folders for older clients. */
 const SECTION_METHODS = [
   WS_METHODS.sectionsSubscribe,
   WS_METHODS.sectionsCreate,
@@ -117,6 +124,7 @@ const SERVED = [
   WS_METHODS.gitRunStackedAction,
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
+  ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...SECTION_METHODS,
@@ -167,6 +175,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.gitRunStackedAction]: AuthSourceControlWriteScope,
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
+  ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
@@ -228,6 +237,23 @@ const threadCall = <A, E>(
 const sectionsStorageFailure = () =>
   new SectionsRpcError({ code: "storage-failed", detail: "Could not load or update sections." });
 
+/** A folder change as an RPC answers it: refusals for the user, storage failures logged. */
+const folderCall = <A>(
+  effect: Effect.Effect<A, UserFolders.FolderRefusedError | SqlError>,
+): Effect.Effect<A, SignalboxFolderError> =>
+  effect.pipe(
+    Effect.catchTags({
+      FolderRefusedError: (error) =>
+        Effect.fail(new SignalboxFolderError({ message: error.message })),
+      SqlError: (cause) =>
+        Effect.logError("cloud folders storage failed", { cause }).pipe(
+          Effect.andThen(
+            Effect.fail(new SignalboxFolderError({ message: "Could not load or change folders." })),
+          ),
+        ),
+    }),
+  );
+
 const storageFailed = (cause: unknown) =>
   Effect.logError("cloud sections storage failed", { cause }).pipe(
     Effect.andThen(Effect.fail(sectionsStorageFailure())),
@@ -237,8 +263,8 @@ const storageFailed = (cause: unknown) =>
  * Handlers for one connection, acting for `userId`. Every thread RPC is one
  * `CloudThreadService` call with its errors mapped to the contract's; the
  * sidebar comes from the user's own `UserShell`, contexts from their
- * `UserContexts`, drives from their `UserDrives` and sections from their
- * `UserSections`, so every connection sees every other connection's changes.
+ * `UserContexts`, drives from their `UserDrives` and folders from their
+ * `UserFolders`, so every connection sees every other connection's changes.
  * Each call acts within the user's contexts as they are at that moment, and
  * an open thread stream ends as soon as the user can't see the thread anymore.
  * Storage failures are bugs, not answers a client can act on.
@@ -252,7 +278,8 @@ export const layerHandlers = (input: {
       const shell = yield* UserShell.UserShell;
       const threads = yield* CloudThreadService.CloudThreadService;
       const contexts = yield* UserContexts.UserContexts;
-      const sections = yield* UserSections.UserSections;
+      const sections = yield* LegacySections.LegacySections;
+      const folders = yield* UserFolders.UserFolders;
       const userDrives = yield* UserDrives.UserDrives;
       const sharing = yield* Effect.serviceOption(DriveSharing);
       const shortcuts = yield* Effect.serviceOption(DriveShortcuts);
@@ -515,6 +542,21 @@ export const layerHandlers = (input: {
                     : Effect.fail(new SignalboxPreviewError({ message: link.message })),
                 ),
               ),
+        [SIGNALBOX_FOLDERS_WS_METHODS.subscribe]: () =>
+          folders.changes.pipe(
+            Stream.tapError((cause) => Effect.logError("cloud folders stream failed", { cause })),
+            Stream.mapError(
+              () => new SignalboxFolderError({ message: "Could not load your folders." }),
+            ),
+          ),
+        [SIGNALBOX_FOLDERS_WS_METHODS.create]: (request) => folderCall(folders.create(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.update]: (request) => folderCall(folders.update(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.move]: (request) => folderCall(folders.move(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) => folderCall(folders.delete(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.moveThread]: (request) =>
+          folderCall(folders.moveThread(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
+          folderCall(folders.setInstructions(request)),
         [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),

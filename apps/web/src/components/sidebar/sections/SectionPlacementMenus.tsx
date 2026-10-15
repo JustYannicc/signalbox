@@ -4,13 +4,11 @@ import {
   sectionSiblingMoveInput,
 } from "@t3tools/client-runtime/state/sections";
 import type { ProjectId } from "@t3tools/contracts";
-import { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type { Section, SectionsSnapshot } from "@t3tools/contracts/sections";
 import {
   EllipsisIcon,
   FolderInputIcon,
   FolderPlusIcon,
-  LayersIcon,
   PencilIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -20,8 +18,6 @@ import {
   Menu,
   MenuItem,
   MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
   MenuSeparator,
   MenuSub,
   MenuSubPopup,
@@ -29,6 +25,7 @@ import {
   MenuTrigger,
 } from "../../ui/menu";
 import { usePoolViews } from "../../../state/accountPools";
+import { PoolRadioSubmenu } from "../../accountPool/PoolRadioSubmenu";
 import {
   contextIdOfProject,
   projectSectionDestinations,
@@ -37,8 +34,6 @@ import {
 import { useSectionSidebarActions } from "./SectionSidebarActions";
 import type { SectionSidebarEnvironment, SectionSidebarProject } from "./sectionProjectTree";
 import { DriveProjectShareMenuItem } from "../../drives/DriveProjectShareMenuItem"; // signalbox: drives
-
-const INHERIT_POOL = "inherit";
 
 export function SectionMoveMenu(props: {
   environmentId: SectionSidebarEnvironment["environmentId"];
@@ -127,36 +122,14 @@ export function SectionMoveMenu(props: {
           </MenuSubPopup>
         </MenuSub>
         {props.snapshot.pools !== undefined && pools.length > 1 ? (
-          <MenuSub>
-            <MenuSubTrigger>
-              <LayersIcon />
-              Pool for this folder
-            </MenuSubTrigger>
-            <MenuSubPopup>
-              <MenuRadioGroup
-                value={props.section.defaultPoolId ?? INHERIT_POOL}
-                onValueChange={(value) =>
-                  void actions.setSectionPool(
-                    props.environmentId,
-                    props.section.id,
-                    value === INHERIT_POOL ? null : AccountPoolId.make(value),
-                  )
-                }
-              >
-                <MenuRadioItem value={INHERIT_POOL}>
-                  Inherit from above
-                  {inheritedPoolName ? (
-                    <span className="ms-auto ps-4 text-muted-foreground">{inheritedPoolName}</span>
-                  ) : null}
-                </MenuRadioItem>
-                {pools.map((pool) => (
-                  <MenuRadioItem key={pool.id} value={pool.id}>
-                    {pool.name}
-                  </MenuRadioItem>
-                ))}
-              </MenuRadioGroup>
-            </MenuSubPopup>
-          </MenuSub>
+          <PoolRadioSubmenu
+            pools={pools}
+            value={props.section.defaultPoolId}
+            inheritedPoolName={inheritedPoolName}
+            onChange={(poolId) =>
+              void actions.setSectionPool(props.environmentId, props.section.id, poolId)
+            }
+          />
         ) : null}
         <MenuSeparator />
         <MenuItem disabled={currentIndex <= 0} onClick={() => moveOrder("up")}>

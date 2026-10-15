@@ -12,10 +12,15 @@ import type {
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { hubInstancePoolId } from "@t3tools/contracts/accountHub";
+import { type AccountPoolId, hubInstancePoolId } from "@t3tools/contracts/accountHub";
 import type { ResolvedPool, SectionsSnapshot } from "@t3tools/contracts/sections";
 
 type ProviderInstances = Readonly<Record<string, { readonly config?: unknown }>>;
+
+/** A pool a level runs on, however its server says where it's placed (sections or folders). */
+export interface PlacedPool {
+  readonly poolId: AccountPoolId;
+}
 
 /**
  * The pool `projectId`'s threads run on: null when nothing on its chain has
@@ -64,7 +69,7 @@ const defaultModel = (provider: ServerProvider) =>
  */
 function modelSelectionOnPool(input: {
   readonly selection: ModelSelection | null;
-  readonly poolId: string;
+  readonly poolId: AccountPoolId;
   readonly providerInstances: ProviderInstances;
   readonly providers: ReadonlyArray<ServerProvider>;
 }): ModelSelection | null {
@@ -104,11 +109,20 @@ export function projectPoolModelSelection(input: {
   readonly providerInstances: ProviderInstances;
   readonly providers: ReadonlyArray<ServerProvider>;
 }): ModelSelection | null {
-  const pool = projectPool(input.snapshot, input.projectId);
-  if (!pool) return null;
+  return poolModelSelection({ ...input, pool: projectPool(input.snapshot, input.projectId) });
+}
+
+/** `projectPoolModelSelection` for a pool already resolved, such as a folder's. */
+export function poolModelSelection(input: {
+  readonly selection: ModelSelection | null;
+  readonly pool: PlacedPool | null | undefined;
+  readonly providerInstances: ProviderInstances;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}): ModelSelection | null {
+  if (!input.pool) return null;
   return modelSelectionOnPool({
     selection: input.selection,
-    poolId: pool.poolId,
+    poolId: input.pool.poolId,
     providerInstances: input.providerInstances,
     providers: input.providers,
   });
@@ -123,7 +137,7 @@ export type PoolNeed =
   | { readonly _tag: "noPool" }
   | {
       readonly _tag: "signIn";
-      readonly poolId: string;
+      readonly poolId: AccountPoolId;
       readonly instanceId: ProviderInstanceId | null;
     };
 
@@ -131,7 +145,7 @@ export type PoolNeed =
 export const NEEDS_A_POOL = "Needs a pool";
 
 export function poolNeed(input: {
-  readonly pool: ResolvedPool | null | undefined;
+  readonly pool: PlacedPool | null | undefined;
   readonly providerInstances: ProviderInstances;
   readonly providers: ReadonlyArray<ServerProvider>;
 }): PoolNeed | null {

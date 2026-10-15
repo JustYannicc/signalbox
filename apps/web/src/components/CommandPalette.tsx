@@ -3,6 +3,7 @@
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { accountSignOutPaletteItem } from "../account/accountPaletteItem"; // signalbox: accounts
 import { useAutomationPaletteItems } from "./automations/automationPaletteItems"; // signalbox: automations
+import { useFolderPaletteItems } from "./sidebar/folders/folderPaletteItems"; // signalbox: folders
 import { useRepositoryPickerGroups } from "./addProject/repositoryPicker"; // signalbox: repositories
 import {
   addProjectCloneSources,
@@ -2352,6 +2353,7 @@ function OpenCommandPaletteDialog(props: {
   const accountSignOutItem = accountSignOutPaletteItem();
   if (accountSignOutItem) actionItems.push(accountSignOutItem);
   actionItems.push(...useAutomationPaletteItems()); // signalbox: automations
+  actionItems.push(...useFolderPaletteItems()); // signalbox: folders
 
   // Target the active thread or draft's project, falling back to the first sidebar group.
   const contextualProjectGroup =
@@ -3227,6 +3229,10 @@ function OpenCommandPaletteDialog(props: {
       ? "Create & Add"
       : "Add";
   const addShortcutLabel = hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter";
+  const hasHighlightedNewProjectItem = newProjectFlow !== null && highlightedItemValue !== null;
+  const createShortcutLabel = hasHighlightedNewProjectItem
+    ? `${submitModifierLabel} Enter`
+    : "Enter";
   const remoteProjectButtonLabel = addProjectCloneFlow
     ? addProjectCloneFlow.source === "url"
       ? "Continue"
@@ -3324,15 +3330,17 @@ function OpenCommandPaletteDialog(props: {
     }
 
     // Enter creates the project unless an item below the name is
-    // highlighted, in which case it runs that item.
+    // highlighted, in which case it runs that item. Mod+Enter always creates.
     if (
       newProjectFlow !== null &&
       event.key === "Enter" &&
-      highlightedItemValue === null &&
+      (!hasHighlightedNewProjectItem || isPrimaryModifierPressed(event)) &&
       // Enter that confirms an IME composition is part of typing the name.
       !event.nativeEvent.isComposing &&
       event.keyCode !== 229
     ) {
+      // Base UI would otherwise also click the highlighted row.
+      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
       event.preventDefault();
       void submitNewProject();
       return;
@@ -3542,7 +3550,7 @@ function OpenCommandPaletteDialog(props: {
               size="xs"
               tabIndex={-1}
               className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
-              aria-label="Create (Enter)"
+              aria-label={`Create (${createShortcutLabel})`}
               disabled={!canSubmitNewProject}
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -3555,10 +3563,10 @@ function OpenCommandPaletteDialog(props: {
         >
           <span>{isCreatingNewProject ? "Creating" : "Create"}</span>
           <KbdGroup className="pointer-events-none -me-0.5">
-            <Kbd>Enter</Kbd>
+            <Kbd>{createShortcutLabel}</Kbd>
           </KbdGroup>
         </TooltipTrigger>
-        <TooltipPopup side="top">Create (Enter)</TooltipPopup>
+        <TooltipPopup side="top">{`Create (${createShortcutLabel})`}</TooltipPopup>
       </Tooltip>
     ) : addProjectCloneFlow?.step === "repository" ? (
       <Tooltip>
@@ -3671,8 +3679,9 @@ function OpenCommandPaletteDialog(props: {
       inputProps={{
         // The submit button is absolutely positioned over the field, so the
         // inner input must reserve enough room for the full action label.
-        className:
-          addProjectCloneFlow?.step === "repository" || newProjectFlow !== null
+        className: hasHighlightedNewProjectItem
+          ? "*:data-[slot=autocomplete-input]:pe-38!"
+          : addProjectCloneFlow?.step === "repository" || newProjectFlow !== null
             ? "*:data-[slot=autocomplete-input]:pe-32!"
             : isBrowsing
               ? browseInputEndPaddingClass({

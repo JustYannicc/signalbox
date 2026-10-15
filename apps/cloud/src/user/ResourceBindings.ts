@@ -1,6 +1,5 @@
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
-import { ProjectId } from "@t3tools/contracts";
-import type { PoolLevel } from "@t3tools/contracts/sections";
+import { FolderId, type FolderLevel } from "@t3tools/contracts/signalboxFolders";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -11,16 +10,20 @@ import type { SqlError } from "effect/sql/SqlError";
 
 /**
  * What sits at each level of the user's tree: a resource (only pools so far),
- * placed at the top level, a section or a project, with its reach. `here`
- * serves only its level; `below` serves its level and everything under it.
- * What a thread runs on follows from these (`poolChain.ts`). Storage only:
- * `UserSections` makes every change and tells subscribers.
+ * placed at the top level or a folder, with its reach. `here` serves only its
+ * level; `below` serves its level and everything under it. What a thread runs
+ * on follows from these (`poolChain.ts`). Storage only: `UserFolders` makes
+ * every change and tells subscribers.
+ *
+ * Rows from before folders name a `section` or a `project` level. Folders
+ * kept both ids (`UserFolders`), so either reads as the folder with that id;
+ * new rows say `folder`.
  */
 
 type Reach = "here" | "below";
 
 export interface PoolBinding {
-  readonly level: PoolLevel;
+  readonly level: FolderLevel;
   readonly poolId: string;
   readonly reach: Reach;
 }
@@ -36,7 +39,7 @@ export class ResourceBindings extends Context.Service<
      * user has no such pool. Callers run it in their transaction.
      */
     readonly setPool: (
-      level: PoolLevel,
+      level: FolderLevel,
       poolId: string | null,
     ) => Effect.Effect<{ readonly known: boolean; readonly changed: boolean }, SqlError>;
     /** Takes a deleted pool off every level. True when it was placed anywhere. */
@@ -70,7 +73,7 @@ export const createTables = Effect.gen(function* () {
 });
 
 export const BindingRow = Schema.Struct({
-  level_kind: Schema.Literals(["top", "section", "project"]),
+  level_kind: Schema.Literals(["top", "folder", "section", "project"]),
   level_id: Schema.String,
   kind: Schema.String,
   resource_id: Schema.String,
@@ -80,27 +83,16 @@ export const BindingRow = Schema.Struct({
 export type BindingRow = typeof BindingRow.Type;
 const decodeRows = Schema.decodeUnknownSync(Schema.Array(BindingRow));
 
-const levelKey = (level: PoolLevel) => {
-  switch (level._tag) {
-    case "top":
-      return { kind: "top", id: "" } as const;
-    case "section":
-      return { kind: "section", id: level.sectionId } as const;
-    case "project":
-      return { kind: "project", id: level.projectId } as const;
-  }
-};
+/** The rows a level's resources may be stored under: its own kind, and the ones from before folders. */
+const levelRows = (level: FolderLevel) =>
+  level._tag === "top"
+    ? { kind: "top", kinds: ["top"], id: "" }
+    : { kind: "folder", kinds: ["folder", "section", "project"], id: level.folderId };
 
-const levelOf = (row: BindingRow): PoolLevel => {
-  switch (row.level_kind) {
-    case "top":
-      return { _tag: "top" };
-    case "section":
-      return { _tag: "section", sectionId: row.level_id };
-    case "project":
-      return { _tag: "project", projectId: ProjectId.make(row.level_id) };
-  }
-};
+const levelOf = (row: BindingRow): FolderLevel =>
+  row.level_kind === "top"
+    ? { _tag: "top" }
+    : { _tag: "folder", folderId: FolderId.make(row.level_id) };
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -128,10 +120,11 @@ const make = Effect.gen(function* () {
       if (poolId !== null && !(yield* isKnownPool(poolId))) {
         return { known: false, changed: false };
       }
-      const { kind, id } = levelKey(level);
+      const { kind, kinds, id } = levelRows(level);
       const current = decodeRows(
         yield* sql`SELECT level_kind, level_id, kind, resource_id, reach, created_at
-              FROM resource_bindings WHERE level_kind = ${kind} AND level_id = ${id} AND kind = 'pool'`,
+              FROM resource_bindings
+              WHERE level_kind IN ${sql.in(kinds)} AND level_id = ${id} AND kind = 'pool'`,
       );
       if (
         poolId === null
@@ -141,7 +134,7 @@ const make = Effect.gen(function* () {
         return { known: true, changed: false };
       }
       yield* sql`DELETE FROM resource_bindings
-            WHERE level_kind = ${kind} AND level_id = ${id} AND kind = 'pool'`;
+            WHERE level_kind IN ${sql.in(kinds)} AND level_id = ${id} AND kind = 'pool'`;
       if (poolId !== null) {
         const now = yield* Clock.currentTimeMillis;
         yield* sql`INSERT INTO resource_bindings
@@ -172,8 +165,8 @@ const make = Effect.gen(function* () {
               SELECT ${row.level_kind}, ${row.level_id}, ${row.kind}, ${row.resource_id},
                 ${row.reach}, ${row.created_at}
               WHERE NOT EXISTS (SELECT 1 FROM resource_bindings
-                WHERE level_kind = ${row.level_kind} AND level_id = ${row.level_id}
-                  AND kind = ${row.kind})`,
+                WHERE (level_kind = 'top') = (${row.level_kind} = 'top')
+                  AND level_id = ${row.level_id} AND kind = ${row.kind})`,
       { discard: true },
     );
 

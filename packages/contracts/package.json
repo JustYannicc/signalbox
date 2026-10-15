@@ -47,6 +47,10 @@
       "types": "./src/signalboxDrives.ts",
       "import": "./src/signalboxDrives.ts"
     },
+    "./signalboxFolders": {
+      "types": "./src/signalboxFolders.ts",
+      "import": "./src/signalboxFolders.ts"
+    },
     "./signalboxPreviews": {
       "types": "./src/signalboxPreviews.ts",
       "import": "./src/signalboxPreviews.ts"

@@ -12,7 +12,7 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { encodeLinkToken } from "../pool/poolLink.ts";
 import * as UserPools from "../user/UserPools.ts";
-import * as UserSections from "../user/UserSections.ts";
+import * as UserFolders from "../user/UserFolders.ts";
 import type { PreviewSetup } from "./previewSetupWire.ts";
 
 /**
@@ -102,7 +102,7 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const pools = yield* UserPools.UserPools;
     const directory = yield* PoolDirectory.PoolDirectory;
-    const sections = yield* UserSections.UserSections;
+    const folders = yield* UserFolders.UserFolders;
     const github = yield* GitHubConnection.GitHubConnection;
 
     // `UserStore`'s profile, read here: importing it would be a cycle (it runs this migration).
@@ -116,7 +116,7 @@ export const layer = Layer.effect(
 
     const issueCode: UserPreviewSetup["Service"]["issueCode"] = (input) =>
       Effect.gen(function* () {
-        const gid = yield* Effect.orDie(crypto.randomUUIDv4);
+        const gid = yield* Effect.orDie(crypto.randomUUIDv4());
         const now = yield* Clock.currentTimeMillis;
         yield* sql`DELETE FROM preview_setup_codes WHERE expires_at <= ${now}`;
         yield* sql`INSERT INTO preview_setup_codes (gid, origin, challenge, expires_at)
@@ -148,7 +148,8 @@ export const layer = Layer.effect(
         return {
           userId: actor.userId,
           pools: linked,
-          sections: yield* sections.rows,
+          sections: yield* folders.legacyRows,
+          folders: yield* folders.rows,
           github: yield* github.recorded,
         } satisfies PreviewSetup;
       });
@@ -173,10 +174,12 @@ export const layer = Layer.effect(
         return { _tag: "redeemed", setup } as const;
       });
 
-    /** Sections, placements and the GitHub connection, never over what's already here. */
+    /** Folders, what's placed at them and the GitHub connection, never over what's already here. */
     const copy = (setup: PreviewSetup) =>
       Effect.andThen(
-        sections.adopt(setup.sections),
+        setup.folders === undefined
+          ? folders.adoptLegacy(setup.sections)
+          : folders.adopt(setup.folders),
         setup.github === null ? Effect.void : github.adopt(setup.github),
       );
 
