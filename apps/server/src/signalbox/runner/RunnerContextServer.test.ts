@@ -115,12 +115,13 @@ const PUBLISHED: PublishResult = {
 };
 
 const fakeDrive = (calls: Calls): BranchDrive => ({
+  published: (head) => Effect.sync(() => void calls.log.push(`published: ${head}`)),
   saveBranch: (message) =>
     Effect.sync(() => {
       calls.log.push(`save: ${message}`);
       return message === "unsavable"
         ? { _tag: "not_saved", reason: "A merge is in progress here." }
-        : { _tag: "saved", head: C1 };
+        : { _tag: "saved", head: C1, lease: message === "Rebased" ? C1 : null };
     }),
 });
 
@@ -357,7 +358,8 @@ describe("context server (#141)", () => {
         draft: true,
       });
       expect(opened.isError).toBeUndefined();
-      expect(calls.log).toEqual(["save: Add dark mode", "publish: create_pr"]);
+      // GitHub's copy of the branch is the pushed head now: the next push's lease.
+      expect(calls.log).toEqual(["save: Add dark mode", "publish: create_pr", `published: ${C1}`]);
       expect(calls.published).toEqual([
         { action: "create_pr", title: "Add dark mode", body: "Adds a dark theme.", draft: true },
       ]);
@@ -370,7 +372,7 @@ describe("context server (#141)", () => {
       });
 
       yield* call("push", { commitMessage: "Fix typo" });
-      expect(calls.log.slice(2)).toEqual(["save: Fix typo", "publish: push"]);
+      expect(calls.log.slice(3)).toEqual(["save: Fix typo", "publish: push", `published: ${C1}`]);
       expect(calls.published.at(-1)).toEqual({ action: "push" });
 
       // A refusal reads as what to do next.
@@ -389,7 +391,11 @@ describe("context server (#141)", () => {
         reason: "branch_conflict",
         message: "The branch on the remote has commits this thread does not. Nothing was pushed.",
       };
-      expect((yield* call("push", {})).content[0]!.text).toContain("Tell the user");
+      expect((yield* call("push", {})).content[0]!.text).toContain("git pull --rebase");
+      calls.answer = PUBLISHED;
+      // A branch that took the remote's head in may replace it, like --force-with-lease.
+      yield* call("push", { commitMessage: "Rebased" });
+      expect(calls.published.at(-1)).toEqual({ action: "push", lease: C1 });
 
       // Work that can't be saved is never pushed.
       const before = calls.published.length;

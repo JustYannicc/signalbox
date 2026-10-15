@@ -13,6 +13,7 @@ import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
+import { useTopLevelLanding } from "../components/sidebar/folders/useTopLevelLanding"; // signalbox
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
   readProject,
@@ -56,13 +57,14 @@ function IndexDraftLanding() {
   const isStillOnIndex = useEffectEvent(() => router.state.location.pathname === "/");
   const startingRef = useRef(false);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
+  const topLevel = useTopLevelLanding(); // signalbox: folders land at the top level
 
   const mostRecentProject = useMemo(
     () =>
       bootstrapped
-        ? (sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
+        ? (topLevel ?? sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
         : null,
-    [bootstrapped, projects, threads],
+    [bootstrapped, projects, threads, topLevel],
   );
 
   useEffect(() => {

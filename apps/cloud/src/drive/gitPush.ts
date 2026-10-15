@@ -156,13 +156,15 @@ export const commitsSince = (drive: DriveHandle, head: Oid, stop: ReadonlySet<Oi
  * The pack that brings a remote from `remoteHas` to `head`: every commit on
  * `head` it lacks and the objects they add. `old`, the remote branch's
  * current commit, must be on `head`'s history, so a push never drops commits
- * someone else added to the branch.
+ * someone else added to the branch, unless `force`: the thread took exactly
+ * `old` in and rewrote its branch (a lease, #394), and the push replaces it.
  */
 export const packForPush = Effect.fn("gitPush.packForPush")(function* (input: {
   readonly driveId: string;
   readonly head: Oid;
   readonly old: Oid | null;
   readonly remoteHas: ReadonlyArray<Oid>;
+  readonly force?: boolean;
 }) {
   const reader = yield* makeDriveReader(input.driveId);
   const drive = (yield* DriveDirectory).forDrive(input.driveId);
@@ -173,7 +175,12 @@ export const packForPush = Effect.fn("gitPush.packForPush")(function* (input: {
     tree: commit.tree,
     parent: commit.parents[0] ?? null,
   }));
-  if (input.old !== null && input.old !== input.head && !walked.reached.has(input.old)) {
+  if (
+    input.force !== true &&
+    input.old !== null &&
+    input.old !== input.head &&
+    !walked.reached.has(input.old)
+  ) {
     return yield* new PushRefused({
       message: "The branch on the remote has commits this thread does not. Nothing was pushed.",
       diverged: true,
