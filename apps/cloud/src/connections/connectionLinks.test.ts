@@ -39,7 +39,12 @@ describe("connection links", () => {
       // The token names the user, and only this cloud's signature makes it one.
       const token = yield* signLinkToken(userId, secret);
       expect(yield* verifyLinkToken(token)).toEqual({ userId, secret });
-      expect(yield* verifyLinkToken(`${token.slice(0, -2)}xx`)).toBeNull();
+      // The signature's first character: its last carries only 4 bits, so changing it may not.
+      const dot = token.lastIndexOf(".");
+      const changed = token[dot + 1] === "A" ? "B" : "A";
+      expect(
+        yield* verifyLinkToken(`${token.slice(0, dot + 1)}${changed}${token.slice(dot + 2)}`),
+      ).toBeNull();
       expect(yield* verifyLinkToken(`sbcl_${btoa(userId)}.${secret}`)).toBeNull();
       expect(yield* verifyLinkToken(secret)).toBeNull();
 
