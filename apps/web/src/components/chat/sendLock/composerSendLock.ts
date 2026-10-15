@@ -61,6 +61,14 @@ export function sendLockSlashCommandItem(
       };
 }
 
+/** The lock state a slash item asks for: true for `/lock`, false for `/unlock`, null otherwise. */
+export function sendLockSlashCommandTarget(item: ComposerCommandItem): boolean | null {
+  if (item.type !== "slash-command") return null;
+  if (item.command === "lock") return true;
+  if (item.command === "unlock") return false;
+  return null;
+}
+
 /** ChatView's `composer.toggleSendLock` shortcut. */
 export function toggleComposerSendLockFromShortcut(
   event: KeyboardEvent,
