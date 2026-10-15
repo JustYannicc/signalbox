@@ -167,6 +167,7 @@ const TABLES = [
     failures INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
     paused_at TEXT,
+    paused_watchers_json TEXT,
     wanted_at TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
@@ -181,6 +182,7 @@ const TABLES = [
 const ADDED_COLUMNS: ReadonlyArray<readonly [string, string, string]> = [
   ["signalbox_automations", "webhook_secret_set", "INTEGER NOT NULL DEFAULT 0"],
   ["signalbox_automations", "builtin_slug", "TEXT"],
+  ["signalbox_automation_sources", "paused_watchers_json", "TEXT"],
 ];
 
 /** Indexes go last: some cover added columns. */

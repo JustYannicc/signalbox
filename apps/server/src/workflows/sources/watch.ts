@@ -4,7 +4,9 @@ import * as NodeCrypto from "node:crypto";
 import { WorkflowSourceWatch } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { automationDefaults } from "../columns.ts";
 import { toJson } from "../json.ts";
+import type { AutomationRow } from "../WorkflowStore.ts";
 import { durationMs } from "../stepPolicy.ts";
 
 /**
@@ -36,29 +38,47 @@ const fingerprint = (value: unknown) =>
 
 export const isSourceWatch = Schema.is(WorkflowSourceWatch);
 
+/**
+ * Who reads a source: the project its connections come from, and whether
+ * Executor may run calls that need approval (only for full-access owners).
+ * Readers that differ in either never share a source.
+ */
+export interface SourceScope {
+  readonly projectId: string;
+  readonly autoApprove: boolean;
+}
+
+/** An automation's reading scope. */
+export const scopeOf = (automation: AutomationRow): SourceScope => ({
+  projectId: automation.project_id,
+  autoApprove: automationDefaults(automation).runtimeMode === "full-access",
+});
+
 const ids = new WeakMap<WorkflowSourceWatch, Map<string, string>>();
 
 /**
  * One id per thing read: the same operation, arguments, account, list and key
- * in one project is one source, whatever `fields` and `every` each watcher
- * asks for. Projects never share a source; their connections may differ.
- * Watches come from cached trigger indexes and run listeners, so ids are
- * remembered per watch object.
+ * read in one scope is one source, whatever `fields` and `every` each watcher
+ * asks for. Projects never share a source, since their connections may
+ * differ. Watches come from cached trigger indexes and run listeners, so ids
+ * are remembered per watch object.
  */
-export function sourceIdOf(projectId: string, watch: WorkflowSourceWatch): string {
+export function sourceIdOf(scope: SourceScope, watch: WorkflowSourceWatch): string {
   const known = ids.get(watch) ?? new Map<string, string>();
   ids.set(watch, known);
-  const cached = known.get(projectId);
+  const scopeKey = `${scope.projectId}/${scope.autoApprove}`;
+  const cached = known.get(scopeKey);
   if (cached) return cached;
   const id = `source_${fingerprint({
-    projectId,
+    projectId: scope.projectId,
+    autoApprove: scope.autoApprove,
     operation: watch.operation,
     connection: watch.connection ?? null,
     args: watch.args ?? {},
     items: watch.items ?? null,
     key: watch.key,
   })}`;
-  known.set(projectId, id);
+  known.set(scopeKey, id);
   return id;
 }
 
@@ -165,13 +185,19 @@ function changedFields(before: unknown, after: unknown): ReadonlyArray<string> {
     .toSorted();
 }
 
-/** Whether an event came from the source `watch` reads, and changed a field it cares about. */
+/**
+ * Whether a source event is for this watcher: it came from the source `watch`
+ * reads in `scope`, it changed a field the watch cares about, and the watcher
+ * was already watching at the read before it (`since`), so nothing that
+ * predates the watcher reaches it.
+ */
 export function watchMatches(
-  projectId: string,
+  watcher: { readonly scope: SourceScope; readonly startedAt: string },
   watch: WorkflowSourceWatch,
   envelope: Readonly<Record<string, unknown>>,
 ): boolean {
-  if (envelope.sourceId !== sourceIdOf(projectId, watch)) return false;
+  if (envelope.sourceId !== sourceIdOf(watcher.scope, watch)) return false;
+  if (typeof envelope.since === "string" && watcher.startedAt > envelope.since) return false;
   const changed = envelope.changed;
   return watchCares(
     watch,

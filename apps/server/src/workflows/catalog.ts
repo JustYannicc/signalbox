@@ -20,6 +20,7 @@ import { compileWorkflow } from "./compiler/compileWorkflow.ts";
 import { liveColumns, makeDrafts, type DraftsShape } from "./drafts.ts";
 import { fail } from "./errors.ts";
 import { stepWatch } from "./events/runWaits.ts";
+import { scopeOf, type SourceScope } from "./sources/watch.ts";
 import { fromJson, toJson } from "./json.ts";
 import type { Change } from "./liveFeed.ts";
 import { nowIso } from "./time.ts";
@@ -78,7 +79,7 @@ export const makeCatalog = (deps: {
   readonly relayHookBaseUrl: Effect.Effect<string | null>;
   /** How reading these watched sources goes (sources/sourceWatches.ts). */
   readonly watching: (
-    projectId: string,
+    scope: SourceScope,
     watches: ReadonlyArray<WorkflowSourceWatch>,
   ) => Effect.Effect<ReadonlyArray<AutomationSourceStatus>, AutomationError>;
 }): CatalogShape => {
@@ -232,7 +233,7 @@ export const makeCatalog = (deps: {
           bodyBytes: rejection.body_bytes,
           relayed: rejection.relayed === 1,
         })),
-        ...(watches.length > 0 ? { watching: yield* deps.watching(row.project_id, watches) } : {}),
+        ...(watches.length > 0 ? { watching: yield* deps.watching(scopeOf(row), watches) } : {}),
       };
     });
 
@@ -256,7 +257,7 @@ export const makeCatalog = (deps: {
         steps: steps.map(stepView),
         marks: runMarks(run),
         logs: runLogLines(run),
-        ...(automation ? { watching: yield* deps.watching(automation.project_id, watches) } : {}),
+        ...(automation ? { watching: yield* deps.watching(scopeOf(automation), watches) } : {}),
       };
     });
 

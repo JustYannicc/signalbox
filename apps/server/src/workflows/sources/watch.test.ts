@@ -6,19 +6,29 @@ const watch = { operation: "github.actions.listWorkflowRunsForRepo", key: "id" }
 
 describe("sourceIdOf", () => {
   it("is one source per thing read, whatever fields and pace each watcher wants", () => {
-    const base = sourceIdOf("project-1", { ...watch, args: { owner: "o", repo: "r" } });
+    const scope = { projectId: "project-1", autoApprove: false };
+    const base = sourceIdOf(scope, { ...watch, args: { owner: "o", repo: "r" } });
     expect(
-      sourceIdOf("project-1", {
+      sourceIdOf(scope, {
         ...watch,
         args: { repo: "r", owner: "o" },
         fields: ["status"],
         every: { minutes: 1 },
       }),
     ).toBe(base);
-    expect(sourceIdOf("project-2", { ...watch, args: { owner: "o", repo: "r" } })).not.toBe(base);
-    expect(sourceIdOf("project-1", { ...watch, args: { owner: "o", repo: "x" } })).not.toBe(base);
     expect(
-      sourceIdOf("project-1", { ...watch, args: { owner: "o", repo: "r" }, connection: "work" }),
+      sourceIdOf(
+        { ...scope, projectId: "project-2" },
+        { ...watch, args: { owner: "o", repo: "r" } },
+      ),
+    ).not.toBe(base);
+    // Reads that may run approval-gated calls never share with ones that may not.
+    expect(
+      sourceIdOf({ ...scope, autoApprove: true }, { ...watch, args: { owner: "o", repo: "r" } }),
+    ).not.toBe(base);
+    expect(sourceIdOf(scope, { ...watch, args: { owner: "o", repo: "x" } })).not.toBe(base);
+    expect(
+      sourceIdOf(scope, { ...watch, args: { owner: "o", repo: "r" }, connection: "work" }),
     ).not.toBe(base);
   });
 });

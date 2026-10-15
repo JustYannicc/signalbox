@@ -4,11 +4,11 @@ import * as Effect from "effect/Effect";
 import type { RunWaitListener } from "../events/runWaits.ts";
 import type { AutomationRow } from "../WorkflowStore.ts";
 import type { Watcher } from "./sourceWatches.ts";
+import { scopeOf } from "./watch.ts";
 
 /**
  * Everyone watching a source right now: live automations' triggers, and
- * running runs' `waitFor` steps. A trigger's id carries its version, so saving
- * it again counts as someone new watching, which lifts a pause.
+ * running runs' `waitFor` steps.
  */
 export const watchersOf = (sources: {
   readonly triggers: Effect.Effect<
@@ -21,8 +21,9 @@ export const watchersOf = (sources: {
     const watchers: Watcher[] = [];
     for (const { automation, watch } of yield* sources.triggers)
       watchers.push({
-        id: `trigger:${automation.automation_id}@${automation.version}`,
-        projectId: automation.project_id,
+        // Saving or switching it on again is someone new watching.
+        id: `trigger:${automation.automation_id}@${automation.updated_at}`,
+        scope: scopeOf(automation),
         watch,
         automation,
       });
@@ -33,7 +34,7 @@ export const watchersOf = (sources: {
         watchers.push({
           id: `run:${listener.runId}`,
           runId: listener.runId,
-          projectId: listener.projectId,
+          scope: scopeOf(automation),
           watch,
           automation,
         });

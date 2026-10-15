@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { toJson } from "../json.ts";
+
 /** Storage for watched sources; storeSchema.ts creates the table. */
 
 export interface SourceRow {
@@ -20,8 +22,10 @@ export interface SourceRow {
   /** Failed reads in a row. */
   readonly failures: number;
   readonly last_error: string | null;
-  /** Set after too many failed reads in a row; nothing reads it until a watcher is saved again. */
+  /** Set after too many failed reads in a row; nothing reads it until someone new watches it. */
   readonly paused_at: string | null;
+  /** Who watched it when it paused (JSON ids); a watcher not among them lifts the pause. */
+  readonly paused_watchers_json: string | null;
   /** The last time anyone watched it; sources nobody watches for a while are deleted. */
   readonly wanted_at: string;
   readonly created_at: string;
@@ -44,8 +48,21 @@ export const make = Effect.gen(function* () {
         ? Effect.succeed([])
         : run(
             "sourceSchedule",
-            sql<Pick<SourceRow, "source_id" | "paused_at" | "next_check_at" | "interval_ms">>`
-              SELECT source_id, paused_at, next_check_at, interval_ms FROM signalbox_automation_sources
+            sql<
+              Pick<
+                SourceRow,
+                | "source_id"
+                | "paused_at"
+                | "paused_watchers_json"
+                | "next_check_at"
+                | "interval_ms"
+                | "failures"
+                | "snapshot_json"
+              >
+            >`
+              SELECT source_id, paused_at, paused_watchers_json, next_check_at, interval_ms, failures,
+                CASE WHEN snapshot_json IS NULL THEN NULL ELSE '' END AS snapshot_json
+              FROM signalbox_automation_sources
               WHERE ${sql.in("source_id", sourceIds)}
             `,
           ),
@@ -55,7 +72,11 @@ export const make = Effect.gen(function* () {
         ? Effect.succeed([])
         : run(
             "sourceStatuses",
-            sql<Omit<SourceRow, "snapshot_json" | "watch_json"> & { readonly read: number }>`
+            sql<
+              Omit<SourceRow, "snapshot_json" | "watch_json" | "paused_watchers_json"> & {
+                readonly read: number;
+              }
+            >`
               SELECT source_id, project_id, interval_ms, next_check_at, last_checked_at,
                 last_changed_at, failures, last_error, paused_at, wanted_at, created_at,
                 snapshot_json IS NOT NULL AS read
@@ -74,11 +95,13 @@ export const make = Effect.gen(function* () {
         sql`
           INSERT INTO signalbox_automation_sources (
             source_id, project_id, watch_json, snapshot_json, interval_ms, next_check_at,
-            last_checked_at, last_changed_at, failures, last_error, paused_at, wanted_at, created_at
+            last_checked_at, last_changed_at, failures, last_error, paused_at, paused_watchers_json,
+            wanted_at, created_at
           ) VALUES (
             ${row.source_id}, ${row.project_id}, ${row.watch_json}, ${row.snapshot_json},
             ${row.interval_ms}, ${row.next_check_at}, ${row.last_checked_at}, ${row.last_changed_at},
-            ${row.failures}, ${row.last_error}, ${row.paused_at}, ${row.wanted_at}, ${row.created_at}
+            ${row.failures}, ${row.last_error}, ${row.paused_at}, ${row.paused_watchers_json},
+            ${row.wanted_at}, ${row.created_at}
           )
           ON CONFLICT (source_id) DO NOTHING
         `,
@@ -115,7 +138,7 @@ export const make = Effect.gen(function* () {
           WHERE source_id = ${input.sourceId}
         `,
       ).pipe(Effect.asVoid),
-    /** A failed read: back off, or pause when `pause` says so. */
+    /** A failed read: back off, or pause when `pausedWatchers` says who watched it then. */
     recordFailure: (input: {
       readonly sourceId: string;
       /** Failed reads in a row, this one included. */
@@ -123,7 +146,7 @@ export const make = Effect.gen(function* () {
       readonly error: string;
       readonly nextCheckAt: string;
       readonly checkedAt: string;
-      readonly pause: boolean;
+      readonly pausedWatchers: ReadonlyArray<string> | null;
     }) =>
       run(
         "recordSourceFailure",
@@ -133,7 +156,8 @@ export const make = Effect.gen(function* () {
             last_error = ${input.error},
             last_checked_at = ${input.checkedAt},
             next_check_at = ${input.nextCheckAt},
-            paused_at = ${input.pause ? input.checkedAt : null}
+            paused_at = ${input.pausedWatchers ? input.checkedAt : null},
+            paused_watchers_json = ${input.pausedWatchers ? toJson(input.pausedWatchers) : null}
           WHERE source_id = ${input.sourceId}
         `,
       ).pipe(Effect.asVoid),
@@ -143,7 +167,7 @@ export const make = Effect.gen(function* () {
         "resumeSource",
         sql`
           UPDATE signalbox_automation_sources
-          SET paused_at = NULL, failures = 0, next_check_at = ${at}
+          SET paused_at = NULL, paused_watchers_json = NULL, failures = 0, next_check_at = ${at}
           WHERE source_id = ${sourceId} AND paused_at IS NOT NULL
         `,
       ).pipe(Effect.asVoid),

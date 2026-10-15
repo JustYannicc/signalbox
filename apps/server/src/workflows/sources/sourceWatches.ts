@@ -8,7 +8,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 
-import { automationDefaults } from "../columns.ts";
 import { errorMessage, logFailure } from "../errors.ts";
 import { fromJson, toJson } from "../json.ts";
 import { transientCause } from "../stepPolicy.ts";
@@ -22,6 +21,7 @@ import {
   snapshotOf,
   sourceIdOf,
   type Snapshot,
+  type SourceScope,
   type SourceChange,
 } from "./watch.ts";
 
@@ -37,11 +37,16 @@ import {
  * hour later. The first read of a new source only records what's there.
  * Reads are stored before their events go out, so a restart never replays.
  *
+ * Someone new watching a source gets it read right away (unless it's
+ * failing), and each event carries the read before it (`since`), so a
+ * watcher only ever hears about changes made after it started watching.
+ *
  * A quiet source is read less often (up to 4× its `every`), a failing one
- * backs off (doubling, honoring Retry-After, up to an hour), and after
- * `MAX_FAILURES` failed reads in a row it pauses and its watchers' owners are
- * told once. A pause lifts when someone new watches it: an automation saved
- * again, a new run, or a server restart.
+ * backs off (doubling, honoring Retry-After, up to an hour) whoever else
+ * joins, and after `MAX_FAILURES` failed reads in a row it pauses and its
+ * watchers' owners are told once. Who watched it then is stored with the
+ * pause, so only someone new watching lifts it: an automation saved again or
+ * a new run, never a restart.
  */
 
 const MAX_FAILURES = 5;
@@ -52,7 +57,7 @@ const MAX_BACKOFF_MS = 60 * 60_000;
 const FORGET_AFTER_MS = 60 * 60_000;
 /** How often watched sources are marked as wanted and unwanted ones pruned. */
 const PRUNE_EVERY_MS = 10 * 60_000;
-/** Items kept per read; a longer list counts its first ones. */
+/** Items a read may list; a longer list has to be narrowed, or its edge would read as changes. */
 const MAX_ITEMS = 1_000;
 
 /** One automation or run watching a source. */
@@ -61,9 +66,9 @@ export interface Watcher {
   readonly id: string;
   /** The run watching, for a `waitFor` step; absent for a trigger. */
   readonly runId?: string;
-  readonly projectId: string;
+  readonly scope: SourceScope;
   readonly watch: WorkflowSourceWatch;
-  /** Whose watch it is: its owner hears about a pause, and its access decides approvals. */
+  /** Whose watch it is: its owner hears about a pause. */
   readonly automation: AutomationRow;
 }
 
@@ -102,13 +107,16 @@ export interface SourceWatchDependencies {
   readonly scope: Scope.Scope;
 }
 
-/** A source gone quiet, now watched by someone who wants it read more often than it is. */
-const tooSlow = (row: Pick<SourceRow, "interval_ms">, group: Pick<Group, "everyMs">) =>
-  row.interval_ms > group.everyMs * QUIET_MAX;
+/**
+ * A source gone quiet, now watched by someone who wants it read more often
+ * than it is. A failing source keeps its backoff whoever joins.
+ */
+const tooSlow = (row: Pick<SourceRow, "interval_ms" | "failures">, group: Pick<Group, "everyMs">) =>
+  row.failures === 0 && row.interval_ms > group.everyMs * QUIET_MAX;
 
 interface Group {
   readonly sourceId: string;
-  readonly projectId: string;
+  readonly scope: SourceScope;
   readonly watch: WorkflowSourceWatch;
   readonly everyMs: number;
   readonly watchers: ReadonlyArray<Watcher>;
@@ -117,7 +125,7 @@ interface Group {
 function groupWatchers(watchers: ReadonlyArray<Watcher>): Map<string, Group> {
   const groups = new Map<string, Group & { watchers: Watcher[]; everyMs: number }>();
   for (const watcher of watchers) {
-    const sourceId = sourceIdOf(watcher.projectId, watcher.watch);
+    const sourceId = sourceIdOf(watcher.scope, watcher.watch);
     const group = groups.get(sourceId);
     if (group) {
       group.watchers.push(watcher);
@@ -125,7 +133,7 @@ function groupWatchers(watchers: ReadonlyArray<Watcher>): Map<string, Group> {
     } else
       groups.set(sourceId, {
         sourceId,
-        projectId: watcher.projectId,
+        scope: watcher.scope,
         watch: watcher.watch,
         everyMs: everyMsOf(watcher.watch),
         watchers: [watcher],
@@ -136,9 +144,10 @@ function groupWatchers(watchers: ReadonlyArray<Watcher>): Map<string, Group> {
 
 /** The event a change becomes. Reads are stored before their events go out, so an id never comes round twice. */
 function envelopeOf(
-  group: Pick<Group, "sourceId" | "projectId" | "watch">,
+  group: Pick<Group, "sourceId" | "scope" | "watch">,
   change: SourceChange,
   at: string,
+  since: string,
 ): SourceEnvelope {
   const event = `source.item.${change.kind}`;
   return {
@@ -146,7 +155,9 @@ function envelopeOf(
     // Each read is one occurrence: a status flipping back and forth is a new change every time.
     id: `${event}:${group.sourceId}:${change.key}:${at}`,
     at,
-    projectId: group.projectId,
+    // The read before this one: the change happened in between, so watchers that started later skip it.
+    since,
+    projectId: group.scope.projectId,
     sourceId: group.sourceId,
     source: { operation: group.watch.operation, connection: group.watch.connection ?? null },
     key: change.key,
@@ -158,7 +169,7 @@ function envelopeOf(
 export const makeSourceWatches = (deps: SourceWatchDependencies) => {
   const { store } = deps;
   const reading = new Set<string>();
-  /** Who watched each source at the last tick; someone new lifts a pause. */
+  /** Who watched each source at the last tick; someone new gets it read now. */
   const seen = new Map<string, ReadonlySet<string>>();
   let lastPrune = Number.NEGATIVE_INFINITY;
   const logged = logFailure("Automation source watch failed");
@@ -181,24 +192,23 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
    * overlap, and each starts from the stored row, so a tick that listed it
    * before the last read finished can't read it twice.
    */
-  const check = (sourceId: string, group: Group) =>
+  const check = (sourceId: string, group: Group, newcomer: boolean) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const at = DateTime.formatIso(now);
       const row = yield* store.get(sourceId);
-      if (!row || row.paused_at !== null || (row.next_check_at > at && !tooSlow(row, group)))
-        return false;
+      if (!row || row.paused_at !== null) return false;
+      const due =
+        row.next_check_at <= at || tooSlow(row, group) || (newcomer && row.failures === 0);
+      if (!due) return false;
       const { watch } = group;
-      // Executor asks before calls the owner didn't allow everything for; every watcher has to allow it.
-      const autoApprove = group.watchers.every(
-        (watcher) => automationDefaults(watcher.automation).runtimeMode === "full-access",
-      );
       const answer = yield* deps
         .read({
           operation: watch.operation,
           args: watch.args ?? {},
           connection: watch.connection,
-          autoApprove,
+          // Executor asks before calls the owner didn't allow everything for; the scope says.
+          autoApprove: group.scope.autoApprove,
           idempotencyKey: `${row.source_id}/${at}`,
         })
         .pipe(
@@ -209,7 +219,12 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
           Effect.flatMap((value) => {
             const listed = listOf(value, watch.items);
             if (!listed.ok) return Effect.fail({ message: listed.error, retryAfterMs: undefined });
-            const snapshot = snapshotOf(listed.list.slice(0, MAX_ITEMS), watch.key);
+            if (listed.list.length > MAX_ITEMS)
+              return Effect.fail({
+                message: `The list has ${listed.list.length} items, more than the ${MAX_ITEMS} a watch reads; narrow it with args (a filter, or fewer per page).`,
+                retryAfterMs: undefined,
+              });
+            const snapshot = snapshotOf(listed.list, watch.key);
             // A key nothing has would read as an empty list forever; say so instead.
             return snapshot.length === 0 && listed.list.length > 0
               ? Effect.fail({
@@ -234,7 +249,7 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
           error: answer.failure.message,
           nextCheckAt: isoAt(now.epochMilliseconds + backoff),
           checkedAt: at,
-          pause,
+          pausedWatchers: pause ? group.watchers.map((watcher) => watcher.id) : null,
         });
         yield* Effect.logWarning("Automation source read failed", {
           sourceId: row.source_id,
@@ -276,7 +291,8 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
         checkedAt: at,
         changed: changes.length > 0,
       });
-      for (const change of changes) yield* deps.publish(envelopeOf(group, change, at));
+      const since = row.last_checked_at ?? at;
+      for (const change of changes) yield* deps.publish(envelopeOf(group, change, at, since));
       return true;
     });
 
@@ -285,14 +301,23 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
     const now = yield* DateTime.now;
     const at = DateTime.formatIso(now);
     const groups = groupWatchers(yield* deps.watchers);
-    const rows = new Map<string, Pick<SourceRow, "paused_at" | "next_check_at" | "interval_ms">>(
-      (yield* store.schedule([...groups.keys()])).map((row) => [row.source_id, row]),
-    );
+    const rows = new Map<
+      string,
+      Pick<
+        SourceRow,
+        | "paused_at"
+        | "paused_watchers_json"
+        | "next_check_at"
+        | "interval_ms"
+        | "failures"
+        | "snapshot_json"
+      >
+    >((yield* store.schedule([...groups.keys()])).map((row) => [row.source_id, row]));
     for (const group of groups.values()) {
       if (rows.has(group.sourceId)) continue;
       const row: SourceRow = {
         source_id: group.sourceId,
-        project_id: group.projectId,
+        project_id: group.scope.projectId,
         watch_json: toJson(group.watch),
         snapshot_json: null,
         interval_ms: group.everyMs,
@@ -302,6 +327,7 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
         failures: 0,
         last_error: null,
         paused_at: null,
+        paused_watchers_json: null,
         wanted_at: at,
         created_at: at,
       };
@@ -319,14 +345,26 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
       const ids = new Set(group.watchers.map((watcher) => watcher.id));
       const before = seen.get(group.sourceId);
       seen.set(group.sourceId, ids);
+      // Someone new (since the last tick, or this server started) gets an up-to-date baseline.
+      const someoneNew = [...ids].some((id) => !before?.has(id));
       if (row.paused_at !== null) {
-        if (before && [...ids].every((id) => before.has(id))) continue;
+        const pausedFor = new Set(
+          row.paused_watchers_json === null
+            ? []
+            : (fromJson(row.paused_watchers_json) as ReadonlyArray<string>),
+        );
+        if ([...ids].every((id) => pausedFor.has(id))) continue;
         yield* store.resume(group.sourceId, at);
-      } else if (row.next_check_at > at && !tooSlow(row, group)) continue;
+      } else if (
+        row.next_check_at > at &&
+        !tooSlow(row, group) &&
+        !(someoneNew && row.failures === 0 && row.snapshot_json !== null)
+      )
+        continue;
       if (reading.has(group.sourceId)) continue;
       reading.add(group.sourceId);
       yield* deps.adjustBusy(1);
-      yield* check(group.sourceId, group).pipe(
+      yield* check(group.sourceId, group, someoneNew).pipe(
         Effect.flatMap((read) => (read ? deps.checked(group.watchers) : Effect.void)),
         logged,
         Effect.ensuring(
@@ -341,9 +379,9 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
   });
 
   /** What each of these watches reads and how that's going, for the run view and automation page. */
-  const statusOf = (projectId: string, watches: ReadonlyArray<WorkflowSourceWatch>) =>
+  const statusOf = (scope: SourceScope, watches: ReadonlyArray<WorkflowSourceWatch>) =>
     Effect.gen(function* () {
-      const byId = new Map(watches.map((watch) => [sourceIdOf(projectId, watch), watch]));
+      const byId = new Map(watches.map((watch) => [sourceIdOf(scope, watch), watch]));
       const rows = new Map(
         (yield* store.statuses([...byId.keys()])).map((row) => [row.source_id, row]),
       );

@@ -21,7 +21,7 @@ import type { PullRequestTracker } from "./pullRequestFacts.ts";
 import type { PullRequestReads } from "./pullRequestReads.ts";
 import type { RunWaitListener, RunWaits } from "./runWaits.ts";
 import type { SourceEnvelope } from "../sources/sourceWatches.ts";
-import { sourceIdOf, watchMatches } from "../sources/watch.ts";
+import { scopeOf, watchMatches } from "../sources/watch.ts";
 import {
   ACTORS,
   buildIndex,
@@ -203,13 +203,12 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.gen(function* () {
         const current = yield* currentIndex;
         const subs = current.empty ? [] : current.lookup(envelope.event);
-        const waiting = (yield* deps.runWaits.lookup(envelope.event)).filter(
-          (listener) =>
-            listener.projectId === envelope.projectId &&
-            (listener.watches ?? []).some(
-              (watch) => sourceIdOf(listener.projectId, watch) === envelope.sourceId,
-            ),
-        );
+        const waiting = (yield* deps.runWaits.lookup(envelope.event)).filter((listener) => {
+          const { automation, startedAt } = listener;
+          if (!automation || startedAt === undefined) return false;
+          const watcher = { scope: scopeOf(automation), startedAt };
+          return (listener.watches ?? []).some((watch) => watchMatches(watcher, watch, envelope));
+        });
         if (subs.length === 0 && waiting.length === 0) return;
         yield* enqueue({
           type: "ready",
@@ -251,8 +250,9 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
         // A trigger watching a source takes only that source's changes, and only to its fields.
         // Only a trigger watching a source gets its changes, so nobody sees another's sources.
         if (envelope.sourceId !== undefined || trigger.watch) {
-          if (!trigger.watch || !watchMatches(automation.project_id, trigger.watch, envelope))
-            return false;
+          // A trigger watches from when it was last saved or switched on.
+          const watcher = { scope: scopeOf(automation), startedAt: automation.updated_at };
+          if (!trigger.watch || !watchMatches(watcher, trigger.watch, envelope)) return false;
         }
         if (trigger.includeAutomationThreads !== true && (yield* context.fromAutomation))
           return false;

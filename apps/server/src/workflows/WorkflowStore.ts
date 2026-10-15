@@ -434,8 +434,8 @@ export const make = Effect.gen(function* () {
     getRunMeta: (runId: string) =>
       run(
         "getRunMeta",
-        sql<Pick<RunRow, "automation_id" | "status">>`
-          SELECT automation_id, status FROM signalbox_automation_runs WHERE run_id = ${runId}
+        sql<Pick<RunRow, "automation_id" | "status" | "started_at">>`
+          SELECT automation_id, status, started_at FROM signalbox_automation_runs WHERE run_id = ${runId}
         `,
       ).pipe(Effect.map((rows) => rows[0])),
     listRuns: (automationId: string, limit: number) =>
@@ -464,7 +464,8 @@ export const make = Effect.gen(function* () {
           run_id: string;
           automation_id: string;
           version: number;
-        }>`SELECT run_id, automation_id, version FROM signalbox_automation_runs WHERE status = 'running'`,
+          started_at: string;
+        }>`SELECT run_id, automation_id, version, started_at FROM signalbox_automation_runs WHERE status = 'running'`,
       ),
     runningRunsOf: (automationId: string) =>
       run(
@@ -703,8 +704,10 @@ export const make = Effect.gen(function* () {
     runningWaitForSteps: () =>
       run(
         "runningWaitForSteps",
+        // A loop waits on the same thing with a shrinking timeout; without it, its steps are one.
         sql<Pick<StepRow, "run_id" | "verb" | "args_json">>`
-          SELECT DISTINCT s.run_id, s.verb, s.args_json FROM signalbox_automation_steps s
+          SELECT DISTINCT s.run_id, s.verb, json_remove(s.args_json, '$[0].timeout') AS args_json
+          FROM signalbox_automation_steps s
           JOIN signalbox_automation_runs r ON r.run_id = s.run_id
           WHERE s.verb = 'waitFor' AND r.status = 'running'
         `,

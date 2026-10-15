@@ -16,7 +16,7 @@ import type { Settlement } from "../engineTypes.ts";
 import { asRecord, fromJson, toJson } from "../json.ts";
 import type { RunLinkStore } from "../runLinkStore.ts";
 import type { AutomationRow, StepRow, WorkflowStore } from "../WorkflowStore.ts";
-import { isSourceWatch as isWatch, watchMatches } from "../sources/watch.ts";
+import { isSourceWatch as isWatch, scopeOf, watchMatches } from "../sources/watch.ts";
 import { whereMatches } from "./subscriptions.ts";
 
 /**
@@ -53,6 +53,8 @@ export interface RunWaitListener {
   /** Sources its `waitFor` steps watch, and whose they are, for the source poller. */
   readonly watches?: ReadonlyArray<WorkflowSourceWatch>;
   readonly automation?: AutomationRow;
+  /** When the run started listening, so a source's changes from before it don't reach it. */
+  readonly startedAt?: string;
 }
 
 /** The `on` patterns and literal `watch` sources of every `waitFor` in a diagram. */
@@ -185,6 +187,7 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
         if (automation)
           built.push({
             runId: run.run_id,
+            startedAt: run.started_at,
             projectId: automation.project_id,
             patterns,
             watches: [...fromDiagram.watches, ...(computedWatches.get(run.run_id)?.values() ?? [])],
@@ -238,6 +241,16 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
       if (waiting.length === 0) return;
       const inbox = yield* links.unconsumed(runId);
       if (inbox.length === 0) return;
+      // Read only when a source event needs matching: whose run it is, and since when it listens.
+      const runWatcher = yield* Effect.cached(
+        Effect.gen(function* () {
+          const run = yield* store.getRunMeta(runId);
+          const automation = run ? yield* store.getAutomation(run.automation_id) : undefined;
+          return run && automation
+            ? { scope: scopeOf(automation), startedAt: run.started_at }
+            : undefined;
+        }),
+      );
       const taken = new Set<number>();
       for (const step of waiting) {
         const { patterns, where, watch } = stepListens(step);
@@ -248,7 +261,8 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
           if (!whereMatches(where, envelope)) continue;
           // A source's changes go only to steps watching it.
           if (envelope.sourceId !== undefined || watch) {
-            if (!watch || !watchMatches(String(envelope.projectId), watch, envelope)) continue;
+            const watcher = yield* runWatcher;
+            if (!watch || !watcher || !watchMatches(watcher, watch, envelope)) continue;
           }
           if (!(yield* links.consume(runId, event.seq, step.step_key))) continue;
           taken.add(event.seq);

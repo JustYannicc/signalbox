@@ -84,7 +84,7 @@ import { makeCallbacks } from "./callbacks.ts";
 import { makeWaits, type Waits } from "./waits.ts";
 import * as SourceStore from "./sources/sourceStore.ts";
 import { makeSourceWatches } from "./sources/sourceWatches.ts";
-import { sourceIdOf } from "./sources/watch.ts";
+import { scopeOf, sourceIdOf } from "./sources/watch.ts";
 import { watchersOf } from "./sources/watchers.ts";
 import { setPullRequestWatchHandler } from "./pullRequestWatchHook.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
@@ -299,7 +299,7 @@ const make = Effect.gen(function* () {
             if (!automation) return;
             for (const step of yield* store.listSteps(runId)) {
               const watch = step.status === "waiting" ? stepWatch(step) : undefined;
-              if (watch && sourceIdOf(automation.project_id, watch) === sourceId)
+              if (watch && sourceIdOf(scopeOf(automation), watch) === sourceId)
                 yield* complete(runId, step.step_key, { ok: false, error });
             }
           }).pipe(ignoreFailure("source pause")),

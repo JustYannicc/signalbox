@@ -386,3 +386,106 @@ export default workflow(async (w) => null);`,
     }),
   ),
 );
+
+const RUNS_WATCH = {
+  operation: "github.actions.listWorkflowRunsForRepo",
+  args: { owner: "o", repo: "r" },
+  key: "id",
+} as const;
+
+it.effect("a failing source keeps its backoff when someone who wants it faster joins", () => {
+  const fake = fakeSource();
+  const tools = fakeTools({ t3_thread_send: { delivery: "queued" } });
+  return withEngine(
+    { http: fake.http, environment: fake.environment },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      yield* engine.registerBuiltinTools(tools.handler);
+      yield* saveOk(
+        `export const meta = { name: "Hourly", triggers: [{ on: "source.item.added", watch: { operation: "github.actions.listWorkflowRunsForRepo", args: { owner: "o", repo: "r" }, key: "id", every: { hours: 1 } } }] } as const;
+export default workflow(async (w, input: any) => input.key);`,
+      );
+      yield* check(engine, "0 millis");
+      fake.state.failing = 100;
+      yield* check(engine, "1 hour");
+      expect(fake.state.calls).toBe(2);
+
+      // An agent waiting every 5 minutes joins while the source backs off for an hour.
+      yield* engine.startWait(
+        { threadId: "thread-agent", until: "a new run", watch: RUNS_WATCH },
+        { builtInDefaults: DEFAULTS },
+      );
+      yield* engine.drain;
+      for (let index = 0; index < 10; index++) yield* check(engine, "5 minutes");
+      expect(fake.state.calls).toBe(2);
+      yield* check(engine, "15 minutes");
+      expect(fake.state.calls).toBe(3);
+    }),
+  );
+});
+
+it.effect("someone who starts watching later never hears about changes from before", () => {
+  const fake = fakeSource();
+  return withEngine(
+    { http: fake.http, environment: fake.environment },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const first = yield* saveOk(source("First", "source.item.added"));
+      yield* check(engine, "0 millis");
+      yield* engine.setEnabled(first.id, false);
+
+      // Run 2 shows up while nobody watches; the stored read still says only run 1.
+      fake.state.runs.unshift({ id: 2, status: "queued", updated_at: "2" });
+      yield* TestClock.adjust("10 minutes");
+      const later = yield* saveOk(source("Later", "source.item.added"));
+      yield* check(engine, "0 millis");
+      expect((yield* engine.get(later.id)).runs).toEqual([]);
+
+      fake.state.runs.unshift({ id: 3, status: "queued", updated_at: "3" });
+      yield* check(engine);
+      const runs = (yield* engine.get(later.id)).runs;
+      expect(runs).toHaveLength(1);
+      expect((yield* engine.getRun(runs[0]!.id)).output).toBe("3");
+    }),
+  );
+});
+
+it.effect("a source paused after failing stays paused across a restart", () => {
+  const fake = fakeSource();
+  return withRestartableEngine({ http: fake.http, environment: fake.environment }, (start) =>
+    Effect.gen(function* () {
+      const first = yield* start;
+      const automation = yield* saveOk(source("New runs", "source.item.added")).pipe(
+        Effect.provideService(WorkflowEngine, first.engine),
+      );
+      yield* check(first.engine, "0 millis");
+      fake.state.failing = 100;
+      for (let index = 0; index < 5; index++) yield* check(first.engine, "1 hour");
+      expect(fake.state.calls).toBe(6);
+      yield* first.stop;
+
+      const second = yield* start;
+      for (let index = 0; index < 3; index++) yield* check(second.engine, "1 hour");
+      expect(fake.state.calls).toBe(6);
+      expect((yield* second.engine.get(automation.id)).watching).toMatchObject([
+        { status: "paused" },
+      ]);
+    }),
+  );
+});
+
+it.effect("a list too long to watch fails with how to narrow it", () => {
+  const fake = fakeSource();
+  fake.state.runs = Array.from({ length: 1001 }, (_, index) => ({ id: index, status: "done" }));
+  return withEngine(
+    { http: fake.http, environment: fake.environment },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const automation = yield* saveOk(source("Big", "source.item.added"));
+      yield* check(engine, "0 millis");
+      expect((yield* engine.get(automation.id)).watching).toMatchObject([
+        { status: "failing", error: expect.stringContaining("narrow it with args") },
+      ]);
+    }),
+  );
+});
