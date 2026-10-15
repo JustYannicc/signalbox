@@ -268,7 +268,7 @@
       "rpc": "automations.save",
       "access": "write",
       "input": "e2698ed3",
-      "output": "52fe2d18"
+      "output": "e9ad0c58"
     },
     {
       "name": "automations.setEnabled",
