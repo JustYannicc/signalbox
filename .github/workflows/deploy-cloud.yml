@@ -1,11 +1,16 @@
-# Signalbox-only: deploys Signalbox Cloud (apps/cloud) to Cloudflare. Its own
-# file so upstream merges never touch it. Setup: docs/operations/cloud.md.
+# Signalbox-only: deploys Signalbox Cloud (apps/cloud) to Cloudflare through its
+# Alchemy stack (apps/cloud/alchemy.run.ts). Its own file so upstream merges
+# never touch it. Setup: docs/operations/cloud.md.
 #
-# - main deploys production at app.signalbox.run, and its ModelGateway at
-#   gateway.signalbox.run.
-# - Pull requests from JustYannicc get a preview at preview-<number>.signalbox.run:
-#   its own Worker, Durable Objects and ModelGateway (gateway-preview-<number>),
-#   deleted when the pull request closes.
+# - main deploys the `production` stage: app.signalbox.run, and its
+#   ModelGateway at gateway.signalbox.run.
+# - Pull requests from JustYannicc deploy the `pr-<number>` stage at
+#   preview-<number>.signalbox.run: its own Worker, Durable Objects and
+#   ModelGateway (gateway-preview-<number>), destroyed when the pull request
+#   closes. They also plan production, to show what merging would do.
+#
+# Every deploy plans first and stops if the plan replaces, deletes, orphans or
+# unbinds anything (apps/cloud/infra/plan.sh). Plans are in the job summary.
 name: Deploy Signalbox Cloud
 
 on:
@@ -24,6 +29,7 @@ on:
       - apps/server/src/signalbox/runner/**
       - apps/server/src/orchestration-v2/Adapters/**
       - pnpm-lock.yaml
+      - patches/alchemy@*.patch
       - .github/workflows/deploy-cloud.yml
       # Production's cleanup token is derived by this script. The other cleanup
       # scripts run from main's checkout when a PR closes, so they need no deploy.
@@ -41,12 +47,15 @@ on:
 permissions:
   contents: read
 
+env:
+  ALCHEMY_TELEMETRY_DISABLED: "1"
+
 jobs:
   deploy_production:
     name: Deploy production cloud
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     concurrency:
       group: cloud-production
       cancel-in-progress: false
@@ -55,6 +64,29 @@ jobs:
       url: https://app.signalbox.run
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      STAGE: production
+      T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+      MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      # Optional: `cloud.*` usage analytics (#116). Production only, so
+      # previews never mix test turns into the cost data.
+      SIGNALBOX_POSTHOG_KEY: ${{ vars.SIGNALBOX_POSTHOG_KEY }}
+      SIGNALBOX_POSTHOG_HOST: ${{ vars.SIGNALBOX_POSTHOG_HOST }}
+      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
+      SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
+      T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
+      # Optional: membership changes from WorkOS at once (docs/operations/cloud.md).
+      T3CODE_WORKOS_WEBHOOK_SECRET: ${{ secrets.T3CODE_WORKOS_WEBHOOK_SECRET }}
+      # Optional: Claude and Codex on boat VMs (docs/operations/cloud.md).
+      BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+      # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
+      APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
+      APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
+      APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
+      FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
     steps:
       - &checkout
         name: Checkout
@@ -93,75 +125,23 @@ jobs:
         working-directory: apps/server
         run: vp run runner:bundle
 
-      - name: Write Worker secrets
+      - name: Derive the preview cleanup token
         run: |
-          umask 077
-          preview_cleanup_token="$(bash .github/scripts/preview-cleanup-token.sh)"
-          jq -n \
-            --arg SESSION_SECRET "$SESSION_SECRET" \
-            --arg PREVIEW_CLEANUP_TOKEN "$preview_cleanup_token" \
-            --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
-            --arg T3CODE_WORKOS_WEBHOOK_SECRET "$T3CODE_WORKOS_WEBHOOK_SECRET" \
-            --arg BOAT_API_KEY "$BOAT_API_KEY" \
-            --arg TYPESAFE_API_KEY "$TYPESAFE_API_KEY" \
-            --arg OPENAI_API_KEY "$OPENAI_API_KEY" \
-            --arg APNS_TEAM_ID "$APNS_TEAM_ID" \
-            --arg APNS_KEY_ID "$APNS_KEY_ID" \
-            --arg APNS_PRIVATE_KEY "$APNS_PRIVATE_KEY" \
-            --arg FCM_SERVICE_ACCOUNT "$FCM_SERVICE_ACCOUNT" \
-            '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
-          T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
-          # Optional: membership changes from WorkOS at once (docs/operations/cloud.md).
-          T3CODE_WORKOS_WEBHOOK_SECRET: ${{ secrets.T3CODE_WORKOS_WEBHOOK_SECRET }}
-          # Optional: Claude and Codex on boat VMs (docs/operations/cloud.md).
-          BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
-          # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
-          APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
-          APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
-          APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
-          FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+          token="$(bash .github/scripts/preview-cleanup-token.sh)"
+          echo "::add-mask::$token"
+          echo "PREVIEW_CLEANUP_TOKEN=$token" >> "$GITHUB_ENV"
 
-      # Secrets ship with the version, so no deploy runs without them.
-      - name: Deploy
+      # Nothing deploys unless the plan keeps every Worker, Durable Object,
+      # container and bucket where it is.
+      - &plan
+        name: Plan
         working-directory: apps/cloud
-        run: >-
-          ./node_modules/.bin/wrangler deploy --env ""
-          --secrets-file "$RUNNER_TEMP/cloud-secrets.json"
-          --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
-          --var "CLOUD_URL:https://app.signalbox.run"
-          --var "MACHINE_BACKEND:$MACHINE_BACKEND"
-          --var "MODEL_GATEWAY_URL:$MODEL_GATEWAY_URL"
-          --var "SIGNALBOX_POSTHOG_KEY:$SIGNALBOX_POSTHOG_KEY"
-          --var "SIGNALBOX_POSTHOG_HOST:$SIGNALBOX_POSTHOG_HOST"
-          --var "PREVIEW_DOMAIN:$PREVIEW_DOMAIN"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
-          MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
-          MODEL_GATEWAY_URL: ${{ vars.MODEL_GATEWAY_URL }}
-          # Optional: `cloud.*` usage analytics (#116). Production only, so
-          # previews never mix test turns into the cost data.
-          SIGNALBOX_POSTHOG_KEY: ${{ vars.SIGNALBOX_POSTHOG_KEY }}
-          SIGNALBOX_POSTHOG_HOST: ${{ vars.SIGNALBOX_POSTHOG_HOST }}
-          PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
+        run: bash infra/plan.sh "$STAGE"
 
-      # After the cloud, whose `ModelGrants` entrypoint it calls.
-      - name: Deploy ModelGateway
+      - &deploy
+        name: Deploy
         working-directory: apps/cloud
-        run: ./node_modules/.bin/wrangler deploy --config wrangler.model-gateway.jsonc --env ""
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-
-      - &cleanup
-        name: Remove secrets file
-        if: always()
-        run: rm -f "$RUNNER_TEMP/cloud-secrets.json"
+        run: ./node_modules/.bin/alchemy deploy --stage "$STAGE" --yes --no-input
 
   # Same-repository pull requests opened by JustYannicc (including agents
   # working under that account). Forks never get a preview or the secrets.
@@ -173,7 +153,7 @@ jobs:
       github.event.pull_request.user.login == 'JustYannicc' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     concurrency:
       group: cloud-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -182,7 +162,21 @@ jobs:
       url: https://preview-${{ github.event.pull_request.number }}.signalbox.run
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      STAGE: pr-${{ github.event.pull_request.number }}
+      T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+      MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
+      BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+      # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
+      APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
+      APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
+      APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
+      FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
     steps:
       - *checkout
       - *setup
@@ -191,35 +185,18 @@ jobs:
 
       # Each preview signs its own sessions: stable across its redeploys, and
       # never accepted by production or another preview.
-      - name: Write Worker secrets
+      - name: Derive the preview's session secret
         run: |
-          umask 077
-          session_secret="$(printf 'preview-%s' "$PR_NUMBER" | openssl dgst -sha256 -hmac "$PREVIEW_SESSION_SECRET" -r | cut -d' ' -f1)"
-          jq -n \
-            --arg SESSION_SECRET "$session_secret" \
-            --arg T3CODE_WORKOS_API_KEY "$T3CODE_WORKOS_API_KEY" \
-            --arg BOAT_API_KEY "$BOAT_API_KEY" \
-            --arg TYPESAFE_API_KEY "$TYPESAFE_API_KEY" \
-            --arg OPENAI_API_KEY "$OPENAI_API_KEY" \
-            --arg APNS_TEAM_ID "$APNS_TEAM_ID" \
-            --arg APNS_KEY_ID "$APNS_KEY_ID" \
-            --arg APNS_PRIVATE_KEY "$APNS_PRIVATE_KEY" \
-            --arg FCM_SERVICE_ACCOUNT "$FCM_SERVICE_ACCOUNT" \
-            '$ARGS.named' > "$RUNNER_TEMP/cloud-secrets.json"
+          set -o pipefail
+          : "${PREVIEW_SESSION_SECRET:?CLOUD_PREVIEW_SESSION_SECRET is not set}"
+          secret="$(printf 'preview-%s' "$PR_NUMBER" | openssl dgst -sha256 -hmac "$PREVIEW_SESSION_SECRET" -r | cut -d' ' -f1)"
+          echo "::add-mask::$secret"
+          echo "SESSION_SECRET=$secret" >> "$GITHUB_ENV"
         env:
           PREVIEW_SESSION_SECRET: ${{ secrets.CLOUD_PREVIEW_SESSION_SECRET }}
-          T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
-          BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
-          APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
-          APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
-          APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
-          FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
 
       # A reopened pull request may use the same preview origin as before.
-      # This job already runs PR code (the build, wrangler) with the Cloudflare
+      # This job already runs PR code (the build, the stack) with the Cloudflare
       # token, which is enough to derive the cleanup token. Main's checkout isn't
       # a security boundary: it only means a reopen uses main's reviewed call,
       # not whatever the PR changed it to.
@@ -239,51 +216,21 @@ jobs:
       - name: Reopen production preview links
         if: github.event.action == 'reopened'
         run: bash .trusted-cleanup/.github/scripts/call-preview-cleanup.sh activate "$PR_NUMBER"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # Containers and service bindings have no command-line names, so the
-      # preview deploys from copies of the configs with its own names.
-      - name: Name the preview's containers and gateway binding
+      - *plan
+      - *deploy
+
+      # What merging this pull request would do to production. Placeholder
+      # secrets: a plan uploads nothing. The production deploy plans again
+      # with the real values, and that plan is what stops a bad deploy.
+      - name: Plan production
         working-directory: apps/cloud
         run: |
-          sed "s/PR_NUMBER/$PR_NUMBER/g" wrangler.jsonc > wrangler.preview.jsonc
-          sed "s/PR_NUMBER/$PR_NUMBER/g" wrangler.model-gateway.jsonc > wrangler.model-gateway.preview.jsonc
+          SESSION_SECRET=plan-only T3CODE_WORKOS_API_KEY=plan-only PREVIEW_CLEANUP_TOKEN=plan-only \
+            bash infra/plan.sh production
 
-      - name: Deploy
-        working-directory: apps/cloud
-        run: >-
-          ./node_modules/.bin/wrangler deploy --config wrangler.preview.jsonc --env preview
-          --name "signalbox-cloud-pr-$PR_NUMBER"
-          --domain "preview-$PR_NUMBER.signalbox.run"
-          --secrets-file "$RUNNER_TEMP/cloud-secrets.json"
-          --var "ENVIRONMENT_ID:cloud-preview-$PR_NUMBER"
-          --var "ENVIRONMENT_LABEL:Signalbox Cloud (PR #$PR_NUMBER)"
-          --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
-          --var "CLOUD_URL:https://preview-$PR_NUMBER.signalbox.run"
-          --var "DRIVE_PACKS_PREFIX:pr-$PR_NUMBER/"
-          --var "MACHINE_BACKEND:$MACHINE_BACKEND"
-          --var "MODEL_GATEWAY_URL:https://gateway-preview-$PR_NUMBER.signalbox.run"
-          --var "THREAD_KIND_TEST_CLOCK:1"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
-          MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
-
-      # The preview's own gateway: its binding reaches only this preview's Worker.
-      - name: Deploy ModelGateway
-        working-directory: apps/cloud
-        run: >-
-          ./node_modules/.bin/wrangler deploy --config wrangler.model-gateway.preview.jsonc
-          --env preview
-          --name "signalbox-model-gateway-pr-$PR_NUMBER"
-          --domain "gateway-preview-$PR_NUMBER.signalbox.run"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-
-      - *cleanup
-
-  # Deletes the preview's Workers, containers, drive packs and production links.
+  # Destroys the preview's stage, then asks production to drop its drive packs
+  # and pool links.
   delete_preview:
     name: Delete preview cloud
     if: >-
@@ -291,7 +238,7 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     concurrency:
       group: cloud-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -302,8 +249,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
-      # Only main's scripts run here: no PR code ever sees the token in this job.
-      - name: Checkout trusted cleanup scripts
+      # Only main's code runs here: no PR code ever sees the token in this job.
+      - name: Checkout trusted cleanup
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -311,8 +258,18 @@ jobs:
           # `git submodule foreach` in this step, which dies on the vendored
           # gitlink under .repos/ that has no .gitmodules entry.
           sparse-checkout: |
-            /.github/scripts
+            /*
+            !/.repos/
           sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
 
       - name: Delete preview resources
         run: bash .github/scripts/delete-cloud-preview.sh
