@@ -1,6 +1,9 @@
 import { ThreadId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import type { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import {
+  OnePasswordEnvironmentId,
+  type SignalboxFoldersSnapshot,
+} from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -10,6 +13,7 @@ import * as Environment from "../environment.ts";
 import { layerMemoryStore } from "../testing.ts";
 import { projectIdForDrive } from "./contextProjects.ts";
 import * as LegacySections from "./legacySections.ts";
+import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserFolders from "./UserFolders.ts";
@@ -182,6 +186,7 @@ describe("UserFolders", () => {
         expect(yield* folders.turn({ threadId, projectId: null })).toEqual({
           pools: { top: "personal", projects: { [SCRATCH]: "personal" } },
           instructions: { top: topOnly, projects: { [SCRATCH]: topOnly } },
+          secrets: { top: [], projects: { [SCRATCH]: [] } },
         });
 
         // Filed in Clients: its own cascade, beside every project's for a thread it doesn't know.
@@ -208,6 +213,101 @@ describe("UserFolders", () => {
       }).pipe(Effect.provide(layerMemoryStore)),
   );
 
+  it.effect(
+    "gives a thread its chain's 1Password Environments top first, and shows only when 1Password was connected",
+    () =>
+      Effect.gen(function* () {
+        const { folders, store } = yield* services;
+        const account = yield* OnePasswordAccount.OnePasswordAccount;
+        yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+        const threadId = ThreadId.make("thread-1");
+        yield* indexThread(threadId, PERSONAL_CONTEXT_ID, SCRATCH);
+        let snapshot = yield* folders.create({ name: "Work", parentId: null });
+        snapshot = yield* folders.create({ name: "Clients", parentId: idOf(snapshot, "Work") });
+        const work = idOf(snapshot, "Work");
+        const clients = idOf(snapshot, "Clients");
+        const env = OnePasswordEnvironmentId.make;
+        yield* folders.setSecrets({
+          level: { _tag: "top" },
+          secrets: { environmentId: env("env-top") },
+        });
+        yield* folders.setSecrets({
+          level: { _tag: "folder", folderId: clients },
+          secrets: { environmentId: env("env-clients") },
+        });
+        snapshot = yield* folders.setSecrets({
+          level: { _tag: "folder", folderId: work },
+          secrets: { environmentId: env("env-work") },
+        });
+        expect(snapshot.top).toEqual({ secrets: { environmentId: "env-top" } });
+        // Folders at different depths come in id order, which is random here.
+        expect(
+          Object.fromEntries(snapshot.folders.map((folder) => [folder.name, folder.secrets])),
+        ).toEqual({
+          Work: { environmentId: "env-work" },
+          Clients: { environmentId: "env-clients" },
+        });
+
+        // Filed in Clients: every level up its chain, top level first.
+        yield* folders.moveThread({ threadId, folderId: clients });
+        expect((yield* folders.turn({ threadId, projectId: null })).secrets).toEqual({
+          top: ["env-top"],
+          projects: { [SCRATCH]: ["env-top"] },
+          thread: ["env-top", "env-work", "env-clients"],
+        });
+
+        // Clearing a level drops it; setting the same again changes nothing.
+        snapshot = yield* folders.setSecrets({
+          level: { _tag: "folder", folderId: work },
+          secrets: null,
+        });
+        expect(
+          (yield* folders.setSecrets({
+            level: { _tag: "top" },
+            secrets: { environmentId: env("env-top") },
+          })).revision,
+        ).toBe(snapshot.revision);
+        expect((yield* folders.turn({ threadId, projectId: null })).secrets.thread).toEqual([
+          "env-top",
+          "env-clients",
+        ]);
+
+        // Deleting Clients takes its reference with it; its thread goes up to Work.
+        snapshot = yield* folders.delete({ id: clients });
+        expect(snapshot.folders.map((folder) => folder.secrets)).toEqual([undefined]);
+        expect((yield* folders.turn({ threadId, projectId: null })).secrets.thread).toEqual([
+          "env-top",
+        ]);
+        expect(
+          yield* reasonOf(
+            folders.setSecrets({
+              level: { _tag: "folder", folderId: clients },
+              secrets: { environmentId: env("env-gone") },
+            }),
+          ),
+        ).toBe("not-found");
+
+        // 1Password: the snapshot says when it was connected, never the token.
+        expect(snapshot.onePassword).toBeUndefined();
+        const token = "ops_first-service-account-token";
+        yield* TestClock.setTime(5_000);
+        let connected = yield* folders.setOnePassword({ token });
+        expect(connected.onePassword).toEqual({ connectedAt: 5_000 });
+        expect(connected.revision).toBeGreaterThan(snapshot.revision);
+        expect(JSON.stringify(connected)).not.toContain(token);
+        expect(yield* account.token).toBe(token);
+        // Replacing it moves the time; disconnecting removes both.
+        yield* TestClock.setTime(9_000);
+        connected = yield* folders.setOnePassword({ token: "ops_replacement-token" });
+        expect(connected.onePassword).toEqual({ connectedAt: 9_000 });
+        expect(yield* account.token).toBe("ops_replacement-token");
+        const disconnected = yield* folders.setOnePassword({ token: null });
+        expect(disconnected.onePassword).toBeUndefined();
+        expect(disconnected.revision).toBeGreaterThan(connected.revision);
+        expect(yield* account.token).toBeNull();
+      }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
   it.effect("migrates sections, placements and pools into folders, once", () =>
     Effect.gen(function* () {
       const { contexts, store, sql } = yield* services;
@@ -216,12 +316,13 @@ describe("UserFolders", () => {
       yield* give(CLIENT_DRIVE, "Northwind files");
       yield* give(ACME_DRIVE, "Payments drive");
 
-      // A user object from before folders: `0013` not run yet.
+      // A user object from before folders: `0013` and later not run yet.
       yield* sql`DROP TABLE folders`;
       yield* sql`DROP TABLE folder_drives`;
       yield* sql`DROP TABLE thread_homes`;
       yield* sql`DROP TABLE folders_state`;
-      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 13`;
+      yield* sql`DROP TABLE onepassword_account`;
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id IN (13, 15)`;
       yield* sql`INSERT INTO sections (id, context_id, parent_id, name, position) VALUES
         ('work', 'personal', NULL, 'Work', 0),
         ('clients', 'personal', 'work', 'Clients', 0),
