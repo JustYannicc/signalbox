@@ -1,5 +1,5 @@
-import { WAIT_FOR } from "../../defaults/waitFor.ts";
-import { WATCH_PULL_REQUEST } from "../../defaults/watchPullRequest.ts";
+import { WAIT_FOR } from "@signalbox/automations/defaults/waitFor";
+import { WATCH_PULL_REQUEST } from "@signalbox/automations/defaults/watchPullRequest";
 
 /**
  * Complete automations agents start from, installed as `references/examples/<name>`.

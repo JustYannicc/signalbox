@@ -8,7 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import {
   acceptedRun,
   DEFAULTS,

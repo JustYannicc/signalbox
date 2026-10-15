@@ -26,4 +26,4 @@ export class ExecutorSettingsStore extends Context.Service<
     }) => Effect.Effect<void, AutomationError>;
     readonly clear: Effect.Effect<void, AutomationError>;
   }
->()("t3/workflows/executorSettings/ExecutorSettingsStore") {}
+>()("@signalbox/automations/executorConnection/ExecutorSettingsStore") {}

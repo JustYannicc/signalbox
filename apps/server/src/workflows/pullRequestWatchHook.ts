@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import { loadCaller } from "../mcp/threadAccess.ts";
 import { PullRequestWatchFailedError } from "../mcp/toolkits/pullRequests/tools.ts";
 import { withinLimits } from "./callerAccess.ts";
-import type { Waits } from "./waits.ts";
+import type { Waits } from "@signalbox/automations/waits";
 
 /**
  * `watch_pull_request` and `unwatch_pull_request` start and stop the built-in

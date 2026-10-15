@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import type { Candidate, EventReads } from "./candidate.ts";
-import { makePullRequestTracker } from "./pullRequestFacts.ts";
-import type { PullRequestReads, Remark } from "./pullRequestDetails.ts";
+import type { Candidate, EventReads } from "@signalbox/automations/events/candidate";
+import { makePullRequestTracker } from "@signalbox/automations/events/pullRequestFacts";
+import type { PullRequestReads, Remark } from "@signalbox/automations/events/pullRequestDetails";
 
 const sync = (snapshot: Record<string, unknown> | null, syncedAt = "2026-10-06T10:00:00.000Z") =>
   ({

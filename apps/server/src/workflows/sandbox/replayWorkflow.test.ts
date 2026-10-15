@@ -2,14 +2,14 @@
 import { workflowNodeIdForStepKey, type WorkflowNode } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { CompiledWorkflow } from "../compiled.ts";
+import type { CompiledWorkflow } from "@signalbox/automations/compiled";
 import { compileWorkflow } from "../compiler/compileWorkflow.ts";
-import {
-  replayWorkflow,
-  type JournalResult,
-  type ReplayInput,
-  type StepRequest,
-} from "./replayWorkflow.ts";
+import type {
+  JournalResult,
+  ReplayInput,
+  StepRequest,
+} from "@signalbox/automations/sandbox/replayWorkflow";
+import { replayWorkflow } from "../quickJs.ts";
 
 const STARTED_AT = Date.UTC(2026, 9, 5, 9, 0);
 

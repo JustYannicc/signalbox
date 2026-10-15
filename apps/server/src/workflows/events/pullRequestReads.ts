@@ -1,5 +1,4 @@
 import type {
-  PullRequestCheck,
   PullRequestComment,
   PullRequestRef,
   ThreadPullRequestWatch,
@@ -10,9 +9,9 @@ import * as Option from "effect/Option";
 
 import { evaluatePullRequestWatch } from "../../orchestration-v2/pullRequestWatch.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
-import { WorkflowEngine } from "../WorkflowEngine.ts";
-import { cap, SHORT_TEXT } from "./candidate.ts";
-import type { FailedCheck, PullRequestReads, Remark } from "./pullRequestDetails.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
+import { cap, SHORT_TEXT } from "@signalbox/automations/events/candidate";
+import type { PullRequestReads, Remark } from "@signalbox/automations/events/pullRequestDetails";
 
 /**
  * Host reads behind `pr.commented`, `pr.reviewed` and the failed checks on

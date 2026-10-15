@@ -2,8 +2,8 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { Remark } from "./events/pullRequestDetails.ts";
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import type { Remark } from "@signalbox/automations/events/pullRequestDetails";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import {
   DEFAULTS,
   fakeThreads,

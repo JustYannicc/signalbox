@@ -1,25 +1,22 @@
 import {
   parseAutomationAsk,
-  ProjectId,
   type AutomationError,
   type AutomationRunSummary,
 } from "@t3tools/contracts";
 import type * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import { runtimeModeWithin } from "./access.ts";
 import { isBuiltinToolOperation, type BuiltinTools } from "./builtinTools/runner.ts";
 import { waitForEventProblem } from "./compiler/eventTriggers.ts";
-import type { CallbackLink } from "./host.ts";
 import { automationDefaults, stepArgs } from "./columns.ts";
 import type { makeConnections } from "./connections.ts";
 import type { EngineServices } from "./engineTypes.ts";
-import { automationError, fail } from "./errors.ts";
+import { fail } from "./errors.ts";
 import { asRecord, fromJson, toJson } from "./json.ts";
 import { modelPrompt } from "./modelSteps.ts";
-import type { AutomationFunctions } from "./host.ts";
+import type { AutomationFunctions, CallbackLink } from "./host.ts";
 import { waitsOnEvents } from "./events/runWaits.ts";
 import { explained } from "./runLog.ts";
 import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";

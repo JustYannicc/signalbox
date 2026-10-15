@@ -1,10 +1,5 @@
 import type { WorkflowStepVerb } from "@t3tools/contracts";
-import {
-  newQuickJSWASMModuleFromVariant,
-  type QuickJSContext,
-  type QuickJSHandle,
-  type QuickJSWASMModule,
-} from "quickjs-emscripten-core";
+import type { QuickJSContext, QuickJSHandle, QuickJSWASMModule } from "quickjs-emscripten-core";
 
 import { installGuestGlobals } from "./guestGlobals.ts";
 import { installGuestRuntime } from "./guestRuntime.ts";
@@ -77,9 +72,26 @@ const MAX_LOG_LENGTH = 2_000;
 const LOG_LEVELS = new Set<string>(["log", "info", "warn", "error", "debug"]);
 const GUEST_RUNTIME = `(${installGuestGlobals.toString()})();\n(${installGuestRuntime.toString()})();`;
 
-let quickJS: Promise<QuickJSWASMModule> | undefined;
-const loadQuickJS = () =>
-  (quickJS ??= newQuickJSWASMModuleFromVariant(import("@jitl/quickjs-wasmfile-release-sync")));
+/** How a host runs QuickJS: the build it loads, and the budget that stops runaway code. */
+export interface QuickJsSandboxOptions {
+  /** Loads the QuickJS build; called once. */
+  readonly load: () => Promise<QuickJSWASMModule>;
+  /**
+   * Starts one replay's budget for `timeLimitMs`. The returned check is
+   * QuickJS's interrupt handler, which it calls every few thousand
+   * instructions; true stops the code.
+   */
+  readonly budget: (timeLimitMs: number) => () => boolean;
+}
+
+/** A wall-clock budget, for hosts whose clock moves while code runs (not workerd's). */
+export const wallClockBudget = (timeLimitMs: number) => {
+  const deadline = performance.now() + timeLimitMs;
+  return () => performance.now() > deadline;
+};
+
+/** The one sandbox a host replays automations in (see host.ts's AutomationSandbox). */
+export type ReplayWorkflow = (options: ReplayInput) => Promise<ReplayOutcome>;
 
 /** FNV-1a, to turn the run id into a 32-bit seed. */
 function hashSeed(seed: string) {
@@ -103,16 +115,24 @@ function errorMessage(context: QuickJSContext, handle: QuickJSHandle) {
 }
 
 /**
- * Runs an automation from the top in a fresh QuickJS sandbox, answering steps
- * from the journal. Code is replayed after every step that finishes, so the
- * sandbox never outlives one call and holds nothing durable.
+ * Replays an automation from the top in a fresh QuickJS sandbox, answering
+ * steps from the journal. Code is replayed after every step that finishes,
+ * so the sandbox never outlives one call and holds nothing durable.
  */
-export async function replayWorkflow(options: ReplayInput): Promise<ReplayOutcome> {
-  const runtime = (await loadQuickJS()).newRuntime();
+export const makeQuickJsReplay = (sandbox: QuickJsSandboxOptions): ReplayWorkflow => {
+  let quickJS: Promise<QuickJSWASMModule> | undefined;
+  return (options) => replayIn((quickJS ??= sandbox.load()), sandbox, options);
+};
+
+async function replayIn(
+  quickJS: Promise<QuickJSWASMModule>,
+  sandbox: QuickJsSandboxOptions,
+  options: ReplayInput,
+): Promise<ReplayOutcome> {
+  const runtime = (await quickJS).newRuntime();
   runtime.setMemoryLimit(options.memoryLimitBytes ?? DEFAULT_MEMORY_LIMIT_BYTES);
-  // A wall-clock budget for one replay; it only guards against runaway code.
-  const deadline = performance.now() + (options.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS);
-  runtime.setInterruptHandler(() => performance.now() > deadline);
+  // One replay's budget; it only guards against runaway code.
+  runtime.setInterruptHandler(sandbox.budget(options.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS));
   const context = runtime.newContext();
 
   const requests = new Map<string, StepRequest>();

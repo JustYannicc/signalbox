@@ -1,7 +1,7 @@
 import type { WorkflowDiagnostic, WorkflowMeta } from "@t3tools/contracts";
 import type { Node } from "oxc-parser";
 
-import type { WorkflowCompileResult } from "../compiled.ts";
+import type { WorkflowCompileResult } from "@signalbox/automations/compiled";
 import { WorkflowAnalyzer, type Edit, type FunctionNode } from "./analyze.ts";
 import { unwrap } from "./literals.ts";
 import { readMeta } from "./meta.ts";

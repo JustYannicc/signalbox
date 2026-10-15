@@ -26,11 +26,11 @@ import * as PullRequestsHandlers from "../../mcp/toolkits/pullRequests/handlers.
 import { PullRequestsToolkit } from "../../mcp/toolkits/pullRequests/tools.ts";
 import * as ThreadHandlers from "../../mcp/toolkits/thread/handlers.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
-import { automationError, errorMessage } from "../errors.ts";
+import { automationError, errorMessage } from "@signalbox/automations/errors";
 import * as PullRequestReads from "../events/pullRequestReads.ts";
-import { asRecord } from "../json.ts";
-import * as WorkflowEngine from "../WorkflowEngine.ts";
-import type { BuiltinToolCall } from "./runner.ts";
+import { asRecord } from "@signalbox/automations/json";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
+import type { BuiltinToolCall } from "@signalbox/automations/builtinTools/runner";
 
 /**
  * Hands the engine Signalbox's MCP tool handlers, so `w.call("…",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { compileWorkflow } from "../compiler/compileWorkflow.ts";
-import { BUILT_IN_AUTOMATIONS, builtInOfRow } from "./registry.ts";
+import { BUILT_IN_AUTOMATIONS, builtInOfRow } from "@signalbox/automations/defaults/registry";
 
 describe("built-in automations", () => {
   it.each(BUILT_IN_AUTOMATIONS.map((builtIn) => [builtIn.slug, builtIn] as const))(

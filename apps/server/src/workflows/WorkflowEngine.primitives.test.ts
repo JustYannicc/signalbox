@@ -3,7 +3,7 @@ import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import {
   DEFAULTS,
   fakeThreads,

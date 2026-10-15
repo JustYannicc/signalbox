@@ -28,6 +28,7 @@ import type { DrainContext } from "evlog";
 import type { WorkflowCompileResult } from "./compiled.ts";
 import type { LaunchRun } from "./engineTypes.ts";
 import type { Envelope } from "./events/eventTriggers.ts";
+import type { ReplayWorkflow } from "./sandbox/replayWorkflow.ts";
 import type { WorkflowStore } from "./WorkflowStore.ts";
 
 /**
@@ -134,7 +135,7 @@ export interface AutomationThreadsShape {
 
 /** The host's threads: the agents automations start, wake and wait on. */
 export class AutomationThreads extends Context.Service<AutomationThreads, AutomationThreadsShape>()(
-  "signalbox/automations/AutomationThreads",
+  "@signalbox/automations/host/AutomationThreads",
 ) {}
 
 /**
@@ -144,7 +145,16 @@ export class AutomationThreads extends Context.Service<AutomationThreads, Automa
 export class AutomationCompiler extends Context.Service<
   AutomationCompiler,
   { readonly compile: (source: string) => WorkflowCompileResult }
->()("signalbox/automations/AutomationCompiler") {}
+>()("@signalbox/automations/host/AutomationCompiler") {}
+
+/**
+ * Where automation code replays. One seam, so a host can swap QuickJS for
+ * another isolate (sandbox/replayWorkflow.ts holds the contract and QuickJS).
+ */
+export class AutomationSandbox extends Context.Service<
+  AutomationSandbox,
+  { readonly replay: ReplayWorkflow }
+>()("@signalbox/automations/host/AutomationSandbox") {}
 
 /** `w.run`: a function from the file, run where the host runs code. */
 export class AutomationFunctions extends Context.Service<
@@ -167,7 +177,7 @@ export class AutomationFunctions extends Context.Service<
       keep: ReadonlySet<number>,
     ) => Effect.Effect<void, AutomationError>;
   }
->()("signalbox/automations/AutomationFunctions") {}
+>()("@signalbox/automations/host/AutomationFunctions") {}
 
 /** What `w.hook` returns: `url` once the host has a public address, else the path on it. */
 export interface CallbackLink {
@@ -216,7 +226,7 @@ export class AutomationIngress extends Context.Service<
       deps: IngressDependencies,
     ) => Effect.Effect<AutomationIngressShape, never, Scope.Scope>;
   }
->()("signalbox/automations/AutomationIngress") {}
+>()("@signalbox/automations/host/AutomationIngress") {}
 
 /** Where each run's wide event goes when it ends (see runLog.ts); null keeps none. */
 export class AutomationRunLogSink extends Context.Service<
@@ -226,7 +236,7 @@ export class AutomationRunLogSink extends Context.Service<
     /** Pretty-prints events in the terminal, for development. */
     readonly pretty: boolean;
   }
->()("signalbox/automations/AutomationRunLogSink") {}
+>()("@signalbox/automations/host/AutomationRunLogSink") {}
 
 /** The effective reasoning-effort option of a model, when the host has a provider catalog. */
 export class AutomationModels extends Context.Service<
@@ -241,7 +251,7 @@ export class AutomationModels extends Context.Service<
       readonly values: ReadonlyArray<string> | null;
     } | null>;
   }
->()("signalbox/automations/AutomationModels") {}
+>()("@signalbox/automations/host/AutomationModels") {}
 
 /**
  * Held until the host is ready to run work, when it has such a moment (a
@@ -249,7 +259,7 @@ export class AutomationModels extends Context.Service<
  * parked behind it.
  */
 export class AutomationActivation extends Context.Reference<Effect.Effect<void> | undefined>(
-  "signalbox/automations/AutomationActivation",
+  "@signalbox/automations/host/AutomationActivation",
   { defaultValue: () => undefined },
 ) {}
 

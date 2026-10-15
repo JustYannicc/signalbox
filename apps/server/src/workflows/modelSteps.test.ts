@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { modelPrompt, modelResult } from "./modelSteps.ts";
+import { modelPrompt, modelResult } from "@signalbox/automations/modelSteps";
 
 const judge = { input: "Login crashes on Safari", outcomes: ["bug", "question", "spam"] };
 

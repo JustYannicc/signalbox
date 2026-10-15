@@ -36,11 +36,11 @@ import type {
   WebhookTriggerResult,
 } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import type { BuiltinToolCall } from "./builtinTools/runner.ts";
-import { automationError } from "./errors.ts";
-import { fromJson, toJson } from "./json.ts";
+import type { BuiltinToolCall } from "@signalbox/automations/builtinTools/runner";
+import { automationError } from "@signalbox/automations/errors";
+import { fromJson, toJson } from "@signalbox/automations/json";
 import { AutomationHooks, layer as engineLayer } from "./serverHost.ts";
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 
 /** A request to an automation webhook, through the server's hook route. */
 export const receiveWebhook = (request: WebhookTriggerRequest) =>

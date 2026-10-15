@@ -3,7 +3,11 @@ import { AUTOMATION_EVENTS } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import { candidatesFor, MAPPED_EVENT_NAMES, type EventReads } from "./normalize.ts";
+import {
+  candidatesFor,
+  MAPPED_EVENT_NAMES,
+  type EventReads,
+} from "@signalbox/automations/events/normalize";
 
 const AT = DateTime.makeUnsafe("2026-10-06T10:00:00.000Z");
 const reads = { shell: Effect.succeed(null), threads: {} as never } satisfies EventReads;

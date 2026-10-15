@@ -5,9 +5,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpClient from "effect/http/HttpClient";
 
-import { listExecutorServices } from "./connections.ts";
-import { fail } from "./errors.ts";
-import { ExecutorSettingsStore } from "./executorConnection.ts";
+import { listExecutorServices } from "@signalbox/automations/connections";
+import { fail } from "@signalbox/automations/errors";
+import { ExecutorSettingsStore } from "@signalbox/automations/executorConnection";
 import * as ExecutorSettings from "./executorSettings.ts";
 
 export interface AutomationConnectionsShape {

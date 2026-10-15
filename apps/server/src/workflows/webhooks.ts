@@ -16,12 +16,12 @@ import {
   constantTimeEquals,
   verifyWebhookSignature,
 } from "../scheduledTasks/webhookVerification.ts";
-import { automationTriggers } from "./columns.ts";
-import type { LaunchRun } from "./engineTypes.ts";
-import { automationError } from "./errors.ts";
-import { jsonOrText } from "./json.ts";
-import { isoAt, nowIso } from "./time.ts";
-import type { WebhookRejectionRow, WorkflowStore } from "./WorkflowStore.ts";
+import { automationTriggers } from "@signalbox/automations/columns";
+import type { LaunchRun } from "@signalbox/automations/engineTypes";
+import { automationError } from "@signalbox/automations/errors";
+import { jsonOrText } from "@signalbox/automations/json";
+import { isoAt, nowIso } from "@signalbox/automations/time";
+import type { WebhookRejectionRow, WorkflowStore } from "@signalbox/automations/WorkflowStore";
 
 /**
  * Automation webhooks, received through upstream's `/api/hooks/:hookId/:token`

@@ -3,7 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import { fakeHttp, jsonResponse, saveOk, withEngine } from "./WorkflowEngine.testkit.ts";
 
 /** Counts calls per URL; `b.example` hangs the first time and answers after. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { waitPatterns } from "../events/runWaits.ts";
+import { waitPatterns } from "@signalbox/automations/events/runWaits";
 import { compileWorkflow } from "./compileWorkflow.ts";
 
 const compile = (body: string) =>

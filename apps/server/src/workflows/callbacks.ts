@@ -6,12 +6,12 @@ import type {
   WebhookTriggerResult,
 } from "../scheduledTasks/ScheduledTaskService.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
-import type { Envelope } from "./events/eventTriggers.ts";
-import type { CallbackLink } from "./host.ts";
-import { nowIso } from "./time.ts";
-import { hookEndpoint } from "./views.ts";
+import type { Envelope } from "@signalbox/automations/events/eventTriggers";
+import type { CallbackLink } from "@signalbox/automations/host";
+import { nowIso } from "@signalbox/automations/time";
+import { hookEndpoint } from "@signalbox/automations/views";
 import { bodyInput, requestKeys, runHeaders, runQuery } from "./webhooks.ts";
-import type { WorkflowStore } from "./WorkflowStore.ts";
+import type { WorkflowStore } from "@signalbox/automations/WorkflowStore";
 
 /**
  * `w.hook(label)`: a callback link a run hands to someone else, such as a

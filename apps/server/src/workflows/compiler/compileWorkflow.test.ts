@@ -1,7 +1,7 @@
 import type { WorkflowNode } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { CompiledWorkflow } from "../compiled.ts";
+import type { CompiledWorkflow } from "@signalbox/automations/compiled";
 import { compileWorkflow } from "./compileWorkflow.ts";
 
 const META = `export const meta = { name: "Test", triggers: [{ cron: "0 * * * *" }] } as const;\n`;

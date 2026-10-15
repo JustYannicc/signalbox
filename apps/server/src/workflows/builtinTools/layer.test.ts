@@ -25,9 +25,9 @@ import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsStatusBroadcaster from "../../vcs/VcsStatusBroadcaster.ts";
-import { WorkflowEngine } from "../WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import * as BuiltinTools from "./layer.ts";
-import type { BuiltinToolHandler } from "./runner.ts";
+import type { BuiltinToolHandler } from "@signalbox/automations/builtinTools/runner";
 
 const stubs = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),

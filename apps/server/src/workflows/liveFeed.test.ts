@@ -5,7 +5,12 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { COALESCE_WINDOW, makeLiveFeed, runShows, type Change } from "./liveFeed.ts";
+import {
+  COALESCE_WINDOW,
+  makeLiveFeed,
+  runShows,
+  type Change,
+} from "@signalbox/automations/liveFeed";
 
 const stepMoved = (runId: string): Change => ({
   kind: "runs",

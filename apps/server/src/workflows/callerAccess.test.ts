@@ -14,7 +14,7 @@ import type { CallerLimits } from "../mcp/threadAccess.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { saveForCaller } from "./callerAccess.ts";
-import * as WorkflowEngine from "./WorkflowEngine.ts";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 const PROJECT = ProjectId.make("project-outside");
 const SOURCE = "export const meta = { name: 'Inbox' }";

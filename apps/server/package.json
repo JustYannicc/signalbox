@@ -74,6 +74,7 @@
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@signalbox/account": "workspace:*",
+    "@signalbox/automations": "workspace:*",
     "@signalbox/runner-protocol": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-testing": "workspace:*",

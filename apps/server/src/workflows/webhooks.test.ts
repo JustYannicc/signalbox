@@ -5,8 +5,8 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { isoAt } from "./time.ts";
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { isoAt } from "@signalbox/automations/time";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import {
   acceptedRun,
   receiveWebhook,

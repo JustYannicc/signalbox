@@ -12,7 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import {
   acceptedRun,
   DEFAULTS,

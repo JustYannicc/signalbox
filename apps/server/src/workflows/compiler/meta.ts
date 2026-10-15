@@ -5,8 +5,8 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import type { Node } from "oxc-parser";
 
-import { durationMs } from "../stepPolicy.ts";
-import { eventTriggerProblem } from "./eventTriggers.ts";
+import { durationMs } from "@signalbox/automations/stepPolicy";
+import { eventTriggerProblem } from "@signalbox/automations/compiler/eventTriggers";
 import { evaluateLiteral } from "./literals.ts";
 import type { WorkflowSource } from "./source.ts";
 

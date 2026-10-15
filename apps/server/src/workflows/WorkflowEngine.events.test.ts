@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import { fakeThreads, PROJECT, saveOk, withEngine } from "./WorkflowEngine.testkit.ts";
 
 const AT = DateTime.makeUnsafe("2026-10-06T10:00:00.000Z");

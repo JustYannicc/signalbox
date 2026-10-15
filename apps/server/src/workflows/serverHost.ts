@@ -29,7 +29,7 @@ import { Scheduler } from "../scheduling/Scheduler.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import { makeCallbacks } from "./callbacks.ts";
 import { compileWorkflow } from "./compiler/compileWorkflow.ts";
-import { automationError, fail } from "./errors.ts";
+import { automationError, fail } from "@signalbox/automations/errors";
 import * as ExecutorSettings from "./executorSettings.ts";
 import {
   AutomationActivation,
@@ -38,13 +38,15 @@ import {
   AutomationIngress,
   AutomationModels,
   AutomationRunLogSink,
+  AutomationSandbox,
   AutomationThreads,
   type ThreadMonitor,
-} from "./host.ts";
+} from "@signalbox/automations/host";
 import { setPullRequestWatchHandler } from "./pullRequestWatchHook.ts";
+import { replayWorkflow } from "./quickJs.ts";
 import { makeRunFunction } from "./runFunction.ts";
 import { makeWebhooks } from "./webhooks.ts";
-import * as WorkflowEngine from "./WorkflowEngine.ts";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 /**
  * The automation engine on a self-hosted server: host.ts's services from the
@@ -272,6 +274,7 @@ const layerHost = Layer.mergeAll(
   layerActivation,
   ExecutorSettings.layer,
   Layer.succeed(AutomationCompiler, AutomationCompiler.of({ compile: compileWorkflow })),
+  Layer.succeed(AutomationSandbox, AutomationSandbox.of({ replay: replayWorkflow })),
 );
 
 /** The engine with the server as its host. */

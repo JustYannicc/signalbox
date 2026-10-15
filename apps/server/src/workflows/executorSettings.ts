@@ -10,8 +10,8 @@ import * as Schema from "effect/Schema";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
-import { ExecutorSettingsStore, type ExecutorSettings } from "./executorConnection.ts";
-import { fromJson, toJson } from "./json.ts";
+import { ExecutorSettingsStore } from "@signalbox/automations/executorConnection";
+import { fromJson, toJson } from "@signalbox/automations/json";
 
 /** The API key lives in the server's secret store under this name. */
 const EXECUTOR_API_KEY_SECRET = "automations-executor-api-key";
