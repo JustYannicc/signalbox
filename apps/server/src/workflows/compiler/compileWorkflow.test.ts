@@ -372,6 +372,28 @@ export default workflow(async (w) => {
     expect(runModule).toContain("export { issues, pulls };");
   });
 
+  it("emits a worker module whose factory gives each run its own top-level state", async () => {
+    const { workerModule } = compiled(
+      `await w.notify("Count", String(bump()));\n  return count;`,
+      `let count = 0;\nconst bump = () => ++count;\n`,
+    );
+    expect(workerModule).toMatch(/^export function load\(workflow\) \{\n/);
+    expect(workerModule).toContain("const meta = {");
+    expect(workerModule).toContain('w.notify("s1", "Count"');
+    expect(workerModule).toMatch(/return __signalboxWorkflow;\n\}\n$/);
+
+    // Evaluate it as a module would, with a `workflow` wrapper that returns the callback.
+    const load = new Function(`${workerModule!.replace(/^export /, "")}\nreturn load;`)() as (
+      workflow: (fn: unknown) => unknown,
+    ) => (w: unknown, input: unknown, trigger: unknown) => Promise<number>;
+    const w = { notify: async () => null };
+    const first = load((fn) => fn);
+    const second = load((fn) => fn);
+    expect(await first(w, null, {})).toBe(1);
+    expect(await first(w, null, {})).toBe(2);
+    expect(await second(w, null, {})).toBe(1);
+  });
+
   it("draws try/finally without a catch as plain steps", () => {
     const result = compiled(`try {
     await w.notify("First", "a");
