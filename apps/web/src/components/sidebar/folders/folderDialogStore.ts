@@ -31,6 +31,14 @@ export type FolderDialog =
       /** The folder's name; null for the top level. */
       readonly name: string | null;
       readonly instructions: string;
+    }
+  | {
+      /** A level's 1Password Environment, and the user's token; it reads both live. */
+      readonly kind: "secrets";
+      readonly environmentId: EnvironmentId;
+      readonly level: FolderLevel;
+      /** The folder's name; null for the top level. */
+      readonly name: string | null;
     };
 
 /** `shown` stays the last dialog while it closes; `openCount` tells each opening apart. */

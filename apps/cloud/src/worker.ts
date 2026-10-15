@@ -52,6 +52,18 @@ const isLoopback = (hostname: string) =>
 
 let app: CloudApp | undefined;
 
+const appFor = (env: CloudEnv) => {
+  app ??= makeCloudApp(
+    layerServices({
+      vars: stringVars(env),
+      users: env.USERS,
+      threads: env.THREADS,
+      localWorkerd: env.LOCAL_WORKERD === "1",
+    }),
+  );
+  return app;
+};
+
 export default {
   fetch(request, env) {
     const { hostname, pathname } = new URL(request.url);
@@ -66,14 +78,7 @@ export default {
     if (previews !== null && labelOfHost(previews, hostname) !== null) {
       return routePreview(env.THREADS, request, { localWorkerd });
     }
-    app ??= makeCloudApp(
-      layerServices({
-        vars: stringVars(env),
-        users: env.USERS,
-        threads: env.THREADS,
-        localWorkerd,
-      }),
-    );
+    const app = appFor(env);
     if (pathname === "/ws") return app.webSocket(request);
     if (isRunnerSocketPath(pathname)) return connectRunner(env.THREADS, request, { localWorkerd });
     if (isSessionApiPath(pathname)) {
@@ -104,20 +109,32 @@ const decodeModelGatewayRecord = Schema.decodeUnknownOption(ModelGatewayRecord);
  */
 
 export class ModelGrants extends WorkerEntrypoint<CloudEnv> {
-  /** Checks a request's token and, granted, sends it to the turn's pool. */
+  /** Checks a request's token or local key and, granted, sends it to its pool. */
   serve(token: string, provider: ModelGatewayProvider, path: string, request: Request) {
-    const { THREADS, POOLS, LOCAL_WORKERD } = this.env;
+    const { THREADS, USERS, POOLS, LOCAL_WORKERD } = this.env;
+    // Only a local key needs the app, to check its signature; a turn's token never builds it.
+    const verifyLocalKey = (key: string) => appFor(this.env).verifyLocalKey(key);
     return serveModel(
-      { threads: THREADS, pools: POOLS, token, provider, path, request },
+      {
+        threads: THREADS,
+        users: USERS,
+        pools: POOLS,
+        verifyLocalKey,
+        token,
+        provider,
+        path,
+        request,
+      },
       { localWorkerd: LOCAL_WORKERD === "1" },
     );
   }
 
-  /** A served request's record, for its thread. Anything that does not decode is dropped. */
+  /** A served request's record, for its thread or key. Anything that does not decode is dropped. */
   async report(record: unknown): Promise<void> {
     const decoded = decodeModelGatewayRecord(record);
     if (decoded._tag === "None") return;
-    await reportModelRequest(this.env.THREADS, decoded.value, {
+    const { THREADS, USERS } = this.env;
+    await reportModelRequest({ threads: THREADS, users: USERS }, decoded.value, {
       localWorkerd: this.env.LOCAL_WORKERD === "1",
     });
   }
