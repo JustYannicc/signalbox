@@ -5,7 +5,7 @@ import {
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
-import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
+import { useEnvironmentUiState } from "../state/environmentCapabilities";
 
 export const Route = createFileRoute("/pair")({
   beforeLoad: async ({ context }) => {
@@ -30,7 +30,7 @@ export const Route = createFileRoute("/pair")({
 function PairRouteView() {
   const router = useRouter();
   const { authGateState } = Route.useRouteContext();
-  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
+  const environmentUi = useEnvironmentUiState(); // signalbox: one environment
 
   if (!authGateState) {
     return null;
@@ -38,7 +38,8 @@ function PairRouteView() {
 
   if (authGateState.status === "hosted-pairing") {
     // signalbox: pairing adds another environment; the cloud is the only one.
-    if (!showsEnvironmentUi) return <Navigate to="/" replace />;
+    if (environmentUi === "unknown") return null;
+    if (environmentUi === "hidden") return <Navigate to="/" replace />;
     return <HostedPairingRouteSurface />;
   }
 

@@ -15,6 +15,8 @@ import { Atom } from "effect/reactivity";
 
 import { cloudDefaultOrigin } from "../account/cloudDefault";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { isHostedStaticApp } from "../hostedPairing";
+import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { environmentServerConfigsAtom, primaryServerConfigAtom, serverEnvironment } from "./server";
 
 /** Supported until the environment says otherwise, including while its config loads. */
@@ -41,17 +43,51 @@ export function readEnvironmentSupports(
  * Whether to show environments at all: pickers, lists, Add environment, pairing, the local
  * environment and its network access. Signalbox Cloud is the user's one environment and says
  * `otherEnvironments: false`, so web and desktop then never mention environments (see
- * `showsEnvironmentUi` in contracts). A desktop
- * gateway without a local environment only ever reaches the cloud, so it hides them before
- * signing in too. T3 Code and self-hosted servers never say, so they keep it all.
+ * `showsEnvironmentUi` in contracts). T3 Code and self-hosted servers never say, so they keep
+ * it all. Until an environment has reported, the answer is unknown and environment UI stays
+ * hidden: the cloud's config can take seconds to arrive, and flashing pairing UI at people who
+ * have one environment is worse than a self-hosted page filling in a moment later. A desktop
+ * gateway without a local environment only ever reaches the cloud, so it knows right away.
  */
-export const showsEnvironmentUiAtom = Atom.make((get) => {
-  if (cloudDefaultOrigin() !== null) return false;
+export type EnvironmentUiState = "unknown" | "shown" | "hidden";
+
+export function resolveEnvironmentUiState(input: {
+  /** A desktop gateway: it only ever reaches Signalbox Cloud. */
+  readonly gateway: boolean;
+  /** This client is served by an environment whose config may still be loading. */
+  readonly hasPrimary: boolean;
+  readonly reported: ReadonlyArray<{ readonly [K in SignalboxEnvironmentCapability]?: boolean }>;
+}): EnvironmentUiState {
+  if (input.gateway) return "hidden";
+  // A client with no environment of its own (upstream's hosted app) needs the way in.
+  if (input.reported.length === 0) return input.hasPrimary ? "unknown" : "shown";
+  return showsEnvironmentUi(input.reported) ? "shown" : "hidden";
+}
+
+// Known before the primary registers (that waits on an HTTP fetch), so a cold load never
+// starts out "shown". Fixed for the renderer's life; the desktop check is a sync IPC.
+let cachedServedByAnEnvironment: boolean | undefined;
+function servedByAnEnvironment(): boolean {
+  cachedServedByAnEnvironment ??=
+    !isLocalEnvironmentDisabled() && !isHostedStaticApp(new URL(window.location.href));
+  return cachedServedByAnEnvironment;
+}
+
+export const environmentUiStateAtom = Atom.make((get): EnvironmentUiState => {
   const primary = get(primaryServerConfigAtom);
   const configs = [...(primary ? [primary] : []), ...get(environmentServerConfigsAtom).values()];
-  return showsEnvironmentUi(configs.map((config) => config.environment.capabilities));
-}).pipe(Atom.withLabel("web-shows-environment-ui"));
+  return resolveEnvironmentUiState({
+    gateway: cloudDefaultOrigin() !== null,
+    hasPrimary: servedByAnEnvironment(),
+    reported: configs.map((config) => config.environment.capabilities),
+  });
+}).pipe(Atom.withLabel("web-environment-ui-state"));
+
+/** For routes that redirect away: wait while `unknown` rather than bounce a self-hosted link. */
+export function useEnvironmentUiState(): EnvironmentUiState {
+  return useAtomValue(environmentUiStateAtom);
+}
 
 export function useShowsEnvironmentUi(): boolean {
-  return useAtomValue(showsEnvironmentUiAtom);
+  return useEnvironmentUiState() === "shown";
 }
