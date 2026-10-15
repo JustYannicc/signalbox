@@ -5,7 +5,10 @@
 #
 # - nightly: every night from main, as `nightly` and `nightly-<date>-<sha>`.
 # - stable: every `vX.Y.Z` tag, as `X.Y.Z` and `stable`.
-# - Pull requests that change the Runner build the image without publishing it.
+# - pr-<number>: a pull request's preview (deploy-cloud.yml calls this before it
+#   deploys), so its boat machines run the pull request's Runner. Deleted with
+#   the preview (.github/scripts/runner-pr-images.sh).
+# - Other pull requests that change the Runner build the image without publishing it.
 name: Runner image
 
 on:
@@ -17,12 +20,26 @@ on:
       - "!v*-nightly.*"
       - "!v*-preview.*"
   pull_request:
+    # Also in deploy-cloud.yml: its paths, and `runner_changes`' pattern.
     paths:
       - apps/server/src/signalbox/runner/**
       - apps/server/src/preview/ServerBrowser*.ts
       - apps/server/src/orchestration-v2/Adapters/**
+      # The Runner compiles and forwards agents' automations.
+      - apps/server/src/workflows/**
       - packages/runner-protocol/**
+      - packages/automations/**
       - .github/workflows/runner-image.yml
+  workflow_call:
+    inputs:
+      pr_number:
+        description: "Publish as pr-<number>, for that pull request's preview"
+        required: true
+        type: string
+    outputs:
+      image:
+        description: The published image
+        value: ${{ jobs.image.outputs.image }}
   workflow_dispatch:
     inputs:
       channel:
@@ -37,21 +54,29 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: runner-image-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 env:
   IMAGE: ghcr.io/justyannicc/signalbox-runner
 
 jobs:
   image:
     name: Build Runner image
+    # A pull request with a preview builds and publishes through deploy-cloud.yml's call instead.
+    if: >-
+      github.event_name != 'pull_request' ||
+      inputs.pr_number != '' ||
+      github.event.pull_request.user.login != 'JustYannicc' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    # Per job: a called run and the pull request's own run must not cancel each other.
+    concurrency:
+      group: runner-image-${{ inputs.pr_number != '' && format('pr-{0}', inputs.pr_number) || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.tags.outputs.first }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -79,20 +104,27 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           CHANNEL: ${{ inputs.channel }}
+          PR_NUMBER: ${{ inputs.pr_number }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           short_sha="${GITHUB_SHA::12}"
-          if [ "$EVENT" = "pull_request" ]; then
-            echo "push=false" >> "$GITHUB_OUTPUT"
-            echo "tags=$IMAGE:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          push=true
+          if [ -n "$PR_NUMBER" ]; then
+            tags="$IMAGE:pr-$PR_NUMBER"
+          elif [ "$EVENT" = "pull_request" ]; then
+            push=false
+            tags="$IMAGE:pr-${{ github.event.pull_request.number }}"
           elif [ "$EVENT" = "push" ] || [ "$CHANNEL" = "stable" ]; then
             if [ "$EVENT" = "push" ]; then version="${REF_NAME#v}"; else version="$(jq -r .version apps/server/package.json)"; fi
-            echo "push=true" >> "$GITHUB_OUTPUT"
-            echo "tags=$IMAGE:$version,$IMAGE:stable" >> "$GITHUB_OUTPUT"
+            tags="$IMAGE:$version,$IMAGE:stable"
           else
-            echo "push=true" >> "$GITHUB_OUTPUT"
-            echo "tags=$IMAGE:nightly,$IMAGE:nightly-$(date -u +%Y%m%d)-$short_sha" >> "$GITHUB_OUTPUT"
+            tags="$IMAGE:nightly,$IMAGE:nightly-$(date -u +%Y%m%d)-$short_sha"
           fi
+          {
+            echo "push=$push"
+            echo "tags=$tags"
+            echo "first=${tags%%,*}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -137,9 +169,33 @@ jobs:
           docker rm --force runner-smoke >/dev/null 2>&1 || true
           test "$status" -eq 124
 
+      # The pull request's previous image, which this push untags.
+      - name: Find the image this replaces
+        id: previous
+        if: steps.tags.outputs.push == 'true' && inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          # Best effort: a version left behind costs storage, not a preview.
+          ids="$(bash .github/scripts/runner-pr-images.sh ids "$PR_NUMBER")" || {
+            echo "::warning::Could not list PR #$PR_NUMBER's Runner image versions."
+            ids=''
+          }
+          echo "ids=$(tr '\n' ' ' <<< "$ids")" >> "$GITHUB_OUTPUT"
+
       - name: Publish
         if: steps.tags.outputs.push == 'true'
         env:
           TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           for tag in ${TAGS//,/ }; do docker push "$tag"; done
+
+      - name: Delete the image this replaced
+        if: steps.previous.outputs.ids != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDS: ${{ steps.previous.outputs.ids }}
+        run: |
+          # shellcheck disable=SC2086 # One argument per version id.
+          bash .github/scripts/runner-pr-images.sh delete-untagged $IDS

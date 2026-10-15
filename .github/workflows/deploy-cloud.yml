@@ -26,11 +26,13 @@ on:
       - packages/client-runtime/**
       - packages/contracts/**
       - packages/shared/**
-      # Light machines run the Runner built with the Worker.
+      # Light machines run the Runner built with the Worker, and a preview's
+      # boat machines its own image (runner-image.yml has the same paths).
       - apps/server/src/signalbox/runner/**
       - apps/server/src/orchestration-v2/Adapters/**
       # The Runner compiles automations its agents save.
       - apps/server/src/workflows/**
+      - .github/workflows/runner-image.yml
       - pnpm-lock.yaml
       - patches/alchemy@*.patch
       - .github/workflows/deploy-cloud.yml
@@ -143,15 +145,64 @@ jobs:
         working-directory: apps/cloud
         run: ./node_modules/.bin/alchemy deploy --stage "$STAGE" --yes --no-input
 
-  # Same-repository pull requests opened by JustYannicc (including agents
-  # working under that account). Forks never get a preview or the secrets.
-  deploy_preview:
-    name: Deploy preview cloud
+  # Whether the pull request changes what boat machines run (the paths
+  # runner-image.yml builds on). Then its preview runs its own Runner image.
+  runner_changes:
+    name: Runner changes
     if: >-
       github.event_name == 'pull_request' &&
       github.event.action != 'closed' &&
       github.event.pull_request.user.login == 'JustYannicc' &&
       github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.files.outputs.changed }}
+    steps:
+      - name: List the pull request's files
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # The files endpoint stops at 3000 files: a list shorter than the
+          # pull request's count builds the image to be safe.
+          expected="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')"
+          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename')"
+          listed="$(grep -c . <<< "$files" || true)"
+          # runner-image.yml's paths.
+          if [[ "$listed" -lt "$expected" ]] ||
+            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/runner-protocol/|packages/automations/|\.github/workflows/runner-image\.yml$)' <<< "$files"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Published as ghcr.io/justyannicc/signalbox-runner:pr-<number> before the
+  # preview deploys, so its first boat machine can pull it.
+  runner_image:
+    name: Runner image
+    needs: runner_changes
+    if: needs.runner_changes.outputs.changed == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/runner-image.yml
+    with:
+      pr_number: ${{ format('{0}', github.event.pull_request.number) }}
+
+  # Same-repository pull requests opened by JustYannicc (including agents
+  # working under that account). Forks never get a preview or the secrets.
+  deploy_preview:
+    name: Deploy preview cloud
+    needs: [runner_changes, runner_image]
+    # Without a Runner change the image job skips, and the preview runs `nightly`.
+    if: >-
+      !cancelled() &&
+      needs.runner_changes.result == 'success' &&
+      (needs.runner_image.result == 'success' || needs.runner_image.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -169,6 +220,8 @@ jobs:
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
       BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+      # The pull request's own Runner on boat machines, when it changes the Runner.
+      RUNNER_IMAGE: ${{ needs.runner_image.outputs.image }}
       # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
       APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
@@ -241,9 +294,14 @@ jobs:
       cancel-in-progress: true
     environment:
       name: cloud-preview
+    permissions:
+      contents: read
+      # Deletes the preview's Runner image (pr-<number>).
+      packages: write
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       # Only main's code runs here: no PR code ever sees the token in this job.
