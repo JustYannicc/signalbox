@@ -518,6 +518,10 @@
     "./modelManifest": {
       "types": "./src/modelManifest.ts",
       "import": "./src/modelManifest.ts"
+    },
+    "./poolUsage": {
+      "types": "./src/poolUsage.ts",
+      "import": "./src/poolUsage.ts"
     }
   },
   "scripts": {

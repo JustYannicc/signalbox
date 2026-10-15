@@ -20,7 +20,8 @@ const TURN_MESSAGE_CHARS = 20_000;
 const MAX_HIT_MESSAGES = 5;
 const MAX_HIT_FILES = 40;
 
-const cut = (text: string, limit: number) =>
+/** `text` up to `limit` characters, marked with an ellipsis when cut. */
+export const cut = (text: string, limit: number) =>
   text.length <= limit
     ? { text, truncated: false }
     : { text: `${text.slice(0, limit)}…`, truncated: true };

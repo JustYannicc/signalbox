@@ -24,6 +24,7 @@ import {
   cloudStage,
   DURABLE_OBJECT_BINDINGS as DO,
   PREVIEW_DRIVE_PACKS_BUCKET,
+  PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
 } from "./infra/stage.ts";
 import type {
@@ -132,7 +133,6 @@ function workerEnv(target: CloudStage) {
           // never mix test turns into the cost data.
           SIGNALBOX_POSTHOG_KEY: yield* optional("SIGNALBOX_POSTHOG_KEY"),
           SIGNALBOX_POSTHOG_HOST: yield* optional("SIGNALBOX_POSTHOG_HOST"),
-          PREVIEW_DOMAIN: yield* optional("PREVIEW_DOMAIN"),
           PREVIEW_CLEANUP_TOKEN: yield* Config.Redacted("PREVIEW_CLEANUP_TOKEN"),
           // Optional: membership changes from WorkOS at once.
           T3CODE_WORKOS_WEBHOOK_SECRET: yield* optionalSecret("T3CODE_WORKOS_WEBHOOK_SECRET"),
@@ -165,6 +165,18 @@ function deploy(
       ? yield* drivePacks("DrivePacks", target.drivePacksBucket)
       : previewPacks;
 
+    // Every stage's dev-server previews resolve through one proxied wildcard,
+    // shared like the buckets: each stage declares the same record and none
+    // ever deletes it. `100::` is the discard prefix: the routes answer first.
+    yield* Cloudflare.DNS.Record("PreviewWildcard", {
+      zoneId: PREVIEW_ZONE.id,
+      name: `*.${PREVIEW_ZONE.name}`,
+      type: "AAAA",
+      content: "100::",
+      proxied: true,
+      comment: "Signalbox dev-server previews (apps/cloud/alchemy.run.ts)",
+    }).pipe(Alchemy.RemovalPolicy.retain());
+
     const cloud = yield* Cloudflare.Worker("Cloud", {
       name: target.cloudWorker,
       main: here("src/worker.ts"),
@@ -172,6 +184,8 @@ function deploy(
       // One origin: sign-in callbacks, cookies and saved connections all key on it.
       workersDev: false,
       domain: { name: target.cloudDomain, zoneId: SIGNALBOX_ZONE_ID },
+      // Threads' dev servers (`PREVIEW_DOMAIN`), on this stage's preview hosts only.
+      routes: [{ pattern: `${target.previewHost}/*`, zoneId: PREVIEW_ZONE.id }],
       assets,
       observability: workerObservability,
       env: {

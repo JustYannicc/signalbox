@@ -77,6 +77,8 @@ import { useMaterialFabScroll } from "./MaterialFabScrollContext";
 import { SectionNavigationPanel } from "../sections/SectionNavigationPanel";
 import { resolveSelectedProjectScope } from "../sections/section-project-filter";
 import { withAutomationsBanner } from "../automations/AutomationsHomeBanner"; // signalbox: automations
+import { FolderEmptyState, scopeFilterOptions } from "../folders/FolderListParts"; // signalbox: folders
+import { useFolderScope } from "../folders/use-folder-filter"; // signalbox: folders
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
 
@@ -421,6 +423,7 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [props.projects]);
 
   const v2ProjectScopeKey = props.selectedProjectKey;
+  const folderScope = useFolderScope(v2ProjectScopeKey, props.threads, props.pendingTasks); // signalbox: folders
   const v2ScopedProjectGroup = useMemo(
     () =>
       resolveSelectedProjectScope({
@@ -609,7 +612,7 @@ export function HomeScreen(props: HomeScreenProps) {
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
       pendingOrder,
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
+      threads: folderScope.threads.filter((thread) => thread.archivedAt === null),
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
@@ -641,7 +644,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozeEnvironmentIds,
     props.searchQuery,
     props.selectedEnvironmentId,
-    props.threads,
+    folderScope.threads, // signalbox: folders; follows props.threads
     matchedThreadKeys,
     v2ScopedProjectGroup,
   ]);
@@ -666,7 +669,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
   const v2PendingTasks = useMemo(
     () =>
-      props.pendingTasks.filter(
+      folderScope.pendingTasks.filter(
         (pendingTask) =>
           (props.selectedEnvironmentId === null ||
             pendingTask.environmentId === props.selectedEnvironmentId) &&
@@ -677,7 +680,7 @@ export function HomeScreen(props: HomeScreenProps) {
           (v2SearchQuery.length === 0 ||
             pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
       ),
-    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
+    [folderScope.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
   );
   const threadListV2Items = useMemo(
     () =>
@@ -992,7 +995,7 @@ export function HomeScreen(props: HomeScreenProps) {
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           environments={props.environments}
-          projects={projectScopes.map((scope) => ({ key: scope.key, label: scope.title }))}
+          projects={scopeFilterOptions(projectScopes, folderScope.filter)} // signalbox: folders
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}
@@ -1020,6 +1023,8 @@ export function HomeScreen(props: HomeScreenProps) {
         detail={`No threads matching "${props.searchQuery}".`}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
+    ) : folderScope.filter !== null ? ( // signalbox: folders
+      <FolderEmptyState label={folderScope.filter.label} />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
         title={`No threads in ${v2ScopedProjectGroup.title}`}

@@ -34,6 +34,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { usePromptLinkResolver } from "../prompt-links/usePromptLinkResolver";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { useFolderStartRedirect } from "../folders/use-folder-start-redirect"; // signalbox: folders
 import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
 
 type NewTaskRouteParams = {
@@ -152,6 +153,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const insets = useSafeAreaInsets();
   const { getShare, releaseShareReservation } = useIncomingShare();
   usePromptLinkResolver(route.params);
+  useFolderStartRedirect(route.params); // signalbox: folders
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
     : route.params?.incomingShareId;

@@ -30,7 +30,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as AccountPools from "./AccountPools.ts";
 import { advisePool, PROFILE_HOURS } from "./poolAdvice.ts";
-import { takesTurns } from "./poolOverview.ts";
+import { takesTurns } from "@t3tools/shared/poolUsage";
 import {
   type AccountWindowState,
   accountWindowKey,
