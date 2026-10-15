@@ -718,7 +718,7 @@ elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PI
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   elif ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
-    printf 'Remote T3 server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
+    printf 'Remote Signalbox server is still running but did not become ready. Retry the connection; the server was left running.\\n' >&2
     exit 1
   fi
 else

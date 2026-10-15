@@ -1922,12 +1922,12 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           title={searchableSetting("t3-connect").title}
           description={
             linkRevoked
-              ? "This environment was removed from T3 Connect. Turn it on to link it again."
+              ? "This environment was removed from Signalbox Connect. Turn it on to link it again."
               : managedTunnelActive
-                ? "This environment is available to your other devices through T3 Connect."
+                ? "This environment is available to your other devices through Signalbox Connect."
                 : managedTunnelOutOfSync
-                  ? "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it."
-                  : "Make this environment available to your other devices through T3 Connect."
+                  ? "Signalbox Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn Signalbox Connect on to repair it."
+                  : "Make this environment available to your other devices through Signalbox Connect."
           }
           status={operationError ?? primaryCloudLinkState.error}
           control={
@@ -1948,7 +1948,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ) : linkRevoked ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
-          description="This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
+          description="This environment was removed from Signalbox Connect. Run `signalbox connect link` on the host to link it again."
         />
       ) : null}
       <SettingsRow

@@ -23,8 +23,8 @@ the server process is currently running, and the exact paths for state, logs, an
 the database.
 
 Its triage CLI version (called "Installed version" in older context files) is only
-the version of the `t3` that ran `t3 triage`. It is often not the build the bug
-happened on: `npx t3 triage` runs whatever `t3` npm resolves, while the user may
+the version of the `signalbox` that ran `signalbox triage`. It is often not the build the bug
+happened on: `npx signalbox-cli triage` runs whatever `signalbox-cli` npm resolves, while the user may
 run the desktop app, the background service, or a nightly. The server process line
 gives the local server's version when the server recorded one.
 

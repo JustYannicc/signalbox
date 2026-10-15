@@ -177,7 +177,7 @@ export const layer = Layer.effect(
                 Ref.set(
                   preflightErrorRef,
                   Option.some(
-                    "Another T3 Code server is using this distro's T3 home. Stop it, or pair with it instead.",
+                    "Another Signalbox server is using this distro's Signalbox home. Stop it, or pair with it instead.",
                   ),
                 ),
               ),

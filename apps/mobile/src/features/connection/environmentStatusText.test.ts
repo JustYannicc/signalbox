@@ -21,7 +21,7 @@ function compatibilityMessage(serverProtocolVersion: number): string {
 describe("environment status text", () => {
   it.each([
     ["a newer server", ORCHESTRATION_PROTOCOL_VERSION + 1, "Update your app"],
-    ["an older server", ORCHESTRATION_PROTOCOL_VERSION - 1, "Update T3 Code on Studio Mac"],
+    ["an older server", ORCHESTRATION_PROTOCOL_VERSION - 1, "Update Signalbox on Studio Mac"],
   ])("tells the user what to update for %s", (_, serverProtocolVersion, guidance) => {
     const text = environmentStatusText({
       phase: "unsupported",

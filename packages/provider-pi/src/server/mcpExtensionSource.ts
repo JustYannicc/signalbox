@@ -431,7 +431,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (exposureChanged) registerTools();
     const active = pi.getActiveTools();
     // Completion gateways can silently drop calls to undeclared tools named
-    // in history or guidance. Eagerly load T3 schemas, including after tree
+    // in history or guidance. Eagerly load Signalbox schemas, including after tree
     // restores, while retaining deferred exposure for Pi's allowlist rules.
     // Pi still applies --tools/--exclude-tools to this active loadout.
     const required = [

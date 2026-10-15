@@ -25,7 +25,8 @@ export const IS_NIGHTLY_BUILD =
 const IOS_TESTFLIGHT_URL = "https://testflight.apple.com/join/XgaxaRtd";
 // Google banned the Play testing group, so new testers can't join it. CI mirrors
 // the Play-signed beta APK to this release instead (mobile-android-apk.yml).
-const ANDROID_APK_RELEASE_URL = "https://github.com/pingdotgg/t3code/releases/tag/android-nightly";
+const ANDROID_APK_RELEASE_URL =
+  "https://github.com/JustYannicc/signalbox/releases/tag/android-nightly";
 
 const ROW_ID = "nightly-mobile-beta";
 // signalbox: these are T3 Code's beta programs; Signalbox has no mobile beta yet.

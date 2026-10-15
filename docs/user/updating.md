@@ -20,7 +20,7 @@ desktop apps do not wait for npm. The confirmation lists each machine it skips
 and why, such as a machine that is offline or needs a manual update. Use the
 notice or **Settings → Connections** for those.
 
-If a desktop app restarts on its old version, T3 Code tells you the update did
+If a desktop app restarts on its old version, Signalbox tells you the update did
 not apply. It does not install that version again on its own, even when another
 device asks. Use the update button on that machine to retry.
 
@@ -99,7 +99,7 @@ update can roll back to the previous version. If the update still fails:
 2. Check that you updated the server's machine, not only the device you are using.
 3. For a command-line server, stop it and relaunch the exact version shown in the notice.
 
-Only one server can use a T3 home directory at a time. If startup reports that
+Only one server can use a Signalbox home directory at a time. If startup reports that
 another server owns it, stop that server before retrying, or use a separate home
 directory and pair with the running server.
 
@@ -123,7 +123,7 @@ These controls require a connected environment and permission to operate it.
 Provider update checks and restart continuation preferences are in
 **Settings → Maintenance**. If provider update checks are disabled, enable them
 there before refreshing to find newer versions. The same setting controls whether
-T3 Code downloads model catalog updates, so with it off new models may not appear
+Signalbox downloads model catalog updates, so with it off new models may not appear
 until you enable it and refresh provider status.
 
 Install App Store or Google Play releases as usual. The mobile app can also
