@@ -36,7 +36,9 @@ export function ThreadWaitsSection(props: {
   const [stopped, setStopped] = useState<ReadonlySet<string>>(new Set());
   const waits = (shell?.pendingBackgroundTasks ?? []).flatMap((task) => {
     const run = attachedRunOf(task.taskId);
-    return run && !stopped.has(run.runId) ? [{ ...run, label: task.description }] : [];
+    return run && !stopped.has(run.runId)
+      ? [{ ...run, label: task.description ?? "Automation running" }]
+      : [];
   });
   if (waits.length === 0) return null;
 
@@ -61,10 +63,7 @@ export function ThreadWaitsSection(props: {
             >
               <HourglassIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
               {/* Under "Waiting on", an agent's "Waiting for …" reads as just the thing. */}
-              <span
-                title={wait.label}
-                className={`min-w-0 flex-1 truncate ${THREAD_DETAILS_PANEL_LABEL_CLASS}`}
-              >
+              <span className={`min-w-0 flex-1 truncate ${THREAD_DETAILS_PANEL_LABEL_CLASS}`}>
                 {wait.label.replace(/^Waiting for /, "")}
               </span>
             </ThreadDetailsControl>
