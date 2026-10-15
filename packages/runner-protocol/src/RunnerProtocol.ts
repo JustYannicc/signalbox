@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 
 import { jsonCodec as frameCodec } from "./jsonCodec.ts";
 import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
+import { SecretsAccess } from "./SecretsProtocol.ts";
 import { SessionAccess } from "./SessionProtocol.ts";
 
 /**
@@ -60,6 +61,11 @@ import { SessionAccess } from "./SessionProtocol.ts";
  * the ModelGateway named in `MachineEnsureRequest`, with the model token each
  * `turn.start` carries. That token works for that thread, provider and turn
  * only, and stops working when the turn ends.
+ *
+ * A turn in a folder that names 1Password Environments also carries the
+ * owner's service account token for them (`SecretsProtocol.ts`): the Runner
+ * reads the values as a harness session starts, and masks them in every
+ * frame it sends.
  */
 
 export const RUNNER_PROTOCOL_VERSION = 5;
@@ -176,6 +182,12 @@ export const RunnerItem = Schema.Union([
     runId: RunId,
     message: Schema.String,
   }),
+  /** The folder's secrets could not all be loaded: the turn runs without the ones missing. */
+  Schema.Struct({
+    kind: Schema.Literal("secrets.notice"),
+    runId: RunId,
+    message: Schema.String,
+  }),
   /**
    * The light machine cannot do what the turn needs (a build, or it ran out of
    * memory): the Runner saved the turn's files and session as of now and does
@@ -279,6 +291,8 @@ export const ThreadMessage = Schema.Union([
     drive: Schema.NullOr(DriveAccess),
     /** Where the harness's session rows go. */
     sessions: SessionAccess,
+    /** The secrets of the thread's folders. Absent: none, or a cloud older than this field. */
+    secrets: Schema.optionalKey(SecretsAccess),
   }),
   Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),

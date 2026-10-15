@@ -34,9 +34,18 @@ convenience. Production should list only the hosted origins.
 
 Enable these sign-in methods to match the clients: Google, GitHub, Apple, email
 and password, and email code (Magic Auth). The hosted page also offers any
-other method you enable, and desktop uses that page. Staging uses WorkOS's
-default OAuth credentials. Production needs your own Google, GitHub and Apple
-credentials.
+other method you enable, and desktop uses that page.
+
+Hosted Signalbox runs on one WorkOS environment (SignalBox → Staging) so user
+ids never change. WorkOS's default OAuth credentials show "WorkOS Demo" on the
+provider's consent screen; our own GitHub and Google credentials replace them in
+place with `scripts/owner-setup/owner-setup.sh workos`. The client secrets go
+from the provider's console straight into WorkOS's dialog, since WorkOS is the
+only thing that uses them. Each provider can switch back to default credentials
+if something breaks. Apple sign-in needs the Apple Developer Program, so it
+stays on default credentials until that exists. Moving the environment to
+production later is a WorkOS support request that converts it in place; confirm
+with them that user ids survive.
 
 Branding for the hosted page, the sign-in methods, and the redirect URIs can be
 changed with the WorkOS API or the dashboard. Logos need a dashboard upload.

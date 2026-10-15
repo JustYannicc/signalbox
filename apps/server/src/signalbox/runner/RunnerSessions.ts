@@ -13,8 +13,9 @@ import { CODEX_DRIVER_KIND } from "../../orchestration-v2/Adapters/CodexAdapterV
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { type ClaudeSessions, makeClaudeSessions } from "./RunnerClaudeSessions.ts";
 import { makeCodexRollouts } from "./RunnerCodexRollouts.ts";
-import { makeSessionClient } from "./RunnerSessionClient.ts";
+import { makeSessionClient, type SessionClient } from "./RunnerSessionClient.ts";
 import { makeSessionOutbox } from "./RunnerSessionOutbox.ts";
+import type { SecretMask } from "./secretMask.ts";
 
 /**
  * A machine's harness sessions, kept off the machine (#112, #132): Claude
@@ -29,6 +30,9 @@ import { makeSessionOutbox } from "./RunnerSessionOutbox.ts";
  * - `settle`, before an event that reports something complete goes out: its
  *   rows are durable first. Claude's messages already wait in the SDK stream.
  * - `failures`: saving stalled. The Runner stops the turn; rows keep going.
+ *
+ * Rows leave with the folder's secrets masked (`secretMask.ts`): a harness
+ * resumed from the store reads `***` where a value was.
  */
 
 export class RunnerSessionError extends Schema.TaggedError<RunnerSessionError>()(
@@ -73,13 +77,22 @@ const reportsCompletion = (event: ProviderAdapterV2Event) => {
 export const makeRunnerSessions = Effect.fn("makeRunnerSessions")(function* (input: {
   readonly cloudUrl: string;
   readonly codexHome: string;
+  readonly mask?: SecretMask;
 }): Effect.fn.Return<
   RunnerSessions,
   never,
   HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Scope.Scope
 > {
   const token = yield* Ref.make<string | null>(null);
-  const client = yield* makeSessionClient({ cloudUrl: input.cloudUrl, token: Ref.get(token) });
+  const unmasked = yield* makeSessionClient({ cloudUrl: input.cloudUrl, token: Ref.get(token) });
+  const { mask } = input;
+  const client: SessionClient =
+    mask === undefined
+      ? unmasked
+      : {
+          ...unmasked,
+          append: (append) => unmasked.append({ ...append, rows: append.rows.map(mask.json) }),
+        };
   const failures = yield* Queue.unbounded<string>();
   const report = (message: string) => Effect.asVoid(Queue.offer(failures, message));
   const outbox = yield* makeSessionOutbox({

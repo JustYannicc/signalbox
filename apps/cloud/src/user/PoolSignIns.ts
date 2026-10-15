@@ -199,7 +199,7 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError((error) => fail(error.detail)));
         if (target === null) return yield* fail("That provider isn't one of your pools.");
         yield* stopLogin(actor, instanceId);
-        const flowId = yield* Effect.orDie(crypto.randomUUIDv4);
+        const flowId = yield* Effect.orDie(crypto.randomUUIDv4());
         yield* update(instanceId, {
           phase: "starting",
           flowId,

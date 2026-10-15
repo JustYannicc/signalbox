@@ -12,6 +12,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
+import * as CloudAssets from "../assets/CloudAssets.ts";
+import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
@@ -23,6 +25,7 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
+import * as PushNotifier from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as ModelManifest from "../thread/ModelManifest.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
@@ -41,6 +44,7 @@ import {
 import * as DrivePeople from "./DrivePeople.ts";
 import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
+import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -122,7 +126,7 @@ const layerDrives = (env: UserObjectEnv) => {
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
   return ManagedRuntime.make(
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer).pipe(
+    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           UserShell.layer,
@@ -135,6 +139,16 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       // Below the drive services: the files panel reads promised files with it (#406).
       Layer.provideMerge(GitHubConnection.layer),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
+      Layer.provideMerge(
+        PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              FetchHttpClient.layer,
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+            ),
+          ),
+        ),
+      ),
       Layer.provideMerge(LegacySections.layer),
       Layer.provideMerge(UserFolders.layer),
       Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
@@ -145,7 +159,12 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       ),
       Layer.provideMerge(UserDrives.layer),
       Layer.provideMerge(
-        Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives, ResourceBindings.layer),
+        Layer.mergeAll(
+          UserStore.layer,
+          UserContexts.layerWithDrives,
+          ResourceBindings.layer,
+          OnePasswordAccount.layer,
+        ),
       ),
       Layer.provideMerge(drives.store),
       Layer.provideMerge(
@@ -157,6 +176,13 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ),
       ),
       Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+      // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
+      Layer.provideMerge(
+        CloudTokens.layerSessionSecret.pipe(
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
+          Layer.orDie,
+        ),
+      ),
     ),
   );
 };
@@ -298,6 +324,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.githubCommitAuthor();
   }
 
+  onePasswordToken() {
+    return this.api.onePasswordToken();
+  }
+
   contextIds() {
     return this.api.contextIds();
   }
@@ -338,6 +368,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
         scopes: session.scopes,
         identity: this.identity,
         userId: profile.id,
+        sid,
       }).pipe(
         // An open socket never outlives its session.
         Effect.raceFirst(

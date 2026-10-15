@@ -3,8 +3,10 @@ import type {
   MachineClass,
   MachineUsage,
   RunnerItem,
+  RunnerLogLevel,
   RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import {
   MessageId,
@@ -42,9 +44,11 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { HarnessStderr } from "./harnessStderr.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
-import type { RunnerDrive } from "./RunnerDrive.ts";
-import { DriveTooLargeError } from "./RunnerDriveClient.ts";
+import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
+import { DriveClientError, DriveTooLargeError } from "./RunnerDriveClient.ts";
+import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
+import type { RunnerSecrets } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
 import { outgrownBy } from "./RunnerMachineClass.ts";
@@ -71,7 +75,9 @@ import { isUnmeasured } from "./RunnerUsage.ts";
  * with their lockfiles (`RunnerDependencies.ts`), one turn at a time.
  * Harnesses read their instructions when a session starts, so when the
  * instructions the drive's shortcuts bring change, the provider's session is
- * restarted and the thread resumed natively, which swaps them in.
+ * restarted and the thread resumed natively, which swaps them in. The folder's
+ * secrets (`RunnerSecrets.ts`) are environment variables of the session, so a
+ * change to them restarts it the same way.
  *
  * The harness's own session leaves the machine as it is written
  * (`RunnerSessions.ts`): it is restored before the harness loads it, an event
@@ -104,6 +110,7 @@ export interface RunnerTurns {
     readonly modelToken: string;
     readonly drive?: DriveAccess | null;
     readonly sessions?: SessionAccess | null;
+    readonly secrets?: SecretsAccess;
   }) => Effect.Effect<void>;
   /** Stops `runId`, wherever it is: loading, or running on the harness. */
   readonly interrupt: (runId: RunId) => Effect.Effect<void>;
@@ -111,11 +118,18 @@ export interface RunnerTurns {
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
 }
 
-/** An adapter session, and the shortcut instructions it was started with. */
+/** An adapter session, and the shortcut instructions and secrets it was started with. */
 interface OpenSession {
   readonly runtime: ProviderAdapterV2SessionRuntime;
-  readonly instructions: string;
+  readonly loaded: SessionLoad;
   readonly scope: Scope.Closeable;
+}
+
+/** What a harness reads only as its session starts. */
+interface SessionLoad {
+  readonly instructions: string;
+  /** The version of the folder's secrets (`RunnerSecrets.ts`). */
+  readonly secrets: number;
 }
 
 /** A run this machine was handed, until the harness ends its turn. */
@@ -130,17 +144,33 @@ interface Turn {
 
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
 
-/** Failures that say what's wrong in the user's terms, shown as they are. */
-const isUserFacing = Schema.is(Schema.Union([RunnerInstructionsError, DriveTooLargeError]));
+const isInstructionsError = Schema.is(RunnerInstructionsError);
+const isTurnError = Schema.is(RunnerTurnError);
+const isRunnerGitError = Schema.is(RunnerGitError);
+const isDriveClientError = Schema.is(DriveClientError);
+const isDriveTooLarge = Schema.is(DriveTooLargeError);
 
 /**
  * The failure text a thread may store: bounded and with credentials redacted.
- * Instructions too big to load say so in their own words (`RunnerInstructions.ts`).
+ * Instructions too big to load say so in their own words (`RunnerInstructions.ts`),
+ * and the Runner's own reasons (`RunnerTurnError`) say why instead of "Provider turn failed."
  */
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
-  return isUserFacing(error) ? error.message : makeProviderFailure({ cause: error }).message;
+  if (isInstructionsError(error)) return error.message;
+  return makeProviderFailure(isTurnError(error) ? { message: error.message } : { cause: error })
+    .message;
 };
+
+/** Why a drive couldn't be readied, in words a thread may show: ours, not a file system's. */
+const drivePrepareError = (error: RunnerDriveError) =>
+  new RunnerTurnError({
+    message: `Signalbox couldn't get this thread's files ready: ${
+      isRunnerGitError(error) || isDriveClientError(error) || isDriveTooLarge(error)
+        ? error.message
+        : "a file operation on its machine failed."
+    }`,
+  });
 
 const USAGE_INTERVAL = "30 seconds";
 /** While no turn runs, every this many intervals (5 min): each report wakes the thread's object. */
@@ -178,6 +208,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly machineClass?: MachineClass;
   /** Pins this turn's view of every drive the user can read (#141). Never fails. */
   readonly pinDrives?: (access: DriveAccess) => Effect.Effect<void>;
+  /** The folder's secrets for the harness sessions. Absent: none load on this machine. */
+  readonly secrets?: RunnerSecrets;
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
@@ -191,9 +223,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   /** Where the latest run's stderr starts. */
   let latestStderr = 0;
   /** A failure line: the cause, then what the CLIs said on stderr since `mark`. */
+  // Secrets are masked before anything is cut short, so no piece of one is left to send.
+  const mask = input.secrets?.mask ?? ((text: string) => text);
+  const log = (runId: RunId | null, level: RunnerLogLevel, text: string) =>
+    runnerLog(runId, level, mask(text));
   const failureLine = (what: string, cause: Cause.Cause<unknown>, mark: number) => {
-    const stderr = input.stderr?.since(mark) ?? "";
-    const text = causeText(cause);
+    const stderr = mask(input.stderr?.since(mark) ?? "");
+    const text = mask(causeText(cause));
     if (stderr === "") return `${what}: ${text}`;
     const tail =
       stderr.length > STDERR_TAIL_CHARS ? `…${stderr.slice(-STDERR_TAIL_CHARS)}` : stderr;
@@ -268,7 +304,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
               Effect.logWarning("interrupting the provider turn failed", Cause.pretty(cause)).pipe(
                 Effect.andThen(
                   input.emit(
-                    runnerLog(
+                    log(
                       turn.turn.runId,
                       "warning",
                       `interrupting the provider turn failed: ${causeText(cause)}`,
@@ -483,7 +519,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         Effect.logError("provider event stream ended", Cause.pretty(cause)).pipe(
           Effect.andThen(
             input.emit(
-              runnerLog(
+              log(
                 latestRunId,
                 "error",
                 failureLine("provider event stream ended", cause, latestStderr),
@@ -506,19 +542,28 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     adapter: ProviderAdapterV2["Service"],
     turn: RunnerTurn,
     runtimePolicy: ProviderAdapterV2RuntimePolicy,
-    instructions: string,
+    loaded: SessionLoad,
   ) =>
     Effect.gen(function* () {
       const open = sessions.get(adapter.instanceId);
-      if (open !== undefined && open.instructions === instructions) return open.runtime;
-      // A stopped run may still be winding down on it; the next turn swaps the instructions then.
+      if (
+        open !== undefined &&
+        open.loaded.instructions === loaded.instructions &&
+        open.loaded.secrets === loaded.secrets
+      ) {
+        return open.runtime;
+      }
+      // A stopped run may still be winding down on it; the next turn swaps them in then.
       if (open !== undefined && [...turns.values()].some((t) => t.session === open.runtime)) {
         return open.runtime;
       }
       if (open !== undefined) {
         // Nothing runs on it anymore: the thread resumes on the new one.
         sessions.delete(adapter.instanceId);
-        yield* Effect.logInfo("the drive's instructions changed; restarting the harness session");
+        yield* Effect.logInfo("what the harness loads changed; restarting its session", {
+          instructions: open.loaded.instructions !== loaded.instructions,
+          secrets: open.loaded.secrets !== loaded.secrets,
+        });
         yield* Scope.close(open.scope, Exit.void);
       }
       const sessionScope = yield* Scope.fork(scope);
@@ -532,7 +577,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           runtimePolicy,
         })
         .pipe(Scope.provide(sessionScope));
-      sessions.set(adapter.instanceId, { runtime, instructions, scope: sessionScope });
+      sessions.set(adapter.instanceId, { runtime, loaded, scope: sessionScope });
       yield* forward(adapter, runtime).pipe(Effect.forkIn(sessionScope));
       return runtime;
     }).pipe(
@@ -572,7 +617,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                 ).pipe(
                   Effect.andThen(
                     input.emit(
-                      runnerLog(
+                      log(
                         turn.runId,
                         "warning",
                         `native resume failed; starting a fresh session: ${causeText(cause)}`,
@@ -594,6 +639,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     modelToken: string,
     access: DriveAccess | null,
     sessionAccess: SessionAccess | null,
+    secretsAccess: SecretsAccess | null,
     state: Turn,
   ) => {
     // The session may spawn its CLI below; what it writes from here on is this turn's.
@@ -625,14 +671,28 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         Effect.gen(function* () {
           const drive =
             opened !== null && access !== null
-              ? yield* opened.prepare(access.remoteToken, access.author, access.instructions)
+              ? yield* opened
+                  .prepare(access.remoteToken, access.author, access.instructions)
+                  .pipe(
+                    Effect.mapError((error) =>
+                      isInstructionsError(error) ? error : drivePrepareError(error),
+                    ),
+                  )
               : null;
           if (input.dependencies !== undefined) {
             yield* input.dependencies.prepare((message) =>
               input.emit({ kind: "drive.notice", runId: turn.runId, message }),
             );
           }
-          return drive;
+          const secrets =
+            input.secrets === undefined
+              ? 0
+              : yield* input.secrets.load(secretsAccess, {
+                  notice: (message) =>
+                    input.emit({ kind: "secrets.notice", runId: turn.runId, message }),
+                  info: (message) => input.emit(log(turn.runId, "info", message)),
+                });
+          return { drive, secrets };
         }),
       );
       yield* input.useModelToken(modelToken);
@@ -641,7 +701,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         yield* input.sessions.use(sessionAccess);
         yield* input.sessions.prepare(adapter.driver);
       }
-      const session = yield* sessionFor(adapter, turn, runtimePolicy, prepared?.instructions ?? "");
+      const session = yield* sessionFor(adapter, turn, runtimePolicy, {
+        instructions: prepared.drive?.instructions ?? "",
+        secrets: prepared.secrets,
+      });
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
       if (pinning !== null) yield* Fiber.join(pinning);
       const started = yield* ordered.withPermits(1)(
@@ -662,7 +725,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
             providerSession: session.providerSession,
             providerThread,
           });
-          for (const message of prepared?.notices ?? []) {
+          for (const message of prepared.drive?.notices ?? []) {
             yield* input.emit({ kind: "drive.notice", runId: turn.runId, message });
           }
           return true;
@@ -693,11 +756,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
             turns.delete(turn.runId);
             if (runningRunId === turn.runId) runningRunId = null;
             yield* input.emit(
-              runnerLog(
-                turn.runId,
-                "error",
-                failureLine("turn failed to start", cause, stderrMark),
-              ),
+              log(turn.runId, "error", failureLine("turn failed to start", cause, stderrMark)),
             );
             yield* input.emit({
               kind: "turn.failed",
@@ -716,6 +775,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     modelToken,
     drive: access = null,
     sessions: sessionAccess = null,
+    secrets: secretsAccess = null,
   }) =>
     Effect.suspend(() => {
       if (taken.has(turn.runId)) return Effect.void;
@@ -730,7 +790,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       };
       turns.set(turn.runId, state);
       return Effect.asVoid(
-        run(turn, modelToken, access, sessionAccess, state).pipe(Effect.forkIn(scope)),
+        run(turn, modelToken, access, sessionAccess, secretsAccess, state).pipe(
+          Effect.forkIn(scope),
+        ),
       );
     });
 

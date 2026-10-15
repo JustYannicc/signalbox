@@ -4,8 +4,11 @@ import {
   type FolderDeleteInput,
   FolderId,
   type FolderMoveInput,
+  OnePasswordEnvironmentId,
   type FolderMoveThreadInput,
   type FolderSetInstructionsInput,
+  type FolderSetOnePasswordInput,
+  type FolderSetSecretsInput,
   type FolderUpdateInput,
   type SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
@@ -26,7 +29,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { parseDriveId } from "../drive/driveAccess.ts";
-import type { TurnInstructions, TurnPools } from "../thread/turnPool.ts";
+import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 import { contextOfProject, driveOfProject, projectIdForDrive } from "./contextProjects.ts";
 import { foldDrives } from "./driveFolders.ts";
 import { toSnapshot } from "./folderSnapshot.ts";
@@ -41,6 +44,7 @@ import {
   levelOf,
   poolResolver,
   sameOrder,
+  secretsOf,
   type Tree,
   type TreeFolder,
   withSoundParents,
@@ -53,6 +57,7 @@ import {
   type FolderRows,
   type SectionRows,
 } from "./folderRows.ts";
+import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import { makeProfileId } from "./profileId.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -89,6 +94,8 @@ export interface FolderState {
   readonly drives: ReadonlyArray<UserDriveIndex.IndexedDrive>;
   readonly tree: Tree;
   readonly revision: number;
+  /** When the user's 1Password service account was connected; null when none is. */
+  readonly onePasswordConnectedAt: number | null;
 }
 
 export class UserFolders extends Context.Service<
@@ -110,6 +117,16 @@ export class UserFolders extends Context.Service<
     readonly setInstructions: (
       input: FolderSetInstructionsInput,
     ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
+    /** Names a level's 1Password Environment (#395), or stops loading secrets there. */
+    readonly setSecrets: (
+      input: FolderSetSecretsInput,
+    ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
+    /** Connects the user's 1Password service account, replacing any before, or disconnects it. */
+    readonly setOnePassword: (
+      input: FolderSetOnePasswordInput,
+    ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
+    /** Connects `token` only when no account is: a preview taking production's (`previewSetup/`). */
+    readonly adoptOnePassword: (token: string) => Effect.Effect<void, SqlError>;
     /** Takes a deleted pool off every level, so they inherit from above again. */
     readonly forgetPool: (poolId: string) => Effect.Effect<void, SqlError>;
     /**
@@ -120,7 +137,11 @@ export class UserFolders extends Context.Service<
       readonly threadId: ThreadId;
       readonly projectId: ProjectId | null;
     }) => Effect.Effect<
-      { readonly pools: TurnPools; readonly instructions: TurnInstructions },
+      {
+        readonly pools: TurnPools;
+        readonly instructions: TurnInstructions;
+        readonly secrets: TurnSecrets;
+      },
       SqlError
     >;
     /** Every row as stored, owners left included: what a preview takes along (`previewSetup/`). */
@@ -141,7 +162,11 @@ const decodeIndexed = Schema.decodeUnknownSync(
 );
 const decodeState = Schema.decodeUnknownSync(
   Schema.Array(
-    Schema.Struct({ revision: Schema.Number, instructions: Schema.NullOr(Schema.String) }),
+    Schema.Struct({
+      revision: Schema.Number,
+      instructions: Schema.NullOr(Schema.String),
+      secrets_environment_id: Schema.NullOr(OnePasswordEnvironmentId),
+    }),
   ),
 );
 const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
@@ -152,6 +177,7 @@ const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
   position: row.position,
   driveId: row.drive_id,
   instructions: row.instructions,
+  secrets: row.secrets_environment_id ?? null,
 });
 
 /** How long a filing waits for its thread to be created before the next filing drops it. */
@@ -179,6 +205,7 @@ const make = Effect.gen(function* () {
       },
     );
   const bindings = yield* ResourceBindings.ResourceBindings;
+  const onePassword = yield* OnePasswordAccount.OnePasswordAccount;
   // Own changes and owner or drive changes share one signal, so a subscriber
   // that subscribes before its first read misses neither.
   const changed = yield* PubSub.sliding<void>(1);
@@ -188,6 +215,9 @@ const make = Effect.gen(function* () {
   );
 
   const bump = sql`UPDATE folders_state SET revision = revision + 1 WHERE id = 1`;
+  const selectFolders = sql`SELECT id, owner_id, parent_id, name, position, drive_id, instructions,
+    secrets_environment_id FROM folders`;
+  const selectState = sql`SELECT revision, instructions, secrets_environment_id FROM folders_state`;
 
   /**
    * A span for one operation, with who did it and what it touched (#284):
@@ -229,9 +259,7 @@ const make = Effect.gen(function* () {
   const load = (at: Owned, filedOnly?: ThreadId) =>
     Effect.gen(function* () {
       const user = yield* userId;
-      const folders = decodeFolderRows(
-        yield* sql`SELECT id, owner_id, parent_id, name, position, drive_id, instructions FROM folders`,
-      )
+      const folders = decodeFolderRows(yield* selectFolders)
         .filter((row) => at.owners.has(row.owner_id))
         .map(toTreeFolder);
       const homes = decodeHomeRows(
@@ -239,10 +267,11 @@ const make = Effect.gen(function* () {
           ? yield* sql`SELECT thread_id, folder_id FROM thread_homes`
           : yield* sql`SELECT thread_id, folder_id FROM thread_homes WHERE thread_id = ${filedOnly}`,
       );
-      const [state] = decodeState(yield* sql`SELECT revision, instructions FROM folders_state`);
+      const [state] = decodeState(yield* selectState);
       const tree: Tree = {
         folders: withSoundParents(folders),
         topInstructions: state?.instructions ?? null,
+        topSecrets: state?.secrets_environment_id ?? null,
         bindings: yield* bindings.pools,
         filed: new Map(homes.map((row) => [row.thread_id, row.folder_id])),
         driveOfProject: (projectId) => (user === null ? null : driveOfProject(projectId, user)),
@@ -252,6 +281,7 @@ const make = Effect.gen(function* () {
         drives: at.drives,
         tree,
         revision: state?.revision ?? 0,
+        onePasswordConnectedAt: yield* onePassword.connectedAt,
       } satisfies FolderState;
     });
 
@@ -329,7 +359,7 @@ const make = Effect.gen(function* () {
 
   const create: UserFolders["Service"]["create"] = (input) =>
     Effect.gen(function* () {
-      const id = FolderId.make(yield* Effect.orDie(crypto.randomUUIDv4));
+      const id = FolderId.make(yield* Effect.orDie(crypto.randomUUIDv4()));
       return yield* mutate((current) =>
         Effect.gen(function* () {
           const parent =
@@ -537,17 +567,59 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const forgetPool: UserFolders["Service"]["forgetPool"] = (poolId) =>
-    Effect.gen(function* () {
-      const forgotten = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          if (!(yield* bindings.forgetPool(poolId))) return false;
-          yield* bump;
+  const setSecrets: UserFolders["Service"]["setSecrets"] = (input) =>
+    mutate((current) =>
+      Effect.gen(function* () {
+        const environmentId = input.secrets?.environmentId ?? null;
+        if (input.level._tag === "top") {
+          if (current.tree.topSecrets === environmentId) return false;
+          yield* sql`UPDATE folders_state SET secrets_environment_id = ${environmentId} WHERE id = 1`;
           return true;
-        }),
+        }
+        const folder = yield* requireFolder(current, input.level.folderId);
+        yield* annotateOwner(folder.ownerId);
+        if (folder.secrets === environmentId) return false;
+        yield* sql`UPDATE folders SET secrets_environment_id = ${environmentId}
+          WHERE id = ${folder.id}`;
+        return true;
+      }),
+    ).pipe(
+      traced("UserFolders.setSecrets", {
+        "folder.id": input.level._tag === "top" ? "top" : input.level.folderId,
+        "secrets.set": String(input.secrets !== null),
+      }),
+    );
+
+  /** Applies `change` in a transaction; when it changed anything, bumps and tells subscribers. */
+  const changedWith = <E>(change: Effect.Effect<boolean, E>) =>
+    Effect.gen(function* () {
+      const changedAnything = yield* sql.withTransaction(
+        Effect.tap(change, (did) => (did ? Effect.asVoid(bump) : Effect.void)),
       );
-      if (forgotten) yield* PubSub.publish(changed, undefined);
+      if (changedAnything) yield* PubSub.publish(changed, undefined);
     });
+
+  // Never annotated with the token: only whether one was connected.
+  const setOnePassword: UserFolders["Service"]["setOnePassword"] = (input) =>
+    // A failed write's cause names the statement, token included: it never reaches the span.
+    changedWith(
+      onePassword
+        .set(input.token)
+        .pipe(
+          Effect.catchTags({ SqlError: () => refuse("Could not change your 1Password account.") }),
+        ),
+    ).pipe(
+      Effect.andThen(snapshot),
+      traced("UserFolders.setOnePassword", {
+        "onepassword.connected": String(input.token !== null),
+      }),
+    );
+
+  const adoptOnePassword: UserFolders["Service"]["adoptOnePassword"] = (token) =>
+    changedWith(onePassword.adopt(token));
+
+  const forgetPool: UserFolders["Service"]["forgetPool"] = (poolId) =>
+    changedWith(bindings.forgetPool(poolId));
 
   const turn: UserFolders["Service"]["turn"] = (thread) =>
     Effect.gen(function* () {
@@ -558,6 +630,11 @@ const make = Effect.gen(function* () {
       const cascadeOf = (home: FolderId | null) => {
         if (!cascades.has(home)) cascades.set(home, instructionsOf(tree, home));
         return cascades.get(home)!;
+      };
+      const secretChains = new Map<FolderId | null, TurnSecrets["top"]>();
+      const secretsAt = (home: FolderId | null) => {
+        if (!secretChains.has(home)) secretChains.set(home, secretsOf(tree, home));
+        return secretChains.get(home)!;
       };
       const projectHomes = currentProjectIds(at.contexts).map(
         (projectId) => [projectId, folderOfProject(tree, projectId)] as const,
@@ -583,6 +660,11 @@ const make = Effect.gen(function* () {
         projects: Object.fromEntries(projectHomes.map(([id, folder]) => [id, cascadeOf(folder)])),
         ...(filed ? { thread: cascadeOf(home) } : {}),
       };
+      const secrets: TurnSecrets = {
+        top: secretsAt(null),
+        projects: Object.fromEntries(projectHomes.map(([id, folder]) => [id, secretsAt(folder)])),
+        ...(filed ? { thread: secretsAt(home) } : {}),
+      };
       const own =
         filed || projectId === null
           ? home
@@ -596,18 +678,19 @@ const make = Effect.gen(function* () {
           (bytes, level) => bytes + new TextEncoder().encode(level.text).byteLength,
           0,
         ),
+        // A count only: Environment ids name the user's vaults' contents.
+        "secrets.levels": secretsAt(own).length,
       });
-      return { pools, instructions };
+      return { pools, instructions, secrets };
     }).pipe(traced("UserFolders.turn", { "thread.id": thread.threadId }));
 
   const rows: UserFolders["Service"]["rows"] = Effect.gen(function* () {
-    const [folderState] = decodeState(yield* sql`SELECT revision, instructions FROM folders_state`);
+    const [folderState] = decodeState(yield* selectState);
     return {
-      folders: decodeFolderRows(
-        yield* sql`SELECT id, owner_id, parent_id, name, position, drive_id, instructions FROM folders`,
-      ),
+      folders: decodeFolderRows(yield* selectFolders),
       bindings: yield* bindings.rows,
       topInstructions: folderState?.instructions ?? null,
+      topSecrets: folderState?.secrets_environment_id ?? null,
     };
   });
 
@@ -624,9 +707,10 @@ const make = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           for (const row of input.folders) {
-            yield* sql`INSERT INTO folders (id, owner_id, parent_id, name, position, instructions)
+            yield* sql`INSERT INTO folders
+                (id, owner_id, parent_id, name, position, instructions, secrets_environment_id)
               VALUES (${row.id}, ${row.owner_id}, ${row.parent_id}, ${row.name}, ${row.position},
-                ${row.instructions})
+                ${row.instructions}, ${row.secrets_environment_id ?? null})
               ON CONFLICT (id) DO NOTHING`;
           }
           // A drive's folder takes its place from these the first time it's made.
@@ -639,6 +723,10 @@ const make = Effect.gen(function* () {
           if (input.topInstructions !== null) {
             yield* sql`UPDATE folders_state SET instructions = ${input.topInstructions}
               WHERE id = 1 AND instructions IS NULL`;
+          }
+          if (input.topSecrets != null) {
+            yield* sql`UPDATE folders_state SET secrets_environment_id = ${input.topSecrets}
+              WHERE id = 1 AND secrets_environment_id IS NULL`;
           }
           yield* bump;
         }),
@@ -690,6 +778,9 @@ const make = Effect.gen(function* () {
     delete: remove,
     moveThread,
     setInstructions,
+    setSecrets,
+    setOnePassword,
+    adoptOnePassword,
     forgetPool,
     turn,
     rows,
