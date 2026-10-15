@@ -203,18 +203,6 @@ jobs:
         if: github.event.action == 'reopened'
         run: bash .trusted-cleanup/.github/scripts/call-preview-cleanup.sh activate "$PR_NUMBER"
 
-      # TEMPORARY (#298 token diagnosis): which token CI holds, and what it may
-      # do with Secrets Store. Prints ids and status codes only.
-      - name: Diagnose Cloudflare token
-        if: always()
-        run: |
-          api() { curl --silent --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4$1"; }
-          echo "account token verify: $(api "/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" | jq -c '{success, id: .result.id, status: .result.status, errors: [.errors[]?.code]}')"
-          echo "user token verify:    $(api /user/tokens/verify | jq -c '{success, id: .result.id, status: .result.status, errors: [.errors[]?.code]}')"
-          echo "secrets_store/stores: $(api "/accounts/$CLOUDFLARE_ACCOUNT_ID/secrets_store/stores" | jq -c '{success, errors: [.errors[]?.code]}')"
-          echo "workers/subdomain:    $(api "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" | jq -c '{success, errors: [.errors[]?.code]}')"
-          echo "r2/buckets:           $(api "/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets" | jq -c '{success, errors: [.errors[]?.code]}')"
-
       - *plan
       - *deploy
 
