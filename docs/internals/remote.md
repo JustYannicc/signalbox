@@ -113,5 +113,5 @@ There is one environment, so clients show no environment UI. The cloud advertise
 `otherEnvironments: false`, and web, desktop and mobile hide pickers, lists, pairing and
 Connections through `showsEnvironmentUi` (`packages/contracts/src/signalboxCapabilities.ts`).
 The catalog, pairing and per-environment state stay underneath unchanged, so upstream merges
-apply and servers that don't send the capability (T3 Code, self-hosted, development) keep
+apply and servers that don't send the capability (upstream, self-hosted, development) keep
 everything.
