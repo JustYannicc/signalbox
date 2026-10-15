@@ -27,4 +27,7 @@ export const AUTOMATION_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>>
   automation_emit: tool(["Send", "Sending", "Sent", "an automation event"]),
   automation_set_webhook_secret: tool(["Set", "Setting", "Set", "an automation webhook secret"]),
   automation_customize: tool(["Customize", "Customizing", "Customized", "a built-in automation"]),
+  wait_for: tool(["Wait", "Starting to wait", "Waiting", "for something"]),
+  list_waits: tool(["List", "Listing", "Listed", "waits"]),
+  stop_waiting: tool(["Stop", "Stopping", "Stopped", "a wait"]),
 };
