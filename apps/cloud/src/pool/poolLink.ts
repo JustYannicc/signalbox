@@ -99,13 +99,13 @@ export const handleLinkRequest = (secret: string, request: Request) =>
       return Response.json({});
     }
     if (path === "/v0/management/auth-files" && request.method === "GET") {
-      const { accounts } = yield* engine.accounts(actor);
+      const { accounts, role } = yield* engine.accounts(actor);
       // The fields `cliProxyApi.listAccounts` reads, signed-out ones as CLIProxyAPI marks them.
       return Response.json({
         files: accounts.map((account) => ({
           name: account.name,
           type: account.type,
-          ...(account.email === null ? {} : { email: account.email }),
+          ...(account.email === null || role !== "admin" ? {} : { email: account.email }),
           disabled: account.disabled,
           ...(account.signedOut ? { status: "error", unavailable: true } : {}),
         })),

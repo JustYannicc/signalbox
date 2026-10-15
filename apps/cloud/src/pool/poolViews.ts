@@ -18,11 +18,14 @@ import {
 } from "@t3tools/contracts";
 
 import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import { hasQuota, pooledUsage, takesTurns } from "@t3tools/shared/poolUsage";
 import * as DateTime from "effect/DateTime";
 
 import { CLOUD_POOL_KINDS, harnessModels, poolServerProvider } from "../thread/providerCatalog.ts";
 import type { ServedModel } from "./cliProxyApi.ts";
-import type { PoolAccounts } from "./PoolEngine.ts";
+import type { PoolAccounts, PoolRole } from "./PoolEngine.ts";
+import { READS_LIMITS } from "./poolLimits.ts";
 
 /**
  * A user's pools as clients see them: the pool list, one usage source per
@@ -42,8 +45,11 @@ export interface UserPool {
 /** A pool with its accounts, as one usage limit source, and the models they serve. */
 export interface PoolEntry {
   readonly pool: UserPool;
+  /** Every account, for the overview and providers; `limitsSource` is what the user may see. */
   readonly source: UsageLimitSourceSnapshot;
   readonly models: ReadonlyArray<ServedModel>;
+  /** The user's role in the pool, null when it couldn't be read. */
+  readonly role: PoolRole | null;
 }
 
 export const accountPool = (pool: UserPool): AccountPool => ({
@@ -64,12 +70,28 @@ const DRIVER_BY_ACCOUNT_TYPE: Record<string, ProviderDriverKind> = {
 
 const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
-/** Limits per account are not read in the cloud yet; the account list is. */
-const usageNotRead = (checkedAt: string): UsageLimitSourceAccount["usageLimits"] => ({
-  checkedAt,
-  windows: [],
-  unavailable: { reason: "unsupported", message: "Signalbox Cloud doesn't read limits yet." },
-});
+const unavailable = (
+  checkedAt: string,
+  message: string,
+  reason: "unsupported" | "probeFailed" = "unsupported",
+) => makeUnavailableUsageLimits({ checkedAt, reason, message });
+
+/** An account's windows, or why it has none. */
+const usageLimitsOf = (
+  account: PoolAccounts["accounts"][number],
+  checkedAt: string,
+): UsageLimitSourceAccount["usageLimits"] => {
+  if (account.disabled) return unavailable(checkedAt, "Paused.");
+  if (account.signedOut) return unavailable(checkedAt, "Signed out. Sign in again.");
+  if (account.usageLimits !== null) return account.usageLimits;
+  return READS_LIMITS.has(account.type)
+    ? unavailable(
+        checkedAt,
+        "Not read yet. The pool reads it the next time it runs.",
+        "probeFailed",
+      )
+    : unavailable(checkedAt, "Signalbox Cloud reads limits for Claude and ChatGPT accounts.");
+};
 
 /** The pool's accounts as one usage limit source, grouped under the pool in Limits. */
 export const usageSource = (
@@ -97,7 +119,7 @@ export const usageSource = (
           id: account.name,
           driver,
           ...(account.email ? { email: account.email } : {}),
-          usageLimits: usageNotRead(at),
+          usageLimits: usageLimitsOf(account, at),
           ...(account.disabled ? { disabled: true } : {}),
           ...(account.signedOut ? { signedOut: true } : {}),
         },
@@ -107,34 +129,43 @@ export const usageSource = (
   };
 };
 
+/** What the user may see in Limits: each account for admins, none for members. */
+export const limitsSource = (entry: PoolEntry): UsageLimitSourceSnapshot =>
+  entry.role === "admin" ? entry.source : { ...entry.source, accounts: [] };
+
+/** `driver`'s accounts in `source` that take turns. */
+const running = (source: UsageLimitSourceSnapshot, driver: ProviderDriverKind) =>
+  source.accounts.filter((account) => account.driver === driver && takesTurns(account));
+
 /** Whether `source` holds an account of `driver` that can take turns. */
 const canRun = (source: UsageLimitSourceSnapshot, driver: ProviderDriverKind) =>
-  source.accounts.some(
-    (account) => account.driver === driver && !account.disabled && !account.signedOut,
-  );
+  running(source, driver).length > 0;
 
 const instanceOf = (kind: (typeof CLOUD_POOL_KINDS)[number], pool: UserPool) =>
   poolInstanceEntry(kind, { id: pool.id, name: pool.personal ? undefined : pool.name });
 
 /**
- * What any member may see: per provider, whether it can run now. No account
- * count, emails or plans, and no usage windows until the cloud reads limits.
+ * What any member may see: per provider, whether an account has quota left
+ * now, and the share left per window with the next reset, pooled across the
+ * accounts. No account count, emails or plans.
  */
 export const overview = (
   pool: UserPool,
   source: UsageLimitSourceSnapshot,
+  now: number,
 ): AccountPoolOverview => ({
   id: pool.id,
   name: pool.name,
   providers: CLOUD_POOL_KINDS.map((kind): AccountPoolProvider => {
     const [providerInstanceId] = instanceOf(kind, pool);
     const { driver, displayName } = POOL_INSTANCE_KINDS[kind];
+    const accounts = running(source, driver);
     return {
       providerInstanceId,
       driver,
       displayName,
-      available: canRun(source, driver),
-      usage: [],
+      available: accounts.some((account) => hasQuota(account, now)),
+      usage: pooledUsage(accounts, now),
     };
   }),
 });

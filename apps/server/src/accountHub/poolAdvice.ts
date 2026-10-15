@@ -20,7 +20,7 @@ import {
 } from "@t3tools/contracts/accountHub";
 import * as DateTime from "effect/DateTime";
 
-import { asOf } from "./poolOverview.ts";
+import { asOf } from "@t3tools/shared/poolUsage";
 import { HOUR_MS, type UsageHour, windowDurationMs } from "./poolUsageRecording.ts";
 
 const STEP_MS = 15 * 60_000;
