@@ -283,6 +283,8 @@ export const POOL_LINK_PATH = "/api/pool-link";
 export const PoolLinkAccount = Schema.Struct({
   name: Schema.String,
   type: Schema.String,
+  /** Only when the link acts for one of the pool's admins. */
+  email: Schema.optional(Schema.String),
   disabled: Schema.Boolean,
   signedOut: Schema.Boolean,
 });

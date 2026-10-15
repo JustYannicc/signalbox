@@ -3,7 +3,11 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { CLI_PROXY_API_PORT, renderConfig } from "../../apps/cloud/src/pool/cliProxyApi.ts";
+import {
+  CLI_PROXY_API_PORT,
+  MANAGED_CONFIG,
+  renderConfig,
+} from "../../apps/cloud/src/pool/cliProxyApi.ts";
 
 const image = `signalbox-cliproxyapi-smoke-${process.pid}`;
 const container = `cliproxyapi-smoke-${process.pid}`;
@@ -25,13 +29,36 @@ const docker = (args, options = {}) => {
   return result.stdout?.trim() ?? "";
 };
 
-const checkEndpoint = async (origin, path, key) => {
+const checkEndpoint = async (origin, path, key, init = {}) => {
   const response = await fetch(`${origin}${path}`, {
-    headers: { authorization: `Bearer ${key}` },
+    ...init,
+    headers: { authorization: `Bearer ${key}`, ...init.headers },
   });
   const body = await response.text();
   if (!response.ok) {
     throw new Error(`${path} returned ${response.status}: ${body.slice(0, 500)}`);
+  }
+  return body;
+};
+
+/** The v8 management calls a cloud pool makes, against the pinned release. */
+const checkPoolCalls = async (origin) => {
+  await checkEndpoint(origin, "/v8/management/credentials", managementKey);
+  // An older pool's config is patched up to the managed one; v8 rejects legacy field names.
+  await checkEndpoint(origin, "/v8/management/config", managementKey, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(MANAGED_CONFIG),
+  });
+  const config = JSON.parse(await checkEndpoint(origin, "/v8/management/config", managementKey));
+  const applied = {
+    strategy: config.routing?.strategy,
+    sessionAffinity: config.routing?.["session-affinity"],
+    usageStatistics: config.observability?.usage?.["usage-statistics-enabled"],
+  };
+  const expected = { strategy: "round-robin", sessionAffinity: true, usageStatistics: true };
+  if (JSON.stringify(applied) !== JSON.stringify(expected)) {
+    throw new Error(`The managed config did not apply: ${JSON.stringify(applied)}`);
   }
 };
 
@@ -67,10 +94,9 @@ try {
 
   while (Date.now() < deadline) {
     try {
-      await checkEndpoint(origin, "/v0/management/config", managementKey);
+      await checkEndpoint(origin, "/v8/management/config", managementKey);
       await checkEndpoint(origin, "/v1/models", clientKey);
       ready = true;
-      console.log("CLIProxyAPI management API and /v1/models responded successfully.");
       break;
     } catch (error) {
       lastError = error;
@@ -80,6 +106,8 @@ try {
 
   if (!ready)
     throw lastError ?? new Error("CLIProxyAPI did not answer before the startup deadline.");
+  await checkPoolCalls(origin);
+  console.log("CLIProxyAPI's v8 management API, managed config and /v1/models work.");
 } catch (error) {
   if (started) {
     const logs = NodeChildProcess.spawnSync("docker", ["logs", container], { encoding: "utf8" });

@@ -96,9 +96,22 @@ describe("pool link", () => {
         body: { imported: ["claude-a@x.test.json", "codex-b@x.test.json"], skipped: [] },
       });
       const info = yield* onLink(received.token, "");
+      // The link acts for the pool's admin, who sees each account's email.
       expect(info.body.accounts).toEqual([
-        { name: "claude-a@x.test.json", type: "claude", disabled: false, signedOut: false },
-        { name: "codex-b@x.test.json", type: "codex", disabled: false, signedOut: false },
+        {
+          name: "claude-a@x.test.json",
+          type: "claude",
+          email: "a@x.test",
+          disabled: false,
+          signedOut: false,
+        },
+        {
+          name: "codex-b@x.test.json",
+          type: "codex",
+          email: "b@x.test",
+          disabled: false,
+          signedOut: false,
+        },
       ]);
 
       // Model requests reach the pool's CLIProxyAPI with the pool's own key, never the link's.
