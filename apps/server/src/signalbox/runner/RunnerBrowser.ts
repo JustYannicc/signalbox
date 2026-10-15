@@ -105,7 +105,7 @@ const pushBounded = <A>(
 };
 
 /** A navigation's URL: `environment-port` targets are this machine's loopback ports. */
-export const navigationUrl = (input: PreviewAutomationNavigateInput) => {
+const navigationUrl = (input: PreviewAutomationNavigateInput) => {
   if (input.url !== undefined) return normalizePreviewUrl(input.url);
   const target = input.target!;
   if (target.kind === "url") return normalizePreviewUrl(target.url);

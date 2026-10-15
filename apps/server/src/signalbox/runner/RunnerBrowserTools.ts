@@ -62,7 +62,7 @@ const answer = <A>(operation: () => Promise<A>) =>
  * A snapshot as the agent reads it. The screenshot rides along as an image
  * only when asked: providers replay images on every later request.
  */
-export const presentSnapshot = (
+const presentSnapshot = (
   snapshot: PreviewAutomationSnapshot,
   options: { readonly includeImage: boolean; readonly save: boolean },
 ): ReadonlyArray<McpSchema.ContentBlock> => {
