@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type ProviderInstanceId, defaultInstanceIdForDriver } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -117,6 +118,8 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
     layout,
     stderr,
     environment,
+    /** Where the adapters read a turn's attachments from (`RunnerAttachments.ts`). */
+    attachmentsDir: Context.get(services, ServerConfig.ServerConfig).attachmentsDir,
     adapters: new Map<ProviderInstanceId, ProviderAdapterV2["Service"]>([
       [claude.instanceId, claude],
       [codex.instanceId, codex],

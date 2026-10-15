@@ -75,6 +75,24 @@ const PreviewSetupClaims = Schema.TaggedStruct("preview-setup", {
   exp: ExpiresAt,
 });
 
+/** One upload's bytes, as `attachments.createUploadUrl` promised them (`attachments/`). */
+const AttachmentUploadClaims = Schema.TaggedStruct("attachment-upload", {
+  u: UserId,
+  a: Schema.String,
+  t: Schema.Literals(["image", "file"]),
+  m: Schema.String,
+  s: Schema.Number,
+  exp: ExpiresAt,
+});
+
+/** A short-lived link to one attachment's bytes, as `assets.createUrl` minted it. */
+const AttachmentFileClaims = Schema.TaggedStruct("attachment-file", {
+  a: Schema.String,
+  n: Schema.optionalKey(Schema.String),
+  d: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
+  exp: ExpiresAt,
+});
+
 const SignedClaims = Schema.Union([
   SessionClaims,
   TicketClaims,
@@ -83,6 +101,8 @@ const SignedClaims = Schema.Union([
   GitHubConnectClaims,
   ConnectionLinkClaims,
   PreviewSetupClaims,
+  AttachmentUploadClaims,
+  AttachmentFileClaims,
 ]);
 export type SignedClaims = typeof SignedClaims.Type;
 type SignedKind = SignedClaims["_tag"];

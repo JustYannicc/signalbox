@@ -14,6 +14,9 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import type { AttachmentObjects } from "./attachments/attachmentObjects.ts";
+import { makeMemoryObjects } from "./attachments/attachmentTesting.ts";
+import * as CloudAttachments from "./attachments/CloudAttachments.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -78,6 +81,14 @@ export const CLOUD_TEST_ENV = {
 export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_ENV) =>
   Layer.mergeAll(Layer.fresh(CloudConfig.layer), Layer.fresh(PreviewSetup.layerConfig)).pipe(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
+
+/** Attachments over `objects`, with links signed by the test config. */
+export const layerAttachments = (objects: AttachmentObjects) =>
+  CloudAttachments.layer({ objects, prefix: "" }).pipe(
+    Layer.provide(CloudTokens.layer),
+    Layer.provide(Layer.mergeAll(layerConfig(), Platform.layerCrypto)),
+    Layer.orDie,
   );
 
 /** A user object's storage services on a fresh in-memory database, migrated. */
@@ -184,6 +195,7 @@ const makeUserRuntime = (
   drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
   people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
+  attachments: Layer.Layer<CloudAttachments.CloudAttachments>,
 ) =>
   ManagedRuntime.make(
     // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
@@ -200,7 +212,7 @@ const makeUserRuntime = (
           CloudThreadService.layer,
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto)),
+      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto, attachments)),
       Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
       Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
       Layer.provideMerge(Layer.mergeAll(drives, people, github)),
@@ -259,6 +271,8 @@ export const makeMemoryCloud = (
   const pools = makeMemoryPools(options.poolFetch);
   const drives = makeMemoryDrives({ users: () => userDirectory });
   const people = layerTestPeople(options.people ?? []);
+  const attachmentObjects = makeMemoryObjects();
+  const attachments = layerAttachments(attachmentObjects);
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
@@ -269,6 +283,7 @@ export const makeMemoryCloud = (
       drives.layer,
       people,
       options.github ?? layerNoGitHub,
+      attachments,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -318,6 +333,7 @@ export const makeMemoryCloud = (
       Layer.mergeAll(
         Layer.succeed(UserDirectory.UserDirectory, userDirectory),
         Layer.succeed(ThreadDirectory.ThreadDirectory, threadDirectory),
+        attachments,
       ),
     ),
     Layer.provideMerge(Platform.layerCrypto),
@@ -342,6 +358,8 @@ export const makeMemoryCloud = (
     pools,
     /** The drives' objects and packs, shared by every user and thread here. */
     drives,
+    /** The attachments bucket, shared by every user and thread here. */
+    attachmentObjects,
     /** Who owns a thread, and the context and drive it was created in. */
     threadOwner: (threadId: string) =>
       Effect.promise(() =>

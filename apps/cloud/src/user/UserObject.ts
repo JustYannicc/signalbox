@@ -12,6 +12,10 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
+import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
+import * as CloudAttachments from "../attachments/CloudAttachments.ts";
+import * as CloudTokens from "../auth/CloudTokens.ts";
+import * as CloudConfig from "../CloudConfig.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
@@ -69,7 +73,8 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.Git
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
    */
   readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
-  readonly DRIVE_PACKS?: DrivePacks.PackBucket;
+  /** Also where pasted screenshots and files live (`attachments/`). */
+  readonly DRIVE_PACKS?: DrivePacks.PackBucket & AttachmentObjects;
   readonly DRIVE_PACKS_PREFIX?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
@@ -118,6 +123,16 @@ const layerDrives = (env: UserObjectEnv) => {
   };
 };
 
+/** Attachments in the drives bucket, their links signed like the Worker's (`CloudTokens`). */
+const layerAttachments = (env: UserObjectEnv) =>
+  CloudAttachments.layer(attachmentStorage(env)).pipe(
+    Layer.provide(CloudTokens.layer),
+    Layer.provide(CloudConfig.layer),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
+    // The Worker reads the same settings before anything reaches this object.
+    Layer.orDie,
+  );
+
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
@@ -133,7 +148,9 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           ConnectionLinks.layer,
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(ThreadContexts.layer, UserPools.layer, layerAttachments(env)),
+      ),
       Layer.provideMerge(LegacySections.layer),
       Layer.provideMerge(UserFolders.layer),
       Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
@@ -180,6 +197,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       // Only machines run dev servers.
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
+      attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));
