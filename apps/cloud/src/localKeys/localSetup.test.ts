@@ -41,7 +41,13 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((resolve) => gateway.close(() => resolve())));
 
-const makeComputer = (options: { readonly executorUrl?: string } = {}) => {
+const makeComputer = (
+  options: {
+    readonly executorUrl?: string;
+    /** Leave `CLAUDE_CONFIG_DIR` unset, as most computers do: Claude Code uses `~/.claude`. */
+    readonly defaultClaudeDir?: boolean;
+  } = {},
+) => {
   const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "signalbox-local-"));
   const claude = NodePath.join(home, "claude");
   const codex = NodePath.join(home, "codex");
@@ -51,7 +57,7 @@ const makeComputer = (options: { readonly executorUrl?: string } = {}) => {
         env: {
           PATH: process.env.PATH ?? "",
           HOME: home,
-          CLAUDE_CONFIG_DIR: claude,
+          ...(options.defaultClaudeDir ? {} : { CLAUDE_CONFIG_DIR: claude }),
           CODEX_HOME: codex,
         },
       });
@@ -91,7 +97,7 @@ const CLAUDE_SETTINGS = `${JSON.stringify(
   2,
 )}\n`;
 
-/** What a signed-in Claude Code and Codex keep, which setup must never touch. */
+/** What a signed-in Claude Code and Codex keep, which setup without an Executor never touches. */
 const SIGNED_IN: ReadonlyArray<readonly [file: string, text: string]> = [
   ["claude/.credentials.json", '{"claudeAiOauth":{"accessToken":"sk-ant-oat-fake"}}\n'],
   ["claude/.claude.json", '{"oauthAccount":{"emailAddress":"me@example.com"}}\n'],
@@ -195,6 +201,7 @@ http_headers = { "x-signalbox-key" = "${GOOD}" }
     const result = await computer.run(GOOD);
     expect(result.code, result.output).toBe(0);
     expect(result.output).toContain('MCP server "signalbox"');
+    expect(result.output).toContain("codex mcp login signalbox");
     // Exactly what `claude mcp add --transport http --scope user` writes, next to what was there.
     expect(JSON.parse(computer.read("claude/.claude.json") ?? "")).toEqual({
       ...claudeState,
@@ -226,14 +233,57 @@ http_headers = { "x-signalbox-key" = "${GOOD}" }
     expect(withoutExecutor.read("codex/config.toml")).not.toContain("mcp_servers");
   });
 
-  it("keeps a user's own MCP server called signalbox and changes nothing", async () => {
+  it("keeps a user's own MCP server called signalbox in either harness and changes nothing", async () => {
+    const executorUrl = "https://executor.test/mcp";
+    for (const [file, text] of [
+      ["codex/config.toml", '[mcp_servers.signalbox]\nurl = "https://mine.test"\n'],
+      ["codex/config.toml", '[mcp_servers."signalbox"]\nurl = "https://mine.test"\n'],
+      [
+        "claude/.claude.json",
+        '{"mcpServers":{"signalbox":{"type":"http","url":"https://mine.test"}}}\n',
+      ],
+    ] as const) {
+      const computer = makeComputer({ executorUrl });
+      computer.writeFile(file, text);
+      const result = await computer.run(GOOD);
+      expect(result.code, file).toBe(1);
+      expect(result.output).toContain('already has a "signalbox" MCP server');
+      expect(computer.read(file)).toBe(text);
+      expect(computer.read("claude/settings.json")).toBeNull();
+    }
+
+    // A server whose name merely starts with it is someone else's.
+    const computer = makeComputer({ executorUrl });
+    computer.writeFile(
+      "codex/config.toml",
+      '[mcp_servers.signalbox-dev]\nurl = "https://mine.test"\n',
+    );
+    expect((await computer.run(GOOD)).code).toBe(0);
+  });
+
+  it("leaves Claude Code's state file alone when its entry is already set up", async () => {
     const computer = makeComputer({ executorUrl: "https://executor.test/mcp" });
-    computer.writeFile("codex/config.toml", '[mcp_servers.signalbox]\nurl = "https://mine.test"\n');
+    expect((await computer.run(GOOD)).code).toBe(0);
+    const state = NodePath.join(computer.home, "claude", ".claude.json");
+    const before = NodeFS.statSync(state).mtimeMs;
+    expect((await computer.run(GOOD)).code).toBe(0);
+    expect(NodeFS.statSync(state).mtimeMs).toBe(before);
+  });
+
+  it("uses ~/.claude and ~/.claude.json when no Claude config dir is set", async () => {
+    const executorUrl = "https://executor.test/mcp";
+    const computer = makeComputer({ executorUrl, defaultClaudeDir: true });
     const result = await computer.run(GOOD);
-    expect(result.code).toBe(1);
-    expect(result.output).toContain('already has a "signalbox" MCP server');
-    expect(computer.read("claude/settings.json")).toBeNull();
-    expect(computer.read("claude/.claude.json")).toBeNull();
+    expect(result.code, result.output).toBe(0);
+    expect(JSON.parse(computer.read(".claude/settings.json") ?? "").env.ANTHROPIC_AUTH_TOKEN).toBe(
+      GOOD,
+    );
+    expect(JSON.parse(computer.read(".claude.json") ?? "").mcpServers).toEqual({
+      signalbox: { type: "http", url: executorUrl },
+    });
+    expect((await computer.run("--undo")).code).toBe(0);
+    expect(computer.read(".claude.json")).toBeNull();
+    expect(computer.read(".claude/settings.json")).toBeNull();
   });
 
   it("changes nothing when the pool doesn't take the key", async () => {

@@ -254,9 +254,10 @@ production.
 The local harness setup (`apps/cloud/src/localKeys/localSetup.ts`) also adds
 an Executor as the MCP server `signalbox` in Codex and Claude Code when the
 `EXECUTOR_MCP_URL` variable is set in the GitHub environment (the Executor's
-MCP endpoint, e.g. `https://executor.example/mcp`). Unset, setup leaves MCP
-alone. Each harness signs in to the Executor with its own MCP sign-in, and
-`--undo` removes the entry again.
+MCP endpoint, e.g. `https://executor.example/mcp`). Unset, setup adds none and
+removes one an earlier run added. Each harness signs in to the Executor with its
+own MCP sign-in (`/mcp` in Claude Code, `codex mcp login signalbox`), and
+`--undo` removes the entry again. Previews use the same variable.
 
 #### CLIProxyAPI updates
 

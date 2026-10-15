@@ -46,7 +46,10 @@ export interface LocalSetupConfig {
   readonly keyPrefix: string;
   /** The header the ModelGateway reads a key from (`LOCAL_KEY_HEADER`). */
   readonly keyHeader: string;
-  /** The Executor's MCP endpoint both harnesses get as `signalbox`; null leaves MCP alone. */
+  /**
+   * The Executor's MCP endpoint both harnesses get as `signalbox`. Null adds
+   * none, and takes away the entry an earlier run added.
+   */
   readonly executorUrl: string | null;
 }
 
@@ -92,8 +95,17 @@ export async function localSetup(
         continue;
       }
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, text);
+      // Written whole, then renamed over: a harness reading its config (Claude Code
+      // rewrites `.claude.json` while it runs) never sees half a file.
+      const staged = `${file}.signalbox-next`;
+      fs.writeFileSync(staged, text);
+      fs.renameSync(staged, file);
     }
+  };
+  /** Whether a TOML file has `<group>.<name>` as a table or dotted key, quoted or not. */
+  const hasTable = (lines: ReadonlyArray<string>, group: string, name: string) => {
+    const table = new RegExp(`^\\s*\\[?\\s*${group}\\.("?)${name}\\1\\s*[\\].=]`);
+    return lines.some((line) => table.test(line));
   };
 
   /** Root-table lines of a TOML file end at its first table header. */
@@ -173,9 +185,16 @@ export async function localSetup(
   const setUpClaudeMcp = (url: string): ReadonlyArray<Change> => {
     const state = readJson(claudeState) ?? {};
     const servers = (state.mcpServers ?? {}) as Record<string, unknown>;
-    const previous: ReadonlyArray<Change> = fs.existsSync(claudeMcpPrevious)
+    const ours = fs.existsSync(claudeMcpPrevious);
+    const existing = servers[MCP_NAME] as { readonly url?: unknown } | undefined;
+    if (existing !== undefined && !ours) {
+      throw new Error(`${shown(claudeState)} already has a "${MCP_NAME}" MCP server.`);
+    }
+    // Already set up as asked: Claude Code's state file stays as it is.
+    if (ours && existing?.url === url) return [];
+    const previous: ReadonlyArray<Change> = ours
       ? []
-      : [[claudeMcpPrevious, json({ server: servers[MCP_NAME] ?? null })]];
+      : [[claudeMcpPrevious, json({ server: null })]];
     const next = { ...state, mcpServers: { ...servers, [MCP_NAME]: { type: "http", url } } };
     return [...previous, [claudeState, json(next)]];
   };
@@ -202,15 +221,15 @@ export async function localSetup(
   const codexPrevious = path.join(codexDir, PREVIOUS_FILE);
   const setUpCodex = (key: string): ReadonlyArray<Change> => {
     const lines = withoutBlock(read(codexConfig) ?? "").split("\n");
-    if (lines.some((line) => /^\s*\[?\s*model_providers\.signalbox\b/.test(line))) {
+    if (hasTable(lines, "model_providers", "signalbox")) {
       throw new Error(`${shown(codexConfig)} already has a "signalbox" model provider.`);
     }
     const mcp =
       config.executorUrl === null
         ? []
         : ["", `[mcp_servers.${MCP_NAME}]`, `url = ${JSON.stringify(config.executorUrl)}`];
-    if (mcp.length > 0 && lines.some((line) => /^\s*\[?\s*mcp_servers\.signalbox\b/.test(line))) {
-      throw new Error(`${shown(codexConfig)} already has a "signalbox" MCP server.`);
+    if (mcp.length > 0 && hasTable(lines, "mcp_servers", MCP_NAME)) {
+      throw new Error(`${shown(codexConfig)} already has a "${MCP_NAME}" MCP server.`);
     }
     const root = rootEnd(lines);
     const index = lines.slice(0, root).findIndex(isProviderLine);
@@ -291,8 +310,10 @@ export async function localSetup(
     console.log(`  Codex        ${shown(codexConfig)}`);
     if (config.executorUrl !== null) {
       console.log(
-        'Both also get Signalbox\'s connectors as the MCP server "signalbox"; sign in to it when they ask.',
+        `Both also get Signalbox's connectors as the MCP server "${MCP_NAME}". Sign in once:`,
       );
+      console.log(`  Claude Code  run /mcp, choose ${MCP_NAME}, then Authenticate`);
+      console.log(`  Codex        codex mcp login ${MCP_NAME}`);
     }
     console.log(`Undo: curl -fsSL ${config.setupUrl} | node - --undo`);
     return 0;
