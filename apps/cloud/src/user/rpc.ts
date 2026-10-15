@@ -47,6 +47,11 @@ import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
+import {
+  SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
+  SIGNALBOX_THREAD_KINDS_WS_METHODS,
+  SignalboxThreadKindsError,
+} from "@t3tools/contracts/signalboxThreadKinds";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -70,6 +75,7 @@ import * as UserDrives from "./UserDrives.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
@@ -99,6 +105,7 @@ const SERVED = [
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+  ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
@@ -127,6 +134,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
+  ...Object.values(SIGNALBOX_THREAD_KINDS_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
 ] as const;
@@ -152,6 +160,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
@@ -178,6 +187,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
+  ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -254,6 +264,23 @@ const folderCall = <A>(
     }),
   );
 
+/** A kinds change as an RPC answers it: storage failures logged, a message for the user. */
+const kindsCall = <A>(effect: Effect.Effect<A, SqlError>) =>
+  effect.pipe(
+    Effect.catchTags({
+      SqlError: (cause) =>
+        Effect.logError("cloud thread kinds storage failed", { cause }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new SignalboxThreadKindsError({
+                message: "Could not load or change chat and task kinds.",
+              }),
+            ),
+          ),
+        ),
+    }),
+  );
+
 const storageFailed = (cause: unknown) =>
   Effect.logError("cloud sections storage failed", { cause }).pipe(
     Effect.andThen(Effect.fail(sectionsStorageFailure())),
@@ -280,6 +307,7 @@ export const layerHandlers = (input: {
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
+      const kinds = yield* UserThreadKinds.UserThreadKinds;
       const userDrives = yield* UserDrives.UserDrives;
       const sharing = yield* Effect.serviceOption(DriveSharing);
       const shortcuts = yield* Effect.serviceOption(DriveShortcuts);
@@ -364,6 +392,23 @@ export const layerHandlers = (input: {
                     cause,
                   }),
               ),
+            ),
+          ),
+        // Settings' Archived list: the shell's archived threads.
+        [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
+          shell.snapshot.pipe(
+            Effect.map((snapshot) => ({
+              schemaVersion: snapshot.schemaVersion,
+              snapshotSequence: snapshot.snapshotSequence,
+              projects: snapshot.projects,
+              threads: snapshot.archivedThreads,
+            })),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Archived threads are unavailable right now.",
+                  cause,
+                }),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
@@ -557,6 +602,19 @@ export const layerHandlers = (input: {
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
           folderCall(folders.setInstructions(request)),
+        [SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe]: () =>
+          kinds.changes.pipe(
+            Stream.tapError((cause) =>
+              Effect.logError("cloud thread kinds stream failed", { cause }),
+            ),
+            Stream.mapError(
+              () =>
+                new SignalboxThreadKindsError({ message: "Could not load chat and task kinds." }),
+            ),
+          ),
+        [SIGNALBOX_THREAD_KINDS_WS_METHODS.setKind]: (request) => kindsCall(kinds.setKind(request)),
+        [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: (request) =>
+          kindsCall(kinds.setArchiveChatsAfterDays(request.days)),
         [WS_METHODS.sectionsSubscribe]: () =>
           sections.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud sections stream failed", { cause })),

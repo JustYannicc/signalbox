@@ -369,6 +369,24 @@ preview that was open when prefixes landed has closed (a redeploy isn't enough:
 it still reads the old keys). It deletes only unprefixed keys in
 `signalbox-drives-preview`.
 
+### Chats and tasks
+
+Each user object keeps whether their threads are chats or tasks
+(`apps/cloud/src/user/UserThreadKinds.ts`, #46). A thread's first message is
+classified once, before its turn starts, by a semantic decision model: Jev
+(`TYPESAFE_API_KEY`) or OpenAI's Decisions API (`OPENAI_API_KEY`). With both
+keys set, Jev is asked unless `THREAD_KIND_CLASSIFIER=openai`. Without either,
+nothing is classified and every thread stays a task. The call times out after
+3 seconds and its span carries no title or message text. The question is the
+one the classifier benchmark measured, so change it only with a new run.
+
+Idle chats archive themselves on the user object's alarm, which only this
+uses. Threads from before kinds have no record and stay tasks. Previews and `wrangler dev` set
+`THREAD_KIND_TEST_CLOCK=1`, which serves `POST /api/cloud/thread-kinds/sweep`
+with `{"asOf": "<ISO time>"}`: it runs the caller's sweep as if it were that
+time, so archiving can be tried without waiting a week. Everywhere else the
+route is a 404.
+
 ### What an agent reads beyond its drive
 
 An agent reads every drive its user can, across contexts, and changes only its
@@ -568,6 +586,8 @@ which each preview derives its own session secret.
 | `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                  |
 | `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                                           |
 | `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                             |
+| `TYPESAFE_API_KEY`             | secret   | Optional. Jev, which tells chats from tasks ([Chats and tasks](#chats-and-tasks))                |
+| `OPENAI_API_KEY`               | secret   | Optional. OpenAI's Decisions API, the other chat or task classifier                              |
 
 The production deploy derives the preview-cleanup token from
 `CLOUDFLARE_API_TOKEN`. Keep the same token value in both GitHub environments

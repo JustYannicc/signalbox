@@ -36,6 +36,8 @@ import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
+import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import { previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
@@ -65,6 +67,8 @@ import * as PoolSignIns from "./user/PoolSignIns.ts";
 import * as UserPools from "./user/UserPools.ts";
 import * as UserShell from "./user/UserShell.ts";
 import * as UserStore from "./user/UserStore.ts";
+import * as UserThreadKinds from "./user/UserThreadKinds.ts";
+import * as ChatArchive from "./user/chatArchive.ts";
 
 /** Test wiring: fixed config, a fake WorkOS, and user objects on in-memory SQLite. */
 
@@ -92,7 +96,7 @@ export const layerMemoryStore = LegacySections.layer.pipe(
   ),
 );
 
-/** Places threads for `userId`, who has only Personal, with no storage behind it. */
+/** Places threads for `userId`, who has only Personal, with no storage behind it; no kinds. */
 export const layerPersonalThreadContexts = (userId: string) =>
   Layer.succeed(
     ThreadContexts.ThreadContexts,
@@ -111,7 +115,7 @@ export const layerPersonalThreadContexts = (userId: string) =>
           instructions: { top: [], projects: {} },
         }),
     }),
-  );
+  ).pipe(Layer.merge(ThreadKindTurns.layerNone));
 
 /** Everyone in a test, findable by email for sharing, with their organizations. */
 export type TestPeople = ReadonlyArray<
@@ -184,6 +188,7 @@ const makeUserRuntime = (
   drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
   people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
+  classifier: Layer.Layer<KindClassifier.KindClassifier>,
 ) =>
   ManagedRuntime.make(
     // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
@@ -200,8 +205,11 @@ const makeUserRuntime = (
           CloudThreadService.layer,
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto)),
-      Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto, UserThreadKinds.layerTurns),
+      ),
+      Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer, UserThreadKinds.layer)),
+      Layer.provideMerge(Layer.mergeAll(classifier, ChatArchive.layerAlarmNone)),
       Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
       Layer.provideMerge(Layer.mergeAll(drives, people, github)),
       Layer.provideMerge(
@@ -227,6 +235,8 @@ export const makeMemoryCloud = (
     readonly github?: Layer.Layer<GitHub.GitHub>;
     /** What pools backed by a CLIProxyAPI elsewhere reach. */
     readonly poolFetch?: (request: Request) => Promise<Response>;
+    /** Tells chats from tasks; nothing is classified unless given. */
+    readonly classifier?: Layer.Layer<KindClassifier.KindClassifier>;
   } = {},
 ) => {
   const users = new Map<
@@ -269,6 +279,7 @@ export const makeMemoryCloud = (
       drives.layer,
       people,
       options.github ?? layerNoGitHub,
+      options.classifier ?? KindClassifier.layerNone,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);

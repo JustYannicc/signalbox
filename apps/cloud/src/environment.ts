@@ -97,6 +97,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Folders live in each user's object (`user/UserFolders.ts`); older clients read them as sections.
     sections: true,
     folders: true,
+    // Chats and tasks, and idle chats archiving themselves (`user/UserThreadKinds.ts`).
+    threadKinds: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).

@@ -30,6 +30,7 @@ import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
+import * as KindClassifier from "../threadKinds/KindClassifier.ts";
 import { serveConnection } from "./connection.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import {
@@ -51,6 +52,8 @@ import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as ChatArchive from "./chatArchive.ts";
 
 /**
  * One per WorkOS user, named by their user id, always in the EU jurisdiction.
@@ -63,7 +66,8 @@ import * as UserStore from "./UserStore.ts";
  * while a client is connected.
  */
 
-export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv {
+export interface UserObjectEnv
+  extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv, KindClassifier.KindClassifierEnv {
   /**
    * Drives' objects and packs: clients browse and share them through this
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
@@ -118,6 +122,21 @@ const layerDrives = (env: UserObjectEnv) => {
   };
 };
 
+/** The object's alarm, which only the idle-chat sweep uses (`UserThreadKinds`). */
+const layerAlarm = (storage: DurableObjectStorage) =>
+  Layer.succeed(
+    ChatArchive.ChatArchiveAlarm,
+    ChatArchive.ChatArchiveAlarm.of({
+      armBy: (atMs) =>
+        Effect.promise(async () => {
+          const current = await storage.getAlarm();
+          if (current === null || current > atMs) await storage.setAlarm(atMs);
+        }),
+      reset: (atMs) =>
+        Effect.promise(() => (atMs === null ? storage.deleteAlarm() : storage.setAlarm(atMs))),
+    }),
+  );
+
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
@@ -133,7 +152,16 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           ConnectionLinks.layer,
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(ThreadContexts.layer, UserPools.layer, UserThreadKinds.layerTurns),
+      ),
+      Layer.provideMerge(UserThreadKinds.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+          layerAlarm(storage),
+        ),
+      ),
       Layer.provideMerge(LegacySections.layer),
       Layer.provideMerge(UserFolders.layer),
       Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
@@ -182,7 +210,25 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       scripted: scriptedProviderEnabled(env),
     };
     this.runtime = makeRuntime(ctx.storage, env);
-    void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));
+    void ctx.blockConcurrencyWhile(() =>
+      this.runtime.runPromise(
+        UserStore.migrate.pipe(
+          // An alarm lost to a crash between sweeps is set again.
+          Effect.andThen(
+            UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logError("arming the idle-chat sweep failed", { cause }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /** Idle chats archive themselves (`UserThreadKinds`). */
+  override async alarm() {
+    await this.runtime.runPromise(UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm));
   }
 
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
@@ -315,6 +361,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   publishBranch(input: Parameters<UserObjectApi["publishBranch"]>[0]) {
     return this.api.publishBranch(input);
+  }
+
+  sweepThreadKinds(asOfMs: number) {
+    return this.api.sweepThreadKinds(asOfMs);
   }
 
   override async fetch(request: Request): Promise<Response> {

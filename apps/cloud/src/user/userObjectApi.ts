@@ -13,6 +13,7 @@ import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
 
 /**
  * A user object's answers, given a way to run its effects. The Durable Object
@@ -34,6 +35,7 @@ export const makeUserObjectApi = (
       | UserDrives.UserDrives
       | UserPreviewSetup.UserPreviewSetup
       | GitHubBranches.GitHubBranches
+      | UserThreadKinds.UserThreadKinds
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -56,8 +58,15 @@ export const makeUserObjectApi = (
     syncOrganizations: (organizations) =>
       run(UserContexts.UserContexts.use((contexts) => contexts.syncOrganizations(organizations))),
     shellSnapshot: async () => shellSnapshotWire.encode(await shell((service) => service.snapshot)),
-    recordThreadSummary: (summary) =>
-      shell((service) => service.recordThreadSummary(wire.summary.decode(summary))),
+    recordThreadSummary: (encoded) => {
+      const summary = wire.summary.decode(encoded);
+      return run(
+        Effect.andThen(
+          UserShell.UserShell.use((service) => service.recordThreadSummary(summary)),
+          UserThreadKinds.UserThreadKinds.use((kinds) => kinds.summaryRecorded(summary)),
+        ),
+      );
+    },
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
     beginGitHubConnect: (input) => github((service) => service.begin(input)),
     completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),
@@ -90,5 +99,11 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
+    sweepThreadKinds: async (asOfMs) => {
+      const { archived } = await run(
+        UserThreadKinds.UserThreadKinds.use((kinds) => kinds.sweep(asOfMs)),
+      );
+      return { archived };
+    },
   };
 };

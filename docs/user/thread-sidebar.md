@@ -126,6 +126,18 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Chats and tasks
+
+In Signalbox Cloud, every thread is a chat or a task, shown by the icon at the start of its row.
+A chat is for thinking out loud: questions, research, weighing options. A task is work you want
+done. Signalbox picks one from your first message, and a chat that starts changing files becomes a
+task on its own. Click the icon to switch; **⌘Z** undoes it. The kind changes what the agent is
+told, never what it can do.
+
+Tasks leave through **Done** when you hover their row. Chats you leave alone archive themselves
+after seven idle days; hover a chat's icon to see when. Change or turn this off in **Settings →
+General → Archive idle chats after**. Bring an archived chat back from **Settings → Archived**.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

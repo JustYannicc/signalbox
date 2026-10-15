@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadStreamItem,
+  type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
@@ -23,6 +24,7 @@ import { ThreadContexts, type ThreadPlace, type ThreadTurn } from "../user/threa
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
+import { ThreadKindTurns, withLevel } from "./ThreadKindTurns.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
@@ -203,10 +205,27 @@ const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.model-selection.set",
 ]);
 
+/** What a command sends, for the thread's kind (`ThreadKindTurns`). */
+const messageOf = (command: OrchestrationV2Command) =>
+  command.type === "message.dispatch" ? { text: command.text, title: command.titleSeed } : null;
+
 const make = Effect.gen(function* () {
   const directory = yield* ThreadDirectory.ThreadDirectory;
   const crypto = yield* Crypto.Crypto;
   const threadContexts = yield* ThreadContexts;
+  const kindTurns = yield* ThreadKindTurns;
+
+  /** The thread's turn from its home's chain, with its kind's level last on it. */
+  const turnOf = (
+    threadId: ThreadId,
+    projectId: ProjectId | null,
+    message: Parameters<ThreadKindTurns["Service"]["beforeTurn"]>[1],
+  ) =>
+    Effect.gen(function* () {
+      const turn = yield* threadContexts.turn(threadId, projectId);
+      const level = yield* kindTurns.beforeTurn(threadId, message);
+      return { ...turn, instructions: withLevel(turn.instructions, level) };
+    });
 
   const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) =>
     Effect.gen(function* () {
@@ -225,9 +244,10 @@ const make = Effect.gen(function* () {
           : null;
       // Resolved on every turn start, so a thread that moved runs on its new home's chain.
       const turn = PICKS_A_POOL.has(command.type)
-        ? yield* threadContexts.turn(
+        ? yield* turnOf(
             threadId,
             command.type === "thread.create" ? command.projectId : null,
+            messageOf(command),
           )
         : null;
       return yield* directory
@@ -254,7 +274,17 @@ const make = Effect.gen(function* () {
         .launch(
           actor,
           { ...input, threadId },
-          placed(place, threadId, yield* threadContexts.turn(threadId, input.projectId)),
+          placed(
+            place,
+            threadId,
+            yield* turnOf(
+              threadId,
+              input.projectId,
+              input.initialMessage === undefined
+                ? null
+                : { text: input.initialMessage.text, title: input.title },
+            ),
+          ),
         );
     });
 
