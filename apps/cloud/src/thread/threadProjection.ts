@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import { latestUnheldRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import * as DateTime from "effect/DateTime";
 
 import { isLiveRun } from "./runLifecycle.ts";
@@ -60,8 +61,8 @@ const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
 
 /**
  * The thread's sidebar row. Follows upstream's `threadShellFromProjection` for
- * everything a scripted thread can have; runtime requests, pull requests,
- * goals and background work never occur here yet, so they stay empty.
+ * everything a cloud thread can have; runtime requests, goals and background
+ * work never occur here yet, so they stay empty.
  */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
@@ -89,7 +90,7 @@ export function threadShellFromProjection(
     interactionMode: thread.interactionMode,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
-    pullRequests: [],
+    pullRequests: threadPullRequestsOf(thread),
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
     activeProviderThreadId: thread.activeProviderThreadId,

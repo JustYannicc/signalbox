@@ -1,5 +1,6 @@
 import type { AutomationBuiltIn } from "@t3tools/contracts";
 
+import { MERGE_GATE } from "./mergeGate.ts";
 import { WAIT_FOR } from "./waitFor.ts";
 import { WATCH_PULL_REQUEST } from "./watchPullRequest.ts";
 
@@ -39,6 +40,13 @@ export const BUILT_IN_AUTOMATIONS: ReadonlyArray<BuiltInAutomation> = [
     description:
       "Waits for one thing for a thread's agent (an event, a call to a callback link, or a time), then tells the agent once what happened. The wait_for tool runs it attached to the caller's thread.",
     source: WAIT_FOR,
+  },
+  {
+    slug: "merge-gate",
+    name: "Merge gate",
+    description:
+      "Decides whether a thread's pull request merges: by default asks you, then merges it, deletes its branch and tells the agent. merge_pull_request runs it; customize it to change who or what decides.",
+    source: MERGE_GATE,
   },
 ];
 
