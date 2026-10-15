@@ -1,3 +1,4 @@
+import { MERGE_GATE } from "@signalbox/automations/defaults/mergeGate";
 import { WAIT_FOR } from "@signalbox/automations/defaults/waitFor";
 import { WATCH_PULL_REQUEST } from "@signalbox/automations/defaults/watchPullRequest";
 
@@ -9,6 +10,7 @@ export const EXAMPLES: Readonly<Record<string, string>> = {
   // The built-ins, exactly as they run.
   "watch-pull-request.ts": WATCH_PULL_REQUEST,
   "wait-for.ts": WAIT_FOR,
+  "merge-gate.ts": MERGE_GATE,
   "rss-digest.ts": `import Parser from "rss-parser";
 
 export const meta = {

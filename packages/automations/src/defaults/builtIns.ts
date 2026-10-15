@@ -49,13 +49,17 @@ export const makeBuiltIns = (deps: {
         const live = yield* store.getVersionView(existing.automation_id, existing.version);
         if (live?.source === builtIn.source) return existing;
       }
-      const saved = yield* catalog.save({
-        source: builtIn.source,
-        projectId: ProjectId.make(place.projectId),
-        // A host row keeps the defaults it started with; callers are authorized against them.
-        defaults: existing ? automationDefaults(existing) : place.defaults,
-        ...(existing ? { automationId: existing.automation_id } : {}),
-      });
+      const saved = yield* catalog.save(
+        {
+          source: builtIn.source,
+          projectId: ProjectId.make(place.projectId),
+          // A host row keeps the defaults it started with; callers are authorized against them.
+          defaults: existing ? automationDefaults(existing) : place.defaults,
+          ...(existing ? { automationId: existing.automation_id } : {}),
+        },
+        undefined,
+        "signalbox",
+      );
       if (!saved.ok)
         return yield* fail(
           `The built-in "${builtIn.name}" doesn't compile: ${saved.diagnostics.map((d) => d.message).join(" ")}`,
@@ -125,11 +129,12 @@ export const makeBuiltIns = (deps: {
         yield* deps.changed({ kind: "definition", automationId: host.automation_id });
         return (yield* catalog.get(host.automation_id)).automation;
       }
-      const saved = yield* catalog.save({
-        source: builtIn.source,
-        projectId: ProjectId.make(projectId),
-        defaults: place.defaults,
-      });
+      // The copy is still Signalbox's code; edits after this are whoever saves them.
+      const saved = yield* catalog.save(
+        { source: builtIn.source, projectId: ProjectId.make(projectId), defaults: place.defaults },
+        undefined,
+        "signalbox",
+      );
       if (!saved.ok) return yield* fail(`The built-in "${builtIn.name}" doesn't compile.`);
       return saved.automation satisfies Automation;
     });

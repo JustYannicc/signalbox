@@ -213,8 +213,12 @@ agents check their own dev servers with (the server's pinned Chrome for
 Testing headless shell, plus Playwright). It publishes
 `ghcr.io/justyannicc/signalbox-runner` as `nightly` (and
 `nightly-<date>-<sha>`) every night from `main`, and as `X.Y.Z` and `stable`
-for every `vX.Y.Z` tag. Run it by hand to publish one now. Pull requests that
-change the Runner build the image without publishing it.
+for every `vX.Y.Z` tag. Run it by hand to publish one now. A pull request that
+changes the Runner publishes `pr-<number>` before its preview deploys, and the
+preview's `RUNNER_IMAGE` points at it, so boat machines there run the pull
+request's Runner. Each push deletes the version it replaces, closing the pull
+request deletes the image, and the weekly preview sweep deletes leftovers
+(`.github/scripts/runner-pr-images.sh`).
 
 Machines pull the image anonymously, so the package must be public: after its
 first publish, set its visibility once under the package's settings on GitHub.
@@ -456,6 +460,12 @@ shared like any drive. Its drive keeps GitHub as its home
   `/api/drive/branch/publish` with the drive token. The thread and drive come
   from the token, never the request, and the owner's object runs the git
   panel's `GitHubBranches.publish` (`runner-protocol/src/BranchProtocol.ts`).
+- **The pull request it opens is linked to the thread, and the thread keeps
+  it current.** The thread object's alarm reads linked pull requests from
+  GitHub with the owner's token (`thread/pullRequests/PullRequestSync.ts`),
+  and a change goes out as `thread.pull-request-synced` with the whole thread,
+  never upstream's `thread.pull-request-link-updated`: automations derive
+  `pr.*` facts from `thread.pull-request-synced` only.
 - **No GitHub credential reaches a machine.** Users connect GitHub through
   WorkOS Pipes, which keeps and refreshes their OAuth tokens. Their own object
   only records that they connected, and as whom, and asks Pipes for a token

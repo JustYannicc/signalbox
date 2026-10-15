@@ -20,6 +20,10 @@ import { makeUsageScanner } from "./usageScanner.ts";
  * The response streams back as it arrives. No key or credential ever reaches
  * the gateway or the machine.
  *
+ * A harness on someone's own computer presents a local key instead
+ * (`localKeys/LocalKeys.ts`), which the user's object checks in the thread's
+ * place; everything after that is the same.
+ *
  * Only the endpoints a harness needs for a turn are served, so a token is no
  * use for anything else the pool could do.
  */
@@ -47,14 +51,31 @@ const SERVED_PATHS: Readonly<Record<ModelGatewayProvider, ReadonlyArray<string>>
 
 const PROVIDERS = Object.keys(MODEL_GATEWAY_PATHS) as ReadonlyArray<ModelGatewayProvider>;
 
-/** Headers that carry the caller's credential, or describe the hop rather than the request. The pool adds its own key. */
-const DROPPED_REQUEST_HEADERS = new Set([
+/**
+ * Where a local key travels when the harness keeps its own sign-in in
+ * `Authorization` (Codex with `requires_openai_auth`, `localKeys/localSetup.ts`).
+ */
+export const LOCAL_KEY_HEADER = "x-signalbox-key";
+
+/**
+ * Headers that say who the caller is: their credentials, and the ChatGPT
+ * account a signed-in Codex names. None reaches the pool, which adds its own
+ * key and runs on its own accounts.
+ */
+const CALLER_HEADERS = [
   "authorization",
   "x-api-key",
-  "host",
+  LOCAL_KEY_HEADER,
+  "chatgpt-account-id",
   "cookie",
-  "content-length",
-]);
+] as const;
+
+/** The caller's headers, and those that describe the hop rather than the request. */
+const DROPPED_REQUEST_HEADERS = new Set<string>([...CALLER_HEADERS, "host", "content-length"]);
+
+/** Which caller headers a request carried, by name only, for its record. */
+export const callerHeadersOf = (headers: Headers) =>
+  CALLER_HEADERS.filter((name) => headers.has(name));
 /** The runtime decodes the upstream body, so its encoding and length no longer apply. */
 const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfer-encoding"];
 
@@ -86,6 +107,9 @@ export function errorResponse(
 }
 
 export function bearerOrKey(headers: Headers): string | null {
+  // A local key in its own header wins: `Authorization` then holds the harness's own sign-in.
+  const localKey = headers.get(LOCAL_KEY_HEADER);
+  if (localKey !== null && localKey !== "") return localKey;
   const key = headers.get("x-api-key");
   if (key !== null && key !== "") return key;
   const authorization = headers.get("authorization");
@@ -120,7 +144,7 @@ export async function handleModelRequest(
     return errorResponse(provider, 404, `The ModelGateway does not serve ${path}.`);
   }
   const token = bearerOrKey(request.headers);
-  if (token === null) return errorResponse(provider, 401, "Missing model token.");
+  if (token === null) return errorResponse(provider, 401, "Missing model token or Signalbox key.");
 
   const startedAt = deps.now();
   const threadId = threadOfModelToken(token);
@@ -129,6 +153,7 @@ export async function handleModelRequest(
       provider,
       method: request.method,
       path,
+      droppedHeaders: callerHeadersOf(request.headers),
       threadId,
       runId: null,
       traceId: null,
@@ -160,21 +185,29 @@ export async function handleModelRequest(
     );
   } catch {
     record({ status: 503, authMs: deps.now() - startedAt });
-    return errorResponse(provider, 503, "Could not check the model token. Try again.");
+    return errorResponse(provider, 503, "Could not check the model token or key. Try again.");
   }
   const { authMs } = served;
   if (served._tag === "denied") {
-    record({ status: 401, authMs, denied: served.reason });
-    return errorResponse(provider, 401, served.reason);
+    // A key in its own header rides next to the harness's own sign-in, which is
+    // fine: a 401 would make Codex refresh its ChatGPT token for nothing.
+    const status = request.headers.has(LOCAL_KEY_HEADER) ? 403 : 401;
+    record({ status, authMs, denied: served.reason });
+    return errorResponse(provider, status, served.reason);
   }
-  const { runId, traceId, reply } = served;
+  // Who the request was for: a turn, or a local key's owner.
+  const grant =
+    served._tag === "granted"
+      ? { runId: served.runId, traceId: served.traceId }
+      : { local: { userId: served.userId, keyId: served.keyId } };
+  const { reply } = served;
   if (reply._tag === "denied") {
-    record({ status: 403, runId, traceId, authMs, denied: reply.reason });
+    record({ status: 403, ...grant, authMs, denied: reply.reason });
     return errorResponse(provider, 403, reply.reason);
   }
   if (reply._tag === "failed") {
-    record({ status: 502, runId, traceId, authMs, outcome: "failed" });
-    return errorResponse(provider, 502, `This thread's pool is unavailable: ${reply.reason}`);
+    record({ status: 502, ...grant, authMs, outcome: "failed" });
+    return errorResponse(provider, 502, `The pool is unavailable: ${reply.reason}`);
   }
   const { response } = reply;
   const headersMs = deps.now() - startedAt;
@@ -186,7 +219,7 @@ export async function handleModelRequest(
   for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name);
   const init = { status: response.status, statusText: response.statusText, headers };
   if (response.body === null) {
-    record({ status: response.status, runId, traceId, authMs, upstreamHeadersMs, addedMs });
+    record({ status: response.status, ...grant, authMs, upstreamHeadersMs, addedMs });
     return new Response(null, init);
   }
 
@@ -206,8 +239,7 @@ export async function handleModelRequest(
     const { model, usage } = scanner.finish();
     record({
       status: response.status,
-      runId,
-      traceId,
+      ...grant,
       authMs,
       upstreamHeadersMs,
       firstChunkMs,
