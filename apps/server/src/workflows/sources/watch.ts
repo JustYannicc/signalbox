@@ -79,13 +79,36 @@ export function pathValue(value: unknown, path: string): unknown {
   return current;
 }
 
+/**
+ * What an operation answered, without an MCP tool's envelope: Executor passes
+ * MCP-backed tools' results through as `{ content, structuredContent }`.
+ */
+export function unwrapToolResult(answer: unknown): unknown {
+  if (answer === null || typeof answer !== "object" || Array.isArray(answer)) return answer;
+  const record = answer as Record<string, unknown>;
+  if (!("content" in record) || !Array.isArray(record.content)) return answer;
+  if (record.structuredContent !== undefined && record.structuredContent !== null)
+    return record.structuredContent;
+  const texts = record.content.filter(
+    (block): block is { type: "text"; text: string } =>
+      typeof block === "object" && block !== null && (block as { type?: unknown }).type === "text",
+  );
+  if (texts.length !== 1) return answer;
+  try {
+    return JSON.parse(texts[0]!.text) as unknown;
+  } catch {
+    return answer;
+  }
+}
+
 /** The list in an operation's answer: at `items`, else the answer itself, else its only list. */
 export function listOf(
-  answer: unknown,
+  raw: unknown,
   items: string | undefined,
 ):
   | { readonly ok: true; readonly list: ReadonlyArray<unknown> }
   | { readonly ok: false; readonly error: string } {
+  const answer = unwrapToolResult(raw);
   if (items !== undefined) {
     const found = pathValue(answer, items);
     return Array.isArray(found)

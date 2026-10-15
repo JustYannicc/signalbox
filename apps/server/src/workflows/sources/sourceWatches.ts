@@ -208,9 +208,15 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
           })),
           Effect.flatMap((value) => {
             const listed = listOf(value, watch.items);
-            return listed.ok
-              ? Effect.succeed(listed.list)
-              : Effect.fail({ message: listed.error, retryAfterMs: undefined });
+            if (!listed.ok) return Effect.fail({ message: listed.error, retryAfterMs: undefined });
+            const snapshot = snapshotOf(listed.list.slice(0, MAX_ITEMS), watch.key);
+            // A key nothing has would read as an empty list forever; say so instead.
+            return snapshot.length === 0 && listed.list.length > 0
+              ? Effect.fail({
+                  message: `None of the ${listed.list.length} items has "${watch.key}"; set key to the field that identifies an item.`,
+                  retryAfterMs: undefined,
+                })
+              : Effect.succeed(snapshot);
           }),
           Effect.result,
         );
@@ -251,7 +257,7 @@ export const makeSourceWatches = (deps: SourceWatchDependencies) => {
         return true;
       }
 
-      const snapshot = snapshotOf(answer.success.slice(0, MAX_ITEMS), watch.key);
+      const snapshot = answer.success;
       const before = row.snapshot_json === null ? null : (fromJson(row.snapshot_json) as Snapshot);
       const changes = before === null ? [] : diffSnapshots(before, snapshot);
       // A first read or a change keeps the watchers' pace; only a source that stays the same slows down.

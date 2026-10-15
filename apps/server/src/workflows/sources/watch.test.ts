@@ -33,6 +33,17 @@ describe("listOf", () => {
     expect(listOf({ data: { rows: [2] } }, "data.rows")).toEqual({ ok: true, list: [2] });
     expect(listOf({ a: [], b: [] }, undefined)).toMatchObject({ ok: false });
     expect(listOf({ a: 1 }, "a")).toMatchObject({ ok: false });
+    // An MCP tool's result, as Executor passes it through.
+    const mcp = {
+      _meta: {},
+      content: [{ type: "text", text: '{"issues":[{"number":1}],"totalCount":1}' }],
+      structuredContent: { issues: [{ number: 1 }], totalCount: 1 },
+    };
+    expect(listOf(mcp, undefined)).toEqual({ ok: true, list: [{ number: 1 }] });
+    expect(listOf({ ...mcp, structuredContent: undefined }, "issues")).toEqual({
+      ok: true,
+      list: [{ number: 1 }],
+    });
   });
 });
 
