@@ -32,6 +32,14 @@ RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/clau
 # fetched once into the machine's caches (`COREPACK_HOME`, RunnerCaches.ts).
 RUN corepack enable pnpm yarn
 
+# 1Password's SDK, which reads a folder's secrets (RunnerOnePassword.ts), stays out
+# of the bundle: it loads its WebAssembly core from beside itself. Installed
+# beside the Runner, where its `import` finds it. The version apps/server pins.
+ARG ONEPASSWORD_SDK_VERSION=0.5.0
+RUN install -d /opt/signalbox \
+  && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save "@1password/sdk@${ONEPASSWORD_SDK_VERSION}" \
+  && npm cache clean --force
+
 COPY main.mjs /opt/signalbox/runner.mjs
 
 # The commit the Runner was built from, for each turn's diagnostics. Declared

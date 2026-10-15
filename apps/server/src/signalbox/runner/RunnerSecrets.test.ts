@@ -1,0 +1,457 @@
+import {
+  type RunnerItem,
+  type RunnerMessage,
+  type RunnerTurn,
+} from "@signalbox/runner-protocol/RunnerProtocol";
+import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
+import {
+  MessageId,
+  NodeId,
+  type OrchestrationV2ProviderThread,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+
+import type {
+  ProviderAdapterV2Event,
+  ProviderAdapterV2,
+  ProviderAdapterV2SessionRuntime,
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  type EnvironmentVariable,
+  type OnePassword,
+  OnePasswordError,
+} from "./RunnerOnePassword.ts";
+import { makeRunnerSecrets, type SecretsReport } from "./RunnerSecrets.ts";
+import type { RunnerTransport } from "./RunnerSession.ts";
+import { makeRunnerTurns } from "./RunnerTurns.ts";
+import { maskingTransport } from "./runnerSocket.ts";
+import { makeSecretMask } from "./secretMask.ts";
+
+const TOKEN = "ops_service-account-token";
+const top = OnePasswordEnvironmentId.make("envtop");
+const folder = OnePasswordEnvironmentId.make("envfolder");
+const variable = (name: string, value: string, masked = true): EnvironmentVariable => ({
+  name,
+  value,
+  masked,
+});
+
+/** A 1Password account holding `environments`, counting sign-ins and reads; its tokens start with `TOKEN`. */
+const fakeOnePassword = (
+  environments: Record<string, ReadonlyArray<EnvironmentVariable> | string>,
+) => {
+  const calls: Array<string> = [];
+  const onePassword: OnePassword = (presented) =>
+    Effect.suspend(() => {
+      calls.push("sign in");
+      if (!presented.startsWith(TOKEN)) {
+        return Effect.fail(new OnePasswordError({ message: `invalid token ${presented}` }));
+      }
+      return Effect.succeed({
+        variables: (environmentId: string) =>
+          Effect.suspend(() => {
+            calls.push(`read ${environmentId}`);
+            const found = environments[environmentId];
+            if (found === undefined || typeof found === "string") {
+              return Effect.fail(new OnePasswordError({ message: found ?? "not found" }));
+            }
+            return Effect.succeed(found);
+          }),
+      });
+    });
+  return { onePassword, calls };
+};
+
+const reporter = () => {
+  const notices: Array<string> = [];
+  const lines: Array<string> = [];
+  const report: SecretsReport = {
+    notice: (message) => Effect.sync(() => void notices.push(message)),
+    info: (message) => Effect.sync(() => void lines.push(message)),
+  };
+  return { report, notices, lines };
+};
+
+const access = (
+  environments: ReadonlyArray<OnePasswordEnvironmentId>,
+  token: string | null = TOKEN,
+): SecretsAccess => ({ token, environments });
+
+describe("RunnerSecrets", () => {
+  it.effect("gives the chain's variables, a nearer folder's over the top level's", () =>
+    Effect.gen(function* () {
+      const account = fakeOnePassword({
+        [top]: [variable("DATABASE_URL", "postgres://top-db"), variable("SHARED", "from-top")],
+        [folder]: [variable("SHARED", "from-folder"), variable("API_KEY", "folder-api-key")],
+      });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(),
+      });
+      const { report, notices, lines } = reporter();
+
+      const version = yield* secrets.load(access([top, folder]), report);
+
+      expect(secrets.environment()).toEqual({
+        DATABASE_URL: "postgres://top-db",
+        SHARED: "from-folder",
+        API_KEY: "folder-api-key",
+      });
+      expect(version).toBe(1);
+      expect(notices).toEqual([]);
+      expect(lines).toEqual(["loaded 3 secrets from 2 1Password Environments"]);
+    }),
+  );
+
+  it.effect(
+    "reads again only when the turn names something else, or the last read fell short",
+    () =>
+      Effect.gen(function* () {
+        const environments: Record<string, ReadonlyArray<EnvironmentVariable> | string> = {
+          [top]: "rate limit exceeded",
+        };
+        const account = fakeOnePassword(environments);
+        const secrets = makeRunnerSecrets({
+          onePassword: account.onePassword,
+          mask: makeSecretMask(),
+          reserved: () => new Set(),
+        });
+        const { report, notices } = reporter();
+
+        expect(yield* secrets.load(access([top]), report)).toBe(0);
+        expect(notices).toEqual([
+          "Some of this folder's secrets didn't load from 1Password, so this turn runs without them: Environment envtop: rate limit exceeded.",
+        ]);
+        // 1Password recovered: the next turn reads again and gets them.
+        environments[top] = [variable("API_KEY", "now-it-loads")];
+        expect(yield* secrets.load(access([top]), report)).toBe(1);
+        // Nothing changed: no read, same version, so the open harness session stays.
+        expect(yield* secrets.load(access([top]), report)).toBe(1);
+        // The thread moved to a folder with its own Environment.
+        environments[folder] = [variable("OTHER", "other-value")];
+        expect(yield* secrets.load(access([top, folder]), report)).toBe(2);
+        // A replaced token reads again, but the same variables keep their version.
+        expect(yield* secrets.load(access([top, folder], `${TOKEN}-rotated`), report)).toBe(2);
+
+        expect(account.calls).toEqual([
+          "sign in",
+          "read envtop",
+          "sign in",
+          "read envtop",
+          "sign in",
+          "read envtop",
+          "read envfolder",
+          "sign in",
+          "read envtop",
+          "read envfolder",
+        ]);
+      }),
+  );
+
+  it.effect("never replaces what Signalbox sets for the harness, and says which it skipped", () =>
+    Effect.gen(function* () {
+      const account = fakeOnePassword({
+        [top]: [
+          variable("HOME", "/somewhere/else"),
+          variable("ANTHROPIC_API_KEY", "sk-ant-would-bypass-gateway"),
+          variable("not a name", "ignored-value"),
+          variable("TEST_ANTHROPIC_API_KEY", "sk-ant-for-tests"),
+        ],
+      });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(["HOME", "PATH"]),
+      });
+      const { report, notices } = reporter();
+
+      yield* secrets.load(access([top]), report);
+
+      expect(secrets.environment()).toEqual({ TEST_ANTHROPIC_API_KEY: "sk-ant-for-tests" });
+      expect(notices).toEqual([
+        "Skipped ANTHROPIC_API_KEY, HOME from 1Password: Signalbox sets them for the agent's own harness.",
+      ]);
+    }),
+  );
+
+  it.effect("loads nothing without a connected service account, and says so", () =>
+    Effect.gen(function* () {
+      const account = fakeOnePassword({ [top]: [variable("API_KEY", "never-read")] });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(),
+      });
+      const { report, notices } = reporter();
+
+      yield* secrets.load(access([top], null), report);
+      yield* secrets.load(null, report);
+
+      expect(secrets.environment()).toEqual({});
+      expect(account.calls).toEqual([]);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain("no 1Password service account is connected");
+    }),
+  );
+
+  it.effect("masks the token and every hidden value, but not what 1Password shows", () =>
+    Effect.gen(function* () {
+      const mask = makeSecretMask();
+      const account = fakeOnePassword({
+        [top]: [
+          variable("API_KEY", "hidden-api-key"),
+          variable("RELAY_URL", "https://relay.example", false),
+        ],
+      });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask,
+        reserved: () => new Set(),
+      });
+      const { report, notices } = reporter();
+
+      yield* secrets.load(access([top]), report);
+      // A token 1Password turns down is masked in what the turn says about it.
+      yield* secrets.load(access([top], "ops_a-revoked-token"), report);
+
+      expect(mask.text(`${TOKEN} hidden-api-key https://relay.example`)).toBe(
+        "*** *** https://relay.example",
+      );
+      expect(notices).toEqual([
+        "Some of this folder's secrets didn't load from 1Password, so this turn runs without them: signing in to 1Password failed: invalid token ***.",
+      ]);
+    }),
+  );
+});
+
+const threadId = ThreadId.make("thread-1");
+const instanceId = ProviderInstanceId.make("codex");
+const driver = ProviderDriverKind.make("codex");
+const providerThread = {
+  id: ProviderThreadId.make("pt-1"),
+  nativeThreadRef: "native-thread",
+} as unknown as OrchestrationV2ProviderThread;
+const turnFor = (n: number): RunnerTurn =>
+  ({
+    runId: RunId.make(`run-${n}`),
+    traceId: `trace-${n}`,
+    attemptId: RunAttemptId.make(`attempt-${n}`),
+    modelSelection: { instanceId, model: "m" },
+    providerThread,
+    message: { messageId: MessageId.make(`message-${n}`), text: "Hi", attachments: [] },
+  }) as unknown as RunnerTurn;
+
+const settle = Effect.gen(function* () {
+  for (let round = 0; round < 20; round++) yield* Effect.yieldNow;
+});
+
+/**
+ * A harness whose sessions see the folder's secrets the way the real adapters
+ * do (`RunnerAdapters.ts`: as the session opens), and whose agent prints one
+ * back, as `echo $API_KEY` would.
+ */
+const makeEchoingAdapter = (environment: () => Readonly<Record<string, string>>) => {
+  const calls: Array<string> = [];
+  let opened = 0;
+  const adapter = {
+    instanceId,
+    driver,
+    openSession: () =>
+      Effect.gen(function* () {
+        const n = ++opened;
+        const seen = environment();
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        calls.push(`open ${n} with API_KEY=${seen.API_KEY ?? "none"}`);
+        yield* Effect.addFinalizer(() => Effect.sync(() => void calls.push(`close ${n}`)));
+        return {
+          providerSessionId: ProviderSessionId.make(`session-${n}`),
+          providerSession: {},
+          events: Stream.fromQueue(events),
+          ensureThread: () => Effect.succeed(providerThread),
+          resumeThread: () => Effect.succeed(providerThread),
+          startTurn: (input: { readonly runId: string; readonly runOrdinal: number }) =>
+            Effect.gen(function* () {
+              calls.push(`start ${input.runId}`);
+              const ordinal = Number(input.runId.replace("run-", ""));
+              yield* Queue.offer(events, {
+                type: "provider_turn.updated",
+                driver,
+                providerTurn: {
+                  id: ProviderTurnId.make(`native-${ordinal}`),
+                  providerThreadId: providerThread.id,
+                  nodeId: NodeId.make(`node-${ordinal}`),
+                  runAttemptId: RunAttemptId.make(`attempt-${ordinal}`),
+                  nativeTurnRef: null,
+                  ordinal,
+                  status: "running",
+                  startedAt: null,
+                  completedAt: null,
+                },
+              } as unknown as ProviderAdapterV2Event);
+              yield* Queue.offer(events, {
+                type: "turn_item.updated",
+                driver,
+                turnItem: {
+                  id: TurnItemId.make(`item-${input.runId}`),
+                  threadId,
+                  runId: RunId.make(input.runId),
+                  nodeId: null,
+                  providerThreadId: providerThread.id,
+                  providerTurnId: ProviderTurnId.make(`native-${ordinal}`),
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 1,
+                  status: "completed",
+                  title: null,
+                  startedAt: DateTime.makeUnsafe(0),
+                  completedAt: DateTime.makeUnsafe(0),
+                  updatedAt: DateTime.makeUnsafe(0),
+                  type: "command_execution",
+                  input: `curl -H 'Authorization: ${seen.API_KEY ?? ""}' localhost`,
+                },
+              } as ProviderAdapterV2Event);
+              yield* Queue.offer(events, {
+                type: "turn.terminal",
+                driver,
+                providerThreadId: providerThread.id,
+                providerTurnId: ProviderTurnId.make(`native-${ordinal}`),
+                runOrdinal: ordinal,
+                status: "completed",
+                failure: null,
+                threadDisposition: "reusable",
+              } as unknown as ProviderAdapterV2Event);
+            }),
+        } as unknown as ProviderAdapterV2SessionRuntime;
+      }),
+  } as unknown as ProviderAdapterV2["Service"];
+  return { adapter, calls };
+};
+
+describe("a thread's secrets on its machine", () => {
+  it.effect(
+    "reach the harness session, and a change restarts it so the thread resumes with them",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const environments: Record<string, ReadonlyArray<EnvironmentVariable>> = {
+            [top]: [variable("API_KEY", "first-api-key")],
+          };
+          const account = fakeOnePassword(environments);
+          const secrets = makeRunnerSecrets({
+            onePassword: account.onePassword,
+            mask: makeSecretMask(),
+            reserved: () => new Set(),
+          });
+          const harness = makeEchoingAdapter(secrets.environment);
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, harness.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed({
+              cpuSeconds: null,
+              memoryBytes: null,
+              memoryPeakBytes: null,
+              memoryAverageBytes: null,
+              diskUsedBytes: null,
+              egressBytes: null,
+            }),
+            emit: () => Effect.void,
+            secrets,
+          });
+
+          yield* turns.start({ turn: turnFor(1), modelToken: "t", secrets: access([top]) });
+          yield* settle;
+          yield* turns.start({ turn: turnFor(2), modelToken: "t", secrets: access([top]) });
+          yield* settle;
+          // Moved to a folder with its own Environment, which sets the same name.
+          environments[folder] = [variable("API_KEY", "folder-api-key")];
+          yield* turns.start({ turn: turnFor(3), modelToken: "t", secrets: access([top, folder]) });
+          yield* settle;
+
+          expect(harness.calls).toEqual([
+            "open 1 with API_KEY=first-api-key",
+            "start run-1",
+            "start run-2",
+            "close 1",
+            "open 2 with API_KEY=folder-api-key",
+            "start run-3",
+          ]);
+        }),
+      ),
+  );
+
+  it.effect("never leave the machine: every frame the Runner sends has them masked", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const mask = makeSecretMask();
+        const account = fakeOnePassword({
+          [top]: [variable("API_KEY", "leakable-api-key")],
+          [folder]: "Environment folder: denied for ops_service-account-token",
+        });
+        const secrets = makeRunnerSecrets({
+          onePassword: account.onePassword,
+          mask,
+          reserved: () => new Set(),
+        });
+        const harness = makeEchoingAdapter(secrets.environment);
+        const items: Array<RunnerItem> = [];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, harness.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed({
+            cpuSeconds: null,
+            memoryBytes: null,
+            memoryPeakBytes: null,
+            memoryAverageBytes: null,
+            diskUsedBytes: null,
+            egressBytes: null,
+          }),
+          emit: (item) => Effect.sync(() => void items.push(item)),
+          secrets,
+        });
+        yield* turns.start({ turn: turnFor(1), modelToken: "t", secrets: access([top, folder]) });
+        yield* settle;
+        // The agent did print it: the harness's own output carries the value.
+        expect(JSON.stringify(items)).toContain("leakable-api-key");
+
+        // What goes to the thread, as the Runner host sends it (`RunnerHost.ts`).
+        const frames: Array<string> = [];
+        const wire: RunnerTransport = {
+          connect: Effect.succeed({
+            send: (message: RunnerMessage) =>
+              // The fake harness's session isn't a full one, so the frame is written out as is.
+              Effect.sync(() => void frames.push(JSON.stringify(message))),
+            receive: Effect.never,
+            close: Effect.void,
+          }),
+        };
+        const connection = yield* maskingTransport(wire, mask).connect;
+        yield* connection.send({ type: "batch", sequence: 1, items });
+
+        const sent = frames.join("\n");
+        expect(sent).not.toContain("leakable-api-key");
+        expect(sent).not.toContain(TOKEN);
+        expect(sent).toContain("Authorization: ***");
+        expect(sent).toContain("secrets.notice");
+      }),
+    ),
+  );
+});
