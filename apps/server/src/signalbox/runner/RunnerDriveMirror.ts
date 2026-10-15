@@ -34,14 +34,15 @@ const REF_ATTEMPTS = 3;
 /** The drive's shallow commits, as `.git/shallow` would list them; the repository's own may list fewer. */
 const DRIVE_SHALLOW = "signalbox-drive-shallow";
 
-/** Adds `oids` to the list in `file`, one per line, keeping what is there. */
+/** Adds `oids` to the list in `file`, one per line, keeping what is there. Answers the ones it added. */
 const appendLines = (file: string, oids: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const current = (yield* fs.exists(file)) ? yield* fs.readFileString(file) : "";
     const listed = new Set(current.split("\n").filter((line) => line.length > 0));
-    const missing = oids.filter((oid) => !listed.has(oid));
+    const missing = [...new Set(oids)].filter((oid) => !listed.has(oid));
     if (missing.length > 0) yield* fs.writeFileString(file, [...listed, ...missing, ""].join("\n"));
+    return missing;
   });
 
 /**
@@ -74,10 +75,12 @@ export const storePacks = Effect.fn("storePacks")(function* (input: {
     );
   }
   if (input.shallow.length > 0) {
-    yield* appendLines(path.join(input.gitDir, DRIVE_SHALLOW), input.shallow);
+    // A drive client answers every shallow commit the drive has, every turn; only the
+    // ones new to this repository need their parents checked (earlier ones already were).
+    const added = yield* appendLines(path.join(input.gitDir, DRIVE_SHALLOW), input.shallow);
     // Commits whose parents aren't here either, so git never looks for them. With the
     // remote's history fetched first there are none: listing one would hide its history.
-    const parents = yield* Effect.forEach(input.shallow, (oid) =>
+    const parents = yield* Effect.forEach(added, (oid) =>
       Effect.map(input.git.run(["cat-file", "commit", oid]), (text) => ({
         oid,
         parents: input.git
