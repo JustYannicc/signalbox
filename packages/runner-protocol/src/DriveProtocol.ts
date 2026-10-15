@@ -38,10 +38,12 @@ import { jsonCodec } from "./jsonCodec.ts";
  * - `remote` is the remote repository over git's smart HTTP, fetch only, with
  *   the turn's remote token as bearer. The cloud adds the credential; the
  *   machine never holds one, and the token stops working when the turn ends.
- * - `main` mirrors the remote's default branch: the machine fetches its head
- *   (one commit deep), uploads it with `REMOTE_HEAD_HEADER`, and `mirror`s
- *   `main` to it. The cloud checks both against the remote. Such a drive
- *   never `reconcile`s; merging a pull request on the remote lands the work.
+ * - `main` mirrors the remote's default branch: the machine fetches the
+ *   remote's history (blobless, #394), uploads its head with
+ *   `REMOTE_HEAD_HEADER` (the drive holds it one commit deep, its files
+ *   promised), and `mirror`s `main` to it. The cloud checks both against the
+ *   remote. Such a drive never `reconcile`s; merging a pull request on the
+ *   remote lands the work.
  *
  * A drive's shortcuts (#142) show other drives at paths of its tree, read-only
  * and with their own history. The machine mounts each one as a repository of
@@ -86,6 +88,25 @@ export const shortcutRemotePath = (target: string) =>
  * cloud has checked that it is the remote's head.
  */
 export const REMOTE_HEAD_HEADER = "x-signalbox-remote-head";
+
+/**
+ * Header on a pack upload: other commits in the pack that are on the remote,
+ * comma-separated, at most `MAX_REMOTE_COMMITS` (#394). A thread with the
+ * remote's history works on top of commits the drive doesn't hold: a main
+ * newer than the drive's that it rebased onto, commits pulled from its own
+ * branch on the remote. The pack carries those commits and their folders;
+ * once the cloud has checked the remote has each, their parents and files
+ * stay on the remote, as a remote head's do.
+ */
+export const REMOTE_COMMITS_HEADER = "x-signalbox-remote-commits";
+export const MAX_REMOTE_COMMITS = 16;
+
+/** A thread's own branch on its drive's remote, where pushing and its pull request go. */
+export const threadRemoteBranch = (threadId: string) =>
+  `signalbox/${threadId
+    .replace(/[^0-9a-zA-Z]/g, "")
+    .slice(-8)
+    .toLowerCase()}`;
 
 /**
  * Header on every call: the highest pack sequence the machine already has.
@@ -287,6 +308,8 @@ export type DirectUploadOffer = typeof DirectUploadOffer.Type;
 export const DirectCommitRequest = Schema.Struct({
   uploadId: Schema.String,
   remoteHead: Schema.optional(Oid),
+  /** As `REMOTE_COMMITS_HEADER` says them. */
+  remoteCommits: Schema.optional(Schema.Array(Oid)),
 });
 
 export const driveJson = {

@@ -45,7 +45,7 @@ import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOu
 import type { HarnessStderr } from "./harnessStderr.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
-import { DriveClientError, DriveTooLargeError } from "./RunnerDriveClient.ts";
+import { DriveClientError, DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSecrets } from "./RunnerSecrets.ts";
@@ -148,7 +148,7 @@ const isInstructionsError = Schema.is(RunnerInstructionsError);
 const isTurnError = Schema.is(RunnerTurnError);
 const isRunnerGitError = Schema.is(RunnerGitError);
 const isDriveClientError = Schema.is(DriveClientError);
-const isDriveTooLarge = Schema.is(DriveTooLargeError);
+const isDriveTooLarge = Schema.is(Schema.Union([DriveTooLargeError, DriveRefusedError]));
 
 /**
  * The failure text a thread may store: bounded and with credentials redacted.

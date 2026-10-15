@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DRIVE_COMMIT_AUTHOR } from "@signalbox/runner-protocol/DriveProtocol";
+import { DRIVE_COMMIT_AUTHOR, threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -311,9 +311,12 @@ describe("RunnerDrive", () => {
           expect(drive.refs("t1")).toMatchObject({ main: head, thread: head, base: head });
           expect(read(cwd, "src/app.ts")).toBe("export {}\n");
           expect(status(cwd)).toEqual([]);
-          // One commit deep: the parents stay on the remote, and git knows not to look.
+          // The drive keeps it one commit deep; the thread has the remote's whole history (#394).
           expect(drive.shallow()).toEqual([head]);
           expect(git(drive.store, "rev-list", "--count", head)).toBe("1");
+          expect(git(cwd, "log", "--format=%s")).toBe("second\nfirst");
+          expect(git(cwd, "rev-parse", "--is-shallow-repository")).toBe("false");
+          expect(git(cwd, "rev-parse", "refs/remotes/origin/main")).toBe(head);
           // Its folders, never its files: the remote keeps those for the drive.
           const files = git(upstream.dir, "ls-tree", "-r", "--format=%(objectname)", head).split(
             "\n",
@@ -327,7 +330,6 @@ describe("RunnerDrive", () => {
           expect(read(cwd, ".git/config")).not.toContain("remote-token");
           expect(git(cwd, "config", "--get", "extensions.partialClone")).toBe("origin");
           expect(gitOk(drive.store, "cat-file", "-e", files[0]!)).toBe(false);
-          expect(git(cwd, "log", "--format=%s")).toBe("second");
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );
@@ -382,7 +384,11 @@ describe("RunnerDrive", () => {
           expect(status(cwd)).toEqual([]);
 
           // Nothing new: the branch stays where it is.
-          expect(yield* runner.saveBranch("Again")).toEqual({ _tag: "saved", head: refs.thread });
+          expect(yield* runner.saveBranch("Again")).toEqual({
+            _tag: "saved",
+            head: refs.thread,
+            lease: null,
+          });
           // The turn's end still saves, with the publish inside its checkpoint.
           write(cwd, "later.md", "later\n");
           const turn = yield* runner.finishTurn({ message: "More" });
@@ -482,6 +488,157 @@ describe("RunnerDrive", () => {
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );
+
+    describe("with the remote's history", () => {
+      const agent = (cwd: string, ...args: Array<string>) =>
+        git(cwd, "-c", "user.name=Agent", "-c", "user.email=agent@example.com", ...args);
+
+      it.effect("rebases onto a newer main and saves the branch, closed, for any machine", () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const first = git(upstream.dir, "rev-parse", "HEAD~1");
+            const drive = makeFakeDrive(root, { upstream: upstream.dir });
+            const vm1 = yield* machine(drive, root, "vm-1", "t1");
+            yield* vm1.runner.prepare("remote-token");
+            write(vm1.cwd, "notes.md", "mine\n");
+            expect((yield* vm1.runner.finishTurn({ message: "Notes" })).outcome._tag).toBe("saved");
+
+            // The next turn starts; then, mid-turn, main moves on: a pull request branched
+            // before the drive's main merges in. The drive's main stays where it was.
+            yield* vm1.runner.prepare("remote-token");
+            git(upstream.dir, "switch", "-q", "-c", "feature", first);
+            upstream.commit("feature.ts", "export const f = 1;\n", "Feature");
+            git(upstream.dir, "switch", "-q", "main");
+            git(
+              upstream.dir,
+              "-c",
+              "user.name=Dev",
+              "-c",
+              "user.email=dev@example.com",
+              "merge",
+              "-q",
+              "--no-ff",
+              "feature",
+              "-m",
+              "Merge feature",
+            );
+            const main = upstream.commit("src/app.ts", "export const later = 1;\n", "Later");
+
+            agent(vm1.cwd, "fetch", "-q", "origin");
+            agent(vm1.cwd, "rebase", "-q", "origin/main");
+            expect(git(vm1.cwd, "rev-parse", "HEAD~1")).toBe(main);
+            expect((yield* vm1.runner.finishTurn({ message: "Rebased" })).outcome._tag).toBe(
+              "saved",
+            );
+            const head = git(vm1.cwd, "rev-parse", "HEAD");
+            expect(drive.refs("t1").thread).toBe(head);
+            // The main it rebased onto rides along one commit deep; its history stays on the remote.
+            expect(drive.refs("t1").main).not.toBe(main);
+            expect(drive.shallow()).toContain(main);
+            // Its files too: only the thread's own file travelled.
+            expect(gitOk(drive.store, "cat-file", "-e", `${main}:feature.ts`)).toBe(false);
+            expect(git(drive.store, "show", `${head}:notes.md`)).toBe("mine");
+
+            const vm2 = yield* machine(drive, root, "vm-2", "t1");
+            yield* vm2.runner.prepare("remote-token");
+            expect(git(vm2.cwd, "rev-parse", "HEAD")).toBe(head);
+            expect(read(vm2.cwd, "feature.ts")).toBe("export const f = 1;\n");
+            expect(read(vm2.cwd, "notes.md")).toBe("mine\n");
+            expect(git(vm2.cwd, "log", "--format=%s")).toContain("Merge feature");
+            expect(NodeFS.existsSync(NodePath.join(vm2.cwd, ".git", "shallow"))).toBe(false);
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+      );
+
+      it.effect("leaves a rebase conflict to the agent and saves what it resolved", () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const drive = makeFakeDrive(root, { upstream: upstream.dir });
+            const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+            yield* runner.prepare("remote-token");
+            write(cwd, "README.md", "mine\n");
+            yield* runner.finishTurn({ message: "Mine" });
+            upstream.commit("README.md", "theirs\n", "Theirs");
+
+            yield* runner.prepare("remote-token");
+            agent(cwd, "fetch", "-q", "origin");
+            expect(
+              gitOk(cwd, "-c", "user.name=A", "-c", "user.email=a@b.c", "rebase", "origin/main"),
+            ).toBe(false);
+            // Mid-rebase the worktree holds conflict markers: nothing of it is saved.
+            const wip = drive.refs("t1").wip;
+            yield* runner.autosave;
+            yield* runner.flush;
+            expect(drive.refs("t1").wip).toBe(wip);
+
+            write(cwd, "README.md", "both\n");
+            agent(cwd, "add", "README.md");
+            git(
+              cwd,
+              "-c",
+              "core.editor=true",
+              "-c",
+              "user.name=A",
+              "-c",
+              "user.email=a@b.c",
+              "rebase",
+              "--continue",
+            );
+            expect((yield* runner.finishTurn({ message: "Resolved" })).outcome._tag).toBe("saved");
+            expect(git(drive.store, "show", `${drive.refs("t1").thread}:README.md`)).toBe("both");
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+      );
+
+      it.effect("pulls commits pushed to the thread's branch from elsewhere, and leases them", () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const drive = makeFakeDrive(root, { upstream: upstream.dir });
+            const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+            yield* runner.prepare("remote-token");
+            write(cwd, "notes.md", "mine\n");
+            yield* runner.finishTurn({ message: "Mine" });
+            const mine = git(cwd, "rev-parse", "HEAD");
+
+            // Pushed as the thread's branch, then someone else adds to it on GitHub.
+            const branch = threadRemoteBranch("t1");
+            git(upstream.dir, "fetch", "-q", cwd, `refs/heads/signalbox:refs/heads/${branch}`);
+            const tree = git(upstream.dir, "rev-parse", `${mine}^{tree}`);
+            const theirs = git(
+              upstream.dir,
+              "-c",
+              "user.name=Dev",
+              "-c",
+              "user.email=dev@example.com",
+              "commit-tree",
+              tree,
+              "-p",
+              mine,
+              "-m",
+              "From elsewhere",
+            );
+            git(upstream.dir, "update-ref", `refs/heads/${branch}`, theirs);
+
+            yield* runner.prepare("remote-token");
+            // Not taken in yet: publishing may not replace it.
+            expect(yield* runner.saveBranch("Publish")).toEqual({
+              _tag: "saved",
+              head: mine,
+              lease: null,
+            });
+            agent(cwd, "pull", "-q", "--rebase");
+            expect(git(cwd, "rev-parse", "HEAD")).toBe(theirs);
+            write(cwd, "more.md", "more\n");
+            const saved = yield* runner.saveBranch("More");
+            expect(saved).toMatchObject({ _tag: "saved", lease: theirs });
+            expect(git(drive.store, "rev-parse", `${drive.refs("t1").thread}^`)).toBe(theirs);
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+      );
+    });
 
     it.effect("fails a thread's first turn with why its first save was rejected, in one line", () =>
       scopedTest((root) =>

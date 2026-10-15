@@ -4,6 +4,8 @@ import {
   type DriveState,
   driveJson,
   MAX_DIRECT_PACK_BYTES,
+  MAX_REMOTE_COMMITS,
+  REMOTE_COMMITS_HEADER,
   Oid,
   PACK_INDEX_LENGTH_HEADER,
   PACKS_AFTER_HEADER,
@@ -47,7 +49,13 @@ import {
 } from "./directUploads.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import { threadOfDriveToken } from "./driveToken.ts";
-import { forwardRemote, isRemoteHead, proxyRemote, remoteFileSizes } from "./remoteRoutes.ts";
+import {
+  areRemoteCommits,
+  forwardRemote,
+  isRemoteHead,
+  proxyRemote,
+  remoteFileSizes,
+} from "./remoteRoutes.ts";
 import { decodeBody, json, packResponse, text } from "./routeResponses.ts";
 import { shortcutRoute } from "./shortcutRoutes.ts";
 
@@ -166,6 +174,41 @@ export async function handleDriveRequest(
   }
 }
 
+/**
+ * An upload's remote commits, each checked against the remote as the
+ * thread's user: its head, and others its branch sits on (#394). What may
+ * lean on the remote, or the refusal.
+ */
+async function checkedRemote(
+  run: <A, E>(effect: Effect.Effect<A, E, Services>) => Promise<A>,
+  auth: { readonly driveId: string; readonly userId: string },
+  remoteHead: Oid | null,
+  remoteCommits: ReadonlyArray<Oid>,
+) {
+  if (remoteCommits.length > MAX_REMOTE_COMMITS) {
+    return text(`More than ${MAX_REMOTE_COMMITS} remote commits in one upload.`, 400);
+  }
+  if (remoteHead !== null && !(await run(isRemoteHead(auth.driveId, auth.userId, remoteHead)))) {
+    return text("That is not the remote's head.", 422);
+  }
+  if (
+    remoteCommits.length > 0 &&
+    !(await run(areRemoteCommits(auth.driveId, auth.userId, remoteCommits)))
+  ) {
+    return text("The remote doesn't hold those commits.", 422);
+  }
+  // Other remote commits' files are promised with unknown sizes: read when first needed.
+  return {
+    ...(remoteHead === null
+      ? {}
+      : {
+          remoteHead,
+          promisedSizes: remoteFileSizes(auth.driveId, auth.userId, remoteHead),
+        }),
+    ...(remoteCommits.length === 0 ? {} : { remoteCommits }),
+  };
+}
+
 async function route(
   env: DriveRouteEnv,
   request: Request,
@@ -233,24 +276,25 @@ async function route(
       const headerValue = request.headers.get(REMOTE_HEAD_HEADER);
       const remoteHead = headerValue === null ? null : decodeOid(headerValue);
       if (remoteHead?._tag === "None") return text(`Bad ${REMOTE_HEAD_HEADER}.`, 400);
-      if (
-        remoteHead !== null &&
-        !(await run(isRemoteHead(auth.driveId, auth.userId, remoteHead.value)))
-      ) {
-        return text("That is not the remote's head.", 422);
+      const listed = request.headers.get(REMOTE_COMMITS_HEADER);
+      const remoteCommits = listed === null ? [] : listed.split(",").map((oid) => decodeOid(oid));
+      if (remoteCommits.some((oid) => oid._tag === "None")) {
+        return text(`Bad ${REMOTE_COMMITS_HEADER}.`, 400);
       }
+      const remote = await checkedRemote(
+        run,
+        auth,
+        remoteHead?.value ?? null,
+        remoteCommits.flatMap((oid) => (oid._tag === "Some" ? [oid.value] : [])),
+      );
+      if (remote instanceof Response) return remote;
       const result = await run(
         uploadPack({
           driveId: auth.driveId,
           threadId: auth.threadId,
           idx: body.subarray(0, idxLength),
           pack: body.subarray(idxLength),
-          ...(remoteHead === null
-            ? {}
-            : {
-                remoteHead: remoteHead.value,
-                promisedSizes: remoteFileSizes(auth.driveId, auth.userId, remoteHead.value),
-              }),
+          ...remote,
         }),
       );
       return result._tag === "ok"
@@ -278,24 +322,19 @@ async function route(
       if (direct === null || direct === undefined) {
         return text("This cloud takes packs in a request's body.", 404);
       }
-      const remoteHead = parsed.remoteHead ?? null;
-      if (
-        remoteHead !== null &&
-        !(await run(isRemoteHead(auth.driveId, auth.userId, remoteHead)))
-      ) {
-        return text("That is not the remote's head.", 422);
-      }
+      const remote = await checkedRemote(
+        run,
+        auth,
+        parsed.remoteHead ?? null,
+        parsed.remoteCommits ?? [],
+      );
+      if (remote instanceof Response) return remote;
       const result = await run(
         direct.commit({
           driveId: auth.driveId,
           threadId: auth.threadId,
           uploadId: parsed.uploadId,
-          ...(remoteHead === null
-            ? {}
-            : {
-                remoteHead,
-                promisedSizes: remoteFileSizes(auth.driveId, auth.userId, remoteHead),
-              }),
+          ...remote,
         }),
       );
       return result._tag === "ok"

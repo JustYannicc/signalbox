@@ -55,6 +55,22 @@ export const remoteHead = (driveId: string, userId: string) =>
 export const isRemoteHead = (driveId: string, userId: string, oid: Oid) =>
   Effect.map(remoteHead(driveId, userId), (head) => head === oid);
 
+/** Whether the remote holds every one of `oids`, acting as `userId` (#394). */
+export const areRemoteCommits = (driveId: string, userId: string, oids: ReadonlyArray<Oid>) =>
+  Effect.gen(function* () {
+    const [remote, token] = yield* remoteAndToken(driveId, userId);
+    if (remote === null || token === null) return false;
+    const api = (yield* GitHub).api;
+    const held = yield* Effect.forEach(
+      oids,
+      (oid) => api.hasCommit(token, remote.repository, oid),
+      {
+        concurrency: 4,
+      },
+    );
+    return held.every(Boolean);
+  });
+
 /**
  * The sizes of the files under remote commit `oid`, as GitHub lists them, for
  * the files the drive is promised (#406). Best effort: unknown sizes stay unknown.

@@ -482,6 +482,17 @@ describe("GitHub-backed drives", () => {
         reason: "branch_conflict",
       });
       expect(github.head("signalbox/0000abcd")).toBe(theirs);
+      // A lease on a head GitHub has since moved past replaces nothing.
+      expect(yield* publish(threadId, { action: "push", lease: turn })).toMatchObject({
+        _tag: "failed",
+        reason: "branch_conflict",
+      });
+      // The thread took exactly that head in (fetched, then rebased): its branch replaces it.
+      expect(yield* publish(threadId, { action: "push", lease: theirs })).toMatchObject({
+        _tag: "published",
+        pushed: true,
+      });
+      expect(github.head("signalbox/0000abcd")).toBe(next);
 
       yield* user.disconnectGitHub();
       expect(yield* publish(threadId, { action: "push" })).toEqual({

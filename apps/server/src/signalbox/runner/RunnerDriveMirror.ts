@@ -1,9 +1,13 @@
-import type { DriveState, ThreadRefName } from "@signalbox/runner-protocol/DriveProtocol";
+import {
+  type DriveState,
+  MAX_REMOTE_COMMITS,
+  type ThreadRefName,
+} from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import type { DriveClient, DriveClientError } from "./RunnerDriveClient.ts";
+import { type DriveClient, type DriveClientError, DriveRefusedError } from "./RunnerDriveClient.ts";
 import type { RunnerGit } from "./RunnerGit.ts";
 
 /**
@@ -11,20 +15,38 @@ import type { RunnerGit } from "./RunnerGit.ts";
  * between them. `refs/drive/{main,thread,wip}` mirror the drive's refs as
  * last seen, and only ever name commits the drive has, so a pack of what a
  * commit reaches `^` those refs is closed: everything it points at is in the
- * pack or already in the drive. A remote-backed drive's `main` is the
- * remote's head, fetched one commit deep (the repository is shallow there).
- * A pack of it holds the commit and its folders, never its files (#406): the
- * remote has those, and the drive records them as promised. The repository
- * here is a partial clone with the cloud's fetch proxy as its promisor, so git
- * fetches a promised file when it needs one; the drive's packs are promisor
- * packs.
+ * pack or already in the drive.
+ *
+ * A remote-backed drive holds the remote's commits one deep: its `main` is
+ * the remote's head, and a thread's branch may sit on other remote commits
+ * (a newer main it rebased onto, commits pulled from its own branch on the
+ * remote, #394), each kept without its parents. A pack carries such commits
+ * and their folders, never their files (#406): the remote has those, and the
+ * drive records them as promised. The repository here is a blobless clone of
+ * the remote's whole history with the cloud's fetch proxy as its promisor, so
+ * git fetches a file when it needs one; the drive's packs are promisor packs.
+ * It packs through the drive's view: `DRIVE_SHALLOW` lists the drive's
+ * shallow commits, and git reads it as the shallow file, so a pack never
+ * walks history the drive doesn't hold.
  */
 
 const REF_ATTEMPTS = 3;
+/** The drive's shallow commits, as `.git/shallow` would list them; the repository's own may list fewer. */
+const DRIVE_SHALLOW = "signalbox-drive-shallow";
+
+/** Adds `oids` to the list in `file`, one per line, keeping what is there. */
+const appendLines = (file: string, oids: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const current = (yield* fs.exists(file)) ? yield* fs.readFileString(file) : "";
+    const listed = new Set(current.split("\n").filter((line) => line.length > 0));
+    const missing = oids.filter((oid) => !listed.has(oid));
+    if (missing.length > 0) yield* fs.writeFileString(file, [...listed, ...missing, ""].join("\n"));
+  });
 
 /**
  * Puts a drive's `packs` into the repository at `gitDir` with `download`,
- * lists `shallow` commits in `.git/shallow`, and indexes every pack. Answers
+ * records its `shallow` commits, and indexes every pack. Answers
  * the highest pack sequence stored, or null when there were none. A
  * remote-backed drive's packs are `promisor` packs: what they leave out, the
  * remote has.
@@ -52,14 +74,31 @@ export const storePacks = Effect.fn("storePacks")(function* (input: {
     );
   }
   if (input.shallow.length > 0) {
-    // Commits whose parents stay on the remote, so git never looks for them.
-    const file = path.join(input.gitDir, "shallow");
-    const current = (yield* fs.exists(file)) ? yield* fs.readFileString(file) : "";
-    const listed = new Set(current.split("\n").filter((line) => line.length > 0));
-    const missing = input.shallow.filter((oid) => !listed.has(oid));
-    if (missing.length > 0) {
-      yield* fs.writeFileString(file, [...listed, ...missing, ""].join("\n"));
+    yield* appendLines(path.join(input.gitDir, DRIVE_SHALLOW), input.shallow);
+    // Commits whose parents aren't here either, so git never looks for them. With the
+    // remote's history fetched first there are none: listing one would hide its history.
+    const parents = yield* Effect.forEach(input.shallow, (oid) =>
+      Effect.map(input.git.run(["cat-file", "commit", oid]), (text) => ({
+        oid,
+        parents: input.git
+          .lines(text.slice(0, text.indexOf("\n\n")))
+          .filter((line) => line.startsWith("parent "))
+          .map((line) => line.slice("parent ".length)),
+      })),
+    );
+    // One at a time: `rev-list --missing=print` never fetches (a partial clone would ask the
+    // remote for each), and before git 2.44 it fails outright on a missing start.
+    const absent = new Set<string>();
+    for (const oid of new Set(parents.flatMap((commit) => commit.parents))) {
+      const found = yield* input.git.exec(["rev-list", "--no-walk", "--missing=print", oid]);
+      if (found.code !== 0) absent.add(oid);
     }
+    yield* appendLines(
+      path.join(input.gitDir, "shallow"),
+      parents
+        .filter((commit) => commit.parents.some((parent) => absent.has(parent)))
+        .map((commit) => commit.oid),
+    );
   }
   if (input.packs.length === 0) return null;
   // One index over every pack, so lookups stay fast as auto-saves pile packs up.
@@ -79,6 +118,8 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
   const { git, client, gitDir } = input;
   const packDir = path.join(gitDir, "objects", "pack");
   let known: DriveRefs = { main: null, thread: null, wip: null };
+  /** Whether the drive is backed by a remote, as last seen. */
+  let remoteBacked = false;
 
   /** Fetches the drive's packs we lack, then mirrors its refs. */
   const adopt = (state: DriveState) =>
@@ -99,41 +140,121 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         yield* git.setRef(`refs/drive/${ref}`, state[ref]);
       }
       known = { main: state.main, thread: state.thread, wip: state.wip };
+      remoteBacked = state.remote !== null;
     });
 
-  /** Uploads what `commit` reaches that the drive lacks, as one full (not thin) pack. */
+  const driveShallow = path.join(gitDir, DRIVE_SHALLOW);
+
+  /**
+   * Remote commits `commit` builds on that the drive lacks: where its new
+   * commits meet the remote's history (`refs/remotes/origin/*`), or `commit`
+   * itself when it is one. `have` are the drive's refs.
+   */
+  const remoteBase = (commit: string, have: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      if (!remoteBacked) return [];
+      /** Whether the drive holds `oid`: its refs reach it in the drive's own view. */
+      const held = (oid: string) =>
+        have.length === 0
+          ? Effect.succeed(false)
+          : Effect.map(
+              git.run(["--shallow-file", driveShallow, "rev-list", "-n1", oid, "--not", ...have]),
+              (out) => out.trim() === "",
+            );
+      const walked = git.lines(
+        yield* git.run(["rev-list", "--boundary", commit, "--not", ...have, "--remotes=origin"]),
+      );
+      const remote: Array<string> = [];
+      for (const line of walked.filter((entry) => entry.startsWith("-"))) {
+        if (!(yield* held(line.slice(1)))) remote.push(line.slice(1));
+      }
+      if (walked.length === 0 && !(yield* held(commit))) {
+        const onOrigin = yield* git.run([
+          "for-each-ref",
+          "--count=1",
+          "--contains",
+          commit,
+          "refs/remotes/origin",
+        ]);
+        if (onOrigin.trim() !== "") remote.push(commit);
+      }
+      return remote;
+    });
+
+  /**
+   * Uploads what `commit` reaches that the drive lacks, as one full (not thin)
+   * pack, through the drive's view. Remote commits it carries one deep keep
+   * their files on the remote. `remoteHead`: `commit` is the remote's head,
+   * for `main`.
+   */
   const upload = (commit: string, options: { readonly remoteHead?: boolean } = {}) =>
     Effect.gen(function* () {
+      if (!(yield* fs.exists(driveShallow))) yield* fs.writeFileString(driveShallow, "");
       const have = [known.main, known.thread, known.wip].filter((oid) => oid !== null);
-      const fresh = yield* git.run(["rev-list", "--count", commit, "--not", ...have]);
-      if (Number(fresh.trim()) === 0) return;
+      const remote = yield* remoteBase(commit, have);
+      if (remote.length > MAX_REMOTE_COMMITS) {
+        return yield* new DriveRefusedError({
+          message: `This branch builds on ${remote.length} commits from GitHub that Signalbox doesn't hold, more than ${MAX_REMOTE_COMMITS} at once. Rebase it onto the latest main and try again.`,
+        });
+      }
       const tmp = yield* fs.makeTempDirectory({ directory: gitDir, prefix: "drive-pack-" });
       yield* Effect.gen(function* () {
-        // `^<ref>^{tree}`: the remote's head is cut from its parents, so it doesn't
-        // reach the drive's commits; their folders are excluded by name instead.
-        const stdin = [commit, ...have.flatMap((oid) => [`^${oid}`, `^${oid}^{tree}`]), ""].join(
+        // The drive's view, with the remote commits this upload brings in one deep.
+        const shallowFile = path.join(tmp, "shallow");
+        yield* fs.writeFileString(
+          shallowFile,
+          `${yield* fs.readFileString(driveShallow)}${remote.map((oid) => `${oid}\n`).join("")}`,
+        );
+        // `^<ref>^{tree}`: a remote commit cut from its parents doesn't reach the drive's
+        // commits, so their folders are excluded by name, or each new main would send them all.
+        const revs = [commit, ...have.flatMap((oid) => [`^${oid}`, `^${oid}^{tree}`]), ""].join(
           "\n",
         );
-        const into = ["pack-objects", "--delta-base-offset", "-q", path.join(tmp, "pack")];
-        // The remote's files stay on the remote: the drive holds them as promised. Listed
-        // first and packed by name, since git before 2.42 filters only into `--stdout`.
-        const hash = (
-          options.remoteHead === true
-            ? yield* git.run(into, {
-                stdin: yield* git.run(["rev-list", "--objects", "--filter=blob:none", "--stdin"], {
-                  stdin,
-                }),
-              })
-            : yield* git.run(["pack-objects", "--revs", ...into.slice(1)], { stdin })
-        ).trim();
+        const listed = git.lines(
+          yield* git.run(
+            [
+              "--shallow-file",
+              shallowFile,
+              "rev-list",
+              "--objects",
+              "--missing=allow-promisor",
+              "--stdin",
+            ],
+            { stdin: revs },
+          ),
+        );
+        if (listed.length === 0) return;
+        // The remote commits' files stay on the remote; files this thread wrote travel.
+        const kept = new Set<string>();
+        for (const oid of remote) {
+          for (const file of git.lines(
+            yield* git.run(["ls-tree", "-r", "--format=%(objectname)", oid]),
+          )) {
+            kept.add(file);
+          }
+        }
+        // Packed by name: git before 2.42 filters `pack-objects` only into `--stdout`.
+        const hash = (yield* git.run(
+          ["pack-objects", "--delta-base-offset", "-q", path.join(tmp, "pack")],
+          {
+            stdin: [...listed.filter((line) => !kept.has(line.slice(0, 40))), ""].join("\n"),
+          },
+        )).trim();
         const file = (ext: string) => path.join(tmp, `pack-${hash}.${ext}`);
+        const others = remote.filter((oid) => !(options.remoteHead === true && oid === commit));
         const result = yield* client.uploadPack(
           { idx: file("idx"), pack: file("pack") },
-          options.remoteHead === true ? { remoteHead: commit } : {},
+          {
+            ...(options.remoteHead === true ? { remoteHead: commit } : {}),
+            ...(others.length > 0 ? { remoteCommits: others } : {}),
+          },
         );
         // Kept, so the next `open` does not download it back. The index goes last.
         yield* fs.rename(file("pack"), path.join(packDir, `pack-${result.name}.pack`));
         yield* fs.rename(file("idx"), path.join(packDir, `pack-${result.name}.idx`));
+        if (remoteBacked) {
+          yield* fs.writeFileString(path.join(packDir, `pack-${result.name}.promisor`), "");
+        }
         yield* git.run(["multi-pack-index", "write"]);
       }).pipe(Effect.ensuring(fs.remove(tmp, { recursive: true }).pipe(Effect.ignore)));
     });

@@ -33,7 +33,7 @@ export const publishBranch = (input: {
       } satisfies PublishResult;
     }
     const { userId, contextIds } = owner.value;
-    const { action, ...pullRequest } = input.request;
+    const { action, lease, ...pullRequest } = input.request;
     const published = yield* branches
       .publish(
         { userId, contextIds },
@@ -41,6 +41,7 @@ export const publishBranch = (input: {
           cwd: remoteThreadWorktree(input.driveId, ThreadId.make(input.threadId)).path,
           openPullRequest: action === "create_pr",
           pullRequest,
+          ...(lease === undefined ? {} : { lease }),
         },
       )
       .pipe(Effect.result);

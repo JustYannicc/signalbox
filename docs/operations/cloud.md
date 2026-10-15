@@ -465,10 +465,22 @@ shared like any drive. Its drive keeps GitHub as its home
 (`apps/cloud/src/github/`, `drive/remoteRoutes.ts`):
 
 - **`main` mirrors the default branch**, one commit deep. At each turn start
-  the Runner fetches GitHub's `HEAD` through the cloud, uploads that commit
-  with its whole tree, and `mirror`s `main` to it. The Worker checks both
-  against what GitHub says the head is right now, so `main` only ever follows
-  GitHub. A new thread's branch starts there.
+  the Runner fetches GitHub's history blobless (commits and folders, files on
+  demand) through the cloud, uploads the default branch's head with its
+  folders, and `mirror`s `main` to it. The Worker checks both against what
+  GitHub says the head is right now, so `main` only ever follows GitHub. A new
+  thread's branch starts there.
+- **The drive keeps GitHub's files on GitHub** (#406). A head's files the
+  drive lacks are recorded as promised. The files panel, search and `/drives`
+  read them from GitHub as the reader, checked against their ids and cached.
+  A thread's checkout is a partial clone with the cloud's fetch proxy as its
+  promisor, so git fetches them as it needs them.
+- **Agents work with the whole history** (#394): `git log`, `blame`, `fetch`,
+  `pull` and `rebase origin/main` reach GitHub through `origin`. A rebased
+  branch saves with the newer main it sits on, one commit deep; the Worker
+  checks GitHub has each such commit. Pushing still goes through the cloud,
+  and replaces the branch on GitHub only when it holds nothing the thread
+  hasn't fetched (a lease).
 - **Threads never reconcile.** A turn's commit stays on `threads/<id>`. The
   user pushes it, or opens a pull request, from the thread's git panel. The
   user's object builds the push from the drive's packs and sends it over git's
@@ -485,8 +497,9 @@ shared like any drive. Its drive keeps GitHub as its home
   each time the cloud acts as them. A machine fetches through
   `/api/drive/remote`, which takes fetches only, with a remote token that is
   good only while its turn runs. The cloud adds the user's token on the way to
-  GitHub. The Runner passes the remote token to that one `git fetch` in its
-  environment, and never writes it to disk.
+  GitHub. The Runner hands the remote token to git through a credential
+  helper reading a file next to, never inside, the thread's working
+  directory, so nothing in the workspace holds it.
 - **A connection counts once the browser that started it comes back.** A
   Pipes authorize link connects whoever opens it to the user who made it, so
   `/api/github/callback` checks a one-time grant cookie and aborts (deleting

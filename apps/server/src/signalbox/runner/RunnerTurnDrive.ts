@@ -6,9 +6,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { DriveOutcome, RunnerDrive } from "./RunnerDrive.ts";
-import { DriveTooLargeError } from "./RunnerDriveClient.ts";
+import { DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 
-const isTooLarge = Schema.is(DriveTooLargeError);
+/** Why a save failed, when it says so in the thread's person's terms: the drive refused it, and why. */
+const isUserFacing = Schema.is(Schema.Union([DriveTooLargeError, DriveRefusedError]));
 
 /**
  * How a turn that works in a drive ends (#131): its files are committed and
@@ -79,6 +80,7 @@ export const finishDriveTurn = (input: {
       outcome = yield* drive.continueAfterResolution;
     }
     if (outcome._tag === "conflict") outcome = yield* drive.abandonMerge;
+    if (outcome._tag === "held") yield* emit(notice(runId, outcome.reason));
     if (outcome._tag === "not_landed") {
       yield* emit(
         notice(runId, `This turn's files are saved but not merged yet: ${outcome.reason}`),
@@ -92,7 +94,7 @@ export const finishDriveTurn = (input: {
           input.emit(
             notice(
               input.runId,
-              isTooLarge(error)
+              isUserFacing(error)
                 ? `Saving this turn's files failed: ${error.message}`
                 : "Saving this turn's files failed; the last auto-save is kept.",
             ),

@@ -82,6 +82,7 @@ const toPull = (body: typeof PullBody.Type): GitHubPullRequest => ({
 });
 
 const RefBody = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
+const CommitBody = Schema.Struct({ sha: Schema.String });
 const TreeBody = Schema.Struct({
   tree: Schema.Array(
     Schema.Struct({
@@ -254,6 +255,14 @@ export const makeGitHubApi = (
         }),
       );
     },
+    /** Whether `repository` holds commit `sha`. */
+    hasCommit: (token: string, repository: string, sha: string) =>
+      json(
+        "hasCommit",
+        CommitBody,
+        HttpClientRequest.get(`${api}/repos/${repository}/git/commits/${sha}`),
+        token,
+      ).pipe(Effect.map((body) => body !== null)),
     branchHead: (token: string, repository: string, branch: string) =>
       json(
         "branchHead",

@@ -38,6 +38,15 @@ export const makeFakeGitHub = (options: {
       return null;
     }
   };
+  /** Whether the repository holds commit `sha`. */
+  const has = (sha: string) => {
+    try {
+      git(["cat-file", "-e", `${sha}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const [owner] = options.repository.split("/");
   const pulls: Array<{
     number: number;
@@ -159,6 +168,13 @@ export const makeFakeGitHub = (options: {
           return { mode, type, sha, size: Number(size) };
         });
       return json({ tree, truncated: false });
+    }
+    const commitPrefix = `/repos/${options.repository}/git/commits/`;
+    if (method === "GET" && path.startsWith(commitPrefix)) {
+      const sha = path.slice(commitPrefix.length);
+      return /^[0-9a-f]{40}$/.test(sha) && has(sha)
+        ? json({ sha })
+        : json({ message: "Not Found" }, 404);
     }
     const refPrefix = `/repos/${options.repository}/git/ref/heads/`;
     if (method === "GET" && path.startsWith(refPrefix)) {
