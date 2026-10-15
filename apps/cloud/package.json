@@ -12,6 +12,7 @@
   "dependencies": {
     "@effect/sql-sqlite-do": "catalog:",
     "@signalbox/account": "workspace:*",
+    "@signalbox/api": "workspace:*",
     "@signalbox/runner-protocol": "workspace:*",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
