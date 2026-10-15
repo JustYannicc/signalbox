@@ -201,9 +201,6 @@ importers:
       '@signalbox/api':
         specifier: workspace:*
         version: link:../../packages/api
-      '@t3tools/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       effect:
         specifier: 4.0.4
         version: 4.0.4
