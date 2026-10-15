@@ -21,6 +21,7 @@ on:
       - apps/cloud/**
       - apps/web/**
       - packages/account/**
+      - packages/automations/**
       - packages/runner-protocol/**
       - packages/client-runtime/**
       - packages/contracts/**
@@ -28,6 +29,8 @@ on:
       # Light machines run the Runner built with the Worker.
       - apps/server/src/signalbox/runner/**
       - apps/server/src/orchestration-v2/Adapters/**
+      # The Runner compiles automations its agents save.
+      - apps/server/src/workflows/**
       - pnpm-lock.yaml
       - patches/alchemy@*.patch
       - .github/workflows/deploy-cloud.yml
