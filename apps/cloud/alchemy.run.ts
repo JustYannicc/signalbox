@@ -2,8 +2,8 @@
 /**
  * Signalbox Cloud on Cloudflare, as one Alchemy stack: the app Worker with its
  * Durable Objects and web assets, the thread and pool containers, the drive
- * pack buckets, and the ModelGateway. Stages are `production` and
- * `pr-<number>` (`infra/stage.ts`); `.github/workflows/deploy-cloud.yml`
+ * pack buckets, the automation Workflow, and the ModelGateway. Stages are
+ * `production` and `pr-<number>` (`infra/stage.ts`); `.github/workflows/deploy-cloud.yml`
  * deploys both. `wrangler dev` still runs the cloud locally from
  * wrangler.jsonc. See docs/operations/cloud.md.
  *
@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
 import {
+  AUTOMATION_BINDINGS as AUTOMATION,
   COMPATIBILITY_DATE,
   type CloudStage,
   cloudStage,
@@ -200,6 +201,15 @@ function deploy(
         DRIVE_PACKS: packs,
         // Production cleans up the preview bucket; previews never use this one.
         PREVIEW_DRIVE_PACKS: previewPacks,
+        // Automation runs, one Workflow instance each. The name is
+        // account-global, so it comes from the stage like the Worker's.
+        AUTOMATION_RUNS: Cloudflare.Workflow("AutomationRuns", {
+          className: AUTOMATION.workflowClass,
+          workflowName: target.automationWorkflow,
+        }),
+        // Each automation version runs as a Dynamic Worker, loaded by its
+        // stable version ID (`LOADER.get`, never `load`: each load bills anew).
+        LOADER: Cloudflare.WorkerLoader(),
       },
     });
 

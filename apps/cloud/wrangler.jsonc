@@ -76,6 +76,17 @@
       "jurisdiction": "eu",
     },
   ],
+  // Automation runs, one Workflow instance each, hosted by this Worker's
+  // `AutomationWorkflow`. Each automation version loads as a Dynamic Worker
+  // through `LOADER`. Not inherited by `env`, so dev repeats both.
+  "workflows": [
+    {
+      "binding": "AUTOMATION_RUNS",
+      "name": "signalbox-cloud-automations",
+      "class_name": "AutomationWorkflow",
+    },
+  ],
+  "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {
     // Production identity. Never reuse it for another deployment.
     "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
@@ -119,6 +130,15 @@
           "max_instances": 2,
         },
       ],
+      // Local only: `wrangler dev` runs the Workflow and Dynamic Workers in workerd.
+      "workflows": [
+        {
+          "binding": "AUTOMATION_RUNS",
+          "name": "signalbox-cloud-automations",
+          "class_name": "AutomationWorkflow",
+        },
+      ],
+      "worker_loaders": [{ "binding": "LOADER" }],
       // The scripted provider: a reply without a model, for trying the cloud locally.
       "vars": { "SCRIPTED_PROVIDER": "1" },
     },
