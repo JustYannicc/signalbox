@@ -3,9 +3,13 @@ import { SESSION_PATHS } from "@signalbox/runner-protocol/SessionProtocol";
 import { type ChatAttachment, ChatAttachmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeRunnerAttachments } from "./RunnerAttachments.ts";
@@ -86,6 +90,91 @@ describe("RunnerAttachments", () => {
 
       const refused = yield* Effect.flip(attachments.bring("someone-else", []));
       expect(refused.status).toBe(403);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+/** A thread whose `stalls` requests never finish: no answer at all, or bytes that stop coming. */
+const stuckCloud = (stalls: "listing" | "answer" | "body") => {
+  const requests: Array<string> = [];
+  const client = HttpClient.make((request) => {
+    const { pathname } = new URL(request.url);
+    requests.push(pathname);
+    if (pathname === SESSION_PATHS.attachments) {
+      return stalls === "listing"
+        ? Effect.never
+        : Effect.succeed(
+            HttpClientResponse.fromWeb(request, Response.json({ attachments: [shot, notes] })),
+          );
+    }
+    const id = decodeURIComponent(pathname.slice(SESSION_PATHS.attachments.length + 1));
+    if (id === shot.id) {
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(BYTES[id]!.slice())));
+    }
+    if (stalls === "answer") return Effect.never;
+    // Two of the five bytes, then nothing, without the stream ever ending.
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(BYTES[id]!.slice(0, 2)),
+    });
+    return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body)));
+  });
+  const downloadsOf = (attachment: ChatAttachment) =>
+    requests.filter((pathname) => pathname.endsWith(encodeURIComponent(attachment.id))).length;
+  return { client, requests, downloadsOf };
+};
+
+/** Runs `bring` to its end while the test clock moves, as a stuck request would never let it. */
+const bringStuck = (
+  stalls: "listing" | "answer" | "body",
+  required: ReadonlyArray<ChatAttachment>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const attachmentsDir = path.join(yield* fs.makeTempDirectoryScoped(), "attachments");
+    const cloud = stuckCloud(stalls);
+    const attachments = yield* makeRunnerAttachments({
+      cloudUrl: "http://cloud.test",
+      attachmentsDir,
+    }).pipe(Effect.provideService(HttpClient.HttpClient, cloud.client));
+    const fiber = yield* Effect.forkChild(Effect.exit(attachments.bring("token", required)));
+    for (let minute = 0; minute < 10; minute++) yield* TestClock.adjust("1 minute");
+    const exit = yield* Fiber.join(fiber);
+    return { exit, cloud, attachmentsDir };
+  });
+
+describe("RunnerAttachments when the thread stops answering", () => {
+  it.effect("gives up on a download that never answers, naming the file, after a retry", () =>
+    Effect.gen(function* () {
+      const { exit, cloud } = yield* bringStuck("answer", [notes]);
+      expect(Option.getOrThrow(Exit.findErrorOption(exit)).message).toContain('"notes.txt"');
+      expect(cloud.downloadsOf(notes)).toBe(3);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("gives up on a download whose bytes stop coming, leaving no partial file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { exit, cloud, attachmentsDir } = yield* bringStuck("body", [notes]);
+      expect(Option.getOrThrow(Exit.findErrorOption(exit)).message).toContain('"notes.txt"');
+      expect(cloud.downloadsOf(notes)).toBe(3);
+      expect(
+        (yield* fs.readDirectory(attachmentsDir)).filter((name) => name.endsWith(".download")),
+      ).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("lets a turn without files of its own start when the listing hangs", () =>
+    Effect.gen(function* () {
+      const { exit } = yield* bringStuck("listing", []);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("names the turn's own files when the listing hangs", () =>
+    Effect.gen(function* () {
+      const { exit } = yield* bringStuck("listing", [notes]);
+      expect(Option.getOrThrow(Exit.findErrorOption(exit)).message).toContain('"notes.txt"');
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
