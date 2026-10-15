@@ -4,15 +4,11 @@ import {
   type AutomationRunAttach,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
-import {
-  setThreadMonitorSource,
-  type PendingBackgroundWorkTask,
-} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Effect from "effect/Effect";
 
-import type { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import type { Launch } from "./engineTypes.ts";
 import { automationError, fail } from "./errors.ts";
+import type { AutomationThreads, ThreadMonitor } from "./host.ts";
 import type { RunLinkStore } from "./runLinkStore.ts";
 import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
 
@@ -24,18 +20,12 @@ import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
  * or deleting the thread, or Stop on it, cancels its attached runs.
  *
  * The monitors live in memory, rebuilt from the run links at startup, and
- * reach thread shells through upstream's pending-work function (see
- * `setThreadMonitorSource`). A shell picks a change up the next time the
- * thread's shell is read: the turn that attached the run ending, the agent
- * being woken, the thread settling.
+ * the host hears every change to a thread's (`monitorsChanged`), which it
+ * shows in the thread's pending background work.
  */
 
 /** `automation-run:<automationId>:<runId>`, so clients can open the run (see client-runtime's attached.ts). */
 const TASK_PREFIX = "automation-run:";
-
-/** Whether a pending task is an attached automation run, for clients that show their own. */
-const isAttachedRunTask = (task: Pick<PendingBackgroundWorkTask, "taskId">) =>
-  task.taskId.startsWith(TASK_PREFIX);
 
 /** Thread events that end the thread's attached runs. */
 const ENDING_EVENTS: ReadonlySet<string> = new Set([
@@ -47,7 +37,7 @@ const ENDING_EVENTS: ReadonlySet<string> = new Set([
 export interface AttachmentDependencies {
   readonly store: WorkflowStore;
   readonly links: RunLinkStore;
-  readonly threads: ThreadManagementService["Service"];
+  readonly threads: AutomationThreads["Service"];
   /** Cancels a running run; false when it had already ended. */
   readonly cancel: (runId: string) => Effect.Effect<boolean, AutomationError>;
 }
@@ -60,19 +50,25 @@ export const makeAttachments = (deps: AttachmentDependencies) => {
     Map<string, { readonly automationId: string; readonly label: string }>
   >();
 
-  setThreadMonitorSource((threadId) =>
-    [...(monitors.get(threadId) ?? [])].map(([runId, { automationId, label }]) => ({
-      taskId: `${TASK_PREFIX}${automationId}:${runId}`,
-      kind: "monitor" as const,
-      description: label,
-    })),
-  );
+  /** Tells the host what the thread lists now. */
+  const publish = (threadId: string) =>
+    deps.threads.monitorsChanged(
+      threadId,
+      [...(monitors.get(threadId) ?? [])].map(
+        ([runId, { automationId, label }]): ThreadMonitor => ({
+          taskId: `${TASK_PREFIX}${automationId}:${runId}`,
+          description: label,
+        }),
+      ),
+    );
 
-  const drop = (threadId: string, runId: string) => {
-    const runs = monitors.get(threadId);
-    runs?.delete(runId);
-    if (runs?.size === 0) monitors.delete(threadId);
-  };
+  const drop = (threadId: string, runId: string) =>
+    Effect.suspend(() => {
+      const runs = monitors.get(threadId);
+      if (!runs?.delete(runId)) return Effect.void;
+      if (runs.size === 0) monitors.delete(threadId);
+      return publish(threadId);
+    });
 
   /** Brings a run's monitor up to date: shown while it runs, labelled by the step it waits on. */
   const refresh = (runId: string) =>
@@ -80,7 +76,7 @@ export const makeAttachments = (deps: AttachmentDependencies) => {
       const link = yield* links.getLink(runId);
       if (!link?.thread_id) return;
       const run = yield* store.getRunMeta(runId);
-      if (run?.status !== "running") return drop(link.thread_id, runId);
+      if (run?.status !== "running") return yield* drop(link.thread_id, runId);
       const waiting = (yield* store.listSteps(runId)).filter((step) => step.status === "waiting");
       const automation = yield* store.getAutomation(run.automation_id);
       const label =
@@ -88,8 +84,10 @@ export const makeAttachments = (deps: AttachmentDependencies) => {
       const runs =
         monitors.get(link.thread_id) ??
         new Map<string, { readonly automationId: string; readonly label: string }>();
+      if (runs.get(runId)?.label === label) return;
       runs.set(runId, { automationId: run.automation_id, label });
       monitors.set(link.thread_id, runs);
+      yield* publish(link.thread_id);
     });
 
   /**
@@ -129,7 +127,7 @@ export const makeAttachments = (deps: AttachmentDependencies) => {
       let cancelled = 0;
       for (const link of yield* links.runningAttachedTo(threadId)) {
         if (yield* deps.cancel(link.run_id)) cancelled++;
-        drop(threadId, link.run_id);
+        yield* drop(threadId, link.run_id);
       }
       return cancelled;
     });

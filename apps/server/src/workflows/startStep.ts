@@ -8,21 +8,18 @@ import type * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import type * as HttpClient from "effect/http/HttpClient";
 
-import { resolveRuntimeMode } from "../mcp/OrchestratorMcpService.ts";
-import type { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
-import type { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import type { ProjectService } from "../project/ProjectService.ts";
+import { runtimeModeWithin } from "./access.ts";
 import { isBuiltinToolOperation, type BuiltinTools } from "./builtinTools/runner.ts";
 import { waitForEventProblem } from "./compiler/eventTriggers.ts";
-import type { CallbackLink } from "./callbacks.ts";
+import type { CallbackLink } from "./host.ts";
 import { automationDefaults, stepArgs } from "./columns.ts";
 import type { makeConnections } from "./connections.ts";
+import type { EngineServices } from "./engineTypes.ts";
 import { automationError, fail } from "./errors.ts";
 import { asRecord, fromJson, toJson } from "./json.ts";
 import { modelPrompt } from "./modelSteps.ts";
-import type { makeRunFunction } from "./runFunction.ts";
+import type { AutomationFunctions } from "./host.ts";
 import { waitsOnEvents } from "./events/runWaits.ts";
 import { explained } from "./runLog.ts";
 import { retryAfterMs, retryPolicy, stepTimeoutMs } from "./stepPolicy.ts";
@@ -45,11 +42,8 @@ export type StepOutcome =
 
 export interface StartStepDependencies {
   readonly store: WorkflowStore;
-  readonly services: Context.Context<
-    ThreadLaunchService | ThreadManagementService | HttpClient.HttpClient
-  >;
-  readonly projects: ProjectService["Service"];
-  readonly runFunction: Effect.Success<typeof makeRunFunction>;
+  readonly services: Context.Context<EngineServices>;
+  readonly functions: AutomationFunctions["Service"];
   readonly connections: Effect.Success<typeof makeConnections>;
   /** `signalbox.<tool>` calls. */
   readonly builtinTools: BuiltinTools;
@@ -201,19 +195,13 @@ export const makeStartStep =
           }
           const run = yield* store.getRun(step.run_id);
           const version = run ? yield* store.getVersion(run.automation_id, run.version) : undefined;
-          const project = yield* deps.projects
-            .getById(ProjectId.make(automation.project_id))
-            .pipe(
-              Effect.mapError((cause) => automationError("Couldn't read the project.", { cause })),
-            );
-          if (Option.isNone(project)) return yield* fail("This automation's project is gone.");
-          const value = yield* deps.runFunction.run({
+          const value = yield* deps.functions.run({
             automationId: automation.automation_id,
+            projectId: automation.project_id,
             version: run?.version ?? automation.version,
             module: version?.run_module ?? null,
             name: String(first),
             args: args.slice(1),
-            cwd: project.value.workspaceRoot,
             resultName: `${step.run_id}-${step.step_key}`,
           });
           return { type: "done", value } satisfies StepStart;
@@ -256,17 +244,15 @@ const startChild = (
     }
     const own = automationDefaults(automation).runtimeMode;
     const theirs = automationDefaults(target).runtimeMode;
-    yield* resolveRuntimeMode(own, theirs).pipe(
-      Effect.mapError(() =>
-        explained(
-          `"${name}" runs with ${theirs} access, more than this automation's ${own}, so it can't start it.`,
-          {
-            why: "An automation may only start automations that run with at most its own access.",
-            fix: `Save this automation from a thread with ${theirs} access, or save "${name}" from a more limited one.`,
-          },
-        ),
-      ),
-    );
+    if (!runtimeModeWithin(theirs, own)) {
+      return yield* explained(
+        `"${name}" runs with ${theirs} access, more than this automation's ${own}, so it can't start it.`,
+        {
+          why: "An automation may only start automations that run with at most its own access.",
+          fix: `Save this automation from a thread with ${theirs} access, or save "${name}" from a more limited one.`,
+        },
+      );
+    }
     const run = yield* deps.launchChild({ automation: target, input, parent });
     return { type: "done", value: { runId: run.id } } satisfies StepStart;
   });

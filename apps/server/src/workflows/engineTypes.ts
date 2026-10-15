@@ -5,9 +5,15 @@ import type {
   AutomationRunTrigger,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import type * as HttpClient from "effect/http/HttpClient";
+
+import type { AutomationThreads } from "./host.ts";
 
 import type { RunLinkRow } from "./runLinkStore.ts";
 import type { AutomationRow, RunRow } from "./WorkflowStore.ts";
+
+/** What step fibers run with: the host's threads and an HTTP client (plus the host's models, when it has them). */
+export type EngineServices = AutomationThreads | HttpClient.HttpClient;
 
 /** The run core's entry points, as the modules around the engine call them. */
 

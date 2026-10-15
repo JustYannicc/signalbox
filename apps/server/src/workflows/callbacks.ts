@@ -7,6 +7,7 @@ import type {
 } from "../scheduledTasks/ScheduledTaskService.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import type { Envelope } from "./events/eventTriggers.ts";
+import type { CallbackLink } from "./host.ts";
 import { nowIso } from "./time.ts";
 import { hookEndpoint } from "./views.ts";
 import { bodyInput, requestKeys, runHeaders, runQuery } from "./webhooks.ts";
@@ -25,13 +26,6 @@ import type { WorkflowStore } from "./WorkflowStore.ts";
 
 /** Callback link ids are `callback_<uuid>`; automation and scheduled task ids never start this way. */
 export const CALLBACK_HOOK_PREFIX = "callback_";
-
-/** What `w.hook` returns: `url` once the server has a public address, else the path on it. */
-export interface CallbackLink {
-  readonly hookId: string;
-  readonly url: string | null;
-  readonly path: string;
-}
 
 export const makeCallbacks = (deps: {
   readonly store: WorkflowStore;

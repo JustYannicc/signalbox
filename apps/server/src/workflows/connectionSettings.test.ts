@@ -12,6 +12,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ServerConfig from "../config.ts";
 import { AutomationConnections, layer, normalizeExecutorUrl } from "./connectionSettings.ts";
 import { LIST_CONNECTIONS_CODE, makeConnections } from "./connections.ts";
+import type { ExecutorSettingsStore } from "./executorConnection.ts";
 import * as ExecutorSettings from "./executorSettings.ts";
 import { fromJson, toJson } from "./json.ts";
 
@@ -68,9 +69,7 @@ function run<A, E>(
   body: Effect.Effect<
     A,
     E,
-    | AutomationConnections
-    | ExecutorSettings.ExecutorSettingsStore
-    | Layer.Success<ReturnType<typeof baseLayer>>
+    AutomationConnections | ExecutorSettingsStore | Layer.Success<ReturnType<typeof baseLayer>>
   >,
   options: { readonly env?: NodeJS.ProcessEnv } = {},
 ) {

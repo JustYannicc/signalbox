@@ -6,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Path from "effect/Path";
 import {
   createError,
   createRequestLogger,
@@ -14,24 +13,21 @@ import {
   initLogger,
   type RequestLogger,
 } from "evlog";
-import { createFsDrain } from "evlog/fs";
 
-import { ServerConfig } from "../config.ts";
+import { AutomationRunLogSink } from "./host.ts";
 import { causeChain } from "./stepPolicy.ts";
 import type { AutomationRow, RunRow, StepRow } from "./WorkflowStore.ts";
 
 /**
- * Automation observability with evlog, kept to this module so the server's
+ * Automation observability with evlog, kept to this module so the host's
  * Effect logger stays as it is: one wide event per run, with every step's
- * outcome and the code's newest console lines, written as NDJSON under
- * `<stateDir>/logs/automations/` (pretty in the terminal during dev). Failures
+ * outcome and the code's newest console lines, handed to the host's sink
+ * (the server writes NDJSON under `<stateDir>/logs/automations/`). Failures
  * are evlog structured errors, so runs and steps can say why and what to do.
  */
 
 /** Steps recorded per run event; long loops keep the first ones and count the rest. */
 const MAX_STEPS = 200;
-const LOG_FILES = 14;
-const LOG_FILE_BYTES = 10 * 1024 * 1024;
 
 /** An AutomationError that explains itself: why it happened and what to do next. */
 export function explained(
@@ -83,16 +79,8 @@ export interface RunEnd {
 const ms = (iso: string) => DateTime.makeUnsafe(iso).epochMilliseconds;
 
 export const makeRunLogs = Effect.gen(function* () {
-  const config = yield* ServerConfig;
-  const path = yield* Path.Path;
-  const dev = config.devUrl !== undefined;
-  initLogger({ env: { service: "signalbox-automations" }, pretty: dev, silent: !dev });
-  const drain = createFsDrain({
-    dir: path.join(config.stateDir, "logs", "automations"),
-    maxFiles: LOG_FILES,
-    maxSizePerFile: LOG_FILE_BYTES,
-    pretty: false,
-  });
+  const { drain, pretty } = yield* AutomationRunLogSink;
+  initLogger({ env: { service: "signalbox-automations" }, pretty, silent: !pretty });
 
   // One open event per running run. A restart loses the open ones; the next
   // touch reopens the run's event marked `resumed`, so its trail starts there.
@@ -202,7 +190,7 @@ export const makeRunLogs = Effect.gen(function* () {
           }
           return log.emit({ outcome: end.status, _durationMs: end.durationMs });
         });
-        if (event) yield* Effect.promise(() => Promise.resolve(drain({ event })));
+        if (event && drain) yield* Effect.promise(() => Promise.resolve(drain({ event })));
       }),
 
     /** Forgets every run but `running` ones; cleanup calls it now and then. */

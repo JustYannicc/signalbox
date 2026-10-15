@@ -1,6 +1,7 @@
-import type { WorkflowDiagnostic, WorkflowGraph, WorkflowMeta } from "@t3tools/contracts";
+import type { WorkflowDiagnostic, WorkflowMeta } from "@t3tools/contracts";
 import type { Node } from "oxc-parser";
 
+import type { WorkflowCompileResult } from "../compiled.ts";
 import { WorkflowAnalyzer, type Edit, type FunctionNode } from "./analyze.ts";
 import { unwrap } from "./literals.ts";
 import { readMeta } from "./meta.ts";
@@ -8,26 +9,6 @@ import { parseSync, transformSync } from "./oxc.ts";
 import { WorkflowSource } from "./source.ts";
 import { SDK_MODULE } from "./verbs.ts";
 import { declaredNames, isFunctionNode, someNode } from "./walk.ts";
-
-/**
- * A compiled automation.
- *
- * `script` is the plain module the sandbox runs: types stripped, every step
- * call carrying its graph id as an extra first argument, and imports and
- * `w.run` functions removed. `runModule` holds the rest of the file as JS, minus
- * the workflow itself, exporting the `w.run` functions; it runs in a real
- * runtime with packages and network.
- */
-export interface CompiledWorkflow {
-  readonly meta: WorkflowMeta;
-  readonly graph: WorkflowGraph;
-  readonly script: string;
-  readonly runModule: string | null;
-}
-
-export type WorkflowCompileResult =
-  | { readonly ok: true; readonly workflow: CompiledWorkflow }
-  | { readonly ok: false; readonly diagnostics: ReadonlyArray<WorkflowDiagnostic> };
 
 const FILENAME = "automation.ts";
 const MAX_DIAGNOSTICS = 50;

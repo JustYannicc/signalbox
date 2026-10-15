@@ -8,7 +8,7 @@ import { threadPullRequestKeyOf } from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 
 import type { Attachments } from "./attachments.ts";
-import type { CallbackLink } from "./callbacks.ts";
+import type { CallbackLink } from "./host.ts";
 import { waitForEventProblem } from "./compiler/eventTriggers.ts";
 import type { AuthorizeAutomation } from "./catalog.ts";
 import { fail } from "./errors.ts";

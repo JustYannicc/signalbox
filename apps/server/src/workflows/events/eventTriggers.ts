@@ -9,8 +9,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 
-import type { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import type { LaunchRun } from "../engineTypes.ts";
+import type { AutomationThreads } from "../host.ts";
 import { logFailure } from "../errors.ts";
 import { eventsPausedNotice } from "../notices.ts";
 import { MAX_START_DEPTH } from "../startStep.ts";
@@ -18,7 +18,7 @@ import type { AutomationRow, WorkflowStore } from "../WorkflowStore.ts";
 import type { ReadError } from "./candidate.ts";
 import { candidatesFor, type Actor, type Candidate, type EventReads } from "./normalize.ts";
 import type { PullRequestTracker } from "./pullRequestFacts.ts";
-import type { PullRequestReads } from "./pullRequestReads.ts";
+import type { PullRequestReads } from "./pullRequestDetails.ts";
 import type { RunWaitListener, RunWaits } from "./runWaits.ts";
 import {
   ACTORS,
@@ -84,7 +84,7 @@ const isAutomationId = (id: string | null | undefined) => id?.startsWith("automa
 
 export interface EventTriggerDependencies {
   readonly store: WorkflowStore;
-  readonly threads: ThreadManagementService["Service"];
+  readonly threads: AutomationThreads["Service"];
   /** Counts work in flight, so the engine's drain waits for matched events. */
   readonly adjustBusy: (delta: number) => Effect.Effect<void>;
   readonly notify: (notice: AutomationNotice) => Effect.Effect<void>;

@@ -3,22 +3,20 @@ import { ellipsize } from "@t3tools/shared/String";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import type { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
-import type { PullRequestReads } from "./pullRequestReads.ts";
+import type { AutomationThreads } from "../host.ts";
+import type { PullRequestReads } from "./pullRequestDetails.ts";
 
 /** What the normalizer hands the trigger runtime for each public event. */
 export type Actor = "person" | "agent" | "system";
 export type EventFields = Readonly<Record<string, unknown>>;
 
 /** How reading a thread's records can fail. */
-export type ReadError = Effect.Error<
-  ReturnType<ThreadManagementService["Service"]["getThreadRecords"]>
->;
+export type ReadError = Effect.Error<ReturnType<AutomationThreads["Service"]["getThreadRecords"]>>;
 
 /** What building an event may read. `shell` is read at most once per domain event; null when gone. */
 export interface EventReads {
   readonly shell: Effect.Effect<OrchestrationV2ThreadShell | null>;
-  readonly threads: ThreadManagementService["Service"];
+  readonly threads: AutomationThreads["Service"];
   /** Host reads for pull request details; absent until the server registers them. */
   readonly pullRequests?: PullRequestReads | undefined;
 }

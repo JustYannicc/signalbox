@@ -1,4 +1,8 @@
-import { PULL_REQUEST_WATCH_WAKE_LIMIT } from "../../orchestration-v2/pullRequestWatch.ts";
+/**
+ * Comment-only wakes in a row before a watch stops: upstream's PR watch limit
+ * (`PULL_REQUEST_WATCH_WAKE_LIMIT`, which a server test holds this to).
+ */
+export const WATCH_WAKE_LIMIT = 10;
 
 /**
  * "Watch pull request": what upstream's PR watch does, as an automation
@@ -34,7 +38,7 @@ type News = {
 };
 
 /** Comment-only wakes in a row before the watch stops, so a chatty bot can't loop the agent. */
-const WAKE_LIMIT = ${PULL_REQUEST_WATCH_WAKE_LIMIT};
+const WAKE_LIMIT = ${WATCH_WAKE_LIMIT};
 /** Reads in a row that may fail before the watch gives up. */
 const READ_FAILURE_LIMIT = 8;
 const LISTED = 10;

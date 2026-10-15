@@ -11,7 +11,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import { fixed, type Candidate, type EventReads } from "./candidate.ts";
-import type { Remark } from "./pullRequestReads.ts";
+import type { Remark } from "./pullRequestDetails.ts";
 
 /**
  * Pull request facts as events. Upstream's sync reactor keeps each thread's

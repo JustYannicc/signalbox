@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { Remark } from "./events/pullRequestReads.ts";
+import type { Remark } from "./events/pullRequestDetails.ts";
 import { WorkflowEngine } from "./WorkflowEngine.ts";
 import {
   DEFAULTS,
@@ -10,6 +10,7 @@ import {
   fakeTools,
   monitorsOf,
   pullRequestSynced,
+  receiveCallback,
   threadEvent,
   withEngine,
 } from "./WorkflowEngine.testkit.ts";
@@ -129,9 +130,9 @@ it.effect("a callback link wakes the thread with what was posted, and only while
       // Without Signalbox Connect there's no public address yet.
       expect(link.url).toBeNull();
 
-      const wrong = yield* engine.receiveCallback(callbackRequest(link.path, "{}", "token_nope"));
+      const wrong = yield* receiveCallback(callbackRequest(link.path, "{}", "token_nope"));
       expect(wrong).toEqual({ _tag: "not_found" });
-      const paid = yield* engine.receiveCallback(
+      const paid = yield* receiveCallback(
         callbackRequest(link.path, JSON.stringify({ invoice: "in_1", status: "paid" })),
       );
       expect(paid._tag).toBe("accepted");
@@ -144,7 +145,7 @@ it.effect("a callback link wakes the thread with what was posted, and only while
       expect((yield* engine.getRun(started.waitId)).run.status).toBe("succeeded");
       expect((yield* engine.getRun(other.waitId)).run.status).toBe("running");
       // The run ended, so its link stopped answering.
-      expect(yield* engine.receiveCallback(callbackRequest(link.path, "{}"))).toEqual({
+      expect(yield* receiveCallback(callbackRequest(link.path, "{}"))).toEqual({
         _tag: "not_found",
       });
     }),

@@ -2,7 +2,8 @@
 import { workflowNodeIdForStepKey, type WorkflowNode } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { compileWorkflow, type CompiledWorkflow } from "../compiler/compileWorkflow.ts";
+import type { CompiledWorkflow } from "../compiled.ts";
+import { compileWorkflow } from "../compiler/compileWorkflow.ts";
 import {
   replayWorkflow,
   type JournalResult,

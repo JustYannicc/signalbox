@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 
 import type { Candidate, EventReads } from "./candidate.ts";
 import { makePullRequestTracker } from "./pullRequestFacts.ts";
-import type { PullRequestReads, Remark } from "./pullRequestReads.ts";
+import type { PullRequestReads, Remark } from "./pullRequestDetails.ts";
 
 const sync = (snapshot: Record<string, unknown> | null, syncedAt = "2026-10-06T10:00:00.000Z") =>
   ({

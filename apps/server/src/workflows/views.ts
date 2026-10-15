@@ -13,7 +13,6 @@ import * as Cron from "effect/Cron";
 import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 
-import { WEBHOOK_ROUTE_PREFIX } from "../scheduledTasks/ScheduledTaskService.ts";
 import { automationTriggers, errorDetailOf, stepArgs, stepAsk } from "./columns.ts";
 import { builtInOfRow } from "./defaults/registry.ts";
 import { fromJson } from "./json.ts";
@@ -36,11 +35,14 @@ function automationWebhook(
   };
 }
 
+/** Upstream's scheduled-task webhook route, which automation hooks ride (a server test holds them equal). */
+export const HOOK_ROUTE_PREFIX = "/api/hooks";
+
 /** A hook on upstream's webhook route: its path on this server, and its public URL when there is one. */
 export function hookEndpoint(hookId: string, token: string, relayHookBaseUrl: string | null) {
   const hook = `${encodeURIComponent(hookId)}/${token}`;
   return {
-    path: `${WEBHOOK_ROUTE_PREFIX}/${hook}`,
+    path: `${HOOK_ROUTE_PREFIX}/${hook}`,
     url: relayHookBaseUrl === null ? null : `${relayHookBaseUrl}/${hook}`,
   };
 }

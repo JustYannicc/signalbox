@@ -7,6 +7,7 @@ import * as HttpClient from "effect/http/HttpClient";
 
 import { listExecutorServices } from "./connections.ts";
 import { fail } from "./errors.ts";
+import { ExecutorSettingsStore } from "./executorConnection.ts";
 import * as ExecutorSettings from "./executorSettings.ts";
 
 export interface AutomationConnectionsShape {
@@ -44,7 +45,7 @@ export function normalizeExecutorUrl(raw: string): string | null {
 
 const make = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
-  const store = yield* ExecutorSettings.ExecutorSettingsStore;
+  const store = yield* ExecutorSettingsStore;
 
   const status = Effect.gen(function* () {
     const settings = yield* store.read;
