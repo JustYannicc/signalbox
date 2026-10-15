@@ -376,6 +376,23 @@ preview that was open when prefixes landed has closed (a redeploy isn't enough:
 it still reads the old keys). It deletes only unprefixed keys in
 `signalbox-drives-preview`.
 
+### Attachments
+
+Pasted screenshots and files share the drives bucket, under
+`<preview prefix>attachments/` (`apps/cloud/src/attachments/`), so a preview's
+attachments go with its prefix. A client uploads to a signed URL and gets a
+`pending-…` id, stored under `attachments/pending/`; sending the message copies
+each upload under an id of the thread, derived from the command so a retry
+rewrites the same copy. Uploads nobody sent are swept after a day, beside the
+next upload; an R2 lifecycle rule on `attachments/pending/` would do the same
+without the sweep. Clients load a sent attachment through the same signed
+`/api/assets` URLs as tools' images (`apps/cloud/src/assets/`), issued only to
+its uploader and to people who can see its thread. Limits are the contract's (`chatAttachment.ts`): 10 MiB
+per image, 50 MiB per file, 80 MiB of images and 100 attachments per message.
+Before each turn the Runner downloads every attachment the thread's messages
+hold into the adapters' attachments directory with its session token, so a
+new machine after a sleep has the earlier ones too.
+
 ### Secrets
 
 A level can name a 1Password Environment (#395): the threads on its chain get

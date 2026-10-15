@@ -1,4 +1,4 @@
-import { NonNegativeInt } from "@t3tools/contracts";
+import { ChatAttachment, NonNegativeInt } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
@@ -21,6 +21,12 @@ import { jsonCodec } from "./jsonCodec.ts";
  * - `streams` lists the streams under a prefix with their row counts.
  * - `rows` reads one stream, a page at a time from row `from`.
  *
+ * The thread's attachments (pasted screenshots and files) are read the same way:
+ *
+ * - `attachments` lists every one the thread's messages hold.
+ * - `attachments/<id>` downloads one. The machine keeps them as files where
+ *   the harness reads them, the way a self-hosted server does.
+ *
  * Every call carries the thread's session token as a bearer token. It names
  * the thread and its machine generation; a token from an older machine is
  * refused, so a machine the thread gave up on can never write again.
@@ -31,6 +37,7 @@ export const SESSION_PATHS = {
   append: `${SESSION_API_PREFIX}/append`,
   streams: `${SESSION_API_PREFIX}/streams`,
   rows: `${SESSION_API_PREFIX}/rows`,
+  attachments: `${SESSION_API_PREFIX}/attachments`,
 } as const;
 
 /** Claude Code's streams: `claude/<session id>`, and `claude/<session id>/<subpath>` for sidecars. */
@@ -87,7 +94,11 @@ export const MAX_APPEND_BYTES = 8 * 1024 * 1024;
 /** About the most row text one `rows` page carries; a page always holds at least one row. */
 export const ROWS_PAGE_CHARS = 4 * 1024 * 1024;
 
+export const SessionAttachments = Schema.Struct({ attachments: Schema.Array(ChatAttachment) });
+export type SessionAttachments = typeof SessionAttachments.Type;
+
 export const sessionJson = {
+  attachments: jsonCodec(SessionAttachments),
   append: jsonCodec(SessionAppend),
   appendResult: jsonCodec(SessionAppendResult),
   streams: jsonCodec(SessionStreams),
