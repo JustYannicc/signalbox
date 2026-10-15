@@ -64,6 +64,9 @@ const CLOUD_COMMAND_TYPES = [
   "thread.model-selection.set",
   "thread.runtime-mode.set",
   "thread.interaction-mode.set",
+  "thread.pull-request.link",
+  "thread.pull-request.unlink",
+  "thread.pull-request-link.sync",
 ] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
