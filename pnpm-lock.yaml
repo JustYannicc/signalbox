@@ -214,6 +214,9 @@ importers:
 
   apps/cloud:
     dependencies:
+      '@cloudflare/dynamic-workflows':
+        specifier: 0.1.1
+        version: 0.1.1
       '@effect/sql-sqlite-do':
         specifier: 'catalog:'
         version: 4.0.4(effect@4.0.4)
@@ -223,6 +226,9 @@ importers:
       '@signalbox/api':
         specifier: workspace:*
         version: link:../../packages/api
+      '@signalbox/automations':
+        specifier: workspace:*
+        version: link:../../packages/automations
       '@signalbox/runner-protocol':
         specifier: workspace:*
         version: link:../../packages/runner-protocol
@@ -1251,9 +1257,15 @@ importers:
         specifier: 0.32.0
         version: 0.32.0
     devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.4
+        version: 4.0.4(patch_hash=ebaec66c6bdd25e1b8d5bfd4a14f25ab959bdcca6e22ed8871d061e50e2db0ad)(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.4)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
+      vite-plus:
+        specifier: 1.0.0
+        version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
   packages/client-runtime:
     dependencies:
@@ -2976,6 +2988,10 @@ packages:
         optional: true
       react-dom:
         optional: true
+
+  '@cloudflare/dynamic-workflows@0.1.1':
+    resolution: {integrity: sha512-sVomQI/cCOHr/Tu/qefnpECctG38ayrePxsUJm8UqllV1HCX9hQ1EW0cFo4HCdU+avQsPVfPiknnlk0oRySlig==}
+    engines: {node: '>=22'}
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -14480,6 +14496,8 @@ snapshots:
     optionalDependencies:
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
+
+  '@cloudflare/dynamic-workflows@0.1.1': {}
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 

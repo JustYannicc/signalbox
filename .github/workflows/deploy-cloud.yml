@@ -21,6 +21,7 @@ on:
       - apps/cloud/**
       - apps/web/**
       - packages/account/**
+      - packages/automations/**
       - packages/runner-protocol/**
       - packages/client-runtime/**
       - packages/contracts/**
@@ -29,6 +30,8 @@ on:
       # boat machines its own image (runner-image.yml has the same paths).
       - apps/server/src/signalbox/runner/**
       - apps/server/src/orchestration-v2/Adapters/**
+      # The Runner compiles automations its agents save.
+      - apps/server/src/workflows/**
       - .github/workflows/runner-image.yml
       - pnpm-lock.yaml
       - patches/alchemy@*.patch
@@ -177,7 +180,7 @@ jobs:
           listed="$(grep -c . <<< "$files" || true)"
           # runner-image.yml's paths.
           if [[ "$listed" -lt "$expected" ]] ||
-            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/orchestration-v2/Adapters/|packages/runner-protocol/|\.github/workflows/runner-image\.yml$)' <<< "$files"; then
+            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/runner-protocol/|packages/automations/|\.github/workflows/runner-image\.yml$)' <<< "$files"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

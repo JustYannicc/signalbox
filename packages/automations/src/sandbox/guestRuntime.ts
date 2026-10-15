@@ -1,8 +1,9 @@
 // @effect-diagnostics globalDate:off - this code runs inside the QuickJS sandbox, not under Effect.
 /**
  * The receiver automations call, installed inside the QuickJS sandbox before
- * the compiled module runs. It is serialized with `Function#toString`, so it
- * must not reference anything outside its own body.
+ * the compiled module runs. It ships as source text (`guestSource.ts`, written
+ * from `Function#toString`), so it must not reference anything outside its
+ * own body.
  *
  * Step calls go to `host.step(key, verb, label, argsJson)`, which answers
  * synchronously: an `{ ok, value | error, at }` envelope when the journal has

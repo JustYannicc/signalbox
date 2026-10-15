@@ -12,6 +12,9 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
+import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import * as CloudAttachments from "../attachments/CloudAttachments.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
@@ -89,6 +92,8 @@ export interface UserObjectEnv
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
+  /** Automation runs, one Workflow instance each (`automations/automationWorkflow.ts`). */
+  readonly AUTOMATION_RUNS?: Workflow;
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
@@ -132,15 +137,26 @@ const layerDrives = (env: UserObjectEnv) => {
 };
 
 /**
- * Makes the object's alarm go off no later than `atMs`. The idle-chat sweep
- * (`chatArchive.ts`) and client sockets' session expiry share it, and each
- * treats an early alarm as nothing to do yet.
+ * Makes the object's alarm go off no later than `atMs`. Its one alarm is
+ * shared: the idle-chat sweep (`chatArchive.ts`), client sockets' session
+ * expiry and automation crons each only move it earlier, and each treats an
+ * early alarm as nothing to do yet.
  */
 const armBy = async (storage: DurableObjectStorage, atMs: number) => {
   const current = await storage.getAlarm();
   if (current === null || current > atMs) await storage.setAlarm(atMs);
 };
 
+/** Automations' side of the object's alarm: their next cron. */
+const layerAutomationAlarm = (storage: DurableObjectStorage) =>
+  Layer.succeed(
+    AutomationAlarm,
+    AutomationAlarm.of({
+      arm: (at) => (at === null ? Effect.void : Effect.promise(() => armBy(storage, at))),
+    }),
+  );
+
+/** The idle-chat sweep's side of the object's alarm. */
 const layerAlarm = (storage: DurableObjectStorage) =>
   Layer.succeed(
     ChatArchive.ChatArchiveAlarm,
@@ -153,75 +169,87 @@ const layerAlarm = (storage: DurableObjectStorage) =>
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
   return ManagedRuntime.make(
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
-      Layer.provideMerge(
-        Layer.mergeAll(
-          UserShell.layer,
-          CloudThreadService.layer,
-          PoolSignIns.layer,
-          drives.services,
-          ConnectionLinks.layer,
-          LocalKeys.layer,
-        ),
+    // The user's automations (#434), on the services below.
+    CloudEngine.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAutomationAlarm(storage)),
       ),
-      // Below the drive services: the files panel reads promised files with it (#406).
-      Layer.provideMerge(GitHubConnection.layer),
+      // Building it only touches the object's own SQLite, which the object can't run without either.
+      Layer.orDie,
       Layer.provideMerge(
-        Layer.mergeAll(
-          ThreadContexts.layer,
-          UserPools.layer,
-          UserThreadKinds.layerTurns,
-          // Pasted screenshots and files, signed with the same keys as asset URLs.
-          CloudAttachments.layer(attachmentStorage(env)),
-        ),
-      ),
-      Layer.provideMerge(UserThreadKinds.layer),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
-          layerAlarm(storage),
-          PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                FetchHttpClient.layer,
-                ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+        Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              UserShell.layer,
+              CloudThreadService.layer,
+              PoolSignIns.layer,
+              drives.services,
+              ConnectionLinks.layer,
+              LocalKeys.layer,
+            ),
+          ),
+          // Below the drive services: the files panel reads promised files with it (#406).
+          Layer.provideMerge(GitHubConnection.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ThreadContexts.layer,
+              UserPools.layer,
+              UserThreadKinds.layerTurns,
+              // Pasted screenshots and files, signed with the same keys as asset URLs.
+              CloudAttachments.layer(attachmentStorage(env)),
+            ),
+          ),
+          Layer.provideMerge(UserThreadKinds.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+              layerAlarm(storage),
+              PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    FetchHttpClient.layer,
+                    ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      ),
-      Layer.provideMerge(LegacySections.layer),
-      Layer.provideMerge(UserFolders.layer),
-      Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
-      Layer.provideMerge(
-        GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
-          Layer.provide(FetchHttpClient.layer),
-        ),
-      ),
-      Layer.provideMerge(UserDrives.layer),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          UserStore.layer,
-          UserContexts.layerWithDrives,
-          ResourceBindings.layer,
-          OnePasswordAccount.layer,
-        ),
-      ),
-      Layer.provideMerge(drives.store),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          ThreadDirectory.layerDurableObjects(env.THREADS, {
-            localWorkerd: env.LOCAL_WORKERD === "1",
-          }),
-          PoolDirectory.layerDurableObjects(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-        ),
-      ),
-      Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
-      // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
-      Layer.provideMerge(
-        CloudTokens.layerSessionSecret.pipe(
-          Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
-          Layer.orDie,
+          Layer.provideMerge(LegacySections.layer),
+          Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
+          Layer.provideMerge(
+            GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
+              Layer.provide(FetchHttpClient.layer),
+            ),
+          ),
+          Layer.provideMerge(UserDrives.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              UserStore.layer,
+              UserContexts.layerWithDrives,
+              ResourceBindings.layer,
+              OnePasswordAccount.layer,
+            ),
+          ),
+          Layer.provideMerge(drives.store),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ThreadDirectory.layerDurableObjects(env.THREADS, {
+                localWorkerd: env.LOCAL_WORKERD === "1",
+              }),
+              PoolDirectory.layerDurableObjects(env.POOLS, {
+                localWorkerd: env.LOCAL_WORKERD === "1",
+              }),
+            ),
+          ),
+          Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+          // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
+          Layer.provideMerge(
+            CloudTokens.layerSessionSecret.pipe(
+              Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
+              Layer.orDie,
+            ),
+          ),
         ),
       ),
     ),
@@ -264,12 +292,19 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       // Serves sockets that outlived the object's memory before anything else runs.
       await this.sockets.restore(await this.now());
       // An alarm lost to a crash between sweeps is set again; one that's set is enough.
-      if ((await ctx.storage.getAlarm()) !== null) return;
-      await this.runtime.runPromise(
-        UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logError("arming the idle-chat sweep failed", { cause }),
+      if ((await ctx.storage.getAlarm()) === null) {
+        await this.runtime.runPromise(
+          UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("arming the idle-chat sweep failed", { cause }),
+            ),
           ),
+        );
+      }
+      // Then automations give cut-off launches their instance and set the alarm for the next cron.
+      await this.runtime.runPromise(
+        CloudAutomations.use((automations) => automations.start).pipe(
+          Effect.catchCause((cause) => Effect.logError("starting automations failed", { cause })),
         ),
       );
     });
@@ -434,6 +469,22 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.publishBranch(input);
   }
 
+  threadEvents(input: Parameters<UserObjectApi["threadEvents"]>[0]) {
+    return this.api.threadEvents(input);
+  }
+
+  automationTool(threadId: string, name: string, input: unknown) {
+    return this.api.automationTool(threadId, name, input);
+  }
+
+  automationHost(call: Parameters<UserObjectApi["automationHost"]>[0]) {
+    return this.api.automationHost(call);
+  }
+
+  automationWorkerModule(automationId: string, version: number) {
+    return this.api.automationWorkerModule(automationId, version);
+  }
+
   sweepThreadKinds(asOfMs: number) {
     return this.api.sweepThreadKinds(asOfMs);
   }
@@ -490,10 +541,25 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     await this.sockets.closed(socket);
   }
 
-  /** Idle chats archive themselves (`UserThreadKinds`), and expired sessions' sockets close. */
+  /**
+   * Expired sessions' sockets close, idle chats archive themselves
+   * (`UserThreadKinds`), and due crons start. Each re-arms it.
+   */
   override async alarm() {
     const next = await this.sockets.expire(await this.now());
     if (next !== null) await armBy(this.ctx.storage, next);
-    await this.runtime.runPromise(UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm));
+    await this.runtime.runPromise(
+      Effect.all(
+        [
+          UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm).pipe(
+            Effect.catchCause((cause) => Effect.logError("idle-chat sweep failed", { cause })),
+          ),
+          CloudAutomations.use((automations) => automations.wake).pipe(
+            Effect.catchCause((cause) => Effect.logError("automation crons failed", { cause })),
+          ),
+        ],
+        { discard: true },
+      ),
+    );
   }
 }

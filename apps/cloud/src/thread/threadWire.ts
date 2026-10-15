@@ -1,6 +1,7 @@
 import {
   NonNegativeInt,
   OrchestrationV2Command,
+  OrchestrationV2DomainEventJson,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchInput,
   OrchestrationV2ThreadLaunchResult,
@@ -57,6 +58,16 @@ export const ThreadSnapshotWire = Schema.Struct({
   projection: OrchestrationV2ThreadProjection,
 });
 
+/**
+ * An automation run attached to the thread, listed among its background tasks
+ * as a monitor while it runs, so the thread stays in Working.
+ */
+export const ThreadMonitorWire = Schema.Struct({
+  taskId: Schema.String,
+  description: Schema.String,
+});
+export type ThreadMonitor = typeof ThreadMonitorWire.Type;
+
 export const wire = {
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(OrchestrationV2Command),
@@ -66,6 +77,13 @@ export const wire = {
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
   batch: jsonCodec(Schema.Array(OrchestrationV2ThreadStreamItem)),
   previews: jsonCodec(Schema.Struct({ ports: Schema.Array(SignalboxPreviewPort) })),
+  monitors: jsonCodec(Schema.Array(ThreadMonitorWire)),
+  /** A thread's domain events with their sequence, on their way to its owner's automations. */
+  events: jsonCodec(
+    Schema.Array(
+      Schema.Struct({ sequence: NonNegativeInt, event: OrchestrationV2DomainEventJson }),
+    ),
+  ),
 };
 
 /** A thread object's answer to a call. Failures travel as values: RPC exceptions lose their type. */

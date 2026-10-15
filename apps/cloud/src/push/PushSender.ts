@@ -192,17 +192,17 @@ const make = Effect.gen(function* () {
         "apns-push-type": "alert",
         "apns-priority": "10",
         "apns-topic": device.bundleId,
-        "apns-collapse-id": message.threadId.slice(0, MAX_COLLAPSE_ID),
+        "apns-collapse-id": message.group.slice(0, MAX_COLLAPSE_ID),
       }),
       HttpClientRequest.bodyJson({
         aps: {
           alert: { title: message.title, body: message.body },
           sound: "default",
           // Notification Center stacks a thread's pushes together.
-          "thread-id": `${message.environmentId}/${message.threadId}`,
+          "thread-id": `${message.environmentId}/${message.group}`,
         },
         environmentId: message.environmentId,
-        threadId: message.threadId,
+        ...(message.threadId === null ? {} : { threadId: message.threadId }),
         deepLink: message.deepLink,
       }),
       Effect.flatMap(client.execute),
@@ -278,13 +278,13 @@ const make = Effect.gen(function* () {
           notification: { title: message.title, body: message.body },
           data: {
             environmentId: message.environmentId,
-            threadId: message.threadId,
+            ...(message.threadId === null ? {} : { threadId: message.threadId }),
             deepLink: message.deepLink,
           },
           android: {
             priority: "HIGH",
             // The high-importance channel the app creates when it asks for permission.
-            notification: { tag: message.threadId, channel_id: "agent-alerts" },
+            notification: { tag: message.group, channel_id: "agent-alerts" },
             ...(device.bundleId === null ? {} : { restricted_package_name: device.bundleId }),
           },
         },

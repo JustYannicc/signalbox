@@ -66,7 +66,7 @@ function wakeMessage(input: Input, news: string) {
   return [\`You were waiting for \${input.until}.\`, news, ...(input.message ? ["", input.message] : [])].join("\\n");
 }
 
-export default workflow(async (w, input: Input, trigger: { attach?: { threadId: string } }) => {
+export default workflow(async (w, input: Input, trigger: { at: string; attach?: { threadId: string } }) => {
   const threadId = input.threadId ?? trigger.attach?.threadId;
   if (!threadId) throw new Error("Pass threadId, or start the run attached to the thread to wake.");
   const waited = input.timeout ? \`within \${describe(input.timeout)}\` : "";
@@ -86,11 +86,13 @@ export default workflow(async (w, input: Input, trigger: { attach?: { threadId: 
       ? \`Nobody called the callback link \${waited}, so I stopped waiting.\`
       : \`The callback link was called (\${call.method}) with: \${shown(call.body)}\`;
   } else if (input.watch) {
-    // Every change counts unless a condition says what it has to show; the deadline holds across changes.
-    const deadline = input.timeout ? Date.now() + seconds(input.timeout) * 1000 : null;
+    // Every change counts unless a condition says what it has to show; the deadline holds across
+    // changes. Time is the run's start, then each change's own: the code replays, so no clock.
+    const deadline = input.timeout ? Date.parse(trigger.at) + seconds(input.timeout) * 1000 : null;
+    let now = Date.parse(trigger.at);
     try {
       for (;;) {
-        const left = deadline === null ? undefined : { seconds: Math.max(1, Math.ceil((deadline - Date.now()) / 1000)) };
+        const left = deadline === null ? undefined : { seconds: Math.max(1, Math.ceil((deadline - now) / 1000)) };
         const change = await w.waitFor(\`Waiting for \${input.until}\`, {
           on: input.on ?? "source.item.*",
           watch: input.watch,
@@ -106,7 +108,10 @@ export default workflow(async (w, input: Input, trigger: { attach?: { threadId: 
             input: { condition: input.condition, change: { event: change.event, item: change.item, before: change.before } },
             outcomes: ["yes", "no"],
           });
-          if (verdict !== "yes") continue;
+          if (verdict !== "yes") {
+            now = Date.parse(String(change.at));
+            continue;
+          }
         }
         news = describeEvent(change);
         break;

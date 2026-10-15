@@ -10,10 +10,9 @@ import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import { readCaller, type Caller } from "../../mcp/threadAccess.ts";
 import { callerDefaults, saveForCaller, withinLimits } from "../callerAccess.ts";
 import { builtInById } from "@signalbox/automations/defaults/registry";
-import { EXAMPLES } from "../skill/content/examples.ts";
-import { SKILL_TOPICS, skillReference } from "../skill/files.ts";
+import { skillReference, unknownTopic } from "../skill/files.ts";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
-import { builtInReadResult } from "./builtIns.ts";
+import { builtInReadResult } from "@signalbox/automations/tools/builtIns";
 import {
   automationSummary,
   readResult,
@@ -21,7 +20,7 @@ import {
   runSummary,
   saveResult,
   validateResult,
-} from "./summaries.ts";
+} from "@signalbox/automations/tools/summaries";
 import { AutomationToolkit } from "./tools.ts";
 
 const toMcpFailure = (error: AutomationError | OrchestratorMcpFailure) =>
@@ -64,10 +63,7 @@ export const layer = McpToolAccess.toLayer(
           ? Effect.fail(
               new OrchestratorMcpFailure({
                 code: "invalid_request",
-                message: `There's no reference topic "${topic}". Topics: ${[
-                  ...Object.keys(SKILL_TOPICS),
-                  ...Object.keys(EXAMPLES),
-                ].join(", ")}.`,
+                message: unknownTopic(topic ?? ""),
               }),
             )
           : Effect.succeed({ reference });

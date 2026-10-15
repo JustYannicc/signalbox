@@ -60,6 +60,8 @@ export interface VersionRow {
   readonly source: string;
   readonly script: string;
   readonly run_module: string | null;
+  /** `script` as a Dynamic Worker module, for hosts that run versions on a workflow backend. */
+  readonly worker_module: string | null;
   readonly graph_json: string;
   /** The compiled `meta`, so publishing a draft needn't compile again. Null before drafts. */
   readonly meta_json: string | null;
@@ -74,6 +76,16 @@ export interface VersionRow {
 }
 
 export type VersionApproval = "signalbox" | "person" | "agent";
+
+/** An outcome waiting for its run's backend instance to take it. */
+export interface InstanceEventRow {
+  readonly run_id: string;
+  readonly step_key: string;
+  readonly event_type: string;
+  readonly payload_json: string;
+  readonly attempts: number;
+  readonly next_at: string;
+}
 
 export interface RunRow {
   readonly run_id: string;
@@ -385,12 +397,12 @@ export const make = Effect.gen(function* () {
         "insertVersion",
         sql`
           INSERT INTO signalbox_automation_versions (
-            automation_id, version, source, script, run_module, graph_json, meta_json,
-            defaults_json, created_at, approved_by
+            automation_id, version, source, script, run_module, worker_module, graph_json,
+            meta_json, defaults_json, created_at, approved_by
           ) VALUES (
             ${row.automation_id}, ${row.version}, ${row.source}, ${row.script}, ${row.run_module},
-            ${row.graph_json}, ${row.meta_json}, ${row.defaults_json}, ${row.created_at},
-            ${row.approved_by ?? "agent"}
+            ${row.worker_module}, ${row.graph_json}, ${row.meta_json}, ${row.defaults_json},
+            ${row.created_at}, ${row.approved_by ?? "agent"}
           )
         `,
       ),
@@ -429,6 +441,15 @@ export const make = Effect.gen(function* () {
           WHERE automation_id = ${automationId} AND version = ${version}
         `,
       ).pipe(Effect.map((rows) => rows[0]?.script)),
+    /** The Dynamic Worker module a hosted run loads; undefined for a version saved without one. */
+    getVersionWorkerModule: (automationId: string, version: number) =>
+      run(
+        "getVersionWorkerModule",
+        sql<{ worker_module: string | null }>`
+          SELECT worker_module FROM signalbox_automation_versions
+          WHERE automation_id = ${automationId} AND version = ${version}
+        `,
+      ).pipe(Effect.map((rows) => rows[0]?.worker_module ?? undefined)),
     /** The highest version ever saved, live or draft; new versions go above it. */
     latestVersion: (automationId: string) =>
       run(
@@ -498,6 +519,69 @@ export const make = Effect.gen(function* () {
           started_at: string;
         }>`SELECT run_id, automation_id, version, started_at FROM signalbox_automation_runs WHERE status = 'running'`,
       ),
+    /** Records an outcome for the run's backend instance to take (runner/). */
+    queueInstanceEvent: (row: InstanceEventRow) =>
+      run(
+        "queueInstanceEvent",
+        sql`
+          INSERT INTO signalbox_automation_instance_events (
+            run_id, step_key, event_type, payload_json, attempts, next_at
+          ) VALUES (
+            ${row.run_id}, ${row.step_key}, ${row.event_type}, ${row.payload_json},
+            ${row.attempts}, ${row.next_at}
+          )
+          ON CONFLICT (run_id, step_key) DO UPDATE SET
+            event_type = excluded.event_type, payload_json = excluded.payload_json
+        `,
+      ),
+    /** The instance took it. */
+    instanceEventTaken: (runId: string, key: string) =>
+      run(
+        "instanceEventTaken",
+        sql`DELETE FROM signalbox_automation_instance_events WHERE run_id = ${runId} AND step_key = ${key}`,
+      ),
+    /** The instance couldn't be told; try again at `nextAt`. */
+    instanceEventDeferred: (runId: string, key: string, nextAt: string) =>
+      run(
+        "instanceEventDeferred",
+        sql`
+          UPDATE signalbox_automation_instance_events
+          SET attempts = attempts + 1, next_at = ${nextAt}
+          WHERE run_id = ${runId} AND step_key = ${key}
+        `,
+      ),
+    /** Outcomes due to be told to their instance again, oldest first. */
+    dueInstanceEvents: (now: string) =>
+      run(
+        "dueInstanceEvents",
+        sql<InstanceEventRow>`
+          SELECT * FROM signalbox_automation_instance_events
+          WHERE next_at <= ${now} ORDER BY next_at LIMIT 100
+        `,
+      ),
+    /** When the next outcome is due to be told again; null when none waits. */
+    nextInstanceEventAt: () =>
+      run(
+        "nextInstanceEventAt",
+        sql<{ readonly at: string | null }>`
+          SELECT MIN(next_at) AS at FROM signalbox_automation_instance_events
+        `,
+      ).pipe(Effect.map((rows) => rows[0]?.at ?? null)),
+    /** A durable backend's instance for the run exists (runner/). */
+    markInstance: (runId: string, at: string) =>
+      run(
+        "markInstance",
+        sql`UPDATE signalbox_automation_runs SET instance_at = ${at} WHERE run_id = ${runId}`,
+      ),
+    /** Running runs whose backend instance was never confirmed: a launch cut off mid-request. */
+    runsWithoutInstance: () =>
+      run(
+        "runsWithoutInstance",
+        sql<{ run_id: string }>`
+          SELECT run_id FROM signalbox_automation_runs
+          WHERE status = 'running' AND instance_at IS NULL
+        `,
+      ).pipe(Effect.map((rows) => rows.map((row) => row.run_id))),
     runningRunsOf: (automationId: string) =>
       run(
         "runningRunsOf",
@@ -671,6 +755,15 @@ export const make = Effect.gen(function* () {
             AND r.status = 'running'
         `,
       ),
+    /** When the next enabled cron is due; null when none is scheduled. */
+    nextCronAt: () =>
+      run(
+        "nextCronAt",
+        sql<{ readonly at: string | null }>`
+          SELECT MIN(next_run_at) AS at FROM signalbox_automations
+          WHERE enabled = 1 AND next_run_at IS NOT NULL
+        `,
+      ).pipe(Effect.map((rows) => rows[0]?.at ?? null)),
     /** Waiting steps of running runs that wait on an agent thread. */
     threadSteps: () =>
       run(

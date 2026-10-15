@@ -12,6 +12,11 @@ import {
 } from "@signalbox/automations/sandbox/replayWorkflow";
 
 const STARTED_AT = Date.UTC(2026, 9, 5, 9, 0);
+/**
+ * The compiler rejects reading the clock or randomness in workflow code. These
+ * aliases get past it, to test the sandbox's deterministic globals behind it.
+ */
+const BACKSTOP = "const { Date: clock, Math: maths, crypto: random } = globalThis as any;\n";
 
 function script(body: string, prelude = "") {
   const result = compileWorkflow(
@@ -195,11 +200,14 @@ describe("replayWorkflow", () => {
   });
 
   it("gives time and randomness the same values on every replay", async () => {
-    const compiled = script(`
-      const before = Date.now();
+    const compiled = script(
+      `
+      const before = clock.now();
       await w.notify("Tick", "t");
-      return { before, after: new Date().toISOString(), random: Math.random(), id: crypto.randomUUID() };
-    `);
+      return { before, after: new clock().toISOString(), random: maths.random(), id: random.randomUUID() };
+    `,
+      BACKSTOP,
+    );
     const first = await runToEnd(compiled, value);
     const second = await runToEnd(compiled, value);
     expect(first.outcome.type === "completed" && first.outcome.output).toEqual(
@@ -215,26 +223,32 @@ describe("replayWorkflow", () => {
   });
 
   describe("keeps time and randomness stable when concurrent steps finish in either order", () => {
-    const tell = "await w.notify(`${name} ${Date.now()} ${Math.random()}`, crypto.randomUUID());";
-    const helper = `async function fetchAndTell(w: any, name: string) {\n  await w.http("Fetch", { url: name });\n  ${tell}\n}\n`;
+    const tell = "await w.notify(`${name} ${clock.now()} ${maths.random()}`, random.randomUUID());";
+    const helper = `${BACKSTOP}async function fetchAndTell(w: any, name: string) {\n  await w.http("Fetch", { url: name });\n  ${tell}\n}\n`;
     it.each([
       [
         "w.parallel",
-        script(`
+        script(
+          `
           await w.parallel("Race", {
             a: async (w) => { const name = "a"; await w.http("Fetch", { url: name }); ${tell} },
             b: async (w) => { const name = "b"; await w.http("Fetch", { url: name }); ${tell} },
           });
-        `),
+        `,
+          BACKSTOP,
+        ),
       ],
       [
         "w.each",
-        script(`
+        script(
+          `
           await w.each("Race", ["a", "b"], { concurrency: 2 }, async (w, name) => {
             await w.http("Fetch", { url: name });
             ${tell}
           });
-        `),
+        `,
+          BACKSTOP,
+        ),
       ],
       [
         "Promise.all",

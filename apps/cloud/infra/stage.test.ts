@@ -8,6 +8,7 @@ import { previewLabel, previewOrigin, previewSettings } from "../src/thread/prev
 
 import { parseJsonc } from "../../../scripts/cloud-migrations/check.ts";
 import {
+  AUTOMATION_BINDINGS,
   COMPATIBILITY_DATE,
   cloudStage,
   DURABLE_OBJECT_BINDINGS,
@@ -20,7 +21,10 @@ interface WranglerConfig {
     readonly bindings: ReadonlyArray<{ name: string; class_name: string }>;
   };
   readonly containers: ReadonlyArray<{ class_name: string; max_instances: number }>;
+  readonly workflows: ReadonlyArray<{ binding: string; name: string; class_name: string }>;
+  readonly worker_loaders: ReadonlyArray<{ binding: string }>;
   readonly vars: Readonly<Record<string, string>>;
+  readonly env: { readonly dev: Pick<WranglerConfig, "workflows" | "worker_loaders"> };
 }
 
 const readWrangler = (file: string) =>
@@ -41,6 +45,7 @@ describe("cloudStage", () => {
       poolContainer: { name: "signalbox-cloud-poolobject" },
       threadContainer: { name: "signalbox-cloud-threadobject" },
       drivePacksBucket: "signalbox-drives",
+      automationWorkflow: "signalbox-cloud-automations",
       vars: {
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         CLOUD_URL: "https://app.signalbox.run",
@@ -61,6 +66,7 @@ describe("cloudStage", () => {
       poolContainer: { name: "signalbox-cloud-pr-298-pools" },
       threadContainer: { name: "signalbox-cloud-pr-298-threads" },
       drivePacksBucket: "signalbox-drives-preview",
+      automationWorkflow: "signalbox-cloud-pr-298-automations",
       vars: {
         ENVIRONMENT_ID: "cloud-preview-298",
         DRIVE_PACKS_PREFIX: "pr-298/",
@@ -118,6 +124,19 @@ describe("wrangler.jsonc", () => {
       [DURABLE_OBJECT_BINDINGS.POOLS]: production.poolContainer.maxInstances,
       [DURABLE_OBJECT_BINDINGS.THREADS]: production.threadContainer.maxInstances,
     });
+  });
+
+  it("runs the automation Workflow and loader, in dev too", () => {
+    for (const config of [wrangler, wrangler.env.dev]) {
+      expect(config.workflows).toEqual([
+        {
+          binding: AUTOMATION_BINDINGS.workflow,
+          name: cloudStage("production").automationWorkflow,
+          class_name: AUTOMATION_BINDINGS.workflowClass,
+        },
+      ]);
+      expect(config.worker_loaders).toEqual([{ binding: AUTOMATION_BINDINGS.loader }]);
+    }
   });
 
   it("runs production's compatibility date and identity", () => {

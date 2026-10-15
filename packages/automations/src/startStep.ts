@@ -257,3 +257,4 @@ const startChild = (
     const run = yield* deps.launchChild({ automation: target, input, parent });
     return { type: "done", value: { runId: run.id } } satisfies StepStart;
   });
+export type StartStep = ReturnType<typeof makeStartStep>;

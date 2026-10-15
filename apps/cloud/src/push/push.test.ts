@@ -104,6 +104,7 @@ describe("pushFor", () => {
       phase: "waiting_for_input",
       environmentId: "cloud-test",
       threadId: "thread-1",
+      group: "thread-1",
       title: "Fix the login bug",
       body: "Has a question for you",
       deepLink: "/threads/cloud-test/thread-1",

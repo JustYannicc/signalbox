@@ -9,7 +9,8 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
@@ -22,6 +23,8 @@
     "quickjs-emscripten-core": "0.32.0"
   },
   "devDependencies": {
-    "@types/node": "catalog:"
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

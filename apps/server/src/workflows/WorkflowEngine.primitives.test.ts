@@ -112,6 +112,38 @@ export default workflow(async (w, input: { pass: number }) => {
   },
 );
 
+it.effect("trigger.at is when the run started, and a restarted run starts its own clock", () =>
+  withEngine(
+    {},
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      const timed = yield* saveOk(`export const meta = { name: "Restart later" } as const;
+export default workflow(async (w, input: { pass: number }, trigger: { at: string }) => {
+  if (input.pass > 0) return trigger.at;
+  await w.remember("Note the start", "at", trigger.at);
+  await w.sleep("Nap", { minutes: 1 });
+  return w.restart({ pass: 1 });
+});`);
+      const first = yield* engine.startRun({
+        automationId: timed.id,
+        input: { pass: 0 },
+        trigger: "manual",
+      });
+      yield* engine.drain;
+      yield* TestClock.adjust("1 minute");
+      yield* engine.tick;
+      yield* engine.drain;
+      const [restarted, original] = (yield* engine.get(timed.id)).runs;
+      expect(original!.id).toBe(first.id);
+      expect((yield* engine.getRun(original!.id)).steps[0]).toMatchObject({
+        args: ["at", original!.startedAt],
+      });
+      expect((yield* engine.getRun(restarted!.id)).output).toBe(restarted!.startedAt);
+      expect(restarted!.startedAt).not.toBe(original!.startedAt);
+    }),
+  ),
+);
+
 it.effect("signalbox.* calls run Signalbox's tools with the automation's access", () => {
   const threads = fakeThreads();
   const tools = fakeTools({ t3_thread_send: { delivery: "queued" } });

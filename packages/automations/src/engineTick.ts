@@ -23,7 +23,7 @@ import type { RunLinkStore } from "./runLinkStore.ts";
 import type { RunLogs } from "./runLog.ts";
 import { describeDuration, retries, stepOptions, stepTimeoutMs } from "./stepPolicy.ts";
 import { agentResult } from "./steps.ts";
-import { isoAt } from "./time.ts";
+import { isoAt, isoMs } from "./time.ts";
 import { nextRunAt } from "./views.ts";
 import type { AutomationRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
 
@@ -56,7 +56,8 @@ export interface EngineCore {
   readonly runLogs: RunLogs;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly runChanged: (runId: string, summary: boolean) => Effect.Effect<void, AutomationError>;
-  readonly replays: ReplayQueue;
+  /** Failed replays to retry; hosts without a replay core have none. */
+  readonly replays: Pick<ReplayQueue, "retryDue">;
   readonly complete: (
     runId: string,
     key: string,
@@ -295,5 +296,25 @@ export const makeTimedWork = (core: EngineCore) =>
       }
     }).pipe(tickLock.withPermits(1));
 
-    return { settleThreadStep, tick };
+    /**
+     * Due crons and cleanup only, for hosts whose backend runs every step's
+     * timer itself (see runner/): the rest of `tick` is the replay core's.
+     */
+    const crons: Effect.Effect<void, AutomationError> = Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      for (const automation of yield* store.dueAutomations(DateTime.formatIso(now))) {
+        yield* fireCron(automation, now).pipe(core.ignoreFailure("cron"));
+      }
+      if (now.epochMilliseconds - lastPrune >= RETENTION_INTERVAL_MS) {
+        lastPrune = now.epochMilliseconds;
+        yield* prune(now).pipe(core.ignoreFailure("cleanup"));
+      }
+    }).pipe(tickLock.withPermits(1));
+
+    /** When the next cron is due, in epoch ms; null when none is scheduled. */
+    const nextCronAt = store
+      .nextCronAt()
+      .pipe(Effect.map((due) => (due === null ? null : isoMs(due))));
+
+    return { settleThreadStep, wakeStep, tick, crons, nextCronAt };
   });

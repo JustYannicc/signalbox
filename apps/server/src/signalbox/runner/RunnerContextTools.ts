@@ -71,6 +71,10 @@ export class ToolError extends Schema.TaggedError<ToolError>()("ToolError", {
 
 export const fail = (message: string) => Effect.fail(new ToolError({ message }));
 
+/** Arguments the tool's input schema refused. */
+export const badArguments = (error: { readonly message: string }) =>
+  new ToolError({ message: `Bad arguments: ${error.message}` });
+
 export const register = <S extends Schema.Top & { readonly DecodingServices: never }>(
   spec: ToolSpec<S>,
 ) =>
@@ -95,7 +99,7 @@ export const register = <S extends Schema.Top & { readonly DecodingServices: nev
       annotations: Context.empty(),
       handle: (payload) =>
         decode(payload).pipe(
-          Effect.mapError((error) => new ToolError({ message: `Bad arguments: ${error.message}` })),
+          Effect.mapError(badArguments),
           Effect.flatMap(spec.handle),
           // The tool and its outcome, never its arguments or answer.
           Effect.withSpan("RunnerMcpTool", { attributes: { tool: spec.name } }),

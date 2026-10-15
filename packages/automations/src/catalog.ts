@@ -124,7 +124,7 @@ export const makeCatalog = (deps: {
     Effect.gen(function* () {
       const compiled = compile(input.source);
       if (!compiled.ok) return { ok: false, diagnostics: compiled.diagnostics } as const;
-      const { meta, graph, script, runModule } = compiled.workflow;
+      const { meta, graph, script, runModule, workerModule } = compiled.workflow;
       const byName = yield* store.getAutomationByName(input.projectId, meta.name);
       const existing = input.automationId ? yield* requireAutomation(input.automationId) : byName;
       if (existing && existing.project_id !== input.projectId) {
@@ -182,6 +182,7 @@ export const makeCatalog = (deps: {
             source: input.source,
             script,
             run_module: runModule,
+            worker_module: workerModule ?? null,
             graph_json: toJson(graph),
             meta_json: toJson(meta),
             defaults_json: toJson(input.defaults),

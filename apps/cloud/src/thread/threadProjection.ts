@@ -6,11 +6,13 @@ import {
   orchestrationV2RunWorkStartedAt,
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { latestUnheldRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import * as DateTime from "effect/DateTime";
 
 import { isLiveRun } from "./runLifecycle.ts";
+import type { ThreadMonitor } from "./threadWire.ts";
 
 /**
  * A cloud thread's read model. Events fold through the same projector every
@@ -76,11 +78,14 @@ const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
 
 /**
  * The thread's sidebar row. Follows upstream's `threadShellFromProjection` for
- * everything a cloud thread can have; runtime requests, goals and background
- * work never occur here yet, so they stay empty.
+ * everything a cloud thread can have; runtime requests and goals never occur
+ * here yet, so they stay empty. Its only background work is `monitors`, the
+ * automation runs attached to it, which show and hold it in Working exactly
+ * as upstream's monitors do.
  */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
+  monitors: ReadonlyArray<ThreadMonitor> = [],
 ): OrchestrationV2ThreadShell {
   const { thread } = projection;
   const runs = projection.runs.toSorted(byOrdinalDesc);
@@ -124,7 +129,15 @@ export function threadShellFromProjection(
     latestUserAuthoredMessageAt:
       userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null,
     hasActionableProposedPlan: false,
-    pendingBackgroundTasks: [],
+    pendingBackgroundTasks: [
+      ...derivePendingBackgroundWork({
+        latestRun,
+        providerThreads: [],
+        turnItems: [],
+        runs: projection.runs,
+        monitors: monitors.map((monitor) => ({ ...monitor, kind: "monitor" as const })),
+      }),
+    ],
     providerInstanceHistory:
       projection.providerThreads.length > 0 ? [thread.providerInstanceId] : [],
     goal: null,

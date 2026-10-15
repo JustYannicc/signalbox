@@ -150,9 +150,9 @@ describe("public API calls", () => {
   it.effect("says which issue closes an operation the cloud doesn't serve yet", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;
-      const answer = json(yield* call("automations.list", {}));
+      const answer = json(yield* call("settings.get", {}));
       expect(answer.status).toBe(501);
-      expect(answer.body).toMatchObject({ error: { code: "not_in_cloud", issue: "#434" } });
+      expect(answer.body).toMatchObject({ error: { code: "not_in_cloud", issue: "#440" } });
     }),
   );
 

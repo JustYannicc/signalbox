@@ -3,27 +3,22 @@ import {
   ProjectId,
   resolveAutomationAskAnswer,
   ThreadId,
-  workflowNodeIdForStepKey,
   type Automation,
   type AutomationAskAnswerInput,
   type AutomationBuiltIn,
   type AutomationDefaults,
   type AutomationDetail,
   type AutomationError,
-  type AutomationErrorDetail,
   type AutomationNotice,
   type AutomationRunDetail,
   type AutomationRunAttach,
-  type AutomationRunLog,
   type AutomationRunSummary,
   type AutomationRunTrigger,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -34,9 +29,8 @@ import * as Stream from "effect/Stream";
 import { makeAttachments } from "./attachments.ts";
 import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
 import { makeCatalog, type AuthorizeAutomation, type CatalogShape } from "./catalog.ts";
-import { automationDefaults, errorDetailOf, runLogLines, stepArgs, stepAsk } from "./columns.ts";
+import { automationDefaults, runLogLines, stepAsk } from "./columns.ts";
 import { makeConnections } from "./connections.ts";
-import { makeTimedWork } from "./engineTick.ts";
 import type {
   EndRun,
   EngineServices,
@@ -45,7 +39,7 @@ import type {
   RunOutcome,
   Settlement,
 } from "./engineTypes.ts";
-import { automationError, causeText, fail, isAutomationError, logFailure } from "./errors.ts";
+import { automationError, fail, logFailure } from "./errors.ts";
 import { makeBuiltIns, type BuiltInPlace } from "./defaults/builtIns.ts";
 import * as HostStore from "./defaults/hostStore.ts";
 import { BUILT_IN_AUTOMATIONS, builtInSummary } from "./defaults/registry.ts";
@@ -61,19 +55,17 @@ import {
   AutomationThreads,
   forkRoot,
 } from "./host.ts";
-import { fromJson, toJson } from "./json.ts";
+import { asRecord, fromJson, toJson } from "./json.ts";
 import { automationShows, listShows, makeLiveFeed, runShows, type Change } from "./liveFeed.ts";
 import { automationNotice, failureNotice } from "./notices.ts";
-import { makeReplayQueue } from "./replayQueue.ts";
 import { makeRestart } from "./restart.ts";
 import * as RunLinkStore from "./runLinkStore.ts";
-import { replayWorkflow, type JournalResult } from "./sandbox/replayWorkflow.ts";
-import { makeInheritance, makeRetryRun, type RetryRun } from "./retry.ts";
+import { makeReplayDriver } from "./replayDriver.ts";
+import { makeRetryRun, type RetryRun } from "./retry.ts";
+import type { EngineInternals, RunDriver } from "./runDriver.ts";
 import { isTerminalRunStatus } from "./runs.ts";
-import { makeStartStep, type StepOutcome } from "./startStep.ts";
-import { retryDelayMs, retryPolicy, transientCause } from "./stepPolicy.ts";
-import { errorDetail, makeRunLogs } from "./runLog.ts";
-import { afterMs } from "./steps.ts";
+import { makeStartStep } from "./startStep.ts";
+import { makeRunLogs } from "./runLog.ts";
 import { isoAt, nowIso } from "./time.ts";
 import { runSummary, runTitle } from "./views.ts";
 import { makeWaits, type Waits } from "./waits.ts";
@@ -161,12 +153,11 @@ export interface WorkflowEngineShape extends CatalogShape {
    */
   readonly subscribeNotices: Effect.Effect<Stream.Stream<AutomationNotice>, never, Scope.Scope>;
   /**
-   * Due crons, timers, timeouts, retries and agent checks, plus hourly
-   * cleanup. The host calls this every few seconds; one bad item never
-   * blocks the rest.
+   * Due timed work (crons, and in the replay core timers, timeouts, retries
+   * and agent checks), plus hourly cleanup. One bad item never blocks the rest.
    */
   readonly tick: Effect.Effect<void, AutomationError>;
-  /** Waits until no replay is queued and no step is running. Waiting steps don't count. */
+  /** Waits until nothing the engine started is still working. Waiting steps don't count. */
   readonly drain: Effect.Effect<void>;
 }
 
@@ -174,898 +165,666 @@ export class WorkflowEngine extends Context.Service<WorkflowEngine, WorkflowEngi
   "@signalbox/automations/WorkflowEngine",
 ) {}
 
-const REPLAY_MISMATCH: AutomationErrorDetail = {
-  why: "A step's label came out different on replay, usually because it's built from Date.now(), Math.random() or data that changed between replays.",
-  fix: "Build step labels from the input and step results only, then run the automation again.",
-  link: null,
-};
-
-const make = Effect.gen(function* () {
-  const store: Store = yield* WorkflowStore.make;
-  const links = yield* RunLinkStore.make;
-  const hosts = yield* HostStore.make;
-  const builtinTools = makeBuiltinTools({
-    approvalOf: (runId) =>
-      Effect.gen(function* () {
-        const run = yield* store.getRun(runId);
-        const version = run ? yield* store.getVersion(run.automation_id, run.version) : undefined;
-        return version?.approved_by ?? null;
-      }),
-    projectOfThread: (threadId) => projectOfThread(threadId),
-  });
-  const crypto = yield* Crypto.Crypto;
-  const threads = yield* AutomationThreads;
-  // Steps run in forked fibers; they get the services they use from here.
-  const required = yield* Effect.context<EngineServices>();
-  // The host's models, when it has a catalog, tell agent steps each model's option names.
-  const models = yield* Effect.serviceOption(AutomationModels);
-  const services = Option.isSome(models)
-    ? Context.add(required, AutomationModels, models.value)
-    : required;
-  const scope = yield* Effect.scope;
-  const changes = yield* PubSub.unbounded<Change>();
-  const functions = yield* AutomationFunctions;
-  const compiler = yield* AutomationCompiler;
-  const connections = yield* makeConnections;
-  const runLogs = yield* makeRunLogs;
-  const replays = yield* makeReplayQueue;
-  const notices = yield* PubSub.unbounded<AutomationNotice>();
-  const newId = (prefix: string) =>
-    crypto.randomUUIDv4().pipe(
-      Effect.map((uuid) => `${prefix}_${uuid}`),
-      Effect.mapError((cause) => automationError("Couldn't create an id.", { cause })),
-    );
-  const ignoreFailure = (what: string) => logFailure(`Automation ${what} failed`);
-
-  // These call back into the run core below once runs exist.
-  const runWaits = makeRunWaits({
-    store,
-    links,
-    complete: (runId, key, outcome) => complete(runId, key, outcome),
-  });
-  const attachments = makeAttachments({
-    store,
-    links,
-    threads,
-    cancel: (runId) => endRunById(runId, { status: "cancelled" }),
-  });
-  let pullRequestReads: PullRequestReads | undefined;
-  const events = yield* makeEventTriggers({
-    store,
-    threads,
-    adjustBusy: replays.adjustBusy,
-    notify: (notice) => PubSub.publish(notices, notice).pipe(Effect.asVoid),
-    // Called only once events flow, after launchRun below exists.
-    launchRun: (launch) => launchRun(launch),
-    runWaits,
-    pullRequests: makePullRequestTracker((yield* DateTime.now).epochMilliseconds),
-    pullRequestReads: () => pullRequestReads,
-  });
-  const ingress = yield* (yield* AutomationIngress).make({
-    store,
-    newId,
-    // Called only once requests arrive, after launchRun below exists.
-    launchRun: (launch) => launchRun(launch),
-    deliverTo: (runId, envelope) =>
-      runWaits
-        .deliver(envelope, [{ runId, projectId: envelope.projectId, patterns: ["hook.called"] }])
-        .pipe(logFailure("Automation callback delivery failed")),
-  });
-
-  const sourceStore = yield* SourceStore.make;
-  const sourceWatchers = watchersOf({
-    triggers: events.watchingTriggers,
-    runs: runWaits.watching,
-  });
-  const sources = makeSourceWatches({
-    store: sourceStore,
-    watchers: sourceWatchers,
-    read: connections.call,
-    publish: events.sourceEvent,
-    notify: (notice) => PubSub.publish(notices, notice).pipe(Effect.asVoid),
-    checked: (watchers) =>
-      Effect.forEach(
-        new Map(
-          watchers.map((watcher) => [
-            `${watcher.automation.automation_id}/${watcher.runId ?? ""}`,
-            watcher,
-          ]),
-        ).values(),
-        (watcher) =>
-          changed({
-            kind: "sources",
-            automationId: watcher.automation.automation_id,
-            ...(watcher.runId ? { runId: watcher.runId } : {}),
-          }),
-        { discard: true },
-      ),
-    paused: (sourceId, watchers, error) =>
-      Effect.forEach(
-        new Set(watchers.flatMap((watcher) => (watcher.runId ? [watcher.runId] : []))),
-        (runId) =>
-          Effect.gen(function* () {
-            const run = yield* store.getRunMeta(runId);
-            const automation = run ? yield* store.getAutomation(run.automation_id) : undefined;
-            if (!automation) return;
-            for (const step of yield* store.listSteps(runId)) {
-              const watch = step.status === "waiting" ? stepWatch(step) : undefined;
-              if (watch && sourceIdOf(scopeOf(automation), watch) === sourceId)
-                yield* complete(runId, step.step_key, { ok: false, error });
-            }
-          }).pipe(ignoreFailure("source pause")),
-        { discard: true },
-      ),
-    adjustBusy: replays.adjustBusy,
-    scope,
-  });
-
-  const changed = (change: Change) =>
-    Effect.suspend(() => {
-      if (change.kind === "definition") events.invalidate(change.automationId);
-      return PubSub.publish(changes, change).pipe(Effect.asVoid);
-    });
-  /** A run changed; `summary` when run lists show it (it started or ended, a question waits or was answered). */
-  const runChanged = (runId: string, summary: boolean) =>
-    store
-      .getRunMeta(runId)
-      .pipe(
-        Effect.flatMap((run) =>
-          run
-            ? changed({ kind: "runs", automationId: run.automation_id, runId, summary })
-            : Effect.void,
-        ),
-      );
-  /** Called only on a step's one transition into waiting or done, so each step notifies once. */
-  const announce = (automation: WorkflowStore.AutomationRow, step: WorkflowStore.StepRow) =>
-    Effect.gen(function* () {
-      const notice = automationNotice({ automation, step, at: yield* nowIso });
-      if (notice) yield* PubSub.publish(notices, notice);
-      if (step.verb === "ask")
-        yield* events.automationEvent("automation.ask.waiting", step.run_id, {
-          stepKey: step.step_key,
-          label: step.label,
-          question: stepAsk(step).ask.question,
-        });
-    });
-
-  /** Step fibers per run, so ending a run interrupts its requests and processes. */
-  const inflight = new Map<string, Set<Fiber.Fiber<unknown, unknown>>>();
-  const interruptSteps = (runId: string) =>
-    Effect.withFiber((current) => {
-      const fibers = [...(inflight.get(runId) ?? [])].filter((fiber) => fiber !== current);
-      inflight.delete(runId);
-      return Effect.forEach(fibers, Fiber.interrupt, { discard: true });
-    });
-
-  const requireAutomation = (automationId: string) =>
-    store.getAutomation(automationId).pipe(
-      Effect.filterOrFail(
-        (row): row is WorkflowStore.AutomationRow => row !== undefined,
-        () => automationError("That automation doesn't exist.", { automationId }),
-      ),
-    );
-  const automationOfRun = (runId: string) =>
-    Effect.gen(function* () {
-      const run = yield* store.getRunMeta(runId);
-      return run ? yield* store.getAutomation(run.automation_id) : undefined;
-    });
-
-  /** Settles a step once and replays its run. False when it was already settled. */
-  const complete = (runId: string, key: string, outcome: Settlement) =>
-    Effect.gen(function* () {
-      const settled = yield* store.completeStep(
-        runId,
-        key,
-        outcome.ok
-          ? { ok: true, value: toJson(outcome.value ?? null) }
-          : {
-              ok: false,
-              error: outcome.error,
-              errorDetail: outcome.detail ? toJson(outcome.detail) : null,
-            },
-        yield* nowIso,
-      );
-      if (!settled) return false;
-      const duration = runLogs.durationOf(settled);
-      yield* runLogs.step(settled, {
-        status: outcome.ok ? "succeeded" : "failed",
-        ...(duration === undefined ? {} : { durationMs: duration }),
-        ...(outcome.ok ? {} : { error: outcome.error, detail: outcome.detail ?? null }),
-      });
-      if (!outcome.ok)
-        yield* events.automationEvent("automation.step.failed", runId, {
-          stepKey: key,
-          verb: settled.verb,
-          label: settled.label,
-          error: outcome.error,
-        });
-      // An answered question stops the run waiting on someone, which run lists show.
-      yield* runChanged(runId, settled.verb === "ask");
-      yield* attachments.refresh(runId);
-      yield* replays.enqueue(runId);
-      return true;
-    });
-
-  /**
-   * Parks a failed attempt until its backoff ends, or fails the step when its
-   * retries are used up. The attempt count is journaled, so a restart neither
-   * loses nor repeats a retry.
-   */
-  const retryOrFail = (
-    step: WorkflowStore.StepRow,
-    error: string,
-    options: {
-      readonly retryAfterMs?: number | undefined;
-      readonly detail?: AutomationErrorDetail | null;
-    } = {},
-  ) =>
-    Effect.gen(function* () {
-      const policy = retryPolicy(step.verb, stepArgs(step));
-      const detail = options.detail ?? null;
-      if (step.attempt >= policy.attempts)
-        return yield* complete(step.run_id, step.step_key, { ok: false, error, detail });
-      const wakeAt = yield* afterMs(retryDelayMs(policy, step.attempt, options.retryAfterMs));
-      const parked = yield* store.scheduleRetry(
-        step.run_id,
-        step.step_key,
-        step.attempt,
-        wakeAt,
-        error,
-      );
-      if (parked) {
-        yield* runLogs.step(step, { status: "retrying", error, detail });
-        yield* runChanged(step.run_id, false);
-      }
-      return false;
-    });
-
-  const startStep = makeStartStep({
-    store,
-    services,
-    functions,
-    connections,
-    builtinTools,
-    callback: (runId) => ingress.createCallback(runId),
-    resolveBuiltIn: (name, automation) =>
-      builtIns.resolveName(name, {
-        projectId: automation.project_id,
-        defaults: automationDefaults(automation),
-      }),
-    launchChild: ({ automation, input, parent }) =>
-      launchRun({ automation, input, trigger: "automation", parent }).pipe(
-        Effect.map(({ run }) => run),
-      ),
-  });
-
-  /** Runs a step the code just reached, in a fiber the run owns. Waiting steps finish later from outside. */
-  const execute = (automation: WorkflowStore.AutomationRow, step: WorkflowStore.StepRow) => {
-    const work = runLogs.step(step, { status: "running" }).pipe(
-      Effect.andThen(startStep(automation, step)),
-      Effect.flatMap((start: StepOutcome) => {
-        switch (start.type) {
-          case "done":
-            return complete(step.run_id, step.step_key, { ok: true, value: start.value });
-          case "retry":
-            return retryOrFail(step, start.error, { retryAfterMs: start.retryAfterMs });
-          case "waiting":
-            return store.markWaiting(step.run_id, step.step_key, start).pipe(
-              Effect.tap((moved) =>
-                moved
-                  ? runLogs.step(step, { status: "waiting" }).pipe(
-                      Effect.andThen(runChanged(step.run_id, step.verb === "ask")),
-                      // An event may have arrived before the step started waiting. A computed
-                      // `on` starts listening only now, so the listeners are rebuilt first.
-                      Effect.andThen(
-                        step.verb === "waitFor"
-                          ? runWaits
-                              .stepWaiting(step)
-                              .pipe(Effect.andThen(runWaits.deliverPending(step.run_id)))
-                          : Effect.void,
-                      ),
-                      Effect.andThen(attachments.refresh(step.run_id)),
-                    )
-                  : Effect.void,
-              ),
-            );
-        }
-      }),
-      // Only the call that moved the step tells the user, so restarts and replays can't repeat it.
-      Effect.tap((moved) => (moved ? announce(automation, step) : Effect.void)),
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
-        const error = Cause.squash(cause);
-        const detail = errorDetail(error);
-        const transient = isAutomationError(error) ? transientCause(error) : undefined;
-        return transient
-          ? retryOrFail(step, causeText(cause), { retryAfterMs: transient.retryAfterMs, detail })
-          : complete(step.run_id, step.step_key, { ok: false, error: causeText(cause), detail });
-      }),
-      ignoreFailure("step couldn't be recorded"),
-    );
-    const tracked = Effect.withFiber((fiber) => {
-      const fibers = inflight.get(step.run_id) ?? new Set();
-      inflight.set(step.run_id, fibers);
-      fibers.add(fiber);
-      return work.pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            fibers.delete(fiber);
-            if (fibers.size === 0 && inflight.get(step.run_id) === fibers)
-              inflight.delete(step.run_id);
-          }),
-        ),
-      );
-    });
-    return replays
-      .adjustBusy(1)
-      .pipe(
-        Effect.andThen(tracked.pipe(Effect.ensuring(replays.adjustBusy(-1)), Effect.forkIn(scope))),
-        Effect.asVoid,
-      );
-  };
-
-  /**
-   * Ends a running run once, and everything still working for it: step
-   * fibers, agent threads, open steps, and on cancel the runs it started.
-   * False when it had already ended. The run's `logs_json` is what its event
-   * records, so a replay passes the lines it just saved.
-   */
-  const endRun: EndRun = (run, outcome) =>
-    Effect.gen(function* () {
-      const { status } = outcome;
-      const steps = yield* store.listSteps(run.run_id);
-      const now = yield* DateTime.now;
-      const nowText = DateTime.formatIso(now);
-      const title = outcome.status === "succeeded" ? runTitle(steps, outcome.output) : null;
-      const error = outcome.status === "failed" ? outcome.error : null;
-      const detail = outcome.status === "failed" ? (outcome.detail ?? null) : null;
-      const ended = yield* store.finishRun(
-        run.run_id,
-        {
-          status,
-          output: outcome.status === "succeeded" ? toJson(outcome.output ?? null) : null,
-          error,
-          errorDetail: detail ? toJson(detail) : null,
-          title,
-        },
-        nowText,
-      );
-      if (!ended) return false;
-      yield* replays.forget(run.run_id);
-      yield* runWaits.ended(run.run_id);
-      yield* ingress.runEnded(run.run_id);
-      yield* attachments.refresh(run.run_id);
-      yield* interruptSteps(run.run_id);
-      const automation = yield* store.getAutomation(run.automation_id);
-      for (const step of steps) {
-        if (step.thread_id === null || (step.status !== "running" && step.status !== "waiting"))
-          continue;
-        if (!automation) continue;
-        yield* threads
-          .interrupt({
-            projectId: ProjectId.make(automation.project_id),
-            commandId: CommandId.make(`automation:${run.run_id}:${step.step_key}:stop`),
-            threadId: ThreadId.make(step.thread_id),
-            reason: "The automation run ended.",
-          })
-          .pipe(Effect.ignore);
-      }
-      yield* store.closeOpenSteps(
-        run.run_id,
-        status === "cancelled"
-          ? "The run was cancelled."
-          : "The run ended before this step finished.",
-        nowText,
-      );
-      if (status === "cancelled") {
-        for (const child of yield* store.runningChildren(run.run_id))
-          yield* endRunById(child, { status: "cancelled" });
-      }
-      yield* changed({
-        kind: "runs",
-        automationId: run.automation_id,
-        runId: run.run_id,
-        summary: true,
-      });
-      yield* events.automationEvent(
-        `automation.run.${status}`,
-        run.run_id,
-        status === "failed" ? { error } : status === "succeeded" ? { title } : {},
-      );
-      if (status === "failed" && automation) {
-        yield* PubSub.publish(
-          notices,
-          failureNotice({ automation, run, error: error ?? "The run failed.", at: nowText }),
-        );
-      }
-      yield* runLogs.finished(run, automation, {
-        status,
-        error,
-        detail,
-        logs: runLogLines(run),
-        durationMs: now.epochMilliseconds - DateTime.makeUnsafe(run.started_at).epochMilliseconds,
-      });
-      return true;
-    });
-  const endRunById = (
-    runId: string,
-    outcome: Extract<RunOutcome, { readonly status: "failed" | "cancelled" }>,
-  ): Effect.Effect<boolean, AutomationError> =>
-    store
-      .getRun(runId)
-      .pipe(
-        Effect.flatMap((run) =>
-          run?.status === "running" ? endRun(run, outcome) : Effect.succeed(false),
-        ),
-      );
-
-  /** Replays a run from its journal and acts on where it got to. */
-  const advance = (runId: string) =>
-    Effect.gen(function* () {
-      const run = yield* store.getRun(runId);
-      if (!run || run.status !== "running") return;
-      const automation = yield* store.getAutomation(run.automation_id);
-      const script = yield* store.getVersionScript(run.automation_id, run.version);
-      if (!automation || script === undefined)
-        return yield* endRun(run, {
-          status: "failed",
-          error: "The automation behind this run is gone.",
-          detail: {
-            why: "The automation or the version this run started on was deleted.",
-            fix: null,
-            link: null,
-          },
-        });
-      const steps = new Map((yield* store.listSteps(runId)).map((step) => [step.step_key, step]));
-      const inherited =
-        run.retry_of_run_id !== null && steps.size === 0
-          ? makeInheritance(yield* store.listSteps(run.retry_of_run_id), runId)
-          : undefined;
-      let mismatch: string | null = null;
-      const outcome = yield* Effect.tryPromise({
-        try: () =>
-          replayWorkflow({
-            script,
-            input: fromJson(run.input_json),
-            trigger: fromJson(run.trigger_json) ?? { type: run.trigger },
-            startedAt: DateTime.makeUnsafe(run.replay_started_at ?? run.started_at)
-              .epochMilliseconds,
-            seed: run.replay_seed ?? runId,
-            result: ({ key, verb, label }): JournalResult | undefined => {
-              const step = steps.get(key) ?? inherited?.take({ key, verb, label });
-              if (!step) return undefined;
-              if (step.verb !== verb || step.label !== label) {
-                mismatch ??= `Step ${key} was "${step.label}" before and is "${label}" now; the code didn't replay the same way.`;
-              }
-              const at = step.finished_at
-                ? DateTime.makeUnsafe(step.finished_at).epochMilliseconds
-                : 0;
-              if (step.status === "succeeded")
-                return { ok: true, value: fromJson(step.result_json), at };
-              if (step.status === "failed")
-                return { ok: false, error: step.error ?? "The step failed.", at };
-              return undefined;
-            },
-          }),
-        catch: (cause) => automationError("The automation sandbox failed.", { runId, cause }),
-      });
-      const reused = inherited?.reused() ?? [];
-      for (const copy of reused) {
-        yield* store.insertStep(copy);
-        steps.set(copy.step_key, copy);
-      }
-      const marks = toJson(Object.fromEntries(outcome.marks));
-      const logs = toJson(
-        outcome.logs.map((entry): AutomationRunLog => ({ ...entry, at: isoAt(entry.at) })),
-      );
-      // Most replays end where the last one did; only a changed run is written and announced.
-      const replayed = marks !== run.marks_json || logs !== run.logs_json;
-      if (replayed) yield* store.saveReplay(runId, marks, logs);
-      const current = { ...run, marks_json: marks, logs_json: logs };
-      if (mismatch)
-        return yield* endRun(current, {
-          status: "failed",
-          error: mismatch,
-          detail: REPLAY_MISMATCH,
-        });
-      if (outcome.type === "completed")
-        return yield* endRun(current, { status: "succeeded", output: outcome.output });
-      if (outcome.type === "restart") return yield* restart(current, automation, outcome.input);
-      if (outcome.type === "failed") {
-        // A step failure nothing caught surfaces with the step's message; keep its explanation.
-        const cause = [...steps.values()].find(
-          (step) => step.status === "failed" && step.error === outcome.error,
-        );
-        return yield* endRun(current, {
-          status: "failed",
-          error: outcome.error,
-          detail: errorDetailOf(cause?.error_detail_json ?? null),
-        });
-      }
-
-      // A cancel or timeout may have ended the run while the sandbox ran; start nothing new then.
-      if ((yield* store.getRunMeta(runId))?.status !== "running") return;
-      const now = yield* nowIso;
-      const fresh = outcome.requests.filter((request) => !steps.has(request.key));
-      for (const request of fresh) {
-        const row: WorkflowStore.StepRow = {
-          run_id: runId,
-          step_key: request.key,
-          node_id: workflowNodeIdForStepKey(request.key),
-          verb: request.verb,
-          label: request.label,
-          status: "running",
-          args_json: toJson(request.args),
-          result_json: null,
-          error: null,
-          error_detail_json: null,
-          thread_id: null,
-          wake_at: null,
-          event: null,
-          attempt: 1,
-          started_at: now,
-          finished_at: null,
-        };
-        if (yield* store.insertStep(row)) yield* execute(automation, row);
-      }
-      const pending = [...steps.values()].some(
-        (step) => step.status === "running" || step.status === "waiting",
-      );
-      if (fresh.length === 0 && !pending) {
-        return yield* endRun(current, {
-          status: "failed",
-          error: "The automation is waiting on something that will never finish.",
-          detail: {
-            why: "The code awaits a promise that no step will ever settle.",
-            fix: "Await only steps and values built from them; don't await promises the code makes itself.",
-            link: null,
-          },
-        });
-      }
-      if (replayed || fresh.length > 0 || reused.length > 0)
-        yield* changed({ kind: "runs", automationId: run.automation_id, runId, summary: false });
-    });
-
-  const launchRun: LaunchRun = (launch: Launch) =>
-    Effect.gen(function* () {
-      const { retryOf } = launch;
-      if (launch.automation.version === 0) {
-        return yield* fail(
-          `"${launch.automation.name}" isn't published yet. Publish its draft first.`,
-          { automationId: launch.automation.automation_id },
-        );
-      }
-      const now = yield* DateTime.now;
-      const row = {
-        run_id: launch.runId ?? (yield* newId("run")),
-        automation_id: launch.automation.automation_id,
-        version: launch.version ?? launch.automation.version,
-        status: "running",
-        trigger: launch.trigger,
-        input_json: toJson(launch.input ?? null),
-        output_json: null,
-        error: null,
-        marks_json: "{}",
-        trigger_json: retryOf
-          ? retryOf.trigger_json
-          : (launch.triggerJson ??
-            toJson({
-              type: launch.trigger,
-              ...launch.webhook,
-              ...launch.event,
-              ...(launch.link?.thread_id
-                ? {
-                    attach: {
-                      threadId: launch.link.thread_id,
-                      key: launch.link.attach_key,
-                      label: launch.link.label,
-                    },
-                  }
-                : {}),
-            })),
-        parent_run_id: launch.parent?.run_id ?? null,
-        depth: retryOf
-          ? retryOf.depth
-          : launch.parent
-            ? launch.parent.depth + 1
-            : (launch.depth ?? 0),
-        deadline_at:
-          launch.automation.timeout_ms === null
-            ? null
-            : isoAt(now.epochMilliseconds + launch.automation.timeout_ms),
-        retry_of_run_id: retryOf?.run_id ?? null,
-        replay_seed: retryOf ? (retryOf.replay_seed ?? retryOf.run_id) : null,
-        replay_started_at: retryOf ? (retryOf.replay_started_at ?? retryOf.started_at) : null,
-        started_at: DateTime.formatIso(now),
-        finished_at: null,
-      } satisfies WorkflowStore.NewRun;
-      const link = launch.link;
-      const insert = store.insertRun(row).pipe(
-        Effect.andThen(
-          link
-            ? links.insertLink({
-                ...link,
-                run_id: row.run_id,
-                lineage_id: link.lineage_id ?? row.run_id,
-                started_at: row.started_at,
-              })
-            : Effect.void,
-        ),
-      );
-      if (launch.claim) {
-        const claim = launch.claim;
-        const prior = yield* store.withTransaction(
-          Effect.gen(function* () {
-            const existing = yield* claim(row.run_id);
-            if (existing === undefined) yield* insert;
-            return existing;
-          }),
-        );
-        if (prior !== undefined) {
-          const existing = yield* store.getRun(prior);
-          if (!existing) return yield* fail("That run is gone.", { runId: prior });
-          return { run: runSummary(existing), duplicate: true };
-        }
-      } else {
-        yield* store.withTransaction(insert);
-      }
-      runWaits.invalidate();
-      yield* attachments.refresh(row.run_id);
-      yield* runLogs.started(row, launch.automation);
-      yield* events.automationEvent("automation.run.started", row.run_id, {
-        trigger: launch.trigger,
-      });
-      yield* changed({
-        kind: "runs",
-        automationId: row.automation_id,
-        runId: row.run_id,
-        summary: true,
-      });
-      yield* replays.enqueue(row.run_id);
-      return {
-        run: runSummary({
-          ...row,
-          waiting_on_you: 0,
-          title: null,
-          error_detail_json: null,
-        }),
-        duplicate: false,
-      };
-    });
-
-  const startRun: WorkflowEngineShape["startRun"] = (input) =>
-    Effect.gen(function* () {
-      const projectId =
-        input.projectId ??
-        (input.attach ? yield* projectOfThread(input.attach.threadId) : undefined);
-      const automation = yield* builtIns.resolve(
-        input.automationId,
-        projectId && input.builtInDefaults
-          ? { projectId, defaults: input.builtInDefaults }
-          : undefined,
-      );
-      if (input.authorize) yield* input.authorize(automationDefaults(automation));
-      const attached = input.attach ? yield* attachments.launchFor(automation, input.attach) : {};
-      return (yield* launchRun({
-        automation,
-        input: input.input,
-        trigger: input.trigger,
-        ...attached,
-      })).run;
-    });
-
-  const remove: WorkflowEngineShape["remove"] = (automationId) =>
-    Effect.gen(function* () {
-      yield* requireAutomation(automationId);
-      for (const runId of yield* store.runningRunsOf(automationId)) {
-        yield* endRunById(runId, { status: "cancelled" });
-      }
-      yield* store.withTransaction(store.deleteAutomation(automationId));
-      yield* ingress.forget(automationId);
-      yield* functions.remove(automationId).pipe(ignoreFailure("files couldn't be deleted"));
-      yield* changed({ kind: "definition", automationId });
-    });
-
-  const setWebhookSecret: WorkflowEngineShape["setWebhookSecret"] = (input) =>
-    Effect.gen(function* () {
-      const automation = yield* requireAutomation(input.automationId);
-      if (input.authorize) yield* input.authorize(automationDefaults(automation));
-      yield* ingress.setSecret(input.automationId, input.secret);
-      yield* changed({ kind: "automation", automationId: input.automationId });
-      return (yield* catalog.get(input.automationId)).automation;
-    });
-
-  const answer: WorkflowEngineShape["answer"] = (input) =>
-    Effect.gen(function* () {
-      const step = yield* store.getStep(input.runId, input.stepKey);
-      if (!step || step.verb !== "ask")
-        return yield* fail("There's no question waiting there.", { runId: input.runId });
-      if (step.status !== "waiting")
-        return yield* fail("That question was already answered.", { runId: input.runId });
-      const resolved = resolveAutomationAskAnswer(stepAsk(step).ask, input);
-      if (!resolved.ok) return yield* fail(resolved.error, { runId: input.runId });
-      yield* complete(input.runId, input.stepKey, { ok: true, value: resolved.value });
-    });
-
-  const emit: WorkflowEngineShape["emit"] = (input) =>
-    store
-      .waitingForEvent(input.event)
-      .pipe(
-        Effect.flatMap((steps) =>
-          Effect.forEach(steps, (step) =>
-            complete(step.run_id, step.step_key, { ok: true, value: input.payload ?? null }),
-          ).pipe(Effect.map((woke) => woke.filter(Boolean).length)),
-        ),
-      );
-
-  const cancelRun: WorkflowEngineShape["cancelRun"] = (runId) =>
-    Effect.gen(function* () {
-      const run = yield* store.getRun(runId);
-      if (!run) return yield* fail("That run doesn't exist.", { runId });
-      yield* endRun(run, { status: "cancelled" });
-    });
-
-  const retryRun = makeRetryRun({ store, requireAutomation, launchRun });
-  const restart = makeRestart({ store, links, newId, endRun, launchRun });
-  const projectOfThread = (threadId: string) =>
-    threads.getThreadShell(ThreadId.make(threadId)).pipe(
-      Effect.map((shell) => shell?.projectId),
-      Effect.mapError((cause) => automationError("Couldn't read the thread.", { cause })),
-    );
-
-  const catalog = makeCatalog({
-    store,
-    newId,
-    changed,
-    requireAutomation,
-    relayHookBaseUrl: ingress.hookBaseUrl,
-    compile: compiler.compile,
-    watching: sources.statusOf,
-  });
-  const builtIns = makeBuiltIns({
-    store,
-    hosts,
-    catalog,
-    compile: compiler.compile,
-    changed,
-    requireAutomation,
-  });
-  const waits = makeWaits({
-    store,
-    threads,
-    links,
-    attachments,
-    newId,
-    start: (input) => startRun({ ...input, trigger: "manual" }),
-    callback: (runId, hookId) => ingress.createCallback(runId, hookId),
-    cancel: (runId) => endRunById(runId, { status: "cancelled" }),
-  });
-
-  const timed = yield* makeTimedWork({
-    store,
-    links,
-    threads,
-    services,
-    functions,
-    runLogs,
-    changed,
-    runChanged,
-    replays,
-    complete,
-    retryOrFail,
-    execute,
-    endRun,
-    launchRun,
-    automationOfRun,
-    ignoreFailure,
-  });
-  const { settleThreadStep } = timed;
-  // One failing doesn't hold up the other.
-  const tick = timed.tick.pipe(Effect.ensuring(sources.tick));
-
-  const feed = yield* makeLiveFeed(changes);
-  yield* forkRoot(events.worker);
-
-  // Replays that fail outside the code (storage, sandbox) are retried by the tick with
-  // backoff, and only fail the run once retries run out.
-  yield* replays.start((runId) =>
-    advance(runId).pipe(
-      Effect.andThen(replays.forget(runId)),
-      Effect.catchCause((cause) =>
+/**
+ * The engine around a run core: catalog, triggers, waits, attachments and the
+ * step executors, with `makeDriver` running the code (see runDriver.ts).
+ */
+export const makeEngine = <R>(
+  makeDriver: (internals: EngineInternals) => Effect.Effect<RunDriver, never, R>,
+) =>
+  Effect.gen(function* () {
+    const store: Store = yield* WorkflowStore.make;
+    const links = yield* RunLinkStore.make;
+    const hosts = yield* HostStore.make;
+    const builtinTools = makeBuiltinTools({
+      approvalOf: (runId) =>
         Effect.gen(function* () {
-          const now = yield* DateTime.now;
-          const { retry, failures } = yield* replays.failed(runId, now.epochMilliseconds);
-          yield* Effect.logWarning("Automation run couldn't advance", { runId, failures, cause });
-          if (!retry) yield* endRunById(runId, { status: "failed", error: causeText(cause) });
-        }).pipe(Effect.ignore),
-      ),
-    ),
-  );
+          const run = yield* store.getRun(runId);
+          const version = run ? yield* store.getVersion(run.automation_id, run.version) : undefined;
+          return version?.approved_by ?? null;
+        }),
+      projectOfThread: (threadId) => projectOfThread(threadId),
+    });
+    const crypto = yield* Crypto.Crypto;
+    const threads = yield* AutomationThreads;
+    // Steps run in forked fibers; they get the services they use from here.
+    const required = yield* Effect.context<EngineServices>();
+    // The host's models, when it has a catalog, tell agent steps each model's option names.
+    const models = yield* Effect.serviceOption(AutomationModels);
+    const services = Option.isSome(models)
+      ? Context.add(required, AutomationModels, models.value)
+      : required;
+    const scope = yield* Effect.scope;
+    const changes = yield* PubSub.unbounded<Change>();
+    const functions = yield* AutomationFunctions;
+    const compiler = yield* AutomationCompiler;
+    const connections = yield* makeConnections;
+    const runLogs = yield* makeRunLogs;
+    // Bound once the driver is built, before any event or run can reach it.
+    let driver: RunDriver | undefined;
+    const theDriver = () => {
+      if (driver === undefined) throw new Error("The automation run core isn't ready.");
+      return driver;
+    };
+    const notices = yield* PubSub.unbounded<AutomationNotice>();
+    const newId = (prefix: string) =>
+      crypto.randomUUIDv4().pipe(
+        Effect.map((uuid) => `${prefix}_${uuid}`),
+        Effect.mapError((cause) => automationError("Couldn't create an id.", { cause })),
+      );
+    const ignoreFailure = (what: string) => logFailure(`Automation ${what} failed`);
 
-  // Thread-backed steps finish when their thread's run ends. Settling reads the thread, so it
-  // runs off the domain event stream, which event triggers match against too.
-  const settles = yield* Queue.unbounded<string>();
-  yield* forkRoot(
-    Queue.take(settles).pipe(
-      Effect.flatMap((threadId) =>
-        store.stepForThread(threadId).pipe(
-          Effect.flatMap((step) => (step ? settleThreadStep(step) : Effect.void)),
-          logFailure("Automation step couldn't settle"),
-          Effect.ensuring(replays.adjustBusy(-1)),
+    // These call back into the run core below once runs exist.
+    const runWaits = makeRunWaits({
+      store,
+      links,
+      complete: (runId, key, outcome) => complete(runId, key, outcome),
+    });
+    const attachments = makeAttachments({
+      store,
+      links,
+      threads,
+      cancel: (runId) => endRunById(runId, { status: "cancelled" }),
+    });
+    let pullRequestReads: PullRequestReads | undefined;
+    const events = yield* makeEventTriggers({
+      store,
+      threads,
+      adjustBusy: (delta) => theDriver().adjustBusy(delta),
+      notify: (notice) => PubSub.publish(notices, notice).pipe(Effect.asVoid),
+      // Called only once events flow, after launchRun below exists.
+      launchRun: (launch) => launchRun(launch),
+      runWaits,
+      pullRequests: makePullRequestTracker((yield* DateTime.now).epochMilliseconds),
+      pullRequestReads: () => pullRequestReads,
+    });
+    const ingress = yield* (yield* AutomationIngress).make({
+      store,
+      newId,
+      // Called only once requests arrive, after launchRun below exists.
+      launchRun: (launch) => launchRun(launch),
+      deliverTo: (runId, envelope) =>
+        runWaits
+          .deliver(envelope, [{ runId, projectId: envelope.projectId, patterns: ["hook.called"] }])
+          .pipe(logFailure("Automation callback delivery failed")),
+    });
+
+    const sourceStore = yield* SourceStore.make;
+    const sourceWatchers = watchersOf({
+      triggers: events.watchingTriggers,
+      runs: runWaits.watching,
+    });
+    const sources = makeSourceWatches({
+      store: sourceStore,
+      watchers: sourceWatchers,
+      read: connections.call,
+      publish: events.sourceEvent,
+      notify: (notice) => PubSub.publish(notices, notice).pipe(Effect.asVoid),
+      checked: (watchers) =>
+        Effect.forEach(
+          new Map(
+            watchers.map((watcher) => [
+              `${watcher.automation.automation_id}/${watcher.runId ?? ""}`,
+              watcher,
+            ]),
+          ).values(),
+          (watcher) =>
+            changed({
+              kind: "sources",
+              automationId: watcher.automation.automation_id,
+              ...(watcher.runId ? { runId: watcher.runId } : {}),
+            }),
+          { discard: true },
         ),
-      ),
-      Effect.forever,
-    ),
-  );
-  yield* forkRoot(
-    Stream.runForEach(threads.domainEvents, (event) =>
-      events
-        .offer(event)
+      paused: (sourceId, watchers, error) =>
+        Effect.forEach(
+          new Set(watchers.flatMap((watcher) => (watcher.runId ? [watcher.runId] : []))),
+          (runId) =>
+            Effect.gen(function* () {
+              const run = yield* store.getRunMeta(runId);
+              const automation = run ? yield* store.getAutomation(run.automation_id) : undefined;
+              if (!automation) return;
+              for (const step of yield* store.listSteps(runId)) {
+                const watch = step.status === "waiting" ? stepWatch(step) : undefined;
+                if (watch && sourceIdOf(scopeOf(automation), watch) === sourceId)
+                  yield* complete(runId, step.step_key, { ok: false, error });
+              }
+            }).pipe(ignoreFailure("source pause")),
+          { discard: true },
+        ),
+      adjustBusy: (delta) => theDriver().adjustBusy(delta),
+      scope,
+    });
+
+    const changed = (change: Change) =>
+      Effect.suspend(() => {
+        if (change.kind === "definition") events.invalidate(change.automationId);
+        return PubSub.publish(changes, change).pipe(Effect.asVoid);
+      });
+    /** A run changed; `summary` when run lists show it (it started or ended, a question waits or was answered). */
+    const runChanged = (runId: string, summary: boolean) =>
+      store
+        .getRunMeta(runId)
         .pipe(
-          Effect.andThen(
-            attachments.onDomainEvent(event).pipe(logFailure("Automation detach failed")),
-          ),
-          Effect.andThen(
-            event.type === "run.updated" && isTerminalRunStatus(event.payload.status)
-              ? replays
-                  .adjustBusy(1)
-                  .pipe(Effect.andThen(Queue.offer(settles, event.threadId)), Effect.asVoid)
+          Effect.flatMap((run) =>
+            run
+              ? changed({ kind: "runs", automationId: run.automation_id, runId, summary })
               : Effect.void,
           ),
+        );
+    /** Called only on a step's one transition into waiting or done, so each step notifies once. */
+    const announce = (automation: WorkflowStore.AutomationRow, step: WorkflowStore.StepRow) =>
+      Effect.gen(function* () {
+        const notice = automationNotice({ automation, step, at: yield* nowIso });
+        if (notice) yield* PubSub.publish(notices, notice);
+        if (step.verb === "ask")
+          yield* events.automationEvent("automation.ask.waiting", step.run_id, {
+            stepKey: step.step_key,
+            label: step.label,
+            question: stepAsk(step).ask.question,
+          });
+      });
+
+    const requireAutomation = (automationId: string) =>
+      store.getAutomation(automationId).pipe(
+        Effect.filterOrFail(
+          (row): row is WorkflowStore.AutomationRow => row !== undefined,
+          () => automationError("That automation doesn't exist.", { automationId }),
         ),
-    ),
-  );
+      );
+    const automationOfRun = (runId: string) =>
+      Effect.gen(function* () {
+        const run = yield* store.getRunMeta(runId);
+        return run ? yield* store.getAutomation(run.automation_id) : undefined;
+      });
 
-  // Startup recovery: restart steps a restart cut off, then replay running runs.
-  yield* forkRoot(
-    Effect.gen(function* () {
-      for (const step of yield* store.stepsWithStatus("running")) {
-        const automation = yield* automationOfRun(step.run_id);
-        if (automation) yield* execute(automation, step);
-      }
-      for (const { run_id } of yield* store.runningRuns()) yield* replays.enqueue(run_id);
-      yield* attachments.recover;
-    }).pipe(logFailure("Automation recovery failed")),
-  );
+    /** Settles a step once and lets the driver wake its run. False when it was already settled. */
+    const complete = (runId: string, key: string, outcome: Settlement) =>
+      Effect.gen(function* () {
+        const settled = yield* store.completeStep(
+          runId,
+          key,
+          outcome.ok
+            ? { ok: true, value: toJson(outcome.value ?? null) }
+            : {
+                ok: false,
+                error: outcome.error,
+                errorDetail: outcome.detail ? toJson(outcome.detail) : null,
+              },
+          yield* nowIso,
+        );
+        if (!settled) return false;
+        const duration = runLogs.durationOf(settled);
+        yield* runLogs.step(settled, {
+          status: outcome.ok ? "succeeded" : "failed",
+          ...(duration === undefined ? {} : { durationMs: duration }),
+          ...(outcome.ok ? {} : { error: outcome.error, detail: outcome.detail ?? null }),
+        });
+        if (!outcome.ok)
+          yield* events.automationEvent("automation.step.failed", runId, {
+            stepKey: key,
+            verb: settled.verb,
+            label: settled.label,
+            error: outcome.error,
+          });
+        // An answered question stops the run waiting on someone, which run lists show.
+        yield* runChanged(runId, settled.verb === "ask");
+        yield* attachments.refresh(runId);
+        yield* theDriver().settled(runId, key, outcome);
+        return true;
+      });
 
-  return {
-    ...catalog,
-    // A built-in's host row changes only with the code.
-    save: (input, authorize) =>
-      builtIns.guardSave(input).pipe(Effect.andThen(catalog.save(input, authorize))),
-    remove,
-    startRun,
-    builtIns: Effect.sync(() => BUILT_IN_AUTOMATIONS.map(builtInSummary)),
-    customize: builtIns.customize,
-    cancelAttached: attachments.cancelAttached,
-    startWait: waits.start,
-    listWaits: waits.list,
-    stopWait: waits.stop,
-    watchPullRequest: waits.watchPullRequest,
-    requestMerge: waits.requestMerge,
-    registerBuiltinTools: builtinTools.register,
-    registerPullRequestReads: (reads) =>
-      Effect.sync(() => {
-        pullRequestReads = reads;
-      }),
-    setWebhookSecret,
-    cancelRun,
-    retryRun,
-    answer,
-    emit,
-    subscribeList: () => feed.watch("list", catalog.list(), listShows, { keepOnFailure: true }),
-    subscribeAutomation: (automationId) =>
-      feed.watch(
-        `automation:${automationId}`,
-        catalog.get(automationId),
-        automationShows(automationId),
+    const startStep = makeStartStep({
+      store,
+      services,
+      functions,
+      connections,
+      builtinTools,
+      callback: (runId) => ingress.createCallback(runId),
+      resolveBuiltIn: (name, automation) =>
+        builtIns.resolveName(name, {
+          projectId: automation.project_id,
+          defaults: automationDefaults(automation),
+        }),
+      launchChild: ({ automation, input, parent }) =>
+        launchRun({ automation, input, trigger: "automation", parent }).pipe(
+          Effect.map(({ run }) => run),
+        ),
+    });
+
+    /**
+     * Ends a running run once, and everything still working for it: step
+     * fibers, agent threads, open steps, and on cancel the runs it started.
+     * False when it had already ended. The run's `logs_json` is what its event
+     * records, so a replay passes the lines it just saved.
+     */
+    const endRun: EndRun = (run, outcome) =>
+      Effect.gen(function* () {
+        const { status } = outcome;
+        const steps = yield* store.listSteps(run.run_id);
+        const now = yield* DateTime.now;
+        const nowText = DateTime.formatIso(now);
+        const title = outcome.status === "succeeded" ? runTitle(steps, outcome.output) : null;
+        const error = outcome.status === "failed" ? outcome.error : null;
+        const detail = outcome.status === "failed" ? (outcome.detail ?? null) : null;
+        const ended = yield* store.finishRun(
+          run.run_id,
+          {
+            status,
+            output: outcome.status === "succeeded" ? toJson(outcome.output ?? null) : null,
+            error,
+            errorDetail: detail ? toJson(detail) : null,
+            title,
+          },
+          nowText,
+        );
+        if (!ended) return false;
+        yield* theDriver().ended(run.run_id, status);
+        yield* runWaits.ended(run.run_id);
+        yield* ingress.runEnded(run.run_id);
+        yield* attachments.refresh(run.run_id);
+        const automation = yield* store.getAutomation(run.automation_id);
+        for (const step of steps) {
+          if (step.thread_id === null || (step.status !== "running" && step.status !== "waiting"))
+            continue;
+          if (!automation) continue;
+          yield* threads
+            .interrupt({
+              projectId: ProjectId.make(automation.project_id),
+              commandId: CommandId.make(`automation:${run.run_id}:${step.step_key}:stop`),
+              threadId: ThreadId.make(step.thread_id),
+              reason: "The automation run ended.",
+            })
+            .pipe(Effect.ignore);
+        }
+        yield* store.closeOpenSteps(
+          run.run_id,
+          status === "cancelled"
+            ? "The run was cancelled."
+            : "The run ended before this step finished.",
+          nowText,
+        );
+        if (status === "cancelled") {
+          for (const child of yield* store.runningChildren(run.run_id))
+            yield* endRunById(child, { status: "cancelled" });
+        }
+        yield* changed({
+          kind: "runs",
+          automationId: run.automation_id,
+          runId: run.run_id,
+          summary: true,
+        });
+        yield* events.automationEvent(
+          `automation.run.${status}`,
+          run.run_id,
+          status === "failed" ? { error } : status === "succeeded" ? { title } : {},
+        );
+        if (status === "failed" && automation) {
+          yield* PubSub.publish(
+            notices,
+            failureNotice({ automation, run, error: error ?? "The run failed.", at: nowText }),
+          );
+        }
+        yield* runLogs.finished(run, automation, {
+          status,
+          error,
+          detail,
+          logs: runLogLines(run),
+          durationMs: now.epochMilliseconds - DateTime.makeUnsafe(run.started_at).epochMilliseconds,
+        });
+        return true;
+      });
+    const endRunById = (
+      runId: string,
+      outcome: Extract<RunOutcome, { readonly status: "failed" | "cancelled" }>,
+    ): Effect.Effect<boolean, AutomationError> =>
+      store
+        .getRun(runId)
+        .pipe(
+          Effect.flatMap((run) =>
+            run?.status === "running" ? endRun(run, outcome) : Effect.succeed(false),
+          ),
+        );
+
+    const launchRun: LaunchRun = (launch: Launch) =>
+      Effect.gen(function* () {
+        const { retryOf } = launch;
+        if (launch.automation.version === 0) {
+          return yield* fail(
+            `"${launch.automation.name}" isn't published yet. Publish its draft first.`,
+            { automationId: launch.automation.automation_id },
+          );
+        }
+        const now = yield* DateTime.now;
+        const startedAt = DateTime.formatIso(now);
+        const row = {
+          run_id: launch.runId ?? (yield* newId("run")),
+          automation_id: launch.automation.automation_id,
+          version: launch.version ?? launch.automation.version,
+          status: "running",
+          trigger: launch.trigger,
+          input_json: toJson(launch.input ?? null),
+          output_json: null,
+          error: null,
+          marks_json: "{}",
+          // A retry replays the run it retries, so it keeps that run's `at`. A restart is a new
+          // run with an empty history: it keeps the trigger but starts at its own time.
+          trigger_json: retryOf
+            ? retryOf.trigger_json
+            : toJson({
+                ...(launch.triggerJson
+                  ? asRecord(fromJson(launch.triggerJson))
+                  : {
+                      type: launch.trigger,
+                      ...launch.webhook,
+                      ...launch.event,
+                      ...(launch.link?.thread_id
+                        ? {
+                            attach: {
+                              threadId: launch.link.thread_id,
+                              key: launch.link.attach_key,
+                              label: launch.link.label,
+                            },
+                          }
+                        : {}),
+                    }),
+                at: startedAt,
+              }),
+          parent_run_id: launch.parent?.run_id ?? null,
+          depth: retryOf
+            ? retryOf.depth
+            : launch.parent
+              ? launch.parent.depth + 1
+              : (launch.depth ?? 0),
+          deadline_at:
+            launch.automation.timeout_ms === null
+              ? null
+              : isoAt(now.epochMilliseconds + launch.automation.timeout_ms),
+          retry_of_run_id: retryOf?.run_id ?? null,
+          replay_seed: retryOf ? (retryOf.replay_seed ?? retryOf.run_id) : null,
+          replay_started_at: retryOf ? (retryOf.replay_started_at ?? retryOf.started_at) : null,
+          started_at: startedAt,
+          finished_at: null,
+        } satisfies WorkflowStore.NewRun;
+        const link = launch.link;
+        const insert = store.insertRun(row).pipe(
+          Effect.andThen(
+            link
+              ? links.insertLink({
+                  ...link,
+                  run_id: row.run_id,
+                  lineage_id: link.lineage_id ?? row.run_id,
+                  started_at: row.started_at,
+                })
+              : Effect.void,
+          ),
+        );
+        if (launch.claim) {
+          const claim = launch.claim;
+          const prior = yield* store.withTransaction(
+            Effect.gen(function* () {
+              const existing = yield* claim(row.run_id);
+              if (existing === undefined) yield* insert;
+              return existing;
+            }),
+          );
+          if (prior !== undefined) {
+            const existing = yield* store.getRun(prior);
+            if (!existing) return yield* fail("That run is gone.", { runId: prior });
+            return { run: runSummary(existing), duplicate: true };
+          }
+        } else {
+          yield* store.withTransaction(insert);
+        }
+        runWaits.invalidate();
+        yield* attachments.refresh(row.run_id);
+        yield* runLogs.started(row, launch.automation);
+        yield* events.automationEvent("automation.run.started", row.run_id, {
+          trigger: launch.trigger,
+        });
+        yield* changed({
+          kind: "runs",
+          automationId: row.automation_id,
+          runId: row.run_id,
+          summary: true,
+        });
+        yield* theDriver()
+          .launched(row.run_id)
+          .pipe(
+            Effect.tapError((error) =>
+              endRunById(row.run_id, { status: "failed", error: error.message }).pipe(
+                Effect.ignore,
+              ),
+            ),
+          );
+        return {
+          run: runSummary({
+            ...row,
+            waiting_on_you: 0,
+            title: null,
+            error_detail_json: null,
+          }),
+          duplicate: false,
+        };
+      });
+
+    const startRun: WorkflowEngineShape["startRun"] = (input) =>
+      Effect.gen(function* () {
+        const projectId =
+          input.projectId ??
+          (input.attach ? yield* projectOfThread(input.attach.threadId) : undefined);
+        const automation = yield* builtIns.resolve(
+          input.automationId,
+          projectId && input.builtInDefaults
+            ? { projectId, defaults: input.builtInDefaults }
+            : undefined,
+        );
+        if (input.authorize) yield* input.authorize(automationDefaults(automation));
+        const attached = input.attach ? yield* attachments.launchFor(automation, input.attach) : {};
+        return (yield* launchRun({
+          automation,
+          input: input.input,
+          trigger: input.trigger,
+          ...attached,
+        })).run;
+      });
+
+    const remove: WorkflowEngineShape["remove"] = (automationId) =>
+      Effect.gen(function* () {
+        yield* requireAutomation(automationId);
+        for (const runId of yield* store.runningRunsOf(automationId)) {
+          yield* endRunById(runId, { status: "cancelled" });
+        }
+        yield* store.withTransaction(store.deleteAutomation(automationId));
+        yield* ingress.forget(automationId);
+        yield* functions.remove(automationId).pipe(ignoreFailure("files couldn't be deleted"));
+        yield* changed({ kind: "definition", automationId });
+      });
+
+    const setWebhookSecret: WorkflowEngineShape["setWebhookSecret"] = (input) =>
+      Effect.gen(function* () {
+        const automation = yield* requireAutomation(input.automationId);
+        if (input.authorize) yield* input.authorize(automationDefaults(automation));
+        yield* ingress.setSecret(input.automationId, input.secret);
+        yield* changed({ kind: "automation", automationId: input.automationId });
+        return (yield* catalog.get(input.automationId)).automation;
+      });
+
+    const answer: WorkflowEngineShape["answer"] = (input) =>
+      Effect.gen(function* () {
+        const step = yield* store.getStep(input.runId, input.stepKey);
+        if (!step || step.verb !== "ask")
+          return yield* fail("There's no question waiting there.", { runId: input.runId });
+        if (step.status !== "waiting")
+          return yield* fail("That question was already answered.", { runId: input.runId });
+        const resolved = resolveAutomationAskAnswer(stepAsk(step).ask, input);
+        if (!resolved.ok) return yield* fail(resolved.error, { runId: input.runId });
+        yield* complete(input.runId, input.stepKey, { ok: true, value: resolved.value });
+      });
+
+    const emit: WorkflowEngineShape["emit"] = (input) =>
+      store
+        .waitingForEvent(input.event)
+        .pipe(
+          Effect.flatMap((steps) =>
+            Effect.forEach(steps, (step) =>
+              complete(step.run_id, step.step_key, { ok: true, value: input.payload ?? null }),
+            ).pipe(Effect.map((woke) => woke.filter(Boolean).length)),
+          ),
+        );
+
+    const cancelRun: WorkflowEngineShape["cancelRun"] = (runId) =>
+      Effect.gen(function* () {
+        const run = yield* store.getRun(runId);
+        if (!run) return yield* fail("That run doesn't exist.", { runId });
+        yield* endRun(run, { status: "cancelled" });
+      });
+
+    const retryRun = makeRetryRun({ store, requireAutomation, launchRun });
+    const restart = makeRestart({ store, links, newId, endRun, launchRun });
+    const projectOfThread = (threadId: string) =>
+      threads.getThreadShell(ThreadId.make(threadId)).pipe(
+        Effect.map((shell) => shell?.projectId),
+        Effect.mapError((cause) => automationError("Couldn't read the thread.", { cause })),
+      );
+
+    const catalog = makeCatalog({
+      store,
+      newId,
+      changed,
+      requireAutomation,
+      relayHookBaseUrl: ingress.hookBaseUrl,
+      compile: compiler.compile,
+      watching: sources.statusOf,
+    });
+    const builtIns = makeBuiltIns({
+      store,
+      hosts,
+      catalog,
+      compile: compiler.compile,
+      changed,
+      requireAutomation,
+    });
+    const waits = makeWaits({
+      store,
+      threads,
+      links,
+      attachments,
+      newId,
+      start: (input) => startRun({ ...input, trigger: "manual" }),
+      callback: (runId, hookId) => ingress.createCallback(runId, hookId),
+      cancel: (runId) => endRunById(runId, { status: "cancelled" }),
+    });
+
+    const internals: EngineInternals = {
+      store,
+      links,
+      threads,
+      services,
+      functions,
+      runLogs,
+      runWaits,
+      attachments,
+      events,
+      notices,
+      scope,
+      startStep,
+      changed,
+      runChanged,
+      announce,
+      complete,
+      endRun,
+      endRunById,
+      launchRun,
+      restart,
+      automationOfRun,
+      ignoreFailure,
+    };
+    const built = yield* makeDriver(internals);
+    driver = built;
+
+    const feed = yield* makeLiveFeed(changes);
+    yield* forkRoot(events.worker);
+
+    // Thread-backed steps finish when their thread's run ends. Settling reads the thread, so it
+    // runs off the domain event stream, which event triggers match against too.
+    const settles = yield* Queue.unbounded<string>();
+    yield* forkRoot(
+      Queue.take(settles).pipe(
+        Effect.flatMap((threadId) =>
+          store.stepForThread(threadId).pipe(
+            Effect.flatMap((step) => (step ? built.settleThreadStep(step) : Effect.void)),
+            logFailure("Automation step couldn't settle"),
+            Effect.ensuring(built.adjustBusy(-1)),
+          ),
+        ),
+        Effect.forever,
       ),
-    subscribeRun: (runId) => feed.watch(`run:${runId}`, catalog.getRun(runId), runShows(runId)),
-    subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
-    tick,
-    drain: replays.drain,
-  } satisfies WorkflowEngineShape;
-});
+    );
+    yield* forkRoot(
+      Stream.runForEach(threads.domainEvents, (event) =>
+        events
+          .offer(event)
+          .pipe(
+            Effect.andThen(
+              attachments.onDomainEvent(event).pipe(logFailure("Automation detach failed")),
+            ),
+            Effect.andThen(
+              event.type === "run.updated" && isTerminalRunStatus(event.payload.status)
+                ? built
+                    .adjustBusy(1)
+                    .pipe(Effect.andThen(Queue.offer(settles, event.threadId)), Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
+      ),
+    );
 
-/** The engine, on the host services in host.ts; each host provides them (the server's: serverHost.ts). */
-export const layer = Layer.effect(WorkflowEngine, make);
+    // Attached runs' monitors come back after a restart (the driver recovers its own runs).
+    yield* forkRoot(attachments.recover.pipe(logFailure("Automation recovery failed")));
+
+    return {
+      ...catalog,
+      // A built-in's host row changes only with the code.
+      save: (input, authorize) =>
+        builtIns.guardSave(input).pipe(Effect.andThen(catalog.save(input, authorize))),
+      remove,
+      startRun,
+      builtIns: Effect.sync(() => BUILT_IN_AUTOMATIONS.map(builtInSummary)),
+      customize: builtIns.customize,
+      cancelAttached: attachments.cancelAttached,
+      startWait: waits.start,
+      listWaits: waits.list,
+      stopWait: waits.stop,
+      watchPullRequest: waits.watchPullRequest,
+      requestMerge: waits.requestMerge,
+      registerBuiltinTools: builtinTools.register,
+      registerPullRequestReads: (reads) =>
+        Effect.sync(() => {
+          pullRequestReads = reads;
+        }),
+      setWebhookSecret,
+      cancelRun,
+      retryRun,
+      answer,
+      emit,
+      subscribeList: () => feed.watch("list", catalog.list(), listShows, { keepOnFailure: true }),
+      subscribeAutomation: (automationId) =>
+        feed.watch(
+          `automation:${automationId}`,
+          catalog.get(automationId),
+          automationShows(automationId),
+        ),
+      subscribeRun: (runId) => feed.watch(`run:${runId}`, catalog.getRun(runId), runShows(runId)),
+      subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
+      // One failing doesn't hold up the other.
+      tick: built.tick.pipe(Effect.ensuring(sources.tick)),
+      drain: built.drain,
+    } satisfies WorkflowEngineShape;
+  });
+
+/**
+ * The engine replaying runs in QuickJS, on the host services in host.ts; each
+ * host provides them (the server's: serverHost.ts).
+ */
+export const layer = Layer.effect(WorkflowEngine, makeEngine(makeReplayDriver));

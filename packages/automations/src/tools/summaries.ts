@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { outlineGraph } from "@signalbox/automations/outline";
+import { outlineGraph } from "../outline.ts";
 
 /**
  * What the automation tools return, and how engine views become it: flat

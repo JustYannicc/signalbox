@@ -13,6 +13,8 @@ import { declaredNames, isFunctionNode, someNode } from "./walk.ts";
 const FILENAME = "automation.ts";
 const MAX_DIAGNOSTICS = 50;
 const SHAPE_HINT = "export default workflow(async (w, input) => { … })";
+/** Holds the default export inside the worker module's factory. */
+const WORKER_DEFAULT = "__signalboxWorkflow";
 
 function failure(diagnostics: ReadonlyArray<WorkflowDiagnostic>): WorkflowCompileResult {
   const seen = new Set<string>();
@@ -126,6 +128,8 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
   const imported = new Set<string>();
   const removals: Edit[] = [];
   const sdkImports: Edit[] = [];
+  /** Turns `meta` and the default export into plain declarations, for the worker module. */
+  const unexports: Edit[] = [];
   const rest: Node[] = [];
   let meta: WorkflowMeta | null = null;
   let sawMeta = false;
@@ -158,6 +162,7 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
         ) {
           sawMeta = true;
           meta = readMeta(source, declarator.init);
+          unexports.push({ start: statement.start, end: declaration.start, text: "" });
         } else {
           source.error(statement, "Only meta and the default workflow can be exported.");
         }
@@ -165,6 +170,11 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
       }
       case "ExportDefaultDeclaration": {
         workflowExport = statement;
+        unexports.push({
+          start: statement.start,
+          end: statement.declaration.start,
+          text: `const ${WORKER_DEFAULT} = `,
+        });
         const declaration = unwrap(statement.declaration as Node);
         const fn = declaration.type === "CallExpression" ? declaration.arguments[0] : undefined;
         if (
@@ -225,17 +235,19 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
   }
   if (source.diagnostics.length > 0 || !meta || !workflowExport) return failure(source.diagnostics);
 
-  const transformed = transformSync(
-    FILENAME,
-    applyEdits(text, [...analyzer.edits.values(), ...removals]),
-    {
-      lang: "ts",
-      sourceType: "module",
-    },
-  );
-  if (transformed.errors.length > 0) {
+  const scriptEdits = [...analyzer.edits.values(), ...removals];
+  const transformed = transformSync(FILENAME, applyEdits(text, scriptEdits), {
+    lang: "ts",
+    sourceType: "module",
+  });
+  const worker = transformSync(FILENAME, applyEdits(text, [...scriptEdits, ...unexports]), {
+    lang: "ts",
+    sourceType: "module",
+  });
+  const prepareErrors = [...transformed.errors, ...worker.errors];
+  if (prepareErrors.length > 0) {
     return failure(
-      transformed.errors.map((error) => ({
+      prepareErrors.map((error) => ({
         message: `Couldn't prepare the automation to run: ${error.message}`,
         line: 1,
         column: 1,
@@ -268,5 +280,23 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
     }
     runModule = runTransformed.code;
   }
-  return { ok: true, workflow: { meta, graph: { nodes }, script: transformed.code, runModule } };
+  return {
+    ok: true,
+    workflow: {
+      meta,
+      graph: { nodes },
+      script: transformed.code,
+      runModule,
+      workerModule: workerModule(worker.code),
+    },
+  };
+}
+
+/**
+ * Wraps the script, with its exports turned into declarations, in one
+ * factory. A Dynamic Worker's isolate is shared by every run of the version,
+ * so each run calls `load` for top-level state of its own.
+ */
+function workerModule(code: string) {
+  return `export function load(workflow) {\n${code}\nreturn ${WORKER_DEFAULT};\n}\n`;
 }

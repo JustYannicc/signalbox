@@ -38,6 +38,7 @@
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
         "scripts/verify-automations-live.ts", // signalbox: automations
+        "scripts/precompile-built-in-automations.ts", // signalbox: automations
         "scripts/verify-automations-tickets.ts", // signalbox: automations
         "src/provider/testFixtures/*.mjs",
       ],
