@@ -1,0 +1,22 @@
+{
+  "name": "@signalbox/cli",
+  "private": true,
+  "bin": {
+    "signalbox": "./src/bin.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@signalbox/api": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:"
+  }
+}
