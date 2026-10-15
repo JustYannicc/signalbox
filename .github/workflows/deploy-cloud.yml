@@ -211,19 +211,6 @@ jobs:
         if: github.event.action == 'reopened'
         run: bash .trusted-cleanup/.github/scripts/call-preview-cleanup.sh activate "$PR_NUMBER"
 
-      # TEMPORARY (#299 evidence): production's drive buckets' live settings,
-      # which adopting them would reset to none. Settings only, no objects.
-      - name: Read drive bucket settings
-        run: |
-          for bucket in signalbox-drives signalbox-drives-preview; do
-            for part in cors lifecycle domains/managed domains/custom; do
-              echo "$bucket $part: $(curl --silent --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-                --header 'cf-r2-jurisdiction: eu' \
-                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$bucket/$part" \
-                | jq -c '{success, result, errors: [.errors[]? | {code, message}]}')"
-            done
-          done
-
       - *plan
       - *deploy
 
