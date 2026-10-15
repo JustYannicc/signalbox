@@ -35,12 +35,14 @@ import type { RunnerBuild } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import { ChildProcess } from "effect/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { runRunnerHost } from "./RunnerHost.ts";
 import { runRunnerMachine } from "./RunnerMachine.ts";
+import { makeSecretMask, maskingLogger } from "./secretMask.ts";
 
 const { values, positionals } = NodeUtil.parseArgs({
   allowPositionals: true,
@@ -80,6 +82,9 @@ const runnerBuild = Effect.gen(function* () {
   } satisfies RunnerBuild;
 });
 
+// Every secret a Runner here loaded, masked in what it sends and in this process's logs.
+const secretMask = makeSecretMask();
+
 const program = Effect.gen(function* () {
   if (positionals[0] === "machine") {
     return yield* runRunnerMachine({
@@ -90,6 +95,7 @@ const program = Effect.gen(function* () {
       build: yield* runnerBuild,
       // The Runner image makes this folder; elsewhere nothing is mounted.
       drivesMountPoint: "/drives",
+      secretMask,
     });
   }
   const port = Number(values.port);
@@ -104,11 +110,18 @@ const program = Effect.gen(function* () {
     imageVersion,
     build: yield* runnerBuild,
     ...(values.drives === undefined ? {} : { drivesMountPoint: values.drives }),
+    secretMask,
   });
 });
 
 program.pipe(
   Effect.scoped,
-  Effect.provide(Layer.mergeAll(NodeServices.layer, McpProviderSessions.layer)),
+  Effect.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      McpProviderSessions.layer,
+      Logger.layer([maskingLogger(secretMask)]),
+    ),
+  ),
   NodeRuntime.runMain,
 );

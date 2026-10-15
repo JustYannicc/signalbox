@@ -27,6 +27,7 @@ import { PullRequestsToolkit } from "../../mcp/toolkits/pullRequests/tools.ts";
 import * as ThreadHandlers from "../../mcp/toolkits/thread/handlers.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { automationError, errorMessage } from "../errors.ts";
+import * as PullRequestReads from "../events/pullRequestReads.ts";
 import { asRecord } from "../json.ts";
 import * as WorkflowEngine from "../WorkflowEngine.ts";
 import type { BuiltinToolCall } from "./runner.ts";
@@ -143,7 +144,7 @@ const register = Effect.gen(function* () {
   yield* engine.registerBuiltinTools({ tools: [...routes.keys()].toSorted(), call });
 });
 
-export const layer = Layer.effectDiscard(register).pipe(
+const toolsLayer = Layer.effectDiscard(register).pipe(
   Layer.provide(
     Layer.mergeAll(
       McpToolAccess.HandlersLayer.layer(OrchestratorHandlers.layer),
@@ -156,3 +157,6 @@ export const layer = Layer.effectDiscard(register).pipe(
   ),
   Layer.provide(Layer.mergeAll(OrchestratorMcpService.layer, ThreadMetadataMcpService.layer)),
 );
+
+/** Hands the engine Signalbox's tools, and the pull request reads behind `pr.*` event details. */
+export const layer = Layer.mergeAll(toolsLayer, PullRequestReads.layer);

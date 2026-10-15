@@ -15,6 +15,8 @@ import type { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchServic
 import type { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import type { ProjectService } from "../project/ProjectService.ts";
 import { isBuiltinToolOperation, type BuiltinTools } from "./builtinTools/runner.ts";
+import { waitForEventProblem } from "./compiler/eventTriggers.ts";
+import type { CallbackLink } from "./callbacks.ts";
 import { automationDefaults, stepArgs } from "./columns.ts";
 import type { makeConnections } from "./connections.ts";
 import { automationError, fail } from "./errors.ts";
@@ -51,6 +53,8 @@ export interface StartStepDependencies {
   readonly connections: Effect.Success<typeof makeConnections>;
   /** `signalbox.<tool>` calls. */
   readonly builtinTools: BuiltinTools;
+  /** `w.hook`: a callback link for the run. */
+  readonly callback: (runId: string) => Effect.Effect<CallbackLink, AutomationError>;
   /** `w.start` by a built-in's name, when the project has no automation of that name. */
   readonly resolveBuiltIn: (
     name: string,
@@ -108,11 +112,14 @@ export const makeStartStep =
           Effect.map((at): StepOutcome => ({ type: "waiting", wakeAt: at })),
         );
       case "waitFor": {
-        const { event, timeout } = asRecord(first);
+        const { event, timeout, on } = asRecord(first);
         // `on` steps wait without a name; runWaits.ts hands them matching events.
         const named = typeof event === "string" ? { event } : {};
         if (!waitsOnEvents(step) && !named.event)
           return fail("w.waitFor needs `on` or an event name.");
+        // A computed `on` skipped the compiler's check.
+        const problem = on === undefined ? null : waitForEventProblem(on);
+        if (problem) return Effect.fail(explained(problem.message, { fix: problem.hint }));
         return Effect.gen(function* () {
           const at = timeout === undefined ? undefined : yield* wakeAt(timeout);
           return { type: "waiting", ...named, ...(at ? { wakeAt: at } : {}) } satisfies StepStart;
@@ -134,6 +141,10 @@ export const makeStartStep =
               Effect.map((at): StepOutcome => ({ type: "waiting", wakeAt: at })),
             );
       }
+      case "hook":
+        return deps
+          .callback(step.run_id)
+          .pipe(Effect.map((value): StepOutcome => ({ type: "done", value })));
       case "recall":
         return store.recall(automation.automation_id, String(first)).pipe(
           Effect.map((value): StepOutcome => ({

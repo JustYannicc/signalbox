@@ -12,6 +12,7 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { encodeLinkToken } from "../pool/poolLink.ts";
 import * as UserPools from "../user/UserPools.ts";
+import * as OnePasswordAccount from "../user/OnePasswordAccount.ts";
 import * as UserFolders from "../user/UserFolders.ts";
 import type { PreviewSetup } from "./previewSetupWire.ts";
 
@@ -23,6 +24,7 @@ import type { PreviewSetup } from "./previewSetupWire.ts";
  *
  * Everything but pools is copied once per source; a preview's pools stay
  * links to production's (`pool/PoolLinks.ts`), which every hand-off renews.
+ * The 1Password account is taken on any hand-off while the preview has none.
  */
 
 /** A claim is redeemed the moment the browser lands back on the preview. */
@@ -104,6 +106,7 @@ export const layer = Layer.effect(
     const directory = yield* PoolDirectory.PoolDirectory;
     const folders = yield* UserFolders.UserFolders;
     const github = yield* GitHubConnection.GitHubConnection;
+    const onePassword = yield* OnePasswordAccount.OnePasswordAccount;
 
     // `UserStore`'s profile, read here: importing it would be a cycle (it runs this migration).
     const signedInUser = Effect.flatMap(
@@ -145,12 +148,14 @@ export const layer = Layer.effect(
               ),
           { concurrency: LINK_CONCURRENCY },
         ).pipe(Effect.catch(failed("Could not link the pools.")));
+        const token = yield* onePassword.token;
         return {
           userId: actor.userId,
           pools: linked,
           sections: yield* folders.legacyRows,
           folders: yield* folders.rows,
           github: yield* github.recorded,
+          ...(token === null ? {} : { onePassword: { token } }),
         } satisfies PreviewSetup;
       });
 
@@ -195,6 +200,10 @@ export const layer = Layer.effect(
         }>`SELECT imported_at FROM preview_setup_imports WHERE source = ${source}`;
         const first = imported === undefined;
         if (first) yield* copy(setup);
+        // Every run, never over one connected here: production may have connected it since.
+        if (setup.onePassword !== undefined) {
+          yield* folders.adoptOnePassword(setup.onePassword.token);
+        }
         // Every pool the first time; after that only the ones still linked, or new
         // since, so a pool someone pointed elsewhere here stays theirs.
         const current = yield* pools

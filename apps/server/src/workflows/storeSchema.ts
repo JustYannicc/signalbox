@@ -140,6 +140,16 @@ const TABLES = [
     consumed_by TEXT,
     UNIQUE (run_id, event_id)
   )`,
+  /**
+   * Callback links runs made with `w.hook`: a request to one with its token
+   * becomes a `hook.called` event while the run that made it is running.
+   */
+  `CREATE TABLE IF NOT EXISTS signalbox_automation_callbacks (
+    hook_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    token TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
 ];
 
 /**
@@ -176,6 +186,8 @@ const INDEXES = [
     ON signalbox_automation_run_links (lineage_id, started_at)`,
   `CREATE INDEX IF NOT EXISTS signalbox_automation_run_inbox_by_run
     ON signalbox_automation_run_inbox (run_id, consumed_by)`,
+  `CREATE INDEX IF NOT EXISTS signalbox_automation_callbacks_by_run
+    ON signalbox_automation_callbacks (run_id)`,
 ];
 
 /** Creates the tables, or brings existing ones up to the current shape. Safe to run every start. */

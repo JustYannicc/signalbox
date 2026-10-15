@@ -27,6 +27,7 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as FolderTables from "./folderTables.ts";
+import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserSections from "./UserSections.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
@@ -204,6 +205,7 @@ const migrations = Migrator.fromRecord({
   "0012_resource_bindings": ResourceBindings.createTables,
   "0013_folders": FolderTables.createTables,
   "0014_push_devices": PushDevices.createTables,
+  "0015_folder_secrets": Effect.andThen(FolderTables.addSecrets, OnePasswordAccount.createTables),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

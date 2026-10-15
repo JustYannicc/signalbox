@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 
 import { canWrite, parseDriveId } from "../drive/driveAccess.ts";
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
-import type { TurnInstructions, TurnPools } from "../thread/turnPool.ts";
+import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 import { driveOfProject } from "./contextProjects.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as UserFolders from "./UserFolders.ts";
@@ -23,6 +23,7 @@ export interface ThreadPlace {
 export interface ThreadTurn {
   readonly pools: TurnPools;
   readonly instructions: TurnInstructions;
+  readonly secrets: TurnSecrets;
 }
 
 /**

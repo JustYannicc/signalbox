@@ -42,6 +42,12 @@ export const PreviewSetup = Schema.Struct({
   folders: Schema.optionalKey(FolderRows),
   /** Pipes keeps the tokens under the WorkOS user, which production and previews share. */
   github: Schema.NullOr(Schema.Struct({ login: Schema.String, githubUserId: Schema.Number })),
+  /**
+   * The user's 1Password service account (#395), so the preview's threads
+   * get their folders' secrets too. Absent: none connected, or a cloud from
+   * before folder secrets.
+   */
+  onePassword: Schema.optionalKey(Schema.Struct({ token: Schema.String })),
 });
 export type PreviewSetup = typeof PreviewSetup.Type;
 
