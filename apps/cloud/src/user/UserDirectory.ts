@@ -99,6 +99,16 @@ export interface UserObjectApi {
   readonly shellSnapshot: () => Promise<unknown>;
   /** A thread object's summary outbox delivery, in its JSON encoding. */
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
+  /**
+   * A thread object's event outbox delivery (`thread/eventOutbox.ts`): the
+   * user's thread's next domain events with their sequence, in order and in
+   * their JSON encoding (`wire.events`), for the user's automations. Returns
+   * once they're taken; a throw has the thread send them again.
+   */
+  readonly threadEvents: (input: {
+    readonly threadId: string;
+    readonly events: unknown;
+  }) => Promise<void>;
   /** Drops the thread index and rebuilds it from the user's thread objects. */
   readonly rebuildThreadIndex: () => Promise<number>;
   /** Starts connecting GitHub (`github/GitHubConnection.ts`); WorkOS comes back to `returnTo`. */
@@ -201,6 +211,7 @@ const METHODS = Object.keys({
   syncOrganizations: true,
   shellSnapshot: true,
   recordThreadSummary: true,
+  threadEvents: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,

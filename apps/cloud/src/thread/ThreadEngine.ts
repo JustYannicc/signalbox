@@ -43,7 +43,7 @@ import {
   type TurnSecrets,
 } from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
-import type { ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
+import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
 
 /**
  * One thread's orchestration, inside its Durable Object. Commands and provider
@@ -207,6 +207,25 @@ export class ThreadEngine extends Context.Service<
       readonly summary: ThreadSummary;
     } | null>;
     readonly acknowledgeSummary: (revision: number) => Effect.Effect<void>;
+    /**
+     * Replaces the automation runs attached to the thread, which its shell
+     * lists as monitors (`threadProjection.ts`). A change to the sidebar row
+     * gets a new summary revision. An empty list clears them. Only for the
+     * thread's owner, whichever contexts they're in, as their index is.
+     */
+    readonly setMonitors: (
+      actor: Actor,
+      monitors: ReadonlyArray<ThreadMonitor>,
+    ) => Effect.Effect<void, ThreadNotFoundError>;
+    /** Whether committed events wait for the owner's automations (`eventOutbox.ts`). */
+    readonly hasPendingEvents: Effect.Effect<boolean>;
+    /** Up to `limit` committed events the owner's automations have not acknowledged, oldest first. */
+    readonly pendingEvents: (limit: number) => Effect.Effect<{
+      readonly ownerUserId: string;
+      readonly threadId: ThreadId;
+      readonly events: ReadonlyArray<ThreadStore.StoredEvent>;
+    } | null>;
+    readonly acknowledgeEvents: (through: number) => Effect.Effect<void>;
   }
 >()("@signalbox/cloud/thread/ThreadEngine") {}
 
@@ -219,14 +238,19 @@ interface Thread {
 interface State {
   readonly head: number;
   readonly thread: Thread | null;
+  /** The automation runs attached to the thread, kept outside its log. */
+  readonly monitors: ReadonlyArray<ThreadMonitor>;
   /** `summaryKey` of the current projection, so a commit computes only the new one. */
   readonly summaryKey: string;
 }
 
 /** The sidebar row without its timestamp, which moves on every streamed chunk. */
-const summaryKey = (projection: OrchestrationV2ThreadProjection | null) => {
+const summaryKey = (
+  projection: OrchestrationV2ThreadProjection | null,
+  monitors: ReadonlyArray<ThreadMonitor>,
+) => {
   if (projection === null) return "";
-  const { updatedAt: _updatedAt, ...rest } = threadShellFromProjection(projection);
+  const { updatedAt: _updatedAt, ...rest } = threadShellFromProjection(projection, monitors);
   return JSON.stringify(rest);
 };
 
@@ -250,10 +274,10 @@ const make = Effect.gen(function* () {
     ? yield* Effect.orDie(
         Effect.andThen(
           store.initialize,
-          Effect.all({ events: store.events(0), owner: store.owner }),
+          Effect.all({ events: store.events(0), owner: store.owner, monitors: store.monitors }),
         ),
       )
-    : { events: [], owner: null };
+    : { events: [], owner: null, monitors: [] };
   const initialProjection = applyEvents(
     null,
     initial.events.map((stored) => stored.event),
@@ -264,7 +288,8 @@ const make = Effect.gen(function* () {
       initial.owner === null || initialProjection === null
         ? null
         : { owner: initial.owner, projection: initialProjection },
-    summaryKey: summaryKey(initialProjection),
+    monitors: initial.monitors,
+    summaryKey: summaryKey(initialProjection, initial.monitors),
   });
 
   const serialized = lock.withPermits(1);
@@ -304,7 +329,7 @@ const make = Effect.gen(function* () {
     }
     // The thread's first commit creates its storage.
     if (current.thread === null) yield* Effect.orDie(store.initialize);
-    const nextKey = summaryKey(projection);
+    const nextKey = summaryKey(projection, current.monitors);
     const head = yield* Effect.orDie(
       store.commit({
         head: current.head,
@@ -317,7 +342,12 @@ const make = Effect.gen(function* () {
         summaryChanged: nextKey !== current.summaryKey,
       }),
     );
-    yield* Ref.set(state, { head, thread: { owner, projection }, summaryKey: nextKey });
+    yield* Ref.set(state, {
+      head,
+      thread: { owner, projection },
+      monitors: current.monitors,
+      summaryKey: nextKey,
+    });
     if (events.length > 0) {
       yield* PubSub.publish(
         published,
@@ -582,26 +612,33 @@ const make = Effect.gen(function* () {
     (current) => current.thread !== null && hasPendingTurnWork(current.thread.projection),
   );
 
-  const summaryOf = (thread: Thread, revision: number): ThreadSummary => ({
+  const summaryOf = (
+    thread: Thread,
+    monitors: ReadonlyArray<ThreadMonitor>,
+    revision: number,
+  ): ThreadSummary => ({
     threadId: thread.projection.thread.id,
     contextId: thread.owner.contextId,
     revision,
-    shell: threadShellFromProjection(thread.projection),
+    shell: threadShellFromProjection(thread.projection, monitors),
   });
 
   const summary: ThreadEngine["Service"]["summary"] = (actor) =>
     Effect.gen(function* () {
-      const thread = ownedBy(yield* Ref.get(state), actor);
+      const current = yield* Ref.get(state);
+      const thread = ownedBy(current, actor);
       if (thread === null) return null;
       const outbox = yield* Effect.orDie(store.outbox);
-      return summaryOf(thread, outbox.revision);
+      return summaryOf(thread, current.monitors, outbox.revision);
     });
 
   const undelivered = Effect.gen(function* () {
-    const { thread } = yield* Ref.get(state);
+    const { thread, monitors } = yield* Ref.get(state);
     if (thread === null) return null;
     const outbox = yield* Effect.orDie(store.outbox);
-    return outbox.revision > outbox.delivered ? { thread, revision: outbox.revision } : null;
+    return outbox.revision > outbox.delivered
+      ? { thread, monitors, revision: outbox.revision }
+      : null;
   });
 
   const hasPendingSummary: ThreadEngine["Service"]["hasPendingSummary"] = Effect.map(
@@ -616,12 +653,46 @@ const make = Effect.gen(function* () {
         ? null
         : {
             ownerUserId: pending.thread.owner.userId,
-            summary: summaryOf(pending.thread, pending.revision),
+            summary: summaryOf(pending.thread, pending.monitors, pending.revision),
           },
   );
 
   const acknowledgeSummary: ThreadEngine["Service"]["acknowledgeSummary"] = (revision) =>
     Effect.orDie(store.acknowledgeSummary(revision));
+
+  const setMonitors: ThreadEngine["Service"]["setMonitors"] = (actor, monitors) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(state);
+        const thread = ownedBy(current, actor);
+        if (thread === null) return yield* new ThreadNotFoundError();
+        // Stored even while a turn hides them, so they show once it ends.
+        const nextKey = summaryKey(thread.projection, monitors);
+        yield* Effect.orDie(
+          store.saveMonitors({ monitors, summaryChanged: nextKey !== current.summaryKey }),
+        );
+        yield* Ref.set(state, { ...current, monitors, summaryKey: nextKey });
+      }),
+    );
+
+  const hasPendingEvents: ThreadEngine["Service"]["hasPendingEvents"] = Effect.gen(function* () {
+    const { thread, head } = yield* Ref.get(state);
+    return thread !== null && (yield* Effect.orDie(store.eventsDelivered)) < head;
+  });
+
+  const pendingEvents: ThreadEngine["Service"]["pendingEvents"] = (limit) =>
+    Effect.gen(function* () {
+      const { thread } = yield* Ref.get(state);
+      if (thread === null) return null;
+      const delivered = yield* Effect.orDie(store.eventsDelivered);
+      const events = yield* Effect.orDie(store.events(delivered, limit));
+      return events.length === 0
+        ? null
+        : { ownerUserId: thread.owner.userId, threadId: thread.projection.thread.id, events };
+    });
+
+  const acknowledgeEvents: ThreadEngine["Service"]["acknowledgeEvents"] = (through) =>
+    Effect.orDie(store.acknowledgeEvents(through));
 
   const canSee: ThreadEngine["Service"]["canSee"] = (actor) =>
     Effect.map(Ref.get(state), (current) => visibleTo(current, actor) !== null);
@@ -640,6 +711,10 @@ const make = Effect.gen(function* () {
     hasPendingSummary,
     pendingSummary,
     acknowledgeSummary,
+    setMonitors,
+    hasPendingEvents,
+    pendingEvents,
+    acknowledgeEvents,
   });
 });
 

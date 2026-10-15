@@ -111,6 +111,14 @@ export const makeThreadObjectApi = (
           ),
         ),
       ),
+    setMonitors: async (actor, monitors) => {
+      const result = await reply(
+        engine.use((service) => service.setMonitors(actor, wire.monitors.decode(monitors))),
+      );
+      // A new summary revision waits for the alarm's outbox.
+      await afterChange();
+      return result;
+    },
     summary: (actor) =>
       run(
         engine.use((service) =>

@@ -263,6 +263,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.recordThreadSummary(summary);
   }
 
+  threadEvents(input: Parameters<UserObjectApi["threadEvents"]>[0]) {
+    return this.api.threadEvents(input);
+  }
+
   rebuildThreadIndex() {
     return this.api.rebuildThreadIndex();
   }

@@ -15,6 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import type * as CloudAutomations from "./automations/CloudAutomations.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
@@ -36,6 +37,7 @@ import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
+import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
@@ -210,6 +212,7 @@ const makeUserRuntime = (
   people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
   observe: Layer.Layer<never>,
+  automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
 ) =>
   ManagedRuntime.make(
     // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
@@ -249,7 +252,7 @@ const makeUserRuntime = (
           layerUserObjectTokens,
         ),
       ),
-      Layer.provideMerge(observe),
+      Layer.provideMerge(Layer.mergeAll(observe, automations)),
     ),
   );
 
@@ -258,7 +261,7 @@ const makeUserRuntime = (
  * object per thread id, running the same APIs the Durable Objects do and
  * reaching each other through the same directories. `settle` does what the
  * thread objects' alarms do: drive every turn to the end and deliver every
- * pending summary.
+ * pending summary and event.
  */
 export const makeMemoryCloud = (
   options: {
@@ -268,6 +271,8 @@ export const makeMemoryCloud = (
     readonly poolFetch?: (request: Request) => Promise<Response>;
     /** Loggers or a tracer every object here runs with, to see what they log and trace. */
     readonly observe?: Layer.Layer<never>;
+    /** Every user object's automations; none unless given, so thread events are dropped. */
+    readonly automations?: Layer.Layer<CloudAutomations.CloudAutomations>;
   } = {},
 ) => {
   const users = new Map<
@@ -315,6 +320,7 @@ export const makeMemoryCloud = (
       people,
       options.github ?? layerNoGitHub,
       options.observe ?? Layer.empty,
+      options.automations ?? Layer.empty,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -388,6 +394,7 @@ export const makeMemoryCloud = (
             // One provider step per alarm in production; here, until the turn ends.
           }
           yield* deliverPendingSummary;
+          yield* deliverPendingEvents;
         }),
       );
     }
