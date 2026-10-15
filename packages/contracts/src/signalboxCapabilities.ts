@@ -34,6 +34,9 @@ export const SignalboxEnvironmentCapabilityFields = {
   /** Serves the Executor connection automations reach the user's accounts through
       (`automations.connectionStatus`, `connect`, `disconnect`). */
   connectedServices: Schema.optionalKey(Schema.Boolean),
+  /** Clients connected here may add, pair with and switch to other environments. False when
+      this is the user's one environment: clients then show no environment UI at all. */
+  otherEnvironments: Schema.optionalKey(Schema.Boolean),
 };
 
 export type SignalboxEnvironmentCapability = keyof typeof SignalboxEnvironmentCapabilityFields;
@@ -50,6 +53,24 @@ export function environmentSupports(
   capability: SignalboxEnvironmentCapability,
 ): boolean {
   return capabilities?.[capability] !== false;
+}
+
+/**
+ * Whether clients show environments at all: pickers, lists, pairing, adding more. Shown while
+ * any connected environment allows other environments, or before any has reported; hidden once
+ * every one of them is the user's one environment (Signalbox Cloud).
+ */
+export function showsEnvironmentUi(
+  connected: Iterable<
+    { readonly [K in SignalboxEnvironmentCapability]?: boolean } | null | undefined
+  >,
+): boolean {
+  let known = false;
+  for (const capabilities of connected) {
+    if (environmentSupports(capabilities, "otherEnvironments")) return true;
+    known = true;
+  }
+  return !known;
 }
 
 /** Whether Add project offers `provider` on an environment. Unknown and absent offer every host. */

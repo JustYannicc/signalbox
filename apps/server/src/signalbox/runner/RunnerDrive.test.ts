@@ -276,6 +276,9 @@ describe("RunnerDrive", () => {
     const dir = NodePath.join(root, "upstream");
     NodeFS.mkdirSync(dir, { recursive: true });
     git(dir, "init", "-q", "-b", "main");
+    // GitHub serves partial clones, and the files a partial clone fetches later.
+    git(dir, "config", "uploadpack.allowFilter", "true");
+    git(dir, "config", "uploadpack.allowAnySHA1InWant", "true");
     const commit = (file: string, text: string, message: string) => {
       write(dir, file, text);
       git(dir, "add", "-A");
@@ -326,6 +329,19 @@ describe("RunnerDrive", () => {
           // One commit deep: the parents stay on the remote, and git knows not to look.
           expect(drive.shallow()).toEqual([head]);
           expect(git(drive.store, "rev-list", "--count", head)).toBe("1");
+          // Its folders, never its files: the remote keeps those for the drive.
+          const files = git(upstream.dir, "ls-tree", "-r", "--format=%(objectname)", head).split(
+            "\n",
+          );
+          expect(drive.promised().toSorted()).toEqual(files.toSorted());
+          // git reaches the remote's files with the turn's token, which stays out of the workspace.
+          const credentials = NodePath.join(root, "vm-1", "threads", ".t1.remote-credential");
+          expect(read(NodePath.dirname(credentials), NodePath.basename(credentials))).toBe(
+            "username=signalbox\npassword=remote-token\n",
+          );
+          expect(read(cwd, ".git/config")).not.toContain("remote-token");
+          expect(git(cwd, "config", "--get", "extensions.partialClone")).toBe("origin");
+          expect(gitOk(drive.store, "cat-file", "-e", files[0]!)).toBe(false);
           expect(git(cwd, "log", "--format=%s")).toBe("second");
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
@@ -418,7 +434,33 @@ describe("RunnerDrive", () => {
       ),
     );
 
-    it.effect("restores a thread on a new machine from the drive's packs alone", () =>
+    it.effect("restores a thread on a new machine, fetching the files the remote keeps", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const first = yield* machine(drive, root, "vm-1", "t1");
+          yield* first.runner.prepare("remote-token");
+          write(first.cwd, "notes.md", "turn one\n");
+          yield* first.runner.finishTurn({ message: "Notes" });
+          // The remote moves on, so the thread's base is no longer what a fetch brings.
+          upstream.commit("src/app.ts", "export const later = 1;\n", "Later");
+
+          const second = yield* machine(drive, root, "vm-2", "t1");
+          yield* second.runner.prepare("remote-token");
+          expect(git(second.cwd, "rev-parse", "HEAD")).toBe(drive.refs("t1").thread);
+          expect(read(second.cwd, "notes.md")).toBe("turn one\n");
+          // The base's own files, fetched from the remote on checkout.
+          expect(read(second.cwd, "src/app.ts")).toBe("export {}\n");
+          expect(read(second.cwd, "README.md")).toBe("hello\n");
+          expect(status(second.cwd)).toEqual([]);
+          write(second.cwd, "notes.md", "turn two\n");
+          expect((yield* second.runner.finishTurn({ message: "More" })).outcome._tag).toBe("saved");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect("can't restore a thread on a new machine while the remote is unreachable", () =>
       scopedTest((root) =>
         Effect.gen(function* () {
           const upstream = makeUpstream(root);
@@ -428,15 +470,11 @@ describe("RunnerDrive", () => {
           write(first.cwd, "notes.md", "turn one\n");
           yield* first.runner.finishTurn({ message: "Notes" });
 
-          // GitHub is unreachable now: the drive's copy is enough to keep working.
+          // The drive keeps the remote's files on the remote: without it, nothing to check out.
           NodeFS.rmSync(upstream.dir, { recursive: true, force: true });
           const second = yield* machine(drive, root, "vm-2", "t1");
-          yield* second.runner.prepare("remote-token");
-          expect(git(second.cwd, "rev-parse", "HEAD")).toBe(drive.refs("t1").thread);
-          expect(read(second.cwd, "notes.md")).toBe("turn one\n");
-          expect(git(second.cwd, "log", "--format=%s")).toBe("Notes\nsecond");
-          write(second.cwd, "notes.md", "turn two\n");
-          expect((yield* second.runner.finishTurn({ message: "More" })).outcome._tag).toBe("saved");
+          const failed = yield* second.runner.prepare("remote-token").pipe(Effect.flip);
+          expect(failed.message).toMatch(/owner\/repo/);
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );

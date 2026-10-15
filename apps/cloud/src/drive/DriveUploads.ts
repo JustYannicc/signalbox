@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks } from "./DrivePacks.ts";
 import type { StoredCommit } from "./DriveStore.ts";
-import { parseCommit } from "./git/gitObjects.ts";
+import { parseCommit, parseTree } from "./git/gitObjects.ts";
 import { PackError, verifyPack } from "./git/gitPack.ts";
 import type { Bytes, Oid } from "./git/gitObjects.ts";
 
@@ -16,10 +16,14 @@ import type { Bytes, Oid } from "./git/gitObjects.ts";
  * cut off anywhere before the index commits leaves at most an unreferenced
  * file in R2.
  *
- * The one exception to "everything referenced is in the drive" is a remote's
+ * The exception to "everything referenced is in the drive" is a remote's
  * head (`remoteHead`), which the caller has checked against the remote: its
  * parents stay on the remote, so a remote-backed drive holds its main line
- * one commit deep.
+ * one commit deep. And its files stay there too (#406): the pack holds the
+ * commit and its folders, and the files those folders name that the drive
+ * lacks become promised, kept by the remote. Only a checked head promises,
+ * and only files its own folders name, so what the drive relies on the remote
+ * for is exactly what the remote has.
  */
 
 export type UploadResult =
@@ -32,13 +36,15 @@ class InvalidPack extends Schema.TaggedError<InvalidPack>()("InvalidPack", {
 
 const refused = (reason: string): UploadResult => ({ _tag: "refused", reason });
 
-export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* (input: {
+export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = never>(input: {
   readonly driveId: string;
   readonly threadId: string;
   readonly idx: Bytes;
   readonly pack: Bytes;
-  /** A commit in the pack that is the remote's current head. Its parents may be absent. */
+  /** A commit in the pack that is the remote's current head. Its parents and files may be absent. */
   readonly remoteHead?: Oid;
+  /** The sizes of the remote head's files as the remote lists them, asked only when it promises any. */
+  readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
 }) {
   if (input.pack.length > MAX_PACK_BYTES) {
     return refused(`Packs over ${MAX_PACK_BYTES} bytes are not stored yet.`);
@@ -61,8 +67,25 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* (input:
   const parents = new Set(head === undefined ? [] : parseCommit(head.content).parents);
   const lacking = yield* drive.missing([...pack.external, ...parents]);
   const onRemote = new Set(lacking.filter((oid) => parents.has(oid)));
-  const external = [...pack.external].filter((oid) => !onRemote.has(oid));
-  const absent = lacking.filter((oid) => !onRemote.has(oid));
+  // A checked head's folders name files the remote keeps: those it lacks, the drive is promised.
+  // Only the folders it reaches: another tree in the pack could name anything as a file.
+  const files = new Set<Oid>();
+  const folders = head === undefined ? [] : [parseCommit(head.content).tree];
+  for (const seen = new Set<Oid>(); folders.length > 0;) {
+    const oid = folders.pop()!;
+    const folder = pack.structure.get(oid);
+    if (seen.has(oid) || folder?.type !== "tree") continue;
+    seen.add(oid);
+    for (const entry of parseTree(folder.content)) {
+      if (entry.kind === "directory") folders.push(entry.oid);
+      else if (entry.kind !== "submodule") files.add(entry.oid);
+    }
+  }
+  const promised = lacking.filter((oid) => files.has(oid));
+  const kept = new Set([...onRemote, ...promised]);
+  // What the remote keeps isn't checked again as the pack registers: it registers with it.
+  const external = [...pack.external].filter((oid) => !kept.has(oid));
+  const absent = lacking.filter((oid) => !kept.has(oid));
   if (absent.length > 0) {
     return refused(`The pack references ${absent.length} objects the drive does not have.`);
   }
@@ -94,6 +117,14 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* (input:
     commits,
     external,
     ...(onRemote.size > 0 && input.remoteHead !== undefined ? { shallow: [input.remoteHead] } : {}),
+    ...(promised.length > 0
+      ? {
+          promised: yield* Effect.map(
+            input.promisedSizes ?? Effect.succeed(new Map<Oid, number>()),
+            (sizes) => promised.map((oid) => ({ oid, size: sizes.get(oid) ?? null })),
+          ),
+        }
+      : {}),
   });
   if (registered._tag === "missing") {
     return refused(

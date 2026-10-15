@@ -10,6 +10,7 @@ import { SettingsRow, SettingsSection } from "../components/settings/settingsLay
 import { Switch } from "../components/ui/switch";
 import { useAtomCommand } from "../state/use-atom-command";
 import { productAnalyticsSettings, setProductAnalyticsEnabled } from "./productAnalytics";
+import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 
 const DESCRIPTION =
   "Anonymous usage events go to T3 Code's and Signalbox's PostHog projects. No prompts, responses, or file contents. Turning this off stops both.";
@@ -41,9 +42,14 @@ function useEnvironmentAnalytics(environmentIds: readonly EnvironmentId[]) {
   );
 }
 
-function describe(environments: readonly EnvironmentAnalytics[]): string {
+function describe(
+  environments: readonly EnvironmentAnalytics[],
+  showsEnvironmentUi: boolean,
+): string {
   if (environments.some((entry) => entry.settings === null && !entry.waiting)) {
-    return "Couldn't read this setting from every selected environment. Update its server to change it here.";
+    return showsEnvironmentUi
+      ? "Couldn't read this setting from every selected environment. Update its server to change it here."
+      : "Couldn't read this setting right now.";
   }
   if (environments.every((entry) => entry.settings?.disabledByServer)) {
     return "Turned off on this server by T3CODE_TELEMETRY_ENABLED=false.";
@@ -63,6 +69,7 @@ export function ProductAnalyticsSettingsSection() {
   );
   const environments = useEnvironmentAnalytics(environmentIds);
   const setEnabled = useAtomCommand(setProductAnalyticsEnabled);
+  const showsEnvironmentUi = useShowsEnvironmentUi();
   const [saving, setSaving] = useState(false);
   if (environments.length === 0) return null;
 
@@ -85,7 +92,7 @@ export function ProductAnalyticsSettingsSection() {
       <SettingsRow
         id="product-analytics"
         title="Share usage analytics"
-        description={describe(environments)}
+        description={describe(environments, showsEnvironmentUi)}
         mixed={values.size > 1}
         control={
           <Switch

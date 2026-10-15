@@ -299,6 +299,9 @@ const decodeKnown = Schema.decodeUnknownSync(KnownAccounts);
 
 const reject = (reason: string) => Effect.fail(new PoolRejectedError({ reason }));
 
+/** Who the audit log names for what the pool does on its own. */
+const POOL_ITSELF: PoolActor = { userId: "pool" };
+
 const backingOf = (row: PoolRow): PoolBacking =>
   row.backing === "external" && row.external_url !== null
     ? { mode: "external", url: row.external_url }
@@ -494,19 +497,62 @@ const make = Effect.gen(function* () {
 
   /**
    * Reads the accounts' windows after their list (`poolLimits.ts`), one read
-   * at a time so an account is never probed twice. Never fails the list.
+   * at a time so an account is never probed twice, and records every
+   * cooldown that read ended. Never fails the list.
    */
   const refreshLimits = (
     endpoint: CliProxyApi.PoolEndpoint,
     live: ReadonlyArray<CliProxyApi.ListedAccount>,
     now: number,
-    probe: boolean,
+    mode: PoolLimits.ReadMode,
   ) =>
-    withSql(PoolLimits.refresh(endpoint, live, now, { probe })).pipe(
+    withSql(PoolLimits.refresh(endpoint, live, now, mode)).pipe(
+      Effect.tap((cleared) =>
+        Effect.forEach(
+          cleared,
+          (each) =>
+            audit(POOL_ITSELF, "clear-cooldown", `${each.name}: ${each.reason}`).pipe(
+              // A wide event: what happened and how much waiting it saved, never who or what.
+              Effect.andThen(
+                Effect.logInfo("pool cooldown cleared").pipe(
+                  Effect.annotateLogs({
+                    "account.type": each.type,
+                    "cooldown.held_for_minutes": Math.round(each.heldForMs / 60_000),
+                  }),
+                ),
+              ),
+            ),
+          { discard: true },
+        ),
+      ),
       readingLimits.withPermits(1),
       Effect.catchTags({
         SqlError: (cause) => Effect.logWarning("pool limits not stored", { cause }),
       }),
+    );
+
+  /** When a rate limit last made the pool check its held accounts (`checkHeldAccounts`). */
+  const heldCheck = { at: 0 };
+
+  /**
+   * After a model request came back rate limited: checks only the accounts
+   * the CLIProxyAPI holds with their providers, and lets go of those with
+   * room again. Clients retry, so a stale cooldown ends within
+   * `HELD_CHECK_MS` of the next attempt with nobody touching the pool. At
+   * most once per `HELD_CHECK_MS`; its probes are bounded on their own, and
+   * it never fails the response it follows.
+   */
+  const checkHeldAccounts = (row: PoolRow) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      if (now - heldCheck.at < PoolLimits.HELD_CHECK_MS) return;
+      heldCheck.at = now;
+      const endpoint = endpointOf(row, { passive: true });
+      const live = yield* CliProxyApi.listAccounts(endpoint);
+      yield* refreshLimits(endpoint, live, now, "held");
+    }).pipe(
+      Effect.withSpan("PoolEngine.checkHeldAccounts"),
+      Effect.catch((cause) => Effect.logWarning("pool held account check failed", { cause })),
     );
 
   /**
@@ -556,9 +602,10 @@ const make = Effect.gen(function* () {
       });
       const names = new Set(live.map((account) => account.name));
       const removed = cached.accounts.filter((account) => !names.has(account.name));
-      const probe = options?.passive === true || options?.probe === true;
+      const mode: PoolLimits.ReadMode =
+        options?.passive === true || options?.probe === true ? "probe" : "free";
       if (changed.length === 0 && removed.length === 0 && cached.error === null) {
-        yield* refreshLimits(endpoint, live, now, probe);
+        yield* refreshLimits(endpoint, live, now, mode);
         return live;
       }
       yield* sql.withTransaction(
@@ -578,7 +625,7 @@ const make = Effect.gen(function* () {
           yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
         }),
       );
-      yield* refreshLimits(endpoint, live, now, probe);
+      yield* refreshLimits(endpoint, live, now, mode);
       return live;
     });
 
@@ -890,7 +937,9 @@ const make = Effect.gen(function* () {
       });
       yield* ensureManagedConfig(row, endpoint);
       const response = yield* CliProxyApi.forwardModel(endpoint, path, request);
-      return { response, upstreamMs: clock.currentTimeMillisUnsafe() - sent.at };
+      const upstreamMs = clock.currentTimeMillisUnsafe() - sent.at;
+      if (response.status === 429) yield* checkHeldAccounts(row);
+      return { response, upstreamMs };
     });
 
   const storeRequest: PoolEngine["Service"]["storeRequest"] = (request) =>

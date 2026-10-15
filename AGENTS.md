@@ -16,11 +16,11 @@ Everything is one click. Connecting a provider, adding a second Gmail account, s
 
 ### 2. The cloud runs everything
 
-Work runs on a server; clients are only gateways. Logging in feels like Notion or Google: everything is already there, on every device. The server can be self-hosted, but nothing runs on the client.
+Agent tools today are built on Office assumptions. The unit is a machine: a VM, a worktree, a sandbox. Work is safe once someone commits and pushes, the machine expires, and collaboration means passing copies around. Signalbox is Google Drive. The unit is the work, and it lives on the server. Changes persist as they happen with no save step, so a machine stopping is never a data event. History is automatic, sharing grants access to the one thing instead of a copy, and nothing expires. Compute and clients are only windows onto the work: any compute provider can open it, and logging in feels like Notion or Google, with everything already there on every device. The server can be self-hosted, but nothing runs on the client.
 
 ### 3. Push, not pull
 
-Today people pull work and hand it to an agent. Signalbox moves to push: agents do the work and tell you when they need you. Attention is the scarce resource, so every notification, badge, and status has to earn it.
+Today people pull work and hand it to an agent. Signalbox moves to push: agents do the work and tell you when they need you. Attention is the scarce resource, so every notification, badge, and status has to earn it. Git's workflow predates agents; what still matters is who has the authority to decide what goes into production. A pull request is that decision. By the time one reaches a person, the work is done, working, and reviewed, and the only question left is whether to merge it and use it.
 
 ### 4. Nobody has to understand it, anyone can dig in
 
@@ -32,7 +32,7 @@ Most of AI never settled who an agent works for, which is why everyone runs thei
 
 ### 6. Works with everything until you need nothing else
 
-The goal is one app. Until it is good enough, it plugs into what people already use every day. Meta's display glasses made you adopt their whole ecosystem instead of showing your Google Maps and your phone's notifications, and that's why Yannic didn't buy them. Nobody adopts Signalbox wholesale. Everything connects outward, and nothing locks you in.
+The goal is one app. Until it is good enough, it plugs into what people already use every day. Meta's display glasses made you adopt their whole ecosystem instead of showing your Google Maps and your phone's notifications, and that's why Yannic didn't buy them. Drive won while still opening Office files, and Signalbox works with Git hosts, office suites, and the tools people already use the same way. Nobody adopts Signalbox wholesale. Everything connects outward, and nothing locks you in.
 
 ### 7. One interface, wherever you are
 
@@ -117,7 +117,7 @@ The most common defect in this repo is a change that works on the path you teste
 - **Entry points.** A behavior reachable from the chat view is usually also reachable from Settings, the command palette, and a keybinding. Fixing one is not fixing the feature.
 - **Clients.** Web, desktop (wraps web, adds Electron shell/IPC), and mobile (React Native, separate navigation). Shared logic lives in `packages/client-runtime`
 - **Providers.** Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each have an adapter. Provider-shaped features need a decision per adapter, even if the decision is "not supported here".
-- **Agents.** A capability a user can trigger is usually one an agent should reach through MCP tools, and scheduled tasks run the same paths. That only works when it is a service method, not handler code.
+- **Agents and the public API.** Every RPC needs an entry in the reach map (`packages/api/src/*Reach.ts`). The API, the `signalbox` CLI and the MCP tools are all generated from it, so a new RPC is a type error until you choose its entry. The cloud then has to serve it or list it in `apps/cloud/src/api/cloudCoverage.ts`. That only works when the capability is a service method behind the RPC, not handler code.
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.

@@ -32,6 +32,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   useAnyEnvironmentSupports,
   useEnvironmentSupports,
+  useShowsEnvironmentUi,
 } from "../../state/environmentCapabilities"; // signalbox
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
@@ -152,6 +153,7 @@ export function CommandPalette(props: {
   const activeThread = useThreadShell(activeThreadRef);
   const supportsTerminal = useEnvironmentSupports(activeThreadRef?.environmentId, "terminal"); // signalbox
   const supportsScheduledTasks = useAnyEnvironmentSupports("scheduledTasks"); // signalbox
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");
@@ -314,7 +316,9 @@ export function CommandPalette(props: {
       key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
       kind: "project",
       title: project.title,
-      detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
+      detail: !showsEnvironments // signalbox
+        ? "New thread"
+        : `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
       searchTerms: [project.workspaceRoot, "new thread", "project"],
       run: () =>
         navigation.navigate("NewTaskSheet", {
@@ -341,7 +345,9 @@ export function CommandPalette(props: {
           key: scopedThreadKey(thread.environmentId, thread.id),
           kind: "thread",
           title: thread.title || "Untitled thread",
-          detail: [project?.title, environment].filter(Boolean).join(" · "),
+          detail: [project?.title, showsEnvironments ? environment : null] // signalbox
+            .filter(Boolean)
+            .join(" · "),
           searchTerms: [
             project?.title ?? "",
             environment,
@@ -353,7 +359,9 @@ export function CommandPalette(props: {
       });
     return [
       // signalbox: no scheduled tasks where no environment runs them.
-      ...actions.filter((action) => supportsScheduledTasks || action.key !== "scheduledTasks"),
+      ...actions
+        .filter((action) => supportsScheduledTasks || action.key !== "scheduledTasks")
+        .filter((action) => showsEnvironments || action.key !== "environments"),
       ...projectItems,
       ...threadItems,
     ];
@@ -365,6 +373,7 @@ export function CommandPalette(props: {
     runCommand,
     savedConnectionsById,
     selectThread,
+    showsEnvironments,
     supportsScheduledTasks,
     supportsTerminal,
     threads,

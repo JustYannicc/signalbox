@@ -131,6 +131,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     accessManagement: false,
     // Automations and their Executor connection run on self-hosted servers only.
     connectedServices: false,
+    // The cloud is the user's one environment; desktop and mobile are gateways to it.
+    otherEnvironments: false,
   },
 });
 

@@ -32,6 +32,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useTargetsSupporting } from "./signalboxSettingsTargets"; // signalbox
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import {
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
@@ -148,6 +149,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const projectSelected = selectedProjectKey !== null;
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   const targets = resolveMobileSettingsTargets(
     selectedTargets,
     projectSelected ? (selectedProject?.members.map((member) => member.project) ?? []) : null,
@@ -431,7 +433,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
               {props.page === "maintenance" ? (
                 <>
-                  {!projectSelected ? (
+                  {!projectSelected && showsEnvironments ? (
                     <SettingsSection title="Manage environments">
                       {selectedTargets.map((target) => (
                         <SettingsRow

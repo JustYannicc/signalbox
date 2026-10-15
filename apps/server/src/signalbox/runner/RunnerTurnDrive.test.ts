@@ -3,51 +3,60 @@ import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import type { DriveCheckpoint, DriveOutcome, RunnerDrive } from "./RunnerDrive.ts";
+import type { RunnerDrive } from "./RunnerDrive.ts";
+import { DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { finishDriveTurn } from "./RunnerTurnDrive.ts";
 
 const runId = RunId.make("run-1");
 
-const finish = (checkpoint: DriveCheckpoint | null, outcome: DriveOutcome) =>
+const finishing = (finishTurn: RunnerDrive["finishTurn"]) =>
   Effect.gen(function* () {
-    const drive: RunnerDrive = {
-      prepare: () => Effect.die(new Error("not in this test")),
-      autosave: Effect.void,
-      flush: Effect.void,
-      finishTurn: () => Effect.succeed({ checkpoint, outcome }),
-      continueAfterResolution: Effect.die(new Error("not in this test")),
-      abandonMerge: Effect.die(new Error("not in this test")),
-      saveBranch: () => Effect.die(new Error("not in this test")),
-    };
     const emitted: Array<RunnerItem> = [];
     yield* finishDriveTurn({
       runId,
-      message: "Hi",
-      drive,
+      message: "Turn",
+      drive: { finishTurn } as unknown as RunnerDrive,
       emit: (item) => Effect.sync(() => void emitted.push(item)),
       resolve: () => Effect.succeed(false),
     });
-    return emitted;
+    return emitted.flatMap((item) => (item.kind === "drive.notice" ? [item.message] : []));
   });
 
 describe("finishDriveTurn", () => {
   it.effect("says nothing about saving when the thread has nothing saved", () =>
     Effect.gen(function* () {
-      expect(yield* finish(null, { _tag: "nothing_saved" })).toEqual([]);
+      const notices = yield* finishing(() =>
+        Effect.succeed({ checkpoint: null, outcome: { _tag: "nothing_saved" } }),
+      );
+      expect(notices).toEqual([]);
     }),
   );
 
-  it.effect("reports saved files that didn't land on main", () =>
+  it.effect("says saved files didn't land on main, and why", () =>
     Effect.gen(function* () {
-      const checkpoint = { start: null, commit: "c".repeat(40), files: [] };
-      expect(yield* finish(checkpoint, { _tag: "not_landed", reason: "Main moved." })).toEqual([
-        { kind: "drive.checkpoint", runId, ...checkpoint },
-        {
-          kind: "drive.notice",
-          runId,
-          message: "This turn's files are saved but not merged yet: Main moved.",
-        },
-      ]);
+      const notices = yield* finishing(() =>
+        Effect.succeed({
+          checkpoint: { start: null, commit: "c".repeat(40), files: [] },
+          outcome: { _tag: "not_landed", reason: "Main moved." },
+        }),
+      );
+      expect(notices).toEqual(["This turn's files are saved but not merged yet: Main moved."]);
+    }),
+  );
+
+  it.effect("says what's too big when the drive can't take the turn's files", () =>
+    Effect.gen(function* () {
+      const notices = yield* finishing(() =>
+        Effect.fail(new DriveTooLargeError({ message: "big.bin is 80 MB." })),
+      );
+      expect(notices).toEqual(["Saving this turn's files failed: big.bin is 80 MB."]);
+    }),
+  );
+
+  it.effect("keeps any other failure generic", () =>
+    Effect.gen(function* () {
+      const notices = yield* finishing(() => Effect.die(new Error("disk on fire")));
+      expect(notices).toEqual(["Saving this turn's files failed; the last auto-save is kept."]);
     }),
   );
 });

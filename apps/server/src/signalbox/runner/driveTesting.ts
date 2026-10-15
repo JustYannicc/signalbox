@@ -33,6 +33,8 @@ const gitRaw = (cwd: string, ...args: Array<string>) =>
     env: GIT_ENV,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    // Listing a real checkout's objects runs well past the default 1 MB.
+    maxBuffer: 1024 * 1024 * 1024,
   });
 export const git = (cwd: string, ...args: Array<string>) => gitRaw(cwd, ...args).trim();
 export const status = (cwd: string) =>
@@ -57,7 +59,8 @@ export const read = (cwd: string, file: string) =>
 /**
  * A drive the way the cloud keeps one: packs in a bare repository that holds
  * nothing else (so its connectivity is exactly the packs'), refs in memory.
- * Uploads must be closed and not thin; refs move by CAS to commits it has;
+ * Uploads must be closed and not thin, but for files a remote head's folders
+ * name, which the remote keeps (promised); refs move by CAS to commits it has;
  * `main` only fast-forwards to the thread's branch, from the main it merged.
  */
 export const makeFakeDrive = (
@@ -79,6 +82,14 @@ export const makeFakeDrive = (
   /** Set to make the cloud refuse every mirror, as when GitHub has not caught up yet. */
   const settings = { refuseMirror: false };
   const shallow: Array<{ seq: number; oid: string }> = [];
+  /** Files the remote keeps for the drive, as the cloud records them. */
+  const promised = new Set<string>();
+  /** What `oid` reaches that the store lacks. */
+  const missingFrom = (oid: string) =>
+    git(store, "rev-list", "--objects", "--missing=print", oid)
+      .split("\n")
+      .filter((line) => line.startsWith("?"))
+      .map((line) => line.slice(1));
   const remote =
     options.upstream === undefined
       ? null
@@ -161,6 +172,8 @@ export const makeFakeDrive = (
             // Its parents stay on the remote, as the cloud records it.
             NodeFS.appendFileSync(NodePath.join(store, "shallow"), `${upload.remoteHead}\n`);
             shallow.push({ seq: packs.length + 1, oid: upload.remoteHead });
+            // And so do the files its folders name that the drive lacks.
+            for (const oid of missingFrom(upload.remoteHead)) promised.add(oid);
           }
           // Not thin: every delta base is inside the pack.
           const listing = git(
@@ -174,7 +187,10 @@ export const makeFakeDrive = (
             .split("\n")
             .filter((line) => / commit /.test(line))
             .map((line) => line.split(" ")[0]!);
-          for (const commit of commits) git(store, "rev-list", "--objects", commit);
+          for (const commit of commits) {
+            const lacking = missingFrom(commit).filter((oid) => !promised.has(oid));
+            if (lacking.length > 0) throw new Error(`not closed: ${lacking.join(", ")}`);
+          }
           packs.push({ seq: packs.length + 1, name, size: pack.length });
           return {
             name,
@@ -272,6 +288,7 @@ export const makeFakeDrive = (
     client,
     refs: (threadId: string) => ({ main, ...threads.get(threadId)! }),
     shallow: () => shallow.map((entry) => entry.oid),
+    promised: () => [...promised],
     settings,
     mainFile: (file: string) => git(store, "show", `${main}:${file}`),
     onceBeforeReconcile: (effect: Effect.Effect<void>) => {
