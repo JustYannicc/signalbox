@@ -25,11 +25,18 @@ export const ModelGatewayRecord = Schema.Struct({
   method: Schema.String,
   path: Schema.String,
   status: Schema.Number,
+  /**
+   * The caller's identity headers the gateway dropped before forwarding, by
+   * name (`Authorization`, a signed-in Codex's `ChatGPT-Account-ID`, …). Never values.
+   */
+  droppedHeaders: Schema.optionalKey(Schema.Array(Schema.String)),
   /** As the model token names it, unchecked. */
   threadId: Schema.NullOr(Schema.String),
   runId: Schema.NullOr(RunId),
   /** The granted turn's trace id. */
   traceId: Schema.NullOr(Schema.String),
+  /** Set for a local key's request (`localKeys/`): whose key, and which of theirs. */
+  local: Schema.optionalKey(Schema.Struct({ userId: Schema.String, keyId: Schema.String })),
   /** Why the thread turned the token down. */
   denied: Schema.optionalKey(Schema.String),
   /** Checking the token with its thread. */
