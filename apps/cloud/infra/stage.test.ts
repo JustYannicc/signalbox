@@ -1,7 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads wrangler.jsonc from disk.
 import * as NodeFS from "node:fs";
 
+import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+
+import { previewLabel, previewOrigin, previewSettings } from "../src/thread/preview/previewHost.ts";
 
 import { parseJsonc } from "../../../scripts/cloud-migrations/check.ts";
 import {
@@ -33,6 +36,7 @@ describe("cloudStage", () => {
       gatewayWorker: "signalbox-model-gateway",
       cloudDomain: "app.signalbox.run",
       gatewayDomain: "gateway.signalbox.run",
+      previewHost: "*-app.signalbox-preview.dev",
       poolContainer: { name: "signalbox-cloud-poolobject" },
       threadContainer: { name: "signalbox-cloud-threadobject" },
       drivePacksBucket: "signalbox-drives",
@@ -40,6 +44,7 @@ describe("cloudStage", () => {
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         CLOUD_URL: "https://app.signalbox.run",
         MODEL_GATEWAY_URL: "https://gateway.signalbox.run",
+        PREVIEW_DOMAIN: "*-app.signalbox-preview.dev",
       },
     });
   });
@@ -51,6 +56,7 @@ describe("cloudStage", () => {
       gatewayWorker: "signalbox-model-gateway-pr-298",
       cloudDomain: "preview-298.signalbox.run",
       gatewayDomain: "gateway-preview-298.signalbox.run",
+      previewHost: "*-pr298.signalbox-preview.dev",
       poolContainer: { name: "signalbox-cloud-pr-298-pools" },
       threadContainer: { name: "signalbox-cloud-pr-298-threads" },
       drivePacksBucket: "signalbox-drives-preview",
@@ -58,9 +64,28 @@ describe("cloudStage", () => {
         ENVIRONMENT_ID: "cloud-preview-298",
         DRIVE_PACKS_PREFIX: "pr-298/",
         MODEL_GATEWAY_URL: "https://gateway-preview-298.signalbox.run",
+        PREVIEW_DOMAIN: "*-pr298.signalbox-preview.dev",
         PREVIEW_SETUP_SOURCE: "https://app.signalbox.run",
       },
     });
+  });
+
+  it("routes each stage's dev-server previews to it alone", async () => {
+    const label = await previewLabel(ThreadId.make("thread:1"), 5173);
+    const hosts = (stage: string) => cloudStage(stage).previewHost;
+    // A route pattern's leading `*` matches any characters (Cloudflare's own syntax).
+    const matches = (pattern: string, host: string) => host.endsWith(pattern.slice(1));
+    for (const stage of ["production", "pr-29", "pr-299", "pr-2990"]) {
+      const host = previewOrigin(
+        previewSettings({ PREVIEW_DOMAIN: cloudStage(stage).previewHost })!,
+        label,
+      ).slice("https://".length);
+      for (const other of ["production", "pr-29", "pr-299", "pr-2990"]) {
+        expect(matches(hosts(other), host)).toBe(other === stage);
+      }
+      // One level under the zone, so Universal SSL's wildcard covers it.
+      expect(host.split(".")).toHaveLength(3);
+    }
   });
 
   it("refuses any other stage, so nothing else can claim a name", () => {

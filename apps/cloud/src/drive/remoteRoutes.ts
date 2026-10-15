@@ -55,6 +55,21 @@ export const remoteHead = (driveId: string, userId: string) =>
 export const isRemoteHead = (driveId: string, userId: string, oid: Oid) =>
   Effect.map(remoteHead(driveId, userId), (head) => head === oid);
 
+/**
+ * The sizes of the files under remote commit `oid`, as GitHub lists them, for
+ * the files the drive is promised (#406). Best effort: unknown sizes stay unknown.
+ */
+export const remoteFileSizes = (driveId: string, userId: string, oid: Oid) =>
+  Effect.gen(function* () {
+    const [remote, token] = yield* remoteAndToken(driveId, userId);
+    if (remote === null || token === null) return new Map<Oid, number>();
+    return yield* (yield* GitHub).api.fileSizes(token, remote.repository, oid);
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.as(Effect.logWarning("listing the remote's file sizes failed", { cause }), new Map()),
+    ),
+  );
+
 /** The upstream request `proxyRemote` resolved to; the caller sends it and streams the answer back. */
 export interface RemoteFetch {
   readonly url: string;
@@ -79,6 +94,22 @@ export async function forwardRemote(request: Request, target: RemoteFetch): Prom
   });
 }
 
+/**
+ * The remote token a request carries: as a bearer (the Runner's own git), or
+ * as the password of basic credentials (git's credential helper, for the
+ * agent's git and the fetches a partial clone makes on its own, #406).
+ */
+const remoteTokenOf = (header: string) => {
+  if (header.startsWith("Bearer ")) return header.slice("Bearer ".length);
+  if (!header.startsWith("Basic ")) return "";
+  try {
+    const decoded = atob(header.slice("Basic ".length));
+    return decoded.slice(decoded.indexOf(":") + 1);
+  } catch {
+    return "";
+  }
+};
+
 /** Request headers git's smart HTTP needs passed through. */
 const FORWARDED = ["content-type", "content-encoding", "accept", "git-protocol"];
 
@@ -100,11 +131,15 @@ export const proxyRemote = (
       (request.method === "POST" && path === "git-upload-pack");
     if (!fetching) return text("A drive's remote can only be fetched from.", 403);
 
-    const header = request.headers.get("authorization") ?? "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const token = remoteTokenOf(request.headers.get("authorization") ?? "");
     const name = threadOfRemoteToken(token);
     const threadId = name === null ? null : decodeThreadId(name);
-    if (threadId === null || threadId._tag === "None") return text("Not a remote token.", 401);
+    if (threadId === null || threadId._tag === "None") {
+      // Asking for credentials is what makes git run its credential helper (#406).
+      const refused = text("Not a remote token.", 401);
+      refused.headers.set("www-authenticate", 'Basic realm="Signalbox"');
+      return refused;
+    }
     const verdict = yield* Effect.promise(() =>
       threadObjectStub(threads, threadId.value, options).authorizeRemote(token),
     );

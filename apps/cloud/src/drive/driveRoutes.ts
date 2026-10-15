@@ -38,7 +38,7 @@ import {
 import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import { threadOfDriveToken } from "./driveToken.ts";
-import { forwardRemote, isRemoteHead, proxyRemote } from "./remoteRoutes.ts";
+import { forwardRemote, isRemoteHead, proxyRemote, remoteFileSizes } from "./remoteRoutes.ts";
 import { decodeBody, json, packResponse, text } from "./routeResponses.ts";
 import { shortcutRoute } from "./shortcutRoutes.ts";
 
@@ -225,7 +225,12 @@ async function route(
           threadId: auth.threadId,
           idx: body.subarray(0, idxLength),
           pack: body.subarray(idxLength),
-          ...(remoteHead === null ? {} : { remoteHead: remoteHead.value }),
+          ...(remoteHead === null
+            ? {}
+            : {
+                remoteHead: remoteHead.value,
+                promisedSizes: remoteFileSizes(auth.driveId, auth.userId, remoteHead.value),
+              }),
         }),
       );
       return result._tag === "ok"

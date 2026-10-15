@@ -1,6 +1,8 @@
 import type {
   AutomationEventName,
   OrchestrationV2AppThread,
+  ProjectId,
+  PullRequestRef,
   ThreadPullRequestLink,
   ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
@@ -11,13 +13,15 @@ import {
 import * as Effect from "effect/Effect";
 
 import { fixed, type Candidate, type EventReads } from "./candidate.ts";
-import type { Remark } from "./pullRequestReads.ts";
+import type { PullRequestReads, Remark } from "./pullRequestReads.ts";
 
 /**
  * Pull request facts as events. Upstream's sync reactor keeps each thread's
- * linked pull requests' host state on the thread and announces every change
- * as `thread.pull-request-synced`; this turns those snapshots into `pr.*`
- * events on the transitions automations care about. No polling of its own.
+ * linked pull requests' host state on the thread and announces every change,
+ * as `thread.pull-request-synced` for links, unlinks and watches and as
+ * `thread.pull-request-link-updated` for its periodic syncs; this turns those
+ * snapshots into `pr.*` events on the transitions automations care about.
+ * No polling of its own.
  *
  * The last snapshot per thread and pull request lives in memory. After a
  * restart the first snapshot seen has no "before": it counts as a transition
@@ -76,6 +80,13 @@ type Snapshot = Pick<
   "state" | "checksState" | "mergeability" | "updatedAt"
 >;
 
+const snapshotOf = (snapshot: ThreadPullRequestSnapshot): Snapshot => ({
+  state: snapshot.state,
+  checksState: snapshot.checksState,
+  mergeability: snapshot.mergeability,
+  updatedAt: snapshot.updatedAt,
+});
+
 /** Which facts became true between `before` (undefined after a restart) and `now`. */
 function transitions(
   before: Snapshot | undefined,
@@ -93,98 +104,152 @@ function transitions(
   ];
 }
 
+/** The last snapshots of one thread's pull requests, and its project once a full sync named it. */
+interface TrackedThread {
+  readonly projectId: ProjectId | undefined;
+  readonly links: Map<string, Snapshot>;
+}
+
 /**
  * Tracks pull request snapshots per thread. `observe` takes every
- * `thread.pull-request-synced` (even when nobody listens, so "before" stays
- * right) and returns the derived events; `forget` drops a deleted thread.
+ * `thread.pull-request-synced` and `observeLink` every
+ * `thread.pull-request-link-updated` (even when nobody listens, so "before"
+ * stays right) and both return the derived events; `forget` drops a deleted
+ * thread. The sync reactor's periodic syncs arrive as link updates, which
+ * carry the one link and no project: after a restart, until a full sync
+ * names it, the project is read from the thread when someone listens.
  */
 export function makePullRequestTracker(startedAtMs: number) {
-  const threads = new Map<string, Map<string, Snapshot>>();
+  const threads = new Map<string, TrackedThread>();
+
+  /** One pull request's derived events against its previous snapshot. */
+  const factsOf = (
+    threadId: string,
+    projectId: ProjectId | undefined,
+    link: ThreadPullRequestLink,
+    snapshot: ThreadPullRequestSnapshot,
+    previous: Snapshot | undefined,
+  ): ReadonlyArray<Candidate> => {
+    const key = threadPullRequestKeyOf(link);
+    const candidates: Candidate[] = [];
+    // Unknown, the trigger runtime reads it from the thread when someone listens.
+    const where = projectId === undefined ? {} : { projectId };
+    /** A host read for this pull request, or null without reads or a project. */
+    const readFor = <A>(
+      reads: EventReads,
+      use: (pullRequests: PullRequestReads, ref: PullRequestRef) => Effect.Effect<A | null>,
+    ) =>
+      Effect.gen(function* () {
+        const project = projectId ?? (yield* reads.shell)?.projectId;
+        if (!reads.pullRequests || project === undefined) return null;
+        return yield* use(reads.pullRequests, {
+          projectId: project,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+        });
+      });
+    const fresh = Date.parse(snapshot.syncedAt) >= startedAtMs;
+    for (const name of transitions(previous, snapshot, fresh)) {
+      const terminal = name === "pr.merged" || name === "pr.closed";
+      candidates.push({
+        name,
+        // A merge happens once; checks and conflicts can flip back and forth, one id per sync.
+        id: `${name}:${threadId}:${key}${terminal ? "" : `:${snapshot.syncedAt}`}`,
+        ...where,
+        build:
+          name === "pr.checks.failed"
+            ? (reads) =>
+                readFor(reads, (pullRequests, ref) => pullRequests.failedChecks(ref)).pipe(
+                  Effect.map((failedChecks) => ({ ...pullRequestFacts(link), failedChecks })),
+                )
+            : fixed(() => pullRequestFacts(link)),
+      });
+    }
+    // A remark moves `updatedAt`; without a "before" there's nothing to read since.
+    const since = previous?.updatedAt;
+    if (since && snapshot.updatedAt && snapshot.updatedAt !== since) {
+      // Both kinds share one read per sync, made only if one of them is built (one at a time).
+      let read: ReadonlyArray<Remark> | null | undefined;
+      const remarksOf = (reads: EventReads) =>
+        read !== undefined
+          ? Effect.succeed(read)
+          : readFor(reads, (pullRequests, ref) => pullRequests.remarksSince(ref, since)).pipe(
+              Effect.tap((remarks) =>
+                Effect.sync(() => {
+                  read = remarks;
+                }),
+              ),
+            );
+      for (const name of PULL_REQUEST_REMARK_EVENTS) {
+        candidates.push({
+          name,
+          id: `${name}:${threadId}:${key}:${snapshot.updatedAt}`,
+          ...where,
+          build: (reads) =>
+            remarksOf(reads).pipe(
+              Effect.map((remarks) => {
+                // Unread: something new happened, so say so once, without the details.
+                if (remarks === null)
+                  return name === "pr.commented" ? { ...pullRequestFacts(link), remarks } : null;
+                const mine = remarks.filter((remark) =>
+                  name === "pr.reviewed" ? remark.kind === "review" : remark.kind !== "review",
+                );
+                return mine.length === 0 ? null : { ...pullRequestFacts(link), remarks: mine };
+              }),
+            ),
+        });
+      }
+    }
+    return candidates;
+  };
+
+  const keep = (threadId: string, tracked: TrackedThread) => {
+    if (tracked.links.size > 0) threads.set(threadId, tracked);
+    else threads.delete(threadId);
+  };
 
   const observe = (event: {
     readonly threadId: string;
     readonly payload: OrchestrationV2AppThread;
   }): ReadonlyArray<Candidate> => {
     const thread = event.payload;
-    const before = threads.get(event.threadId);
+    const before = threads.get(event.threadId)?.links;
     const next = new Map<string, Snapshot>();
     const candidates: Candidate[] = [];
     for (const link of visibleThreadPullRequests(thread.pullRequests ?? [])) {
       const snapshot = link.snapshot;
       if (snapshot === null) continue;
       const key = threadPullRequestKeyOf(link);
-      next.set(key, {
-        state: snapshot.state,
-        checksState: snapshot.checksState,
-        mergeability: snapshot.mergeability,
-        updatedAt: snapshot.updatedAt,
-      });
-      const ref = {
-        projectId: thread.projectId,
-        host: link.host,
-        repository: link.repository,
-        number: link.number,
-      };
-      const previous = before?.get(key);
-      const fresh = Date.parse(snapshot.syncedAt) >= startedAtMs;
-      for (const name of transitions(previous, snapshot, fresh)) {
-        const terminal = name === "pr.merged" || name === "pr.closed";
-        candidates.push({
-          name,
-          // A merge happens once; checks and conflicts can flip back and forth, one id per sync.
-          id: `${name}:${event.threadId}:${key}${terminal ? "" : `:${snapshot.syncedAt}`}`,
-          projectId: thread.projectId,
-          build:
-            name === "pr.checks.failed"
-              ? (reads) =>
-                  (reads.pullRequests?.failedChecks(ref) ?? Effect.succeed(null)).pipe(
-                    Effect.map((failedChecks) => ({ ...pullRequestFacts(link), failedChecks })),
-                  )
-              : fixed(() => pullRequestFacts(link)),
-        });
-      }
-      // A remark moves `updatedAt`; without a "before" there's nothing to read since.
-      const since = previous?.updatedAt;
-      if (since && snapshot.updatedAt && snapshot.updatedAt !== since) {
-        // Both kinds share one read per sync, made only if one of them is built (one at a time).
-        let read: ReadonlyArray<Remark> | null | undefined;
-        const remarksOf = (reads: EventReads) =>
-          read !== undefined
-            ? Effect.succeed(read)
-            : (reads.pullRequests?.remarksSince(ref, since) ?? Effect.succeed(null)).pipe(
-                Effect.tap((remarks) =>
-                  Effect.sync(() => {
-                    read = remarks;
-                  }),
-                ),
-              );
-        for (const name of PULL_REQUEST_REMARK_EVENTS) {
-          candidates.push({
-            name,
-            id: `${name}:${event.threadId}:${key}:${snapshot.updatedAt}`,
-            projectId: thread.projectId,
-            build: (reads) =>
-              remarksOf(reads).pipe(
-                Effect.map((remarks) => {
-                  // Unread: something new happened, so say so once, without the details.
-                  if (remarks === null)
-                    return name === "pr.commented" ? { ...pullRequestFacts(link), remarks } : null;
-                  const mine = remarks.filter((remark) =>
-                    name === "pr.reviewed" ? remark.kind === "review" : remark.kind !== "review",
-                  );
-                  return mine.length === 0 ? null : { ...pullRequestFacts(link), remarks: mine };
-                }),
-              ),
-          });
-        }
-      }
+      next.set(key, snapshotOf(snapshot));
+      candidates.push(
+        ...factsOf(event.threadId, thread.projectId, link, snapshot, before?.get(key)),
+      );
     }
-    if (next.size > 0) threads.set(event.threadId, next);
-    else threads.delete(event.threadId);
+    keep(event.threadId, { projectId: thread.projectId, links: next });
     return candidates;
   };
 
-  return { observe, forget: (threadId: string) => void threads.delete(threadId) };
+  const observeLink = (event: {
+    readonly threadId: string;
+    readonly payload: ThreadPullRequestLink;
+  }): ReadonlyArray<Candidate> => {
+    const link = event.payload;
+    const tracked = threads.get(event.threadId) ?? { projectId: undefined, links: new Map() };
+    const key = threadPullRequestKeyOf(link);
+    const previous = tracked.links.get(key);
+    const snapshot = link.snapshot;
+    if (snapshot === null || visibleThreadPullRequests([link]).length === 0) {
+      tracked.links.delete(key);
+      keep(event.threadId, tracked);
+      return [];
+    }
+    tracked.links.set(key, snapshotOf(snapshot));
+    keep(event.threadId, tracked);
+    return factsOf(event.threadId, tracked.projectId, link, snapshot, previous);
+  };
+
+  return { observe, observeLink, forget: (threadId: string) => void threads.delete(threadId) };
 }
 
 export type PullRequestTracker = ReturnType<typeof makePullRequestTracker>;

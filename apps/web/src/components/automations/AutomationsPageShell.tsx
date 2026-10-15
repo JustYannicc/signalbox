@@ -1,13 +1,12 @@
 /**
  * The frame every automations page shares: the header with its breadcrumb and
  * controls, then the page body. "Automations" in the breadcrumb leads to the
- * overview and brings the Automations panel into the sidebar.
+ * overview.
  */
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { isElectron } from "../../env";
-import { useSidebarView } from "../sidebar/sidebarView";
 import { SidebarInset } from "../ui/sidebar";
 import {
   WorkspaceBreadcrumb,
@@ -25,7 +24,6 @@ export function AutomationsPageShell(props: {
   header?: ReactNode;
   children: ReactNode;
 }) {
-  const [, setView] = useSidebarView();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
@@ -39,11 +37,7 @@ export function AutomationsPageShell(props: {
               </WorkspaceBreadcrumbItem>
             ) : (
               <WorkspaceBreadcrumbItem>
-                <Link
-                  to="/automations"
-                  className="hover:text-foreground"
-                  onClick={() => setView("automations")}
-                >
+                <Link to="/automations" className="hover:text-foreground">
                   <WorkspaceBreadcrumbText>Automations</WorkspaceBreadcrumbText>
                 </Link>
               </WorkspaceBreadcrumbItem>

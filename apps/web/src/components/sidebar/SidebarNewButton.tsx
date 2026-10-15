@@ -1,8 +1,8 @@
 /**
- * Home's New button. Same behavior as Pipeline's new-thread button and
- * `chat.new`: with one project it creates right away, with several it opens the
- * command palette's "New thread in..." picker, and Shift+click creates in the
- * current project.
+ * The New button pinned above every sidebar view. Same behavior as `chat.new`:
+ * with one project it creates right away, with several it opens the command
+ * palette's "New thread in..." picker, and Shift+click creates in the current
+ * project.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { SquarePenIcon } from "lucide-react";
@@ -18,7 +18,7 @@ import { shouldCreateNewThreadInCurrentProject } from "../Sidebar.logic";
 import { Kbd } from "../ui/kbd";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 
-export function HomeNewButton() {
+export function SidebarNewButton() {
   const { isMobile, setOpenMobile } = useSidebar();
   const newThreadContext = useHandleNewThread();
   const projectCount = useProjects().length;
@@ -45,7 +45,7 @@ export function HomeNewButton() {
   );
 
   return (
-    <div className="shrink-0 px-2 pt-1">
+    <div className="shrink-0 px-2 pt-2">
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton className="group/new-chat" onClick={handleNew}>

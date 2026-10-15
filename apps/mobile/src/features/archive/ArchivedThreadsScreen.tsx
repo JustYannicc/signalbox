@@ -26,6 +26,8 @@ import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { withoutEnvironmentFilter } from "../home/environmentFilter"; // signalbox
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
@@ -48,6 +50,7 @@ function ArchivedThreadsHeader(props: {
   const navigation = useNavigation();
   const { width } = useWindowDimensions();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   return (
     <ScreenHeader
       title="Archived threads"
@@ -67,53 +70,56 @@ function ArchivedThreadsHeader(props: {
           icon: hasCustomFilter
             ? "line.3.horizontal.decrease.circle.fill"
             : "line.3.horizontal.decrease.circle",
-          items: [
-            {
-              id: "environment",
-              title: "Environment",
-              items: [
-                {
-                  id: "environment:all",
-                  title: "All environments",
-                  selected: props.selectedEnvironmentId === null,
-                  onPress: () => props.onEnvironmentChange(null),
-                },
-                ...props.environments.map((environment) => ({
-                  id: `environment:${environment.environmentId}`,
-                  title: environment.label,
-                  selected: props.selectedEnvironmentId === environment.environmentId,
-                  onPress: () => props.onEnvironmentChange(environment.environmentId),
-                })),
-              ],
-            },
-            {
-              id: "sort",
-              title: "Sort by archived date",
-              items: [
-                {
-                  id: "sort:newest",
-                  title: "Newest first",
-                  selected: props.sortOrder === "newest",
-                  onPress: () => props.onSortOrderChange("newest"),
-                },
-                {
-                  id: "sort:oldest",
-                  title: "Oldest first",
-                  selected: props.sortOrder === "oldest",
-                  onPress: () => props.onSortOrderChange("oldest"),
-                },
-              ],
-            },
-            ...(Platform.OS === "android"
-              ? [
+          items: withoutEnvironmentFilter(
+            [
+              {
+                id: "environment",
+                title: "Environment",
+                items: [
                   {
-                    id: "refresh",
-                    title: "Refresh archived threads",
-                    onPress: props.onRefresh,
+                    id: "environment:all",
+                    title: "All environments",
+                    selected: props.selectedEnvironmentId === null,
+                    onPress: () => props.onEnvironmentChange(null),
                   },
-                ]
-              : []),
-          ],
+                  ...props.environments.map((environment) => ({
+                    id: `environment:${environment.environmentId}`,
+                    title: environment.label,
+                    selected: props.selectedEnvironmentId === environment.environmentId,
+                    onPress: () => props.onEnvironmentChange(environment.environmentId),
+                  })),
+                ],
+              },
+              {
+                id: "sort",
+                title: "Sort by archived date",
+                items: [
+                  {
+                    id: "sort:newest",
+                    title: "Newest first",
+                    selected: props.sortOrder === "newest",
+                    onPress: () => props.onSortOrderChange("newest"),
+                  },
+                  {
+                    id: "sort:oldest",
+                    title: "Oldest first",
+                    selected: props.sortOrder === "oldest",
+                    onPress: () => props.onSortOrderChange("oldest"),
+                  },
+                ],
+              },
+              ...(Platform.OS === "android"
+                ? [
+                    {
+                      id: "refresh",
+                      title: "Refresh archived threads",
+                      onPress: props.onRefresh,
+                    },
+                  ]
+                : []),
+            ],
+            showsEnvironments, // signalbox
+          ),
         },
       ]}
     />
@@ -313,10 +319,13 @@ export function ArchivedThreadsScreen(props: {
     [props.environments],
   );
   const serverConfigs = useServerConfigs();
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox: no environment badges
   const listItems = useMemo<ReadonlyArray<ArchivedThreadListItem>>(() => {
     const items: ArchivedThreadListItem[] = [];
     for (const group of props.groups) {
-      const environmentLabel = environmentLabelsById.get(group.project.environmentId) ?? null;
+      const environmentLabel = showsEnvironments
+        ? (environmentLabelsById.get(group.project.environmentId) ?? null)
+        : null;
       items.push({
         kind: "project",
         key: `${group.key}:project`,
@@ -339,7 +348,7 @@ export function ArchivedThreadsScreen(props: {
       });
     }
     return items;
-  }, [environmentLabelsById, props.groups, serverConfigs]);
+  }, [environmentLabelsById, props.groups, serverConfigs, showsEnvironments]);
   const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
     if (openSwipeableRef.current && openSwipeableRef.current !== methods) {
       openSwipeableRef.current.close();

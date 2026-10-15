@@ -14,8 +14,7 @@ code to confirm your address.
   so your password manager and saved logins work there. If you are already
   signed in in that browser, it sends you straight back. When the browser asks
   to open Signalbox, allow it.
-- **Mobile**: enter your server's address if the app asks for it, then pick an
-  option. A server without accounts sends you to pairing instead.
+- **Mobile**: pick an option.
 
 ## Signing out
 
