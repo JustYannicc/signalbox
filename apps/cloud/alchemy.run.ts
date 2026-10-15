@@ -132,8 +132,6 @@ function workerEnv(target: CloudStage) {
           SIGNALBOX_POSTHOG_HOST: yield* optional("SIGNALBOX_POSTHOG_HOST"),
           PREVIEW_DOMAIN: yield* optional("PREVIEW_DOMAIN"),
           PREVIEW_CLEANUP_TOKEN: yield* Config.Redacted("PREVIEW_CLEANUP_TOKEN"),
-          // Optional: membership changes from WorkOS at once.
-          T3CODE_WORKOS_WEBHOOK_SECRET: yield* optionalSecret("T3CODE_WORKOS_WEBHOOK_SECRET"),
         }
       : {
           // A preview's own Runner image (deploy-cloud.yml's `runner_image`); empty means `nightly`.
