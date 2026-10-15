@@ -20,6 +20,7 @@ import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
+import { type ThreadMonitor, ThreadMonitorWire } from "./threadWire.ts";
 
 /**
  * What one thread's Durable Object persists: its event log, the receipt of
@@ -93,7 +94,11 @@ export const NO_MACHINE: MachineLease = {
 };
 
 export interface OutboxState {
-  /** The latest summary revision, the event sequence that last changed the thread's sidebar row. */
+  /**
+   * The latest summary revision: grows with every change to the thread's
+   * sidebar row, to the event sequence that changed it, or by one for a
+   * change outside the log (its attached runs).
+   */
   readonly revision: number;
   /** The highest revision the owner's object has acknowledged. */
   readonly delivered: number;
@@ -107,7 +112,11 @@ export class ThreadStore extends Context.Service<
     /** Creates or upgrades the tables. */
     readonly initialize: Effect.Effect<void, SqlError | Migrator.MigrationError>;
     readonly owner: Effect.Effect<ThreadOwner | null, SqlError>;
-    readonly events: (afterSequence: number) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError>;
+    /** Events after `afterSequence` in order, at most `limit` of them when given. */
+    readonly events: (
+      afterSequence: number,
+      limit?: number,
+    ) => Effect.Effect<ReadonlyArray<StoredEvent>, SqlError>;
     readonly receipt: (commandId: CommandId) => Effect.Effect<CommandReceipt | null, SqlError>;
     /**
      * Appends events after `head`, the command's receipt, the owner (when the
@@ -141,6 +150,19 @@ export class ThreadStore extends Context.Service<
     }) => Effect.Effect<void, SqlError>;
     readonly outbox: Effect.Effect<OutboxState, SqlError>;
     readonly acknowledgeSummary: (revision: number) => Effect.Effect<void, SqlError>;
+    /** The last event sequence the owner's automations acknowledged (`eventOutbox.ts`). */
+    readonly eventsDelivered: Effect.Effect<number, SqlError>;
+    readonly acknowledgeEvents: (through: number) => Effect.Effect<void, SqlError>;
+    /** The automation runs attached to the thread. */
+    readonly monitors: Effect.Effect<ReadonlyArray<ThreadMonitor>, SqlError>;
+    /**
+     * Replaces the attached runs; `summaryChanged` gives the sidebar row a new
+     * revision with them, in one transaction.
+     */
+    readonly saveMonitors: (input: {
+      readonly monitors: ReadonlyArray<ThreadMonitor>;
+      readonly summaryChanged: boolean;
+    }) => Effect.Effect<void, SqlError>;
     readonly machine: Effect.Effect<MachineLease, SqlError>;
     readonly saveMachine: (machine: MachineLease) => Effect.Effect<void, SqlError>;
     /** The machine backend's record of the thread's machine (`MachineBackend.ts`). */
@@ -226,6 +248,22 @@ const migrations = Migrator.fromRecord({
   }),
   // When each linked pull request was last read from GitHub (`pullRequests/PullRequestSync.ts`).
   "0008_pull_request_polls": migratePullRequestPolls,
+  // The owner's automations (#434): the last event their object acknowledged
+  // (`eventOutbox.ts`), and the runs attached to the thread. A thread from
+  // before starts at its head: automations hear what happens from now on.
+  "0009_automations": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE event_outbox (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      delivered INTEGER NOT NULL
+    )`;
+    yield* sql`INSERT INTO event_outbox (id, delivered)
+      SELECT 1, COALESCE(MAX(sequence), 0) FROM events`;
+    yield* sql`CREATE TABLE thread_monitors (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      monitors TEXT NOT NULL
+    )`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -267,6 +305,15 @@ const decodeEventRows = Schema.decodeUnknownSync(Schema.Array(EventRow));
 const decodeOwnerRows = Schema.decodeUnknownSync(Schema.Array(OwnerRow));
 const decodeReceiptRows = Schema.decodeUnknownSync(Schema.Array(ReceiptRow));
 const decodeOutboxRows = Schema.decodeUnknownSync(Schema.Array(OutboxRow));
+const decodeDeliveredRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ delivered: Schema.Number })),
+);
+
+const MonitorsJson = Schema.fromJsonString(Schema.Array(ThreadMonitorWire));
+const encodeMonitors = Schema.encodeSync(MonitorsJson);
+const decodeMonitorRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ monitors: MonitorsJson })),
+);
 
 const MachineLeaseJson = Schema.fromJsonString(
   Schema.Struct({
@@ -323,9 +370,12 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const events: ThreadStore["Service"]["events"] = (afterSequence) =>
+  // SQLite reads a negative limit as none.
+  const events: ThreadStore["Service"]["events"] = (afterSequence, limit = -1) =>
     sql`SELECT sequence, format, event FROM events WHERE sequence > ${afterSequence}
-      ORDER BY sequence`.pipe(Effect.map((rows) => decodeEventRows(rows).map(toStoredEvent)));
+      ORDER BY sequence LIMIT ${limit}`.pipe(
+      Effect.map((rows) => decodeEventRows(rows).map(toStoredEvent)),
+    );
 
   const receipt: ThreadStore["Service"]["receipt"] = (commandId) =>
     sql`SELECT status, result_sequence, message FROM receipts WHERE command_id = ${commandId}`.pipe(
@@ -377,7 +427,8 @@ const make = Effect.gen(function* () {
           VALUES (1, ${input.owner.userId}, ${input.owner.contextId}, ${input.owner.driveId})`;
     }
     if (input.summaryChanged) {
-      yield* sql`UPDATE outbox SET revision = ${sequence} WHERE id = 1`;
+      // Past a revision its attached runs moved beyond the head, too.
+      yield* sql`UPDATE outbox SET revision = MAX(${sequence}, revision + 1) WHERE id = 1`;
     }
     if (input.machine) yield* saveMachine(input.machine);
     if (input.instructions) {
@@ -420,6 +471,30 @@ const make = Effect.gen(function* () {
   const acknowledgeSummary: ThreadStore["Service"]["acknowledgeSummary"] = (revision) =>
     sql`UPDATE outbox SET delivered = MAX(delivered, ${revision}) WHERE id = 1`.pipe(Effect.asVoid);
 
+  const eventsDelivered: ThreadStore["Service"]["eventsDelivered"] =
+    sql`SELECT delivered FROM event_outbox WHERE id = 1`.pipe(
+      Effect.map((rows) => decodeDeliveredRows(rows)[0]?.delivered ?? 0),
+    );
+
+  const acknowledgeEvents: ThreadStore["Service"]["acknowledgeEvents"] = (through) =>
+    sql`INSERT INTO event_outbox (id, delivered) VALUES (1, ${through})
+      ON CONFLICT (id) DO UPDATE SET delivered = MAX(delivered, excluded.delivered)`.pipe(
+      Effect.asVoid,
+    );
+
+  const monitors: ThreadStore["Service"]["monitors"] =
+    sql`SELECT monitors FROM thread_monitors WHERE id = 1`.pipe(
+      Effect.map((rows) => decodeMonitorRows(rows)[0]?.monitors ?? []),
+    );
+
+  const saveMonitors: ThreadStore["Service"]["saveMonitors"] = Effect.fn(
+    "ThreadStore.saveMonitors",
+  )(function* (input) {
+    yield* sql`INSERT INTO thread_monitors (id, monitors) VALUES (1, ${encodeMonitors(input.monitors)})
+        ON CONFLICT (id) DO UPDATE SET monitors = excluded.monitors`;
+    if (input.summaryChanged) yield* sql`UPDATE outbox SET revision = revision + 1 WHERE id = 1`;
+  }, sql.withTransaction);
+
   const initialized: ThreadStore["Service"]["initialized"] =
     sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events'`.pipe(
       Effect.map((rows) => rows.length > 0),
@@ -435,6 +510,10 @@ const make = Effect.gen(function* () {
     recordRejection,
     outbox,
     acknowledgeSummary,
+    eventsDelivered,
+    acknowledgeEvents,
+    monitors,
+    saveMonitors,
     machine,
     saveMachine,
     machineRecord,

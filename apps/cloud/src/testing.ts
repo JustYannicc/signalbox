@@ -36,6 +36,7 @@ import * as CloudAnalytics from "./thread/diagnostics/CloudAnalytics.ts";
 import * as DiagnosticsStore from "./thread/diagnostics/DiagnosticsStore.ts";
 import * as TurnDiagnostics from "./thread/diagnostics/TurnDiagnostics.ts";
 import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
+import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
@@ -63,7 +64,7 @@ import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LegacySections from "./user/legacySections.ts";
-import { AutomationAlarm, CloudAutomations } from "./automations/CloudAutomations.ts";
+import * as CloudAutomations from "./automations/CloudAutomations.ts";
 import * as CloudEngine from "./automations/cloudEngine.ts";
 import { AutomationSandbox } from "@signalbox/automations/host";
 import { makeQuickJsReplay, wallClockBudget } from "@signalbox/automations/sandbox/replayWorkflow";
@@ -221,8 +222,8 @@ const layerTestSandbox = Layer.succeed(
 /** A user object's alarm, recorded: `alarms.get(userId)` is when it would fire next. */
 const layerRecordedAlarm = (alarms: Map<string, number>, userId: string) =>
   Layer.succeed(
-    AutomationAlarm,
-    AutomationAlarm.of({
+    CloudAutomations.AutomationAlarm,
+    CloudAutomations.AutomationAlarm.of({
       arm: (at) =>
         Effect.sync(() => {
           const current = alarms.get(userId);
@@ -239,7 +240,9 @@ const makeUserRuntime = (
   people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
   observe: Layer.Layer<never>,
-  alarm: Layer.Layer<AutomationAlarm>,
+  alarm: Layer.Layer<CloudAutomations.AutomationAlarm>,
+  /** Replaces the real automations, for tests that watch what they're handed. */
+  automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
@@ -286,6 +289,7 @@ const makeUserRuntime = (
           Layer.provideMerge(observe),
         ),
       ),
+      Layer.merge(automations),
     ),
   );
 
@@ -294,7 +298,7 @@ const makeUserRuntime = (
  * object per thread id, running the same APIs the Durable Objects do and
  * reaching each other through the same directories. `settle` does what the
  * thread objects' alarms do: drive every turn to the end and deliver every
- * pending summary.
+ * pending summary and event.
  */
 export const makeMemoryCloud = (
   options: {
@@ -304,6 +308,8 @@ export const makeMemoryCloud = (
     readonly poolFetch?: (request: Request) => Promise<Response>;
     /** Loggers or a tracer every object here runs with, to see what they log and trace. */
     readonly observe?: Layer.Layer<never>;
+    /** Every user object's automations; none unless given, so thread events are dropped. */
+    readonly automations?: Layer.Layer<CloudAutomations.CloudAutomations>;
   } = {},
 ) => {
   const users = new Map<
@@ -354,6 +360,7 @@ export const makeMemoryCloud = (
       options.github ?? layerNoGitHub,
       options.observe ?? Layer.empty,
       layerRecordedAlarm(alarms, userId),
+      options.automations ?? Layer.empty,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -427,6 +434,7 @@ export const makeMemoryCloud = (
             // One provider step per alarm in production; here, until the turn ends.
           }
           yield* deliverPendingSummary;
+          yield* deliverPendingEvents;
         }),
       );
     }
@@ -446,7 +454,7 @@ export const makeMemoryCloud = (
       Effect.promise(() => {
         alarms.delete(userId);
         return userFor(userId).runtime.runPromise(
-          CloudAutomations.use((automations) => automations.wake),
+          CloudAutomations.CloudAutomations.use((automations) => automations.wake),
         );
       }),
     /** Pool objects by name, each with its fake CLIProxyAPI. */

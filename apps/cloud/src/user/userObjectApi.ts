@@ -1,5 +1,7 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
+import * as CloudAutomations from "../automations/CloudAutomations.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
 import { publishBranch } from "../github/branchPublishing.ts";
@@ -60,6 +62,18 @@ export const makeUserObjectApi = (
     shellSnapshot: async () => shellSnapshotWire.encode(await shell((service) => service.snapshot)),
     recordThreadSummary: (summary) =>
       shell((service) => service.recordThreadSummary(wire.summary.decode(summary))),
+    // An object without automations yet takes the events and drops them.
+    threadEvents: ({ threadId, events }) =>
+      run(
+        Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
+          Option.isNone(automations)
+            ? Effect.void
+            : automations.value.threadEvents({ threadId, events: wire.events.decode(events) }),
+        ).pipe(
+          // Ids only, never what happened (#284).
+          Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
+        ),
+      ),
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
     beginGitHubConnect: (input) => github((service) => service.begin(input)),
     completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),

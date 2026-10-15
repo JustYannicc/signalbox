@@ -13,6 +13,9 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
+import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerSandbox } from "../automations/quickJs.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
@@ -122,64 +125,87 @@ const layerDrives = (env: UserObjectEnv) => {
   };
 };
 
+/** The object's alarm, as automations arm it: never later than the earliest work due. */
+const layerAlarm = (storage: DurableObjectStorage) =>
+  Layer.succeed(
+    AutomationAlarm,
+    AutomationAlarm.of({
+      arm: (at) =>
+        at === null
+          ? Effect.void
+          : Effect.promise(async () => {
+              const current = await storage.getAlarm();
+              if (current === null || at < current) await storage.setAlarm(at);
+            }),
+    }),
+  );
+
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
   return ManagedRuntime.make(
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
+    // The user's automations (#434), on the services below.
+    CloudEngine.layer.pipe(
+      Layer.provide(Layer.mergeAll(layerSandbox, layerAlarm(storage))),
       Layer.provideMerge(
-        Layer.mergeAll(
-          UserShell.layer,
-          CloudThreadService.layer,
-          PoolSignIns.layer,
-          drives.services,
-          GitHubConnection.layer,
-          ConnectionLinks.layer,
-        ),
-      ),
-      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
-      Layer.provideMerge(
-        PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
-          Layer.provide(
+        Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
+          Layer.provideMerge(
             Layer.mergeAll(
-              FetchHttpClient.layer,
-              ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+              UserShell.layer,
+              CloudThreadService.layer,
+              PoolSignIns.layer,
+              drives.services,
+              GitHubConnection.layer,
+              ConnectionLinks.layer,
             ),
           ),
-        ),
-      ),
-      Layer.provideMerge(LegacySections.layer),
-      Layer.provideMerge(UserFolders.layer),
-      Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
-      Layer.provideMerge(
-        GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
-          Layer.provide(FetchHttpClient.layer),
-        ),
-      ),
-      Layer.provideMerge(UserDrives.layer),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          UserStore.layer,
-          UserContexts.layerWithDrives,
-          ResourceBindings.layer,
-          OnePasswordAccount.layer,
-        ),
-      ),
-      Layer.provideMerge(drives.store),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          ThreadDirectory.layerDurableObjects(env.THREADS, {
-            localWorkerd: env.LOCAL_WORKERD === "1",
-          }),
-          PoolDirectory.layerDurableObjects(env.POOLS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
-        ),
-      ),
-      Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
-      // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
-      Layer.provideMerge(
-        CloudTokens.layerSessionSecret.pipe(
-          Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
-          Layer.orDie,
+          Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
+          Layer.provideMerge(
+            PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  FetchHttpClient.layer,
+                  ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+                ),
+              ),
+            ),
+          ),
+          Layer.provideMerge(LegacySections.layer),
+          Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(ModelManifest.layer.pipe(Layer.provide(FetchHttpClient.layer))),
+          Layer.provideMerge(
+            GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
+              Layer.provide(FetchHttpClient.layer),
+            ),
+          ),
+          Layer.provideMerge(UserDrives.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              UserStore.layer,
+              UserContexts.layerWithDrives,
+              ResourceBindings.layer,
+              OnePasswordAccount.layer,
+            ),
+          ),
+          Layer.provideMerge(drives.store),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ThreadDirectory.layerDurableObjects(env.THREADS, {
+                localWorkerd: env.LOCAL_WORKERD === "1",
+              }),
+              PoolDirectory.layerDurableObjects(env.POOLS, {
+                localWorkerd: env.LOCAL_WORKERD === "1",
+              }),
+            ),
+          ),
+          Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+          // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
+          Layer.provideMerge(
+            CloudTokens.layerSessionSecret.pipe(
+              Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
+              Layer.orDie,
+            ),
+          ),
         ),
       ),
     ),
@@ -208,7 +234,19 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       scripted: scriptedProviderEnabled(env),
     };
     this.runtime = makeRuntime(ctx.storage, env);
-    void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));
+    // Then automations pick up what a restart or deploy cut off, and park it before anything else runs.
+    void ctx.blockConcurrencyWhile(() =>
+      this.runtime.runPromise(
+        UserStore.migrate.pipe(
+          Effect.andThen(CloudAutomations.use((automations) => automations.settle)),
+        ),
+      ),
+    );
+  }
+
+  /** Automations' due work: timers, crons, retries. It re-arms itself for what's due next. */
+  async alarm() {
+    await this.runtime.runPromise(CloudAutomations.use((automations) => automations.wake));
   }
 
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
@@ -261,6 +299,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   recordThreadSummary(summary: unknown) {
     return this.api.recordThreadSummary(summary);
+  }
+
+  threadEvents(input: Parameters<UserObjectApi["threadEvents"]>[0]) {
+    return this.api.threadEvents(input);
   }
 
   rebuildThreadIndex() {
