@@ -8,7 +8,7 @@ something you want to approve.
 
 Ask an agent in any thread, for example "Every weekday at 9, summarize new Sentry issues and ask
 me before filing any of them in Linear." The agent writes the automation and saves it. **New
-automation** at the top of the Automations panel starts that thread for you.
+automation** on the **Automations** page starts that thread for you.
 
 To change an automation, choose **Change with agent** from its **⋯** menu or above its code (on
 mobile, on the automation's screen or a run's **⋯** menu). It opens a thread with the request
@@ -20,8 +20,8 @@ running its live version and its page shows **Draft**: switch between **Live** a
 compare the diagram and code, or read **Changes** for the lines that differ. **Publish** makes the
 draft live; **Discard** drops it. A new automation saved as a draft stays off until you publish it.
 
-Open **Automations** in the sidebar rail to see every automation on your connected environments.
-Unfold one to see its recent runs. Sort and filter from the panel's header.
+To see every automation, open **Automations** from the command palette (`mod+alt+w`) and pick
+**All**.
 
 ## Connect your services
 
@@ -97,8 +97,7 @@ jumps to its line.
 
 When an automation needs a decision, it waits and notifies you. Answer from either place:
 
-- **Needs you** at the top of the Automations panel. The same list also sits on top of
-  **Pipeline**.
+- **Automations waiting on you** at the top of **Pipeline**.
 - The **Automations** page, which lists every question waiting on you and every automation whose
   last run failed.
 - The waiting step in the run, or on the diagram.

@@ -12,6 +12,7 @@
  */
 import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
+  use,
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -23,6 +24,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SidebarRailContext } from "./SidebarChrome"; // signalbox: view rail
 
 export interface SidebarThreadHeaderProps {
   /** Lands on the search field so a popup can anchor to its width. */
@@ -133,6 +135,7 @@ export function SidebarThreadHeader({
           </>
         ) : null}
         <SidebarHeaderIconButton
+          hidden={use(SidebarRailContext)} // signalbox: the rail pins New above every view
           label="New thread"
           tooltip={
             showNewThreadInProjectHint ? (
