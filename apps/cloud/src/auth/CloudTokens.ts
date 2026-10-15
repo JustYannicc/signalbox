@@ -67,6 +67,13 @@ const ConnectionLinkClaims = Schema.TaggedStruct("connection-link", {
   exp: ExpiresAt,
 });
 
+/** A local harness's key to the user's pool (`localKeys/LocalKeys.ts`). Lives until revoked. */
+const LocalKeyClaims = Schema.TaggedStruct("local-key", {
+  u: UserId,
+  s: Schema.String,
+  exp: ExpiresAt,
+});
+
 /** A preview's one-time claim on the user's setup (`previewSetup/`), bound to its origin. */
 const PreviewSetupClaims = Schema.TaggedStruct("preview-setup", {
   u: UserId,
@@ -119,6 +126,7 @@ const SignedClaims = Schema.Union([
   HandoffClaims,
   GitHubConnectClaims,
   ConnectionLinkClaims,
+  LocalKeyClaims,
   PreviewSetupClaims,
   ToolOutputImageClaims,
   AttachmentUploadClaims,
