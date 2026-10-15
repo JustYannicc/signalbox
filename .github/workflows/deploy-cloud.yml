@@ -129,6 +129,7 @@ jobs:
           ./node_modules/.bin/wrangler deploy --env ""
           --secrets-file "$RUNNER_TEMP/cloud-secrets.json"
           --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
+          --var "WORKOS_AUTHKIT_DOMAIN:$WORKOS_AUTHKIT_DOMAIN"
           --var "CLOUD_URL:https://app.signalbox.run"
           --var "MACHINE_BACKEND:$MACHINE_BACKEND"
           --var "MODEL_GATEWAY_URL:$MODEL_GATEWAY_URL"
@@ -138,6 +139,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+          # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`).
+          WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
           MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
           MODEL_GATEWAY_URL: ${{ vars.MODEL_GATEWAY_URL }}
           # Optional: `cloud.*` usage analytics (#116). Production only, so
@@ -251,6 +254,7 @@ jobs:
           --var "ENVIRONMENT_ID:cloud-preview-$PR_NUMBER"
           --var "ENVIRONMENT_LABEL:Signalbox Cloud (PR #$PR_NUMBER)"
           --var "T3CODE_WORKOS_CLIENT_ID:$T3CODE_WORKOS_CLIENT_ID"
+          --var "WORKOS_AUTHKIT_DOMAIN:$WORKOS_AUTHKIT_DOMAIN"
           --var "CLOUD_URL:https://preview-$PR_NUMBER.signalbox.run"
           --var "DRIVE_PACKS_PREFIX:pr-$PR_NUMBER/"
           --var "MACHINE_BACKEND:$MACHINE_BACKEND"
@@ -258,6 +262,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+          # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`).
+          WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
           MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
 
       # The preview's own gateway: its binding reaches only this preview's Worker.
