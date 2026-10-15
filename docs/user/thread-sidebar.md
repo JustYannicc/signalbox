@@ -136,7 +136,7 @@ told, never what it can do.
 
 Tasks leave through **Done** when you hover their row. Chats you leave alone archive themselves
 after seven idle days; hover a chat's icon to see when. Change or turn this off in **Settings →
-General → Archive idle chats after**. Bring an archived chat back from **Settings → Archived**.
+General → Archive idle chats after**. Bring an archived chat back from **Settings → Archive**.
 
 ## Pin and reorder threads
 
