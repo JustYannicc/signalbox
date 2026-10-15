@@ -30,13 +30,24 @@ const pullRequestCheckout = (base: string, branch: string) => {
   git("checkout", "--quiet", "--detach", base);
   git("merge", "--quiet", "--no-ff", "--no-edit", branch);
 };
+/** Runs the script the way CI does: no git identity configured anywhere. */
 const mergeMain = () => {
   const output = NodePath.join(repo, ".git", "github-output");
   NodeFS.writeFileSync(output, "");
+  git("config", "--unset", "user.name");
+  git("config", "--unset", "user.email");
   const run = NodeChildProcess.spawnSync("bash", [SCRIPT, "main"], {
     cwd: repo,
     encoding: "utf8",
-    env: { ...process.env, GITHUB_OUTPUT: output },
+    env: {
+      ...process.env,
+      GITHUB_OUTPUT: output,
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "user.useConfigOnly",
+      GIT_CONFIG_VALUE_0: "true",
+    },
   });
   return {
     status: run.status,

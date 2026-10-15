@@ -18,12 +18,16 @@ main="${1:?ref to merge required}"
 merged=false
 if git merge-base --is-ancestor "$main" HEAD; then
   echo "The checkout already has $main."
-elif git merge --quiet --no-commit --no-ff "$main"; then
+# Nothing is committed, but git wants an identity for any merge and CI has none.
+elif git -c user.name=ci -c user.email=ci@localhost merge --quiet --no-commit --no-ff "$main"; then
   merged=true
   echo "Merged $main."
-else
+elif git rev-parse --quiet --verify MERGE_HEAD > /dev/null; then
   git merge --abort
   echo "::error title=Merge main::This doesn't merge cleanly with $main, so there's no telling what merging it would do to production. Merge $main into it."
+  exit 1
+else
+  echo "::error title=Merge main::Couldn't merge $main (see git's error above)."
   exit 1
 fi
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
