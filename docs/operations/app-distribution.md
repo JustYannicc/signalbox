@@ -53,7 +53,7 @@ is why the push key is an owner step. Bundle capabilities go through the App
 Store Connect API's `bundleIdCapabilities`.
 
 `appleTeamId` in `app.config.ts` and `ascAppId` in `apps/mobile/eas.json` still
-carry T3 Code's values until the owner steps are done.
+carry the upstream project's Apple team and app until the owner steps are done.
 
 ## Android
 
