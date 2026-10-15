@@ -8,6 +8,7 @@ import {
   type AccountPoolReceiveResult,
   type AccountPoolRenameInput,
   type AccountPoolSetBackingInput,
+  type AccountPoolSetRoutingInput,
   PERSONAL_POOL_ID,
   poolIdForSourceId,
 } from "@t3tools/contracts/accountHub";
@@ -77,6 +78,11 @@ export class UserPools extends Context.Service<
     readonly setBacking: (
       actor: PoolActor,
       input: AccountPoolSetBackingInput,
+    ) => Effect.Effect<AccountPool, AccountHubRpcError>;
+    /** Changes how the pool spreads turns across its accounts; applied right away. */
+    readonly setRouting: (
+      actor: PoolActor,
+      input: AccountPoolSetRoutingInput,
     ) => Effect.Effect<AccountPool, AccountHubRpcError>;
     readonly updateAccount: (
       actor: PoolActor,
@@ -241,6 +247,8 @@ const make = Effect.gen(function* () {
                   pool,
                   source: usageSource({ pool, accounts }, now),
                   models: "models" in accounts ? accounts.models : [],
+                  role: "role" in accounts ? accounts.role : null,
+                  routing: "routing" in accounts ? accounts.routing : null,
                 })),
               ),
           { concurrency: "unbounded" },
@@ -304,7 +312,15 @@ const make = Effect.gen(function* () {
         Effect.catchTags({ SqlError: storageFailed }),
       );
       yield* refresh(actor);
-      return accountPool({ ...pool, name: info.name });
+      return accountPool({ ...pool, name: info.name }, info.routing);
+    });
+
+  const setRouting: UserPools["Service"]["setRouting"] = (actor, input) =>
+    Effect.gen(function* () {
+      const pool = yield* requirePool(actor, input.poolId);
+      const info = yield* call(directory.forPool(pool.objectName).setRouting(actor, input.routing));
+      yield* refresh(actor);
+      return accountPool(pool, info.routing);
     });
 
   const remove: UserPools["Service"]["delete"] = (actor, input) =>
@@ -342,7 +358,7 @@ const make = Effect.gen(function* () {
       const pool = yield* requirePool(actor, input.poolId);
       const info = yield* applyBacking(actor, pool, input.backing);
       yield* refresh(actor);
-      return accountPool({ ...pool, backing: info.backing });
+      return accountPool({ ...pool, backing: info.backing }, info.routing);
     });
 
   const receive: UserPools["Service"]["receive"] = (actor, input) =>
@@ -398,6 +414,7 @@ const make = Effect.gen(function* () {
     refresh,
     create,
     rename,
+    setRouting,
     delete: remove,
     setBacking,
     updateAccount,

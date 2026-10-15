@@ -228,6 +228,9 @@ describe("preview setup", () => {
         prodAccounts.accounts.map((account) => account.name),
       );
       expect(accounts.accounts).toHaveLength(1);
+      // So do the limits production read for them.
+      expect(accounts.accounts[0]?.usageLimits).not.toBeNull();
+      expect(accounts.accounts[0]?.usageLimits).toEqual(prodAccounts.accounts[0]?.usageLimits);
       const reply = yield* Effect.promise(() =>
         preview.pools
           .objectFor(linked[0]!.objectName)

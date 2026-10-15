@@ -43,6 +43,7 @@ import {
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { HarnessStderr } from "./harnessStderr.ts";
+import type { RunnerAttachments } from "./RunnerAttachments.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
 import { DriveClientError, DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
@@ -204,6 +205,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
   readonly sessions?: RunnerSessions;
+  /** Brings the thread's attachments to this machine, with the turn's session token (`RunnerAttachments.ts`). */
+  readonly attachments?: RunnerAttachments;
   /** This machine's class. On a light one, a turn that needs more moves up (`RunnerMachineClass.ts`). */
   readonly machineClass?: MachineClass;
   /** Pins this turn's view of every drive the user can read (#141). Never fails. */
@@ -701,12 +704,24 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         yield* input.sessions.use(sessionAccess);
         yield* input.sessions.prepare(adapter.driver);
       }
+      // Pasted screenshots and files, as the files the adapter points the harness at,
+      // fetched while the session loads.
+      const attachments =
+        input.attachments === undefined || sessionAccess === null
+          ? null
+          : yield* Effect.forkChild(
+              input.attachments
+                .bring(sessionAccess.token, turn.message.attachments)
+                // Its message says why, naming the turn's own files when they're the reason.
+                .pipe(Effect.mapError((error) => new RunnerTurnError({ message: error.message }))),
+            );
       const session = yield* sessionFor(adapter, turn, runtimePolicy, {
         instructions: prepared.drive?.instructions ?? "",
         secrets: prepared.secrets,
       });
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
       if (pinning !== null) yield* Fiber.join(pinning);
+      if (attachments !== null) yield* Fiber.join(attachments);
       const started = yield* ordered.withPermits(1)(
         Effect.gen(function* () {
           // Stopped while the session loaded: the thread already ended the run.

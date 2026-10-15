@@ -28,12 +28,15 @@ import { useProjects, useServerConfigs } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { withOneEnvironmentCopy } from "../home/oneEnvironmentCopy"; // signalbox
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { usePromptLinkResolver } from "../prompt-links/usePromptLinkResolver";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { useFolderStartRedirect } from "../folders/use-folder-start-redirect"; // signalbox: folders
 import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
 
 type NewTaskRouteParams = {
@@ -152,6 +155,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const insets = useSafeAreaInsets();
   const { getShare, releaseShareReservation } = useIncomingShare();
   usePromptLinkResolver(route.params);
+  useFolderStartRedirect(route.params); // signalbox: folders
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
     : route.params?.incomingShareId;
@@ -164,9 +168,14 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
     : null;
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
-  const projectEmptyState = deriveProjectEmptyState(catalogState);
+  // signalbox: one environment reads as Signalbox and has no other environment to go and add.
+  const showsEnvironments = useShowsEnvironmentUi();
+  const projectEmptyState = showsEnvironments
+    ? deriveProjectEmptyState(catalogState)
+    : withOneEnvironmentCopy(deriveProjectEmptyState(catalogState));
   // signalbox: while an environment is still connecting there is none to go and add.
-  const waitsForEnvironment = !catalogState.hasReadyEnvironment && projectEmptyState.loading;
+  const waitsForEnvironment =
+    !catalogState.hasReadyEnvironment && (projectEmptyState.loading || !showsEnvironments);
   const serverConfigs = useServerConfigs();
   // Scratch projects are reached through the No project row, never as rows
   // of their own.

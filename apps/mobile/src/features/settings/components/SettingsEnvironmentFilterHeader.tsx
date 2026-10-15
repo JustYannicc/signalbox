@@ -10,6 +10,7 @@ import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-items";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
+import { useShowsEnvironmentUi } from "../../../state/environmentCapabilities"; // signalbox
 
 export function SettingsEnvironmentFilterHeader(props: {
   readonly closeSettings?: boolean;
@@ -28,6 +29,7 @@ export function SettingsEnvironmentFilterHeader(props: {
     selectedProjectKey,
     selectProject,
   } = useSettingsEnvironmentFilter();
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox: one environment, no environment scope
   if (Platform.OS !== "ios") return null;
 
   const filterIcon =
@@ -62,37 +64,42 @@ export function SettingsEnvironmentFilterHeader(props: {
             menu: {
               title: "Settings scope",
               items: [
-                {
-                  type: "submenu",
-                  label:
-                    selectedIds === null
-                      ? "All environments"
-                      : `${selectedTargets.length} ${selectedTargets.length === 1 ? "environment" : "environments"}`,
-                  items: [
-                    {
-                      type: "action",
-                      label: "All connected environments",
-                      state: selectedIds === null ? "on" : undefined,
-                      onPress: selectAll,
-                    },
-                    ...availableTargets.map((entry) => ({
-                      type: "action" as const,
-                      label: entry.label,
-                      icon: {
-                        type: "sfSymbol" as const,
-                        name: ENVIRONMENT_MACHINE_SYMBOLS[
-                          resolveEnvironmentMachineKind(entry.serverConfig)
+                // signalbox: one environment needs no environment scope.
+                ...(!showsEnvironments
+                  ? []
+                  : [
+                      {
+                        type: "submenu" as const,
+                        label:
+                          selectedIds === null
+                            ? "All environments"
+                            : `${selectedTargets.length} ${selectedTargets.length === 1 ? "environment" : "environments"}`,
+                        items: [
+                          {
+                            type: "action",
+                            label: "All connected environments",
+                            state: selectedIds === null ? "on" : undefined,
+                            onPress: selectAll,
+                          },
+                          ...availableTargets.map((entry) => ({
+                            type: "action" as const,
+                            label: entry.label,
+                            icon: {
+                              type: "sfSymbol" as const,
+                              name: ENVIRONMENT_MACHINE_SYMBOLS[
+                                resolveEnvironmentMachineKind(entry.serverConfig)
+                              ],
+                            },
+                            description: entry.displayUrl ?? undefined,
+                            state:
+                              selectedIds === null || selectedIds.has(entry.environmentId)
+                                ? ("on" as const)
+                                : undefined,
+                            onPress: () => toggleEnvironment(entry.environmentId),
+                          })),
                         ],
                       },
-                      description: entry.displayUrl ?? undefined,
-                      state:
-                        selectedIds === null || selectedIds.has(entry.environmentId)
-                          ? ("on" as const)
-                          : undefined,
-                      onPress: () => toggleEnvironment(entry.environmentId),
-                    })),
-                  ],
-                },
+                    ]),
                 {
                   type: "submenu",
                   label:
@@ -147,6 +154,7 @@ export function AndroidSettingsEnvironmentFilter() {
     selectedProjectKey,
     selectProject,
   } = useSettingsEnvironmentFilter();
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox: one environment, no environment scope
   const filterIcon =
     selectedIds === null && selectedProjectKey === null
       ? "line.3.horizontal.decrease"
@@ -184,7 +192,7 @@ export function AndroidSettingsEnvironmentFilter() {
           title: `Project · ${group.label}`,
           state: selectedProjectKey === group.key ? ("on" as const) : ("off" as const),
         })),
-      ]}
+      ].filter((action) => showsEnvironments || action.id.startsWith("project:"))} // signalbox
       onPressAction={({ nativeEvent }) => {
         if (nativeEvent.event === "all") selectAll();
         else if (nativeEvent.event === "project:all") selectProject(null);

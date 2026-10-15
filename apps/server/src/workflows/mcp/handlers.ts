@@ -1,4 +1,8 @@
-import { OrchestratorMcpFailure, type AutomationError } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  type AutomationError,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
@@ -34,6 +38,19 @@ const toMcpFailure = (error: AutomationError | OrchestratorMcpFailure) =>
 const asCaller = <A, R>(
   use: (caller: Caller) => Effect.Effect<A, AutomationError | OrchestratorMcpFailure, R>,
 ) => readCaller().pipe(Effect.flatMap(use), Effect.mapError(toMcpFailure));
+
+/** Waits belong to the thread that calls; a client outside a thread has none. */
+const callingThread = (
+  caller: Caller,
+): Effect.Effect<OrchestrationV2ThreadShell, OrchestratorMcpFailure> =>
+  caller.caller
+    ? Effect.succeed(caller.caller)
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "target_required",
+          message: "Waits wake a thread, so call this from a Signalbox thread.",
+        }),
+      );
 
 export const layer = McpToolAccess.toLayer(
   AutomationToolkit,
@@ -143,6 +160,52 @@ export const layer = McpToolAccess.toLayer(
       ),
       automation_emit: McpToolAccess.writes((input) =>
         asCaller(() => engine.emit(input)).pipe(Effect.map((woke) => ({ woke }))),
+      ),
+      wait_for: McpToolAccess.writes((input) =>
+        asCaller((caller) =>
+          Effect.gen(function* () {
+            const thread = yield* callingThread(caller);
+            const started = yield* engine.startWait(
+              { ...input, threadId: thread.id },
+              {
+                authorize: withinLimits(caller.limits),
+                builtInDefaults: yield* callerDefaults(caller, thread.projectId),
+              },
+            );
+            return {
+              waitId: started.waitId,
+              callbackUrl: started.callback
+                ? (started.callback.url ?? started.callback.path)
+                : null,
+            };
+          }),
+        ),
+      ),
+      list_waits: McpToolAccess.reads(() =>
+        asCaller((caller) =>
+          callingThread(caller).pipe(Effect.flatMap((thread) => engine.listWaits(thread.id))),
+        ).pipe(Effect.map((waits) => ({ waits }))),
+      ),
+      stop_waiting: McpToolAccess.writes(({ waitId }) =>
+        asCaller((caller) =>
+          callingThread(caller).pipe(
+            Effect.flatMap((thread) => engine.stopWait(thread.id, waitId)),
+          ),
+        ).pipe(Effect.map((stopped) => ({ stopped }))),
+      ),
+      merge_pull_request: McpToolAccess.writes(({ url, note }) =>
+        asCaller((caller) =>
+          Effect.gen(function* () {
+            const thread = yield* callingThread(caller);
+            return yield* engine.requestMerge(
+              { threadId: thread.id, url, note },
+              {
+                authorize: withinLimits(caller.limits),
+                builtInDefaults: yield* callerDefaults(caller, thread.projectId),
+              },
+            );
+          }),
+        ),
       ),
       automation_set_webhook_secret: McpToolAccess.writes(({ automationId, secretRef }) =>
         asCaller(({ limits }) =>

@@ -159,8 +159,8 @@ jobs:
         run: |
           image="${TAGS%%,*}"
           docker run --rm --entrypoint sh --env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 "$image" -c 'git --version && claude --version && codex --version && pnpm --version && "$SIGNALBOX_BROWSER_EXECUTABLE" --version'
-          # 1Password's SDK loads its WebAssembly core from beside the Runner.
-          docker run --rm --entrypoint node --workdir /opt/signalbox "$image" -e 'require("@1password/sdk")'
+          # Playwright and 1Password's SDK load from beside the Runner.
+          docker run --rm --entrypoint node --workdir /opt/signalbox "$image" -e 'require("playwright-core"); require("@1password/sdk")'
           status=0
           timeout 10 docker run --rm --name runner-smoke "$image" machine --config /tmp/none.json || status=$?
           docker rm --force runner-smoke >/dev/null 2>&1 || true

@@ -5,6 +5,7 @@ import { EnvironmentAuthorizationError } from "./auth.ts";
 import {
   Automation,
   AutomationDetail,
+  AutomationSaveResult,
   AutomationError,
   AutomationNotice,
   AutomationRetryVersion,
@@ -13,6 +14,7 @@ import {
   AutomationRunSummary,
 } from "./automation.ts";
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { WorkflowDiagnostic, WorkflowGraph } from "./workflow.ts";
 
 /**
  * WebSocket methods for automations. Spread into `WS_METHODS` and `WsRpcGroup`
@@ -38,6 +40,8 @@ export const AUTOMATION_WS_METHODS = {
   automationsConnectionStatus: "automations.connectionStatus",
   automationsConnect: "automations.connect",
   automationsDisconnect: "automations.disconnect",
+  automationsValidate: "automations.validate",
+  automationsSave: "automations.save",
 } as const;
 
 const AutomationId = TrimmedNonEmptyString;
@@ -154,9 +158,14 @@ const RetryRunRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsRetryRun, {
   error,
 });
 
-/** Makes the pending draft the live version. */
+/**
+ * Makes the pending draft the live version. `version` is the draft the person
+ * looked at: publishing it vouches for that code (it may then merge pull
+ * requests), so a different pending draft is refused. Without it the draft
+ * goes live but vouches for nothing.
+ */
 const PublishRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsPublish, {
-  payload: Schema.Struct({ automationId: AutomationId }),
+  payload: Schema.Struct({ automationId: AutomationId, version: Schema.optional(Schema.Int) }),
   success: Automation,
   error,
 });
@@ -236,6 +245,36 @@ const DisconnectRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsDisconnect, {
   error,
 });
 
+/** What an automation file compiles to, or what to fix: the authoring loop's check. */
+export const AutomationValidateResult = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), graph: WorkflowGraph }),
+  Schema.Struct({ ok: Schema.Literal(false), diagnostics: Schema.Array(WorkflowDiagnostic) }),
+]);
+export type AutomationValidateResult = typeof AutomationValidateResult.Type;
+
+/** Compiles a file without saving it. */
+const ValidateRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsValidate, {
+  payload: Schema.Struct({ source: Schema.String }),
+  success: AutomationValidateResult,
+  error,
+});
+
+/**
+ * Saves a file in a project, live unless `draft`: new without `automationId`,
+ * a new version of that automation with it. A file that doesn't compile is
+ * not saved; the result says what to fix.
+ */
+const SaveRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSave, {
+  payload: Schema.Struct({
+    source: Schema.String,
+    projectId: ProjectId,
+    automationId: Schema.optional(AutomationId),
+    draft: Schema.optional(Schema.Boolean),
+  }),
+  success: AutomationSaveResult,
+  error,
+});
+
 export const AutomationRpcs = [
   SubscribeRpc,
   SubscribeOneRpc,
@@ -256,4 +295,6 @@ export const AutomationRpcs = [
   ConnectionStatusRpc,
   ConnectRpc,
   DisconnectRpc,
+  ValidateRpc,
+  SaveRpc,
 ] as const;

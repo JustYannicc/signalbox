@@ -1,20 +1,12 @@
 /**
  * The always-visible icon column of the sidebar. The top group switches the
  * panel beside it; the bottom group opens Usage, Feedback and Settings.
- * Entries that don't run on real data yet stay visible but disabled, with a
- * "coming soon" tooltip.
+ * Pipeline carries the count of automations waiting on the user, since their
+ * waiting group sits on top of it. Plugins stays visible but disabled, with a
+ * "coming soon" tooltip, until its view runs on real data (#320).
  */
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import {
-  BellIcon,
-  BlocksIcon,
-  HouseIcon,
-  LibraryIcon,
-  MoonIcon,
-  SettingsIcon,
-  WorkflowIcon,
-  type LucideIcon,
-} from "lucide-react";
+import { BellIcon, BlocksIcon, HouseIcon, SettingsIcon, type LucideIcon } from "lucide-react";
 import { memo, type ReactNode } from "react";
 
 import { useWaitingAutomationCount } from "../automations/useAutomations";
@@ -31,8 +23,6 @@ type RailEntry =
 
 const VIEW_ENTRIES: ReadonlyArray<RailEntry> = [
   { kind: "view", view: "home", label: "Home", icon: HouseIcon },
-  { kind: "soon", label: "Spaces", icon: LibraryIcon },
-  { kind: "view", view: "automations", label: "Automations", icon: WorkflowIcon },
   { kind: "view", view: "pipeline", label: "Pipeline", icon: BellIcon },
   { kind: "soon", label: "Plugins", icon: BlocksIcon },
 ];
@@ -121,7 +111,7 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
               label={entry.label}
               active={props.view === entry.view}
               onClick={() => props.onViewChange(entry.view)}
-              {...(entry.view === "automations" ? { badge: waitingAutomations } : {})}
+              badge={entry.view === "pipeline" ? waitingAutomations : 0}
             >
               <entry.icon />
             </RailButton>
@@ -146,9 +136,6 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
         <SidebarMenuItem>
           <SidebarFeedbackButton />
         </SidebarMenuItem>
-        <ComingSoonButton label="Focus">
-          <MoonIcon />
-        </ComingSoonButton>
         <RailButton
           label="Settings"
           active={isPathOpen(pathname, "/settings")}

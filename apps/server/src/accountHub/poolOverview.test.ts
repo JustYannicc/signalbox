@@ -8,7 +8,9 @@ import {
 } from "@t3tools/contracts";
 import { type AccountPool, AccountPoolId, poolSourceId } from "@t3tools/contracts/accountHub";
 
-import { buildPoolOverviews, pooledUsage } from "./poolOverview.ts";
+import { pooledUsage } from "@t3tools/shared/poolUsage";
+
+import { buildPoolOverviews } from "./poolOverview.ts";
 
 const pool = (id: string, name: string): AccountPool => ({
   id: AccountPoolId.make(id),

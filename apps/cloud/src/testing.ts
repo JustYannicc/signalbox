@@ -15,7 +15,12 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
+import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
+import type { AttachmentObjects } from "./attachments/attachmentObjects.ts";
+import { makeMemoryObjects } from "./attachments/attachmentTesting.ts";
+import * as CloudAttachments from "./attachments/CloudAttachments.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -39,12 +44,16 @@ import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
+import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
 import { previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
+import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
+import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
 import * as ModelManifest from "./thread/ModelManifest.ts";
 import * as TurnModels from "./thread/TurnModels.ts";
@@ -60,6 +69,7 @@ import * as GitHub from "./github/GitHub.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
+import * as LocalKeys from "./localKeys/LocalKeys.ts";
 import * as LegacySections from "./user/legacySections.ts";
 import * as UserFolders from "./user/UserFolders.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
@@ -69,6 +79,8 @@ import * as PoolSignIns from "./user/PoolSignIns.ts";
 import * as UserPools from "./user/UserPools.ts";
 import * as UserShell from "./user/UserShell.ts";
 import * as UserStore from "./user/UserStore.ts";
+import * as UserThreadKinds from "./user/UserThreadKinds.ts";
+import * as ChatArchive from "./user/chatArchive.ts";
 
 /** Test wiring: fixed config, a fake WorkOS, and user objects on in-memory SQLite. */
 
@@ -78,10 +90,21 @@ export const CLOUD_TEST_ENV = {
   SESSION_SECRET: "test-session-secret-0123456789abcdef",
 } as const;
 
+/** The environment the in-memory cloud's API calls act in. */
+const API_TEST_IDENTITY = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
+
 /** Fresh per call: Effect shares a layer built once, which would pin the first env. */
 export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_ENV) =>
   Layer.mergeAll(Layer.fresh(CloudConfig.layer), Layer.fresh(PreviewSetup.layerConfig)).pipe(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
+
+/** Attachments over `objects`, with links signed by the test config. */
+export const layerAttachments = (objects: AttachmentObjects) =>
+  CloudAttachments.layer({ objects, prefix: "" }).pipe(
+    Layer.provide(CloudTokens.layer),
+    Layer.provide(Layer.mergeAll(layerConfig(), Platform.layerCrypto)),
+    Layer.orDie,
   );
 
 /** A user object's storage services on a fresh in-memory database, migrated. */
@@ -101,7 +124,7 @@ export const layerMemoryStore = LegacySections.layer.pipe(
   ),
 );
 
-/** Places threads for `userId`, who has only Personal, with no storage behind it. */
+/** Places threads for `userId`, who has only Personal, with no storage behind it; no kinds. */
 export const layerPersonalThreadContexts = (userId: string) =>
   Layer.succeed(
     ThreadContexts.ThreadContexts,
@@ -121,7 +144,7 @@ export const layerPersonalThreadContexts = (userId: string) =>
           secrets: { top: [], projects: {} },
         }),
     }),
-  );
+  ).pipe(Layer.merge(ThreadKindTurns.layerNone));
 
 /** Everyone in a test, findable by email for sharing, with their organizations. */
 export type TestPeople = ReadonlyArray<
@@ -207,6 +230,8 @@ const makeUserRuntime = (
   drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
   people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
+  classifier: Layer.Layer<KindClassifier.KindClassifier>,
+  attachments: Layer.Layer<CloudAttachments.CloudAttachments>,
   observe: Layer.Layer<never>,
 ) =>
   ManagedRuntime.make(
@@ -220,11 +245,19 @@ const makeUserRuntime = (
           DriveFiles.layer,
           GitHubConnection.layer,
           ConnectionLinks.layer,
+          LocalKeys.layer,
           PoolSignIns.layer,
           CloudThreadService.layer,
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          ThreadContexts.layer,
+          Platform.layerCrypto,
+          UserThreadKinds.layerTurns,
+          attachments,
+        ),
+      ),
       // No push credentials, so phones are recorded and every push is skipped.
       Layer.provideMerge(
         PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
@@ -236,7 +269,8 @@ const makeUserRuntime = (
           ),
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
+      Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer, UserThreadKinds.layer)),
+      Layer.provideMerge(Layer.mergeAll(classifier, ChatArchive.layerAlarmNone)),
       Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
       Layer.provideMerge(Layer.mergeAll(drives, people, github)),
       Layer.provideMerge(
@@ -264,6 +298,8 @@ export const makeMemoryCloud = (
     readonly github?: Layer.Layer<GitHub.GitHub>;
     /** What pools backed by a CLIProxyAPI elsewhere reach. */
     readonly poolFetch?: (request: Request) => Promise<Response>;
+    /** Tells chats from tasks; nothing is classified unless given. */
+    readonly classifier?: Layer.Layer<KindClassifier.KindClassifier>;
     /** Loggers or a tracer every object here runs with, to see what they log and trace. */
     readonly observe?: Layer.Layer<never>;
   } = {},
@@ -283,14 +319,40 @@ export const makeMemoryCloud = (
         effect: Effect.Effect<
           A,
           E,
-          ThreadEngine.ThreadEngine | ThreadStore.ThreadStore | UserDirectory.UserDirectory
+          | ThreadEngine.ThreadEngine
+          | ThreadStore.ThreadStore
+          | UserDirectory.UserDirectory
+          | PullRequestSync.PullRequestSync
+          | PullRequestPolls.PullRequestPolls
         >,
       ) => Promise<A>;
     }
   >();
+  const mcpHandlers = new Map<string, ReturnType<typeof makeMcpHandler>>();
   const userDirectory: UserDirectory.UserDirectory["Service"] = {
     forUser: (userId) => UserDirectory.handleFor(userFor(userId).api),
     connect: () => Effect.die("Sockets are not part of these tests"),
+    // The object's own API and MCP handlers, against its in-memory services.
+    callApi: (userId, request, credential) =>
+      Effect.promise(async () => {
+        const { runtime } = userFor(userId);
+        if (new URL(request.url).pathname !== MCP_PATH) {
+          return runtime.runPromise(
+            serveApiRequest(request, { identity: API_TEST_IDENTITY, userId, credential }),
+          );
+        }
+        const mcp =
+          mcpHandlers.get(userId) ??
+          makeMcpHandler({
+            identity: API_TEST_IDENTITY,
+            userId,
+            context: await runtime.runPromise(Effect.context()),
+          });
+        mcpHandlers.set(userId, mcp);
+        const headers = new Headers(request.headers);
+        headers.set(API_HEADER, encodeApiCredential(credential));
+        return mcp.handler(new Request(request, { headers }));
+      }),
   };
   const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
     forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),
@@ -298,6 +360,8 @@ export const makeMemoryCloud = (
   const pools = makeMemoryPools(options.poolFetch);
   const drives = makeMemoryDrives({ users: () => userDirectory });
   const people = layerTestPeople(options.people ?? []);
+  const attachmentObjects = makeMemoryObjects();
+  const attachments = layerAttachments(attachmentObjects);
   const userFor = (userId: string) => {
     const existing = users.get(userId);
     if (existing) return existing;
@@ -308,26 +372,33 @@ export const makeMemoryCloud = (
       drives.layer,
       people,
       options.github ?? layerNoGitHub,
+      options.classifier ?? KindClassifier.layerNone,
+      attachments,
       options.observe ?? Layer.empty,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
     return object;
   };
+  /** One thread object's services; its linked pull requests sync with `options.github`. */
+  const layerThreadObjectInMemory = () =>
+    layerThreadObject(":memory:", MachineBackends.layerNone, {
+      drives: true,
+      writes: (userId, driveId) =>
+        Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
+      secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),
+      // Turns check their pool as in production, with the scripted provider on.
+      models: TurnModels.layer({ scripted: true }).pipe(
+        Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
+      ),
+    });
   const threadFor = (threadId: string) => {
     const existing = threads.get(threadId);
     if (existing) return existing;
     const runtime = ManagedRuntime.make(
-      layerThreadObject(":memory:", MachineBackends.layerNone, {
-        drives: true,
-        writes: (userId, driveId) =>
-          Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
-        secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),
-        // Turns check their pool as in production, with the scripted provider on.
-        models: TurnModels.layer({ scripted: true }).pipe(
-          Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
-        ),
-      }).pipe(
+      PullRequestSync.layer.pipe(
+        Layer.provide(options.github ?? layerNoGitHub),
+        Layer.provideMerge(layerThreadObjectInMemory()),
         Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, userDirectory)),
         Layer.provideMerge(options.observe ?? Layer.empty),
       ),
@@ -340,6 +411,8 @@ export const makeMemoryCloud = (
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
+        | PullRequestSync.PullRequestSync
+        | PullRequestPolls.PullRequestPolls
       >,
     ) => runtime.runPromise(effect);
     // No machine runs in memory, so nothing serves previews.
@@ -362,6 +435,7 @@ export const makeMemoryCloud = (
       Layer.mergeAll(
         Layer.succeed(UserDirectory.UserDirectory, userDirectory),
         Layer.succeed(ThreadDirectory.ThreadDirectory, threadDirectory),
+        attachments,
       ),
     ),
     Layer.provideMerge(Platform.layerCrypto),
@@ -386,6 +460,8 @@ export const makeMemoryCloud = (
     pools,
     /** The drives' objects and packs, shared by every user and thread here. */
     drives,
+    /** The attachments bucket, shared by every user and thread here. */
+    attachmentObjects,
     /** Who owns a thread, and the context and drive it was created in. */
     threadOwner: (threadId: string) =>
       Effect.promise(() =>
@@ -406,6 +482,29 @@ export const makeMemoryCloud = (
         ),
       ),
     settle,
+    /** Every event a thread committed, oldest first. */
+    threadEvents: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(
+          ThreadStore.ThreadStore.use((store) =>
+            Effect.map(Effect.orDie(store.events(0)), (stored) =>
+              stored.map((entry) => entry.event),
+            ),
+          ),
+        ),
+      ),
+    /** Time passing for a thread's pull request sync: every link is due again at once. */
+    forgetPullRequestPolls: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(
+          PullRequestPolls.PullRequestPolls.use((polls) => Effect.orDie(polls.replace([]))),
+        ),
+      ),
+    /** What a thread object's alarm does for its linked pull requests; answers when it is due next. */
+    syncPullRequests: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(PullRequestSync.PullRequestSync.use((sync) => sync.sync)),
+      ),
     /** The services inside `userId`'s object, for handlers that run there (the socket's RPC). */
     userObject,
     /** The thread service as `userId`'s object runs it, with that user's contexts. */

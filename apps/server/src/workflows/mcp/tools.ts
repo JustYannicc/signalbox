@@ -1,19 +1,12 @@
 import {
   AutomationRetryVersion,
   AutomationRunAttach,
-  OrchestratorMcpFailure,
   ProjectId,
   SecretRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 
-import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
-import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../../project/ProjectService.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import * as WorkflowEngine from "../WorkflowEngine.ts";
 import { BuiltInList } from "./builtIns.ts";
 import {
   AutomationSummary,
@@ -23,20 +16,13 @@ import {
   SaveResult,
   ValidateResult,
 } from "./summaries.ts";
+import { tool } from "./tool.ts";
+import { ListWaitsTool, MergePullRequestTool, StopWaitingTool, WaitForTool } from "./waitTools.ts";
 
 /**
  * Agent tools for automations. Each handler calls one engine method (see
  * handlers.ts); what they return is in summaries.ts.
  */
-
-const dependencies = [
-  McpInvocationContext.McpInvocationContext,
-  ThreadManagement.ThreadManagementService,
-  WorkflowEngine.WorkflowEngine,
-  // automation_save picks a model for callers without a thread.
-  ProjectService.ProjectService,
-  ServerSettings.ServerSettingsService,
-];
 
 const AutomationId = Schema.String.annotate({
   description: "The automation's id, from automation_list or automation_save.",
@@ -48,35 +34,6 @@ const Source = Schema.String.annotate({
   description:
     "The full TypeScript file. Read automation_reference before writing one if you haven't yet.",
 });
-
-const tool = <
-  Name extends string,
-  P extends Schema.Struct.Fields = {},
-  S extends Schema.Top = Schema.Top,
->(
-  name: Name,
-  options: {
-    title: string;
-    description: string;
-    parameters?: Schema.Struct<P>;
-    success: S;
-    readonly: boolean;
-    destructive?: boolean;
-  },
-) =>
-  Tool.make(name, {
-    description: options.description,
-    // Tools without inputs leave parameters out, which publishes an empty object schema.
-    ...(options.parameters ? { parameters: options.parameters } : {}),
-    success: options.success,
-    failure: OrchestratorMcpFailure,
-    failureMode: "return",
-    dependencies,
-  })
-    .annotate(Tool.Title, options.title)
-    .annotate(Tool.Readonly, options.readonly)
-    .annotate(Tool.Destructive, options.destructive ?? false)
-    .annotate(Tool.OpenWorld, false);
 
 const AutomationReferenceTool = tool("automation_reference", {
   title: "Automation reference",
@@ -275,4 +232,8 @@ export const AutomationToolkit = Toolkit.make(
   AutomationEmitTool,
   AutomationSetWebhookSecretTool,
   AutomationCustomizeTool,
+  WaitForTool,
+  ListWaitsTool,
+  StopWaitingTool,
+  MergePullRequestTool,
 );

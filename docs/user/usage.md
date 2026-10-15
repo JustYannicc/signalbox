@@ -136,7 +136,12 @@ the pool's logins of the same provider: an Anthropic key and a Claude subscripti
 take Claude conversations. Keys never report usage limits, and their menu only offers **Remove**.
 
 In Signalbox Cloud, pools take Claude and ChatGPT sign-ins for now. API keys, imported accounts,
-Cursor and OpenCode come later, and Limits lists each account without its usage bars.
+Cursor and OpenCode come later. Limits shows each account's windows from its latest request, or
+checks with the provider at most every ten minutes while the pool is running. A pool that's asleep
+shows what it last read. The pool's admins see each account; members see only how much the pool
+has left and when it next resets. When a provider rate-limits an account, the pool keeps it aside until the
+announced reset, but checks with the provider while threads keep asking. If the provider resets
+the window early, the account is back within about a minute.
 
 In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
 cannot load; copy that page's full address and paste it into Signalbox to finish.
@@ -198,6 +203,12 @@ To bring accounts from a CLIProxyAPI you run into a pool, choose **Import from C
 pool's menu. Leave **Remove them from that CLIProxyAPI** on unless you stop using that instance:
 two places refreshing the same account sign each other out.
 
+In Signalbox Cloud, a pool's admins choose how it spreads turns under **Load balancing** in the
+pool's menu: each account in turn (the default), or one account until it runs out. **Keep each thread on one account** (on by default) keeps cached prompts valid; a thread
+then moves to another account only when its own fails, on quota or sign-in errors or on any error.
+Each choice applies to the pool right away. A pool that runs on your own CLIProxyAPI uses that
+CLIProxyAPI's routing settings.
+
 Deleting a pool removes its providers from the model picker. In Signalbox Cloud, folders that ran on
 it move to the pool above them; on your own server, threads on it stop working. The
 accounts Signalbox keeps for it are removed; a pool that keeps its logins in your CLIProxyAPI leaves
@@ -213,6 +224,29 @@ cloud. Manage its accounts in Signalbox Cloud from then on.
 
 Signalbox Cloud pools take Claude and ChatGPT accounts for now. A pool that also holds API keys or
 other accounts can't move until you remove them from it.
+
+### Use your pool on your computer
+
+In Signalbox Cloud, Claude Code and the Codex CLI and desktop app on your own computer can run on
+your pool. They connect straight to your pool with a personal key; the Signalbox apps don't need to
+be open or installed on that computer.
+
+In Signalbox on the web, open **Settings → Pools**, choose **Set up a computer** and run the command
+it shows in a terminal there (it needs Node.js 22 or later). The command checks the key with your
+pool before it changes anything, then points both harnesses at Signalbox; their own settings stay as
+they were otherwise. Run the same command with `--undo` in place of the key to go back.
+
+Where Signalbox offers connectors, setup also adds them to both harnesses as the MCP server
+`signalbox`. Sign in to it once in each: in Claude Code run `/mcp`, choose `signalbox` and
+Authenticate; for Codex run `codex mcp login signalbox`.
+
+Each harness stays signed in to its own account, so going back needs no new sign-in. Codex needs to
+be signed in once (with ChatGPT or an API key) before it uses the pool. The Claude desktop app isn't
+covered.
+
+The computer uses the pool your top level runs on, and stops the moment you **Revoke** its key. Its
+requests count toward that pool's accounts like any thread's, and each key shows when it was last
+used and how many tokens it has used.
 
 ## Connect a CLIProxyAPI hub
 

@@ -1,9 +1,17 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { HttpServerRequest, type HttpServerResponse } from "effect/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
-import { requestCredentials } from "./credentials.ts";
+import { NO_STORE_HEADERS, requestCredentials } from "./credentials.ts";
+
+/** A JSON answer to one of Signalbox's own pages, never cached. */
+export const pageJson = (body: unknown, status = 200) =>
+  HttpServerResponse.jsonUnsafe(body, { status, headers: NO_STORE_HEADERS });
+
+/** A refusal the page shows as `message`; `error` is for code. */
+export const pageFailure = (status: number, error: string, message: string) =>
+  pageJson({ error, message }, status);
 
 /** Anything unexpected is logged and answered with `fallback`, which says nothing about the request. */
 export const guarded = <E, R>(
@@ -38,3 +46,21 @@ export const pageUser = Effect.gen(function* () {
     ? ({ _tag: "signed_out" } satisfies PageUser)
     : ({ _tag: "user", userId: session.value.userId } satisfies PageUser);
 });
+
+/**
+ * Runs `handler` for the signed-in user of one of Signalbox's own pages, or
+ * answers why there isn't one. `forbidden` is what a cross-site request is told.
+ */
+export const withPageUser =
+  (forbidden: string) =>
+  <E, R>(handler: (userId: string) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+    Effect.flatMap(pageUser, (user) => {
+      switch (user._tag) {
+        case "user":
+          return handler(user.userId);
+        case "cross_site":
+          return Effect.succeed(pageFailure(403, "forbidden", forbidden));
+        case "signed_out":
+          return Effect.succeed(pageFailure(401, "unauthorized", "Sign in to Signalbox first."));
+      }
+    });

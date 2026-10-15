@@ -623,6 +623,33 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ]);
   });
 
+  // signalbox: thin cloud build
+  it.effect("ships no server resources in the thin cloud build", () =>
+    Effect.gen(function* () {
+      const thin = (platform: "mac" | "linux" | "win", target: string) =>
+        createBuildConfig(
+          platform,
+          target,
+          "1.2.3",
+          false,
+          false,
+          undefined,
+          undefined,
+          true,
+          undefined,
+          false,
+        );
+
+      assert.deepStrictEqual((yield* thin("mac", "dmg")).extraResources, []);
+      assert.deepStrictEqual((yield* thin("linux", "AppImage")).extraResources, [
+        ...LINUX_CAPTURE_EXTRA_RESOURCES,
+        { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
+      ]);
+      // Neither the server sidecar nor the WSL runtime, even when an archive was handed in.
+      assert.deepStrictEqual((yield* thin("win", "nsis")).extraResources, []);
+    }),
+  );
+
   it.effect("applies platform-specific packaging to the build config", () =>
     Effect.gen(function* () {
       const mac = yield* createBuildConfig(
@@ -2395,6 +2422,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
         wslRuntime: Option.none(),
+        localServer: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -2415,6 +2443,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.platform, "win");
       assert.equal(resolved.target, "nsis");
       assert.equal(resolved.arch, "arm64");
+      // signalbox: releases build the thin cloud client unless asked for the local server.
+      assert.isFalse(resolved.localServer);
     }),
   );
 
@@ -2435,6 +2465,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
             wslRuntime: Option.none(),
+            localServer: Option.none(),
           }),
         );
 
@@ -2459,6 +2490,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
         wslRuntime: Option.none(),
+        localServer: Option.some(false),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(
@@ -2469,6 +2501,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                 T3CODE_DESKTOP_SIGNED: "true",
                 T3CODE_DESKTOP_VERBOSE: "true",
                 T3CODE_DESKTOP_MOCK_UPDATES: "true",
+                T3CODE_DESKTOP_LOCAL_SERVER: "true",
               },
             }),
           ),
@@ -2480,6 +2513,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.signed, false);
       assert.equal(resolved.verbose, false);
       assert.equal(resolved.mockUpdates, false);
+      assert.equal(resolved.localServer, false);
     }),
   );
 });

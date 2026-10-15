@@ -1,6 +1,9 @@
 import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
+import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
@@ -15,7 +18,22 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   /** HTTP status, or 0 when no answer arrived. */
   status: Schema.Number,
   message: Schema.String,
+  /** When GitHub's rate limit lets the caller ask again (epoch ms), when it said. */
+  retryAt: Schema.optional(Schema.Number),
 }) {}
+
+/**
+ * When a refused request may be retried: `retry-after` (secondary limits), or
+ * the window's reset once none are left. Undefined for any other refusal.
+ */
+const rateLimitRetryAt = (response: HttpClientResponse.HttpClientResponse, now: number) => {
+  if (response.status !== 403 && response.status !== 429) return undefined;
+  const retryAfter = retryAtFromHeader(response.headers["retry-after"], now);
+  if (retryAfter !== undefined) return retryAfter;
+  if (response.headers["x-ratelimit-remaining"] !== "0") return undefined;
+  const reset = Number(response.headers["x-ratelimit-reset"]);
+  return Number.isFinite(reset) ? reset * 1_000 : now + 60_000;
+};
 
 export interface GitHubEndpoints {
   /** Where OAuth and git live, e.g. `https://github.com`. */
@@ -104,6 +122,7 @@ const DefaultHeadBody = Schema.Struct({
     ),
   }),
 });
+const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const decodeErrorBody = Schema.decodeUnknownOption(
   Schema.Struct({ message: Schema.optional(Schema.String) }),
 );
@@ -159,8 +178,12 @@ export const makeGitHubApi = (
       Effect.scoped,
     );
 
-  /** Like `json`, answering the raw body. */
-  const raw = (operation: string, request: HttpClientRequest.HttpClientRequest, token: string) =>
+  /** Like `json`, answering the raw body as bytes. */
+  const rawBytes = (
+    operation: string,
+    request: HttpClientRequest.HttpClientRequest,
+    token: string,
+  ) =>
     send(operation, asUser(request, token, "application/vnd.github.raw+json")).pipe(
       Effect.flatMap((response) =>
         response.status === 404
@@ -185,6 +208,60 @@ export const makeGitHubApi = (
       Effect.scoped,
     );
 
+  /** Fails with GitHub's message, and its rate limit's retry time, for a non-2xx answer. */
+  const failUnlessOk = (
+    operation: string,
+    response: HttpClientResponse.HttpClientResponse,
+    body: unknown,
+  ) =>
+    Effect.gen(function* () {
+      if (response.status >= 200 && response.status < 300) return;
+      const error = decodeErrorBody(body);
+      const retryAt = rateLimitRetryAt(response, yield* Clock.currentTimeMillis);
+      return yield* new GitHubError({
+        operation,
+        status: response.status,
+        message:
+          (error._tag === "Some" ? error.value.message : undefined) ??
+          `GitHub answered ${response.status}.`,
+        ...(retryAt === undefined ? {} : { retryAt }),
+      });
+    });
+
+  /** A call as `token` whose answer the caller decodes: its JSON text, null on 404. */
+  const raw = (operation: string, request: HttpClientRequest.HttpClientRequest, token: string) =>
+    send(
+      operation,
+      request.pipe(
+        HttpClientRequest.bearerToken(token),
+        HttpClientRequest.setHeaders({
+          accept: "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28",
+        }),
+      ),
+    ).pipe(
+      Effect.flatMap((response) =>
+        Effect.gen(function* () {
+          const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+          if (response.status === 404) return null;
+          yield* failUnlessOk(operation, response, Option.getOrNull(parseJson(text)));
+          // GraphQL answers its own rate limit with a 200 and an error in the body.
+          if (text.includes('"RATE_LIMITED"')) {
+            const now = yield* Clock.currentTimeMillis;
+            const reset = Number(response.headers["x-ratelimit-reset"]) * 1_000;
+            return yield* new GitHubError({
+              operation,
+              status: response.status,
+              message: "GitHub's API rate limit is used up for now.",
+              retryAt: Number.isFinite(reset) && reset > now ? reset : now + 60_000,
+            });
+          }
+          return text;
+        }),
+      ),
+      Effect.scoped,
+    );
+
   const decodeOrFail = <A>(
     operation: string,
     schema: Schema.Codec<A, unknown>,
@@ -193,16 +270,7 @@ export const makeGitHubApi = (
     Effect.gen(function* () {
       const body: unknown = yield* response.json.pipe(Effect.orElseSucceed(() => null));
       if (response.status === 404) return null;
-      if (response.status < 200 || response.status >= 300) {
-        const error = decodeErrorBody(body);
-        return yield* new GitHubError({
-          operation,
-          status: response.status,
-          message:
-            (error._tag === "Some" ? error.value.message : undefined) ??
-            `GitHub answered ${response.status}.`,
-        });
-      }
+      yield* failUnlessOk(operation, response, body);
       return yield* Schema.decodeUnknownEffect(schema)(body).pipe(
         // A token answer's body holds the tokens, so the decode error stays out of logs.
         Effect.mapError(
@@ -345,7 +413,7 @@ export const makeGitHubApi = (
       ),
     /** A file's bytes by id, or null when `repository` doesn't have it (#406). */
     blob: (token: string, repository: string, sha: string) =>
-      raw("blob", HttpClientRequest.get(`${api}/repos/${repository}/git/blobs/${sha}`), token),
+      rawBytes("blob", HttpClientRequest.get(`${api}/repos/${repository}/git/blobs/${sha}`), token),
     /**
      * Every file's size under commit or tree `sha`, by id. GitHub lists at most
      * 100,000 entries; a bigger tree answers what it listed.
@@ -370,6 +438,34 @@ export const makeGitHubApi = (
             ),
         ),
       ),
+    /** A GraphQL query's answer as JSON text, for decoders that read text (upstream's). */
+    graphql: (
+      operation: string,
+      token: string,
+      query: string,
+      variables: Readonly<Record<string, unknown>>,
+    ) =>
+      raw(
+        operation,
+        HttpClientRequest.post(`${api}/graphql`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({ query, variables }),
+        ),
+        token,
+      ),
+    /** A REST read's answer as JSON text; null on 404. `path` starts with `/`. */
+    rest: (
+      operation: string,
+      token: string,
+      path: string,
+      params: Readonly<Record<string, string>> = {},
+    ) =>
+      raw(
+        operation,
+        HttpClientRequest.get(`${api}${path}`).pipe(HttpClientRequest.setUrlParams(params)),
+        token,
+      ),
+    /** The host links to this GitHub's pull requests name, e.g. `github.com`. */
+    host: new URL(web).host.toLowerCase(),
     /** Where git's smart HTTP for `repository` lives, for the drive's fetch proxy. */
     gitUrl: (repository: string, path: string) => `${web}/${repository}.git/${path}`,
   };

@@ -22,6 +22,7 @@ export const ACCOUNT_POOL_RPC_SCOPES = {
   [WS_METHODS.accountPoolAddApiKey]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolMoveNativeLogins]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolSetOpenCode]: AuthProvidersManageScope,
+  [WS_METHODS.accountPoolSetRouting]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolReceive]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolMoveToCloud]: AuthProvidersManageScope,
 } as const;

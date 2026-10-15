@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { poolInstanceId, type AccountPool } from "@t3tools/contracts/accountHub";
+import { poolInstanceId, type AccountPool, type PoolRouting } from "@t3tools/contracts/accountHub";
 import {
   CloudUploadIcon,
   CodeIcon,
@@ -8,6 +8,7 @@ import {
   PencilIcon,
   PlusIcon,
   ServerIcon,
+  ShuffleIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useState } from "react";
@@ -26,7 +27,21 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { MoveToCloudDialog } from "./MoveToCloudDialog";
 import { failureText, PoolBackingDialog, PoolImportDialog, PoolNameDialog } from "./PoolDialogs";
@@ -43,6 +58,82 @@ function useOpenCodeOnPool(environmentId: EnvironmentId) {
     set: (pool: AccountPool, enabled: boolean) =>
       void setOpenCode({ environmentId, input: { poolId: pool.id, enabled } }),
   };
+}
+
+const STRATEGIES: ReadonlyArray<{
+  readonly value: PoolRouting["strategy"];
+  readonly label: string;
+  readonly hint: string;
+}> = [
+  { value: "round-robin", label: "Round robin", hint: "Each account in turn" },
+  { value: "fill-first", label: "Fill first", hint: "One account until it runs out" },
+];
+
+/**
+ * How a pool spreads turns across its accounts, for its admins: each choice
+ * applies to the pool at once (`accountPool.setRouting`).
+ */
+function LoadBalancingSubmenu({
+  environmentId,
+  pool,
+  routing,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly pool: AccountPool;
+  readonly routing: PoolRouting;
+}) {
+  const setRouting = useAtomCommand(
+    serverEnvironment.setAccountPoolRouting,
+    "Change load balancing",
+  );
+  // Only what changed, so a second click before the first lands doesn't undo it.
+  const change = (next: Partial<PoolRouting>) =>
+    void setRouting({ environmentId, input: { poolId: pool.id, routing: next } });
+  return (
+    <MenuSub>
+      <MenuSubTrigger>
+        <ShuffleIcon aria-hidden />
+        Load balancing
+      </MenuSubTrigger>
+      <MenuSubPopup>
+        <MenuGroup>
+          <MenuGroupLabel>Spread turns</MenuGroupLabel>
+          <MenuRadioGroup
+            value={routing.strategy}
+            onValueChange={(value) => change({ strategy: value as PoolRouting["strategy"] })}
+          >
+            {STRATEGIES.map((strategy) => (
+              <MenuRadioItem key={strategy.value} value={strategy.value}>
+                {strategy.label}
+                <span className="ms-auto ps-4 text-muted-foreground">{strategy.hint}</span>
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+        <MenuSeparator />
+        <MenuCheckboxItem
+          checked={routing.sessionAffinity}
+          onCheckedChange={(checked) => change({ sessionAffinity: checked })}
+        >
+          Keep each thread on one account
+        </MenuCheckboxItem>
+        <MenuGroup>
+          <MenuGroupLabel>Move a thread when its account fails</MenuGroupLabel>
+          <MenuRadioGroup
+            value={routing.moveOn}
+            onValueChange={(value) => change({ moveOn: value as PoolRouting["moveOn"] })}
+          >
+            <MenuRadioItem value="quota" disabled={!routing.sessionAffinity}>
+              On quota or sign-in errors
+            </MenuRadioItem>
+            <MenuRadioItem value="any" disabled={!routing.sessionAffinity}>
+              On any error
+            </MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuGroup>
+      </MenuSubPopup>
+    </MenuSub>
+  );
 }
 
 function DeletePoolDialog({
@@ -96,7 +187,10 @@ function DeletePoolDialog({
 
 type Editing = "rename" | "backing" | "import" | "move" | "delete";
 
-/** A pool's own actions: rename, where it keeps logins, import, OpenCode, move to the cloud, delete. */
+/**
+ * A pool's own actions: rename, where it keeps logins, import, load
+ * balancing, OpenCode, move to the cloud, delete.
+ */
 export function PoolActionsMenu({
   environmentId,
   pool,
@@ -137,6 +231,13 @@ export function PoolActionsMenu({
               <DownloadIcon aria-hidden />
               Import from CLIProxyAPI
             </MenuItem>
+          ) : null}
+          {pool.routing !== undefined ? (
+            <LoadBalancingSubmenu
+              environmentId={environmentId}
+              pool={pool}
+              routing={pool.routing}
+            />
           ) : null}
           {can("opencode") ? (
             <MenuItem onClick={() => openCode.set(pool, !openCode.isOn(pool))}>

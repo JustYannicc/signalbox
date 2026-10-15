@@ -184,6 +184,7 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslRuntime: Option.Option<string>;
+  readonly localServer: Option.Option<boolean>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -941,6 +942,10 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslRuntime: string | undefined;
+  // signalbox: false (the default) builds the desktop gateway to Signalbox Cloud,
+  // without the local server, its runtime dependencies or the WSL runtime. True
+  // keeps upstream's full app buildable for merges; Signalbox doesn't ship it.
+  readonly localServer: boolean;
 }
 
 interface StagePackageJson {
@@ -1684,6 +1689,7 @@ const BuildEnvConfig = Config.all({
   // by the build_linux_cli CI job. The Windows build embeds it verbatim as the
   // WSL runtime.
   wslRuntime: Config.String("T3CODE_DESKTOP_WSL_RUNTIME").pipe(Config.option),
+  localServer: Config.Boolean("T3CODE_DESKTOP_LOCAL_SERVER").pipe(Config.withDefault(false)),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1777,6 +1783,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslRuntime =
     Option.getOrUndefined(input.wslRuntime) ?? Option.getOrUndefined(env.wslRuntime);
+  const localServer = resolveBooleanFlag(input.localServer, env.localServer);
 
   return {
     platform,
@@ -1791,6 +1798,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslRuntime,
+    localServer,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -2773,6 +2781,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  // signalbox: false for the thin cloud build, which ships no server resources.
+  localServer = true,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -2797,11 +2807,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
       : {}),
     extraResources: [
-      ...DESKTOP_EXTRA_RESOURCES,
+      ...(localServer ? DESKTOP_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
-      ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
-      ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
+      ...(platform === "win" && localServer ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
+      ...(platform === "win" && localServer && wslRuntimeBundled
+        ? WSL_RUNTIME_EXTRA_RESOURCES
+        : []),
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -3553,13 +3565,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (hostPlatform === "darwin" && options.platform === "mac") {
     yield* preflightMacDesktopBuild(options.arch);
   }
+  // signalbox: only a build with the local server carries the WSL runtime.
+  const wslRuntimeBundled =
+    options.localServer &&
+    bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime });
   if (hostPlatform === "win32" && options.platform === "win") {
     yield* preflightWindowsDesktopBuild({
       arch: options.arch,
-      bundlesWslRuntime: bundlesWslRuntime({
-        platform: options.platform,
-        runtimeArchivePath: options.wslRuntime,
-      }),
+      bundlesWslRuntime: wslRuntimeBundled,
     });
   }
   const workspaceConfig = yield* readWorkspaceConfig();
@@ -3736,7 +3749,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
-  if (options.platform !== "win") {
+  if (options.platform !== "win" || !options.localServer) {
     yield* fs.makeDirectory(path.join(stageAppDir, "apps/server"), { recursive: true });
   }
 
@@ -3762,16 +3775,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
   // On Windows the server tree ships in the server.asar sidecar instead of
   // app.asar (see stageWindowsServerSidecar), so the app stage omits it.
-  if (options.platform !== "win") {
+  // signalbox: the thin cloud build ships only the web client the window renders.
+  if (!options.localServer) {
+    yield* fs.copy(
+      path.dirname(bundledClientEntry),
+      path.join(stageAppDir, "apps/server/dist/client"),
+    );
+  } else if (options.platform !== "win") {
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
-  yield* stageResourceMonitor({
-    repoRoot,
-    stageResourcesDir,
-    platform: options.platform,
-    arch: options.arch,
-    verbose: options.verbose,
-  });
+  if (options.localServer) {
+    yield* stageResourceMonitor({
+      repoRoot,
+      stageResourcesDir,
+      platform: options.platform,
+      arch: options.arch,
+      verbose: options.verbose,
+    });
+  }
   if (options.platform === "linux") {
     for (const backend of ["kde", "hyprland"] as const)
       yield* stageLinuxCaptureHelper({
@@ -3849,7 +3870,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // in the server.asar sidecar (see stageWindowsServerSidecar). macOS and
   // Linux merge both sets into one app.asar.
   const stageDependencies =
-    options.platform === "win"
+    options.platform === "win" || !options.localServer
       ? { ...resolvedDesktopRuntimeDependencies }
       : resolveMergedStageDependencies({
           platform: options.platform,
@@ -3863,7 +3884,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     stageDependencies,
   );
   const windowsServerAsarPath =
-    options.platform === "win"
+    options.platform === "win" && options.localServer
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
@@ -3895,8 +3916,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
-      bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
+      wslRuntimeBundled,
       options.arch,
+      options.localServer,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3953,17 +3975,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       verbose: options.verbose,
     });
   }
-  yield* stageCursorSdkPlatformPackages(
-    path.join(
-      options.platform === "win" ? path.join(stageRoot, "server") : stageAppDir,
-      "node_modules",
-    ),
-    path.join(stageProdResourcesDir, "cursor-sdk"),
-  );
-  if (
-    options.wslRuntime !== undefined &&
-    bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime })
-  ) {
+  if (options.localServer) {
+    yield* stageCursorSdkPlatformPackages(
+      path.join(
+        options.platform === "win" ? path.join(stageRoot, "server") : stageAppDir,
+        "node_modules",
+      ),
+      path.join(stageProdResourcesDir, "cursor-sdk"),
+    );
+  }
+  if (options.wslRuntime !== undefined && wslRuntimeBundled) {
     yield* stageWslRuntimeArchive({
       sourceArchivePath: options.wslRuntime,
       archivePath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from),
@@ -4064,17 +4085,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   //
   // Only Windows unpacks anything; macOS and Linux keep the whole tree inside
   // the app asar. Windows validates and executes the separately packed server
-  // sidecar after electron-builder copies it into the final payload.
-  if (options.platform === "win") {
+  // sidecar after electron-builder copies it into the final payload. The thin
+  // cloud build has no sidecar to check.
+  if (options.platform === "win" && options.localServer) {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
       appVersion,
-      expectWslRuntime: bundlesWslRuntime({
-        platform: options.platform,
-        runtimeArchivePath: options.wslRuntime,
-      }),
+      expectWslRuntime: wslRuntimeBundled,
       verbose: options.verbose,
     });
   }
@@ -4161,6 +4180,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslRuntime: Flag.String("wsl-runtime").pipe(
     Flag.withDescription(
       "Path to the Linux CLI release archive (signalbox-<version>-linux-x64.tar.gz) to embed as the WSL runtime of a Windows build (env: T3CODE_DESKTOP_WSL_RUNTIME).",
+    ),
+    Flag.optional,
+  ),
+  localServer: Flag.Boolean("local-server").pipe(
+    Flag.withDescription(
+      "Bundle upstream's local server. Kept buildable for upstream compatibility; Signalbox ships the gateway build without it (env: T3CODE_DESKTOP_LOCAL_SERVER).",
     ),
     Flag.optional,
   ),

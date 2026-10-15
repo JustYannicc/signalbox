@@ -68,6 +68,18 @@ export const automationRpcHandlers = (engine: WorkflowEngine.WorkflowEngine["Ser
         attach: input.attach,
       }),
     ),
+  [METHODS.automationsValidate]: (input: Payload<typeof METHODS.automationsValidate>) =>
+    Effect.sync(() => engine.validate(input.source)),
+  [METHODS.automationsSave]: (input: Payload<typeof METHODS.automationsSave>) =>
+    annotated(
+      {
+        "folder.id": input.projectId,
+        ...(input.automationId ? { "automation.id": input.automationId } : {}),
+      },
+      projectDefaults(input.projectId).pipe(
+        Effect.flatMap((defaults) => engine.save({ ...input, defaults })),
+      ),
+    ),
   [METHODS.automationsCustomize]: (input: Payload<typeof METHODS.automationsCustomize>) =>
     annotated(
       { "automation.id": input.automationId },
@@ -93,7 +105,14 @@ export const automationRpcHandlers = (engine: WorkflowEngine.WorkflowEngine["Ser
       engine.retryRun({ runId: input.runId, version: input.version }),
     ),
   [METHODS.automationsPublish]: (input: Payload<typeof METHODS.automationsPublish>) =>
-    annotated({ "automation.id": input.automationId }, engine.publish(input.automationId)),
+    // People publish in the app, vouching for the version they saw; agents publish through MCP and vouch for nothing.
+    annotated(
+      { "automation.id": input.automationId },
+      engine.publish(
+        input.automationId,
+        input.version === undefined ? undefined : { version: input.version },
+      ),
+    ),
   [METHODS.automationsDiscardDraft]: (input: Payload<typeof METHODS.automationsDiscardDraft>) =>
     annotated({ "automation.id": input.automationId }, engine.discardDraft(input.automationId)),
   [METHODS.automationsAnswer]: (input: Payload<typeof METHODS.automationsAnswer>) =>

@@ -14,6 +14,11 @@ const state = vi.hoisted(() => ({
   save: vi.fn(),
   navigate: vi.fn(),
 }));
+// signalbox: these cover a server with other environments; the one-environment gate is tested on its own.
+vi.mock("../state/environmentCapabilities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/environmentCapabilities")>()),
+  useShowsEnvironmentUi: () => true,
+}));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.session }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../state/environments", () => ({

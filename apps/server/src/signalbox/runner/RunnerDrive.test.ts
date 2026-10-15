@@ -55,6 +55,21 @@ describe("RunnerDrive", () => {
       ),
   );
 
+  it.effect("has nothing to land when a thread has never saved a file", () =>
+    scopedTest((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const { runner } = yield* machine(drive, root, "vm-1", "t1");
+        yield* runner.prepare("remote-token");
+        expect(yield* runner.finishTurn({ message: "Hi" })).toEqual({
+          checkpoint: null,
+          outcome: { _tag: "nothing_saved" },
+        });
+        expect(drive.refs("t1")).toMatchObject({ main: null, thread: null });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.effect("restores the thread's branch and its auto-save on a brand new machine", () =>
     scopedTest((root) =>
       Effect.gen(function* () {

@@ -16,9 +16,9 @@ import type { HomeHeaderProps } from "./HomeHeader.types";
 import {
   createSectionNavigationHeaderItem,
   SectionNavigationToggle,
-  WorkspaceSectionsHeaderItem,
 } from "../sections/SectionNavigationToggle";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -60,10 +60,11 @@ export function HomeHeader(props: HomeHeaderProps) {
     return searchBarRef.current !== null;
   }, [primaryColumn, panes.primarySidebarVisible, togglePrimarySidebar]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
-  const filterMenu = buildHomeListFilterMenu(props);
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
+  const filterMenu = buildHomeListFilterMenu({ ...props, showsEnvironments });
 
   if (props.usesWorkspaceToolbar) {
-    return <WorkspaceSectionsHeaderItem open={props.sectionsOpen} onPress={props.onOpenSections} />; // signalbox: sections
+    return null;
   }
 
   return (
@@ -188,25 +189,27 @@ export function HomeHeader(props: HomeHeaderProps) {
             title="Thread list options"
             separateBackground
           >
-            <NativeHeaderToolbar.Menu title="Environment">
-              <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
-              <NativeHeaderToolbar.MenuAction
-                isOn={props.selectedEnvironmentId === null}
-                onPress={() => props.onEnvironmentChange(null)}
-                subtitle="Show threads from every environment"
-              >
-                <NativeHeaderToolbar.Label>All environments</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-              {props.environments.map((environment) => (
+            {showsEnvironments ? (
+              <NativeHeaderToolbar.Menu title="Environment">
+                <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
                 <NativeHeaderToolbar.MenuAction
-                  key={environment.environmentId}
-                  isOn={props.selectedEnvironmentId === environment.environmentId}
-                  onPress={() => props.onEnvironmentChange(environment.environmentId)}
+                  isOn={props.selectedEnvironmentId === null}
+                  onPress={() => props.onEnvironmentChange(null)}
+                  subtitle="Show threads from every environment"
                 >
-                  <NativeHeaderToolbar.Label>{environment.label}</NativeHeaderToolbar.Label>
+                  <NativeHeaderToolbar.Label>All environments</NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
-              ))}
-            </NativeHeaderToolbar.Menu>
+                {props.environments.map((environment) => (
+                  <NativeHeaderToolbar.MenuAction
+                    key={environment.environmentId}
+                    isOn={props.selectedEnvironmentId === environment.environmentId}
+                    onPress={() => props.onEnvironmentChange(environment.environmentId)}
+                  >
+                    <NativeHeaderToolbar.Label>{environment.label}</NativeHeaderToolbar.Label>
+                  </NativeHeaderToolbar.MenuAction>
+                ))}
+              </NativeHeaderToolbar.Menu>
+            ) : null}
 
             {props.projects.length > 0 ? (
               <NativeHeaderToolbar.Menu title="Project">

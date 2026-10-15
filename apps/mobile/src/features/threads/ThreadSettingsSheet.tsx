@@ -47,7 +47,7 @@ import {
 } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { usePoolSourceLabel } from "../sections/useProjectPool"; // signalbox
+import { type PoolHome, usePoolSourceLabel } from "../sections/useProjectPool"; // signalbox
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
@@ -255,6 +255,7 @@ type ThreadSettingsSubmenuPage =
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null;
+  readonly poolHome?: PoolHome | undefined; // signalbox: what its pool resolves by, with folders
   readonly providerInstanceId?: ProviderInstanceId;
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -311,6 +312,7 @@ export function useExistingThreadSettingsRoutePresentation() {
 type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null; // signalbox
+  readonly poolHome?: PoolHome | undefined; // signalbox
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
@@ -620,6 +622,7 @@ function ThreadSettingsSessionProvider(
     () => ({
       environmentId: props.environmentId,
       projectId: props.projectId, // signalbox
+      poolHome: props.poolHome, // signalbox
       providerInstanceId: props.providerInstanceId,
       providerGroups,
       manageHidden,
@@ -680,6 +683,7 @@ function ThreadSettingsSessionProvider(
       toggleProvider,
       toggleFavorite,
       props.projectId, // signalbox
+      props.poolHome, // signalbox
     ],
   );
 
@@ -1018,7 +1022,7 @@ function ThreadSettingsMainContent(props: {
   const [animationsReady, setAnimationsReady] = useState(false);
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
-  const poolSource = usePoolSourceLabel(session.environmentId, session.projectId); // signalbox
+  const poolSource = usePoolSourceLabel(session.environmentId, session.projectId, session.poolHome); // signalbox
   const listItems = useMemo<ReadonlyArray<ThreadSettingsCatalogItem>>(
     () => [
       ...(poolSource ? [{ kind: "notice", key: "pool-source", text: poolSource } as const] : []), // signalbox
@@ -1621,6 +1625,7 @@ export function NewTaskThreadSettingsRouteScreen() {
     <ThreadSettingsPickerScreen
       environmentId={flow.selectedEnvironmentId}
       projectId={flow.selectedProject?.id ?? null}
+      poolHome={flow.folders.poolHome} // signalbox: folders
       {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}

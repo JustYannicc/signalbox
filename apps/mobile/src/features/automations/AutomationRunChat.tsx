@@ -2,6 +2,7 @@ import { runQuestions } from "@t3tools/client-runtime/automations/ask";
 import { durationMs, RUN_TRIGGER_LABEL } from "@t3tools/client-runtime/automations/labels";
 import { resultLine, runChatItems, runTitle } from "@t3tools/client-runtime/automations/runs";
 import { DISPLAY_STATUS_LABEL, runDisplayStatus } from "@t3tools/client-runtime/automations/status";
+import { watchedSource } from "@t3tools/client-runtime/automations/triggers";
 import type {
   AutomationRunDetail,
   AutomationRunTrigger,
@@ -17,6 +18,7 @@ import { SymbolView, type AppSymbolViewProps } from "../../components/AppSymbol"
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
+import { useMinuteClock } from "./automation-hooks";
 import { StatusDot } from "./AutomationParts";
 import { AUTOMATION_CONTENT_STYLE } from "./AutomationsRouteScreen";
 import { STATUS_TEXT_CLASS } from "./presentation";
@@ -69,9 +71,18 @@ function EdgeMessage(props: {
 
 function EndMessage({ detail }: { readonly detail: AutomationRunDetail }) {
   const { run } = detail;
+  const now = useMinuteClock();
   switch (run.status) {
     case "running":
-      return run.waitingOnYou ? null : <EdgeMessage icon="circle" title="Still running" />;
+      return run.waitingOnYou ? null : (
+        <EdgeMessage icon="circle" title="Still running">
+          {(detail.watching ?? []).map((source) => (
+            <Text key={source.sourceId} className="text-sm leading-normal text-foreground-muted">
+              {`Watching ${watchedSource(source, now).subject} · ${watchedSource(source, now).status}`}
+            </Text>
+          ))}
+        </EdgeMessage>
+      );
     case "succeeded": {
       const output = resultLine(detail.output);
       return (

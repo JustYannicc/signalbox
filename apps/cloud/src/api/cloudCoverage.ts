@@ -1,0 +1,151 @@
+import type { Operation } from "@signalbox/api/catalog";
+
+import { CLOUD_COMMANDS } from "../thread/threadDecider.ts";
+import { CloudRpcGroup } from "../user/rpc.ts";
+
+/**
+ * Which public API operations the cloud serves. Every operation is either
+ * served (its RPC is in `CloudRpcGroup` and, for commands, `decide` takes it)
+ * or listed below: a gap names the issue that closes it, an exemption says why
+ * the cloud never serves it. `cloudCoverage.test.ts` fails on anything else,
+ * so a new RPC lands here as a decision, not as a silent 404.
+ */
+
+export type Unserved =
+  | { readonly _tag: "gap"; readonly issue: `#${number}` }
+  | { readonly _tag: "exempt"; readonly reason: string };
+
+const gap = (issue: `#${number}`): Unserved => ({ _tag: "gap", issue });
+const exempt = (reason: string): Unserved => ({ _tag: "exempt", reason });
+
+/** Threads run on machines nobody operates (#401), so nothing addresses a host. */
+const noHost = exempt(
+  "Addresses the host a server runs on; cloud threads run on machines nobody operates.",
+);
+const replacedByAutomations = exempt("Scheduled tasks are going away; automations replace them.");
+const ownBranch = exempt("Each cloud thread works on its own branch.");
+const githubImports = exempt("Repositories import from GitHub (`github/GitHubImport.ts`).");
+const selfDeploying = exempt("The cloud deploys itself; nobody updates it from a client.");
+const cloudPreviews = exempt("Cloud dev servers open through previews.* (`thread/preview/`).");
+const poolHarnesses = exempt("Pools run each harness; nothing installs per user.");
+
+/** Keys are operation names, or `prefix.*` for every operation under a prefix. */
+export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
+  "automations.*": gap("#434"),
+  "settings.*": gap("#440"),
+  "keybindings.*": gap("#440"),
+  "analytics.*": gap("#284"),
+
+  // Waiting on you: approvals, questions and secret requests.
+  "threads.respond": gap("#410"),
+  "threads.dismissQuestion": gap("#410"),
+  "secrets.answer": gap("#410"),
+
+  // The rest of a thread's lifecycle.
+  "threads.delete": gap("#439"),
+  "threads.settle": gap("#439"),
+  "threads.unsettle": gap("#439"),
+  "threads.autoSettle.set": gap("#439"),
+  "threads.snooze": gap("#439"),
+  "threads.unsnooze": gap("#439"),
+  "threads.pin": gap("#439"),
+  "threads.unpin": gap("#439"),
+  "threads.pin.reorder": gap("#439"),
+  "threads.active.reorder": gap("#439"),
+  "threads.markUnread": gap("#439"),
+  "threads.fork": gap("#439"),
+  "threads.mergeBack": gap("#439"),
+  "threads.queuedMessage.promoteToSteer": gap("#439"),
+  "threads.queuedRun.*": gap("#439"),
+  "threads.switchProvider": gap("#439"),
+  "threads.stopSubagent": gap("#439"),
+  "threads.retryPreparation": gap("#439"),
+  "threads.subscribeArchived": gap("#439"),
+  "threads.getTurnItem": gap("#439"),
+  "threads.getWorkflowScript": gap("#439"),
+  "threads.stopWorkflow": gap("#439"),
+  "threads.rollback": gap("#398"),
+  "threads.search": gap("#334"),
+  "threads.searchOne": gap("#334"),
+
+  // Pull requests, linked and followed (`pr.*` for automations).
+  "pullRequests.*": gap("#397"),
+  "threads.pullRequest.watch": gap("#397"),
+  "git.preparePullRequestThread": gap("#397"),
+  "git.resolvePullRequest": gap("#397"),
+
+  // Git beyond the thread's own branch.
+  "vcs.listRefs": gap("#394"),
+  "review.getDiffFileContents": gap("#394"),
+  "sourceControl.cloneRepository": githubImports,
+  "sourceControl.publishRepository": gap("#394"),
+
+  // Files in folders without a machine.
+  "projects.writeFile": gap("#439"),
+  "projects.searchContents": gap("#439"),
+  "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
+  "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
+  "assets.persistChatAttachments": gap("#399"),
+
+  // Pools: the cloud signs in Claude and ChatGPT accounts only.
+  "pools.advice": gap("#197"),
+  "provider.auth.respond": gap("#205"),
+  "provider.auth.logout": gap("#205"),
+  "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),
+  "provider.codex.authCallback.subscribe": exempt(
+    "A self-hosted server's localhost sign-in callback.",
+  ),
+  "provider.consumeResetCredit": gap("#197"),
+  "provider.install.*": poolHarnesses,
+  "provider.uploadFeedback": gap("#15"),
+  "server.updateProvider": poolHarnesses,
+
+  "acpRegistry.*": exempt("ACP agents install on a host; cloud threads run on pool harnesses."),
+  "agentSessions.*": exempt("Imports sessions from CLIs on the host."),
+  "authAccess.subscribe": exempt("Pairing links and client sessions are not served (#401)."),
+  "backgroundPolicy.subscribe": noHost,
+  "device.*": noHost,
+  "deviceState.subscribe": noHost,
+  "diagnostics.*": noHost,
+  "discoveredLocalServers.subscribe": noHost,
+  "filesystem.*": noHost,
+  "preview.*": cloudPreviews,
+  "previewEvents.subscribe": cloudPreviews,
+  "relay.*": exempt("The relay connects self-hosted servers to the cloud."),
+  "resourceTelemetry.subscribe": noHost,
+  "scheduledTasks.*": replacedByAutomations,
+  "server.backgroundPolicy": noHost,
+  "server.commitDesktopUpdate": noHost,
+  "server.updateServer": selfDeploying,
+  "server.updateServerWithProgress": selfDeploying,
+  "storage.*": noHost,
+  "terminal.*": noHost,
+  "terminalEvents.subscribe": noHost,
+  "terminalMetadata.subscribe": noHost,
+  "usage.*": exempt("Pools report usage per account (`pool/poolViews.ts`)."),
+  "vcs.createRef": ownBranch,
+  "vcs.switchRef": ownBranch,
+  "vcs.createWorktree": ownBranch,
+  "vcs.removeWorktree": ownBranch,
+  "vcs.init": githubImports,
+  "worktreeSetup.*": ownBranch,
+};
+
+/** Whether `name` falls under `key`, an operation name or a `prefix.*`. */
+export const coverageKeyMatches = (key: string, name: string): boolean =>
+  key.endsWith(".*") ? name.startsWith(key.slice(0, -1)) : key === name;
+
+const servedRpcs: ReadonlySet<string> = new Set(CloudRpcGroup.requests.keys());
+
+/** Whether the cloud answers `operation` today. */
+export const cloudServes = (operation: Operation): boolean =>
+  servedRpcs.has(operation.rpc) &&
+  (operation.command === undefined || CLOUD_COMMANDS.has(operation.command));
+
+/** Why the cloud doesn't answer `operation`, or undefined when it does or nobody said. */
+export const cloudUnserved = (operation: Operation): Unserved | undefined => {
+  const key = Object.keys(CLOUD_UNSERVED).find((candidate) =>
+    coverageKeyMatches(candidate, operation.name),
+  );
+  return key === undefined ? undefined : CLOUD_UNSERVED[key];
+};

@@ -55,6 +55,8 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { visibleEnvironmentSelection } from "../home/environmentFilter"; // signalbox
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
@@ -109,8 +111,14 @@ export function UsageRouteScreen() {
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
+  const [chosenEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
+  // signalbox: a hidden environment filter can't narrow what's shown.
+  const showsEnvironments = useShowsEnvironmentUi();
+  const selectedEnvironmentIds = visibleEnvironmentSelection(
+    chosenEnvironmentIds,
+    showsEnvironments,
+  );
   const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
@@ -198,7 +206,8 @@ export function UsageRouteScreen() {
     });
   };
 
-  const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
+  const showEnvironmentFilter =
+    showsEnvironments && (environments.length > 0 || selectedEnvironmentIds !== null);
   const filterIcon =
     selectedEnvironmentIds === null
       ? "line.3.horizontal.decrease"

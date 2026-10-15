@@ -1,0 +1,2253 @@
+{
+  "version": "v1",
+  "operations": [
+    {
+      "name": "acpRegistry.acceptUrlAuth",
+      "rpc": "server.acceptAcpRegistryUrlAuth",
+      "access": "write",
+      "humanOnly": true,
+      "input": "498e3721",
+      "output": "313992cd"
+    },
+    {
+      "name": "acpRegistry.logout",
+      "rpc": "server.logoutAcpRegistry",
+      "access": "write",
+      "input": "096e33e2",
+      "output": "b31a087e"
+    },
+    {
+      "name": "acpRegistry.prepareAgent",
+      "rpc": "server.prepareAcpRegistryAgent",
+      "access": "write",
+      "input": "3cd026b2",
+      "output": "331b9c4a"
+    },
+    {
+      "name": "acpRegistry.providers.disable",
+      "rpc": "server.disableAcpRegistryProvider",
+      "access": "write",
+      "input": "5c30e6d2",
+      "output": "7fe527f2"
+    },
+    {
+      "name": "acpRegistry.providers.list",
+      "rpc": "server.listAcpRegistryProviders",
+      "access": "read",
+      "input": "e116c189",
+      "output": "59db7eb8"
+    },
+    {
+      "name": "acpRegistry.providers.set",
+      "rpc": "server.setAcpRegistryProvider",
+      "access": "write",
+      "input": "73c71e70",
+      "output": "a754fd32"
+    },
+    {
+      "name": "acpRegistry.search",
+      "rpc": "server.searchAcpRegistry",
+      "access": "read",
+      "input": "fe800d92",
+      "output": "547aeef5"
+    },
+    {
+      "name": "acpRegistry.sessions.delete",
+      "rpc": "server.deleteAcpRegistrySession",
+      "access": "write",
+      "destructive": true,
+      "input": "161c11d2",
+      "output": "a4d99412"
+    },
+    {
+      "name": "acpRegistry.sessions.import",
+      "rpc": "server.importAcpRegistrySession",
+      "access": "write",
+      "input": "6d0bddee",
+      "output": "184dc5dc"
+    },
+    {
+      "name": "acpRegistry.sessions.list",
+      "rpc": "server.listAcpRegistrySessions",
+      "access": "read",
+      "input": "2979c37e",
+      "output": "6e691fb7"
+    },
+    {
+      "name": "acpRegistry.uninstallBinary",
+      "rpc": "server.uninstallAcpRegistryManagedBinary",
+      "access": "write",
+      "input": "3cd026b2",
+      "output": "bc347146"
+    },
+    {
+      "name": "agentSessions.import",
+      "rpc": "agentSessions.import",
+      "access": "write",
+      "input": "dca21f26",
+      "output": "15c0de9d"
+    },
+    {
+      "name": "agentSessions.scan",
+      "rpc": "agentSessions.scan",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "758d5892"
+    },
+    {
+      "name": "analytics.get",
+      "rpc": "signalbox.analytics.getSettings",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "61d64991"
+    },
+    {
+      "name": "analytics.setEnabled",
+      "rpc": "signalbox.analytics.setEnabled",
+      "access": "write",
+      "input": "9a868ce9",
+      "output": "61d64991"
+    },
+    {
+      "name": "assets.createUrl",
+      "rpc": "assets.createUrl",
+      "access": "read",
+      "input": "9528be3d",
+      "output": "4a98470e"
+    },
+    {
+      "name": "assets.persistChatAttachments",
+      "rpc": "assets.persistChatAttachments",
+      "access": "write",
+      "input": "c0fae070",
+      "output": "04eafcde"
+    },
+    {
+      "name": "attachments.createUploadUrl",
+      "rpc": "attachments.createUploadUrl",
+      "access": "write",
+      "input": "9093a5c6",
+      "output": "24f46775"
+    },
+    {
+      "name": "attachments.delete",
+      "rpc": "attachments.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "bea3efa2",
+      "output": "794c92c1"
+    },
+    {
+      "name": "authAccess.subscribe",
+      "rpc": "subscribeAuthAccess",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "35770288"
+    },
+    {
+      "name": "automations.answer",
+      "rpc": "automations.answer",
+      "access": "write",
+      "humanOnly": true,
+      "input": "22a86e0a",
+      "output": "03c2b661"
+    },
+    {
+      "name": "automations.connect",
+      "rpc": "automations.connect",
+      "access": "write",
+      "input": "80624ddf",
+      "output": "3043bd11"
+    },
+    {
+      "name": "automations.connectionStatus",
+      "rpc": "automations.connectionStatus",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "3043bd11"
+    },
+    {
+      "name": "automations.customize",
+      "rpc": "automations.customize",
+      "access": "write",
+      "input": "91eb786d",
+      "output": "de208150"
+    },
+    {
+      "name": "automations.delete",
+      "rpc": "automations.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "e4926bda",
+      "output": "03c2b661"
+    },
+    {
+      "name": "automations.discardDraft",
+      "rpc": "automations.discardDraft",
+      "access": "write",
+      "input": "e4926bda",
+      "output": "de208150"
+    },
+    {
+      "name": "automations.disconnect",
+      "rpc": "automations.disconnect",
+      "access": "write",
+      "input": "03c2b661",
+      "output": "3043bd11"
+    },
+    {
+      "name": "automations.get",
+      "rpc": "automations.subscribeOne",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "e4926bda",
+      "output": "6cfec324"
+    },
+    {
+      "name": "automations.list",
+      "rpc": "automations.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "a1386d18"
+    },
+    {
+      "name": "automations.notices",
+      "rpc": "automations.subscribeNotices",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "1347a30a"
+    },
+    {
+      "name": "automations.publish",
+      "rpc": "automations.publish",
+      "access": "write",
+      "input": "b3f469e7",
+      "output": "de208150"
+    },
+    {
+      "name": "automations.rotateWebhook",
+      "rpc": "automations.rotateWebhook",
+      "access": "write",
+      "input": "e4926bda",
+      "output": "de208150"
+    },
+    {
+      "name": "automations.run",
+      "rpc": "automations.runNow",
+      "access": "write",
+      "input": "daed0d66",
+      "output": "775208a7"
+    },
+    {
+      "name": "automations.runs.cancel",
+      "rpc": "automations.cancelRun",
+      "access": "write",
+      "input": "5b9c822a",
+      "output": "03c2b661"
+    },
+    {
+      "name": "automations.runs.get",
+      "rpc": "automations.subscribeRun",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "5b9c822a",
+      "output": "b013495f"
+    },
+    {
+      "name": "automations.runs.retry",
+      "rpc": "automations.retryRun",
+      "access": "write",
+      "input": "85c190b3",
+      "output": "775208a7"
+    },
+    {
+      "name": "automations.save",
+      "rpc": "automations.save",
+      "access": "write",
+      "input": "e2698ed3",
+      "output": "e9ad0c58"
+    },
+    {
+      "name": "automations.setEnabled",
+      "rpc": "automations.setEnabled",
+      "access": "write",
+      "input": "a3f5fcc8",
+      "output": "de208150"
+    },
+    {
+      "name": "automations.setWebhookSecret",
+      "rpc": "automations.setWebhookSecret",
+      "access": "write",
+      "input": "2af82751",
+      "output": "de208150"
+    },
+    {
+      "name": "automations.stopAttached",
+      "rpc": "automations.stopAttached",
+      "access": "write",
+      "input": "1276a316",
+      "output": "78961bd6"
+    },
+    {
+      "name": "automations.validate",
+      "rpc": "automations.validate",
+      "access": "read",
+      "input": "9df3bde6",
+      "output": "7c407bde"
+    },
+    {
+      "name": "backgroundPolicy.subscribe",
+      "rpc": "subscribeBackgroundPolicy",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "3f68261f"
+    },
+    {
+      "name": "contexts.list",
+      "rpc": "signalbox.contexts.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "16f3e564"
+    },
+    {
+      "name": "device.action",
+      "rpc": "device.action",
+      "access": "write",
+      "input": "e86a0581",
+      "output": "4c49c647"
+    },
+    {
+      "name": "device.close",
+      "rpc": "device.close",
+      "access": "write",
+      "input": "44168bda",
+      "output": "794c92c1"
+    },
+    {
+      "name": "device.configure",
+      "rpc": "device.configure",
+      "access": "write",
+      "input": "bb51696d",
+      "output": "edac0f53"
+    },
+    {
+      "name": "device.detail",
+      "rpc": "device.detail",
+      "access": "read",
+      "input": "ed89af8a",
+      "output": "4c49c647"
+    },
+    {
+      "name": "device.list",
+      "rpc": "device.list",
+      "access": "read",
+      "input": "661d6123",
+      "output": "edac0f53"
+    },
+    {
+      "name": "device.open",
+      "rpc": "device.open",
+      "access": "write",
+      "input": "b98404fd",
+      "output": "c11f5e73"
+    },
+    {
+      "name": "device.shutdown",
+      "rpc": "device.shutdown",
+      "access": "write",
+      "input": "97911120",
+      "output": "794c92c1"
+    },
+    {
+      "name": "device.testHost",
+      "rpc": "device.testHost",
+      "access": "write",
+      "input": "5bc4cdf3",
+      "output": "383ed6ee"
+    },
+    {
+      "name": "deviceState.subscribe",
+      "rpc": "subscribeDeviceState",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "edac0f53"
+    },
+    {
+      "name": "diagnostics.checkOtlpEndpoint",
+      "rpc": "server.checkOtlpEndpoint",
+      "access": "write",
+      "input": "701e0734",
+      "output": "5d719c99"
+    },
+    {
+      "name": "diagnostics.hostResources",
+      "rpc": "server.getHostResources",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "bda4b92d"
+    },
+    {
+      "name": "diagnostics.processes",
+      "rpc": "server.getProcessDiagnostics",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "37188520"
+    },
+    {
+      "name": "diagnostics.processHistory",
+      "rpc": "server.getProcessResourceHistory",
+      "access": "read",
+      "input": "263498a3",
+      "output": "cc8bb508"
+    },
+    {
+      "name": "diagnostics.retryTelemetry",
+      "rpc": "server.retryResourceTelemetry",
+      "access": "write",
+      "input": "03c2b661",
+      "output": "b13ca3e6"
+    },
+    {
+      "name": "diagnostics.signalProcess",
+      "rpc": "server.signalProcess",
+      "access": "write",
+      "destructive": true,
+      "input": "0719e15f",
+      "output": "a4afeeab"
+    },
+    {
+      "name": "diagnostics.telemetryHistory",
+      "rpc": "server.getResourceTelemetryHistory",
+      "access": "read",
+      "input": "263498a3",
+      "output": "c5b5fbd4"
+    },
+    {
+      "name": "diagnostics.traces",
+      "rpc": "server.getTraceDiagnostics",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "a6b68feb"
+    },
+    {
+      "name": "discoveredLocalServers.subscribe",
+      "rpc": "subscribeDiscoveredLocalServers",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "58abdd81",
+      "output": "f5ad5e96"
+    },
+    {
+      "name": "drives.addShortcut",
+      "rpc": "signalbox.drives.addShortcut",
+      "access": "write",
+      "input": "8f15a442",
+      "output": "4daedb30"
+    },
+    {
+      "name": "drives.create",
+      "rpc": "signalbox.drives.create",
+      "access": "write",
+      "input": "2f141a97",
+      "output": "67947259"
+    },
+    {
+      "name": "drives.list",
+      "rpc": "signalbox.drives.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "072a330b"
+    },
+    {
+      "name": "drives.members",
+      "rpc": "signalbox.drives.members",
+      "access": "read",
+      "input": "3615dca8",
+      "output": "44de3ca0"
+    },
+    {
+      "name": "drives.removeShortcut",
+      "rpc": "signalbox.drives.removeShortcut",
+      "access": "write",
+      "input": "04653643",
+      "output": "794c92c1"
+    },
+    {
+      "name": "drives.share",
+      "rpc": "signalbox.drives.share",
+      "access": "write",
+      "input": "053254a9",
+      "output": "f74690b6"
+    },
+    {
+      "name": "drives.shareFolder",
+      "rpc": "signalbox.drives.shareFolder",
+      "access": "write",
+      "input": "a93b1ab4",
+      "output": "67947259"
+    },
+    {
+      "name": "drives.shortcuts",
+      "rpc": "signalbox.drives.shortcuts",
+      "access": "read",
+      "input": "3615dca8",
+      "output": "2a100784"
+    },
+    {
+      "name": "drives.unshare",
+      "rpc": "signalbox.drives.unshare",
+      "access": "write",
+      "input": "afa6ad67",
+      "output": "794c92c1"
+    },
+    {
+      "name": "filesystem.browse",
+      "rpc": "filesystem.browse",
+      "access": "read",
+      "input": "29a3a10d",
+      "output": "8801861a"
+    },
+    {
+      "name": "filesystem.getMetadata",
+      "rpc": "filesystem.getMetadata",
+      "access": "read",
+      "input": "2fedc7ce",
+      "output": "5dac0db3"
+    },
+    {
+      "name": "folders.create",
+      "rpc": "signalbox.folders.create",
+      "access": "write",
+      "input": "f9c41d1b",
+      "output": "46235ce0"
+    },
+    {
+      "name": "folders.delete",
+      "rpc": "signalbox.folders.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "a3ac90c6",
+      "output": "46235ce0"
+    },
+    {
+      "name": "folders.list",
+      "rpc": "signalbox.folders.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "46235ce0"
+    },
+    {
+      "name": "folders.move",
+      "rpc": "signalbox.folders.move",
+      "access": "write",
+      "input": "e8e9d1d8",
+      "output": "46235ce0"
+    },
+    {
+      "name": "folders.setInstructions",
+      "rpc": "signalbox.folders.setInstructions",
+      "access": "write",
+      "input": "50051613",
+      "output": "46235ce0"
+    },
+    {
+      "name": "folders.setOnePassword",
+      "rpc": "signalbox.folders.setOnePassword",
+      "access": "write",
+      "input": "55e4b414",
+      "output": "46235ce0"
+    },
+    {
+      "name": "folders.setSecrets",
+      "rpc": "signalbox.folders.setSecrets",
+      "access": "write",
+      "input": "8c1300cc",
+      "output": "46235ce0"
+    },
+    {
+      "name": "folders.update",
+      "rpc": "signalbox.folders.update",
+      "access": "write",
+      "input": "83f5ef8c",
+      "output": "46235ce0"
+    },
+    {
+      "name": "git.preparePullRequestThread",
+      "rpc": "git.preparePullRequestThread",
+      "access": "write",
+      "input": "2262718d",
+      "output": "407b46b8"
+    },
+    {
+      "name": "git.resolvePullRequest",
+      "rpc": "git.resolvePullRequest",
+      "access": "read",
+      "input": "0eaf17f9",
+      "output": "64649c47"
+    },
+    {
+      "name": "git.runStackedAction",
+      "rpc": "git.runStackedAction",
+      "access": "write",
+      "stream": "final",
+      "input": "c66dd4c0",
+      "output": "c2290032"
+    },
+    {
+      "name": "keybindings.remove",
+      "rpc": "server.removeKeybinding",
+      "access": "write",
+      "input": "a4e18f33",
+      "output": "feaaef60"
+    },
+    {
+      "name": "keybindings.upsert",
+      "rpc": "server.upsertKeybinding",
+      "access": "write",
+      "input": "3270b37e",
+      "output": "feaaef60"
+    },
+    {
+      "name": "keys.create",
+      "rpc": "signalbox.keys.create",
+      "access": "write",
+      "humanOnly": true,
+      "input": "5cb5d0a6",
+      "output": "0c7367c0"
+    },
+    {
+      "name": "keys.list",
+      "rpc": "signalbox.keys.list",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "2e0ff267"
+    },
+    {
+      "name": "keys.revoke",
+      "rpc": "signalbox.keys.revoke",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "2e0ff267"
+    },
+    {
+      "name": "pools.addApiKey",
+      "rpc": "accountPool.addApiKey",
+      "access": "write",
+      "humanOnly": true,
+      "input": "44574171",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pools.advice",
+      "rpc": "accountPool.subscribeAdvice",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "fff52248"
+    },
+    {
+      "name": "pools.create",
+      "rpc": "accountPool.create",
+      "access": "write",
+      "input": "174129b6",
+      "output": "185e3b9d"
+    },
+    {
+      "name": "pools.delete",
+      "rpc": "accountPool.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "7773aea6",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pools.importAccounts",
+      "rpc": "accountPool.importAccounts",
+      "access": "write",
+      "input": "b7b456b8",
+      "output": "6be4c5d3"
+    },
+    {
+      "name": "pools.list",
+      "rpc": "accountPool.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "5882b80c"
+    },
+    {
+      "name": "pools.moveNativeLogins",
+      "rpc": "accountPool.moveNativeLogins",
+      "access": "write",
+      "input": "8fc89f87",
+      "output": "da8c435f"
+    },
+    {
+      "name": "pools.moveToCloud",
+      "rpc": "accountPool.moveToCloud",
+      "access": "write",
+      "input": "801034c4",
+      "output": "fe505ca3"
+    },
+    {
+      "name": "pools.receive",
+      "rpc": "accountPool.receive",
+      "access": "write",
+      "input": "c7dbab18",
+      "output": "fec8b6db"
+    },
+    {
+      "name": "pools.rename",
+      "rpc": "accountPool.rename",
+      "access": "write",
+      "input": "8c826655",
+      "output": "185e3b9d"
+    },
+    {
+      "name": "pools.setBacking",
+      "rpc": "accountPool.setBacking",
+      "access": "write",
+      "input": "06e7aef0",
+      "output": "185e3b9d"
+    },
+    {
+      "name": "pools.setOpenCode",
+      "rpc": "accountPool.setOpenCode",
+      "access": "write",
+      "input": "313db31a",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pools.setRouting",
+      "rpc": "accountPool.setRouting",
+      "access": "write",
+      "input": "7396acb3",
+      "output": "185e3b9d"
+    },
+    {
+      "name": "pools.updateAccount",
+      "rpc": "usageLimitSource.updateAccount",
+      "access": "write",
+      "input": "c69b4c00",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pools.views",
+      "rpc": "accountPool.subscribeViews",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "c053554a"
+    },
+    {
+      "name": "preview.adjust",
+      "rpc": "preview.adjust",
+      "access": "write",
+      "input": "e1f9c7b3",
+      "output": "509dd82d"
+    },
+    {
+      "name": "preview.clearProfile",
+      "rpc": "preview.clearProfile",
+      "access": "write",
+      "input": "c5abdc7a",
+      "output": "794c92c1"
+    },
+    {
+      "name": "preview.close",
+      "rpc": "preview.close",
+      "access": "write",
+      "input": "21faf437",
+      "output": "794c92c1"
+    },
+    {
+      "name": "preview.list",
+      "rpc": "preview.list",
+      "access": "read",
+      "input": "1276a316",
+      "output": "7a6ba81a"
+    },
+    {
+      "name": "preview.navigate",
+      "rpc": "preview.navigate",
+      "access": "write",
+      "input": "5f928773",
+      "output": "509dd82d"
+    },
+    {
+      "name": "preview.open",
+      "rpc": "preview.open",
+      "access": "write",
+      "input": "3119062e",
+      "output": "509dd82d"
+    },
+    {
+      "name": "preview.refresh",
+      "rpc": "preview.refresh",
+      "access": "write",
+      "input": "62fb0d71",
+      "output": "794c92c1"
+    },
+    {
+      "name": "preview.resize",
+      "rpc": "preview.resize",
+      "access": "write",
+      "input": "512eac04",
+      "output": "509dd82d"
+    },
+    {
+      "name": "previewEvents.subscribe",
+      "rpc": "subscribePreviewEvents",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "57a203f5"
+    },
+    {
+      "name": "previews.list",
+      "rpc": "signalbox.previews.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "1276a316",
+      "output": "ed42d908"
+    },
+    {
+      "name": "previews.open",
+      "rpc": "signalbox.previews.open",
+      "access": "write",
+      "input": "2c64f775",
+      "output": "4b800d70"
+    },
+    {
+      "name": "projectClone.cancel",
+      "rpc": "projectClone.cancel",
+      "access": "write",
+      "input": "941a13a2",
+      "output": "43d340d9"
+    },
+    {
+      "name": "projectClone.retry",
+      "rpc": "projectClone.retry",
+      "access": "write",
+      "input": "941a13a2",
+      "output": "43d340d9"
+    },
+    {
+      "name": "projectClone.start",
+      "rpc": "projectClone.start",
+      "access": "write",
+      "input": "d43405f6",
+      "output": "cb70893d"
+    },
+    {
+      "name": "projectClones.subscribe",
+      "rpc": "subscribeProjectClones",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "fdcef307"
+    },
+    {
+      "name": "projects.createNew",
+      "rpc": "projects.createNew",
+      "access": "write",
+      "input": "174129b6",
+      "output": "a8b26649"
+    },
+    {
+      "name": "projects.ensureScratch",
+      "rpc": "projects.ensureScratch",
+      "access": "write",
+      "input": "03c2b661",
+      "output": "941a13a2"
+    },
+    {
+      "name": "projects.listEntries",
+      "rpc": "projects.listEntries",
+      "access": "read",
+      "input": "2c9e6287",
+      "output": "97f665fb"
+    },
+    {
+      "name": "projects.mutate",
+      "rpc": "projects.mutate",
+      "access": "write",
+      "input": "f83c9ef5",
+      "output": "a9fa845d"
+    },
+    {
+      "name": "projects.readFile",
+      "rpc": "projects.readFile",
+      "access": "read",
+      "input": "3a2662f7",
+      "output": "52f4f49b"
+    },
+    {
+      "name": "projects.searchContents",
+      "rpc": "projects.searchContents",
+      "access": "read",
+      "input": "c4f338d5",
+      "output": "ca8afba2"
+    },
+    {
+      "name": "projects.searchEntries",
+      "rpc": "projects.searchEntries",
+      "access": "read",
+      "input": "a0e82740",
+      "output": "97f665fb"
+    },
+    {
+      "name": "projects.writeFile",
+      "rpc": "projects.writeFile",
+      "access": "write",
+      "input": "5c20ad3e",
+      "output": "6d27bbfa"
+    },
+    {
+      "name": "provider.auth.cancel",
+      "rpc": "provider.auth.cancel",
+      "access": "write",
+      "input": "d432654b",
+      "output": "f7a44f3d"
+    },
+    {
+      "name": "provider.auth.complete",
+      "rpc": "provider.auth.complete",
+      "access": "write",
+      "humanOnly": true,
+      "input": "9304b812",
+      "output": "f7a44f3d"
+    },
+    {
+      "name": "provider.auth.logout",
+      "rpc": "provider.auth.logout",
+      "access": "write",
+      "input": "096e33e2",
+      "output": "f7a44f3d"
+    },
+    {
+      "name": "provider.auth.respond",
+      "rpc": "provider.auth.respond",
+      "access": "write",
+      "humanOnly": true,
+      "input": "91652795",
+      "output": "f7a44f3d"
+    },
+    {
+      "name": "provider.auth.start",
+      "rpc": "provider.auth.start",
+      "access": "write",
+      "input": "a02c85df",
+      "output": "f7a44f3d"
+    },
+    {
+      "name": "provider.auth.subscribe",
+      "rpc": "provider.auth.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "096e33e2",
+      "output": "f7a44f3d"
+    },
+    {
+      "name": "provider.chatgpt.handoff.subscribe",
+      "rpc": "provider.chatgpt.handoff.subscribe",
+      "access": "write",
+      "stream": "final",
+      "humanOnly": true,
+      "input": "e49234e2",
+      "output": "1b104f5c"
+    },
+    {
+      "name": "provider.chatgpt.importProfile",
+      "rpc": "provider.chatgpt.import-profile",
+      "access": "write",
+      "humanOnly": true,
+      "input": "b1c3a1a0",
+      "output": "f7a44f3d"
+    },
+    {
+      "name": "provider.chatgpt.reconnectProfile",
+      "rpc": "provider.chatgpt.reconnect-profile",
+      "access": "write",
+      "humanOnly": true,
+      "input": "40268f71",
+      "output": "57466aaf"
+    },
+    {
+      "name": "provider.codex.authCallback.subscribe",
+      "rpc": "provider.codex.auth-callback.subscribe",
+      "access": "write",
+      "stream": "final",
+      "humanOnly": true,
+      "input": "eaab9e6f",
+      "output": "9c4312df"
+    },
+    {
+      "name": "provider.consumeResetCredit",
+      "rpc": "provider.consumeResetCredit",
+      "access": "write",
+      "input": "86657ba5",
+      "output": "58a7600f"
+    },
+    {
+      "name": "provider.install.cancel",
+      "rpc": "provider.install.cancel",
+      "access": "write",
+      "input": "a7b886b1",
+      "output": "a7316c2c"
+    },
+    {
+      "name": "provider.install.remove",
+      "rpc": "provider.install.remove",
+      "access": "write",
+      "destructive": true,
+      "input": "096e33e2",
+      "output": "a7316c2c"
+    },
+    {
+      "name": "provider.install.start",
+      "rpc": "provider.install.start",
+      "access": "write",
+      "input": "096e33e2",
+      "output": "a7316c2c"
+    },
+    {
+      "name": "provider.install.subscribe",
+      "rpc": "provider.install.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "096e33e2",
+      "output": "a7316c2c"
+    },
+    {
+      "name": "provider.uploadFeedback",
+      "rpc": "provider.uploadFeedback",
+      "access": "write",
+      "input": "d0c0d40f",
+      "output": "597e8af2"
+    },
+    {
+      "name": "pullRequests.activity",
+      "rpc": "pullRequests.activity",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "3d86208e"
+    },
+    {
+      "name": "pullRequests.checks",
+      "rpc": "pullRequests.checks",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "dfe407e7"
+    },
+    {
+      "name": "pullRequests.comment",
+      "rpc": "pullRequests.comment",
+      "access": "write",
+      "input": "fa46166d",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.detail",
+      "rpc": "pullRequests.detail",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "7bdd5122"
+    },
+    {
+      "name": "pullRequests.diffFileContents",
+      "rpc": "pullRequests.diffFileContents",
+      "access": "read",
+      "input": "65023a5f",
+      "output": "80061c35"
+    },
+    {
+      "name": "pullRequests.filesViewed",
+      "rpc": "pullRequests.filesViewed",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "a6032212"
+    },
+    {
+      "name": "pullRequests.generateReviewGuide",
+      "rpc": "pullRequests.generateReviewGuide",
+      "access": "write",
+      "input": "bf7232ba",
+      "output": "80e8460d"
+    },
+    {
+      "name": "pullRequests.labelCandidates",
+      "rpc": "pullRequests.labelCandidates",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "f4d2b91c"
+    },
+    {
+      "name": "pullRequests.linkedThreads",
+      "rpc": "pullRequests.linkedThreads",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "c5fa8df1"
+    },
+    {
+      "name": "pullRequests.list",
+      "rpc": "pullRequests.list",
+      "access": "read",
+      "input": "83198514",
+      "output": "f759f397"
+    },
+    {
+      "name": "pullRequests.listStats",
+      "rpc": "pullRequests.listStats",
+      "access": "read",
+      "input": "a1d4b371",
+      "output": "148e1be2"
+    },
+    {
+      "name": "pullRequests.preview",
+      "rpc": "pullRequests.preview",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "1192425c"
+    },
+    {
+      "name": "pullRequests.refresh",
+      "rpc": "pullRequests.invalidate",
+      "access": "read",
+      "input": "e6bedb6a",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.replyToThread",
+      "rpc": "pullRequests.replyToThread",
+      "access": "write",
+      "input": "af197e6e",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.requestReviewers",
+      "rpc": "pullRequests.requestReviewers",
+      "access": "write",
+      "input": "5472bca9",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.reviewerCandidates",
+      "rpc": "pullRequests.reviewerCandidates",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "fd64ad2c"
+    },
+    {
+      "name": "pullRequests.reviewGuide",
+      "rpc": "pullRequests.reviewGuide",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "80e8460d"
+    },
+    {
+      "name": "pullRequests.routing",
+      "rpc": "pullRequests.routing",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "438afd01"
+    },
+    {
+      "name": "pullRequests.routingIdentity",
+      "rpc": "pullRequests.routingIdentity",
+      "access": "read",
+      "input": "6a162832",
+      "output": "9e3e016d"
+    },
+    {
+      "name": "pullRequests.runAction",
+      "rpc": "pullRequests.runAction",
+      "access": "write",
+      "input": "d0d77cd7",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.setFilesViewed",
+      "rpc": "pullRequests.setFilesViewed",
+      "access": "write",
+      "input": "81ce5f7e",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.setLabels",
+      "rpc": "pullRequests.setLabels",
+      "access": "write",
+      "input": "29e69432",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.setReaction",
+      "rpc": "pullRequests.setReaction",
+      "access": "write",
+      "input": "29637b17",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.setThreadResolution",
+      "rpc": "pullRequests.setThreadResolution",
+      "access": "write",
+      "input": "5aab2f75",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.stack",
+      "rpc": "pullRequests.stack",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "2c403e0c"
+    },
+    {
+      "name": "pullRequests.submitReview",
+      "rpc": "pullRequests.submitReview",
+      "access": "write",
+      "input": "69ff938f",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.subscribeRefreshes",
+      "rpc": "pullRequests.subscribeRefreshes",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "cc5317f2"
+    },
+    {
+      "name": "pullRequests.summary",
+      "rpc": "pullRequests.summary",
+      "access": "read",
+      "input": "bf7232ba",
+      "output": "2eefbeae"
+    },
+    {
+      "name": "pullRequests.threadComments",
+      "rpc": "pullRequests.threadComments",
+      "access": "read",
+      "input": "23ba4d9e",
+      "output": "bca37aa4"
+    },
+    {
+      "name": "pullRequests.update",
+      "rpc": "pullRequests.update",
+      "access": "write",
+      "input": "46401019",
+      "output": "794c92c1"
+    },
+    {
+      "name": "pullRequests.updateComment",
+      "rpc": "pullRequests.updateComment",
+      "access": "write",
+      "input": "2f438a07",
+      "output": "794c92c1"
+    },
+    {
+      "name": "relay.install",
+      "rpc": "cloud.installRelayClient",
+      "access": "write",
+      "stream": "final",
+      "input": "03c2b661",
+      "output": "758fb213"
+    },
+    {
+      "name": "relay.status",
+      "rpc": "cloud.getRelayClientStatus",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "8c220584"
+    },
+    {
+      "name": "repositories.list",
+      "rpc": "signalbox.repositories.list",
+      "access": "read",
+      "input": "96624d5a",
+      "output": "c6e58d15"
+    },
+    {
+      "name": "resourceTelemetry.subscribe",
+      "rpc": "subscribeResourceTelemetry",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "2aa7b129"
+    },
+    {
+      "name": "review.getDiffFileContents",
+      "rpc": "review.getDiffFileContents",
+      "access": "read",
+      "input": "835fd057",
+      "output": "80061c35"
+    },
+    {
+      "name": "review.getDiffPreview",
+      "rpc": "review.getDiffPreview",
+      "access": "read",
+      "input": "53905c8b",
+      "output": "3ca555b6"
+    },
+    {
+      "name": "scheduledTasks.delete",
+      "rpc": "scheduledTasks.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "a3ac90c6",
+      "output": "a3ac90c6"
+    },
+    {
+      "name": "scheduledTasks.getWebhookDelivery",
+      "rpc": "scheduledTasks.getWebhookDelivery",
+      "access": "read",
+      "input": "85b31149",
+      "output": "891a87e1"
+    },
+    {
+      "name": "scheduledTasks.list",
+      "rpc": "scheduledTasks.list",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "d21e29dd"
+    },
+    {
+      "name": "scheduledTasks.listWebhookDeliveries",
+      "rpc": "scheduledTasks.listWebhookDeliveries",
+      "access": "read",
+      "input": "a3ac90c6",
+      "output": "e07c314b"
+    },
+    {
+      "name": "scheduledTasks.rotateWebhookToken",
+      "rpc": "scheduledTasks.rotateWebhookToken",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "a6fa4606"
+    },
+    {
+      "name": "scheduledTasks.runNow",
+      "rpc": "scheduledTasks.runNow",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "a6fa4606"
+    },
+    {
+      "name": "scheduledTasks.setEnabled",
+      "rpc": "scheduledTasks.setEnabled",
+      "access": "write",
+      "input": "94a2337a",
+      "output": "a6fa4606"
+    },
+    {
+      "name": "scheduledTasks.subscribe",
+      "rpc": "scheduledTasks.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "d21e29dd"
+    },
+    {
+      "name": "scheduledTasks.upsert",
+      "rpc": "scheduledTasks.upsert",
+      "access": "write",
+      "input": "14e189d6",
+      "output": "a6fa4606"
+    },
+    {
+      "name": "secrets.answer",
+      "rpc": "secrets.answerRequest",
+      "access": "write",
+      "humanOnly": true,
+      "input": "c1351538",
+      "output": "794c92c1"
+    },
+    {
+      "name": "sections.create",
+      "rpc": "sections.create",
+      "access": "write",
+      "input": "01482deb",
+      "output": "f2311ee7"
+    },
+    {
+      "name": "sections.delete",
+      "rpc": "sections.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "a3ac90c6",
+      "output": "f2311ee7"
+    },
+    {
+      "name": "sections.list",
+      "rpc": "sections.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "f2311ee7"
+    },
+    {
+      "name": "sections.move",
+      "rpc": "sections.move",
+      "access": "write",
+      "input": "ef51647c",
+      "output": "f2311ee7"
+    },
+    {
+      "name": "sections.moveProject",
+      "rpc": "sections.moveProject",
+      "access": "write",
+      "input": "ec26808b",
+      "output": "f2311ee7"
+    },
+    {
+      "name": "sections.update",
+      "rpc": "sections.update",
+      "access": "write",
+      "input": "668e32e3",
+      "output": "f2311ee7"
+    },
+    {
+      "name": "server.backgroundPolicy",
+      "rpc": "server.getBackgroundPolicy",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "3f68261f"
+    },
+    {
+      "name": "server.commitDesktopUpdate",
+      "rpc": "server.commitDesktopUpdate",
+      "access": "write",
+      "input": "c12d751a",
+      "output": "027c8f4a"
+    },
+    {
+      "name": "server.config",
+      "rpc": "server.getConfig",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "52c2d3b1"
+    },
+    {
+      "name": "server.refreshProviders",
+      "rpc": "server.refreshProviders",
+      "access": "read",
+      "input": "54bdce9d",
+      "output": "a332da1e"
+    },
+    {
+      "name": "server.updateProvider",
+      "rpc": "server.updateProvider",
+      "access": "write",
+      "input": "9c17fa1f",
+      "output": "a332da1e"
+    },
+    {
+      "name": "server.updateServer",
+      "rpc": "server.updateServer",
+      "access": "write",
+      "input": "1ac1d46b",
+      "output": "027c8f4a"
+    },
+    {
+      "name": "server.updateServerWithProgress",
+      "rpc": "server.updateServerWithProgress",
+      "access": "write",
+      "stream": "final",
+      "input": "1ac1d46b",
+      "output": "8168ef34"
+    },
+    {
+      "name": "serverConfig.subscribe",
+      "rpc": "subscribeServerConfig",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "240ec835",
+      "output": "e9a1a308"
+    },
+    {
+      "name": "settings.get",
+      "rpc": "server.getSettings",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "6d87d19e"
+    },
+    {
+      "name": "settings.update",
+      "rpc": "server.updateSettings",
+      "access": "write",
+      "input": "a5f17099",
+      "output": "6d87d19e"
+    },
+    {
+      "name": "sourceControl.cloneRepository",
+      "rpc": "sourceControl.cloneRepository",
+      "access": "write",
+      "input": "8eb0f325",
+      "output": "2744b3a4"
+    },
+    {
+      "name": "sourceControl.discover",
+      "rpc": "server.discoverSourceControl",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "5b355e6f"
+    },
+    {
+      "name": "sourceControl.lookupRepository",
+      "rpc": "sourceControl.lookupRepository",
+      "access": "read",
+      "input": "52aae3e4",
+      "output": "8e2076df"
+    },
+    {
+      "name": "sourceControl.publishRepository",
+      "rpc": "sourceControl.publishRepository",
+      "access": "write",
+      "input": "4c99eff2",
+      "output": "96d1c5d3"
+    },
+    {
+      "name": "storage.cleanup",
+      "rpc": "server.runStorageCleanup",
+      "access": "write",
+      "destructive": true,
+      "input": "03c2b661",
+      "output": "13f90f73"
+    },
+    {
+      "name": "storage.report",
+      "rpc": "server.getStorageCleanupReport",
+      "access": "read",
+      "stream": "final",
+      "input": "03c2b661",
+      "output": "b54ba357"
+    },
+    {
+      "name": "terminal.clear",
+      "rpc": "terminal.clear",
+      "access": "write",
+      "input": "0640135d",
+      "output": "794c92c1"
+    },
+    {
+      "name": "terminal.close",
+      "rpc": "terminal.close",
+      "access": "write",
+      "input": "6d289cc5",
+      "output": "794c92c1"
+    },
+    {
+      "name": "terminal.observe",
+      "rpc": "terminal.observe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "0640135d",
+      "output": "5e95f168"
+    },
+    {
+      "name": "terminal.open",
+      "rpc": "terminal.open",
+      "access": "write",
+      "input": "95f54c5d",
+      "output": "b1e6c6f1"
+    },
+    {
+      "name": "terminal.resize",
+      "rpc": "terminal.resize",
+      "access": "write",
+      "input": "f1a089d1",
+      "output": "794c92c1"
+    },
+    {
+      "name": "terminal.restart",
+      "rpc": "terminal.restart",
+      "access": "write",
+      "input": "5a677a5f",
+      "output": "b1e6c6f1"
+    },
+    {
+      "name": "terminal.write",
+      "rpc": "terminal.write",
+      "access": "write",
+      "input": "db19ce54",
+      "output": "794c92c1"
+    },
+    {
+      "name": "terminalEvents.subscribe",
+      "rpc": "subscribeTerminalEvents",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "b6f8ae30"
+    },
+    {
+      "name": "terminalMetadata.subscribe",
+      "rpc": "subscribeTerminalMetadata",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "fd689900"
+    },
+    {
+      "name": "threadKinds.list",
+      "rpc": "signalbox.threadKinds.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "0496a06b"
+    },
+    {
+      "name": "threadKinds.setArchiveChatsAfterDays",
+      "rpc": "signalbox.threadKinds.setArchiveChatsAfterDays",
+      "access": "write",
+      "input": "26b73c17",
+      "output": "0496a06b"
+    },
+    {
+      "name": "threads.active.reorder",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.active.reorder",
+      "access": "write",
+      "input": "75326e0c",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.archive",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.archive",
+      "access": "write",
+      "input": "1236b61d",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.autoSettle.set",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.auto-settle.set",
+      "access": "write",
+      "input": "dc0204b5",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.create",
+      "rpc": "orchestration.launchThread",
+      "access": "write",
+      "input": "49ccbbaa",
+      "output": "870bd27d"
+    },
+    {
+      "name": "threads.delete",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "1236b61d",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.dismissQuestion",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.user-input.dismiss",
+      "access": "write",
+      "humanOnly": true,
+      "input": "8acbe7aa",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.fork",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.fork",
+      "access": "write",
+      "input": "20c2ed70",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.get",
+      "rpc": "orchestration.getThreadProjection",
+      "access": "read",
+      "input": "1276a316",
+      "output": "c7cbdb47"
+    },
+    {
+      "name": "threads.getFullThreadDiff",
+      "rpc": "orchestration.getFullThreadDiff",
+      "access": "read",
+      "input": "252c6579",
+      "output": "6b0458eb"
+    },
+    {
+      "name": "threads.getTurnDiff",
+      "rpc": "orchestration.getTurnDiff",
+      "access": "read",
+      "input": "1137726d",
+      "output": "6b0458eb"
+    },
+    {
+      "name": "threads.getTurnItem",
+      "rpc": "orchestration.getTurnItem",
+      "access": "read",
+      "input": "049d9a37",
+      "output": "150d0e5e"
+    },
+    {
+      "name": "threads.getWorkflowScript",
+      "rpc": "orchestration.getWorkflowScript",
+      "access": "read",
+      "input": "81c8125b",
+      "output": "6ac5e7bf"
+    },
+    {
+      "name": "threads.interactionMode.set",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.interaction-mode.set",
+      "access": "write",
+      "input": "2a6a79b3",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.interrupt",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "run.interrupt",
+      "access": "write",
+      "input": "9f6fd019",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.list",
+      "rpc": "orchestration.subscribeShell",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "9b1960e6",
+      "output": "96399a4c"
+    },
+    {
+      "name": "threads.listArchived",
+      "rpc": "orchestration.getArchivedShellSnapshot",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "99b6eac5"
+    },
+    {
+      "name": "threads.markRead",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.visit",
+      "access": "write",
+      "input": "0c4c5ada",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.markUnread",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.mark-unread",
+      "access": "write",
+      "input": "1236b61d",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.mergeBack",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.merge_back",
+      "access": "write",
+      "input": "5db1e3d1",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.modelSelection.set",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.model-selection.set",
+      "access": "write",
+      "input": "13cdbe93",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.move",
+      "rpc": "signalbox.folders.moveThread",
+      "access": "write",
+      "input": "218150d1",
+      "output": "46235ce0"
+    },
+    {
+      "name": "threads.pin",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.pin",
+      "access": "write",
+      "input": "55fea70d",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.pin.reorder",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.pin.reorder",
+      "access": "write",
+      "input": "75326e0c",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.pullRequest.link",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.pull-request.link",
+      "access": "write",
+      "input": "9de6b4c4",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.pullRequest.unlink",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.pull-request.unlink",
+      "access": "write",
+      "input": "f885b0e6",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.pullRequest.watch",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.pull-request.watch",
+      "access": "write",
+      "input": "ff5d14ef",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.queue.resume",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "queue.resume",
+      "access": "write",
+      "input": "1236b61d",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.queuedMessage.promoteToSteer",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "queued-message.promote-to-steer",
+      "access": "write",
+      "input": "02259395",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.queuedRun.cancel",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "queued-run.cancel",
+      "access": "write",
+      "input": "4bef536a",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.queuedRun.edit",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "queued-run.edit",
+      "access": "write",
+      "input": "102c04b4",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.queuedRun.reorder",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "queued-run.reorder",
+      "access": "write",
+      "input": "03c0b5f9",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.respond",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "runtime-request.respond",
+      "access": "write",
+      "humanOnly": true,
+      "input": "3bc54e36",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.retryPreparation",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "prepared-run.retry",
+      "access": "write",
+      "input": "4bef536a",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.rollback",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "checkpoint.rollback",
+      "access": "write",
+      "destructive": true,
+      "input": "8f3a9b28",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.runtimeMode.set",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.runtime-mode.set",
+      "access": "write",
+      "input": "2f2f6a9d",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.search",
+      "rpc": "orchestration.searchThreads",
+      "access": "read",
+      "input": "4851e18f",
+      "output": "7e3c74cc"
+    },
+    {
+      "name": "threads.searchOne",
+      "rpc": "orchestration.searchThread",
+      "access": "read",
+      "input": "25dbd2df",
+      "output": "07c54253"
+    },
+    {
+      "name": "threads.send",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "message.dispatch",
+      "access": "write",
+      "input": "1fac6d00",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.setKind",
+      "rpc": "signalbox.threadKinds.setKind",
+      "access": "write",
+      "input": "171e8cf9",
+      "output": "0496a06b"
+    },
+    {
+      "name": "threads.settle",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.settle",
+      "access": "write",
+      "input": "b1be93e6",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.snooze",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.snooze",
+      "access": "write",
+      "input": "33a37ef6",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.stopSubagent",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "subagent.stop",
+      "access": "write",
+      "input": "f6964201",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.stopWorkflow",
+      "rpc": "orchestration.stopWorkflow",
+      "access": "write",
+      "input": "db6cd1bb",
+      "output": "794c92c1"
+    },
+    {
+      "name": "threads.subscribe",
+      "rpc": "orchestration.subscribeThread",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "438e44e7",
+      "output": "e88b7a7a"
+    },
+    {
+      "name": "threads.subscribeArchived",
+      "rpc": "orchestration.subscribeArchivedShell",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "118e49b8"
+    },
+    {
+      "name": "threads.switchProvider",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "provider.switch",
+      "access": "write",
+      "input": "13cdbe93",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.unarchive",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.unarchive",
+      "access": "write",
+      "input": "1236b61d",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.unpin",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.unpin",
+      "access": "write",
+      "input": "1236b61d",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.unsettle",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.unsettle",
+      "access": "write",
+      "input": "693f5db2",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.unsnooze",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.unsnooze",
+      "access": "write",
+      "input": "693f5db2",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "threads.update",
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.metadata.update",
+      "access": "write",
+      "input": "45c27603",
+      "output": "aebf4e45"
+    },
+    {
+      "name": "usage.refreshRates",
+      "rpc": "server.refreshUsageRates",
+      "access": "read",
+      "input": "03c2b661",
+      "output": "1d46f74d"
+    },
+    {
+      "name": "usage.summary",
+      "rpc": "server.getUsageSummary",
+      "access": "read",
+      "input": "a8914263",
+      "output": "980c65f3"
+    },
+    {
+      "name": "vcs.createRef",
+      "rpc": "vcs.createRef",
+      "access": "write",
+      "input": "4e0abbc0",
+      "output": "5b5d5afa"
+    },
+    {
+      "name": "vcs.createWorktree",
+      "rpc": "vcs.createWorktree",
+      "access": "write",
+      "input": "4adbaf91",
+      "output": "6e13b7c2"
+    },
+    {
+      "name": "vcs.init",
+      "rpc": "vcs.init",
+      "access": "write",
+      "input": "8132baa8",
+      "output": "794c92c1"
+    },
+    {
+      "name": "vcs.listRefs",
+      "rpc": "vcs.listRefs",
+      "access": "read",
+      "input": "bea0ed46",
+      "output": "2940e8ed"
+    },
+    {
+      "name": "vcs.pull",
+      "rpc": "vcs.pull",
+      "access": "write",
+      "input": "34e2f6b6",
+      "output": "e27d02d0"
+    },
+    {
+      "name": "vcs.refreshStatus",
+      "rpc": "vcs.refreshStatus",
+      "access": "read",
+      "input": "34e2f6b6",
+      "output": "16557745"
+    },
+    {
+      "name": "vcs.removeWorktree",
+      "rpc": "vcs.removeWorktree",
+      "access": "write",
+      "destructive": true,
+      "input": "02f39aae",
+      "output": "794c92c1"
+    },
+    {
+      "name": "vcs.switchRef",
+      "rpc": "vcs.switchRef",
+      "access": "write",
+      "input": "cf3a9c47",
+      "output": "1605c402"
+    },
+    {
+      "name": "vcsStatus.subscribe",
+      "rpc": "subscribeVcsStatus",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "de09b502",
+      "output": "da0fd203"
+    },
+    {
+      "name": "worktreeSetup.cancel",
+      "rpc": "worktreeSetup.cancel",
+      "access": "write",
+      "input": "1276a316",
+      "output": "178978ad"
+    },
+    {
+      "name": "worktreeSetup.subscribe",
+      "rpc": "subscribeWorktreeSetup",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "1276a316",
+      "output": "80548c84"
+    }
+  ],
+  "exemptions": [
+    {
+      "rpc": "signalbox.analytics.recordClientEvent",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "signalbox.push.registerDevice",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "signalbox.push.unregisterDevice",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "server.probe",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "server.reportClientActivity",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "server.reportHostPowerState",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "pullRequests.reportState",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "shell.openInEditor",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "mcpApps.callTool",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "mcpApps.toolInfo",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "mcpApps.readResource",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "mcpApps.updateModelContext",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "terminal.attach",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "preview.reportProfiles",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "preview.reportStatus",
+      "kind": "client-report"
+    },
+    {
+      "rpc": "subscribeServerLifecycle",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.create",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.auto-settle",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.pull-request-link.sync",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.pull-request.sync",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.title.regeneration.complete",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "provider-session.detach",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "prepared-run.release",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "prepared-run.progress",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "prepared-run.fail",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "notification.delivery.accept",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "delegated_task.request",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "delegated_task.wake-policy",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "delegated_task.completion-delivery.acknowledge",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "delegated_task.completion-delivery.dispose",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.dispatchCommand",
+      "command": "thread.created.record",
+      "kind": "internal"
+    },
+    {
+      "rpc": "orchestration.searchThreadStream",
+      "kind": "client-local"
+    }
+  ]
+}

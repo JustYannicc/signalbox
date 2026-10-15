@@ -16,6 +16,7 @@ import {
   startNativeSignIn,
 } from "./accountSession";
 import { useFinishEnvironmentSignIn } from "./AccountEnvironmentSignIn";
+import { cloudDefaultOrigin } from "./cloudDefault";
 import { appForwardUrl, type AppForward } from "./appForward";
 import { SignInFrame, SignInNotice } from "./SignInFrame";
 import { parseVerifyRequest } from "./verifyEmail";
@@ -61,6 +62,8 @@ export function SignInScreen({
   const [completing, setCompleting] = useState(false);
   const redeemedHandoff = useRef<string | null>(null);
   const finishEnvironmentSignIn = useFinishEnvironmentSignIn();
+  // signalbox: desktop without a local environment signs in to Signalbox Cloud and adds it.
+  const [cloudOrigin] = useState(cloudDefaultOrigin);
 
   // A return can land on first load or, on desktop, as a hash change while this
   // screen is already waiting. Adopt each new one during render so the first
@@ -140,6 +143,7 @@ export function SignInScreen({
     try {
       await startNativeSignIn({
         screenHint,
+        ...(cloudOrigin ? { environmentOrigin: cloudOrigin } : {}),
         ...(selectAccount ? { selectAccount: true } : {}),
         ...(search.returnTo ? { returnTo: search.returnTo } : {}),
       });

@@ -57,7 +57,52 @@ export const WorkflowWebhookTrigger = Schema.Struct({
 });
 export type WorkflowWebhookTrigger = typeof WorkflowWebhookTrigger.Type;
 
+const DurationAmount = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0));
+
+/** A length of time as `{ minutes: 5 }`; units add up. Used by meta and step options. */
+export const WorkflowDuration = Schema.Struct({
+  seconds: Schema.optional(DurationAmount),
+  minutes: Schema.optional(DurationAmount),
+  hours: Schema.optional(DurationAmount),
+  days: Schema.optional(DurationAmount),
+});
+export type WorkflowDuration = typeof WorkflowDuration.Type;
+
 const EventFieldValue = Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]);
+
+/**
+ * Something readable through a connection, watched for changes: Signalbox
+ * polls `operation` once per source (however many automations and agents
+ * watch it), diffs the list it returns by `key`, and turns what changed into
+ * `source.item.added`, `source.item.changed` and `source.item.removed` events.
+ */
+export const WorkflowSourceWatch = Schema.Struct({
+  operation: TrimmedNonEmptyString.annotate({
+    description:
+      "The Executor operation that lists the items, as w.call names it, e.g. 'github.actions.listWorkflowRunsForRepo'.",
+  }),
+  args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
+    description: "The operation's arguments.",
+  }),
+  key: TrimmedNonEmptyString.annotate({
+    description: "The field that identifies an item, e.g. 'id'. A dotted path reaches into it.",
+  }),
+  items: Schema.optional(TrimmedNonEmptyString).annotate({
+    description:
+      "Where the list is in the answer, e.g. 'workflow_runs'. Defaults to the answer itself, or its only list.",
+  }),
+  fields: Schema.optional(Schema.NonEmptyArray(TrimmedNonEmptyString)).annotate({
+    description:
+      "Only changes to these top-level fields count for source.item.changed. Defaults to any field.",
+  }),
+  every: Schema.optional(WorkflowDuration).annotate({
+    description: "How often to check, at least a minute. Defaults to 5 minutes.",
+  }),
+  connection: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "Which account, when the service is connected more than once.",
+  }),
+});
+export type WorkflowSourceWatch = typeof WorkflowSourceWatch.Type;
 
 /**
  * Start a run for every matching event (see `automationEvents.ts`). The run's
@@ -81,6 +126,10 @@ export const WorkflowEventTrigger = Schema.Struct({
   ).annotate({
     description: "Top-level event fields that must equal these values; an array means any of them.",
   }),
+  watch: Schema.optional(WorkflowSourceWatch).annotate({
+    description:
+      "For source.item.* events: the source to watch. Only its changes trigger this automation.",
+  }),
   includeAutomationThreads: Schema.optional(Schema.Boolean).annotate({
     description: "Also trigger on threads and turns automations started. Off by default.",
   }),
@@ -98,17 +147,6 @@ export const WorkflowTrigger = Schema.Union([
   WorkflowEventTrigger,
 ]);
 export type WorkflowTrigger = typeof WorkflowTrigger.Type;
-
-const DurationAmount = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0));
-
-/** A length of time as `{ minutes: 5 }`; units add up. Used by meta and step options. */
-export const WorkflowDuration = Schema.Struct({
-  seconds: Schema.optional(DurationAmount),
-  minutes: Schema.optional(DurationAmount),
-  hours: Schema.optional(DurationAmount),
-  days: Schema.optional(DurationAmount),
-});
-export type WorkflowDuration = typeof WorkflowDuration.Type;
 
 export const WorkflowMeta = Schema.Struct({
   name: TrimmedNonEmptyString,
@@ -140,6 +178,7 @@ export const WorkflowStepVerb = Schema.Literals([
   "notify",
   "sleep",
   "waitFor",
+  "hook",
   "recall",
   "remember",
   "start",

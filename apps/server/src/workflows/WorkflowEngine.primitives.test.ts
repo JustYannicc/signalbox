@@ -1,95 +1,20 @@
 import { expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { automationError } from "./errors.ts";
-import type { BuiltinToolCall } from "./builtinTools/runner.ts";
 import { WorkflowEngine } from "./WorkflowEngine.ts";
-import { DEFAULTS, fakeThreads, PROJECT, saveOk, withEngine } from "./WorkflowEngine.testkit.ts";
-
-const AT = DateTime.makeUnsafe("2026-10-06T10:00:00.000Z");
-let sequence = 0;
-
-/** A thread's pull request sync, as upstream's sync reactor announces it. */
-const pullRequestSynced = (
-  threadId: string,
-  snapshot: { state: string; checksState?: string; mergeability?: string },
-) => ({
-  id: `pr-sync-${++sequence}`,
-  type: "thread.pull-request-synced",
-  threadId,
-  occurredAt: AT,
-  payload: {
-    id: threadId,
-    projectId: PROJECT,
-    title: "Fix login",
-    providerInstanceId: "codex",
-    modelSelection: { instanceId: "codex", model: "gpt-6-astra" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: "fix-login",
-    worktreePath: null,
-    branchPullRequest: null,
-    pullRequests: [
-      {
-        host: "github.com",
-        repository: "acme/app",
-        number: 12,
-        url: "https://github.com/acme/app/pull/12",
-        source: "agent",
-        linkedAt: "2026-10-06T09:00:00.000Z",
-        stack: null,
-        snapshot: {
-          title: "Fix login",
-          headBranch: "fix-login",
-          baseBranch: "main",
-          isDraft: false,
-          updatedAt: null,
-          // Each sync is its own fact.
-          syncedAt: `2026-10-06T10:00:${String(sequence).padStart(2, "0")}.000Z`,
-          ...snapshot,
-        },
-      },
-    ],
-  },
-});
-
-const threadEvent = (type: string, threadId: string) => ({
-  id: `thread-event-${++sequence}`,
-  type,
-  threadId,
-  occurredAt: AT,
-  payload: { id: threadId, projectId: PROJECT },
-});
-
-/** Records `signalbox.*` calls instead of running Signalbox's MCP handlers. */
-const fakeTools = (answers: Record<string, unknown> = {}) => {
-  const calls: BuiltinToolCall[] = [];
-  return {
-    calls,
-    handler: {
-      tools: ["list_thread_pull_requests", "t3_thread_send"],
-      call: (input: BuiltinToolCall) =>
-        Effect.suspend(() => {
-          calls.push(input);
-          return input.tool in answers
-            ? Effect.succeed(answers[input.tool])
-            : Effect.fail(automationError("no answer"));
-        }),
-    },
-  };
-};
-
-const monitorsOf = (threadId: string) =>
-  derivePendingBackgroundWork({
-    latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-    providerThreads: [],
-    turnItems: [],
-    threadId,
-  });
+import {
+  DEFAULTS,
+  fakeThreads,
+  fakeTools,
+  monitorsOf,
+  PROJECT,
+  pullRequestSynced,
+  saveOk,
+  threadEvent,
+  withEngine,
+} from "./WorkflowEngine.testkit.ts";
 
 it.effect("waitFor on keeps events from the run's start and matches them like triggers", () => {
   const threads = fakeThreads();
@@ -113,8 +38,8 @@ export default workflow(async (w, input: { number: number }) => {
       });
       yield* engine.drain;
       // Merged while the run is still sleeping: no step waits yet, so it's kept for later.
-      const firstSync = sequence + 1;
-      yield* threads.emit(pullRequestSynced("thread-9", { state: "open" }));
+      const opened = pullRequestSynced("thread-9", { state: "open" });
+      yield* threads.emit(opened);
       yield* threads.emit(pullRequestSynced("thread-9", { state: "merged" }));
       yield* engine.drain;
       yield* TestClock.adjust("2 minutes");
@@ -139,7 +64,7 @@ export default workflow(async (w, input: { number: number }) => {
       expect(detail.run.status).toBe("succeeded");
       expect(detail.output).toMatchObject({
         merged: { event: "pr.merged" },
-        update: `pr-sync-${firstSync}`,
+        update: opened.id,
         closed: null,
       });
     }),
@@ -216,6 +141,8 @@ export default workflow(async (w) => {
           tool: "t3_thread_send",
           args: { threadId: "thread-9", message: "Go", mode: "queue" },
           automationId: automation.id,
+          projectId: PROJECT,
+          runId: run.id,
           automationName: "Nudge",
           runtimeMode: DEFAULTS.runtimeMode,
           requestKey: `${run.id}/${detail.steps[0]!.key}`,
@@ -251,7 +178,7 @@ it.effect("the built-in PR watch runs attached to its thread and wakes the agent
       expect(host).toMatchObject({ name: "Watch pull request", builtIn: true });
       expect(monitorsOf("thread-9")).toEqual([
         {
-          taskId: `automation-run:${run.id}`,
+          taskId: `automation-run:${run.automationId}:${run.id}`,
           kind: "monitor",
           description: "Wait for news on the pull request",
         },
@@ -266,8 +193,12 @@ it.effect("the built-in PR watch runs attached to its thread and wakes the agent
           {
             threadId: "thread-9",
             mode: "queue",
-            message:
-              "Checks failed on pull request #12 (https://github.com/acme/app/pull/12). Look at the failures and fix them.",
+            message: [
+              "Checks failed on pull request #12 (https://github.com/acme/app/pull/12):",
+              "Look at the failures and fix them.",
+              "",
+              "I keep watching and wake you on the next change, so end your turn when you're done. Call unwatch_pull_request when you hand the work back.",
+            ].join("\n"),
           },
         ],
       ]);
