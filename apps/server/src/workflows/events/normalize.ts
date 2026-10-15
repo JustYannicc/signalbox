@@ -1,6 +1,7 @@
 import {
   AUTOMATION_RAW_EVENT_PREFIX,
   OrchestrationV2DomainEvent,
+  SOURCE_ITEM_EVENTS,
   type AutomationEventName,
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
@@ -270,4 +271,6 @@ export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   ...PULL_REQUEST_REMARK_EVENTS,
   // A run's callback link was called (callbacks.ts).
   "hook.called",
+  // A watched source changed (sources/sourceWatches.ts).
+  ...SOURCE_ITEM_EVENTS,
 ] satisfies ReadonlyArray<AutomationEventName>);

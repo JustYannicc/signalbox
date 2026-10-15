@@ -8,6 +8,7 @@ import { isPoolLinkPath, routePoolLink } from "./pool/poolLink.ts";
 import type { PoolObjectEnv } from "./pool/PoolObject.ts";
 import { labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
 import { routePreview } from "./thread/preview/previewRoute.ts";
+import { attachmentStorage } from "./attachments/attachmentObjects.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
 import { ModelGatewayRecord } from "./modelGateway/modelGatewayRecord.ts";
 import { reportModelRequest, serveModel } from "./thread/runner/modelGrants.ts";
@@ -62,6 +63,7 @@ const appFor = (env: CloudEnv) => {
       users: env.USERS,
       threads: env.THREADS,
       localWorkerd: env.LOCAL_WORKERD === "1",
+      attachments: attachmentStorage(env),
     }),
   );
   return app;

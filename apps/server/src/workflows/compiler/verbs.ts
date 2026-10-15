@@ -2,7 +2,7 @@ import { WorkflowStepVerb, type WorkflowDetailValue } from "@t3tools/contracts";
 import type { CallExpression, Node } from "oxc-parser";
 
 import { readAskDetail } from "./ask.ts";
-import { waitForEventProblem } from "./eventTriggers.ts";
+import { sourceWatchProblem, waitForEventProblem } from "./eventTriggers.ts";
 import { detailValue, evaluateLiteral, objectProperties, readString, unwrap } from "./literals.ts";
 import type { WorkflowSource } from "./source.ts";
 
@@ -218,8 +218,8 @@ export function readStepDetail(
         !ensure(
           source,
           call,
-          properties?.has("event") || on,
-          "w.waitFor needs the event to wait for: `on` for Signalbox events, `event` for automation_emit names.",
+          properties?.has("event") || on || properties?.has("watch"),
+          "w.waitFor needs the event to wait for: `on` for Signalbox events, `watch` for changes in a connected source, `event` for automation_emit names.",
           example,
         )
       )
@@ -229,11 +229,23 @@ export function readStepDetail(
       // step starts and collects from then on.
       const literal = on ? evaluateLiteral(on) : undefined;
       if (on && literal?.ok) {
-        const problem = waitForEventProblem(literal.value);
+        const problem = waitForEventProblem(literal.value, properties?.has("watch") === true);
         if (problem) {
           source.error(on, problem.message, problem.hint);
           return null;
         }
+      }
+      // A literal watch is checked now and shows its service's logo; a computed one is checked when the step starts.
+      const watchNode = properties?.get("watch");
+      const watch = watchNode ? evaluateLiteral(watchNode) : undefined;
+      if (watchNode && watch?.ok) {
+        const problem = sourceWatchProblem(watch.value, literal?.ok ? literal.value : undefined);
+        if (problem) {
+          source.error(watchNode, `w.waitFor: ${problem.message}`, problem.hint);
+          return null;
+        }
+        const operation = (watch.value as { readonly operation: string }).operation;
+        return { detail, service: operation.slice(0, operation.indexOf(".")) };
       }
       return { detail };
     }

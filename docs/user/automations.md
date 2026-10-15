@@ -49,6 +49,12 @@ by its name in Executor.
   threads in the automation's project, and never to threads automations started themselves. If
   events start more than 30 runs in a minute, its event triggers pause and you're notified; save
   it, or switch it off and on, to resume.
+- **When something changes in a connected service**: a new GitHub Actions run, an invoice paid, a
+  row added to a sheet. Ask for it in your own words ("when a new issue is filed in Linear, triage
+  it"). Signalbox checks the service every few minutes, once for every automation and agent watching
+  the same thing, and reacts only to what's new after the automation starts. The automation's page
+  shows what it watches and when it last checked. If the service keeps failing, Signalbox stops
+  checking and tells you; save the automation again to retry.
 - **Run now** starts a run by hand. An automation only a webhook or events start offers **Replay this run**
   instead, which runs again with the shown run's payload; **Run now without input** stays in its
   **⋯** menu.
@@ -70,11 +76,17 @@ from where the run stopped. Steps whose code moved or changed run again too.
 
 ## When an agent waits
 
-Ask an agent to wait for something, like CI on its pull request, another thread finishing, or
-tomorrow morning, and it ends its turn instead of sitting there polling. The thread stays in
+Ask an agent to wait for something, like CI on its pull request, another thread finishing, an
+invoice being paid in a connected service, or tomorrow morning, and it ends its turn instead of sitting there polling. The thread stays in
 **Working**, and the agent wakes with one message when it happens. A pull request it watches
 keeps waking it on failed checks, other people's comments and reviews, and conflicts until it
 merges.
+
+When the work is done, the agent asks to merge instead of merging. You get a needs-you, "Merge
+acme/app#12?", showing the commit it would merge: **merge** merges that commit and deletes its
+branch, **not yet** sends the agent your reason. If new commits land after you approve, nothing
+merges and the agent asks again. To have a project merge on its own when checks pass, have an agent
+customize the built-in **Merge gate** there as a draft, then publish it yourself.
 
 **Thread details → Waiting on** lists what the thread waits for. Open a row to see the run behind
 it, or stop it there. Settling, archiving or stopping the thread ends its waits too. Each wait is a

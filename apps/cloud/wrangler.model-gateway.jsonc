@@ -3,7 +3,8 @@
   // API with per-turn model tokens. It holds no keys: it checks each token
   // with the cloud Worker and sends the request to the turn's pool over the
   // GRANTS service binding. `vp run dev:gateway` runs it locally next to
-  // `vp run dev`. See docs/operations/cloud.md.
+  // `vp run dev`. Deploys go through the Alchemy stack (alchemy.run.ts). See
+  // docs/operations/cloud.md.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "signalbox-model-gateway",
   "main": "src/modelGateway/worker.ts",
@@ -15,19 +16,4 @@
   "routes": [{ "pattern": "gateway.signalbox.run", "custom_domain": true }],
   "services": [{ "binding": "GRANTS", "service": "signalbox-cloud", "entrypoint": "ModelGrants" }],
   "observability": { "enabled": true },
-  "env": {
-    // A pull request preview's own gateway, for its own cloud Worker. The
-    // deploy workflow puts the pull request's number in place of PR_NUMBER
-    // and passes the name and domain.
-    "preview": {
-      "routes": [],
-      "services": [
-        {
-          "binding": "GRANTS",
-          "service": "signalbox-cloud-pr-PR_NUMBER",
-          "entrypoint": "ModelGrants",
-        },
-      ],
-    },
-  },
 }
