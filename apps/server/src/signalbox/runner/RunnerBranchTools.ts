@@ -15,13 +15,16 @@ import type { DrivesView } from "./RunnerDrivesView.ts";
  * Publishing the thread's own branch from the context server (#135), named
  * like the git panel's actions: `push`, and `create_pr` to push and open its
  * pull request. The machine holds no credential for the remote, so `git push`
- * can't work here: the Runner saves the branch to the drive with whatever is
- * uncommitted, then asks the cloud, with the turn's drive token, to push it
- * as the thread's owner. The cloud acts only on the thread the token names.
+ * can't work here (fetching, pulling and rebasing do, #394): the Runner saves
+ * the branch to the drive with whatever is uncommitted, then asks the cloud,
+ * with the turn's drive token, to push it as the thread's owner. The cloud
+ * acts only on the thread the token names. A branch that took the remote
+ * branch's head in and rewrote it (a rebase) replaces that head, and nothing
+ * newer: the lease.
  */
 
 /** What publishing needs of the thread's drive. */
-export type BranchDrive = Pick<RunnerDrive, "saveBranch">;
+export type BranchDrive = Pick<RunnerDrive, "saveBranch" | "published">;
 
 /** A refusal as the agent should read it: what happened, and what to do about it. */
 const explain = (reason: PublishFailureReason, message: string) => {
@@ -31,7 +34,7 @@ const explain = (reason: PublishFailureReason, message: string) => {
     case "no_permission":
       return `${message} Ask the user to check their GitHub account can write to this repository.`;
     case "branch_conflict":
-      return `${message} Tell the user; Signalbox can't bring GitHub's commits into this thread yet.`;
+      return `${message} Run \`git pull --rebase\` to take them in (resolve any conflict), then push again.`;
     case "unavailable":
       return `${message} Try again in a little while.`;
     case "not_a_repository":
@@ -65,9 +68,13 @@ export const layerBranchTools = (view: DrivesView, drive: () => BranchDrive | nu
           ),
         );
       if (saved._tag === "not_saved") return yield* fail(saved.reason);
-      const result = yield* client.publish(request);
+      const result = yield* client.publish(
+        saved.lease === null ? request : { ...request, lease: saved.lease },
+      );
       if (result._tag === "failed") return yield* fail(explain(result.reason, result.message));
       const { branch, repository, pushed, pullRequest } = result;
+      // GitHub has the branch at this head now: the next push's lease.
+      yield* current.published(saved.head).pipe(Effect.ignore);
       return json({ branch, repository, commit: saved.head, pushed, pullRequest });
     });
 
@@ -77,7 +84,7 @@ export const layerBranchTools = (view: DrivesView, drive: () => BranchDrive | nu
       register({
         name: "push",
         description:
-          "Push this thread's branch to its GitHub repository, as the git panel's Push does. Uncommitted changes are committed first. Use this instead of `git push`, which has no credential here: Signalbox pushes with the user's GitHub connection. Answers the branch, the repository and the pushed commit. Only in a project backed by a GitHub repository.",
+          "Push this thread's branch to its GitHub repository, as the git panel's Push does. Uncommitted changes are committed first. Use this instead of `git push`, which has no credential here: Signalbox pushes with the user's GitHub connection. `git fetch`, `git pull` and `git rebase origin/main` work as usual; after rebasing, this replaces the branch on GitHub as long as it holds nothing you haven't fetched. Answers the branch, the repository and the pushed commit. Only in a project backed by a GitHub repository.",
         parameters: Schema.Struct({ commitMessage: Schema.optional(CommitMessage) }),
         writes,
         handle: ({ commitMessage }) => publish({ action: "push" }, commitMessage),

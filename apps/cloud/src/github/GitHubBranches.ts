@@ -121,7 +121,9 @@ export interface PublishInput {
   readonly cwd: string;
   readonly openPullRequest: boolean;
   /** The pull request's title, body and draft state, when it opens a new one. */
-  readonly pullRequest?: Omit<PublishRequest, "action">;
+  readonly pullRequest?: Omit<PublishRequest, "action" | "lease">;
+  /** The remote branch head the thread took in, which a rewritten branch may replace. */
+  readonly lease?: Oid;
 }
 
 type Status = {
@@ -266,7 +268,10 @@ const make = Effect.gen(function* () {
   const branchState = (drive: DriveHandle, threadId: string) =>
     Effect.gen(function* () {
       const refs = yield* drive.refs(threadId);
-      const known = [refs.base, refs.main].filter((oid): oid is Oid => oid !== null);
+      // The remote has its base, its main and every remote commit the drive holds one deep.
+      const known = [refs.base, refs.main, ...refs.shallow].filter(
+        (oid): oid is Oid => oid !== null,
+      );
       const ahead =
         refs.thread === null
           ? 0
@@ -384,7 +389,13 @@ const make = Effect.gen(function* () {
     );
 
   /** Pushes the thread's branch from the drive. Answers whether anything moved and if the branch is new. */
-  const push = (target: Target, branch: string, threadId: string, userToken: string) =>
+  const push = (
+    target: Target,
+    branch: string,
+    threadId: string,
+    userToken: string,
+    lease: Oid | undefined,
+  ) =>
     Effect.gen(function* () {
       const repository = target.remote.repository;
       const [refs, old] = yield* Effect.all(
@@ -405,7 +416,11 @@ const make = Effect.gen(function* () {
         driveId: target.driveId,
         head,
         old,
-        remoteHas: [refs.base, refs.main].filter((oid): oid is Oid => oid !== null),
+        remoteHas: [refs.base, refs.main, ...refs.shallow].filter(
+          (oid): oid is Oid => oid !== null,
+        ),
+        // GitHub still checks `old` as it moves the branch, so a lease never races a push.
+        force: old !== null && old === lease,
       }).pipe(
         Effect.provideService(DriveDirectory, target.drives.directory),
         Effect.provideService(DrivePacks, target.drives.packs),
@@ -513,7 +528,7 @@ const make = Effect.gen(function* () {
         return yield* refusal("not_connected", "Connect GitHub first: Settings › Source Control.");
       }
       // Watchers recompute only when the branch or its pull request changed.
-      const pushed = yield* push(target, thread.branch, thread.id, userToken);
+      const pushed = yield* push(target, thread.branch, thread.id, userToken, input.lease);
       if (pushed.pushed) yield* PubSub.publish(moved, input.cwd);
       const pr = input.openPullRequest
         ? yield* openPull(actor, target, thread, userToken, input.pullRequest)

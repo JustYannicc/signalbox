@@ -9,10 +9,11 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import type {
-  DriveShortcut,
-  DriveState,
-  RefWriteResult,
+import {
+  type DriveShortcut,
+  type DriveState,
+  type RefWriteResult,
+  threadRemoteBranch,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
 
@@ -168,14 +169,37 @@ export const makeFakeDrive = (
           if (upload.remoteHead !== undefined && upload.remoteHead !== upstreamHead()) {
             throw new Error("not the remote's head");
           }
+          const remoteCommits = [
+            ...(upload.remoteHead === undefined ? [] : [upload.remoteHead]),
+            ...(upload.remoteCommits ?? []),
+          ];
+          for (const oid of remoteCommits) {
+            if (
+              options.upstream === undefined ||
+              !gitOk(options.upstream, "cat-file", "-e", `${oid}^{commit}`)
+            ) {
+              throw new Error(`${oid} is not on the remote`);
+            }
+          }
           NodeFS.writeFileSync(NodePath.join(packDir, `pack-${name}.pack`), pack);
           NodeFS.writeFileSync(NodePath.join(packDir, `pack-${name}.idx`), idx);
-          if (upload.remoteHead !== undefined) {
-            // Its parents stay on the remote, as the cloud records it.
-            NodeFS.appendFileSync(NodePath.join(store, "shallow"), `${upload.remoteHead}\n`);
-            shallow.push({ seq: packs.length + 1, oid: upload.remoteHead });
+          for (const oid of remoteCommits) {
+            // Parents the drive lacks stay on the remote, as the cloud records it.
+            const parents = git(store, "cat-file", "-p", oid)
+              .split("\n")
+              .filter((line) => line.startsWith("parent "))
+              .map((line) => line.slice("parent ".length));
+            if (parents.some((parent) => !gitOk(store, "cat-file", "-e", parent))) {
+              NodeFS.appendFileSync(NodePath.join(store, "shallow"), `${oid}\n`);
+              shallow.push({ seq: packs.length + 1, oid });
+            }
+          }
+          for (const oid of remoteCommits) {
             // And so do the files its folders name that the drive lacks.
-            for (const oid of missingFrom(upload.remoteHead)) promised.add(oid);
+            const files = new Set(
+              git(store, "ls-tree", "-r", "--format=%(objectname)", oid).split("\n"),
+            );
+            for (const missing of missingFrom(oid)) if (files.has(missing)) promised.add(missing);
           }
           // Not thin: every delta base is inside the pack.
           const listing = git(
@@ -308,6 +332,7 @@ export const machine = (drive: FakeDrive, root: string, name: string, threadId: 
   makeRunnerDrive({
     cwd: NodePath.join(root, name, "threads", threadId),
     client: drive.client(threadId),
+    branch: threadRemoteBranch(threadId),
   }).pipe(
     Effect.map((runner) => ({ runner, cwd: NodePath.join(root, name, "threads", threadId) })),
   );

@@ -17,13 +17,14 @@ import type { Bytes, Oid } from "./git/gitObjects.ts";
  * file in R2.
  *
  * The exception to "everything referenced is in the drive" is a remote's
- * head (`remoteHead`), which the caller has checked against the remote: its
- * parents stay on the remote, so a remote-backed drive holds its main line
- * one commit deep. And its files stay there too (#406): the pack holds the
- * commit and its folders, and the files those folders name that the drive
- * lacks become promised, kept by the remote. Only a checked head promises,
- * and only files its own folders name, so what the drive relies on the remote
- * for is exactly what the remote has.
+ * commits, which the caller has checked against the remote: its head
+ * (`remoteHead`), and others a thread's branch sits on (`remoteCommits`,
+ * #394). Their parents stay on the remote, so a remote-backed drive holds
+ * them one commit deep. And their files stay there too (#406): the pack holds
+ * the commits and their folders, and the files those folders name that the
+ * drive lacks become promised, kept by the remote. Only a checked commit
+ * promises, and only files its own folders name, so what the drive relies on
+ * the remote for is exactly what the remote has.
  */
 
 export type UploadResult =
@@ -55,23 +56,35 @@ export const acceptPack = Effect.fn("DriveUploads.acceptPack")(function* <
   readonly store: Effect.Effect<void, E, R1>;
   /** A commit in the pack that is the remote's current head. Its parents and files may be absent. */
   readonly remoteHead?: Oid;
+  /** Other commits in the pack that are on the remote; their parents and files may be absent too. */
+  readonly remoteCommits?: ReadonlyArray<Oid>;
   /** The sizes of the remote head's files as the remote lists them, asked only when it promises any. */
   readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R2>;
 }) {
   const { pack } = input;
+  const remoteCommits = [
+    ...(input.remoteHead === undefined ? [] : [input.remoteHead]),
+    ...(input.remoteCommits ?? []),
+  ];
   const drive = (yield* DriveDirectory).forDrive(input.driveId);
-  const head = input.remoteHead === undefined ? undefined : pack.structure.get(input.remoteHead);
-  if (input.remoteHead !== undefined && head?.type !== "commit") {
-    return refused(`The pack does not hold commit ${input.remoteHead}.`);
+  const parentsOf = new Map<Oid, ReadonlyArray<Oid>>();
+  const roots: Array<Oid> = [];
+  for (const oid of remoteCommits) {
+    const commit = pack.structure.get(oid);
+    if (commit?.type !== "commit") return refused(`The pack does not hold commit ${oid}.`);
+    const parsed = parseCommit(commit.content);
+    parentsOf.set(oid, parsed.parents);
+    roots.push(parsed.tree);
   }
-  // One lookup: the head's parents the drive lacks stay on the remote; anything else is refused.
-  const parents = new Set(head === undefined ? [] : parseCommit(head.content).parents);
+  // One lookup: remote commits' parents the drive lacks stay on the remote; anything else is refused.
+  // A parent in this same pack isn't lacking: it comes along.
+  const parents = new Set([...parentsOf.values()].flat().filter((oid) => !pack.structure.has(oid)));
   const lacking = yield* drive.missing([...pack.external, ...parents]);
   const onRemote = new Set(lacking.filter((oid) => parents.has(oid)));
-  // A checked head's folders name files the remote keeps: those it lacks, the drive is promised.
+  // A checked commit's folders name files the remote keeps: those it lacks, the drive is promised.
   // Only the folders it reaches: another tree in the pack could name anything as a file.
   const files = new Set<Oid>();
-  const folders = head === undefined ? [] : [parseCommit(head.content).tree];
+  const folders = [...roots];
   for (const seen = new Set<Oid>(); folders.length > 0;) {
     const oid = folders.pop()!;
     const folder = pack.structure.get(oid);
@@ -112,7 +125,9 @@ export const acceptPack = Effect.fn("DriveUploads.acceptPack")(function* <
     objects: pack.objects,
     commits,
     external,
-    ...(onRemote.size > 0 && input.remoteHead !== undefined ? { shallow: [input.remoteHead] } : {}),
+    shallow: [...parentsOf]
+      .filter(([, commitParents]) => commitParents.some((parent) => onRemote.has(parent)))
+      .map(([oid]) => oid),
     ...(promised.length > 0
       ? {
           promised: yield* Effect.map(
@@ -137,6 +152,7 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
   readonly idx: Bytes;
   readonly pack: Bytes;
   readonly remoteHead?: Oid;
+  readonly remoteCommits?: ReadonlyArray<Oid>;
   readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
 }) {
   if (input.pack.length > MAX_PACK_BYTES) {
@@ -163,6 +179,7 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
       pack: input.pack,
     }),
     ...(input.remoteHead === undefined ? {} : { remoteHead: input.remoteHead }),
+    ...(input.remoteCommits === undefined ? {} : { remoteCommits: input.remoteCommits }),
     ...(input.promisedSizes === undefined ? {} : { promisedSizes: input.promisedSizes }),
   });
 });

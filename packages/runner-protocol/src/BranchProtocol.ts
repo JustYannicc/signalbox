@@ -1,7 +1,7 @@
 import { PositiveInt } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { DRIVE_API_PREFIX } from "./DriveProtocol.ts";
+import { DRIVE_API_PREFIX, Oid } from "./DriveProtocol.ts";
 import { jsonCodec } from "./jsonCodec.ts";
 
 /**
@@ -28,6 +28,12 @@ export const PublishRequest = Schema.Struct({
   title: Schema.optional(Schema.String),
   body: Schema.optional(Schema.String),
   draft: Schema.optional(Schema.Boolean),
+  /**
+   * The remote branch's head the thread has taken in (fetched, then rebased or
+   * merged), like `git push --force-with-lease`: a branch rewritten since may
+   * replace exactly that head, never commits the thread hasn't seen.
+   */
+  lease: Schema.optional(Oid),
 });
 export type PublishRequest = typeof PublishRequest.Type;
 

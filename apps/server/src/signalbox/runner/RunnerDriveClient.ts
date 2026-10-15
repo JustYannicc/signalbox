@@ -10,6 +10,7 @@ import {
   type ReconcileRequest,
   type RefUpdate,
   type RefWriteResult,
+  REMOTE_COMMITS_HEADER,
   REMOTE_HEAD_HEADER,
   type DriveShortcut,
   shortcutPacksPath,
@@ -42,6 +43,12 @@ export class DriveTooLargeError extends Schema.TaggedError<DriveTooLargeError>()
   { message: Schema.String },
 ) {}
 
+/** A save the drive won't take as it is, with what to do about it, said for the thread's person. */
+export class DriveRefusedError extends Schema.TaggedError<DriveRefusedError>()(
+  "DriveRefusedError",
+  { message: Schema.String },
+) {}
+
 const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`;
 
 export interface DriveClient {
@@ -55,11 +62,12 @@ export interface DriveClient {
   /**
    * Uploads the pack and index at these paths: straight to storage when the
    * cloud offers it (#406), else in a request's body. `remoteHead`: the pack
-   * holds the remote's head, whose parents stay on the remote.
+   * holds the remote's head; `remoteCommits`: other commits it holds from the
+   * remote (#394). Their parents and files stay on the remote.
    */
   readonly uploadPack: (
     files: { readonly idx: string; readonly pack: string },
-    options?: { readonly remoteHead?: string },
+    options?: { readonly remoteHead?: string; readonly remoteCommits?: ReadonlyArray<string> },
   ) => Effect.Effect<typeof PackUploadResult.Type, DriveClientError | DriveTooLargeError>;
   readonly updateRefs: (
     updates: ReadonlyArray<RefUpdate>,
@@ -196,7 +204,7 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
   const uploadInline = (
     files: { readonly idx: string; readonly pack: string },
     packSize: number,
-    options: { readonly remoteHead?: string },
+    options: { readonly remoteHead?: string; readonly remoteCommits?: ReadonlyArray<string> },
   ) =>
     Effect.gen(function* () {
       if (packSize > MAX_PACK_BYTES) {
@@ -216,6 +224,9 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
           options.remoteHead === undefined
             ? (request) => request
             : HttpClientRequest.setHeader(REMOTE_HEAD_HEADER, options.remoteHead),
+          options.remoteCommits === undefined || options.remoteCommits.length === 0
+            ? (request) => request
+            : HttpClientRequest.setHeader(REMOTE_COMMITS_HEADER, options.remoteCommits.join(",")),
           HttpClientRequest.bodyUint8Array(body, "application/octet-stream"),
         ),
         "uploading a pack",
@@ -297,6 +308,9 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
         driveJson.directCommit.encode({
           uploadId: offered.uploadId,
           ...(options.remoteHead === undefined ? {} : { remoteHead: options.remoteHead }),
+          ...(options.remoteCommits === undefined || options.remoteCommits.length === 0
+            ? {}
+            : { remoteCommits: options.remoteCommits }),
         }),
         "storing an uploaded pack",
       );

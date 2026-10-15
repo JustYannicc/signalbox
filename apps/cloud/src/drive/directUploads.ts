@@ -134,6 +134,7 @@ export const makeDirectUploads = (input: {
     readonly threadId: string;
     readonly uploadId: string;
     readonly remoteHead?: Oid;
+    readonly remoteCommits?: ReadonlyArray<Oid>;
     readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
   }) {
     if (!/^[0-9a-f-]{36}$/.test(input.uploadId)) return refused("Unknown upload.");
@@ -178,6 +179,7 @@ export const makeDirectUploads = (input: {
           copy(idxKey, drivePackKey(input.driveId, name, "idx", prefix)),
         ),
         ...(input.remoteHead === undefined ? {} : { remoteHead: input.remoteHead }),
+        ...(input.remoteCommits === undefined ? {} : { remoteCommits: input.remoteCommits }),
         ...(input.promisedSizes === undefined ? {} : { promisedSizes: input.promisedSizes }),
       });
     });

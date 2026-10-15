@@ -2,6 +2,7 @@
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import { PREVIEW_TUNNEL_PATH } from "@signalbox/runner-protocol/PreviewTunnel";
 import {
   machineEnsureJson,
@@ -195,7 +196,11 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 secrets,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
-                    makeRunnerDrive({ cwd, client }),
+                    makeRunnerDrive({
+                      cwd,
+                      client,
+                      branch: threadRemoteBranch(request.threadId),
+                    }),
                   ).pipe(
                     // The agent's push and create_pr save the branch through it first.
                     Effect.tap(context.attachDrive),
