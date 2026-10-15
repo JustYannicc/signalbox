@@ -16,7 +16,6 @@ import type { HomeHeaderProps } from "./HomeHeader.types";
 import {
   createSectionNavigationHeaderItem,
   SectionNavigationToggle,
-  WorkspaceSectionsHeaderItem,
 } from "../sections/SectionNavigationToggle";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
@@ -65,7 +64,7 @@ export function HomeHeader(props: HomeHeaderProps) {
   const filterMenu = buildHomeListFilterMenu({ ...props, showsEnvironments });
 
   if (props.usesWorkspaceToolbar) {
-    return <WorkspaceSectionsHeaderItem open={props.sectionsOpen} onPress={props.onOpenSections} />; // signalbox: sections
+    return null;
   }
 
   return (

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { DEFAULT_POOL_ROUTING } from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
@@ -43,6 +44,7 @@ describe("PoolObject", () => {
         personal: false,
         backing: { mode: "managed" },
         role: "admin",
+        routing: DEFAULT_POOL_ROUTING,
       });
       // Creating again as the owner is a no-op; nobody else can take it over.
       expect((yield* pool.create(alice, { name: "Other", personal: false })).name).toBe("Work");
@@ -75,7 +77,9 @@ describe("PoolObject", () => {
       // Seeded before a setting existed, it has no record of the managed config.
       yield* forget(older.runtime);
       yield* signIn(older.pool);
-      expect(older.cliProxyApi.configPatches).toEqual([CliProxyApi.MANAGED_CONFIG]);
+      expect(older.cliProxyApi.configPatches).toEqual([
+        CliProxyApi.managedConfig(DEFAULT_POOL_ROUTING),
+      ]);
       yield* signIn(older.pool);
       expect(older.cliProxyApi.configPatches).toHaveLength(1);
     }),
@@ -99,6 +103,68 @@ describe("PoolObject", () => {
       // Not tried again on every request while it fails.
       yield* signIn(pool);
       expect(patches).toHaveLength(1);
+    }),
+  );
+
+  it.effect("changes how it spreads turns in one call, applied to its CLIProxyAPI at once", () =>
+    Effect.gen(function* () {
+      const { pool, runtime, cliProxyApi, container } = makePool();
+      yield* pool.create(alice, { name: "Work", personal: false });
+      const routing = { strategy: "fill-first", sessionAffinity: false, moveOn: "quota" } as const;
+      // A change names only what changes.
+      yield* pool.setRouting(alice, { strategy: "fill-first" });
+      expect(
+        (yield* pool.setRouting(alice, { sessionAffinity: false, moveOn: "quota" })).routing,
+      ).toEqual(routing);
+      // An asleep pool isn't woken for it: the request that wakes it applies it first.
+      expect(container.starts).toBe(0);
+      expect(cliProxyApi.configPatches).toEqual([]);
+      yield* signIn(pool);
+      expect(cliProxyApi.configPatches).toEqual([CliProxyApi.managedConfig(routing)]);
+      // A running pool applies a change at once, and nothing after it patches again.
+      yield* pool.setRouting(alice, { strategy: "round-robin" });
+      const roundRobin = { ...routing, strategy: "round-robin" } as const;
+      expect(cliProxyApi.configPatches).toEqual([
+        CliProxyApi.managedConfig(routing),
+        CliProxyApi.managedConfig(roundRobin),
+      ]);
+      yield* signIn(pool);
+      expect(cliProxyApi.configPatches).toHaveLength(2);
+      expect((yield* pool.info(alice)).routing).toEqual(roundRobin);
+
+      // Members neither see nor change it.
+      yield* Effect.promise(() =>
+        runtime.runPromise(
+          SqlClient.SqlClient.use(
+            (sql) => sql`INSERT INTO grants (user_id, role, granted_at)
+              VALUES (${bob.userId}, 'member', 0)`,
+          ),
+        ),
+      );
+      expect((yield* pool.info(bob)).routing).toBeNull();
+      expect((yield* Effect.flip(pool.setRouting(bob, { strategy: "fill-first" }))).message).toBe(
+        "Only the pool's admins can do that.",
+      );
+    }),
+  );
+
+  it.effect("leaves the routing of a CLIProxyAPI its admin runs to its own config", () =>
+    Effect.gen(function* () {
+      const external = makeFakeCliProxyApi();
+      const { pool } = makePool((request) => external.serve(request));
+      yield* pool.create(alice, { name: "Mine", personal: false });
+      yield* pool.setBacking(alice, {
+        mode: "external",
+        url: "https://proxy.example.test",
+        managementKey: "management",
+        clientKey: "client",
+      });
+      expect((yield* pool.info(alice)).routing).toBeNull();
+      const refused = yield* Effect.flip(pool.setRouting(alice, DEFAULT_POOL_ROUTING));
+      expect(refused.message).toBe(
+        "This pool runs on your own CLIProxyAPI. Set its routing in that CLIProxyAPI's config.",
+      );
+      expect(external.configPatches).toEqual([]);
     }),
   );
 

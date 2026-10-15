@@ -58,6 +58,21 @@ export function applyEvents(
   return next;
 }
 
+/**
+ * When a turn first changed files: the earliest checkpoint with any. A chat
+ * that has one started real work (#46). Null: no turn changed a file yet.
+ */
+export function workStartedAt(projection: OrchestrationV2ThreadProjection): DateTime.Utc | null {
+  let earliest: DateTime.Utc | null = null;
+  for (const checkpoint of projection.checkpoints) {
+    if (checkpoint.files.length === 0) continue;
+    if (earliest === null || DateTime.isLessThan(checkpoint.capturedAt, earliest)) {
+      earliest = checkpoint.capturedAt;
+    }
+  }
+  return earliest;
+}
+
 const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
   right.ordinal - left.ordinal;
 

@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import {
   CLI_PROXY_API_PORT,
-  MANAGED_CONFIG,
+  managedConfig,
   renderConfig,
 } from "../../apps/cloud/src/pool/cliProxyApi.ts";
 
@@ -41,25 +41,32 @@ const checkEndpoint = async (origin, path, key, init = {}) => {
   return body;
 };
 
-/** The v8 management calls a cloud pool makes, against the pinned release. */
-const checkPoolCalls = async (origin) => {
-  await checkEndpoint(origin, "/v8/management/credentials", managementKey);
-  // An older pool's config is patched up to the managed one; v8 rejects legacy field names.
+/** Patches a pool's managed config in, as a routing change does, and reads it back. */
+const applyRouting = async (origin, routing) => {
+  // v8 rejects legacy field names, so this also checks the tree is current.
   await checkEndpoint(origin, "/v8/management/config", managementKey, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(MANAGED_CONFIG),
+    body: JSON.stringify(managedConfig(routing)),
   });
   const config = JSON.parse(await checkEndpoint(origin, "/v8/management/config", managementKey));
   const applied = {
     strategy: config.routing?.strategy,
     sessionAffinity: config.routing?.["session-affinity"],
+    moveOn: config.routing?.["session-affinity-rebind-on"],
     usageStatistics: config.observability?.usage?.["usage-statistics-enabled"],
   };
-  const expected = { strategy: "round-robin", sessionAffinity: true, usageStatistics: true };
+  const expected = { ...routing, usageStatistics: true };
   if (JSON.stringify(applied) !== JSON.stringify(expected)) {
     throw new Error(`The managed config did not apply: ${JSON.stringify(applied)}`);
   }
+};
+
+/** The v8 management calls a cloud pool makes, against the pinned release. */
+const checkPoolCalls = async (origin) => {
+  await checkEndpoint(origin, "/v8/management/credentials", managementKey);
+  await applyRouting(origin, { strategy: "fill-first", sessionAffinity: false, moveOn: "quota" });
+  await applyRouting(origin, { strategy: "round-robin", sessionAffinity: true, moveOn: "any" });
 };
 
 try {

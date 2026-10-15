@@ -128,6 +128,10 @@ export class PoolObject
     return this.api.rename(...args);
   }
 
+  setRouting(...args: Parameters<PoolObjectApi["setRouting"]>) {
+    return this.api.setRouting(...args);
+  }
+
   setBacking(...args: Parameters<PoolObjectApi["setBacking"]>) {
     return this.api.setBacking(...args);
   }

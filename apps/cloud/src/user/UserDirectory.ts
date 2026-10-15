@@ -199,6 +199,13 @@ export interface UserObjectApi {
   readonly automationHost: (call: AutomationHostCall) => Promise<unknown>;
   /** A version's code, for the dispatcher loading it as a Dynamic Worker. */
   readonly automationWorkerModule: (automationId: string, version: number) => Promise<string>;
+  /**
+   * The idle-chat sweep as of `asOfMs` instead of now, for previews' test
+   * clock (`http/threadKindRoutes.ts`). What it archived.
+   */
+  readonly sweepThreadKinds: (
+    asOfMs: number,
+  ) => Promise<{ readonly archived: ReadonlyArray<string> }>;
 }
 
 type Method = keyof UserObjectApi;
@@ -278,6 +285,7 @@ const METHODS = Object.keys({
   automationTool: true,
   automationHost: true,
   automationWorkerModule: true,
+  sweepThreadKinds: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** Results that cross RPC encoded, decoded on arrival. */

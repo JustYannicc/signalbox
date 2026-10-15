@@ -130,6 +130,9 @@ const finishLogin = (request: Request) =>
     }),
   );
 
+/** `agent` when an agent makes the call with its person's key (`signalbox mcp`). */
+export const CALLER_HEADER = "x-signalbox-caller";
+
 const bearer = (request: Request) => {
   const header = request.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(header);
@@ -147,6 +150,8 @@ const callOperation = (request: Request) =>
     return yield* (yield* UserDirectory.UserDirectory).callApi(key.userId, request, {
       _tag: "key",
       secret: key.secret,
+      // Only ever narrows: an agent's call never gets more than the person's would.
+      ...(request.headers.get(CALLER_HEADER) === "agent" ? { agent: true } : {}),
     });
   }).pipe(
     Effect.catchTags({

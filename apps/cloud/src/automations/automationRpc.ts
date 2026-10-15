@@ -98,6 +98,11 @@ export const makeAutomationHandlers = Effect.gen(function* () {
           });
         }),
       ),
+    // Compiling needs oxc, which can't run in workerd; saves come from a thread's machine.
+    [METHODS.automationsValidate]: (_input: Payload<typeof METHODS.automationsValidate>) =>
+      notYet("Checking automations from the app (an agent's automation_validate works)"),
+    [METHODS.automationsSave]: (_input: Payload<typeof METHODS.automationsSave>) =>
+      notYet("Saving automations from the app (an agent in a cloud thread saves them)"),
     [METHODS.automationsCustomize]: (_input: Payload<typeof METHODS.automationsCustomize>) =>
       notYet("Customizing built-ins from the app (an agent's automation_customize works)"),
     [METHODS.automationsStopAttached]: (input: Payload<typeof METHODS.automationsStopAttached>) =>

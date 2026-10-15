@@ -28,6 +28,7 @@ import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
+import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -40,6 +41,7 @@ import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
+import * as KindClassifier from "../threadKinds/KindClassifier.ts";
 import { serveConnection } from "./connection.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import {
@@ -62,6 +64,8 @@ import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as ChatArchive from "./chatArchive.ts";
 
 /**
  * One per WorkOS user, named by their user id, always in the EU jurisdiction.
@@ -74,7 +78,8 @@ import * as UserStore from "./UserStore.ts";
  * while a client is connected.
  */
 
-export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv {
+export interface UserObjectEnv
+  extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv, KindClassifier.KindClassifierEnv {
   /**
    * Drives' objects and packs: clients browse and share them through this
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
@@ -132,8 +137,12 @@ const layerDrives = (env: UserObjectEnv) => {
   };
 };
 
-/** The object's alarm, as automations arm it: never later than the earliest work due. */
-const layerAlarm = (storage: DurableObjectStorage) =>
+/**
+ * The object's one alarm, shared: automations set it for their next cron,
+ * the idle-chat sweep for its next chat (`chatArchive.ts`). Each only moves
+ * it earlier, and `alarm()` runs both, so neither waits on the other.
+ */
+const layerAutomationAlarm = (storage: DurableObjectStorage) =>
   Layer.succeed(
     AutomationAlarm,
     AutomationAlarm.of({
@@ -147,13 +156,28 @@ const layerAlarm = (storage: DurableObjectStorage) =>
     }),
   );
 
+/** The idle-chat sweep's side of the object's alarm. */
+const layerAlarm = (storage: DurableObjectStorage) =>
+  Layer.succeed(
+    ChatArchive.ChatArchiveAlarm,
+    ChatArchive.ChatArchiveAlarm.of({
+      armBy: (atMs) =>
+        Effect.promise(async () => {
+          const current = await storage.getAlarm();
+          if (current === null || current > atMs) await storage.setAlarm(atMs);
+        }),
+    }),
+  );
+
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
   return ManagedRuntime.make(
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
-      Layer.provide(Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAlarm(storage))),
+      Layer.provide(
+        Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAutomationAlarm(storage)),
+      ),
       // Building it only touches the object's own SQLite, which the object can't run without either.
       Layer.orDie,
       Layer.provideMerge(
@@ -174,16 +198,22 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               ThreadContexts.layer,
               UserPools.layer,
+              UserThreadKinds.layerTurns,
               // Pasted screenshots and files, signed with the same keys as asset URLs.
               CloudAttachments.layer(attachmentStorage(env)),
             ),
           ),
+          Layer.provideMerge(UserThreadKinds.layer),
           Layer.provideMerge(
-            PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
-              Layer.provide(
-                Layer.mergeAll(
-                  FetchHttpClient.layer,
-                  ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+            Layer.mergeAll(
+              KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+              layerAlarm(storage),
+              PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    FetchHttpClient.layer,
+                    ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+                  ),
                 ),
               ),
             ),
@@ -233,6 +263,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
 export class UserObject extends DurableObject<UserObjectEnv> implements UserObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
   private readonly identity: Environment.CloudEnvironmentIdentity;
+  /** The person's MCP server (`api/mcpObject.ts`), made on first use. */
+  private mcp: ReturnType<typeof makeMcpHandler> | undefined;
   /** Open sockets per session, so revoking a session also disconnects it. */
   private readonly connections = new Map<string, Set<Fiber.Fiber<void>>>();
 
@@ -253,19 +285,42 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
-    // Then automations give cut-off launches their instance and set the alarm for the next cron.
-    void ctx.blockConcurrencyWhile(() =>
-      this.runtime.runPromise(
-        UserStore.migrate.pipe(
-          Effect.andThen(CloudAutomations.use((automations) => automations.start)),
+    void ctx.blockConcurrencyWhile(async () => {
+      await this.runtime.runPromise(UserStore.migrate);
+      // An alarm lost to a crash between sweeps is set again; one that's set is enough.
+      if ((await ctx.storage.getAlarm()) === null) {
+        await this.runtime.runPromise(
+          UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("arming the idle-chat sweep failed", { cause }),
+            ),
+          ),
+        );
+      }
+      // Then automations give cut-off launches their instance and set the alarm for the next cron.
+      await this.runtime.runPromise(
+        CloudAutomations.use((automations) => automations.start).pipe(
+          Effect.catchCause((cause) => Effect.logError("starting automations failed", { cause })),
         ),
-      ),
-    );
+      );
+    });
   }
 
-  /** Starts due crons; automations re-arm it for the next one. */
+  /** Idle chats archive themselves (`UserThreadKinds`), and due crons start. Both re-arm it. */
   override async alarm() {
-    await this.runtime.runPromise(CloudAutomations.use((automations) => automations.wake));
+    await this.runtime.runPromise(
+      Effect.all(
+        [
+          UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm).pipe(
+            Effect.catchCause((cause) => Effect.logError("idle-chat sweep failed", { cause })),
+          ),
+          CloudAutomations.use((automations) => automations.wake).pipe(
+            Effect.catchCause((cause) => Effect.logError("automation crons failed", { cause })),
+          ),
+        ],
+        { discard: true },
+      ),
+    );
   }
 
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
@@ -440,11 +495,24 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.automationWorkerModule(automationId, version);
   }
 
+  sweepThreadKinds(asOfMs: number) {
+    return this.api.sweepThreadKinds(asOfMs);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const apiCredential = decodeApiCredential(request.headers.get(API_HEADER));
     if (apiCredential._tag === "Some") {
       const profile = await this.profile();
       if (!profile) return new Response("Unauthorized", { status: 401 });
+      if (new URL(request.url).pathname === MCP_PATH) {
+        // One MCP server per object: its sessions last as long as the object does.
+        this.mcp ??= makeMcpHandler({
+          identity: this.identity,
+          userId: profile.id,
+          context: await this.runtime.runPromise(Effect.context()),
+        });
+        return this.mcp.handler(request);
+      }
       return this.runtime.runPromise(
         serveApiRequest(request, {
           identity: this.identity,

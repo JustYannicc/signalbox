@@ -140,7 +140,8 @@
       ],
       "worker_loaders": [{ "binding": "LOADER" }],
       // The scripted provider: a reply without a model, for trying the cloud locally.
-      "vars": { "SCRIPTED_PROVIDER": "1" },
+      // The idle-chat test clock (`http/threadKindRoutes.ts`).
+      "vars": { "SCRIPTED_PROVIDER": "1", "THREAD_KIND_TEST_CLOCK": "1" },
     },
   },
 }

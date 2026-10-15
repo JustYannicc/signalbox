@@ -39,14 +39,21 @@ import * as AccountRoutes from "./http/accountRoutes.ts";
 import * as WorkOSWebhook from "./http/workosWebhook.ts";
 import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credentials.ts";
 import * as DiagnosticsRoutes from "./http/diagnosticsRoutes.ts";
+import * as ThreadKindRoutes from "./http/threadKindRoutes.ts";
 import * as EnvironmentApi from "./http/environmentApi.ts";
 import * as Platform from "./platform.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PreviewSetupRoutes from "./previewSetup/previewSetupRoutes.ts";
 import { handleApiRequest } from "./api/apiRoutes.ts";
+import {
+  handleMcpRequest,
+  PROTECTED_RESOURCE_PATHS,
+  protectedResourceMetadata,
+} from "./api/mcpRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
+import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserDirectory from "./user/UserDirectory.ts";
 
@@ -82,12 +89,17 @@ export const layerServices = (input: {
 }) =>
   CloudAssets.layer.pipe(
     Layer.provideMerge(
-      Layer.mergeAll(CloudAccounts.layer, CloudThreadService.layer, PreviewSetup.layer),
+      Layer.mergeAll(
+        CloudAccounts.layer,
+        CloudThreadService.layer,
+        PreviewSetup.layer,
+        ThreadKindRoutes.layerTestClock,
+      ),
     ),
     Layer.provideMerge(CloudAttachments.layer(input.attachments)),
     Layer.provideMerge(PreviewSetup.layerSourceHttp),
     // The Worker only reads threads; they are created in their user's object.
-    Layer.provideMerge(ThreadContexts.layerWorker),
+    Layer.provideMerge(Layer.mergeAll(ThreadContexts.layerWorker, ThreadKindTurns.layerNone)),
     Layer.provideMerge(CloudSessions.layer),
     Layer.provideMerge(
       GitHub.layer(GitHub.gitHubPipesConfig(input.vars), GitHub.gitHubEndpoints(input.vars)),
@@ -114,6 +126,7 @@ const routes = Layer.mergeAll(
   EnvironmentApi.layer,
   AccountRoutes.layer,
   DiagnosticsRoutes.layer,
+  ThreadKindRoutes.layer,
   WorkOSWebhook.layer,
   GitHubRoutes.layer,
   ConnectionRoutes.layer,
@@ -184,6 +197,8 @@ export interface CloudApp {
   readonly verifyLocalKey: LocalKeyVerifier;
   /** `/api/v1/`: the public API (`api/apiRoutes.ts`), streams and all. */
   readonly api: (request: Request) => Promise<Response>;
+  /** `/mcp` and its protected-resource metadata (`api/mcpRoutes.ts`). */
+  readonly mcp: (request: Request) => Promise<Response>;
 }
 
 export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp => {
@@ -217,5 +232,11 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
     webSocket: (request) => runtime.runPromise(openSocket(request)),
     verifyLocalKey: (token) => runtime.runPromise(verifyLocalKey(token)),
     api: (request) => runtime.runPromise(handleApiRequest(request)),
+    mcp: (request) =>
+      runtime.runPromise(
+        PROTECTED_RESOURCE_PATHS.has(new URL(request.url).pathname)
+          ? protectedResourceMetadata(request)
+          : handleMcpRequest(request),
+      ),
   };
 };

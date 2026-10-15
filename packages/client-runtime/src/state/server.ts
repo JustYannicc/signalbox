@@ -1225,6 +1225,15 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:set-account-pool-opencode",
       tag: WS_METHODS.accountPoolSetOpenCode,
     }),
+    setAccountPoolRouting: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-account-pool-routing",
+      tag: WS_METHODS.accountPoolSetRouting,
+      // Each change names only what it changes, so quick clicks apply in order.
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.poolId]),
+      },
+    }),
     receiveAccountPool: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:receive-account-pool",
       tag: WS_METHODS.accountPoolReceive,

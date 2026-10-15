@@ -25,6 +25,7 @@ import * as UserDrives from "./UserDrives.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
 
 /**
  * A user object's answers, given a way to run its effects. The Durable Object
@@ -46,6 +47,7 @@ export const makeUserObjectApi = (
       | UserDrives.UserDrives
       | UserPreviewSetup.UserPreviewSetup
       | GitHubBranches.GitHubBranches
+      | UserThreadKinds.UserThreadKinds
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
@@ -80,8 +82,16 @@ export const makeUserObjectApi = (
     syncOrganizations: (organizations) =>
       run(UserContexts.UserContexts.use((contexts) => contexts.syncOrganizations(organizations))),
     shellSnapshot: async () => shellSnapshotWire.encode(await shell((service) => service.snapshot)),
-    recordThreadSummary: (summary) =>
-      shell((service) => service.recordThreadSummary(wire.summary.decode(summary))),
+    recordThreadSummary: (encoded) => {
+      const summary = wire.summary.decode(encoded);
+      return run(
+        Effect.flatMap(UserShell.UserShell, (shell) =>
+          UserThreadKinds.UserThreadKinds.use((kinds) =>
+            kinds.recordSummary(summary, shell.recordThreadSummary(summary)),
+          ),
+        ),
+      );
+    },
     // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
       run(
@@ -138,5 +148,11 @@ export const makeUserObjectApi = (
     automationHost: (call) => run(withAutomations((automations) => automations.host(call))),
     automationWorkerModule: (automationId, version) =>
       run(withAutomations((automations) => automations.workerModule(automationId, version))),
+    sweepThreadKinds: async (asOfMs) => {
+      const { archived } = await run(
+        UserThreadKinds.UserThreadKinds.use((kinds) => kinds.sweep(asOfMs)),
+      );
+      return { archived };
+    },
   };
 };

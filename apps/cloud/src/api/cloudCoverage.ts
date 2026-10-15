@@ -41,8 +41,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "secrets.answer": gap("#410"),
 
   // The rest of a thread's lifecycle.
-  "threads.archive": gap("#439"),
-  "threads.unarchive": gap("#439"),
   "threads.delete": gap("#439"),
   "threads.settle": gap("#439"),
   "threads.unsettle": gap("#439"),
@@ -61,7 +59,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "threads.switchProvider": gap("#439"),
   "threads.stopSubagent": gap("#439"),
   "threads.retryPreparation": gap("#439"),
-  "threads.listArchived": gap("#439"),
   "threads.subscribeArchived": gap("#439"),
   "threads.getTurnItem": gap("#439"),
   "threads.getWorkflowScript": gap("#439"),

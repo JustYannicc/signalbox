@@ -59,6 +59,7 @@ import {
 } from "./folderRows.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import { makeProfileId } from "./profileId.ts";
+import { makeTraced } from "./tracing.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
@@ -219,25 +220,8 @@ const make = Effect.gen(function* () {
     secrets_environment_id FROM folders`;
   const selectState = sql`SELECT revision, instructions, secrets_environment_id FROM folders_state`;
 
-  /**
-   * A span for one operation, with who did it and what it touched (#284):
-   * ids only, never a folder's name or instructions. Its duration is the
-   * operation's latency.
-   */
-  const traced =
-    (name: string, attributes: Readonly<Record<string, string | null | undefined>>) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(userId.pipe(Effect.orElseSucceed(() => null)), (person) =>
-        effect.pipe(
-          Effect.withSpan(name, {
-            attributes: Object.fromEntries(
-              Object.entries({ "person.id": person, ...attributes }).filter(
-                ([, value]) => value !== null && value !== undefined,
-              ),
-            ),
-          }),
-        ),
-      );
+  /** A span for one operation (`tracing.ts`): never a folder's name or instructions. */
+  const traced = makeTraced(userId);
   /** The tree a decided change was in, once known. */
   const annotateOwner = (ownerId: string) => Effect.annotateCurrentSpan("org.id", ownerId);
 

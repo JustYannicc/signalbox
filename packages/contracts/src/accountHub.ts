@@ -95,6 +95,27 @@ export type AccountPoolId = typeof AccountPoolId.Type;
 
 const PoolName = TrimmedNonEmptyString.check(Schema.isMaxLength(60));
 
+/**
+ * How a pool spreads turns across its accounts (`routing` in CLIProxyAPI's
+ * config). `strategy` picks the next account: in turn, by each account's
+ * weight, or the first until it runs out. With `sessionAffinity`, a thread
+ * stays on one account so cached prompts stay valid; `moveOn` says which
+ * failures move it to another: quota and sign-in errors only, or any.
+ */
+export const PoolRouting = Schema.Struct({
+  strategy: Schema.Literals(["round-robin", "weighted-round-robin", "fill-first"]),
+  sessionAffinity: Schema.Boolean,
+  moveOn: Schema.Literals(["quota", "any"]),
+});
+export type PoolRouting = typeof PoolRouting.Type;
+
+/** What a pool starts with. */
+export const DEFAULT_POOL_ROUTING: PoolRouting = {
+  strategy: "round-robin",
+  sessionAffinity: true,
+  moveOn: "any",
+};
+
 export const AccountPool = Schema.Struct({
   id: AccountPoolId,
   name: PoolName,
@@ -103,6 +124,8 @@ export const AccountPool = Schema.Struct({
   backing: AccountHubConnection,
   /** The pool every install starts with; it can be renamed but not deleted. */
   personal: Schema.Boolean,
+  /** signalbox: how it spreads turns; only where the caller can change it. */
+  routing: Schema.optional(PoolRouting),
 });
 export type AccountPool = typeof AccountPool.Type;
 
@@ -325,6 +348,17 @@ export type CloudPoolAccountType = (typeof CLOUD_POOL_ACCOUNT_TYPES)[number];
 export const isCloudPoolAccountType = (type: unknown): type is CloudPoolAccountType =>
   (CLOUD_POOL_ACCOUNT_TYPES as ReadonlyArray<unknown>).includes(type);
 
+/** Only what changes; the rest stays as the pool has it, so quick changes don't undo each other. */
+export const AccountPoolSetRoutingInput = Schema.Struct({
+  poolId: AccountPoolId,
+  routing: Schema.Struct({
+    strategy: Schema.optional(PoolRouting.fields.strategy),
+    sessionAffinity: Schema.optional(PoolRouting.fields.sessionAffinity),
+    moveOn: Schema.optional(PoolRouting.fields.moveOn),
+  }),
+});
+export type AccountPoolSetRoutingInput = typeof AccountPoolSetRoutingInput.Type;
+
 export const AccountPoolSetOpenCodeInput = Schema.Struct({
   poolId: AccountPoolId,
   enabled: Schema.Boolean,
@@ -349,7 +383,8 @@ export type PoolInstanceKind = keyof typeof POOL_INSTANCE_KINDS;
 /**
  * What a pool can do: sign in an account of one of these kinds, take an API
  * key, import accounts from a CLIProxyAPI, run OpenCode, or advise from its
- * usage history.
+ * usage history. A pool whose routing its admins may change carries it
+ * (`AccountPool.routing`) instead of a feature here.
  */
 export const PoolFeature = Schema.Literals([
   "codex",
