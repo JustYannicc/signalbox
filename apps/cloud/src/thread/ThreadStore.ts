@@ -18,6 +18,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
+import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 
 /**
@@ -223,6 +224,8 @@ const migrations = Migrator.fromRecord({
       environments TEXT NOT NULL
     )`;
   }),
+  // When each linked pull request was last read from GitHub (`pullRequests/PullRequestSync.ts`).
+  "0008_pull_request_polls": migratePullRequestPolls,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

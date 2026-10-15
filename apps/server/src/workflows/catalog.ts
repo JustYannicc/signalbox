@@ -7,7 +7,9 @@ import {
   type AutomationRunDetail,
   type AutomationSaveInput,
   type AutomationSaveResult,
+  type AutomationSourceStatus,
   type WorkflowDiagnostic,
+  type WorkflowSourceWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -17,6 +19,8 @@ import { automationDefaults, automationTriggers, runLogLines, runMarks } from ".
 import { compileWorkflow } from "./compiler/compileWorkflow.ts";
 import { liveColumns, makeDrafts, type DraftsShape } from "./drafts.ts";
 import { fail } from "./errors.ts";
+import { stepWatch } from "./events/runWaits.ts";
+import { scopeOf, type SourceScope } from "./sources/watch.ts";
 import { fromJson, toJson } from "./json.ts";
 import type { Change } from "./liveFeed.ts";
 import { nowIso } from "./time.ts";
@@ -50,9 +54,11 @@ export interface CatalogShape extends DraftsShape {
   ) =>
     | { readonly ok: true; readonly graph: WorkflowGraph }
     | { readonly ok: false; readonly diagnostics: ReadonlyArray<WorkflowDiagnostic> };
+  /** Saves agents make count as `agent`; only built-ins save as `signalbox`. */
   readonly save: <E = never>(
     input: AutomationSaveInput,
     authorize?: AuthorizeAutomation<E>,
+    approvedBy?: "signalbox",
   ) => Effect.Effect<AutomationSaveResult, AutomationError | E>;
   readonly list: () => Effect.Effect<ReadonlyArray<Automation>, AutomationError>;
   readonly get: (automationId: string) => Effect.Effect<AutomationDetail, AutomationError>;
@@ -73,6 +79,11 @@ export const makeCatalog = (deps: {
   ) => Effect.Effect<AutomationRow, AutomationError>;
   /** The Signalbox Connect prefix for webhook URLs, read per view since linking can change. */
   readonly relayHookBaseUrl: Effect.Effect<string | null>;
+  /** How reading these watched sources goes (sources/sourceWatches.ts). */
+  readonly watching: (
+    scope: SourceScope,
+    watches: ReadonlyArray<WorkflowSourceWatch>,
+  ) => Effect.Effect<ReadonlyArray<AutomationSourceStatus>, AutomationError>;
 }): CatalogShape => {
   const { store, newId, changed, requireAutomation, relayHookBaseUrl } = deps;
 
@@ -107,7 +118,7 @@ export const makeCatalog = (deps: {
       : { ok: false, diagnostics: compiled.diagnostics };
   };
 
-  const save: CatalogShape["save"] = (input, authorize) =>
+  const save: CatalogShape["save"] = (input, authorize, approvedBy) =>
     Effect.gen(function* () {
       const compiled = compileWorkflow(input.source);
       if (!compiled.ok) return { ok: false, diagnostics: compiled.diagnostics } as const;
@@ -173,6 +184,7 @@ export const makeCatalog = (deps: {
             meta_json: toJson(meta),
             defaults_json: toJson(input.defaults),
             created_at: nowText,
+            approved_by: approvedBy ?? "agent",
           }),
           store.upsertAutomation(row),
         ]),
@@ -203,6 +215,9 @@ export const makeCatalog = (deps: {
       const version = live ?? draft;
       if (!version) return yield* fail("This automation's code is missing.", { automationId });
       const runs = yield* store.listRuns(automationId, RUN_HISTORY);
+      const watches = automationTriggers(row).flatMap((trigger) =>
+        "watch" in trigger && trigger.watch ? [trigger.watch] : [],
+      );
       return {
         automation: automationView(
           row,
@@ -221,6 +236,7 @@ export const makeCatalog = (deps: {
           bodyBytes: rejection.body_bytes,
           relayed: rejection.relayed === 1,
         })),
+        ...(watches.length > 0 ? { watching: yield* deps.watching(scopeOf(row), watches) } : {}),
       };
     });
 
@@ -229,14 +245,22 @@ export const makeCatalog = (deps: {
       const run = yield* store.getRun(runId);
       if (!run) return yield* fail("That run doesn't exist.", { runId });
       const version = yield* versionView(run.automation_id, run.version);
+      const steps = yield* store.listSteps(runId);
+      const watches = steps.flatMap((step) => {
+        const watch = step.status === "waiting" ? stepWatch(step) : undefined;
+        return watch ? [watch] : [];
+      });
+      const automation =
+        watches.length > 0 ? yield* store.getAutomation(run.automation_id) : undefined;
       return {
         run: runSummary(run),
         graph: version?.graph ?? { nodes: [] },
         input: fromJson(run.input_json),
         output: fromJson(run.output_json),
-        steps: (yield* store.listSteps(runId)).map(stepView),
+        steps: steps.map(stepView),
         marks: runMarks(run),
         logs: runLogLines(run),
+        ...(automation ? { watching: yield* deps.watching(scopeOf(automation), watches) } : {}),
       };
     });
 

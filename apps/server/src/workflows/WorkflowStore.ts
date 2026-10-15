@@ -31,6 +31,12 @@ export interface AutomationRow {
   readonly next_run_at: string | null;
   readonly created_at: string;
   readonly updated_at: string;
+  /**
+   * When the live version last went live or the automation was last switched
+   * on; drafts, discards and webhook changes leave it. Watched sources count
+   * a trigger from here. Null on rows older than the column.
+   */
+  readonly live_since?: string | null;
   /** `meta.timeout` of the current version, for runs it starts. */
   readonly timeout_ms: number | null;
   /** `meta.overlap`; null means the default, skip. */
@@ -60,7 +66,14 @@ export interface VersionRow {
   /** The defaults of the thread that saved it, which apply once it's live. Null before drafts. */
   readonly defaults_json: string | null;
   readonly created_at: string;
+  /**
+   * Who stands behind this code: `signalbox` for a built-in's own, `person` once someone
+   * published it in the app, else `agent` (null for versions saved before this was recorded).
+   */
+  readonly approved_by?: VersionApproval | null;
 }
+
+export type VersionApproval = "signalbox" | "person" | "agent";
 
 export interface RunRow {
   readonly run_id: string;
@@ -243,12 +256,12 @@ export const make = Effect.gen(function* () {
           INSERT INTO signalbox_automations (
             automation_id, name, description, enabled, version, project_id, defaults_json,
             triggers_json, webhook_token, next_run_at, created_at, updated_at, timeout_ms, overlap,
-            intent, draft_version
+            intent, draft_version, live_since
           ) VALUES (
             ${row.automation_id}, ${row.name}, ${row.description}, ${row.enabled}, ${row.version},
             ${row.project_id}, ${row.defaults_json}, ${row.triggers_json}, ${row.webhook_token},
             ${row.next_run_at}, ${row.created_at}, ${row.updated_at}, ${row.timeout_ms},
-            ${row.overlap}, ${row.intent}, ${row.draft_version}
+            ${row.overlap}, ${row.intent}, ${row.draft_version}, ${row.updated_at}
           )
           ON CONFLICT (automation_id) DO UPDATE SET
             name = excluded.name,
@@ -263,7 +276,14 @@ export const make = Effect.gen(function* () {
             timeout_ms = excluded.timeout_ms,
             overlap = excluded.overlap,
             intent = excluded.intent,
-            draft_version = excluded.draft_version
+            draft_version = excluded.draft_version,
+            -- Only a new live version or switching it on moves it; a draft save or discard doesn't.
+            live_since = CASE
+              WHEN excluded.version != signalbox_automations.version
+                OR (excluded.enabled = 1 AND signalbox_automations.enabled = 0)
+              THEN excluded.updated_at
+              ELSE signalbox_automations.live_since
+            END
         `,
       ),
     setSchedule: (id: string, enabled: boolean, nextRunAt: string | null, now: string) =>
@@ -271,7 +291,8 @@ export const make = Effect.gen(function* () {
         "setSchedule",
         sql`
           UPDATE signalbox_automations
-          SET enabled = ${enabled ? 1 : 0}, next_run_at = ${nextRunAt}, updated_at = ${now}
+          SET enabled = ${enabled ? 1 : 0}, next_run_at = ${nextRunAt}, updated_at = ${now},
+            live_since = CASE WHEN ${enabled ? 1 : 0} = 1 AND enabled = 0 THEN ${now} ELSE live_since END
           WHERE automation_id = ${id}
         `,
       ),
@@ -365,11 +386,21 @@ export const make = Effect.gen(function* () {
         sql`
           INSERT INTO signalbox_automation_versions (
             automation_id, version, source, script, run_module, graph_json, meta_json,
-            defaults_json, created_at
+            defaults_json, created_at, approved_by
           ) VALUES (
             ${row.automation_id}, ${row.version}, ${row.source}, ${row.script}, ${row.run_module},
-            ${row.graph_json}, ${row.meta_json}, ${row.defaults_json}, ${row.created_at}
+            ${row.graph_json}, ${row.meta_json}, ${row.defaults_json}, ${row.created_at},
+            ${row.approved_by ?? "agent"}
           )
+        `,
+      ),
+    /** A person published this version in the app: they stand behind it. */
+    approveVersion: (automationId: string, version: number) =>
+      run(
+        "approveVersion",
+        sql`
+          UPDATE signalbox_automation_versions SET approved_by = 'person'
+          WHERE automation_id = ${automationId} AND version = ${version}
         `,
       ),
     getVersion: (automationId: string, version: number) =>
@@ -434,8 +465,8 @@ export const make = Effect.gen(function* () {
     getRunMeta: (runId: string) =>
       run(
         "getRunMeta",
-        sql<Pick<RunRow, "automation_id" | "status">>`
-          SELECT automation_id, status FROM signalbox_automation_runs WHERE run_id = ${runId}
+        sql<Pick<RunRow, "automation_id" | "status" | "started_at">>`
+          SELECT automation_id, status, started_at FROM signalbox_automation_runs WHERE run_id = ${runId}
         `,
       ).pipe(Effect.map((rows) => rows[0])),
     listRuns: (automationId: string, limit: number) =>
@@ -464,7 +495,8 @@ export const make = Effect.gen(function* () {
           run_id: string;
           automation_id: string;
           version: number;
-        }>`SELECT run_id, automation_id, version FROM signalbox_automation_runs WHERE status = 'running'`,
+          started_at: string;
+        }>`SELECT run_id, automation_id, version, started_at FROM signalbox_automation_runs WHERE status = 'running'`,
       ),
     runningRunsOf: (automationId: string) =>
       run(
@@ -699,13 +731,16 @@ export const make = Effect.gen(function* () {
         sql`DELETE FROM signalbox_automation_callbacks WHERE run_id = ${runId}`,
       ),
     /** `waitFor` steps of running runs that are waiting now, for patterns computed at run time. */
-    waitingWaitForSteps: () =>
+    /** Every `waitFor` step running runs reached, waiting or done: a computed `on` keeps listening until its run ends. */
+    runningWaitForSteps: () =>
       run(
-        "waitingWaitForSteps",
+        "runningWaitForSteps",
+        // A loop waits on the same thing with a shrinking timeout; without it, its steps are one.
         sql<Pick<StepRow, "run_id" | "verb" | "args_json">>`
-          SELECT s.run_id, s.verb, s.args_json FROM signalbox_automation_steps s
+          SELECT DISTINCT s.run_id, s.verb, json_remove(s.args_json, '$[0].timeout') AS args_json
+          FROM signalbox_automation_steps s
           JOIN signalbox_automation_runs r ON r.run_id = s.run_id
-          WHERE s.verb = 'waitFor' AND s.status = 'waiting' AND r.status = 'running'
+          WHERE s.verb = 'waitFor' AND r.status = 'running'
         `,
       ),
     getStep: (runId: string, key: string) =>

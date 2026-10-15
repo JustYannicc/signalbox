@@ -161,12 +161,12 @@ export const layer = McpToolAccess.toLayer(
       automation_emit: McpToolAccess.writes((input) =>
         asCaller(() => engine.emit(input)).pipe(Effect.map((woke) => ({ woke }))),
       ),
-      wait_for: McpToolAccess.writes(({ until, on, where, callback, at, timeout, message }) =>
+      wait_for: McpToolAccess.writes((input) =>
         asCaller((caller) =>
           Effect.gen(function* () {
             const thread = yield* callingThread(caller);
             const started = yield* engine.startWait(
-              { threadId: thread.id, until, on, where, callback, at, timeout, message },
+              { ...input, threadId: thread.id },
               {
                 authorize: withinLimits(caller.limits),
                 builtInDefaults: yield* callerDefaults(caller, thread.projectId),
@@ -192,6 +192,20 @@ export const layer = McpToolAccess.toLayer(
             Effect.flatMap((thread) => engine.stopWait(thread.id, waitId)),
           ),
         ).pipe(Effect.map((stopped) => ({ stopped }))),
+      ),
+      merge_pull_request: McpToolAccess.writes(({ url, note }) =>
+        asCaller((caller) =>
+          Effect.gen(function* () {
+            const thread = yield* callingThread(caller);
+            return yield* engine.requestMerge(
+              { threadId: thread.id, url, note },
+              {
+                authorize: withinLimits(caller.limits),
+                builtInDefaults: yield* callerDefaults(caller, thread.projectId),
+              },
+            );
+          }),
+        ),
       ),
       automation_set_webhook_secret: McpToolAccess.writes(({ automationId, secretRef }) =>
         asCaller(({ limits }) =>

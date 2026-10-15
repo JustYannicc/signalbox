@@ -13,6 +13,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
+import * as CloudAttachments from "../attachments/CloudAttachments.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
@@ -22,6 +24,7 @@ import * as GitHub from "../github/GitHub.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
+import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
@@ -73,7 +76,8 @@ export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.Git
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
    */
   readonly DRIVES?: DriveDirectory.DriveObjectNamespace;
-  readonly DRIVE_PACKS?: DrivePacks.PackBucket;
+  /** Also where pasted screenshots and files live (`attachments/`). */
+  readonly DRIVE_PACKS?: DrivePacks.PackBucket & AttachmentObjects;
   readonly DRIVE_PACKS_PREFIX?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
@@ -135,9 +139,17 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           drives.services,
           GitHubConnection.layer,
           ConnectionLinks.layer,
+          LocalKeys.layer,
         ),
       ),
-      Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, UserPools.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          ThreadContexts.layer,
+          UserPools.layer,
+          // Pasted screenshots and files, signed with the same keys as asset URLs.
+          CloudAttachments.layer(attachmentStorage(env)),
+        ),
+      ),
       Layer.provideMerge(
         PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
           Layer.provide(
@@ -206,6 +218,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       // Only machines run dev servers.
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
+      attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
     void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));
@@ -305,6 +318,26 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   linkedToken(input: Parameters<UserObjectApi["linkedToken"]>[0]) {
     return this.api.linkedToken(input);
+  }
+
+  createLocalKey(label: string) {
+    return this.api.createLocalKey(label);
+  }
+
+  localKeys() {
+    return this.api.localKeys();
+  }
+
+  revokeLocalKey(id: string) {
+    return this.api.revokeLocalKey(id);
+  }
+
+  authorizeLocalModel(secret: string) {
+    return this.api.authorizeLocalModel(secret);
+  }
+
+  recordLocalModelRequest(input: Parameters<UserObjectApi["recordLocalModelRequest"]>[0]) {
+    return this.api.recordLocalModelRequest(input);
   }
 
   issuePreviewSetupCode(input: Parameters<UserObjectApi["issuePreviewSetupCode"]>[0]) {

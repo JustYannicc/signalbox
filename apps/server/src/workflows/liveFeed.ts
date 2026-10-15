@@ -25,21 +25,25 @@ export type Change =
       readonly automationId: string;
       readonly runId?: string;
       readonly summary: boolean;
-    };
+    }
+  /** A source its triggers or this run watch was read (sources/sourceWatches.ts). */
+  | { readonly kind: "sources"; readonly automationId: string; readonly runId?: string };
 
 /** Changes within this window reach subscribers as one recompute. A busy run changes many times a second. */
 export const COALESCE_WINDOW = "100 millis";
 
 /** The automation list shows each automation and its latest run's summary. */
-export const listShows = (change: Change) => change.kind !== "runs" || change.summary;
+export const listShows = (change: Change) =>
+  change.kind === "runs" ? change.summary : change.kind !== "sources";
 
 /** An automation's page shows it and its recent runs' summaries. */
 export const automationShows = (automationId: string) => (change: Change) =>
-  change.automationId === automationId && listShows(change);
+  change.automationId === automationId &&
+  (listShows(change) || (change.kind === "sources" && change.runId === undefined));
 
 /** A run's page shows its steps. */
 export const runShows = (runId: string) => (change: Change) =>
-  change.kind === "runs" && change.runId === runId;
+  (change.kind === "runs" || change.kind === "sources") && change.runId === runId;
 
 interface View {
   readonly read: Effect.Effect<unknown, AutomationError>;
