@@ -32,8 +32,14 @@ export function liveColumns(meta: WorkflowMeta) {
 }
 
 export interface DraftsShape {
-  /** Makes the pending draft live. A never-published automation turns on with it. */
-  readonly publish: (automationId: string) => Effect.Effect<Automation, AutomationError>;
+  /**
+   * Makes the pending draft live. A never-published automation turns on with it. A person
+   * publishing it in the app stands behind its code (see `VersionRow.approved_by`).
+   */
+  readonly publish: (
+    automationId: string,
+    by?: "person",
+  ) => Effect.Effect<Automation, AutomationError>;
   /** Drops the pending draft; the live version carries on. */
   readonly discardDraft: (automationId: string) => Effect.Effect<Automation, AutomationError>;
 }
@@ -48,7 +54,7 @@ export const makeDrafts = (deps: {
 }): DraftsShape => {
   const { store, changed, requireAutomation, relayHookBaseUrl } = deps;
 
-  const publish: DraftsShape["publish"] = (automationId) =>
+  const publish: DraftsShape["publish"] = (automationId, by) =>
     Effect.gen(function* () {
       const row = yield* requireAutomation(automationId);
       if (row.draft_version === null)
@@ -77,6 +83,7 @@ export const makeDrafts = (deps: {
         updated_at: DateTime.formatIso(now),
       };
       yield* store.upsertAutomation(live);
+      if (by === "person") yield* store.approveVersion(automationId, draft.version);
       yield* changed({ kind: "definition", automationId });
       return automationView(live, undefined, [], yield* relayHookBaseUrl);
     });

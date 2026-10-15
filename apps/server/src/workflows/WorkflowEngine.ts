@@ -194,7 +194,15 @@ const make = Effect.gen(function* () {
   const store: Store = yield* WorkflowStore.make;
   const links = yield* RunLinkStore.make;
   const hosts = yield* HostStore.make;
-  const builtinTools = makeBuiltinTools();
+  const builtinTools = makeBuiltinTools({
+    approvalOf: (runId) =>
+      Effect.gen(function* () {
+        const run = yield* store.getRun(runId);
+        const version = run ? yield* store.getVersion(run.automation_id, run.version) : undefined;
+        return version?.approved_by ?? null;
+      }),
+    projectOfThread: (threadId) => projectOfThread(threadId),
+  });
   const crypto = yield* Crypto.Crypto;
   const threads = yield* ThreadManagementService;
   const scheduler = yield* Scheduler;

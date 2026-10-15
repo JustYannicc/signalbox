@@ -77,9 +77,10 @@ keeps waking it on failed checks, other people's comments and reviews, and confl
 merges.
 
 When the work is done, the agent asks to merge instead of merging. You get a needs-you, "Merge
-pull request #12?": **merge** merges it and deletes its branch, **not yet** sends the agent your
-reason. To have a project merge on its own when checks pass, customize the built-in **Merge gate**
-there.
+acme/app#12?", showing the commit it would merge: **merge** merges that commit and deletes its
+branch, **not yet** sends the agent your reason. If new commits land after you approve, nothing
+merges and the agent asks again. To have a project merge on its own when checks pass, have an agent
+customize the built-in **Merge gate** there as a draft, then publish it yourself.
 
 **Thread details → Waiting on** lists what the thread waits for. Open a row to see the run behind
 it, or stop it there. Settling, archiving or stopping the thread ends its waits too. Each wait is a

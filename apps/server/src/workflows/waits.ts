@@ -8,6 +8,8 @@ import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   threadPullRequestKeyOf,
   threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+  visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 
@@ -219,8 +221,8 @@ export const makeWaits = (deps: {
       const shell = yield* deps.threads
         .getThreadShell(ThreadId.make(request.threadId))
         .pipe(Effect.mapError((cause) => automationError("Couldn't read the thread.", { cause })));
-      const linked = (shell?.pullRequests ?? []).find((link) =>
-        threadPullRequestKeysEqual(link, target),
+      const linked = (shell ? visibleThreadPullRequests(threadPullRequestsOf(shell)) : []).find(
+        (link) => threadPullRequestKeysEqual(link, target),
       );
       if (!linked)
         return yield* explained(`${request.url} isn't linked to this thread.`, {
@@ -236,13 +238,7 @@ export const makeWaits = (deps: {
       if (waiting) return { waitId: waiting, alreadyRequested: true };
       const run = yield* deps.start({
         automationId: "builtin:merge-gate",
-        input: {
-          threadId: request.threadId,
-          url: request.url,
-          repository: linked.repository,
-          number: linked.number,
-          note: request.note,
-        },
+        input: { threadId: request.threadId, url: request.url, note: request.note },
         attach: {
           threadId: ThreadId.make(request.threadId),
           key,

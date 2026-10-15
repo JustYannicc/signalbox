@@ -86,6 +86,8 @@ it.effect("hands the engine Signalbox's MCP handlers, calling as a thread-less c
           tool: "list_thread_pull_requests",
           args: {},
           automationId: "automation-1",
+          projectId: "project-1",
+          runId: "run-1",
           automationName: "Watch",
           runtimeMode: "approval-required",
           requestKey: "run-1/s1",
@@ -96,6 +98,8 @@ it.effect("hands the engine Signalbox's MCP handlers, calling as a thread-less c
 
     const sectionCall = {
       automationId: "automation-1",
+      projectId: "project-1",
+      runId: "run-1",
       automationName: "Organize projects",
       requestKey: "run-1/sections",
     };
@@ -160,6 +164,14 @@ it.effect(
               source: "agent",
               snapshot: null,
             },
+            {
+              host: "github.com",
+              repository: "acme/app",
+              number: 14,
+              url: "https://github.com/acme/app/pull/14",
+              source: "stack-dismissed",
+              snapshot: null,
+            },
           ],
         })) as never,
     });
@@ -175,7 +187,8 @@ it.effect(
           : Effect.sync(() => {
               ran.push(input);
             }),
-      detail: () => Effect.succeed({ state: "merged" } as never),
+      detail: () =>
+        Effect.succeed({ state: "merged", title: "Fix login", headSha: "abc" } as never),
     });
     return Effect.gen(function* () {
       yield* Layer.build(
@@ -188,12 +201,17 @@ it.effect(
           tool: "pull_request_action",
           args: { threadId: "thread-9", url: "https://github.com/acme/app/pull/12", ...args },
           automationId: "automation-1",
+          projectId: "project-1",
+          runId: "run-1",
           automationName: "Merge gate",
           runtimeMode: "full-access",
           requestKey: "run-1/s2",
         });
-      expect(yield* call({ action: "merge", mergeMethod: "squash" })).toEqual({ state: "merged" });
-      expect(yield* call({ action: "delete-branch" })).toEqual({ state: "merged" });
+      expect(yield* call({ action: "merge", mergeMethod: "squash" })).toEqual({
+        state: "merged",
+        moved: false,
+      });
+      expect(yield* call({ action: "delete-branch" })).toEqual({ state: "merged", moved: false });
       expect(ran).toEqual([
         {
           projectId: "project-1",
@@ -217,7 +235,7 @@ it.effect(
       expect(bad.message).toContain("isn't a pull request URL");
       // A merge step that runs again finds the host already merged it: that's done, not failed.
       refuse = true;
-      expect(yield* call({ action: "merge" })).toEqual({ state: "merged" });
+      expect(yield* call({ action: "merge" })).toEqual({ state: "merged", moved: false });
       const closeAgain = yield* Effect.flip(call({ action: "close" }).pipe(Effect.asVoid));
       expect(closeAgain.message).toContain("The host refused to close it");
       refuse = false;
@@ -225,6 +243,37 @@ it.effect(
         call({ url: "https://github.com/acme/app/pull/13", action: "merge" }).pipe(Effect.asVoid),
       );
       expect(unlinked.message).toContain("isn't linked to this thread");
+      // A stacked pull request the user dismissed is no longer the thread's.
+      const dismissed = yield* Effect.flip(
+        call({ url: "https://github.com/acme/app/pull/14", action: "merge" }).pipe(Effect.asVoid),
+      );
+      expect(dismissed.message).toContain("isn't linked to this thread");
+
+      // Commits newer than the approved one: nothing happens.
+      const before = ran.length;
+      expect(yield* call({ action: "merge", expectedHeadSha: "older" })).toEqual({
+        state: "merged",
+        moved: true,
+      });
+      expect(ran).toHaveLength(before);
+      expect(
+        yield* registered!.call({
+          tool: "pull_request_read",
+          args: { threadId: "thread-9", url: "https://github.com/acme/app/pull/12" },
+          automationId: "automation-1",
+          projectId: "project-1",
+          runId: "run-1",
+          automationName: "Merge gate",
+          runtimeMode: "approval-required",
+          requestKey: "run-1/s1",
+        }),
+      ).toEqual({
+        repository: "acme/app",
+        number: 12,
+        title: "Fix login",
+        state: "merged",
+        headSha: "abc",
+      });
     }).pipe(Effect.scoped);
   },
 );

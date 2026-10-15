@@ -93,7 +93,11 @@ export const automationRpcHandlers = (engine: WorkflowEngine.WorkflowEngine["Ser
       engine.retryRun({ runId: input.runId, version: input.version }),
     ),
   [METHODS.automationsPublish]: (input: Payload<typeof METHODS.automationsPublish>) =>
-    annotated({ "automation.id": input.automationId }, engine.publish(input.automationId)),
+    // People publish in the app; agents publish through MCP and approve nothing.
+    annotated(
+      { "automation.id": input.automationId },
+      engine.publish(input.automationId, "person"),
+    ),
   [METHODS.automationsDiscardDraft]: (input: Payload<typeof METHODS.automationsDiscardDraft>) =>
     annotated({ "automation.id": input.automationId }, engine.discardDraft(input.automationId)),
   [METHODS.automationsAnswer]: (input: Payload<typeof METHODS.automationsAnswer>) =>

@@ -6,7 +6,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
-import { threadPullRequestKeysEqual } from "@t3tools/shared/threadPullRequests";
+import {
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -41,32 +45,60 @@ const Action = Schema.Literals(
   ),
 );
 
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagement.ThreadManagementService,
+  PullRequestService.PullRequestService,
+];
+const Target = {
+  threadId: ThreadId.annotate({ description: "The thread the pull request is linked to." }),
+  url: Schema.String.annotate({ description: "The pull request's URL." }),
+};
+
+const PullRequestReadTool = Tool.make("pull_request_read", {
+  description:
+    "Read a pull request linked to a thread: where it lives, its title, state and head commit, fresh from the host.",
+  parameters: Schema.Struct(Target),
+  success: Schema.Struct({
+    repository: Schema.String,
+    number: Schema.Int,
+    title: Schema.String,
+    state: PullRequestState,
+    headSha: Schema.NullOr(Schema.String),
+  }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Read pull request")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true);
+
 const PullRequestActionTool = Tool.make("pull_request_action", {
   description:
-    "Run one action on a pull request linked to a thread: merge it, delete its branch after it merged, bring its base in, hand the merge to the host (enable-auto-merge), mark it ready, close or reopen it. Returns the pull request's state afterwards; a merge the host queued is still open.",
+    "Run one action on a pull request linked to a thread: merge it, delete its branch after it merged, bring its base in, hand the merge to the host (enable-auto-merge), mark it ready, close or reopen it. Returns the pull request's state afterwards; a merge the host queued is still open. With expectedHeadSha, nothing happens if new commits landed since (moved: true).",
   parameters: Schema.Struct({
-    threadId: ThreadId.annotate({ description: "The thread the pull request is linked to." }),
-    url: Schema.String.annotate({ description: "The pull request's URL." }),
+    ...Target,
     action: Action,
     mergeMethod: Schema.optional(PullRequestMergeMethod).annotate({
       description: "For merge: merge, squash or rebase. Default: the host's.",
     }),
+    expectedHeadSha: Schema.optional(Schema.String).annotate({
+      description: "The head commit someone approved; act only while it's still the head.",
+    }),
   }),
-  success: Schema.Struct({ state: PullRequestState }),
+  success: Schema.Struct({ state: PullRequestState, moved: Schema.Boolean }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies: [
-    McpInvocationContext.McpInvocationContext,
-    ThreadManagement.ThreadManagementService,
-    PullRequestService.PullRequestService,
-  ],
+  dependencies,
 })
   .annotate(Tool.Title, "Pull request action")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-export const PullRequestActionToolkit = Toolkit.make(PullRequestActionTool);
+export const PullRequestActionToolkit = Toolkit.make(PullRequestReadTool, PullRequestActionTool);
 
 const refused = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
@@ -77,41 +109,69 @@ const hostFailure = (what: string, cause: unknown) =>
     message: `${what}: ${errorMessage(cause)}`,
   });
 
+/** The pull request at `url`, as linked to the thread (unlinked or dismissed ones are refused). */
+const linkedPullRequest = (threadId: ThreadId, url: string) =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const pullRequests = yield* PullRequestService.PullRequestService;
+    const thread = yield* threads
+      .getThreadShell(threadId)
+      .pipe(Effect.mapError((cause) => hostFailure("Couldn't read the thread", cause)));
+    if (thread === null || thread.deletedAt !== null)
+      return yield* new OrchestratorMcpFailure({
+        code: "thread_not_found",
+        message: `There's no thread ${threadId}.`,
+      });
+    const target = parseChangeRequestUrl(url);
+    if (target === null) return yield* refused(`"${url}" isn't a pull request URL.`);
+    const linked = visibleThreadPullRequests(threadPullRequestsOf(thread)).find((link) =>
+      threadPullRequestKeysEqual(link, target),
+    );
+    if (!linked)
+      return yield* refused(
+        `${url} isn't linked to this thread. Link it with link_pull_request first.`,
+      );
+    const ref = {
+      projectId: thread.projectId,
+      host: linked.host,
+      repository: linked.repository,
+      number: linked.number,
+    };
+    const detail = pullRequests
+      .detail({ ...ref, allowStale: false })
+      .pipe(Effect.mapError((cause) => hostFailure("Couldn't read the pull request", cause)));
+    return { linked, ref, detail, pullRequests };
+  });
+
 export const layer = McpToolAccess.toLayer(
   PullRequestActionToolkit,
   Effect.succeed({
+    pull_request_read: McpToolAccess.reads(({ threadId, url }) =>
+      Effect.gen(function* () {
+        const { linked, detail } = yield* linkedPullRequest(threadId, url);
+        const current = yield* detail;
+        return {
+          repository: linked.repository,
+          number: linked.number,
+          title: current.title,
+          state: current.state,
+          headSha: current.headSha ?? null,
+        };
+      }),
+    ),
     pull_request_action: McpToolAccess.writesThreads(
       (input) => [input.threadId],
-      ({ threadId, url, action, mergeMethod }) =>
+      ({ threadId, url, action, mergeMethod, expectedHeadSha }) =>
         Effect.gen(function* () {
-          const threads = yield* ThreadManagement.ThreadManagementService;
-          const pullRequests = yield* PullRequestService.PullRequestService;
-          const thread = yield* threads
-            .getThreadShell(threadId)
-            .pipe(Effect.mapError((cause) => hostFailure("Couldn't read the thread", cause)));
-          if (thread === null || thread.deletedAt !== null)
-            return yield* new OrchestratorMcpFailure({
-              code: "thread_not_found",
-              message: `There's no thread ${threadId}.`,
-            });
-          const target = parseChangeRequestUrl(url);
-          if (target === null) return yield* refused(`"${url}" isn't a pull request URL.`);
-          const linked = (thread.pullRequests ?? []).find((link) =>
-            threadPullRequestKeysEqual(link, target),
-          );
-          if (!linked)
-            return yield* refused(
-              `${url} isn't linked to this thread. Link it with link_pull_request first.`,
-            );
-          const ref = {
-            projectId: thread.projectId,
-            host: linked.host,
-            repository: linked.repository,
-            number: linked.number,
-          };
-          const stateNow = pullRequests
-            .detail({ ...ref, allowStale: false })
-            .pipe(Effect.map((detail) => detail.state));
+          const { linked, ref, detail, pullRequests } = yield* linkedPullRequest(threadId, url);
+          // What someone approved is a commit; newer ones need their own approval. The host
+          // merges whatever is the head when it gets the request, so this narrows the window
+          // rather than closing it.
+          if (expectedHeadSha !== undefined) {
+            const before = yield* detail;
+            if ((before.headSha ?? null) !== expectedHeadSha)
+              return { state: before.state, moved: true };
+          }
           const ran = yield* Effect.exit(
             pullRequests.runAction({
               ...ref,
@@ -121,7 +181,10 @@ export const layer = McpToolAccess.toLayer(
           );
           // A merge step that runs again after it worked finds the host already merged.
           if (ran._tag === "Failure") {
-            const state = action === "merge" ? yield* Effect.option(stateNow) : Option.none();
+            const state =
+              action === "merge"
+                ? (yield* Effect.option(detail)).pipe(Option.map((after) => after.state))
+                : Option.none();
             if (Option.getOrUndefined(state) !== "merged")
               return yield* hostFailure(
                 `The host refused to ${action} it`,
@@ -131,13 +194,7 @@ export const layer = McpToolAccess.toLayer(
           // The thread's link catches up now instead of on the next sweep.
           const sync = yield* Effect.serviceOption(PullRequestSyncReactor);
           if (Option.isSome(sync)) yield* sync.value.requestSync(linked);
-          return {
-            state: yield* stateNow.pipe(
-              Effect.mapError((cause) =>
-                hostFailure("It's done, but reading the pull request afterwards failed", cause),
-              ),
-            ),
-          };
+          return { state: (yield* detail).state, moved: false };
         }),
     ),
   }),
