@@ -42,7 +42,9 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { HarnessStderr } from "./harnessStderr.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
-import type { RunnerDrive } from "./RunnerDrive.ts";
+import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
+import { DriveClientError } from "./RunnerDriveClient.ts";
+import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
@@ -130,15 +132,31 @@ interface Turn {
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
 
 const isInstructionsError = Schema.is(RunnerInstructionsError);
+const isTurnError = Schema.is(RunnerTurnError);
+const isRunnerGitError = Schema.is(RunnerGitError);
+const isDriveClientError = Schema.is(DriveClientError);
 
 /**
  * The failure text a thread may store: bounded and with credentials redacted.
- * Instructions too big to load say so in their own words (`RunnerInstructions.ts`).
+ * Instructions too big to load say so in their own words (`RunnerInstructions.ts`),
+ * and the Runner's own reasons (`RunnerTurnError`) say why instead of "Provider turn failed."
  */
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
-  return isInstructionsError(error) ? error.message : makeProviderFailure({ cause: error }).message;
+  if (isInstructionsError(error)) return error.message;
+  return makeProviderFailure(isTurnError(error) ? { message: error.message } : { cause: error })
+    .message;
 };
+
+/** Why a drive couldn't be readied, in words a thread may show: ours, not a file system's. */
+const drivePrepareError = (error: RunnerDriveError) =>
+  new RunnerTurnError({
+    message: `Signalbox couldn't get this thread's files ready: ${
+      isRunnerGitError(error) || isDriveClientError(error)
+        ? error.message
+        : "a file operation on its machine failed."
+    }`,
+  });
 
 const USAGE_INTERVAL = "30 seconds";
 /** While no turn runs, every this many intervals (5 min): each report wakes the thread's object. */
@@ -623,7 +641,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         Effect.gen(function* () {
           const drive =
             opened !== null && access !== null
-              ? yield* opened.prepare(access.remoteToken, access.author, access.instructions)
+              ? yield* opened
+                  .prepare(access.remoteToken, access.author, access.instructions)
+                  .pipe(
+                    Effect.mapError((error) =>
+                      isInstructionsError(error) ? error : drivePrepareError(error),
+                    ),
+                  )
               : null;
           if (input.dependencies !== undefined) {
             yield* input.dependencies.prepare((message) =>
