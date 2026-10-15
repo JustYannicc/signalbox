@@ -354,6 +354,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project grouping",
     to: "/settings/general",
     searchTerms: ["combine matching repositories environments sidebar"],
+    capability: "otherEnvironments",
   },
   {
     id: "project-order",
