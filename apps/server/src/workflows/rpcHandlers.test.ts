@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { automationRpcHandlers } from "./rpcHandlers.ts";
-import * as WorkflowEngine from "./WorkflowEngine.ts";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
 const PROJECT = ProjectId.make("project-api");
 const SOURCE = "export const meta = { name: 'Inbox' }";
