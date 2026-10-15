@@ -139,7 +139,9 @@ In Signalbox Cloud, pools take Claude and ChatGPT sign-ins for now. API keys, im
 Cursor and OpenCode come later. Limits shows each account's windows from its latest request, or
 checks with the provider at most every ten minutes while the pool is running. A pool that's asleep
 shows what it last read. The pool's admins see each account; members see only how much the pool
-has left and when it next resets.
+has left and when it next resets. When a provider rate-limits an account, the pool keeps it aside until the
+announced reset, but checks with the provider while threads keep asking. If the provider resets
+the window early, the account is back within about a minute.
 
 In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
 cannot load; copy that page's full address and paste it into Signalbox to finish.

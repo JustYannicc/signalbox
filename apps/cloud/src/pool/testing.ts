@@ -26,6 +26,8 @@ interface FakeAccount {
   observedAt?: string;
   /** What the provider's usage endpoint answers for it; 200 with no windows unless set. */
   usage?: { readonly status: number; readonly body: string };
+  /** Until when CLIProxyAPI keeps it cooling down after a 429, ISO; it routes nothing to it. */
+  cooldownUntil?: string;
 }
 
 interface FakeModel {
@@ -73,6 +75,10 @@ export const makeFakeCliProxyApi = () => {
   /** The upstream URLs asked as each account (`requests/api-call`), by account name. */
   const accountRequests: Array<{ readonly name: string; readonly url: string }> = [];
   const authIndex = (name: string) => `idx-${name}`;
+  /** Accounts whose cooldown was cleared (`routing/cooldown/reset`), in order. */
+  const cooldownResets: Array<string> = [];
+  const cooling = (account: FakeAccount) =>
+    account.cooldownUntil !== undefined && Date.parse(account.cooldownUntil) > Date.now();
   let counter = 0;
   const json = (body: unknown, status = 200) => Response.json(body, { status });
 
@@ -96,6 +102,19 @@ export const makeFakeCliProxyApi = () => {
     }
     // A model request: says what it got, so tests can check what the pool sent.
     if (url.pathname.startsWith("/v1/")) {
+      const usable = [...accounts.values()].filter((account) => !account.disabled);
+      // Every account cooling down: answered here, without asking the provider.
+      if (usable.length > 0 && usable.every(cooling)) {
+        return json(
+          {
+            error: {
+              code: "model_cooldown",
+              message: "All credentials for model claude-opus-5-5 are cooling down",
+            },
+          },
+          429,
+        );
+      }
       return json({
         path: `${url.pathname}${url.search}`,
         authorization: request.headers.get("authorization"),
@@ -143,15 +162,39 @@ export const makeFakeCliProxyApi = () => {
         return json({ status: "ok" });
       case "GET credentials":
         return json({
-          files: [...accounts].map(([name, { type, email, disabled, signals, observedAt }]) => ({
+          files: [...accounts].map(([name, account]) => ({
             name,
             auth_index: authIndex(name),
-            type,
-            email,
-            disabled,
-            quota: { signals: signals ?? {}, ...(observedAt ? { observed_at: observedAt } : {}) },
+            type: account.type,
+            email: account.email,
+            disabled: account.disabled,
+            quota: {
+              signals: account.signals ?? {},
+              ...(account.observedAt ? { observed_at: account.observedAt } : {}),
+            },
+            cooldowns: cooling(account)
+              ? [
+                  {
+                    scope: "credential",
+                    reason: "credential_quota",
+                    retry_at: account.cooldownUntil,
+                    remaining_seconds: Math.round(
+                      (Date.parse(account.cooldownUntil!) - Date.now()) / 1000,
+                    ),
+                    http_status: 429,
+                  },
+                ]
+              : [],
           })),
         });
+      case "POST routing/cooldown/reset": {
+        const body = (await request.json()) as { readonly auth_index: string };
+        const found = [...accounts].find(([name]) => authIndex(name) === body.auth_index);
+        if (!found) return json({ error: "auth not found" }, 404);
+        delete found[1].cooldownUntil;
+        cooldownResets.push(found[0]);
+        return json({ status: "ok", auth_index: body.auth_index });
+      }
       case "POST requests/api-call": {
         const body = (await request.json()) as {
           readonly auth_index: string;
@@ -186,7 +229,7 @@ export const makeFakeCliProxyApi = () => {
         return json({ error: `no route ${request.method} ${route}` }, 404);
     }
   };
-  return { serve, accounts, catalog, configPatches, accountRequests };
+  return { serve, accounts, catalog, configPatches, accountRequests, cooldownResets };
 };
 
 /**
