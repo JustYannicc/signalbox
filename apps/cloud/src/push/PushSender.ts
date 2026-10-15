@@ -15,7 +15,7 @@ import type { PushMessage } from "./pushRules.ts";
 
 /**
  * Sends one push to one phone, straight to Apple (APNs) or Google (FCM), the
- * same native tokens and payload shape the T3 Connect relay uses, so the app
+ * same native tokens and payload shape the Signalbox Connect relay uses, so the app
  * routes a tap the same way. Credentials are Worker secrets:
  *
  * - `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_PRIVATE_KEY`: an APNs auth key (`.p8`)

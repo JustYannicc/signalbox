@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 
 /**
  * Pushes from Signalbox Cloud go to the devices registered there. A
- * self-hosted server publishes through the T3 Connect relay instead, so the
+ * self-hosted server publishes through the Signalbox Connect relay instead, so the
  * phone's registration with it changes nothing; the app ignores this answer.
  */
 export const signalboxPushWsHandlers = {

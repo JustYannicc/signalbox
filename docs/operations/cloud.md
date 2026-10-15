@@ -513,7 +513,7 @@ Runner's container on the VM, so a local Runner host on a Mac reports none.
 ### Push notifications
 
 The cloud pushes to phones itself, straight to APNs and FCM, not through the
-T3 Connect relay: the relay keys devices to its own Clerk accounts, and cloud
+Signalbox Connect relay: the relay keys devices to its own Clerk accounts, and cloud
 people are WorkOS users. A phone registers over its cloud socket
 (`signalbox.push.registerDevice`, the relay's registration payload) and the
 person's object keeps it for that session; signing out silences it. The

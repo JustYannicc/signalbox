@@ -204,7 +204,7 @@ const fakeApple = (status: number, body = "") => {
 
 const registration = {
   deviceId: "phone-1",
-  label: "Yannic's iPhone",
+  label: "Test iPhone",
   platform: "ios" as const,
   iosMajorVersion: 26,
   bundleId: "com.justyannicc.signalbox",
@@ -370,7 +370,7 @@ const serviceAccount = Effect.promise(async () => {
   const der = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
   return JSON.stringify({
     project_id: "signalbox-test",
-    client_email: "push@signalbox-test.iam.gserviceaccount.com",
+    client_email: "push@example.com",
     private_key: `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`,
   });
 });

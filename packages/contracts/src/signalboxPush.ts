@@ -4,7 +4,7 @@
  * A phone registers its APNs or FCM token with Signalbox Cloud, which then
  * pushes the person's needs-yous, failures and finished long turns straight to
  * it, whether or not any client is open. The registration is the one the app
- * already sends the T3 Connect relay, so one payload serves both.
+ * already sends the Signalbox Connect relay, so one payload serves both.
  *
  * A self-hosted server answers `SignalboxPushUnavailableError`: its pushes go
  * through the relay instead.
