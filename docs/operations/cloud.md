@@ -473,6 +473,12 @@ shared like any drive. Its drive keeps GitHub as its home
   `/api/drive/branch/publish` with the drive token. The thread and drive come
   from the token, never the request, and the owner's object runs the git
   panel's `GitHubBranches.publish` (`runner-protocol/src/BranchProtocol.ts`).
+- **The pull request it opens is linked to the thread, and the thread keeps
+  it current.** The thread object's alarm reads linked pull requests from
+  GitHub with the owner's token (`thread/pullRequests/PullRequestSync.ts`),
+  and a change goes out as `thread.pull-request-synced` with the whole thread,
+  never upstream's `thread.pull-request-link-updated`: automations derive
+  `pr.*` facts from `thread.pull-request-synced` only.
 - **No GitHub credential reaches a machine.** Users connect GitHub through
   WorkOS Pipes, which keeps and refreshes their OAuth tokens. Their own object
   only records that they connected, and as whom, and asks Pipes for a token

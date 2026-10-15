@@ -48,6 +48,8 @@ import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
 import * as SessionRows from "./thread/session/SessionRows.ts";
+import * as PullRequestPolls from "./thread/pullRequests/PullRequestPolls.ts";
+import * as PullRequestSync from "./thread/pullRequests/PullRequestSync.ts";
 import * as ThreadStore from "./thread/ThreadStore.ts";
 import * as ModelManifest from "./thread/ModelManifest.ts";
 import * as TurnModels from "./thread/TurnModels.ts";
@@ -295,7 +297,11 @@ export const makeMemoryCloud = (
         effect: Effect.Effect<
           A,
           E,
-          ThreadEngine.ThreadEngine | ThreadStore.ThreadStore | UserDirectory.UserDirectory
+          | ThreadEngine.ThreadEngine
+          | ThreadStore.ThreadStore
+          | UserDirectory.UserDirectory
+          | PullRequestSync.PullRequestSync
+          | PullRequestPolls.PullRequestPolls
         >,
       ) => Promise<A>;
     }
@@ -329,20 +335,25 @@ export const makeMemoryCloud = (
     users.set(userId, object);
     return object;
   };
+  /** One thread object's services; its linked pull requests sync with `options.github`. */
+  const layerThreadObjectInMemory = () =>
+    layerThreadObject(":memory:", MachineBackends.layerNone, {
+      drives: true,
+      writes: (userId, driveId) =>
+        Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
+      secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),
+      // Turns check their pool as in production, with the scripted provider on.
+      models: TurnModels.layer({ scripted: true }).pipe(
+        Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
+      ),
+    });
   const threadFor = (threadId: string) => {
     const existing = threads.get(threadId);
     if (existing) return existing;
     const runtime = ManagedRuntime.make(
-      layerThreadObject(":memory:", MachineBackends.layerNone, {
-        drives: true,
-        writes: (userId, driveId) =>
-          Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
-        secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),
-        // Turns check their pool as in production, with the scripted provider on.
-        models: TurnModels.layer({ scripted: true }).pipe(
-          Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
-        ),
-      }).pipe(
+      PullRequestSync.layer.pipe(
+        Layer.provide(options.github ?? layerNoGitHub),
+        Layer.provideMerge(layerThreadObjectInMemory()),
         Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, userDirectory)),
         Layer.provideMerge(options.observe ?? Layer.empty),
       ),
@@ -355,6 +366,8 @@ export const makeMemoryCloud = (
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
+        | PullRequestSync.PullRequestSync
+        | PullRequestPolls.PullRequestPolls
       >,
     ) => runtime.runPromise(effect);
     // No machine runs in memory, so nothing serves previews.
@@ -424,6 +437,29 @@ export const makeMemoryCloud = (
         ),
       ),
     settle,
+    /** Every event a thread committed, oldest first. */
+    threadEvents: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(
+          ThreadStore.ThreadStore.use((store) =>
+            Effect.map(Effect.orDie(store.events(0)), (stored) =>
+              stored.map((entry) => entry.event),
+            ),
+          ),
+        ),
+      ),
+    /** Time passing for a thread's pull request sync: every link is due again at once. */
+    forgetPullRequestPolls: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(
+          PullRequestPolls.PullRequestPolls.use((polls) => Effect.orDie(polls.replace([]))),
+        ),
+      ),
+    /** What a thread object's alarm does for its linked pull requests; answers when it is due next. */
+    syncPullRequests: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(PullRequestSync.PullRequestSync.use((sync) => sync.sync)),
+      ),
     /** The services inside `userId`'s object, for handlers that run there (the socket's RPC). */
     userObject,
     /** The thread service as `userId`'s object runs it, with that user's contexts. */
