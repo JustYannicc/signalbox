@@ -266,6 +266,18 @@ function itemEvents(
         },
         ctx,
       );
+    // Which of the folder's secrets the turn runs without; the Runner names no value.
+    case "secrets.notice":
+      return systemNoticeEvents(
+        projection,
+        run,
+        {
+          id: TurnItemId.make(`turn-item:${run.id}:secrets`),
+          title: "Secrets",
+          message: item.message,
+        },
+        ctx,
+      );
     // The lease decides what a move means (`ThreadRunner`'s batch).
     case "machine.outgrown":
       return [];

@@ -152,6 +152,11 @@ export interface UserObjectApi {
   }) => Promise<PreviewSetupApplied>;
   /** Who the user's agents commit as, from their GitHub connection; null when not connected. */
   readonly githubCommitAuthor: () => Promise<CommitAuthor | null>;
+  /**
+   * The user's 1Password service account token, or null when none is
+   * connected: only for their thread's machine (`ThreadRunner`'s `ThreadSecrets`).
+   */
+  readonly onePasswordToken: () => Promise<string | null>;
   /** The user's current contexts, which every thread call acts within. */
   readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
@@ -229,6 +234,7 @@ const METHODS = Object.keys({
   redeemPreviewSetup: true,
   importPreviewSetup: true,
   githubCommitAuthor: true,
+  onePasswordToken: true,
   contextIds: true,
   recordDriveAccess: true,
   driveAccess: true,

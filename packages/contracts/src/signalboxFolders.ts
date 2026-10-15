@@ -6,8 +6,9 @@
  * optionally, its own files: a drive, shown as one source. Every thread has a
  * home folder (or the top level) and runs on its home's chain, the home and
  * every level above it: the nearest pool on the chain, and every level's
- * instructions, top level first. Moving a thread changes both from its next
- * turn; the files it works in stay the ones it started in. See #225 and #227.
+ * instructions and secrets, top level first. Moving a thread changes them
+ * from its next turn; the files it works in stay the ones it started in. See
+ * #225, #227 and #395.
  *
  * Folders replace sections and projects in Signalbox Cloud, which still
  * serves `sections.*` for older clients as a view of its folders. Only
@@ -34,6 +35,8 @@ export const SIGNALBOX_FOLDERS_WS_METHODS = {
   delete: "signalbox.folders.delete",
   moveThread: "signalbox.folders.moveThread",
   setInstructions: "signalbox.folders.setInstructions",
+  setSecrets: "signalbox.folders.setSecrets",
+  setOnePassword: "signalbox.folders.setOnePassword",
 } as const;
 
 /** Reading the tree is reading the sidebar; the rest changes what threads run on. */
@@ -45,6 +48,8 @@ export const SIGNALBOX_FOLDERS_REQUIRED_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.delete]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.moveThread]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope,
 } as const;
 
 export const FolderId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(
@@ -57,6 +62,21 @@ const FolderName = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 /** What agents can load beside a drive's own `AGENTS.md`: the Runner's limit. */
 export const FOLDER_INSTRUCTIONS_MAX_LENGTH = 32 * 1024;
 const Instructions = Schema.String.check(Schema.isMaxLength(FOLDER_INSTRUCTIONS_MAX_LENGTH));
+
+/**
+ * A 1Password Environment's id, as the desktop app's "Copy environment ID"
+ * gives it. A level that names one gives the threads on its chain that
+ * Environment's variables (#395). It's a reference, not a secret.
+ */
+export const OnePasswordEnvironmentId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+).pipe(Schema.brand("OnePasswordEnvironmentId"));
+export type OnePasswordEnvironmentId = typeof OnePasswordEnvironmentId.Type;
+
+/** Where a level's secrets come from: one 1Password Environment. */
+export const FolderSecrets = Schema.Struct({ environmentId: OnePasswordEnvironmentId });
+export type FolderSecrets = typeof FolderSecrets.Type;
 
 /** A level of the tree: the top level, or a folder. */
 export const FolderLevel = Schema.Union([
@@ -86,6 +106,8 @@ export const Folder = Schema.Struct({
   poolId: Schema.optionalKey(AccountPoolId),
   /** Its `AGENTS.md`: what agents in it and below follow, after the levels above. */
   instructions: Schema.optionalKey(Instructions),
+  /** Its secrets: what threads in it and below get, over the same names from above. */
+  secrets: Schema.optionalKey(FolderSecrets),
 });
 export type Folder = typeof Folder.Type;
 
@@ -110,7 +132,16 @@ export type FolderProjectHome = typeof FolderProjectHome.Type;
 export const SignalboxFoldersSnapshot = Schema.Struct({
   /** Increases on every committed change. */
   revision: NonNegativeInt,
-  top: Schema.Struct({ instructions: Schema.optionalKey(Instructions) }),
+  top: Schema.Struct({
+    instructions: Schema.optionalKey(Instructions),
+    secrets: Schema.optionalKey(FolderSecrets),
+  }),
+  /**
+   * The user's 1Password service account, which reads every level's
+   * Environment when a thread starts. Absent: none connected, so no level's
+   * secrets load. Its token never leaves the cloud but for the thread's machine.
+   */
+  onePassword: Schema.optionalKey(Schema.Struct({ connectedAt: NonNegativeInt })),
   folders: Schema.Array(Folder),
   threadHomes: Schema.Array(FolderThreadHome),
   projectHomes: Schema.Array(FolderProjectHome),
@@ -179,6 +210,25 @@ export const FolderSetInstructionsInput = Schema.Struct({
 });
 export type FolderSetInstructionsInput = typeof FolderSetInstructionsInput.Type;
 
+/** Replaces where a level's secrets come from; null stops loading secrets there. */
+export const FolderSetSecretsInput = Schema.Struct({
+  level: FolderLevel,
+  secrets: Schema.NullOr(FolderSecrets),
+});
+export type FolderSetSecretsInput = typeof FolderSetSecretsInput.Type;
+
+/** A 1Password service account token, as 1Password shows it once (`ops_…`). */
+export const OnePasswordServiceAccountToken = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(16 * 1024),
+  Schema.isStartingWith("ops_"),
+);
+
+/** Connects the user's 1Password service account, replacing any before; null disconnects it. */
+export const FolderSetOnePasswordInput = Schema.Struct({
+  token: Schema.NullOr(OnePasswordServiceAccountToken),
+});
+export type FolderSetOnePasswordInput = typeof FolderSetOnePasswordInput.Type;
+
 export class SignalboxFoldersUnavailableError extends Schema.TaggedError<SignalboxFoldersUnavailableError>()(
   "SignalboxFoldersUnavailableError",
   {},
@@ -220,4 +270,6 @@ export const SIGNALBOX_FOLDERS_RPCS = [
   change(SIGNALBOX_FOLDERS_WS_METHODS.delete, FolderDeleteInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.moveThread, FolderMoveThreadInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setInstructions, FolderSetInstructionsInput),
+  change(SIGNALBOX_FOLDERS_WS_METHODS.setSecrets, FolderSetSecretsInput),
+  change(SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword, FolderSetOnePasswordInput),
 ] as const;

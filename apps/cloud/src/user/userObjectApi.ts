@@ -15,6 +15,7 @@ import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import { wire } from "../thread/threadWire.ts";
 import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
@@ -43,6 +44,7 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
+      | OnePasswordAccount.OnePasswordAccount
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -92,6 +94,8 @@ export const makeUserObjectApi = (
     importPreviewSetup: (input) =>
       run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.apply(input))),
     githubCommitAuthor: () => github((service) => service.commitAuthor),
+    onePasswordToken: () =>
+      run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),
