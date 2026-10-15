@@ -1,6 +1,6 @@
 /**
  * The ⋯ menus of the folder tree: a folder's (make, rename, move, files,
- * pool, instructions, delete) and an owner's top level.
+ * pool, instructions, secrets, delete) and an owner's top level.
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -20,6 +20,7 @@ import {
   FolderInputIcon,
   FolderPlusIcon,
   HardDriveIcon,
+  KeyRoundIcon,
   PencilIcon,
   SquarePenIcon,
   Trash2Icon,
@@ -190,6 +191,19 @@ function FolderMenuItems(props: FolderMenuProps) {
         <FileTextIcon />
         Instructions…
       </MenuItem>
+      <MenuItem
+        onClick={() =>
+          openFolderDialog({
+            kind: "secrets",
+            environmentId,
+            level: { _tag: "folder", folderId: folder.id },
+            name: folder.name,
+          })
+        }
+      >
+        <KeyRoundIcon />
+        Secrets…
+      </MenuItem>
       <MenuSeparator />
       <MenuItem
         disabled={moveUp === null}
@@ -230,7 +244,7 @@ function FolderMenuItems(props: FolderMenuProps) {
   );
 }
 
-/** An owner's top level: a new thread there, and (for Personal) the top level's instructions. */
+/** An owner's top level: a new thread there, and (for Personal) the top level's instructions and secrets. */
 export function OwnerMenu(props: {
   environmentId: EnvironmentId;
   snapshot: SignalboxFoldersSnapshot;
@@ -265,6 +279,21 @@ export function OwnerMenu(props: {
           >
             <FileTextIcon />
             Instructions…
+          </MenuItem>
+        ) : null}
+        {editsTopLevel ? (
+          <MenuItem
+            onClick={() =>
+              openFolderDialog({
+                kind: "secrets",
+                environmentId,
+                level: { _tag: "top" },
+                name: null,
+              })
+            }
+          >
+            <KeyRoundIcon />
+            Secrets…
           </MenuItem>
         ) : null}
       </MenuPopup>

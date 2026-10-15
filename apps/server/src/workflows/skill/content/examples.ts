@@ -1,3 +1,4 @@
+import { MERGE_GATE } from "../../defaults/mergeGate.ts";
 import { WAIT_FOR } from "../../defaults/waitFor.ts";
 import { WATCH_PULL_REQUEST } from "../../defaults/watchPullRequest.ts";
 
@@ -9,6 +10,7 @@ export const EXAMPLES: Readonly<Record<string, string>> = {
   // The built-ins, exactly as they run.
   "watch-pull-request.ts": WATCH_PULL_REQUEST,
   "wait-for.ts": WAIT_FOR,
+  "merge-gate.ts": MERGE_GATE,
   "rss-digest.ts": `import Parser from "rss-parser";
 
 export const meta = {

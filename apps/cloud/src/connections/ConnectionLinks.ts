@@ -2,13 +2,13 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
+import { hashRangeOf, hashSecret, isPublicId, publicIdOf } from "../auth/hashedSecrets.ts";
 import { randomKey } from "../pool/PoolLinks.ts";
 
 /**
@@ -87,20 +87,12 @@ const LinkRow = Schema.Struct({
 });
 const decodeLinkRows = Schema.decodeUnknownSync(Schema.Array(LinkRow));
 
-/** A link's public id: enough of its hash to tell links apart, nothing to use one. */
-const ID_LENGTH = 16;
-const idOf = (secretHash: string) => secretHash.slice(0, ID_LENGTH);
-const isLinkId = (id: string) => new RegExp(`^[0-9a-f]{${ID_LENGTH}}$`).test(id);
-
 export const layer = Layer.effect(
   ConnectionLinks,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const crypto = yield* Crypto.Crypto;
-    const hash = (secret: string) =>
-      crypto
-        .digest("SHA-256", new TextEncoder().encode(secret))
-        .pipe(Effect.map(Hex.encode), Effect.orDie);
+    const hash = (secret: string) => hashSecret(crypto, secret);
 
     const create: ConnectionLinks["Service"]["create"] = (label) =>
       Effect.gen(function* () {
@@ -133,7 +125,7 @@ export const layer = Layer.effect(
         last_used_at FROM connection_links ORDER BY created_at`.pipe(
       Effect.map((rows) =>
         decodeLinkRows(rows).map((row) => ({
-          id: idOf(row.secret_hash),
+          id: publicIdOf(row.secret_hash),
           label: row.label,
           createdAt: row.created_at,
           lastUsedAt: row.last_used_at,
@@ -141,11 +133,12 @@ export const layer = Layer.effect(
       ),
     );
 
-    // Hashes are lowercase hex, so the ids' range is a primary-key scan.
     const revoke: ConnectionLinks["Service"]["revoke"] = (id) =>
-      isLinkId(id)
+      isPublicId(id)
         ? sql`DELETE FROM connection_links
-            WHERE secret_hash >= ${id} AND secret_hash < ${`${id}g`}`.pipe(Effect.asVoid)
+            WHERE secret_hash >= ${hashRangeOf(id)[0]} AND secret_hash < ${hashRangeOf(id)[1]}`.pipe(
+            Effect.asVoid,
+          )
         : Effect.void;
 
     return ConnectionLinks.of({ create, check, list, revoke });

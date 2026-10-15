@@ -21,7 +21,7 @@ export interface ModelGatewayEnv {
       path: string,
       request: Request,
     ) => Promise<ModelServeReply>;
-    /** Hands a request's record to the thread its token names, for the turn's diagnostics. */
+    /** Hands a request's record to the thread its token names, or a local key's to its user. */
     readonly report: (record: ModelGatewayRecord) => Promise<void>;
   };
 }
@@ -36,7 +36,9 @@ export default {
         console.log(JSON.stringify({ event: "model_gateway.request", ...record }));
         // In the background, so a slow thread never holds the response up. Only a
         // granted request is for a turn; a denied one names whatever thread its token claims.
-        if (record.threadId !== null && record.runId !== null) {
+        // A key counts what its pool served.
+        const served = record.local !== undefined && record.status < 400;
+        if ((record.threadId !== null && record.runId !== null) || served) {
           ctx.waitUntil(env.GRANTS.report(record).catch(() => undefined));
         }
       },
