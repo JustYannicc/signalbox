@@ -24,6 +24,7 @@ import {
 } from "../linuxSecretStorage.ts";
 import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
+import { withLocalServerAvailability } from "../signalbox/DesktopThinClient.ts";
 
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
@@ -536,7 +537,11 @@ export const make = Effect.gen(function* () {
         environment.desktopSettingsPath,
         environment.appVersion,
       );
-      return yield* SynchronizedRef.setAndGet(settingsRef, settings);
+      return yield* SynchronizedRef.setAndGet(
+        settingsRef,
+        // signalbox: the thin cloud build has no local server to turn on.
+        withLocalServerAvailability(settings, environment.localServerBundled),
+      );
     }).pipe(Effect.withSpan("desktop.settings.load")),
     setMainWindowBounds: (bounds, isMaximized) =>
       persist((settings) => setMainWindowBounds(settings, bounds, isMaximized)).pipe(
@@ -577,7 +582,10 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("desktop.settings.setWslOnly", { attributes: { enabled } }),
       ),
     setLocalEnvironmentEnabled: (enabled) =>
-      persist((settings) => setLocalEnvironmentEnabled(settings, enabled)).pipe(
+      persist((settings) =>
+        // signalbox: a no-op in the thin cloud build, so nothing relaunches.
+        setLocalEnvironmentEnabled(settings, enabled && environment.localServerBundled),
+      ).pipe(
         Effect.withSpan("desktop.settings.setLocalEnvironmentEnabled", { attributes: { enabled } }),
       ),
     applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(

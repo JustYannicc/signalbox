@@ -72,11 +72,12 @@ jobs:
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
+      EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
       # Optional: `cloud.*` usage analytics (#116). Production only, so
       # previews never mix test turns into the cost data.
       SIGNALBOX_POSTHOG_KEY: ${{ vars.SIGNALBOX_POSTHOG_KEY }}
       SIGNALBOX_POSTHOG_HOST: ${{ vars.SIGNALBOX_POSTHOG_HOST }}
-      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
       SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
       # Optional: membership changes from WorkOS at once (docs/operations/cloud.md).
@@ -219,6 +220,8 @@ jobs:
       # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
+      # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
+      EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
       BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
       # The pull request's own Runner on boat machines, when it changes the Runner.

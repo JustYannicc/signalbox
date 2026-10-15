@@ -387,11 +387,36 @@ export const acceptedRun = (result: WebhookTriggerResult) =>
 const SYNCED_AT = DateTime.makeUnsafe("2026-10-06T10:00:00.000Z");
 let sequence = 0;
 
-/** A thread's pull request sync, as upstream's sync reactor announces it. */
-export const pullRequestSynced = (
-  threadId: string,
-  snapshot: { state: string; checksState?: string; mergeability?: string; updatedAt?: string },
-) => ({
+type SyncedSnapshot = {
+  state: string;
+  checksState?: string;
+  mergeability?: string;
+  updatedAt?: string;
+};
+
+/** Pull request #12 as the sync reactor last saw it. */
+export const pullRequestLink = (snapshot: SyncedSnapshot) => ({
+  host: "github.com",
+  repository: "acme/app",
+  number: 12,
+  url: "https://github.com/acme/app/pull/12",
+  source: "agent",
+  linkedAt: "2026-10-06T09:00:00.000Z",
+  stack: null,
+  snapshot: {
+    title: "Fix login",
+    headBranch: "fix-login",
+    baseBranch: "main",
+    isDraft: false,
+    updatedAt: null,
+    // Each sync is its own fact.
+    syncedAt: DateTime.formatIso(DateTime.add(SYNCED_AT, { seconds: ++sequence })),
+    ...snapshot,
+  },
+});
+
+/** A thread's pull request sync, as a link, unlink or watch announces it. */
+export const pullRequestSynced = (threadId: string, snapshot: SyncedSnapshot) => ({
   id: `pr-sync-${++sequence}`,
   type: "thread.pull-request-synced",
   threadId,
@@ -407,28 +432,17 @@ export const pullRequestSynced = (
     branch: "fix-login",
     worktreePath: null,
     branchPullRequest: null,
-    pullRequests: [
-      {
-        host: "github.com",
-        repository: "acme/app",
-        number: 12,
-        url: "https://github.com/acme/app/pull/12",
-        source: "agent",
-        linkedAt: "2026-10-06T09:00:00.000Z",
-        stack: null,
-        snapshot: {
-          title: "Fix login",
-          headBranch: "fix-login",
-          baseBranch: "main",
-          isDraft: false,
-          updatedAt: null,
-          // Each sync is its own fact.
-          syncedAt: `2026-10-06T10:00:${String(sequence).padStart(2, "0")}.000Z`,
-          ...snapshot,
-        },
-      },
-    ],
+    pullRequests: [pullRequestLink(snapshot)],
   },
+});
+
+/** One pull request's periodic sync, as upstream's sync reactor announces it: just the link. */
+export const pullRequestLinkUpdated = (threadId: string, snapshot: SyncedSnapshot) => ({
+  id: `pr-link-sync-${++sequence}`,
+  type: "thread.pull-request-link-updated",
+  threadId,
+  occurredAt: SYNCED_AT,
+  payload: pullRequestLink(snapshot),
 });
 
 export const threadEvent = (type: string, threadId: string) => ({

@@ -14,12 +14,19 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const environmentFor = (
   path: Path.Path,
-  input: { home: string; baseDir: string; platform?: NodeJS.Platform; isPackaged?: boolean },
+  input: {
+    home: string;
+    baseDir: string;
+    platform?: NodeJS.Platform;
+    isPackaged?: boolean;
+    localServerBundled?: boolean;
+  },
 ) =>
   DesktopEnvironment.DesktopEnvironment.of({
     path,
     platform: input.platform ?? "linux",
     isPackaged: input.isPackaged ?? true,
+    localServerBundled: input.localServerBundled ?? true,
     homeDirectory: input.home,
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
@@ -29,7 +36,13 @@ const environmentFor = (
 
 /** The service for a packaged app; the launcher is written on Install. */
 const commandIn = (
-  input: { home: string; baseDir?: string; platform?: NodeJS.Platform; isPackaged?: boolean },
+  input: {
+    home: string;
+    baseDir?: string;
+    platform?: NodeJS.Platform;
+    isPackaged?: boolean;
+    localServerBundled?: boolean;
+  },
   spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"],
 ) =>
   Effect.gen(function* () {
@@ -252,6 +265,18 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const command = yield* commandIn({
         home: yield* fs.makeTempDirectoryScoped(),
         isPackaged: false,
+      });
+      expect((yield* command.state).supported).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
+  // signalbox: the command runs the bundled server, which the thin cloud build leaves out.
+  it.effect("offers nothing for the thin cloud build", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const command = yield* commandIn({
+        home: yield* fs.makeTempDirectoryScoped(),
+        localServerBundled: false,
       });
       expect((yield* command.state).supported).toBe(false);
     }).pipe(Effect.scoped),

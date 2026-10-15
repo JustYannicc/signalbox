@@ -8,6 +8,7 @@ import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStora
 import { useEnvironments } from "../state/environments";
 import { environmentSession } from "../state/session";
 import { toastManager } from "./ui/toast";
+import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 
 // Keep an active toast across remounts, including Strict Mode effect replay.
 const shown = new Set<EnvironmentId>();
@@ -72,6 +73,8 @@ function EnvironmentPermissionNotice({
 
 export function PermissionUpdateNotice() {
   const { environments } = useEnvironments();
+  // signalbox: pairing again is how this is fixed, and the one environment isn't paired.
+  if (!useShowsEnvironmentUi()) return null;
   return environments.map(({ environmentId, label }) => (
     <EnvironmentPermissionNotice key={environmentId} environmentId={environmentId} label={label} />
   ));

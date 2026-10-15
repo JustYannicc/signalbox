@@ -241,6 +241,7 @@ const make = Effect.gen(function* () {
                   pool,
                   source: usageSource({ pool, accounts }, now),
                   models: "models" in accounts ? accounts.models : [],
+                  role: "role" in accounts ? accounts.role : null,
                 })),
               ),
           { concurrency: "unbounded" },

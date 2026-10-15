@@ -2,29 +2,33 @@ import type { ThreadId } from "@t3tools/contracts";
 import * as Cookies from "effect/http/Cookies";
 
 /**
- * Where previews live. Every (thread, port) gets an origin of its own,
- * `<label>.<PREVIEW_DOMAIN>`, because dev servers assume they own their
+ * Where previews live. Every (thread, port) gets an origin of its own, the
+ * label in place of `PREVIEW_DOMAIN`'s `*`, because dev servers assume they own their
  * origin: absolute asset paths, HMR sockets, cookies, service workers. The
  * label is a hash of the thread and port: stable across machine generations
  * (so a preview's storage survives a wake) and DNS-safe for any thread id.
  * It's no secret; access is the cookie's job.
  *
- * `PREVIEW_DOMAIN` is a hostname with an optional port. Production wants a
- * registrable domain of its own (like githubusercontent.com), so preview pages
- * aren't same-site with the app; `wrangler dev` uses `localhost:8787`, whose
+ * `PREVIEW_DOMAIN` is the preview host with `*` for the label, in route
+ * pattern syntax, and an optional port: `*-pr12.signalbox-preview.dev`. A
+ * plain domain means `*.<domain>`. Deployments want a registrable domain of
+ * their own (like githubusercontent.com), so preview pages aren't same-site
+ * with the app, and share it by what follows the label: Universal SSL covers
+ * only one level of subdomains. `wrangler dev` uses `localhost:8787`, whose
  * subdomains browsers resolve to loopback. Unset, previews are off.
  */
 
 export interface PreviewEnv {
-  /** e.g. `signalbox-preview.run`, or `localhost:8787` under `wrangler dev`. */
+  /** e.g. `*-app.signalbox-preview.dev`, or `localhost:8787` under `wrangler dev`. */
   readonly PREVIEW_DOMAIN?: string;
   readonly LOCAL_WORKERD?: string;
 }
 
 export interface PreviewSettings {
-  /** Hostname and optional port, lower case. */
-  readonly domain: string;
-  readonly hostname: string;
+  /** What follows the label in a preview origin, port included, lower case. */
+  readonly suffix: string;
+  /** `suffix` without the port: what a preview request's hostname ends with. */
+  readonly hostSuffix: string;
   readonly scheme: "https" | "http";
 }
 
@@ -39,9 +43,12 @@ const LABEL_PATTERN = /^[a-z2-7]{26}$/;
 export function previewSettings(env: PreviewEnv): PreviewSettings | null {
   const domain = env.PREVIEW_DOMAIN?.trim().toLowerCase();
   if (domain === undefined || domain === "") return null;
+  const suffix = domain.startsWith("*") ? domain.slice(1) : `.${domain}`;
+  // The label must end at a separator, or the pattern would claim every host.
+  if (!/^[.-][a-z0-9]/.test(suffix)) return null;
   return {
-    domain,
-    hostname: domain.replace(/:\d+$/, ""),
+    suffix,
+    hostSuffix: suffix.replace(/:\d+$/, ""),
     // Local workerd serves plain HTTP; anything deployed is HTTPS.
     scheme: env.LOCAL_WORKERD === "1" ? "http" : "https",
   };
@@ -75,15 +82,18 @@ export async function previewLabel(threadId: ThreadId, port: number): Promise<st
 
 /** The label when `hostname` is a preview host under `settings`, else null. */
 export function labelOfHost(settings: PreviewSettings, hostname: string): string | null {
-  const suffix = `.${settings.hostname}`;
   const host = hostname.toLowerCase();
-  if (!host.endsWith(suffix)) return null;
-  const label = host.slice(0, -suffix.length);
+  if (!host.endsWith(settings.hostSuffix)) return null;
+  const label = host.slice(0, -settings.hostSuffix.length);
   return LABEL_PATTERN.test(label) ? label : null;
 }
 
+/** Whether `hostname` is under the preview domain, as a label or not. Such hosts never get the app. */
+export const isPreviewHost = (settings: PreviewSettings, hostname: string) =>
+  hostname.toLowerCase().endsWith(settings.hostSuffix);
+
 export const previewOrigin = (settings: PreviewSettings, label: string) =>
-  `${settings.scheme}://${label}.${settings.domain}`;
+  `${settings.scheme}://${label}${settings.suffix}`;
 
 /** A cookie's value from a `Cookie` header. */
 export const readCookie = (header: string | null, name: string): string | null =>

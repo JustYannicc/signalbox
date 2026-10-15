@@ -91,6 +91,14 @@ export interface PackRegistration {
   readonly external: ReadonlyArray<Oid>;
   /** Commits in the pack whose parents stay on the remote (a checked remote head). */
   readonly shallow?: ReadonlyArray<Oid>;
+  /** Files the pack's folders name that the remote keeps for the drive (#406), and their sizes when known. */
+  readonly promised?: ReadonlyArray<PromisedFile>;
+}
+
+/** A file a remote-backed drive leaves on its remote (#406): its id, and its size when known. */
+export interface PromisedFile {
+  readonly oid: Oid;
+  readonly size: number | null;
 }
 
 export interface Shortcut {
@@ -143,6 +151,10 @@ export class DriveStore extends Context.Service<
     readonly ref: (name: string) => Effect.Effect<Oid | null, SqlError>;
     /** Which of `oids` the drive does not have. */
     readonly missing: (oids: ReadonlyArray<Oid>) => Effect.Effect<ReadonlyArray<Oid>, SqlError>;
+    /** Which of `oids` the remote keeps for the drive (#406). */
+    readonly promised: (
+      oids: ReadonlyArray<Oid>,
+    ) => Effect.Effect<ReadonlyArray<PromisedFile>, SqlError>;
     /** Indexes a pack already stored in R2. Idempotent. Fails when it references objects the drive lacks. */
     readonly registerPack: (
       pack: PackRegistration,
@@ -311,6 +323,14 @@ const migrations = Migrator.fromRecord({
       pack_seq INTEGER NOT NULL
     )`;
   }),
+  // Files a remote-backed drive's folders name that the remote keeps (#406).
+  "0004_promised": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE promised (
+      oid TEXT PRIMARY KEY,
+      size INTEGER
+    )`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -352,6 +372,9 @@ const decodeShortcutRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.String })),
 );
 const OidRows = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ oid: Schema.String })));
+const PromisedRow = Schema.Struct({ oid: Schema.String, size: Schema.NullOr(Schema.Number) });
+const decodePromisedRows = Schema.decodeUnknownSync(Schema.Array(PromisedRow));
+const encodePromised = Schema.encodeSync(Schema.fromJsonString(Schema.Array(PromisedRow)));
 const decodeWorkRows = Schema.decodeUnknownSync(
   Schema.Array(
     Schema.Struct({
@@ -494,22 +517,46 @@ const make = Effect.gen(function* () {
       } satisfies RefWrite;
     }).pipe(sql.withTransaction);
 
+  /** What the drive neither holds nor has the remote keep for it. */
   const missing: DriveStore["Service"]["missing"] = (oids) =>
     Effect.gen(function* () {
       const unique = [...new Set(oids)];
       const found = new Set<string>();
       for (const chunk of chunks(unique)) {
-        const rows = OidRows(yield* sql`SELECT oid FROM objects WHERE oid IN ${sql.in(chunk)}`);
-        for (const row of rows) found.add(row.oid);
+        // Two queries: one with both lists would bind twice the parameters SQLite allows.
+        for (const row of OidRows(
+          yield* sql`SELECT oid FROM objects WHERE oid IN ${sql.in(chunk)}`,
+        ))
+          found.add(row.oid);
+        const rest = chunk.filter((oid) => !found.has(oid));
+        if (rest.length === 0) continue;
+        for (const row of OidRows(
+          yield* sql`SELECT oid FROM promised WHERE oid IN ${sql.in(rest)}`,
+        ))
+          found.add(row.oid);
       }
       return unique.filter((oid) => !found.has(oid));
+    });
+
+  const promised: DriveStore["Service"]["promised"] = (oids) =>
+    Effect.gen(function* () {
+      const out: Array<PromisedFile> = [];
+      for (const chunk of chunks([...new Set(oids)])) {
+        out.push(
+          ...decodePromisedRows(
+            yield* sql`SELECT oid, size FROM promised WHERE oid IN ${sql.in(chunk)}`,
+          ),
+        );
+      }
+      return out;
     });
 
   const registerPack: DriveStore["Service"]["registerPack"] = (pack) =>
     Effect.gen(function* () {
       const existing = yield* sql`SELECT seq FROM packs WHERE name = ${pack.name}`;
       if (existing.length > 0) return { _tag: "ok" } as const;
-      const absent = yield* missing(pack.external);
+      const promising = new Set((pack.promised ?? []).map((file) => file.oid));
+      const absent = (yield* missing(pack.external)).filter((oid) => !promising.has(oid));
       if (absent.length > 0) return { _tag: "missing", oids: absent } as const;
       const now = yield* Clock.currentTimeMillis;
       yield* sql`INSERT INTO packs (name, size, object_count, thread_id, created_at)
@@ -527,6 +574,11 @@ const make = Effect.gen(function* () {
       }
       for (const oid of pack.shallow ?? []) {
         yield* sql`INSERT OR IGNORE INTO shallow (oid, pack_seq) VALUES (${oid}, ${seq})`;
+      }
+      // One statement however many: a big remote names hundreds of thousands of files.
+      if (pack.promised !== undefined && pack.promised.length > 0) {
+        yield* sql`INSERT OR IGNORE INTO promised (oid, size)
+          SELECT value ->> 'oid', value ->> 'size' FROM json_each(${encodePromised(pack.promised)})`;
       }
       for (const commit of pack.commits) {
         yield* sql`INSERT OR IGNORE INTO commits (oid, tree, author_name, author_email, time, message)
@@ -813,6 +865,7 @@ const make = Effect.gen(function* () {
     refs,
     ref,
     missing,
+    promised,
     registerPack,
     updateRefs,
     reconcile,

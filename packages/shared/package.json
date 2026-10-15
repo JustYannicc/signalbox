@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./signalboxAppUrl": {
+      "types": "./src/signalboxAppUrl.ts",
+      "import": "./src/signalboxAppUrl.ts"
+    },
     "./githubMarkdownLinks": {
       "types": "./src/githubMarkdownLinks.ts",
       "import": "./src/githubMarkdownLinks.ts"
@@ -518,6 +522,10 @@
     "./modelManifest": {
       "types": "./src/modelManifest.ts",
       "import": "./src/modelManifest.ts"
+    },
+    "./poolUsage": {
+      "types": "./src/poolUsage.ts",
+      "import": "./src/poolUsage.ts"
     }
   },
   "scripts": {

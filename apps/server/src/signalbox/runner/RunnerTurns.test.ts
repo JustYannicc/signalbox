@@ -35,6 +35,7 @@ import type { DriveOutcome, PreparedDrive, RunnerDrive, RunnerDriveError } from 
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
+import { DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -848,6 +849,40 @@ describe("RunnerTurns", () => {
           const failed = reported[1];
           expect(failed?.kind === "turn.failed" && failed.message).toBe(message);
           expect(fake.calls).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect("fails the turn with what's too big when the drive can't take it", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const reported: Array<RunnerItem> = [];
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            openDrive: () =>
+              Effect.succeed(
+                preparingDrive([
+                  Effect.fail(
+                    new DriveTooLargeError({
+                      message: "Signalbox can't save owner/repo to its drive: This save is 80 MB.",
+                    }),
+                  ),
+                ]),
+              ),
+          });
+          yield* turns.start({ turn: turnFor(1), modelToken: "token-1", drive: access });
+          yield* settle;
+
+          const failed = reported.find((item) => item.kind === "turn.failed");
+          expect(failed?.kind === "turn.failed" && failed.message).toBe(
+            "Signalbox couldn't get this thread's files ready: Signalbox can't save owner/repo to its drive: This save is 80 MB.",
+          );
         }),
       ),
     );

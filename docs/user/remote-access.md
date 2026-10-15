@@ -3,6 +3,9 @@
 Connect a phone, browser, or another desktop app to Signalbox running on a different
 machine. That machine must stay running and reachable while you work.
 
+This page is for self-hosted servers. With Signalbox Cloud there is nothing to connect: it
+is your one environment, and the desktop and mobile apps sign in to it.
+
 ## Signalbox Connect
 
 Signalbox Connect makes an environment available to your other devices without setting

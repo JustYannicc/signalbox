@@ -24,6 +24,7 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { barColor } from "./UsageLimits";
 import { LimitSegment } from "./UsageLimitsSegment";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 /**
  * One pooled window as equal-width segments, one per account, each filled by
@@ -219,11 +220,14 @@ export function UsageLimitsPooled({
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
+  const showsEnvironmentUi = useShowsEnvironmentUi();
   return (
     <div className="flex flex-col gap-8">
       {pools.length === 0 && notices.length === 0 && !cursorPrompt && externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No provider on the selected environments reports subscription limits.
+          {showsEnvironmentUi
+            ? "No provider on the selected environments reports subscription limits."
+            : "No provider reports subscription limits."}
         </p>
       ) : null}
       <PoolSummary pools={pools} now={now} />

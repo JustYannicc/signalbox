@@ -70,17 +70,15 @@ export function runnerTurnFor(projection: Projection): Omit<RunnerTurn, "traceId
   // The Runner knows harnesses, not pools: the pool travels in the model token.
   const instanceId = runnerInstanceFor(run.providerInstanceId) ?? run.providerInstanceId;
   // The harness counts turns on its own session; runs that never started never
-  // reached it, and without a session ref there is nothing to resume: the
-  // harness starts a new session rather than resume one it never wrote.
-  const priorTurns =
-    providerThread.nativeThreadRef === null
-      ? 0
-      : projection.runs.filter(
-          (candidate) =>
-            candidate.ordinal < run.ordinal &&
-            candidate.providerThreadId === providerThread.id &&
-            candidate.startedAt !== null,
-        ).length;
+  // reached it. A turn with no session to resume starts over at 1 instead
+  // (`ThreadRunner`'s `turnFor`); later ones count from the thread's runs,
+  // which only has to stay above 1 for the harness to resume.
+  const priorTurns = projection.runs.filter(
+    (candidate) =>
+      candidate.ordinal < run.ordinal &&
+      candidate.providerThreadId === providerThread.id &&
+      candidate.startedAt !== null,
+  ).length;
   return {
     threadId: projection.thread.id,
     runId: run.id,

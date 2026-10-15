@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import { type CloudApp, layerServices, makeCloudApp } from "./app.ts";
 import { isPoolLinkPath, routePoolLink } from "./pool/poolLink.ts";
 import type { PoolObjectEnv } from "./pool/PoolObject.ts";
-import { labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
+import { isPreviewHost, labelOfHost, previewSettings } from "./thread/preview/previewHost.ts";
 import { routePreview } from "./thread/preview/previewRoute.ts";
 import { attachmentStorage } from "./attachments/attachmentObjects.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
@@ -80,8 +80,10 @@ export default {
     }
     // A preview origin serves the thread's dev server and nothing of the app.
     const previews = previewSettings(env);
-    if (previews !== null && labelOfHost(previews, hostname) !== null) {
-      return routePreview(env.THREADS, request, { localWorkerd });
+    if (previews !== null && isPreviewHost(previews, hostname)) {
+      return labelOfHost(previews, hostname) === null
+        ? new Response("Not found", { status: 404 })
+        : routePreview(env.THREADS, request, { localWorkerd });
     }
     const app = appFor(env);
     if (pathname === "/ws") return app.webSocket(request);
