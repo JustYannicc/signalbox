@@ -11,6 +11,7 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { isHarnessInstance } from "./providerCatalog.ts";
+import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import { activeRun, resumeQueueEvents, startRunEvents } from "./runLifecycle.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
@@ -266,6 +267,10 @@ export function decide(
         { interactionMode: command.interactionMode },
         ctx,
       );
+    case "thread.pull-request.link":
+    case "thread.pull-request.unlink":
+    case "thread.pull-request-link.sync":
+      return accept(pullRequestLinkEvents(projection, command, ctx));
     default:
       return reject(unsupported(command.type));
   }
