@@ -43,3 +43,14 @@ export const createTables = Effect.gen(function* () {
     WHERE project_placements.section_id IS NOT NULL
       AND project_placements.project_id NOT LIKE 'drive:%'`;
 });
+
+/**
+ * `UserStore`'s `0015` migration, with the user's 1Password account
+ * (`OnePasswordAccount`): each level's 1Password Environment (#395), a
+ * reference only, never a value.
+ */
+export const addSecrets = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE folders ADD COLUMN secrets_environment_id TEXT`;
+  yield* sql`ALTER TABLE folders_state ADD COLUMN secrets_environment_id TEXT`;
+});

@@ -346,8 +346,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       }
       const mirrored = yield* drive.mirrorMain(fetched.head).pipe(Effect.result);
       if (mirrored._tag === "Success" && mirrored.success === null) return;
-      const reason =
-        mirrored._tag === "Success" ? mirrored.success : Cause.pretty(Cause.fail(mirrored.failure));
+      // The error's own words: this becomes the turn's failure message, so no stack.
+      const reason = mirrored._tag === "Success" ? mirrored.success : mirrored.failure.message;
       // GitHub may still be catching up on a merge; the drive's copy is the next best start.
       if (drive.known().main === null) {
         return yield* new RunnerGitError({
@@ -356,6 +356,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       }
       yield* Effect.logWarning("mirroring the remote failed; working from the drive's copy", {
         reason,
+        ...(mirrored._tag === "Failure" ? { error: mirrored.failure } : {}),
       });
     });
 
