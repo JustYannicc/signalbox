@@ -69,6 +69,13 @@ RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/clau
 # fetched once into the machine's caches (`COREPACK_HOME`, RunnerCaches.ts).
 RUN corepack enable pnpm yarn
 
+# Bun, for projects with a `bun.lock` (RunnerDependencies.ts). Corepack doesn't
+# manage it; its npm package fetches the native binary on install.
+ARG BUN_VERSION=1.4.3
+RUN npm install --global --no-fund --no-audit --allow-scripts=bun "bun@${BUN_VERSION}" \
+  && npm cache clean --force \
+  && bun --version
+
 # What the Runner loads from disk beside itself, at the versions apps/server
 # pins: Playwright, which drives the browser, and 1Password's SDK, which reads a
 # folder's secrets (RunnerOnePassword.ts) and loads its WebAssembly core from

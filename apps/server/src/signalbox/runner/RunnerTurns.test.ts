@@ -262,6 +262,7 @@ describe("RunnerTurns", () => {
               }),
             autosave: Effect.sync(() => void driveCalls.push("autosave")),
             flush: Effect.void,
+            restoreDependencyEdits: Effect.void,
             finishTurn: () =>
               Effect.sync(() => {
                 driveCalls.push("finish");
@@ -424,6 +425,7 @@ describe("RunnerTurns", () => {
             }),
           autosave: Effect.sync(() => void driveCalls.push("autosave")),
           flush: Effect.void,
+          restoreDependencyEdits: Effect.void,
           finishTurn: () =>
             Effect.sync(() => {
               driveCalls.push("finish");
@@ -695,6 +697,7 @@ describe("RunnerTurns", () => {
         prepare: () => prepared.shift()!,
         autosave: Effect.void,
         flush: Effect.void,
+        restoreDependencyEdits: Effect.void,
         finishTurn: () =>
           Effect.succeed({
             checkpoint: null,
@@ -1145,6 +1148,7 @@ describe("RunnerTurns", () => {
             prepare: () => Effect.void,
             autosave: Effect.sync(() => void log.push("autosave")),
             flush: Effect.sync(() => void log.push("drive flush")),
+            restoreDependencyEdits: Effect.void,
           } as unknown as RunnerDrive;
           const turns = yield* makeRunnerTurns({
             threadId,

@@ -1290,6 +1290,14 @@ export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
 });
 export type OrchestrationV2CheckpointFileSummary = typeof OrchestrationV2CheckpointFileSummary.Type;
 
+/** signalbox: a folder a cloud thread's machine state leaves out, and how it comes back (#490). */
+export const OrchestrationV2CheckpointSkippedFolder = Schema.Struct({
+  path: Schema.String,
+  recipe: Schema.String,
+});
+export type OrchestrationV2CheckpointSkippedFolder =
+  typeof OrchestrationV2CheckpointSkippedFolder.Type;
+
 export const OrchestrationV2Checkpoint = Schema.Struct({
   id: CheckpointId,
   threadId: ThreadId,
@@ -1303,6 +1311,7 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   status: Schema.Literals(["ready", "missing", "error", "stale"]),
   files: Schema.Array(OrchestrationV2CheckpointFileSummary),
   capturedAt: Schema.DateTimeUtc,
+  skipped: Schema.optional(Schema.Array(OrchestrationV2CheckpointSkippedFolder)), // signalbox
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
 

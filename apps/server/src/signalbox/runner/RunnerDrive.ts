@@ -5,6 +5,7 @@ import {
   DRIVE_MERGE_MESSAGE,
   type DriveFileChange,
   type DriveRemote,
+  type SkippedFolder,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -23,6 +24,8 @@ import {
 import { type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
 import { EMPTY_TREE, makeRunnerGit, remoteCredentialFile, RunnerGitError } from "./RunnerGit.ts";
 import { makeRunnerInstructions, type RunnerInstructionsError } from "./RunnerInstructions.ts";
+import type { DependencyTree, DependencyTreesError } from "./RunnerDependencies.ts";
+import { makeMachineState, type OutsideFolder } from "./RunnerMachineState.ts";
 import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
 
 /**
@@ -53,6 +56,10 @@ import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
  * `prepare` also mounts the drive's shortcuts (`RunnerShortcuts.ts`) and
  * writes the instructions they bring (`RunnerInstructions.ts`), answering
  * that bundle's version so the harness session can follow it.
+ *
+ * Every save also keeps the thread's machine state (`RunnerMachineState.ts`,
+ * #490): what git leaves out of the branch, such as `.env` and `notes/`, and
+ * the thread's home. A new machine gets it back before its first turn.
  */
 
 export interface DriveCheckpoint {
@@ -60,6 +67,8 @@ export interface DriveCheckpoint {
   readonly start: string | null;
   readonly commit: string;
   readonly files: ReadonlyArray<DriveFileChange>;
+  /** What the machine state leaves out, and how each comes back; absent when none is kept. */
+  readonly skipped?: ReadonlyArray<SkippedFolder>;
 }
 
 export type DriveOutcome =
@@ -115,6 +124,12 @@ export interface RunnerDrive {
   readonly autosave: Effect.Effect<void>;
   /** Waits for running and queued auto-saves. */
   readonly flush: Effect.Effect<void>;
+  /**
+   * After the turn start's dependency installs: puts back files the thread
+   * edited inside dependency trees, where the rebuild landed on the key they
+   * were edited at. Only after `prepare` restored the thread on a new machine.
+   */
+  readonly restoreDependencyEdits: Effect.Effect<void>;
   readonly finishTurn: (input: {
     readonly message: string;
   }) => Effect.Effect<
@@ -163,6 +178,11 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   readonly client: DriveClient;
   /** The thread's own branch on a remote-backed drive's remote, which `git pull` follows. */
   readonly branch?: string;
+  /** What the thread's machine state holds beyond the checkout; none kept when absent. */
+  readonly machine?: {
+    readonly outside: ReadonlyArray<OutsideFolder>;
+    readonly trees: Effect.Effect<ReadonlyArray<DependencyTree>, DependencyTreesError>;
+  };
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -179,6 +199,19 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   let conflicted: ReadonlyArray<string> = [];
   /** The remote the drive is backed by, once read; a drive's remote never changes. */
   let remote: DriveRemote | null | undefined = undefined;
+  /** Where the last turn mounted the drive's shortcuts. */
+  let mounted: ReadonlySet<string> = new Set();
+  const machineState =
+    input.machine === undefined
+      ? null
+      : yield* makeMachineState({
+          cwd: input.cwd,
+          gitDir,
+          git,
+          outside: input.machine.outside,
+          trees: input.machine.trees,
+          shortcuts: () => mounted,
+        });
 
   /** The worktree as a tree, built in a scratch index so the agent's index and HEAD stay put. */
   const snapshotTree = (head: string | null) =>
@@ -204,7 +237,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     (found) => found.some(Boolean),
   );
 
-  const saveWip = Effect.gen(function* () {
+  const saveTracked = Effect.gen(function* () {
     // Mid-merge or mid-rebase the worktree holds conflict markers; the last save before stands.
     if ((yield* git.resolve("MERGE_HEAD")) !== null || (yield* rebasing)) return;
     const head = yield* git.resolve("HEAD");
@@ -215,6 +248,31 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     const refused = yield* drive.saveWip(commit);
     if (refused !== null) yield* Effect.logWarning("the drive refused an auto-save", { refused });
   });
+
+  /**
+   * Saves the machine state beside the latest auto-save, when it changed, and
+   * answers what it left out; null when none is kept. A cloud that keeps none
+   * gets none: its packs would be handed to every thread. `scanEdits`: look
+   * for edits inside dependency trees again (`RunnerMachineState.capture`).
+   */
+  const saveMachine = (scanEdits: boolean) =>
+    Effect.gen(function* () {
+      if (machineState === null || !drive.keepsMachine()) return null;
+      const known = drive.known();
+      const captured = yield* machineState.capture(yield* treeOf(known.wip ?? known.thread), {
+        scanEdits,
+      });
+      const tree = captured.tree ?? EMPTY_TREE;
+      if (tree === (yield* treeOf(known.machine))) return captured.skipped;
+      const commit = (yield* git.run(["commit-tree", tree, "-m", "Machine state"])).trim();
+      const refused = yield* drive.saveMachine(commit);
+      if (refused !== null) {
+        yield* Effect.logWarning("the drive refused the machine state", { refused });
+      }
+      return captured.skipped;
+    });
+
+  const saveWip = saveTracked.pipe(Effect.andThen(saveMachine(false)));
 
   let saving: Deferred.Deferred<void> | null = null;
   let dirty = false;
@@ -476,6 +534,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           if (fetched !== null) yield* syncRemote(fetched);
         }
         const state = yield* drive.open;
+        const notices: Array<string> = [];
         if (!existed || localThread !== state.thread) {
           conflicted = [];
           // The branch may still have files where a shortcut is mounted read-only.
@@ -494,60 +553,101 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
             }),
           );
         }
+        // A new machine: the last one's machine state comes back on top of the checkout.
+        if (!existed && machineState !== null && state.machine !== null) {
+          yield* machineState.restore(state.machine, state.wip ?? state.thread).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("restoring the machine state failed", Cause.pretty(cause)).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    notices.push(
+                      "Some of this thread's files outside git (ignored files, its home folder) couldn't be brought back to this machine.",
+                    );
+                  }),
+                ),
+              ),
+            ),
+          );
+        }
         turnStart = yield* git.resolve("HEAD");
         const mounts = yield* shortcuts.mount(remoteToken);
+        mounted = new Set(mounts.mounted.map((mount) => mount.path));
         return {
           instructions: yield* instructions.compose(mounts.mounted, folders),
-          notices: mounts.notices,
+          notices: [...notices, ...mounts.notices],
         } satisfies PreparedDrive;
       }),
     );
 
+  /** Saves the turn's machine state beside its branch, and lists what it left out on the checkpoint. */
+  const withMachineState = <E>(
+    finished: Effect.Effect<
+      { readonly checkpoint: DriveCheckpoint | null; readonly outcome: DriveOutcome },
+      E
+    >,
+  ) =>
+    Effect.gen(function* () {
+      const result = yield* finished;
+      // The turn's files are saved whatever happens here.
+      const skipped = yield* saveMachine(true).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("saving the machine state failed", Cause.pretty(cause)).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+      return result.checkpoint === null || skipped === null
+        ? result
+        : { ...result, checkpoint: { ...result.checkpoint, skipped } };
+    });
+
   const finishTurn: RunnerDrive["finishTurn"] = ({ message }) =>
     exclusive(
-      Effect.gen(function* () {
-        // Committing now would commit onto the rebase's detached HEAD; the branch stays as last saved.
-        if (yield* rebasing) {
-          return {
-            checkpoint: null,
-            outcome: {
-              _tag: "held",
-              reason:
-                "This turn's work isn't saved yet: a rebase is still in progress. Finish or abort it, and the next turn saves it.",
-            },
-          } as const;
-        }
-        let unresolved: ReadonlyArray<string> = [];
-        if (yield* mergeInProgress) {
-          unresolved = yield* concludeMerge;
-        } else if ((yield* git.run(["status", "--porcelain", "--untracked-files=all"])).trim()) {
-          yield* git.run(["add", "-A"]);
-          yield* git.run(["commit", "-q", "--no-verify", "-m", commitTitle(message)]);
-        }
-        const head = yield* git.resolve("HEAD");
-        const checkpoint =
-          head === null
-            ? null
-            : {
-                start: turnStart,
-                commit: head,
-                files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, head),
-              };
-        if (head === null) return { checkpoint, outcome: { _tag: "nothing_saved" } };
-        if (remote !== null && remote !== undefined) {
-          const refused = yield* drive.saveBranch(head);
-          return {
-            checkpoint,
-            outcome:
-              refused === null
-                ? ({ _tag: "saved", head } as const)
-                : ({ _tag: "not_landed", reason: refused } as const),
-          };
-        }
-        const outcome: DriveOutcome =
-          unresolved.length > 0 ? { _tag: "conflict", files: unresolved } : yield* land;
-        return { checkpoint, outcome };
-      }),
+      withMachineState(
+        Effect.gen(function* () {
+          // Committing now would commit onto the rebase's detached HEAD; the branch stays as last saved.
+          if (yield* rebasing) {
+            return {
+              checkpoint: null,
+              outcome: {
+                _tag: "held",
+                reason:
+                  "This turn's work isn't saved yet: a rebase is still in progress. Finish or abort it, and the next turn saves it.",
+              },
+            } as const;
+          }
+          let unresolved: ReadonlyArray<string> = [];
+          if (yield* mergeInProgress) {
+            unresolved = yield* concludeMerge;
+          } else if ((yield* git.run(["status", "--porcelain", "--untracked-files=all"])).trim()) {
+            yield* git.run(["add", "-A"]);
+            yield* git.run(["commit", "-q", "--no-verify", "-m", commitTitle(message)]);
+          }
+          const head = yield* git.resolve("HEAD");
+          const checkpoint =
+            head === null
+              ? null
+              : {
+                  start: turnStart,
+                  commit: head,
+                  files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, head),
+                };
+          if (head === null) return { checkpoint, outcome: { _tag: "nothing_saved" } };
+          if (remote !== null && remote !== undefined) {
+            const refused = yield* drive.saveBranch(head);
+            return {
+              checkpoint,
+              outcome:
+                refused === null
+                  ? ({ _tag: "saved", head } as const)
+                  : ({ _tag: "not_landed", reason: refused } as const),
+            };
+          }
+          const outcome: DriveOutcome =
+            unresolved.length > 0 ? { _tag: "conflict", files: unresolved } : yield* land;
+          return { checkpoint, outcome };
+        }),
+      ),
     );
 
   const abandonMerge = exclusive(
@@ -618,6 +718,17 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     prepare,
     autosave,
     flush,
+    restoreDependencyEdits:
+      machineState === null
+        ? Effect.void
+        : exclusive(machineState.restoreEdits).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "restoring edits inside dependency trees failed",
+                Cause.pretty(cause),
+              ),
+            ),
+          ),
     finishTurn,
     continueAfterResolution: exclusive(resolveAndLand),
     abandonMerge,

@@ -35,7 +35,10 @@ export interface DriveObjectApi {
   readonly open: (writer: DriveWriter) => Promise<RefWrite>;
   readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
-  readonly missing: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<Oid>>;
+  readonly missing: (
+    oids: ReadonlyArray<Oid>,
+    visibleTo: string | null,
+  ) => Promise<ReadonlyArray<Oid>>;
   readonly promised: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<PromisedFile>>;
   readonly registerPack: (
     pack: PackRegistration,

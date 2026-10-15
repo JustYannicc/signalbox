@@ -24,6 +24,7 @@ import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadPoolRow } from "../accountPool/ThreadPoolRow"; // signalbox
 import { ThreadKindRow } from "../threadKind/ThreadKindRow"; // signalbox: thread kinds
 import { ThreadWaitsSection } from "../automations/ThreadWaitsSection"; // signalbox
+import { ThreadSkippedFoldersRow } from "../threadMachineState/ThreadSkippedFoldersRow"; // signalbox: machine state
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -156,6 +157,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               ) : null}
               {density !== "essential" && !props.draftId ? ( // signalbox: thread kinds
                 <ThreadKindRow environmentId={props.environmentId} threadId={props.threadId} />
+              ) : null}
+              {density !== "essential" && !props.draftId ? ( // signalbox: machine state (#490)
+                <ThreadSkippedFoldersRow
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                />
               ) : null}
             </div>
           </ThreadDetailsSection>

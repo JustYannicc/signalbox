@@ -120,9 +120,11 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
   const path = yield* Path.Path;
   const { git, client, gitDir } = input;
   const packDir = path.join(gitDir, "objects", "pack");
-  let known: DriveRefs = { main: null, thread: null, wip: null };
+  let known: DriveRefs = { main: null, thread: null, wip: null, machine: null };
   /** Whether the drive is backed by a remote, as last seen. */
   let remoteBacked = false;
+  /** Whether the cloud keeps machine state (#490): only then is a pack ever private. */
+  let keepsMachine = false;
 
   /** Fetches the drive's packs we lack, then mirrors its refs. */
   const adopt = (state: DriveState) =>
@@ -139,11 +141,18 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         Effect.provideService(Path.Path, path),
       );
       if (seq !== null) client.havePacksThrough(seq);
-      for (const ref of ["main", "thread", "wip"] as const) {
-        yield* git.setRef(`refs/drive/${ref}`, state[ref]);
+      const refs = { ...state, machine: state.machine ?? null };
+      for (const ref of ["main", "thread", "wip", "machine"] as const) {
+        yield* git.setRef(`refs/drive/${ref}`, refs[ref]);
       }
-      known = { main: state.main, thread: state.thread, wip: state.wip };
+      known = {
+        main: state.main,
+        thread: state.thread,
+        wip: state.wip,
+        machine: state.machine ?? null,
+      };
       remoteBacked = state.remote !== null;
+      keepsMachine = state.machine !== undefined;
     });
 
   const driveShallow = path.join(gitDir, DRIVE_SHALLOW);
@@ -188,12 +197,22 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
    * Uploads what `commit` reaches that the drive lacks, as one full (not thin)
    * pack, through the drive's view. Remote commits it carries one deep keep
    * their files on the remote. `remoteHead`: `commit` is the remote's head,
-   * for `main`.
+   * for `main`. `private`: `commit` is the thread's machine state, whose pack
+   * only this thread is handed; it may lean on the drive's other packs, but
+   * no other pack ever leans on it.
    */
-  const upload = (commit: string, options: { readonly remoteHead?: boolean } = {}) =>
+  const upload = (
+    commit: string,
+    options: { readonly remoteHead?: boolean; readonly private?: boolean } = {},
+  ) =>
     Effect.gen(function* () {
       if (!(yield* fs.exists(driveShallow))) yield* fs.writeFileString(driveShallow, "");
-      const have = [known.main, known.thread, known.wip].filter((oid) => oid !== null);
+      const have = [
+        known.main,
+        known.thread,
+        known.wip,
+        ...(options.private === true ? [known.machine] : []),
+      ].filter((oid) => oid !== null);
       const remote = yield* remoteBase(commit, have);
       if (remote.length > MAX_REMOTE_COMMITS) {
         return yield* new DriveRefusedError({
@@ -250,6 +269,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
           {
             ...(options.remoteHead === true ? { remoteHead: commit } : {}),
             ...(others.length > 0 ? { remoteCommits: others } : {}),
+            ...(options.private === true ? { private: true } : {}),
           },
         );
         // Kept, so the next `open` does not download it back. The index goes last.
@@ -311,6 +331,13 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
     /** Saves `commit` as the auto-save. */
     saveWip: (commit: string) =>
       upload(commit).pipe(Effect.andThen(moveRefs([{ ref: "wip", to: commit }]))),
+    /** Whether the cloud keeps the thread's machine state. */
+    keepsMachine: () => keepsMachine,
+    /** Saves `commit` as the thread's machine state, in a pack only this thread is handed. */
+    saveMachine: (commit: string) =>
+      upload(commit, { private: true }).pipe(
+        Effect.andThen(moveRefs([{ ref: "machine", to: commit }])),
+      ),
     /** Saves the thread's branch at `head`: `thread` and `wip` both move to it. */
     saveBranch: (head: string) =>
       upload(head).pipe(

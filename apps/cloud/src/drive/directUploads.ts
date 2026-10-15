@@ -136,6 +136,7 @@ export const makeDirectUploads = (input: {
     readonly remoteHead?: Oid;
     readonly remoteCommits?: ReadonlyArray<Oid>;
     readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
+    readonly private?: boolean;
   }) {
     if (!/^[0-9a-f-]{36}$/.test(input.uploadId)) return refused("Unknown upload.");
     const packKey = incomingKey(input.driveId, input.uploadId, "pack", prefix);
@@ -181,6 +182,7 @@ export const makeDirectUploads = (input: {
         ...(input.remoteHead === undefined ? {} : { remoteHead: input.remoteHead }),
         ...(input.remoteCommits === undefined ? {} : { remoteCommits: input.remoteCommits }),
         ...(input.promisedSizes === undefined ? {} : { promisedSizes: input.promisedSizes }),
+        ...(input.private === true ? { private: true } : {}),
       });
     });
     // Stored or refused, the upload is done with. A failure keeps it for the machine's
