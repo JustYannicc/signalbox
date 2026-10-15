@@ -124,6 +124,7 @@ import {
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import { usePoolServerConfig, useProjectPoolModelSelection } from "../sections/useProjectPool"; // signalbox
+import { type NewTaskFolders, useNewTaskFolders } from "../folders/draft-folder"; // signalbox: folders
 import type { PoolNeed } from "@t3tools/client-runtime/state/sections"; // signalbox
 
 const NO_PROVIDERS: ReadonlyArray<ServerProvider> = []; // signalbox
@@ -206,6 +207,7 @@ type NewTaskFlowContextValue = {
   readonly modelOptions: ReadonlyArray<ModelOption>;
   /** signalbox: why the project's tasks can't run yet, if they can't. */
   readonly poolNeed: PoolNeed | null;
+  readonly folders: NewTaskFolders; // signalbox: folders
   readonly selectedModel: ModelSelection | null;
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderStatus: ServerProvider | null;
@@ -603,6 +605,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject?.id ?? null,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
+  const folders = useNewTaskFolders(activeDraftKey, selectedProject); // signalbox: folders
   // signalbox: the task starts on the pool its project runs on.
   const sectionPoolSelection = useProjectPoolModelSelection({
     environmentId: selectedProject?.environmentId ?? null,
@@ -610,6 +613,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selection: projectSettings.settings.defaultModelSelection ?? storedStickyModelSelection,
     providerInstances: projectSettings.settings.providerInstances,
     providers: selectedEnvironmentServerConfig?.providers ?? NO_PROVIDERS,
+    home: folders.poolHome, // signalbox: folders
   });
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
@@ -626,6 +630,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject?.environmentId ?? null,
     selectedProject?.id ?? null,
     selectedEnvironmentServerConfig,
+    folders.poolHome, // signalbox: folders
   );
   const modelOptions = useMemo(
     () =>
@@ -1390,6 +1395,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       isScratchDraft,
       modelOptions,
       poolNeed,
+      folders, // signalbox: folders
       selectedModel,
       selectedModelOption,
       selectedProviderStatus,
@@ -1447,6 +1453,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       projectScopes,
       modelOptions,
       poolNeed,
+      folders, // signalbox: folders
       prompt,
       providerGroups,
       replaceAttachments,

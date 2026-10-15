@@ -16,6 +16,9 @@ import { SectionNodeRow, ProjectRow } from "./SectionNavigationRows";
 import { useSectionActions } from "./use-section-actions";
 import { ContextSections } from "../contexts/ContextSections"; // signalbox: contexts
 import { useEnvironmentContexts } from "../../state/signalboxContexts"; // signalbox: contexts
+import { useNavigationPanelCopy, withFolderTrees } from "../folders/FolderPanelParts"; // signalbox: folders
+
+const EnvironmentTree = withFolderTrees(SectionTreeEnvironment); // signalbox: folders
 
 export function SectionNavigationPanel(props: {
   readonly environments: ReadonlyArray<SectionNavigationEnvironment>;
@@ -34,6 +37,7 @@ export function SectionNavigationPanel(props: {
       ),
     [props.environments, props.selectedEnvironmentId],
   );
+  const copy = useNavigationPanelCopy(visibleEnvironments); // signalbox: folders
 
   return (
     <View className="mx-3 mb-3 overflow-hidden rounded-2xl border border-border bg-card">
@@ -43,11 +47,9 @@ export function SectionNavigationPanel(props: {
             accessibilityRole="header"
             className="text-base font-t3-semibold text-foreground"
           >
-            Sections
+            {copy.title}
           </AppText>
-          <AppText className="mt-0.5 text-xs text-foreground-muted">
-            Choose a project to show its threads.
-          </AppText>
+          <AppText className="mt-0.5 text-xs text-foreground-muted">{copy.subtitle}</AppText>
         </View>
         <View className="flex-row items-center gap-1">
           <Pressable
@@ -59,7 +61,7 @@ export function SectionNavigationPanel(props: {
             <AppText className="text-sm text-primary">All threads</AppText>
           </Pressable>
           <MaterialIconButton
-            accessibilityLabel="Hide sections"
+            accessibilityLabel={copy.hide}
             icon="chevron.up"
             onPress={props.onClose}
             variant="tonal"
@@ -74,7 +76,7 @@ export function SectionNavigationPanel(props: {
         </View>
       ) : (
         visibleEnvironments.map((environment) => (
-          <SectionTreeEnvironment
+          <EnvironmentTree
             key={environment.environmentId}
             environment={environment}
             environmentCount={visibleEnvironments.length}
