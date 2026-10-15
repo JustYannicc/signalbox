@@ -193,6 +193,12 @@ Each preview gets its own container application,
 `signalbox-cloud-pr-<number>-threads`, deleted with the preview. Containers
 need the Cloudflare account on the Workers Paid plan.
 
+Every container application has a cap on how many run at once (`maxInstances`
+in `apps/cloud/infra/stage.ts`, for pools and threads). Past it no container
+starts: pools stop answering and turns fail with "No machine came up".
+Cloudflare doesn't alert on it, so `cloud-container-capacity.yml` checks
+production every ten minutes and opens an issue at 80%.
+
 To try light machines locally, give the `dev` environment the same
 `containers` entry (wrangler builds the image with Docker), bundle the Runner
 first, and point `CLOUD_URL` and `MODEL_GATEWAY_URL` at addresses the
