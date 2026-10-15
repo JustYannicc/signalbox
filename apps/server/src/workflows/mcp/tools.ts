@@ -7,7 +7,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as Toolkit from "effect/ai/Toolkit";
 
-import { BuiltInList } from "./builtIns.ts";
+import { BuiltInList } from "@signalbox/automations/tools/builtIns";
 import {
   AutomationSummary,
   ReadResult,
@@ -15,7 +15,7 @@ import {
   RunSummary,
   SaveResult,
   ValidateResult,
-} from "./summaries.ts";
+} from "@signalbox/automations/tools/summaries";
 import { tool } from "./tool.ts";
 import { ListWaitsTool, StopWaitingTool, WaitForTool } from "./waitTools.ts";
 
