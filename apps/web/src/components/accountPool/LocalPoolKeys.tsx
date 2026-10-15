@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 
 import { browserClientOs } from "../../connection/clientMetadata";
 import { useIsSignalboxCloud } from "../../github/CloudGitHubSettings";
-import { readLocalApi } from "../../localApi";
 import { useAccountPools } from "../../state/accountPools";
 import { useEnvironmentHttpBaseUrl } from "../../state/environments";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -15,9 +14,10 @@ import { Button } from "../ui/button";
 /**
  * Settings → Pools in Signalbox Cloud: run Claude Code and Codex on your own
  * computer with your pool. Making a key answers one command that checks it
- * and writes both harnesses' config (`apps/cloud/src/localKeys/`). Keys use
- * the cloud's session, so this runs on the cloud's own web app; elsewhere it
- * opens that page.
+ * and writes both harnesses' config (`apps/cloud/src/localKeys/`). The
+ * harnesses then call the cloud's model endpoint with the key; no Signalbox
+ * client is involved. Keys are managed with the cloud's session, so this runs
+ * on the cloud's own web app; elsewhere it links to that page.
  */
 
 interface LocalKey {
@@ -75,9 +75,7 @@ export function LocalPoolKeys({ environmentId }: { readonly environmentId: Envir
             <Button
               size="sm"
               variant="outline"
-              onClick={() =>
-                void readLocalApi()?.shell.openExternal(pageUrl("/settings/pools").toString())
-              }
+              render={<a href={pageUrl("/settings/pools").href} target="_blank" rel="noreferrer" />}
             >
               Set up on the web
             </Button>
