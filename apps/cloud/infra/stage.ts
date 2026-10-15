@@ -136,6 +136,8 @@ export const cloudStage = (stage: string): CloudStage => {
       DRIVE_PACKS_PREFIX: `pr-${number}/`,
       // Where a preview takes each user's setup from (`src/previewSetup/`).
       PREVIEW_SETUP_SOURCE: "https://app.signalbox.run",
+      // The idle-chat test clock (`src/http/threadKindRoutes.ts`), never in production.
+      THREAD_KIND_TEST_CLOCK: "1",
     },
   };
 };

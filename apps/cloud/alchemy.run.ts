@@ -123,6 +123,9 @@ function workerEnv(target: CloudStage) {
       T3CODE_WORKOS_API_KEY: yield* Config.Redacted("T3CODE_WORKOS_API_KEY"),
       // Optional: Claude and Codex on boat VMs.
       BOAT_API_KEY: yield* optionalSecret("BOAT_API_KEY"),
+      // Optional: chat or task classifiers (`src/threadKinds/`); unset, threads stay tasks.
+      TYPESAFE_API_KEY: yield* optionalSecret("TYPESAFE_API_KEY"),
+      OPENAI_API_KEY: yield* optionalSecret("OPENAI_API_KEY"),
       // Optional: pushes to phones (`src/push/`).
       APNS_TEAM_ID: yield* optionalSecret("APNS_TEAM_ID"),
       APNS_KEY_ID: yield* optionalSecret("APNS_KEY_ID"),

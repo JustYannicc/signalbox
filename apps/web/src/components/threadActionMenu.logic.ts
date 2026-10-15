@@ -1,5 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import type { ThreadKind } from "@t3tools/contracts/signalboxThreadKinds"; // signalbox: thread kinds
+import { type ThreadKindMenuId, withThreadKindItems } from "./threadKind/threadKindMenu.logic"; // signalbox: thread kinds
 
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
@@ -28,7 +30,8 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | ThreadKindMenuId; // signalbox: thread kinds
 
 export type DraftActionMenuId =
   | "copy"
@@ -99,6 +102,8 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** signalbox: the thread's chat or task kind; absent where its environment keeps none. */
+  readonly threadKind?: ThreadKind | null;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -249,9 +254,10 @@ export function buildThreadActionMenuItems(
       icon: "trash",
     },
   ];
+  const kindItems = withThreadKindItems(items, state.threadKind ?? null); // signalbox: thread kinds
   return state.canOperate
-    ? items
-    : items.map((item) =>
+    ? kindItems
+    : kindItems.map((item) =>
         threadActionRequiresOperate(item.id)
           ? {
               ...item,

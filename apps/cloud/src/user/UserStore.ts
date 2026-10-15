@@ -28,6 +28,7 @@ import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as FolderTables from "./folderTables.ts";
+import * as ThreadKindTables from "./threadKindTables.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserSections from "./UserSections.ts";
@@ -206,6 +207,7 @@ const migrations = Migrator.fromRecord({
   "0012_resource_bindings": ResourceBindings.createTables,
   "0013_folders": FolderTables.createTables,
   "0014_push_devices": PushDevices.createTables,
+  "0014_thread_kinds": ThreadKindTables.createTables,
   "0015_folder_secrets": Effect.andThen(FolderTables.addSecrets, OnePasswordAccount.createTables),
   "0016_local_keys": LocalKeys.createTables,
   "0017_api_keys": LocalKeys.addApiScopes,

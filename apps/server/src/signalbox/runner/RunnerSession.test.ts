@@ -181,6 +181,74 @@ describe("RunnerSession", () => {
     ),
   );
 
+  // #502: a disk-resumed machine's Runner process was replaced right after the
+  // first one reported its turn start. The new process numbered its batches
+  // from 1 again, and the thread took them for repeats of what it had.
+  it.effect("continues the thread's numbering when a new process takes over the generation", () =>
+    Effect.gen(function* () {
+      const thread = yield* makeFakeThread;
+      const label = (reported: RunnerItem) =>
+        reported.kind === "provider" ? reported.event.label : reported.kind;
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* makeFakeTurns;
+          yield* makeRunnerSession({
+            threadId,
+            generation: 1,
+            token: "token",
+            machineId: "vm:first",
+            imageVersion: "test",
+            build,
+            transport: thread.transport,
+            makeTurns: first.make,
+          });
+          yield* first.emit(item("a"));
+          yield* settle(
+            Effect.map(Ref.get(thread.acked), (acked) => acked === 1),
+            "a acked",
+          );
+          yield* first.emit(item("b"));
+          yield* settle(
+            Effect.map(Ref.get(thread.acked), (acked) => acked === 2),
+            "b acked",
+          );
+        }),
+      );
+
+      // The replacement reports something before the thread has welcomed it.
+      const connect = yield* Deferred.make<void>();
+      const second = yield* makeFakeTurns;
+      yield* makeRunnerSession({
+        threadId,
+        generation: 1,
+        token: "token",
+        machineId: "vm:second",
+        imageVersion: "test",
+        build,
+        transport: {
+          connect: Effect.andThen(Deferred.await(connect), thread.transport.connect),
+        },
+        makeTurns: second.make,
+      });
+      yield* second.emit(item("x"));
+      for (let round = 0; round < 3; round++) yield* TestClock.adjust("1 second");
+      yield* Deferred.succeed(connect, undefined);
+      yield* settle(
+        Effect.map(Ref.get(thread.hellos), (all) => all.length === 2),
+        "second hello",
+      );
+      yield* second.emit(item("y"));
+      yield* settle(
+        Effect.map(Ref.get(thread.committed), (all) => all.map(label).includes("y")),
+        "y committed",
+      );
+
+      expect((yield* Ref.get(thread.committed)).map(label)).toEqual(["a", "b", "x", "y"]);
+      expect(yield* Ref.get(thread.hellos)).toEqual([0, 0]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends when the thread refuses it", () =>
     Effect.scoped(
       Effect.gen(function* () {

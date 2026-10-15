@@ -31,7 +31,7 @@ import { traceIdOf } from "./diagnostics/traceId.ts";
 import { hasPendingTurnWork, scriptedStep } from "./scriptedTurn.ts";
 import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./threadDecider.ts";
 import type { DecisionContext } from "./threadEvents.ts";
-import { applyEvents, threadShellFromProjection } from "./threadProjection.ts";
+import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
@@ -116,6 +116,11 @@ export interface ThreadCreation {
    * `pools`; a turn it starts keeps them for the Runner. Absent: unresolved.
    */
   readonly instructions?: TurnInstructions;
+  /**
+   * Set by the idle-chat sweep on its `thread.archive`: the thread's
+   * `updatedAt` it judged idle at. A thread that changed since stays.
+   */
+  readonly idleSinceMs?: number;
   /**
    * The 1Password Environments on the thread's chain (#395), resolved with
    * `pools`; a turn it starts keeps them for the thread. Absent: unresolved.
@@ -223,11 +228,17 @@ interface State {
   readonly summaryKey: string;
 }
 
-/** The sidebar row without its timestamp, which moves on every streamed chunk. */
+/**
+ * The summary without its timestamp, which moves on every streamed chunk:
+ * the sidebar row, and when the thread's work started.
+ */
 const summaryKey = (projection: OrchestrationV2ThreadProjection | null) => {
   if (projection === null) return "";
   const { updatedAt: _updatedAt, ...rest } = threadShellFromProjection(projection);
-  return JSON.stringify(rest);
+  const started = workStartedAt(projection);
+  return JSON.stringify(
+    started === null ? rest : { ...rest, workStartedAt: DateTime.toEpochMillis(started) },
+  );
 };
 
 const toStreamItem = (stored: ThreadStore.StoredEvent): OrchestrationV2ThreadStreamItem => ({
@@ -486,6 +497,7 @@ const make = Effect.gen(function* () {
               }
             : onItsPool,
           ctx,
+          creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs },
         );
       },
     ).pipe(Effect.map(({ sequence }) => ({ sequence })));
@@ -582,12 +594,16 @@ const make = Effect.gen(function* () {
     (current) => current.thread !== null && hasPendingTurnWork(current.thread.projection),
   );
 
-  const summaryOf = (thread: Thread, revision: number): ThreadSummary => ({
-    threadId: thread.projection.thread.id,
-    contextId: thread.owner.contextId,
-    revision,
-    shell: threadShellFromProjection(thread.projection),
-  });
+  const summaryOf = (thread: Thread, revision: number): ThreadSummary => {
+    const started = workStartedAt(thread.projection);
+    return {
+      threadId: thread.projection.thread.id,
+      contextId: thread.owner.contextId,
+      revision,
+      shell: threadShellFromProjection(thread.projection),
+      ...(started === null ? {} : { workStartedAt: started }),
+    };
+  };
 
   const summary: ThreadEngine["Service"]["summary"] = (actor) =>
     Effect.gen(function* () {
