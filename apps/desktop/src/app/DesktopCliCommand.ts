@@ -171,7 +171,8 @@ export const make = Effect.gen(function* () {
   });
 
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
-    if (!environment.isPackaged) {
+    // signalbox: the command runs the bundled server, which the thin cloud build leaves out.
+    if (!environment.isPackaged || !environment.localServerBundled) {
       return { supported: false, installedPath: null, onPath: false } as const;
     }
     const installed = yield* installedAt;

@@ -20,8 +20,9 @@ Any WorkOS account that signs in gets a session, so enable accounts only where
 that is intended (hosted Signalbox). Self-hosted servers leave them off and pair.
 
 For development, put these in the main checkout's `.env`. `scripts/dev-runner.ts`
-loads it, and the `t3.json` setup links it into worktrees. Mobile reads an
-optional default server address from `EXPO_PUBLIC_SIGNALBOX_SERVER_URL`.
+loads it, and the `t3.json` setup links it into worktrees. Mobile signs in to
+`https://app.signalbox.run` unless `EXPO_PUBLIC_SIGNALBOX_SERVER_URL` names another
+server, such as a dev server.
 
 ## WorkOS application
 

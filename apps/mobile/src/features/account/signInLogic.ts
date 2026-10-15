@@ -3,6 +3,7 @@ import {
   AccountProvider,
   type AccountSignInError,
 } from "@t3tools/contracts/account";
+import { SIGNALBOX_APP_URL } from "@t3tools/shared/signalboxAppUrl";
 import * as Base64Url from "effect/encoding/Base64Url";
 
 /**
@@ -13,6 +14,15 @@ import * as Base64Url from "effect/encoding/Base64Url";
 
 /** Path of the deep link the server hands off to after native sign-in. */
 export const ACCOUNT_RETURN_PATH = "account-return";
+
+/**
+ * The server a fresh install signs in to: the build's
+ * `EXPO_PUBLIC_SIGNALBOX_SERVER_URL`, else Signalbox Cloud. "Use a different
+ * server" still reaches any other one.
+ */
+export function resolveDefaultServerUrl(configured: string | undefined): string {
+  return normalizeServerUrl(configured) ?? SIGNALBOX_APP_URL;
+}
 
 function isLocalHost(hostname: string): boolean {
   const bare = hostname.replace(/^\[|\]$/g, "");

@@ -67,9 +67,16 @@ macOS, an `.exe` for Windows, and an AppImage or `.deb` for Linux
 (`sudo apt install ./Signalbox-*.deb`). Signalbox installs next to
 [T3 Code](https://github.com/pingdotgg/t3code) and keeps its own data in `~/.signalbox`.
 
+The desktop app is a window onto Signalbox Cloud: a fresh install opens the sign-in, and
+your agents run in the cloud, not on this computer. To run agents on your own machine,
+install the [command line](#command-line) server there and add it under **Settings →
+Connections**, or choose **Use a different server** on the sign-in screen.
+
 The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
+
+The rest of this section applies when the desktop app runs agents on this computer.
 
 ### Importing existing data
 

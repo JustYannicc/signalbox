@@ -100,3 +100,11 @@ auth and platform-managed discovery are skipped and only saved environments (pai
 connect. This is possible because the desktop renderer is not served by the backend: the `signalbox://`
 scheme serves the bundled client from disk (Vite in development) and API traffic always goes to the
 environment's own URL.
+
+Signalbox's default desktop artifact is built on this mode: `scripts/build-desktop-artifact.ts`
+leaves out the server bundle and its dependencies unless `--local-server` is passed. The packaged
+app does not trust a flag for this; it checks whether the server entry exists
+(`apps/desktop/src/signalbox/DesktopThinClient.ts`) and keeps the local environment off without
+writing that to the settings file, so the same settings work in a build that has the server. With
+no local environment and nothing connected, desktop sign-in targets Signalbox Cloud and adds it as
+an environment (`apps/web/src/account/cloudDefault.ts`), reusing the "Add environment" sign-in.

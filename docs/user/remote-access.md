@@ -354,7 +354,9 @@ devices. For server version warnings, follow [Updating Signalbox](./updating.md)
 
 ## Using the Desktop App as a Remote Only
 
-If a computer should only drive work running elsewhere, turn off its local environment. In the
+The desktop app you download runs nothing locally: it signs in to Signalbox Cloud and
+connects to the environments you add. A desktop app that runs its own local environment can
+become a remote only too. In the
 desktop app, open **Settings → Connections** and switch off **Local
 environment**. Signalbox restarts without a local server: no local agents or terminals run, WSL
 backends stay off, and other devices can no longer connect to this computer. Your projects,

@@ -5,6 +5,7 @@ import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
+import { isLocalEnvironmentAvailable } from "~/account/cloudDefault";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
 import {
   useEnvironments,
@@ -86,7 +87,8 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
           getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
         managedTunnelActive,
         unsupportedCapabilities,
-      }),
+        // signalbox: the thin cloud build has no local server to turn on.
+      }).filter((item) => item.id !== "local-environment" || isLocalEnvironmentAvailable()),
     [
       managedTunnelActive,
       unsupportedCapabilities,

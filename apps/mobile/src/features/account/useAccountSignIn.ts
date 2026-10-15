@@ -25,13 +25,16 @@ import {
   accountReturnUrl,
   createPkcePair,
   normalizeServerUrl,
+  resolveDefaultServerUrl,
   serverDisplayHost,
   signInFailureCopy,
   type PkceCrypto,
 } from "./signInLogic";
 
-/** Build-time default server (`EXPO_PUBLIC_SIGNALBOX_SERVER_URL`); null asks for one. */
-export const DEFAULT_SERVER_URL = normalizeServerUrl(process.env.EXPO_PUBLIC_SIGNALBOX_SERVER_URL);
+/** The server a fresh install signs in to; see `resolveDefaultServerUrl`. */
+export const DEFAULT_SERVER_URL = resolveDefaultServerUrl(
+  process.env.EXPO_PUBLIC_SIGNALBOX_SERVER_URL,
+);
 
 const expoPkceCrypto: PkceCrypto = {
   randomBytes: ExpoCrypto.getRandomBytes,
@@ -78,9 +81,10 @@ export function useAccountSignIn(options: {
   readonly onSignedIn?: () => void;
 }) {
   const connectPairing = useAtomCommand(connectPairingUrl, { reportFailure: false });
-  const [server, setServer] = useState<AccountServerState>(() =>
-    DEFAULT_SERVER_URL ? { _tag: "checking", serverUrl: DEFAULT_SERVER_URL } : { _tag: "choose" },
-  );
+  const [server, setServer] = useState<AccountServerState>(() => ({
+    _tag: "checking",
+    serverUrl: DEFAULT_SERVER_URL,
+  }));
   const [pendingProvider, setPendingProvider] = useState<AccountProvider | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const checkIdRef = useRef(0);
@@ -120,7 +124,7 @@ export function useAccountSignIn(options: {
 
   // The default server starts out "checking" (see the initial state).
   useEffect(() => {
-    if (DEFAULT_SERVER_URL) settleCheck(DEFAULT_SERVER_URL, false);
+    settleCheck(DEFAULT_SERVER_URL, false);
   }, [settleCheck]);
 
   /** Returns false when the input isn't a server address. */

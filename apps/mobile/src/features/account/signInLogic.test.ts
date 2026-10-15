@@ -10,6 +10,7 @@ import {
   createPkcePair,
   normalizeServerUrl,
   pkceChallenge,
+  resolveDefaultServerUrl,
   serverDisplayHost,
   signInFailureCopy,
   socialProviders,
@@ -21,6 +22,17 @@ const nodeCrypto: PkceCrypto = {
   sha256: (data) =>
     Promise.resolve(new Uint8Array(NodeCrypto.createHash("sha256").update(data).digest())),
 };
+
+describe("resolveDefaultServerUrl", () => {
+  it("signs a fresh install in to Signalbox Cloud", () => {
+    expect(resolveDefaultServerUrl(undefined)).toBe("https://app.signalbox.run");
+    expect(resolveDefaultServerUrl("  ")).toBe("https://app.signalbox.run");
+  });
+
+  it("prefers the server a build names", () => {
+    expect(resolveDefaultServerUrl("box.example.com")).toBe("https://box.example.com");
+  });
+});
 
 describe("normalizeServerUrl", () => {
   it("defaults a bare hostname to https", () => {

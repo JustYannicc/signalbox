@@ -16,6 +16,7 @@ import {
   startNativeSignIn,
 } from "./accountSession";
 import { reloadAt } from "./accountPlatform";
+import { cloudDefaultOrigin } from "./cloudDefault";
 
 /**
  * Desktop's "Add environment" alternative to a pairing code: sign in to an
@@ -53,6 +54,10 @@ export function useFinishEnvironmentSignIn() {
   const navigate = useNavigate();
   return useCallback(
     (accountReturn: AccountReturn) => {
+      // signalbox: the default cloud sign-in started on /sign-in, so a failure goes back there.
+      // Read before `finish`, which consumes the pending attempt.
+      const pendingOrigin = readPendingEnvironmentSignIn();
+      const startedOnSignIn = pendingOrigin !== null && pendingOrigin === cloudDefaultOrigin();
       const finish = async () => {
         if (accountReturn._tag === "error") throw new AccountFlowError(accountReturn.error);
         const { origin, credential } = await completeEnvironmentSignIn(accountReturn.handoff);
@@ -70,7 +75,10 @@ export function useFinishEnvironmentSignIn() {
             ? "The environment was not added."
             : "Signing in didn't finish. Try again.",
         });
-        void navigate({ to: "/settings/connections", replace: true });
+        void navigate({
+          to: startedOnSignIn ? "/sign-in" : "/settings/connections",
+          replace: true,
+        });
       });
     },
     [connectPairing, navigate],

@@ -148,8 +148,10 @@ vp run dist:desktop:linux
 vp run dist:desktop:win
 ```
 
-DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
-to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
+Artifacts are the thin client for Signalbox Cloud: they leave out the local server, its
+runtime dependencies and the WSL runtime, and the app opens on sign-in. Pass `--local-server`
+for a build that runs agents on this computer. DMGs default to the host architecture. Use
+`--arch` to choose another target and `--keep-stage` to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
 
 ### Linux AppImage prerequisites

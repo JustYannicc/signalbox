@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./signalboxAppUrl": {
+      "types": "./src/signalboxAppUrl.ts",
+      "import": "./src/signalboxAppUrl.ts"
+    },
     "./githubMarkdownLinks": {
       "types": "./src/githubMarkdownLinks.ts",
       "import": "./src/githubMarkdownLinks.ts"
