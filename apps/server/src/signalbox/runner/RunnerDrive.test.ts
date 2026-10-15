@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the assertions run real git on temp dirs.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -442,6 +443,68 @@ describe("RunnerDrive", () => {
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       ),
     );
+
+    describe("with a checkout bigger than one pack the drive takes", () => {
+      const LIMIT = 64 * 1024;
+      /** Random bytes, so git can't compress or delta them below their size. */
+      const noise = (dir: string, file: string, bytes: number) => {
+        NodeFS.mkdirSync(NodePath.dirname(NodePath.join(dir, file)), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(dir, file), NodeCrypto.randomBytes(bytes));
+      };
+
+      it.effect("saves it as several packs, each one the drive takes and closed on its own", () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            for (let i = 0; i < 5; i++) noise(upstream.dir, `assets/${i}.bin`, 30 * 1024);
+            upstream.commit("README.md", "with assets\n", "Add assets");
+            const drive = makeFakeDrive(root, { upstream: upstream.dir, maxPackBytes: LIMIT });
+            const first = yield* machine(drive, root, "vm-1", "t1");
+            yield* first.runner.prepare("remote-token");
+
+            const head = git(upstream.dir, "rev-parse", "HEAD");
+            expect(drive.refs("t1")).toMatchObject({ main: head, thread: head });
+            expect(drive.packs.length).toBeGreaterThan(1);
+            for (const pack of drive.packs) expect(pack.size).toBeLessThanOrEqual(LIMIT);
+            expect(status(first.cwd)).toEqual([]);
+
+            // Another machine checks it out from those packs alone.
+            const second = yield* machine(drive, root, "vm-2", "t2");
+            yield* second.runner.prepare("remote-token");
+            for (let i = 0; i < 5; i++) {
+              const file = `assets/${i}.bin`;
+              expect(NodeFS.readFileSync(NodePath.join(second.cwd, file))).toEqual(
+                NodeFS.readFileSync(NodePath.join(upstream.dir, file)),
+              );
+            }
+            // A turn's work on top saves the same way.
+            noise(second.cwd, "assets/new.bin", 40 * 1024);
+            noise(second.cwd, "assets/other.bin", 40 * 1024);
+            expect((yield* second.runner.finishTurn({ message: "More" })).outcome._tag).toBe(
+              "saved",
+            );
+            for (const pack of drive.packs) expect(pack.size).toBeLessThanOrEqual(LIMIT);
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+      );
+
+      it.effect("fails with which file is too big when one file alone is", () =>
+        scopedTest((root) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            noise(upstream.dir, "big.bin", 100 * 1024);
+            upstream.commit("README.md", "with a big file\n", "Add big file");
+            const drive = makeFakeDrive(root, { upstream: upstream.dir, maxPackBytes: LIMIT });
+            const { runner } = yield* machine(drive, root, "vm-1", "t1");
+            const failed = yield* runner.prepare("remote-token").pipe(Effect.flip);
+            expect(failed._tag).toBe("DriveTooLargeError");
+            expect(failed.message).toMatch(/owner\/repo/);
+            expect(failed.message).toMatch(/big\.bin is 100 KB/);
+            expect(failed.message).toMatch(/64 KB/);
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        ),
+      );
+    });
 
     it.effect("fails a thread's first turn when the remote can't be fetched", () =>
       scopedTest((root) =>

@@ -60,6 +60,8 @@ export interface DriveClient {
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
   /** Where git fetches the drive's remote through the cloud. */
   readonly remoteUrl: string;
+  /** Biggest pack `uploadPack` takes; bigger uploads go as several. */
+  readonly maxPackBytes: number;
   /** The drive's shortcuts (#142), each target's packs listed after `have[target]`. */
   readonly shortcuts: (
     have: Readonly<Record<string, number>>,
@@ -223,6 +225,7 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
     mirror: (request) =>
       writeRefs(DRIVE_PATHS.mirror, driveJson.mirror.encode(request), "mirroring the remote"),
     remoteUrl: `${origin}${DRIVE_PATHS.remote}`,
+    maxPackBytes: MAX_PACK_BYTES,
     shortcuts: (have) =>
       postJson(
         DRIVE_PATHS.shortcuts,

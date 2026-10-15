@@ -9,15 +9,16 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import type {
-  DriveShortcut,
-  DriveState,
-  RefWriteResult,
+import {
+  type DriveShortcut,
+  type DriveState,
+  MAX_PACK_BYTES,
+  type RefWriteResult,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
 
 import { makeRunnerDrive } from "./RunnerDrive.ts";
-import type { DriveClient } from "./RunnerDriveClient.ts";
+import { type DriveClient, DriveClientError } from "./RunnerDriveClient.ts";
 
 const GIT_ENV = {
   ...process.env,
@@ -33,6 +34,8 @@ const gitRaw = (cwd: string, ...args: Array<string>) =>
     env: GIT_ENV,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    // `verify-pack -v` of a real checkout's pack lists every object.
+    maxBuffer: 1024 * 1024 * 1024,
   });
 export const git = (cwd: string, ...args: Array<string>) => gitRaw(cwd, ...args).trim();
 export const status = (cwd: string) =>
@@ -62,9 +65,15 @@ export const read = (cwd: string, file: string) =>
  */
 export const makeFakeDrive = (
   root: string,
-  options: { readonly upstream?: string; readonly id?: string } = {},
+  options: {
+    readonly upstream?: string;
+    readonly id?: string;
+    /** Biggest pack the drive takes, `MAX_PACK_BYTES` when absent. */
+    readonly maxPackBytes?: number;
+  } = {},
 ) => {
   const id = options.id ?? "drive-1";
+  const maxPackBytes = options.maxPackBytes ?? MAX_PACK_BYTES;
   const store = NodePath.join(root, options.id === undefined ? "store" : `store-${options.id}`);
   NodeFS.mkdirSync(store, { recursive: true });
   git(store, "init", "-q", "--bare");
@@ -124,6 +133,7 @@ export const makeFakeDrive = (
       }),
       state: Effect.sync(() => state(threadId, packsAfter)),
       remoteUrl: options.upstream === undefined ? "file:///nowhere" : `file://${options.upstream}`,
+      maxPackBytes,
       mirror: (request) =>
         Effect.sync((): RefWriteResult => {
           calls.mirror++;
@@ -150,36 +160,47 @@ export const makeFakeDrive = (
           }
         }),
       uploadPack: (idx, pack, upload = {}) =>
-        Effect.sync(() => {
-          const name = Buffer.from(pack.subarray(pack.length - 20)).toString("hex");
-          if (upload.remoteHead !== undefined && upload.remoteHead !== upstreamHead()) {
-            throw new Error("not the remote's head");
+        Effect.suspend(() => {
+          // Refused before it is sent, as the real client does.
+          if (pack.byteLength > maxPackBytes) {
+            return Effect.fail(
+              new DriveClientError({
+                message: `A pack of ${pack.byteLength} bytes is bigger than the drive takes (${maxPackBytes}).`,
+                retryable: false,
+              }),
+            );
           }
-          NodeFS.writeFileSync(NodePath.join(packDir, `pack-${name}.pack`), pack);
-          NodeFS.writeFileSync(NodePath.join(packDir, `pack-${name}.idx`), idx);
-          if (upload.remoteHead !== undefined) {
-            // Its parents stay on the remote, as the cloud records it.
-            NodeFS.appendFileSync(NodePath.join(store, "shallow"), `${upload.remoteHead}\n`);
-            shallow.push({ seq: packs.length + 1, oid: upload.remoteHead });
-          }
-          // Not thin: every delta base is inside the pack.
-          const listing = git(
-            store,
-            "verify-pack",
-            "-v",
-            NodePath.join(packDir, `pack-${name}.idx`),
-          );
-          // Closed: everything its commits reach is in this pack or an earlier one.
-          const commits = listing
-            .split("\n")
-            .filter((line) => / commit /.test(line))
-            .map((line) => line.split(" ")[0]!);
-          for (const commit of commits) git(store, "rev-list", "--objects", commit);
-          packs.push({ seq: packs.length + 1, name, size: pack.length });
-          return {
-            name,
-            objects: listing.split("\n").filter((line) => /^[0-9a-f]{40} /.test(line)).length,
-          };
+          return Effect.sync(() => {
+            const name = Buffer.from(pack.subarray(pack.length - 20)).toString("hex");
+            if (upload.remoteHead !== undefined && upload.remoteHead !== upstreamHead()) {
+              throw new Error("not the remote's head");
+            }
+            NodeFS.writeFileSync(NodePath.join(packDir, `pack-${name}.pack`), pack);
+            NodeFS.writeFileSync(NodePath.join(packDir, `pack-${name}.idx`), idx);
+            if (upload.remoteHead !== undefined) {
+              // Its parents stay on the remote, as the cloud records it.
+              NodeFS.appendFileSync(NodePath.join(store, "shallow"), `${upload.remoteHead}\n`);
+              shallow.push({ seq: packs.length + 1, oid: upload.remoteHead });
+            }
+            // Not thin: every delta base is inside the pack.
+            const listing = git(
+              store,
+              "verify-pack",
+              "-v",
+              NodePath.join(packDir, `pack-${name}.idx`),
+            );
+            // Closed: everything its commits reach is in this pack or an earlier one.
+            const commits = listing
+              .split("\n")
+              .filter((line) => / commit /.test(line))
+              .map((line) => line.split(" ")[0]!);
+            for (const commit of commits) git(store, "rev-list", "--objects", commit);
+            packs.push({ seq: packs.length + 1, name, size: pack.length });
+            return {
+              name,
+              objects: listing.split("\n").filter((line) => /^[0-9a-f]{40} /.test(line)).length,
+            };
+          });
         }),
       updateRefs: (updates) =>
         Effect.sync((): RefWriteResult => {

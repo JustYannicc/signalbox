@@ -15,10 +15,12 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
 
 import type { DriveClient, DriveClientError } from "./RunnerDriveClient.ts";
-import { type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
+import { type DriveRefs, DriveTooLargeError, makeDriveMirror } from "./RunnerDriveMirror.ts";
 import { EMPTY_TREE, makeRunnerGit, RunnerGitError } from "./RunnerGit.ts";
 import { makeRunnerInstructions, type RunnerInstructionsError } from "./RunnerInstructions.ts";
 import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
+
+export { DriveTooLargeError };
 
 /**
  * The thread's working directory as a checkout of its drive (#131). The
@@ -64,7 +66,11 @@ export type DriveOutcome =
   | { readonly _tag: "conflict"; readonly files: ReadonlyArray<string> }
   | { readonly _tag: "not_landed"; readonly reason: string };
 
-export type RunnerDriveError = RunnerGitError | DriveClientError | PlatformError.PlatformError;
+export type RunnerDriveError =
+  | RunnerGitError
+  | DriveClientError
+  | DriveTooLargeError
+  | PlatformError.PlatformError;
 
 export type SavedBranch =
   | { readonly _tag: "saved"; readonly head: string }
@@ -346,6 +352,12 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       }
       const mirrored = yield* drive.mirrorMain(fetched.head).pipe(Effect.result);
       if (mirrored._tag === "Success" && mirrored.success === null) return;
+      if (mirrored._tag === "Failure" && mirrored.failure._tag === "DriveTooLargeError") {
+        // Retrying won't shrink it: say what's too big, even when an older copy could do.
+        return yield* new DriveTooLargeError({
+          message: `Signalbox can't save ${remote?.repository ?? "this repository"} to its drive: ${mirrored.failure.message}`,
+        });
+      }
       const reason =
         mirrored._tag === "Success" ? mirrored.success : Cause.pretty(Cause.fail(mirrored.failure));
       // GitHub may still be catching up on a merge; the drive's copy is the next best start.
