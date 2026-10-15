@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { composerSubmissionIntentForKey } from "../../../composer-logic";
 import { DraftId } from "../../../composerDraftStore";
-import { holdLockedComposerSend } from "./composerSendLock";
+import { searchSlashCommandItems } from "../composerSlashCommandSearch";
+import { holdLockedComposerSend, sendLockSlashCommandItem } from "./composerSendLock";
 import { isComposerSendLocked, useComposerSendLockStore } from "./composerSendLockStore";
 
 const draft = DraftId.make("draft-1");
@@ -26,6 +27,15 @@ describe("composerSendLockStore", () => {
 
     expect(isComposerSendLocked(draft)).toBe(false);
     expect(useComposerSendLockStore.getState().lockedTargetKeys).toEqual({});
+  });
+  it("sets the lock idempotently, so /lock never unlocks", () => {
+    const store = useComposerSendLockStore.getState();
+    store.setSendLocked(draft, true);
+    store.setSendLocked(draft, true);
+    expect(isComposerSendLocked(draft)).toBe(true);
+    store.setSendLocked(draft, false);
+    store.setSendLocked(draft, false);
+    expect(isComposerSendLocked(draft)).toBe(false);
   });
 });
 
@@ -79,5 +89,17 @@ describe("holdLockedComposerSend", () => {
 
     expect(holdLockedComposerSend(draft, { ...prompt, answeringPlan: true })).toBe(false);
     expect(holdLockedComposerSend(draft, { ...annotation, answeringPlan: true })).toBe(true);
+  });
+});
+
+describe("sendLockSlashCommandItem", () => {
+  it("offers /lock on an unlocked draft and /unlock on a locked one", () => {
+    expect(searchSlashCommandItems([sendLockSlashCommandItem(false)], "lock")).toMatchObject([
+      { command: "lock", label: "/lock" },
+    ]);
+    expect(searchSlashCommandItems([sendLockSlashCommandItem(true)], "unl")).toMatchObject([
+      { command: "unlock", label: "/unlock" },
+    ]);
+    expect(searchSlashCommandItems([sendLockSlashCommandItem(true)], "lock")).toHaveLength(1);
   });
 });

@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "../../../lib/storage";
 
-export const SEND_LOCKED_REASON = "Sending locked · click the latch to unlock";
+export const SEND_LOCKED_REASON = "Sending is locked for this draft";
 
 /**
  * Per-draft send lock, keyed by `composerTargetKey`. While locked, Enter inserts a
@@ -13,15 +13,19 @@ export const SEND_LOCKED_REASON = "Sending locked · click the latch to unlock";
 interface ComposerSendLockState {
   lockedTargetKeys: Record<string, true>;
   toggleSendLocked: (targetKey: string) => void;
+  setSendLocked: (targetKey: string, locked: boolean) => void;
 }
 
 export const useComposerSendLockStore = create<ComposerSendLockState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       lockedTargetKeys: {},
       toggleSendLocked: (targetKey) =>
+        get().setSendLocked(targetKey, !get().lockedTargetKeys[targetKey]),
+      setSendLocked: (targetKey, locked) =>
         set((state) => {
-          if (!state.lockedTargetKeys[targetKey]) {
+          if (locked === (state.lockedTargetKeys[targetKey] === true)) return state;
+          if (locked) {
             return { lockedTargetKeys: { ...state.lockedTargetKeys, [targetKey]: true } };
           }
           const { [targetKey]: _removed, ...lockedTargetKeys } = state.lockedTargetKeys;
