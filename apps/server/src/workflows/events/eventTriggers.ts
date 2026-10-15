@@ -18,6 +18,7 @@ import type { AutomationRow, WorkflowStore } from "../WorkflowStore.ts";
 import type { ReadError } from "./candidate.ts";
 import { candidatesFor, type Actor, type Candidate, type EventReads } from "./normalize.ts";
 import type { PullRequestTracker } from "./pullRequestFacts.ts";
+import type { PullRequestReads } from "./pullRequestReads.ts";
 import type { RunWaitListener, RunWaits } from "./runWaits.ts";
 import {
   ACTORS,
@@ -47,7 +48,7 @@ import {
 
 const MINUTE_MS = 60_000;
 
-type Envelope = Readonly<Record<string, unknown>> & {
+export type Envelope = Readonly<Record<string, unknown>> & {
   readonly event: string;
   readonly id: string;
   readonly projectId: string;
@@ -92,6 +93,8 @@ export interface EventTriggerDependencies {
   readonly runWaits: RunWaits;
   /** Derives `pr.*` facts from pull request syncs. */
   readonly pullRequests: PullRequestTracker;
+  /** Host reads for pull request details, once the server registered them. */
+  readonly pullRequestReads: () => PullRequestReads | undefined;
 }
 
 export const makeEventTriggers = (deps: EventTriggerDependencies) =>
@@ -139,8 +142,17 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
         const current = yield* currentIndex;
         const hits: Array<Extract<Work, { type: "domain" }>["hits"][number]> = [];
         for (const candidate of [...candidatesFor(event), ...facts]) {
-          const subs = current.empty ? [] : current.lookup(candidate.name);
-          const waiting = yield* deps.runWaits.lookup(candidate.name);
+          // A candidate that knows its project skips listeners elsewhere before anything is read
+          // for it (pull request details are host reads).
+          const here = (projectId: string) =>
+            candidate.projectId === undefined || projectId === candidate.projectId;
+          const subs = (current.empty ? [] : current.lookup(candidate.name)).filter(
+            (sub) =>
+              (sub.trigger.scope ?? "project") !== "project" || here(sub.automation.project_id),
+          );
+          const waiting = (yield* deps.runWaits.lookup(candidate.name)).filter((listener) =>
+            here(listener.projectId),
+          );
           if (subs.length > 0 || waiting.length > 0) hits.push({ candidate, subs, waiting });
         }
         if (hits.length > 0) yield* enqueue({ type: "domain", event, hits });
@@ -289,6 +301,7 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
               .pipe(Effect.orElseSucceed(() => null)),
           ),
           threads,
+          pullRequests: deps.pullRequestReads(),
         };
         const caused = yield* Effect.cached(automationCaused(event, reads));
         for (const { candidate, subs, waiting } of item.hits) {

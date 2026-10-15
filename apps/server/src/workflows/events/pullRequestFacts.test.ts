@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
+import type { Candidate, EventReads } from "./candidate.ts";
 import { makePullRequestTracker } from "./pullRequestFacts.ts";
+import type { PullRequestReads, Remark } from "./pullRequestReads.ts";
 
 const sync = (snapshot: Record<string, unknown> | null, syncedAt = "2026-10-06T10:00:00.000Z") =>
   ({
@@ -58,4 +61,69 @@ describe("pull request facts", () => {
       "pr.merged",
     ]);
   });
+
+  it.effect(
+    "reads remarks once per moved updatedAt and splits them into comments and reviews",
+    () =>
+      Effect.gen(function* () {
+        const asked: string[] = [];
+        const remark = (id: string, kind: Remark["kind"]): Remark => ({
+          id,
+          kind,
+          author: "reviewer",
+          body: id,
+          path: null,
+          reviewState: null,
+          url: null,
+          at: "2026-10-06T10:05:00.000Z",
+        });
+        const pullRequests: PullRequestReads = {
+          remarksSince: (_ref, since) =>
+            Effect.sync(() => {
+              asked.push(since);
+              return [remark("c1", "issue-comment"), remark("r1", "review")];
+            }),
+          failedChecks: () => Effect.succeed([{ name: "lint", status: "failure", url: null }]),
+        };
+        const reads = {
+          shell: Effect.succeed(null),
+          threads: {} as never,
+          pullRequests,
+        } satisfies EventReads;
+        const build = (candidate: Candidate) => candidate.build(reads);
+
+        const tracker = makePullRequestTracker(0);
+        // The first snapshot has no "before": nothing to read since.
+        expect(
+          names(tracker, sync({ state: "open", updatedAt: "2026-10-06T10:00:00.000Z" })),
+        ).toEqual([]);
+        expect(
+          names(tracker, sync({ state: "open", updatedAt: "2026-10-06T10:00:00.000Z" })),
+        ).toEqual([]);
+        const moved = tracker.observe(
+          sync({ state: "open", updatedAt: "2026-10-06T10:05:00.000Z" }),
+        );
+        expect(moved.map((candidate) => candidate.name)).toEqual(["pr.commented", "pr.reviewed"]);
+        expect(yield* build(moved[0]!)).toMatchObject({ number: 7, remarks: [{ id: "c1" }] });
+        expect(yield* build(moved[1]!)).toMatchObject({ remarks: [{ id: "r1" }] });
+        expect(asked).toEqual(["2026-10-06T10:00:00.000Z"]);
+
+        // A read that failed still says something happened, once, without the details.
+        const unread = tracker.observe(
+          sync({ state: "open", updatedAt: "2026-10-06T10:09:00.000Z" }),
+        );
+        const blind = {
+          ...reads,
+          pullRequests: { ...pullRequests, remarksSince: () => Effect.succeed(null) },
+        };
+        expect(yield* unread[0]!.build(blind)).toMatchObject({ number: 7, remarks: null });
+        expect(yield* unread[1]!.build(blind)).toBeNull();
+
+        const [failed] = tracker.observe(
+          sync({ state: "open", checksState: "failing", updatedAt: "2026-10-06T10:09:00.000Z" }),
+        );
+        expect(failed!.name).toBe("pr.checks.failed");
+        expect(yield* build(failed!)).toMatchObject({ failedChecks: [{ name: "lint" }] });
+      }),
+  );
 });
