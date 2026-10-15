@@ -7,6 +7,8 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-30",
   "compatibility_flags": ["nodejs_compat"],
+  // Checking a directly uploaded pack streams through all of it (#406): up to 5 GiB.
+  "limits": { "cpu_ms": 300000 },
   // One origin: sign-in callbacks, cookies and saved connections all key on it.
   "workers_dev": false,
   "preview_urls": false,

@@ -128,8 +128,7 @@ export const makeDriveMirror = Effect.fn("makeDriveMirror")(function* (input: {
         ).trim();
         const file = (ext: string) => path.join(tmp, `pack-${hash}.${ext}`);
         const result = yield* client.uploadPack(
-          yield* fs.readFile(file("idx")),
-          yield* fs.readFile(file("pack")),
+          { idx: file("idx"), pack: file("pack") },
           options.remoteHead === true ? { remoteHead: commit } : {},
         );
         // Kept, so the next `open` does not download it back. The index goes last.

@@ -16,6 +16,7 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "aws4fetch": "1.0.20",
     "diff": "8.0.3",
     "effect": "catalog:"
   },

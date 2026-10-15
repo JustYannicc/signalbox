@@ -6,7 +6,7 @@ import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks } from "./DrivePacks.ts";
 import type { StoredCommit } from "./DriveStore.ts";
 import { parseCommit, parseTree } from "./git/gitObjects.ts";
-import { PackError, verifyPack } from "./git/gitPack.ts";
+import { PackError, type VerifiedPack, verifyPack } from "./git/gitPack.ts";
 import type { Bytes, Oid } from "./git/gitObjects.ts";
 
 /**
@@ -34,30 +34,31 @@ class InvalidPack extends Schema.TaggedError<InvalidPack>()("InvalidPack", {
   reason: Schema.String,
 }) {}
 
-const refused = (reason: string): UploadResult => ({ _tag: "refused", reason });
+export const refused = (reason: string): UploadResult => ({ _tag: "refused", reason });
 
-export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = never>(input: {
+/**
+ * A checked pack, accepted or refused: the closure check, then `store` puts
+ * its bytes where the drive keeps packs, and only then the drive indexes it.
+ * Both ways a pack arrives end here: in a request's body (`uploadPack`), or
+ * uploaded straight to storage and read back (`directUploads.ts`).
+ */
+export const acceptPack = Effect.fn("DriveUploads.acceptPack")(function* <
+  E,
+  R1,
+  R2 = never,
+>(input: {
   readonly driveId: string;
   readonly threadId: string;
-  readonly idx: Bytes;
-  readonly pack: Bytes;
+  readonly pack: VerifiedPack;
+  /** The pack's length in bytes. */
+  readonly size: number;
+  readonly store: Effect.Effect<void, E, R1>;
   /** A commit in the pack that is the remote's current head. Its parents and files may be absent. */
   readonly remoteHead?: Oid;
   /** The sizes of the remote head's files as the remote lists them, asked only when it promises any. */
-  readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
+  readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R2>;
 }) {
-  if (input.pack.length > MAX_PACK_BYTES) {
-    return refused(`Packs over ${MAX_PACK_BYTES} bytes are not stored yet.`);
-  }
-  const verified = yield* Effect.tryPromise({
-    try: () => verifyPack(input.pack, input.idx),
-    catch: (cause) =>
-      new InvalidPack({
-        reason: cause instanceof PackError ? cause.message : "The pack could not be read.",
-      }),
-  }).pipe(Effect.result);
-  if (verified._tag === "Failure") return refused(verified.failure.reason);
-  const pack = verified.success;
+  const { pack } = input;
   const drive = (yield* DriveDirectory).forDrive(input.driveId);
   const head = input.remoteHead === undefined ? undefined : pack.structure.get(input.remoteHead);
   if (input.remoteHead !== undefined && head?.type !== "commit") {
@@ -89,12 +90,7 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
   if (absent.length > 0) {
     return refused(`The pack references ${absent.length} objects the drive does not have.`);
   }
-  yield* (yield* DrivePacks).put({
-    driveId: input.driveId,
-    name: pack.name,
-    idx: input.idx,
-    pack: input.pack,
-  });
+  yield* input.store;
   const commits: Array<StoredCommit> = [];
   for (const [oid, object] of pack.structure) {
     if (object.type !== "commit") continue;
@@ -111,7 +107,7 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
   }
   const registered = yield* drive.registerPack({
     name: pack.name,
-    size: input.pack.length,
+    size: input.size,
     threadId: input.threadId,
     objects: pack.objects,
     commits,
@@ -132,4 +128,41 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
     );
   }
   return { _tag: "ok", name: pack.name, objects: pack.objects.length } satisfies UploadResult;
+});
+
+/** A pack uploaded in a request's body, checked in memory. */
+export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = never>(input: {
+  readonly driveId: string;
+  readonly threadId: string;
+  readonly idx: Bytes;
+  readonly pack: Bytes;
+  readonly remoteHead?: Oid;
+  readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
+}) {
+  if (input.pack.length > MAX_PACK_BYTES) {
+    return refused(`Packs over ${MAX_PACK_BYTES} bytes are not stored yet.`);
+  }
+  const verified = yield* Effect.tryPromise({
+    try: () => verifyPack(input.pack, input.idx),
+    catch: (cause) =>
+      new InvalidPack({
+        reason: cause instanceof PackError ? cause.message : "The pack could not be read.",
+      }),
+  }).pipe(Effect.result);
+  if (verified._tag === "Failure") return refused(verified.failure.reason);
+  const packs = yield* DrivePacks;
+  return yield* acceptPack({
+    driveId: input.driveId,
+    threadId: input.threadId,
+    pack: verified.success,
+    size: input.pack.length,
+    store: packs.put({
+      driveId: input.driveId,
+      name: verified.success.name,
+      idx: input.idx,
+      pack: input.pack,
+    }),
+    ...(input.remoteHead === undefined ? {} : { remoteHead: input.remoteHead }),
+    ...(input.promisedSizes === undefined ? {} : { promisedSizes: input.promisedSizes }),
+  });
 });

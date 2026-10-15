@@ -218,6 +218,9 @@ importers:
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
       diff:
         specifier: 8.0.3
         version: 8.0.3
@@ -18944,8 +18947,7 @@ snapshots:
 
   aws4@1.13.2: {}
 
-  aws4fetch@1.0.20:
-    optional: true
+  aws4fetch@1.0.20: {}
 
   axobject-query@4.1.0: {}
 

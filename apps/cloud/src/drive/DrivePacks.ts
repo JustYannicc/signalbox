@@ -69,9 +69,10 @@ export interface PackBucket {
     readonly size: number;
     readonly arrayBuffer: () => Promise<ArrayBuffer>;
   } | null>;
+  readonly delete: (keys: Array<string>) => Promise<unknown>;
 }
 
-const attempt = <A>(operation: string, run: () => Promise<A>) =>
+export const attempt = <A>(operation: string, run: () => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new DrivePackError({ operation, cause }) });
 
 export const layerBucket = (bucket: PackBucket, prefixValue?: string) => {
@@ -117,6 +118,9 @@ export const makeMemoryBucket = (): PackBucket & { readonly keys: () => Readonly
     keys: () => [...files.keys()],
     put: async (key, value) => {
       files.set(key, value.slice());
+    },
+    delete: async (keys) => {
+      for (const key of keys) files.delete(key);
     },
     get: async (key, options) => {
       const file = files.get(key);
