@@ -17,6 +17,7 @@ import {
   folderTree,
   homeOfProject,
   homeOfThread,
+  isFiledAway,
   newThreadIn,
   ownerFilesProject,
   poolOfHome,
@@ -154,6 +155,18 @@ describe("foldersModel", () => {
       file: true,
     });
     expect(newThreadIn(snapshot, null, SCRATCH)).toEqual({ projectId: SCRATCH, file: false });
+  });
+
+  it("tells a thread filed away from its project's home from one living there", () => {
+    // Started in Clients, which shares Personal's files: a plain New must not reuse it.
+    expect(isFiledAway(snapshot, { id: ThreadId.make("filed"), projectId: SCRATCH })).toBe(true);
+    expect(isFiledAway(snapshot, { id: ThreadId.make("loose"), projectId: SCRATCH })).toBe(false);
+    expect(isFiledAway(snapshot, { id: ThreadId.make("loose"), projectId: DRIVE })).toBe(false);
+    const filedToTop: SignalboxFoldersSnapshot = {
+      ...snapshot,
+      threadHomes: [{ threadId: ThreadId.make("moved"), folderId: null }],
+    };
+    expect(isFiledAway(filedToTop, { id: ThreadId.make("moved"), projectId: DRIVE })).toBe(true);
   });
 
   it("keeps one lookup per snapshot, so its identity only changes with the folders", () => {
