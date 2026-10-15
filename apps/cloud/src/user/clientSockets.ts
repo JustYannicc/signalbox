@@ -235,6 +235,12 @@ export class ClientSockets {
         );
       }
     }
+    if (this.live.size === 0) return;
+    const subscriptions = [...this.live.values()].reduce((sum, live) => sum + live.stored.size, 0);
+    // Each line is one wake from hibernation with clients connected.
+    await this.host.run(
+      Effect.logInfo("client sockets restored", { sockets: this.live.size, subscriptions }),
+    );
   }
 
   async message(socket: WebSocket, frame: string | ArrayBuffer) {
