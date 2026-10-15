@@ -157,6 +157,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       STAGE: pr-${{ github.event.pull_request.number }}
+      # TEMPORARY (#298 token diagnosis): log which Cloudflare call is refused.
+      DISTILLED_DEBUG_HTTP: "1"
       T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
