@@ -72,7 +72,18 @@ const optionalSecret = (name: string) =>
   Config.Redacted(name).pipe(Config.withDefault(Redacted.make("")));
 
 const drivePacks = (id: string, name: string) =>
-  Cloudflare.R2.Bucket(id, { name, jurisdiction: "eu" }).pipe(
+  Cloudflare.R2.Bucket(id, {
+    name,
+    jurisdiction: "eu",
+    // The rule Cloudflare gives new buckets, as `signalbox-drives` has it. The
+    // stack owns the whole list, so leaving it out would delete it.
+    lifecycleRules: [
+      {
+        id: "Default Multipart Abort Rule",
+        abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 7 * 24 * 60 * 60 } },
+      },
+    ],
+  }).pipe(
     // Shared across stages and full of drives: no stage ever deletes one.
     Alchemy.RemovalPolicy.retain(),
   );
