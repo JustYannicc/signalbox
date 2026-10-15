@@ -79,10 +79,10 @@ export class LocalKeys extends Context.Service<
   }
 >()("@signalbox/cloud/localKeys/LocalKeys") {}
 
-/** `UserStore`'s `0016` migration. */
+/** `UserStore`'s `0016` migration. Previews that ran it as `0014_local_keys` already have the table. */
 export const createTables = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`CREATE TABLE local_keys (
+  yield* sql`CREATE TABLE IF NOT EXISTS local_keys (
     secret_hash TEXT PRIMARY KEY,
     label TEXT NOT NULL,
     created_at INTEGER NOT NULL,
