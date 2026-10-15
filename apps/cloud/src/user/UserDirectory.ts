@@ -175,6 +175,13 @@ export interface UserObjectApi {
     readonly driveId: string;
     readonly request: PublishRequest;
   }) => Promise<PublishResult>;
+  /**
+   * The idle-chat sweep as of `asOfMs` instead of now, for previews' test
+   * clock (`http/threadKindRoutes.ts`). What it archived.
+   */
+  readonly sweepThreadKinds: (
+    asOfMs: number,
+  ) => Promise<{ readonly archived: ReadonlyArray<string> }>;
 }
 
 type Method = keyof UserObjectApi;
@@ -250,6 +257,7 @@ const METHODS = Object.keys({
   driveAccess: true,
   readableDrives: true,
   publishBranch: true,
+  sweepThreadKinds: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** Results that cross RPC encoded, decoded on arrival. */

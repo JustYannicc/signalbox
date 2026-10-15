@@ -103,6 +103,18 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.folders.setSecrets": write(),
   "signalbox.folders.setOnePassword": write(),
 
+  "signalbox.threadKinds.subscribe": read({
+    name: "threadKinds.list",
+    summary: "Which threads are chats and which are tasks, and when idle chats archive.",
+  }),
+  "signalbox.threadKinds.setKind": write({
+    name: "threads.setKind",
+    summary: "Make a thread a chat or a task.",
+  }),
+  "signalbox.threadKinds.setArchiveChatsAfterDays": write({
+    name: "threadKinds.setArchiveChatsAfterDays",
+  }),
+
   "signalbox.previews.subscribe": read({ name: "previews.list" }),
   "signalbox.previews.open": write(),
 

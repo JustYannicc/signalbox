@@ -67,6 +67,11 @@ vi.mock("../state/entities", () => ({
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("../components/workspacePathLocation", () => ({ readWorkspacePathLocation: () => null }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
+// signalbox: thread kinds
+vi.mock("../components/threadKind/threadKindMenu", () => ({
+  selectThreadKindMenuItem: () => false,
+}));
+vi.mock("../state/signalboxThreadKinds", () => ({ readThreadKind: () => null }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {
     recordEffect("metadata");

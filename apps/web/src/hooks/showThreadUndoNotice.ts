@@ -7,9 +7,10 @@ import { create } from "zustand";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import * as ThreadUndo from "./threadUndo";
+import type { ThreadKindUndoAction } from "../components/threadKind/threadKind.logic"; // signalbox: thread kinds
 
 type UndoOptions = {
-  action: "Settled" | "Snoozed" | "Unpinned" | "Archived" | "Discarded";
+  action: "Settled" | "Snoozed" | "Unpinned" | "Archived" | "Discarded" | ThreadKindUndoAction; // signalbox: thread kinds
   undo: () => Promise<AtomCommandResult<unknown, unknown>>;
   failureTitle: string;
   claim: ReturnType<typeof ThreadUndo.begin>;

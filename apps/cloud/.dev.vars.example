@@ -22,3 +22,8 @@ T3CODE_WORKOS_API_KEY=
 # PREVIEW_DOMAIN=localhost:8787
 # GitHub-backed drives need nothing more: users connect GitHub through WorkOS
 # Pipes with T3CODE_WORKOS_API_KEY above (docs/operations/cloud.md).
+# Optional: tell chats from tasks by a thread's first message
+# (docs/operations/cloud.md). Jev first when both are set, unless
+# THREAD_KIND_CLASSIFIER=openai.
+# TYPESAFE_API_KEY=
+# OPENAI_API_KEY=

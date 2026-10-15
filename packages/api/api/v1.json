@@ -1432,7 +1432,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "5b8da39a"
+      "output": "52c2d3b1"
     },
     {
       "name": "server.refreshProviders",
@@ -1469,7 +1469,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "982df33b"
+      "output": "e9a1a308"
     },
     {
       "name": "settings.get",
@@ -1594,6 +1594,21 @@
       "stream": "snapshot",
       "input": "03c2b661",
       "output": "fd689900"
+    },
+    {
+      "name": "threadKinds.list",
+      "rpc": "signalbox.threadKinds.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "0496a06b"
+    },
+    {
+      "name": "threadKinds.setArchiveChatsAfterDays",
+      "rpc": "signalbox.threadKinds.setArchiveChatsAfterDays",
+      "access": "write",
+      "input": "26b73c17",
+      "output": "0496a06b"
     },
     {
       "name": "threads.active.reorder",
@@ -1892,6 +1907,13 @@
       "access": "write",
       "input": "1fac6d00",
       "output": "aebf4e45"
+    },
+    {
+      "name": "threads.setKind",
+      "rpc": "signalbox.threadKinds.setKind",
+      "access": "write",
+      "input": "171e8cf9",
+      "output": "0496a06b"
     },
     {
       "name": "threads.settle",
