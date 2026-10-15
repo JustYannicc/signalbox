@@ -1,19 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { AutomationsOverviewPage } from "../components/automations/AutomationsOverviewPage";
+import {
+  AutomationsOverviewPage,
+  overviewViewSearch,
+} from "../components/automations/AutomationsOverviewPage";
 
-/** `?view=steps` shows every trigger and step instead of what needs you. */
-export interface AutomationsSearch {
-  readonly view?: "steps";
-}
+/** `?view=all` lists every automation and `?view=steps` every trigger and step, instead of what needs you. */
+export type AutomationsSearch = ReturnType<typeof overviewViewSearch>;
 
 function AutomationsRoute() {
   const { view } = Route.useSearch();
-  return <AutomationsOverviewPage view={view === "steps" ? "steps" : "needsYou"} />;
+  return <AutomationsOverviewPage view={view ?? "needsYou"} />;
 }
 
 export const Route = createFileRoute("/_chat/automations/")({
   validateSearch: (search: Record<string, unknown>): AutomationsSearch =>
-    search.view === "steps" ? { view: "steps" } : {},
+    overviewViewSearch(search.view),
   component: AutomationsRoute,
 });

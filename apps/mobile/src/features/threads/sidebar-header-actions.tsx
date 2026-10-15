@@ -1,8 +1,6 @@
 import { SymbolView } from "../../components/AppSymbol";
 import { Pressable, View } from "react-native";
 
-import { AutomationsSidebarButton } from "../automations/AutomationsSidebarButton"; // signalbox: automations
-
 export interface SidebarHeaderActionsProps {
   readonly onOpenSettings: () => void;
 }
@@ -33,7 +31,6 @@ function FallbackHeaderButton(props: {
 export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
   return (
     <View className="flex-row items-center gap-0.5">
-      <AutomationsSidebarButton /> {/* signalbox: automations */}
       <FallbackHeaderButton
         accessibilityLabel="Open settings"
         icon="gearshape"
