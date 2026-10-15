@@ -103,6 +103,7 @@ it.effect("a finished turn starts each automation listening for it, once per tur
         type: "event",
         event: "turn.finished",
         eventId: "turn.finished:thread-9-run",
+        at: detail.run.startedAt,
       });
       expect(yield* runsOf(failures.id)).toHaveLength(0);
 

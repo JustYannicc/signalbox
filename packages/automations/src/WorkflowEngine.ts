@@ -60,7 +60,7 @@ import {
   AutomationThreads,
   forkRoot,
 } from "./host.ts";
-import { fromJson, toJson } from "./json.ts";
+import { asRecord, fromJson, toJson } from "./json.ts";
 import { automationShows, listShows, makeLiveFeed, runShows, type Change } from "./liveFeed.ts";
 import { automationNotice, failureNotice } from "./notices.ts";
 import { makeRestart } from "./restart.ts";
@@ -450,6 +450,7 @@ export const makeEngine = <R>(
           );
         }
         const now = yield* DateTime.now;
+        const startedAt = DateTime.formatIso(now);
         const row = {
           run_id: launch.runId ?? (yield* newId("run")),
           automation_id: launch.automation.automation_id,
@@ -460,23 +461,29 @@ export const makeEngine = <R>(
           output_json: null,
           error: null,
           marks_json: "{}",
+          // A retry replays the run it retries, so it keeps that run's `at`. A restart is a new
+          // run with an empty history: it keeps the trigger but starts at its own time.
           trigger_json: retryOf
             ? retryOf.trigger_json
-            : (launch.triggerJson ??
-              toJson({
-                type: launch.trigger,
-                ...launch.webhook,
-                ...launch.event,
-                ...(launch.link?.thread_id
-                  ? {
-                      attach: {
-                        threadId: launch.link.thread_id,
-                        key: launch.link.attach_key,
-                        label: launch.link.label,
-                      },
-                    }
-                  : {}),
-              })),
+            : toJson({
+                ...(launch.triggerJson
+                  ? asRecord(fromJson(launch.triggerJson))
+                  : {
+                      type: launch.trigger,
+                      ...launch.webhook,
+                      ...launch.event,
+                      ...(launch.link?.thread_id
+                        ? {
+                            attach: {
+                              threadId: launch.link.thread_id,
+                              key: launch.link.attach_key,
+                              label: launch.link.label,
+                            },
+                          }
+                        : {}),
+                    }),
+                at: startedAt,
+              }),
           parent_run_id: launch.parent?.run_id ?? null,
           depth: retryOf
             ? retryOf.depth
@@ -490,7 +497,7 @@ export const makeEngine = <R>(
           retry_of_run_id: retryOf?.run_id ?? null,
           replay_seed: retryOf ? (retryOf.replay_seed ?? retryOf.run_id) : null,
           replay_started_at: retryOf ? (retryOf.replay_started_at ?? retryOf.started_at) : null,
-          started_at: DateTime.formatIso(now),
+          started_at: startedAt,
           finished_at: null,
         } satisfies WorkflowStore.NewRun;
         const link = launch.link;

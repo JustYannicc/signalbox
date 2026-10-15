@@ -12,7 +12,7 @@ import { errorDetailOf, stepArgs } from "./columns.ts";
 import { makeTimedWork } from "./engineTick.ts";
 import { automationError, causeText, isAutomationError } from "./errors.ts";
 import { forkRoot } from "./host.ts";
-import { fromJson, toJson } from "./json.ts";
+import { asRecord, fromJson, toJson } from "./json.ts";
 import { makeReplayQueue } from "./replayQueue.ts";
 import { makeInheritance } from "./retry.ts";
 import type { EngineInternals, RunDriver } from "./runDriver.ts";
@@ -32,7 +32,7 @@ import type { AutomationRow, StepRow } from "./WorkflowStore.ts";
  */
 
 const REPLAY_MISMATCH: AutomationErrorDetail = {
-  why: "A step's label came out different on replay, usually because it's built from data that changed between replays.",
+  why: "A step's label came out different on replay, usually because it's built from Date.now(), Math.random() or data that changed between replays.",
   fix: "Build step labels from the input and step results only, then run the automation again.",
   link: null,
 };
@@ -181,7 +181,11 @@ export const makeReplayDriver = (core: EngineInternals) =>
             replayWorkflow({
               script,
               input: fromJson(run.input_json),
-              trigger: fromJson(run.trigger_json) ?? { type: run.trigger },
+              // Runs launched before `trigger.at` existed get their start time.
+              trigger: {
+                at: run.replay_started_at ?? run.started_at,
+                ...asRecord(fromJson(run.trigger_json) ?? { type: run.trigger }),
+              },
               startedAt: DateTime.makeUnsafe(run.replay_started_at ?? run.started_at)
                 .epochMilliseconds,
               seed: run.replay_seed ?? runId,

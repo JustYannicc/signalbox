@@ -17,7 +17,7 @@ export const meta = {
 } as const;
 \`\`\`
 
-The workflow gets \`(w, input, trigger)\`. \`trigger.type\` is \`"manual"\`, \`"cron"\`, \`"webhook"\`, \`"event"\` or \`"automation"\`. A run started attached to a thread also has \`trigger.attach: { threadId, key, label }\` (see \`patterns.md\`).
+The workflow gets \`(w, input, trigger)\`. \`trigger.type\` is \`"manual"\`, \`"cron"\`, \`"webhook"\`, \`"event"\` or \`"automation"\`. \`trigger.at\` is when the run started, as an ISO string; it stays the same on every replay, so use it instead of \`Date.now()\`. A run started attached to a thread also has \`trigger.attach: { threadId, key, label }\` (see \`patterns.md\`).
 
 ## Schedules
 

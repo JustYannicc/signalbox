@@ -13,6 +13,7 @@ import type {
   SwitchStatement,
 } from "oxc-parser";
 
+import { changingCall } from "./determinism.ts";
 import { loopLabel, OTHERWISE, plainLabel } from "./labels.ts";
 import { objectProperties, propertyKey, readLabel, readString, unwrap } from "./literals.ts";
 import type { WorkflowSource } from "./source.ts";
@@ -42,6 +43,8 @@ interface Scope {
   readonly prefix: string;
   readonly exit: "workflow" | "callback" | "helper";
   readonly inRepeat: boolean;
+  /** Inside a pass that repeats: a loop statement or a `w.repeat` callback (not `w.each`'s items). */
+  readonly repeats: boolean;
   readonly deciders: Map<string, Decider>;
   readonly helpers: ReadonlyMap<string, FunctionNode>;
   readonly helperStack: ReadonlyArray<string>;
@@ -60,7 +63,7 @@ const UNAVAILABLE_GLOBALS = new Map([
   ["XMLHttpRequest", "Use w.http for requests, or w.call for a connected service."],
   ["WebSocket", "Use w.run for code that needs sockets."],
   ["setTimeout", "Use w.sleep to wait."],
-  ["setInterval", "Use w.sleep in a loop, or a cron trigger."],
+  ["setInterval", "Use a cron trigger for repeats."],
   ["setImmediate", "Steps run as soon as they're reached; there's nothing to defer."],
   [
     "require",
@@ -78,7 +81,10 @@ const UNAVAILABLE_GLOBALS = new Map([
     "Build URLs with template strings and encodeURIComponent, or URLSearchParams for query strings; or parse URLs inside a w.run function.",
   ],
   ["Buffer", "Use btoa/atob for base64 and TextEncoder/TextDecoder for bytes, or w.run."],
-  ["performance", "Use Date.now()."],
+  [
+    "performance",
+    "Use trigger.at (when the run started, an ISO string) or a time a step returned.",
+  ],
   ["AbortController", "Steps can't be cancelled from code; use w.run for code that needs it."],
   ["AbortSignal", "Steps can't be cancelled from code; use w.run for code that needs it."],
   ["Blob", "Pass text or JSON between steps, or handle files inside a w.run function."],
@@ -91,6 +97,9 @@ const CALLBACK_HINT =
   "Use w.each to run steps per item (with a concurrency limit), w.parallel for named concurrent branches, or a plain for loop.";
 const RUN_HINT =
   'Define it at the top level of this file, e.g. async function parsePdf(url: string) { … }, then await w.run("Parse the PDF", parsePdf, url).';
+const SLEEP_LOOP = "A loop that sleeps is a reminder loop, and every pass is billed as a step.";
+const SLEEP_LOOP_HINT =
+  "Use a schedule trigger (triggers: [{ cron: … }]) for repeats, or w.waitFor with a timeout to wait on something.";
 const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function isFunction(node: Node | undefined | null): node is FunctionNode {
@@ -160,6 +169,7 @@ export class WorkflowAnalyzer {
       prefix: "",
       exit: "workflow",
       inRepeat: false,
+      repeats: false,
       deciders: new Map(),
       helpers: this.moduleFunctions,
       helperStack: [],
@@ -175,6 +185,7 @@ export class WorkflowAnalyzer {
         prefix: "",
         exit: "workflow",
         inRepeat: false,
+        repeats: false,
         deciders: new Map(),
         helpers: new Map(),
         helperStack: [],
@@ -426,7 +437,7 @@ export class WorkflowAnalyzer {
         text: this.source.commentBefore(statement) ?? loopLabel(this.source, statement),
         dynamic: false,
       },
-      body: this.arm(statement.body, scope),
+      body: this.arm(statement.body, { ...scope, repeats: true }),
     });
   }
 
@@ -804,6 +815,14 @@ export class WorkflowAnalyzer {
     out: WorkflowNode[],
   ): void {
     if (!node) return;
+    if (node.type === "CallExpression" || node.type === "NewExpression") {
+      const changing = changingCall(node, this.declared);
+      if (changing) {
+        this.source.error(node, changing.message, changing.hint);
+        for (const argument of node.arguments) this.scan(argument, scope, context, out);
+        return;
+      }
+    }
     switch (node.type) {
       case "CallExpression":
         if (this.call(node, scope, context, out)) return;
@@ -1062,6 +1081,7 @@ export class WorkflowAnalyzer {
   }
 
   private step(call: CallExpression, verb: WorkflowStepVerb, scope: Scope, out: WorkflowNode[]) {
+    if (verb === "sleep" && scope.repeats) this.source.error(call, SLEEP_LOOP, SLEEP_LOOP_HINT);
     const site = this.site(call);
     const label = this.label(call);
     const runTarget = verb === "run" ? this.runTarget(call) : null;
@@ -1152,6 +1172,7 @@ export class WorkflowAnalyzer {
       prefix: `${scope.prefix}${site}/`,
       exit: "callback",
       inRepeat: verb === "repeat",
+      repeats: scope.repeats || verb === "repeat",
       deciders: new Map(scope.deciders),
     });
     if (!label || max === "invalid" || concurrency === "invalid") return;
