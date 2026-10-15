@@ -383,13 +383,13 @@ const readAccount = (
   Effect.gen(function* () {
     const usage = account.usage;
     if (usage._tag === "reported") {
-      // A pool shares each account's windows with its admins only.
+      // A pool shares each account's windows with its admins only, and older ones not at all.
       const limits =
         usage.limits ??
         makeUnavailableUsageLimits({
           checkedAt: isoAt(now),
           reason: "unsupported",
-          message: "The pool this one links to shares limits with its admins only.",
+          message: "The pool this one links to hasn't shared this account's limits.",
         });
       yield* save(
         account.name,
