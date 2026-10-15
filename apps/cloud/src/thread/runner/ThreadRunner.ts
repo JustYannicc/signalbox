@@ -356,7 +356,7 @@ const make = Effect.gen(function* () {
       );
     });
   const newToken = Effect.orDie(
-    Effect.map(Effect.all([crypto.randomUUIDv4, crypto.randomUUIDv4]), (parts) =>
+    Effect.map(Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]), (parts) =>
       parts.join("").replaceAll("-", ""),
     ),
   );
