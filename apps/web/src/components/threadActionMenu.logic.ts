@@ -45,6 +45,7 @@ export function buildDraftActionMenuItems(options: {
   readonly hasPath: boolean;
   readonly hasBranch: boolean;
   readonly hasProject: boolean;
+  readonly projectSettingsLabel?: string; // signalbox: folder words
 }): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
   return [
     {
@@ -60,7 +61,13 @@ export function buildDraftActionMenuItems(options: {
       ],
     },
     ...(options.hasProject
-      ? [{ id: "project-settings" as const, label: "Project settings", icon: "settings" }]
+      ? [
+          {
+            id: "project-settings" as const,
+            label: options.projectSettingsLabel ?? "Project settings", // signalbox: folder words
+            icon: "settings",
+          },
+        ]
       : []),
     {
       id: "discard",
@@ -104,6 +111,8 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /** signalbox: the thread's chat or task kind; absent where its environment keeps none. */
   readonly threadKind?: ThreadKind | null;
+  /** signalbox: "Files settings" where the environment keeps folders. */
+  readonly projectSettingsLabel?: string;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -234,7 +243,11 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
-    { id: "project-settings", label: "Project settings", icon: "settings" },
+    {
+      id: "project-settings",
+      label: state.projectSettingsLabel ?? "Project settings", // signalbox: folder words
+      icon: "settings",
+    },
     // Archive removes the thread from the sidebar while keeping its
     // conversation under Settings > Archived threads — distinct from Settle
     // (stays visible in the Settled shelf) and Delete (clears history for

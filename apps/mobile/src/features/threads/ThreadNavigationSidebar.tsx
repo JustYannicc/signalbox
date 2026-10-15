@@ -44,6 +44,7 @@ import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import { NO_ENVIRONMENTS, withoutEnvironmentFilter } from "../home/environmentFilter"; // signalbox
 import { buildHomeProjectScopes } from "../home/homeThreadList";
+import { useScratchScopeTitles } from "../folders/use-folder-copy"; // signalbox: folders
 import { SectionNavigationPanel } from "../sections/SectionNavigationPanel";
 import { SectionNavigationToggle } from "../sections/SectionNavigationToggle";
 import {
@@ -231,7 +232,7 @@ function ThreadNavigationSidebarPane(
     }
   }, [projectScopeKey, resolvedProjectKey, setSelectedProjectKey]);
   const folderScope = useFolderScope(resolvedProjectKey, threads, pendingTasks); // signalbox: folders
-  const projectScopes = useMemo(
+  const upstreamProjectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
@@ -240,6 +241,7 @@ function ThreadNavigationSidebarPane(
       }),
     [options.projectGroupingMode, options.selectedEnvironmentId, projects],
   );
+  const projectScopes = useScratchScopeTitles(upstreamProjectScopes); // signalbox: folders
   const scopeFilterOptions = useMemo(
     () =>
       buildProjectFilterOptions({

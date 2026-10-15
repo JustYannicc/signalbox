@@ -14,7 +14,7 @@ export interface SidebarThreadScope {
   readonly threads: ReadonlyArray<SidebarThreadSummary>;
   /** The open thread's key, wherever its project is. */
   readonly activeThreadKey: string | null;
-  /** "Project settings" for a thread: its own project's, not the list's. */
+  /** A thread's settings ("Files settings"): its own project's, not the list's. */
   readonly settingsProjectKey: (thread: SidebarThreadSummary) => string | undefined;
   /** More entries for a thread's menu, and what choosing one does; true when it handled it. */
   readonly threadMenu: (thread: SidebarThreadSummary) => {

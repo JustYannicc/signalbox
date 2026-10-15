@@ -3415,9 +3415,11 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           {...searchableSetting("diagnostics")}
           description={
-            isEnvironmentScope
-              ? "Inspect processes, resource use, and logs on this environment."
-              : "Inspect processes, resource use, and logs on one environment at a time."
+            !showsEnvironmentUi // signalbox: one environment
+              ? "Inspect processes, resource use, and logs."
+              : isEnvironmentScope
+                ? "Inspect processes, resource use, and logs on this environment."
+                : "Inspect processes, resource use, and logs on one environment at a time."
           }
           control={
             <Button

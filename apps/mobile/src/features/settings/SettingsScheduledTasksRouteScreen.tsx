@@ -85,6 +85,7 @@ import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
 } from "./scheduledTaskPresentation";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 
 type ScheduledTaskRoutes = {
   SettingsScheduledTaskNew: undefined;
@@ -264,6 +265,7 @@ function PickerRow(props: {
 }
 
 export function SettingsScheduledTasksRouteScreen() {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const [now, setNow] = useState(Date.now);
   useFocusEffect(
     useCallback(() => {
@@ -367,7 +369,7 @@ export function SettingsScheduledTasksRouteScreen() {
           ) : (
             <Text className="px-2 text-base text-foreground-muted">
               {availableTargets.length === 0
-                ? "Connect an environment to view and create scheduled tasks."
+                ? environmentCopy("Connect an environment to view and create scheduled tasks.")
                 : "No environments match these filters. Change the filter above."}
             </Text>
           )}
@@ -397,6 +399,7 @@ export function SettingsScheduledTaskEditRouteScreen() {
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const {
     editor,
     voiceOwnerKey,
@@ -555,7 +558,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to create a scheduled task."
+              ? environmentCopy("Connect an environment to create a scheduled task.")
               : "No environments match the current filters. Change the filters to create a task."}
           </Text>
         )}

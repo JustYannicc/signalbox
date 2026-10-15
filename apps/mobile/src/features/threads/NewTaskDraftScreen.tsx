@@ -140,6 +140,7 @@ import { useEnvironmentSupports, useShowsEnvironmentUi } from "../../state/envir
 import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signalbox
 import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 import { FolderDraftOfflineNotice, useFileDraftInFolder } from "../folders/FolderDraftFiling"; // signalbox: folders
+import { useFolderCopy } from "../folders/use-folder-copy"; // signalbox: folders
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -206,6 +207,7 @@ export function NewTaskDraftScreen(props: {
   const flow = useNewTaskFlow();
   const supportsWorktrees = useEnvironmentSupports(flow.selectedEnvironmentId, "worktrees"); // signalbox
   const showsEnvironments = useShowsEnvironmentUi(); // signalbox
+  const folderCopy = useFolderCopy(); // signalbox: folders
   const navigation = useNavigation();
   const {
     consumeShare,
@@ -1567,12 +1569,12 @@ export function NewTaskDraftScreen(props: {
       {/* Wraps onto two lines only when a long machine name leaves no room. */}
       <View className="flex-row flex-wrap items-center justify-center gap-x-1">
         <ComposerInlineControl
-          accessibilityHint="Opens the project picker"
-          accessibilityLabel="Choose a project"
+          accessibilityHint={folderCopy("Opens the project picker")}
+          accessibilityLabel={folderCopy("Choose a project")}
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
           icon="folder"
-          label="Choose a project"
+          label={folderCopy("Choose a project")}
           onPress={chooseProject}
         />
         {environmentControl}
@@ -1587,7 +1589,7 @@ export function NewTaskDraftScreen(props: {
         <View className="max-w-full flex-row items-center justify-center">
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
           <Pressable
-            accessibilityHint="Opens the project picker"
+            accessibilityHint={folderCopy("Opens the project picker")}
             accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}

@@ -11,6 +11,7 @@ import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-item
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 import { useShowsEnvironmentUi } from "../../../state/environmentCapabilities"; // signalbox
+import { useOneEnvironmentCopy } from "../../home/useOneEnvironmentCopy"; // signalbox
 
 export function SettingsEnvironmentFilterHeader(props: {
   readonly closeSettings?: boolean;
@@ -30,6 +31,7 @@ export function SettingsEnvironmentFilterHeader(props: {
     selectProject,
   } = useSettingsEnvironmentFilter();
   const showsEnvironments = useShowsEnvironmentUi(); // signalbox: one environment, no environment scope
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   if (Platform.OS !== "ios") return null;
 
   const filterIcon =
@@ -57,7 +59,7 @@ export function SettingsEnvironmentFilterHeader(props: {
         unstable_headerRightItems: () => [
           withNativeGlassHeaderItem({
             axisBehavior: "horizontalOnly",
-            accessibilityLabel: "Filter settings environments and projects",
+            accessibilityLabel: environmentCopy("Filter settings environments and projects"),
             icon: { name: filterIcon, type: "sfSymbol" },
             label: "",
             type: "menu",
@@ -155,6 +157,7 @@ export function AndroidSettingsEnvironmentFilter() {
     selectProject,
   } = useSettingsEnvironmentFilter();
   const showsEnvironments = useShowsEnvironmentUi(); // signalbox: one environment, no environment scope
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const filterIcon =
     selectedIds === null && selectedProjectKey === null
       ? "line.3.horizontal.decrease"
@@ -164,7 +167,7 @@ export function AndroidSettingsEnvironmentFilter() {
     <ControlPillMenu
       accessible
       accessibilityRole="button"
-      accessibilityLabel="Filter settings environments and projects"
+      accessibilityLabel={environmentCopy("Filter settings environments and projects")}
       title="Settings scope"
       actions={[
         {
@@ -211,7 +214,7 @@ export function AndroidSettingsEnvironmentFilter() {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Filter settings environments and projects"
+        accessibilityLabel={environmentCopy("Filter settings environments and projects")}
         className="size-11 items-center justify-center rounded-full"
       >
         <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />

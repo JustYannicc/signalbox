@@ -190,6 +190,7 @@ import {
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import { labelCopyPathItems } from "./workspacePathLocation.logic";
+import { readProjectSettingsLabel } from "./sidebar/folders/useFolderCopy"; // signalbox: folder words
 import { readWorkspacePathLocation } from "./workspacePathLocation";
 import {
   animateSidebarLayoutChanges,
@@ -1387,7 +1388,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // one gets its machine glyph. With no local environment (the hosted app)
   // that is every thread, which is the point: the glyph is what tells rows on
   // different machines apart.
-  const isRemote = thread.environmentId !== props.currentEnvironmentId;
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment, no machine glyph
+  const isRemote = thread.environmentId !== props.currentEnvironmentId && showsEnvironmentUi;
   const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
 
   const detailsTooltip = (
@@ -4600,6 +4602,7 @@ export default function Sidebar() {
                 hasPath: Boolean(workspacePath),
                 hasBranch: Boolean(session.branch),
                 hasProject: projectGroup != null,
+                projectSettingsLabel: readProjectSettingsLabel(session.environmentId), // signalbox: folder words
               }),
               readWorkspacePathLocation(
                 session.environmentId,
@@ -4721,6 +4724,7 @@ export default function Sidebar() {
                 },
                 snoozePresets,
                 threadKind: readThreadKind(threadRef), // signalbox: thread kinds
+                projectSettingsLabel: readProjectSettingsLabel(threadRef.environmentId), // signalbox: folder words
               }),
               readWorkspacePathLocation(
                 threadRef.environmentId,

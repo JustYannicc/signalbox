@@ -241,6 +241,8 @@ import { useThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thr
 import { threadLeaveLabel } from "./threadKind/threadKind.logic"; // signalbox: thread kinds
 import { ThreadKindAge, ThreadKindButton, ThreadLeaveIcon } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
 import { threadKindMenuItems, selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
+import { useShowsEnvironmentUi } from "../state/environmentCapabilities"; // signalbox: one environment
+import { readProjectSettingsLabel } from "./sidebar/folders/useFolderCopy"; // signalbox: folder words
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -457,7 +459,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   // No primary (the hosted app) means every thread is remote, and the machine
   // glyph is what tells the environments apart.
-  const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment, nothing to announce
+  const isRemoteThread = thread.environmentId !== primaryEnvironmentId && showsEnvironmentUi;
   const remoteEnvLabel = environment?.label ?? null;
   const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
   // A desktop-local secondary backend (e.g. the WSL backend) shows up as a
@@ -2352,7 +2355,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
-          { id: "project-settings", label: "Project settings" },
+          { id: "project-settings", label: readProjectSettingsLabel(thread.environmentId) }, // signalbox: folder words
           {
             id: "delete",
             label: "Delete",

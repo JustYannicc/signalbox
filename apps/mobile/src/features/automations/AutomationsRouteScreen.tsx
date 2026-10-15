@@ -31,6 +31,7 @@ import {
 } from "./automation-data";
 import { AskAnswer } from "./AskAnswer";
 import { BuiltInPill, GroupedCard, PillButton, SectionTitle, StatusDot } from "./AutomationParts";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 
 /** Content width on wide panes; rows past this get hard to scan. */
 export const AUTOMATION_CONTENT_STYLE = {
@@ -54,6 +55,7 @@ const SORT_OPTIONS: ReadonlyArray<{ value: AutomationSortOrder; title: string }>
 export function AutomationsRouteScreen() {
   const insets = useSafeAreaInsets();
   const lists = useAutomationLists();
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const waiting = waitingAutomations(lists);
   const loaded = lists.filter((list) => list.automations !== null || list.error !== null);
   const total = lists.reduce((sum, list) => sum + (list.automations?.length ?? 0), 0);
@@ -110,7 +112,7 @@ export function AutomationsRouteScreen() {
     >
       {lists.length === 0 ? (
         <Text className="px-2 text-base text-foreground-muted">
-          Connect an environment to see its automations.
+          {environmentCopy("Connect an environment to see its automations.")}
         </Text>
       ) : null}
 
