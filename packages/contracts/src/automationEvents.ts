@@ -38,6 +38,12 @@ const PULL_REQUEST = {
   baseBranch: "",
   headSha: "head commit while upstream's PR watch records it, else null",
 } as const;
+/** Comments or reviews on a pull request, on top of its facts. */
+const REMARKS = {
+  ...PULL_REQUEST,
+  remarks:
+    "[{ id, kind: issue-comment | review-comment | review, author, body (up to 4k chars), path, reviewState, url, at }] new since the last sync, oldest first; null when they couldn't be read",
+} as const;
 const AUTOMATION = {
   automationId: "the automation's id",
   automationName: "its meta.name",
@@ -131,7 +137,32 @@ export const AUTOMATION_EVENTS = [
         "A thread's pull request started to conflict with its base.",
       ],
     ] as const
-  ).map(([name, when, description]) => ({ name, when, description, fields: PULL_REQUEST })),
+  ).map(([name, when, description]) => ({
+    name,
+    when,
+    description,
+    fields:
+      name === "pr.checks.failed"
+        ? {
+            ...PULL_REQUEST,
+            failedChecks: "[{ name, status, url }] of the checks that failed, or null when unread",
+          }
+        : PULL_REQUEST,
+  })),
+  ...(
+    [
+      [
+        "pr.commented",
+        "When someone comments on a pull request",
+        "Someone other than the account Signalbox uses commented on a thread's pull request.",
+      ],
+      [
+        "pr.reviewed",
+        "When someone reviews a pull request",
+        "Someone other than the account Signalbox uses reviewed a thread's pull request.",
+      ],
+    ] as const
+  ).map(([name, when, description]) => ({ name, when, description, fields: REMARKS })),
   {
     name: "turn.requested",
     when: "When a turn is queued",
@@ -333,6 +364,19 @@ export const AUTOMATION_EVENTS = [
     when: "When a checkpoint is restored",
     description: "Someone asked to roll a thread back to a checkpoint.",
     fields: { ...THREAD, checkpointId: "" },
+  },
+  {
+    name: "hook.called",
+    when: "When a callback link is called",
+    description:
+      "A request reached a callback link a run made with w.hook. Wait for it with where: { hookId }.",
+    fields: {
+      hookId: "the link's id, from w.hook",
+      method: "GET | POST | …",
+      body: "the body, parsed as JSON or a form when it is one, else its text; null when empty",
+      query: "query parameters",
+      headers: "request headers, credentials redacted",
+    },
   },
   {
     name: "automation.run.started",

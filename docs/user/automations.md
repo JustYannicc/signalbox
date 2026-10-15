@@ -68,6 +68,19 @@ went well returned and runs the failed step and everything after it again, so no
 happened happens twice. After fixing the automation, retry on the latest version to run the fix
 from where the run stopped. Steps whose code moved or changed run again too.
 
+## When an agent waits
+
+Ask an agent to wait for something, like CI on its pull request, another thread finishing, or
+tomorrow morning, and it ends its turn instead of sitting there polling. The thread stays in
+**Working**, and the agent wakes with one message when it happens. A pull request it watches
+keeps waking it on failed checks, other people's comments and reviews, and conflicts until it
+merges.
+
+**Thread details → Waiting on** lists what the thread waits for. Open a row to see the run behind
+it, or stop it there. Settling, archiving or stopping the thread ends its waits too. Each wait is a
+built-in automation ("Wait for", "Watch pull request"), so you can customize how it behaves in a
+project like any other automation.
+
 ## Read the diagram
 
 The automation's page draws it top to bottom. A decision fans out into one path per option,
