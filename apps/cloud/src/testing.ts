@@ -16,6 +16,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
+import * as CloudAutomations from "./automations/CloudAutomations.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -64,7 +65,6 @@ import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LegacySections from "./user/legacySections.ts";
-import * as CloudAutomations from "./automations/CloudAutomations.ts";
 import * as CloudEngine from "./automations/cloudEngine.ts";
 import { AutomationSandbox } from "@signalbox/automations/host";
 import { makeQuickJsReplay, wallClockBudget } from "@signalbox/automations/sandbox/replayWorkflow";
@@ -457,6 +457,8 @@ export const makeMemoryCloud = (
           CloudAutomations.CloudAutomations.use((automations) => automations.wake),
         );
       }),
+    /** A user object's API as its Durable Object stub answers it, for routes that call stubs. */
+    userObjectApi: (userId: string) => userFor(userId).api,
     /** Pool objects by name, each with its fake CLIProxyAPI. */
     pools,
     /** The drives' objects and packs, shared by every user and thread here. */

@@ -8,6 +8,7 @@ import type {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import { RUNNER_AUTOMATION_TOOLS } from "./RunnerAutomationTools.ts";
 import type { BranchDrive } from "./RunnerBranchTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { startContextServer } from "./RunnerContextServer.ts";
@@ -172,6 +173,7 @@ const fakeClient = (calls: Calls): ContextClient => ({
       calls.published.push(request);
       return calls.answer;
     }),
+  automationTool: () => Effect.die("Automation tools aren't part of these tests."),
 });
 
 const serve = Effect.gen(function* () {
@@ -276,7 +278,9 @@ describe("context server (#141)", () => {
         name: string;
         annotations: { readOnlyHint: boolean };
       }>;
-      const reads = tools.filter((tool) => tool.annotations.readOnlyHint);
+      const reads = tools.filter(
+        (tool) => tool.annotations.readOnlyHint && !RUNNER_AUTOMATION_TOOLS.includes(tool.name),
+      );
       expect(reads.map((tool) => tool.name)).toEqual([
         "search_context",
         "open_thread",
@@ -348,7 +352,12 @@ describe("context server (#141)", () => {
         annotations: { readOnlyHint: boolean };
       }>;
       expect(
-        tools.filter((tool) => !tool.annotations.readOnlyHint).map((tool) => tool.name),
+        tools
+          .filter(
+            (tool) =>
+              !tool.annotations.readOnlyHint && !RUNNER_AUTOMATION_TOOLS.includes(tool.name),
+          )
+          .map((tool) => tool.name),
       ).toEqual(["push", "create_pr"]);
 
       const opened = yield* call("create_pr", {

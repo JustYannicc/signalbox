@@ -16,6 +16,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { layerAutomationTools } from "./RunnerAutomationTools.ts";
 import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import {
   BROWSER_EXECUTABLE_ENV,
@@ -45,7 +46,8 @@ import type { RunnerMcpServers } from "./RunnerModelAccess.ts";
  * the Runner: both read through the turn's `ContextClient`, which `pin`
  * replaces at every turn start along with the view of the drives. The MCP
  * server also publishes the thread's branch, saving it through the drive
- * `attachDrive` gives it. `/browser` serves the thread's headless browser
+ * `attachDrive` gives it, and serves the automation tools, which run in the
+ * cloud (`RunnerAutomationTools.ts`). `/browser` serves the thread's headless browser
  * (#402) as its own MCP server, under the name agents know it by locally.
  */
 
@@ -99,6 +101,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   const mcp = Layer.mergeAll(
     layerContextTools(view),
     layerBranchTools(view, () => drive),
+    layerAutomationTools(view),
   ).pipe(
     Layer.provideMerge(
       McpServer.layerHttp({

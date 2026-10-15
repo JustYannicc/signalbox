@@ -75,10 +75,15 @@ RUN corepack enable pnpm yarn
 
 # 1Password's SDK, which reads a folder's secrets (RunnerOnePassword.ts), stays out
 # of the bundle: it loads its WebAssembly core from beside itself. Installed
-# beside the Runner, where its `import` finds it. The version apps/server pins.
+# beside the Runner, where its `import` finds it. So do oxc's native parser and
+# transformer, which compile the automations agents save
+# (`RunnerAutomationTools.ts`). One install, so neither prunes the other. The
+# versions apps/server pins.
 ARG ONEPASSWORD_SDK_VERSION=0.5.0
+ARG OXC_VERSION=0.148.0
 RUN install -d /opt/signalbox \
   && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save "@1password/sdk@${ONEPASSWORD_SDK_VERSION}" \
+    "oxc-parser@${OXC_VERSION}" "oxc-transform@${OXC_VERSION}" \
   && npm cache clean --force
 
 COPY main.mjs /opt/signalbox/runner.mjs

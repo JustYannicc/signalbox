@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { automationTool } from "../automations/automationTool.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
@@ -108,5 +109,6 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
+    automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
   };
 };
