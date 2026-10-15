@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { describeTrigger, startsFromPayloadOnly, triggerSummary } from "./triggers.ts";
+import {
+  describeTrigger,
+  startsFromPayloadOnly,
+  triggerSummary,
+  watchedSource,
+} from "./triggers.ts";
 
 describe("describeTrigger", () => {
   it("says common schedules in words", () => {
@@ -13,6 +18,13 @@ describe("describeTrigger", () => {
 
   it("says event triggers in words", () => {
     expect(describeTrigger({ on: "turn.finished" })).toBe("When a turn finishes");
+    const watch = { operation: "github.actions.listWorkflowRunsForRepo", key: "id" };
+    expect(describeTrigger({ on: "source.item.added", watch })).toBe(
+      "When something new shows up in Github workflow runs for repo",
+    );
+    expect(describeTrigger({ on: "source.item.*", watch })).toBe(
+      "When anything changes in Github workflow runs for repo",
+    );
     expect(describeTrigger({ on: "message.sent" })).toBe("When you send a message");
     expect(describeTrigger({ on: "message.sent", from: "anyone" })).toBe("When a message is sent");
     expect(describeTrigger({ on: ["thread.created", "input.requested"] })).toBe(
@@ -38,5 +50,34 @@ describe("describeTrigger", () => {
       false,
     );
     expect(startsFromPayloadOnly({ triggers: [] })).toBe(false);
+  });
+});
+
+describe("watchedSource", () => {
+  const now = Date.parse("2026-10-15T10:00:00.000Z");
+  const source = {
+    sourceId: "source_1",
+    operation: "github.actions.listWorkflowRunsForRepo",
+    connection: null,
+    status: "watching" as const,
+    lastCheckedAt: "2026-10-15T09:58:00.000Z",
+    lastChangedAt: null,
+    nextCheckAt: "2026-10-15T10:03:00.000Z",
+    error: null,
+  };
+  it("says what's watched and how reading it goes", () => {
+    expect(watchedSource(source, now)).toEqual({
+      subject: "Github workflow runs for repo",
+      status: "checked 2m ago",
+      trouble: false,
+    });
+    expect(watchedSource({ ...source, status: "failing", connection: "work" }, now)).toEqual({
+      subject: "Github workflow runs for repo (work)",
+      status: "couldn't read it, trying again in 3m",
+      trouble: true,
+    });
+    expect(watchedSource({ ...source, status: "starting", lastCheckedAt: null }, now).status).toBe(
+      "first check soon",
+    );
   });
 });

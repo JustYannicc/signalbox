@@ -1,11 +1,11 @@
 import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
+import { optionalString } from "../CloudConfig.ts";
 import { NO_STORE_HEADERS, requestUrl } from "../http/credentials.ts";
 import { LOCAL_KEY_HEADER } from "../modelGateway/modelGateway.ts";
 import {
@@ -35,13 +35,10 @@ const failure = pageFailure;
 const INTERNAL = failure(500, "internal", "Something went wrong. Try again.");
 
 /** Where the cloud's harnesses send model requests; local ones use the same. */
-const gatewayUrl = Effect.gen(function* () {
-  const url = yield* Config.String("MODEL_GATEWAY_URL").pipe(Config.option);
-  return Option.filter(
-    Option.map(url, (value) => value.trim()),
-    (value) => value !== "",
-  );
-}).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+const gatewayUrl = optionalString("MODEL_GATEWAY_URL");
+
+/** The Executor setup adds to both harnesses as an MCP server; none until it is deployed. */
+const executorUrl = optionalString("EXECUTOR_MCP_URL");
 
 const setupUrl = Effect.map(requestUrl, (url) => new URL(SETUP_PATH, url).href);
 
@@ -121,6 +118,7 @@ const setupRoute = HttpRouter.add(
       openaiUrl: `${origin}${MODEL_GATEWAY_PATHS.openai}/v1`,
       keyPrefix: LOCAL_KEY_PREFIX,
       keyHeader: LOCAL_KEY_HEADER,
+      executorUrl: Option.getOrNull(yield* executorUrl),
     });
     return HttpServerResponse.text(script, {
       contentType: "text/javascript; charset=utf-8",

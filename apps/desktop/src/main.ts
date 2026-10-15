@@ -67,6 +67,7 @@ import * as DesktopLegacyLocalStorage from "./app/DesktopLegacyLocalStorage.ts";
 import * as DesktopTelemetryPublisher from "./telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopRendererHistory from "./telemetry/DesktopRendererHistory.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
+import * as DesktopThinClient from "./signalbox/DesktopThinClient.ts";
 import * as BrowserImport from "./preview/BrowserImport/BrowserImport.ts";
 import * as LinuxBrowserSecret from "./preview/BrowserImport/LinuxBrowserSecret.ts";
 import * as BrowserSession from "./preview/BrowserSession.ts";
@@ -102,6 +103,7 @@ const layerDesktopEnvironment = Layer.unwrap(
       platform,
       processArch,
       ...metadata,
+      probeLocalServer: DesktopThinClient.probeLocalServer, // signalbox: thin cloud build
     });
   }),
 );

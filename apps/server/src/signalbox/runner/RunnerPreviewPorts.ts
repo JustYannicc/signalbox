@@ -4,7 +4,9 @@ import type { DiscoveredLocalServer } from "@t3tools/contracts";
 import * as Net from "@t3tools/shared/Net";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import { FetchHttpClient } from "effect/http";
 
 import * as PortScanner from "../../preview/PortScanner.ts";
@@ -19,6 +21,11 @@ import type { PreviewPortSource } from "./RunnerPreviewTunnel.ts";
  * adapters, so upstream's scanner reaches the Runner through a normal merge.
  * One discovery serves every Runner on the machine; it scans only while a
  * tunnel watches.
+ *
+ * Upstream probes only listeners its own terminals started. A Runner's machine
+ * belongs to its thread, and agents start dev servers however they like
+ * (detached, through a harness), so every process here but the Runner's own
+ * counts as the thread's.
  */
 
 const layerDiscovery = PortScanner.layer.pipe(
@@ -49,12 +56,39 @@ const samePorts = (a: ReadonlyArray<PreviewPort>, b: ReadonlyArray<PreviewPort>)
     (port, index) => port.port === b[index]!.port && port.processName === b[index]!.processName,
   );
 
-/** Reports `discovery`'s ports while the watch's scope lasts. */
+/** The machine's processes as one terminal, so the scanner probes their listeners. */
+const MACHINE = { threadId: "runner-machine", terminalId: "machine" };
+
+/** Matches the scanner's poll, so a new dev server shows up within a scan or two. */
+const OWNERSHIP_REFRESH = Schedule.spaced("3 seconds");
+
+/** Every process id on a Linux machine; none elsewhere. */
+const linuxProcesses = (fileSystem: FileSystem.FileSystem) =>
+  fileSystem.readDirectory("/proc").pipe(
+    Effect.map((entries) => entries.filter((entry) => /^\d+$/.test(entry)).map(Number)),
+    Effect.orElseSucceed((): ReadonlyArray<number> => []),
+  );
+
+/**
+ * Reports `discovery`'s ports while the watch's scope lasts, probing the
+ * listeners of `machineProcesses`.
+ */
 export const discoveredPorts = (
   discovery: PortScanner.PortDiscovery["Service"],
+  machineProcesses: Effect.Effect<ReadonlyArray<number>>,
 ): PreviewPortSource => ({
   watch: (report) =>
     Effect.gen(function* () {
+      const claimMachine = machineProcesses.pipe(
+        Effect.flatMap((processIds) =>
+          discovery.registerTerminalProcesses({
+            ...MACHINE,
+            processIds: processIds.filter((processId) => processId !== process.pid),
+          }),
+        ),
+      );
+      yield* Effect.acquireRelease(claimMachine, () => discovery.unregisterTerminal(MACHINE));
+      yield* Effect.forkScoped(claimMachine.pipe(Effect.repeat(OWNERSHIP_REFRESH)));
       // The scanner notifies on any change, including fields dropped here
       // (url, pid), so only a different port list goes out. Both start
       // empty, like the tunnel's own list.
@@ -72,6 +106,11 @@ export const discoveredPorts = (
 });
 
 /** A port source that lives as long as the scope. */
-export const makeDiscoveredPorts = Effect.map(Layer.build(layerDiscovery), (context) =>
-  discoveredPorts(Context.get(context, PortScanner.PortDiscovery)),
-);
+export const makeDiscoveredPorts = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const context = yield* Layer.build(layerDiscovery);
+  return discoveredPorts(
+    Context.get(context, PortScanner.PortDiscovery),
+    linuxProcesses(fileSystem),
+  );
+});

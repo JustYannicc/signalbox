@@ -76,6 +76,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 function KeybindingPill({ value }: { value: string }) {
   // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
@@ -1313,7 +1314,17 @@ export function KeybindingsSettingsPanel() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
-  const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
+  // signalbox: one environment, so there's no host to pick or cycle.
+  const showsEnvironmentUi = useShowsEnvironmentUi();
+  const isShownCommand = useCallback(
+    (command: KeybindingCommand) =>
+      showsEnvironmentUi || (command !== "composer.host" && command !== "composer.cycleHost"),
+    [showsEnvironmentUi],
+  );
+  const rows = useMemo(
+    () => buildKeybindingRows(keybindings, query).filter((row) => isShownCommand(row.command)),
+    [keybindings, query, isShownCommand],
+  );
   const groups = useMemo(() => groupKeybindingRows(rows), [rows]);
   // Settings search jumps to a command, so only its first row anchors.
   const anchorIds = useMemo(() => {
@@ -1336,7 +1347,10 @@ export function KeybindingsSettingsPanel() {
     setHandledSearchTargetId(searchTargetId);
     if (searchTargetId.startsWith("keybinding-")) setQuery("");
   }
-  const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
+  const commandOptions = useMemo(
+    () => buildKeybindingCommandOptions(keybindings).filter(isShownCommand),
+    [keybindings, isShownCommand],
+  );
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
 
   const openKeybindingsFile = useCallback(() => {

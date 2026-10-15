@@ -43,9 +43,10 @@ import {
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOutputImageBytes.ts";
 import type { HarnessStderr } from "./harnessStderr.ts";
+import type { RunnerAttachments } from "./RunnerAttachments.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
-import { DriveClientError } from "./RunnerDriveClient.ts";
+import { DriveClientError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSecrets } from "./RunnerSecrets.ts";
@@ -148,6 +149,7 @@ const isInstructionsError = Schema.is(RunnerInstructionsError);
 const isTurnError = Schema.is(RunnerTurnError);
 const isRunnerGitError = Schema.is(RunnerGitError);
 const isDriveClientError = Schema.is(DriveClientError);
+const isDriveTooLarge = Schema.is(DriveTooLargeError);
 
 /**
  * The failure text a thread may store: bounded and with credentials redacted.
@@ -165,7 +167,7 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
 const drivePrepareError = (error: RunnerDriveError) =>
   new RunnerTurnError({
     message: `Signalbox couldn't get this thread's files ready: ${
-      isRunnerGitError(error) || isDriveClientError(error)
+      isRunnerGitError(error) || isDriveClientError(error) || isDriveTooLarge(error)
         ? error.message
         : "a file operation on its machine failed."
     }`,
@@ -203,6 +205,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly openDrive?: (access: DriveAccess) => Effect.Effect<RunnerDrive, never, Scope.Scope>;
   /** Where the harnesses' sessions are kept. Absent: they stay on this machine. */
   readonly sessions?: RunnerSessions;
+  /** Brings the thread's attachments to this machine, with the turn's session token (`RunnerAttachments.ts`). */
+  readonly attachments?: RunnerAttachments;
   /** This machine's class. On a light one, a turn that needs more moves up (`RunnerMachineClass.ts`). */
   readonly machineClass?: MachineClass;
   /** Pins this turn's view of every drive the user can read (#141). Never fails. */
@@ -700,12 +704,21 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         yield* input.sessions.use(sessionAccess);
         yield* input.sessions.prepare(adapter.driver);
       }
+      // Pasted screenshots and files, as the files the adapter points the harness at,
+      // fetched while the session loads.
+      const attachments =
+        input.attachments === undefined || sessionAccess === null
+          ? null
+          : yield* Effect.forkChild(
+              input.attachments.bring(sessionAccess.token, turn.message.attachments),
+            );
       const session = yield* sessionFor(adapter, turn, runtimePolicy, {
         instructions: prepared.drive?.instructions ?? "",
         secrets: prepared.secrets,
       });
       const providerThread = yield* loadProviderThread(session, turn, runtimePolicy);
       if (pinning !== null) yield* Fiber.join(pinning);
+      if (attachments !== null) yield* Fiber.join(attachments);
       const started = yield* ordered.withPermits(1)(
         Effect.gen(function* () {
           // Stopped while the session loaded: the thread already ended the run.

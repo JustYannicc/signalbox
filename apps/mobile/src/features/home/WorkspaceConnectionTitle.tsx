@@ -12,6 +12,7 @@ import {
   getCompactBrandHeaderOptions,
 } from "../../components/CompactBrandTitle";
 import { useWorkspaceState } from "../../state/workspace";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import {
   workspaceConnectionStatusPresentation,
   type WorkspaceConnectionStatusPresentation,
@@ -108,6 +109,8 @@ export function WorkspaceConnectionTitle(props: {
   const status = useDelayedConnectionStatus();
   const size = props.size ?? "navbar";
   const { scale } = useAndroidControlSizing();
+  // signalbox: with one environment there are no environment settings to open.
+  const onPress = useShowsEnvironmentUi() ? props.onPress : undefined;
 
   if (status === null) {
     return props.grow ? (
@@ -122,12 +125,12 @@ export function WorkspaceConnectionTitle(props: {
   return (
     <StatusFadeIn grow={props.grow} maxWidth={props.maxWidth}>
       <Pressable
-        accessibilityHint="Opens environment settings"
+        accessibilityHint={onPress ? "Opens environment settings" : undefined}
         accessibilityLabel={status.label}
-        accessibilityRole="button"
-        disabled={props.onPress === undefined}
+        accessibilityRole={onPress ? "button" : undefined}
+        disabled={onPress === undefined}
         hitSlop={8}
-        onPress={props.onPress}
+        onPress={onPress}
         className="flex-row items-center gap-2"
         style={[
           { flexShrink: 1, marginLeft: props.statusOffset ?? 0 },

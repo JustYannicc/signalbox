@@ -1,0 +1,41 @@
+import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import { RunId } from "@t3tools/contracts";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+
+import type { RunnerDrive } from "./RunnerDrive.ts";
+import { DriveTooLargeError } from "./RunnerDriveClient.ts";
+import { finishDriveTurn } from "./RunnerTurnDrive.ts";
+
+const runId = RunId.make("run-1");
+
+const finishing = (finishTurn: RunnerDrive["finishTurn"]) =>
+  Effect.gen(function* () {
+    const emitted: Array<RunnerItem> = [];
+    yield* finishDriveTurn({
+      runId,
+      message: "Turn",
+      drive: { finishTurn } as unknown as RunnerDrive,
+      emit: (item) => Effect.sync(() => void emitted.push(item)),
+      resolve: () => Effect.succeed(false),
+    });
+    return emitted.flatMap((item) => (item.kind === "drive.notice" ? [item.message] : []));
+  });
+
+describe("finishDriveTurn", () => {
+  it.effect("says what's too big when the drive can't take the turn's files", () =>
+    Effect.gen(function* () {
+      const notices = yield* finishing(() =>
+        Effect.fail(new DriveTooLargeError({ message: "big.bin is 80 MB." })),
+      );
+      expect(notices).toEqual(["Saving this turn's files failed: big.bin is 80 MB."]);
+    }),
+  );
+
+  it.effect("keeps any other failure generic", () =>
+    Effect.gen(function* () {
+      const notices = yield* finishing(() => Effect.die(new Error("disk on fire")));
+      expect(notices).toEqual(["Saving this turn's files failed; the last auto-save is kept."]);
+    }),
+  );
+});

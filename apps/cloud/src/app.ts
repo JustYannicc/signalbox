@@ -24,6 +24,9 @@ import {
 import * as CloudAccounts from "./account/CloudAccounts.ts";
 import * as AssetRoutes from "./assets/assetRoutes.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
+import * as AttachmentRoutes from "./attachments/attachmentRoutes.ts";
+import type { AttachmentStorage } from "./attachments/attachmentObjects.ts";
+import * as CloudAttachments from "./attachments/CloudAttachments.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -40,6 +43,7 @@ import * as EnvironmentApi from "./http/environmentApi.ts";
 import * as Platform from "./platform.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PreviewSetupRoutes from "./previewSetup/previewSetupRoutes.ts";
+import { handleApiRequest } from "./api/apiRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
@@ -73,11 +77,14 @@ export const layerServices = (input: {
   readonly users: UserDirectory.UserObjectNamespace;
   readonly threads: ThreadDirectory.ThreadObjectNamespace;
   readonly localWorkerd: boolean;
+  /** The drives bucket and its preview prefix, where attachments live. */
+  readonly attachments: AttachmentStorage;
 }) =>
   CloudAssets.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(CloudAccounts.layer, CloudThreadService.layer, PreviewSetup.layer),
     ),
+    Layer.provideMerge(CloudAttachments.layer(input.attachments)),
     Layer.provideMerge(PreviewSetup.layerSourceHttp),
     // The Worker only reads threads; they are created in their user's object.
     Layer.provideMerge(ThreadContexts.layerWorker),
@@ -113,6 +120,7 @@ const routes = Layer.mergeAll(
   LocalKeyRoutes.layer,
   PreviewSetupRoutes.layer,
   AssetRoutes.layer,
+  AttachmentRoutes.layer,
 ).pipe(Layer.provide(layerCors));
 
 const json = (body: unknown, status: number) =>
@@ -174,6 +182,8 @@ export interface CloudApp {
   readonly webSocket: (request: Request) => Promise<Response>;
   /** The ModelGateway's check of a local key's signature (`ModelGrants` in `worker.ts`). */
   readonly verifyLocalKey: LocalKeyVerifier;
+  /** `/api/v1/`: the public API (`api/apiRoutes.ts`), streams and all. */
+  readonly api: (request: Request) => Promise<Response>;
 }
 
 export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp => {
@@ -206,5 +216,6 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
     http: (request) => http.then((handler) => handler(request)),
     webSocket: (request) => runtime.runPromise(openSocket(request)),
     verifyLocalKey: (token) => runtime.runPromise(verifyLocalKey(token)),
+    api: (request) => runtime.runPromise(handleApiRequest(request)),
   };
 };

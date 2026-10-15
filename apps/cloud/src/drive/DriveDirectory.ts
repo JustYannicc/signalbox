@@ -11,6 +11,7 @@ import type {
   DriveWriter,
   ObjectLocation,
   PackRegistration,
+  PromisedFile,
   RefWrite,
   Shortcut,
   ShortcutChange,
@@ -35,6 +36,7 @@ export interface DriveObjectApi {
   readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
   readonly missing: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<Oid>>;
+  readonly promised: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<PromisedFile>>;
   readonly registerPack: (
     pack: PackRegistration,
   ) => Promise<
@@ -125,6 +127,7 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     refs: wrap("refs"),
     ref: wrap("ref"),
     missing: wrap("missing"),
+    promised: wrap("promised"),
     registerPack: wrap("registerPack"),
     updateRefs: wrap("updateRefs"),
     reconcile: wrap("reconcile"),

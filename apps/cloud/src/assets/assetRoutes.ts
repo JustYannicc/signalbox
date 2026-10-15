@@ -6,7 +6,7 @@ import * as UserDirectory from "../user/UserDirectory.ts";
 import * as CloudAssets from "./CloudAssets.ts";
 
 /**
- * `GET /api/assets/<token>/<name>`: the image a `CloudAssets` URL names. The
+ * `GET /api/assets/<token>/<name>`: the image or attachment a `CloudAssets` URL names. The
  * token is the only credential, since an `<img>` on another origin (desktop,
  * mobile) sends no session; the read runs as the user it was issued to, with
  * their contexts as they are now. The name is only for whoever saves the file.
@@ -41,7 +41,18 @@ const serve = Effect.gen(function* () {
   const contextIds = yield* (yield* UserDirectory.UserDirectory)
     .forUser(granted.userId)
     .contextIds();
-  const image = yield* assets.read({ userId: granted.userId, contextIds }, granted.resource);
+  const actor = { userId: granted.userId, contextIds };
+  if (granted.resource._tag === "attachment") {
+    const file = yield* assets.openAttachment(actor, granted.resource);
+    return file === null
+      ? notFound()
+      : HttpServerResponse.raw(file.body, {
+          headers: file.headers,
+          contentType: file.headers["content-type"],
+          contentLength: file.size,
+        });
+  }
+  const image = yield* assets.read(actor, granted.resource);
   if (image === null) return notFound();
   return HttpServerResponse.uint8Array(image.bytes, {
     contentType: image.mimeType,

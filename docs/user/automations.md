@@ -8,7 +8,7 @@ something you want to approve.
 
 Ask an agent in any thread, for example "Every weekday at 9, summarize new Sentry issues and ask
 me before filing any of them in Linear." The agent writes the automation and saves it. **New
-automation** at the top of the Automations panel starts that thread for you.
+automation** on the **Automations** page starts that thread for you.
 
 To change an automation, choose **Change with agent** from its **⋯** menu or above its code (on
 mobile, on the automation's screen or a run's **⋯** menu). It opens a thread with the request
@@ -20,8 +20,8 @@ running its live version and its page shows **Draft**: switch between **Live** a
 compare the diagram and code, or read **Changes** for the lines that differ. **Publish** makes the
 draft live; **Discard** drops it. A new automation saved as a draft stays off until you publish it.
 
-Open **Automations** in the sidebar rail to see every automation on your connected environments.
-Unfold one to see its recent runs. Sort and filter from the panel's header.
+To see every automation, open **Automations** from the command palette (`mod+alt+w`) and pick
+**All**.
 
 ## Connect your services
 
@@ -49,6 +49,12 @@ by its name in Executor.
   threads in the automation's project, and never to threads automations started themselves. If
   events start more than 30 runs in a minute, its event triggers pause and you're notified; save
   it, or switch it off and on, to resume.
+- **When something changes in a connected service**: a new GitHub Actions run, an invoice paid, a
+  row added to a sheet. Ask for it in your own words ("when a new issue is filed in Linear, triage
+  it"). Signalbox checks the service every few minutes, once for every automation and agent watching
+  the same thing, and reacts only to what's new after the automation starts. The automation's page
+  shows what it watches and when it last checked. If the service keeps failing, Signalbox stops
+  checking and tells you; save the automation again to retry.
 - **Run now** starts a run by hand. An automation only a webhook or events start offers **Replay this run**
   instead, which runs again with the shown run's payload; **Run now without input** stays in its
   **⋯** menu.
@@ -70,8 +76,8 @@ from where the run stopped. Steps whose code moved or changed run again too.
 
 ## When an agent waits
 
-Ask an agent to wait for something, like CI on its pull request, another thread finishing, or
-tomorrow morning, and it ends its turn instead of sitting there polling. The thread stays in
+Ask an agent to wait for something, like CI on its pull request, another thread finishing, an
+invoice being paid in a connected service, or tomorrow morning, and it ends its turn instead of sitting there polling. The thread stays in
 **Working**, and the agent wakes with one message when it happens. A pull request it watches
 keeps waking it on failed checks, other people's comments and reviews, and conflicts until it
 merges.
@@ -103,8 +109,7 @@ jumps to its line.
 
 When an automation needs a decision, it waits and notifies you. Answer from either place:
 
-- **Needs you** at the top of the Automations panel. The same list also sits on top of
-  **Pipeline**.
+- **Automations waiting on you** at the top of **Pipeline**.
 - The **Automations** page, which lists every question waiting on you and every automation whose
   last run failed.
 - The waiting step in the run, or on the diagram.

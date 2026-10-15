@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { EnvironmentId } from "@t3tools/contracts";
+
 import { buildHomeListFilterMenu } from "./home-list-filter-menu";
 
 describe("buildHomeListFilterMenu", () => {
@@ -35,5 +37,19 @@ describe("buildHomeListFilterMenu", () => {
     projectMenu.items[2]?.onPress();
     expect(onProjectChange).toHaveBeenNthCalledWith(1, null);
     expect(onProjectChange).toHaveBeenNthCalledWith(2, "environment-1:project-2");
+  });
+
+  it("leaves out the environment filter when the user has one environment", () => {
+    const menu = buildHomeListFilterMenu({
+      environments: [{ environmentId: EnvironmentId.make("cloud"), label: "Signalbox Cloud" }],
+      projects: [{ key: "cloud:project-1", label: "Codething" }],
+      selectedEnvironmentId: null,
+      selectedProjectKey: null,
+      onEnvironmentChange: vi.fn(),
+      onProjectChange: vi.fn(),
+      showsEnvironments: false,
+    });
+
+    expect(menu.items.map((item) => item.title)).toEqual(["Project"]);
   });
 });

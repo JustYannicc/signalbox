@@ -37,6 +37,14 @@ export const optionalSecret = (name: string) =>
     Config.map(Option.filter((value) => Redacted.value(value).trim().length > 0)),
   );
 
+/** A plain var that may be unset. Deploys pass an unset var as empty, which counts as unset. */
+export const optionalString = (name: string) =>
+  Config.String(name).pipe(
+    Config.option,
+    Config.map(Option.map((value) => value.trim())),
+    Config.map(Option.filter((value) => value.length > 0)),
+  );
+
 export class CloudConfig extends Context.Service<
   CloudConfig,
   {

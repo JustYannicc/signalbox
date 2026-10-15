@@ -130,6 +130,7 @@ import {
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
   const currentSet = new Set(current);
@@ -377,8 +378,10 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     selectedEnvironmentCanRenderSettings,
     target.scoped,
   ]);
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment, no device tabs
   const onlyPrimaryDevice =
-    options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
+    !showsEnvironmentUi ||
+    (options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget");
   const deviceTabs =
     !target.scoped && !onlyPrimaryDevice && options.length > 0 ? (
       <ScrollArea radius="none" hideScrollbars scrollFade className="h-11 min-w-0 flex-1">

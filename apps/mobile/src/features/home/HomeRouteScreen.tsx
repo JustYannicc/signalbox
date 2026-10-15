@@ -30,10 +30,13 @@ import { useAtomValueWhileVisible, useHomeRouteVisible } from "./home-route-visi
 import { useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { projectFilterOptions as buildProjectFilterOptions } from "../sections/section-project-filter";
+import { useFolderFilter, useFolderFilterOptions } from "../folders/use-folder-filter"; // signalbox: folders
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { NO_ENVIRONMENTS } from "./environmentFilter"; // signalbox
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
@@ -125,11 +128,12 @@ export function HomeRouteScreen() {
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox: a hidden filter can't narrow
   const {
     options: listOptions,
     setSelectedEnvironmentId,
     setSelectedProjectKey,
-  } = useHomeListOptions(availableEnvironmentIds);
+  } = useHomeListOptions(showsEnvironments ? availableEnvironmentIds : NO_ENVIRONMENTS);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const projectScopeKey = listOptions.selectedProjectKey;
   const resolvedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects, {
@@ -151,7 +155,7 @@ export function HomeRouteScreen() {
     [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );
   // signalbox: sections can select a single project outside the grouped scopes.
-  const projectFilterOptions = useMemo(
+  const scopeFilterOptions = useMemo(
     () =>
       buildProjectFilterOptions({
         selectedProjectKey: resolvedProjectKey,
@@ -160,6 +164,8 @@ export function HomeRouteScreen() {
       }),
     [projectScopes, projects, resolvedProjectKey],
   );
+  const folderFilter = useFolderFilter(resolvedProjectKey); // signalbox: folders
+  const projectFilterOptions = useFolderFilterOptions(scopeFilterOptions, folderFilter); // signalbox: folders
   // A saved project stays selected while its environment is offline or filtered out.
   const selectedProjectKey = projectFilterOptions.some(
     (project) => project.key === resolvedProjectKey,

@@ -8,7 +8,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { DriveClient } from "./RunnerDriveClient.ts";
 import { storePacks } from "./RunnerDriveMirror.ts";
-import { makeRunnerGit, type RunnerGit } from "./RunnerGit.ts";
+import { makeRunnerGit, remoteCredentialFile, type RunnerGit } from "./RunnerGit.ts";
 
 /**
  * A drive's shortcuts on its thread's machine (#142). Each shortcut shows
@@ -271,6 +271,11 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
   ) =>
     Effect.gen(function* () {
       if (shortcut.remote !== null && remoteToken !== null) {
+        // The target's drive keeps the remote's files on the remote, for git to fetch.
+        yield* mount.usePromisor(
+          client.shortcutRemoteUrl(shortcut.target),
+          remoteCredentialFile(input.cwd),
+        );
         const fetched = yield* mount.fetchHead(
           client.shortcutRemoteUrl(shortcut.target),
           REMOTE_REF,
@@ -289,6 +294,7 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
         git: mount,
         packs: shortcut.packs,
         shallow: shortcut.shallow,
+        promisor: shortcut.remote !== null,
         download: (name, packDir) => client.downloadShortcutPack(shortcut.target, name, packDir),
       }).pipe(Effect.provide(services));
       if (seq !== null) yield* fs.writeFileString(path.join(mountGitDir, PACKS_FILE), String(seq));
