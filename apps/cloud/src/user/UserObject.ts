@@ -245,7 +245,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   /** Automations' due work: timers, crons, retries. It re-arms itself for what's due next. */
-  async alarm() {
+  override async alarm() {
     await this.runtime.runPromise(CloudAutomations.use((automations) => automations.wake));
   }
 

@@ -103,10 +103,11 @@ export default workflow(async (w, event: { threadId: string }) => {
     Effect.gen(function* () {
       const { cloud, thread, tool, rpc } = yield* setup;
       const agent = yield* thread("thread-agent", "Check back later");
-      const at = Date.parse("2030-01-01T10:00:00.000Z");
+      const atIso = "2030-01-01T10:00:00.000Z";
+      const at = Date.parse(atIso);
       const wait = (yield* tool(agent, "wait_for", {
         until: "ten o'clock",
-        at: new Date(at).toISOString(),
+        at: atIso,
         message: "Look at the build again.",
       })) as { readonly waitId: string };
       expect(wait.waitId).toBeTruthy();

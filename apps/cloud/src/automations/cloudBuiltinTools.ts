@@ -33,7 +33,8 @@ const threadIdOf = (args: Args) =>
     ? Effect.succeed(ThreadId.make(args.threadId))
     : refuse("Pass threadId: automations have no thread of their own.");
 
-const GITHUB_PULL = /^https:\/\/(github\.com)\/([^/]+\/[^/]+)\/pull\/(\d+)/;
+/** A pull request's web URL: host, owner/repo and number. */
+const PULL_URL = /^https?:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/(\d+)/;
 
 export const makeCloudBuiltinTools = (deps: {
   readonly threads: AutomationThreadsShape;
@@ -77,9 +78,11 @@ export const makeCloudBuiltinTools = (deps: {
       Effect.gen(function* () {
         const threadId = yield* threadIdOf(args);
         const url = typeof args.url === "string" ? args.url : "";
-        const match = GITHUB_PULL.exec(url);
+        const match = PULL_URL.exec(url);
         if (!match)
-          return yield* refuse("Cloud threads link GitHub pull requests: pass its github.com URL.");
+          return yield* refuse(
+            "Pass the pull request's web URL, like https://github.com/owner/repo/pull/12.",
+          );
         const target = { host: match[1]!, repository: match[2]!, number: Number(match[3]), url };
         const shell = yield* shellOf(threadId);
         const alreadyLinked = (shell.pullRequests ?? []).some(

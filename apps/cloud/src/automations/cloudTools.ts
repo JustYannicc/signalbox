@@ -63,14 +63,16 @@ const withinCaller =
           `That automation runs with ${current.runtimeMode} access, more than this thread's ${caller.runtimeMode}.`,
         );
 
-/** A GitHub pull request named by URL, or by number on a repository the thread links. */
+/** A pull request named by its web URL, or by number on a repository the thread links. */
 const pullRequestTarget = (caller: OrchestrationV2ThreadShell, input: Input) =>
   Effect.gen(function* () {
     const url = text(input, "url");
     if (url) {
-      const match = /^https:\/\/(github\.com)\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(url);
+      const match = /^https?:\/\/([^/]+)\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(url);
       if (!match)
-        return yield* refuse("Cloud threads watch GitHub pull requests: pass its github.com URL.");
+        return yield* refuse(
+          "Pass the pull request's web URL, like https://github.com/owner/repo/pull/12.",
+        );
       return { host: match[1]!, repository: match[2]!, number: Number(match[3]), url };
     }
     const number = typeof input.number === "number" ? input.number : undefined;
