@@ -37,6 +37,8 @@ import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import { NO_ENVIRONMENTS } from "./environmentFilter"; // signalbox
+import { useAtom } from "@effect/atom-react"; // signalbox: sections
+import { sectionsPanelOpenAtom } from "../sections/sections-panel-state"; // signalbox: sections
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
@@ -69,7 +71,7 @@ export function HomeRouteScreen() {
     else if (workspace) workspace.dispatch({ type: "query", query, tab: "threads" });
     else setLocalSearchQuery(query);
   };
-  const [sectionsOpen, setSectionsOpen] = useState(false);
+  const [sectionsOpen, setSectionsOpen] = useAtom(sectionsPanelOpenAtom); // signalbox: sections
   const handleSelectThread = useHomeThreadSelection();
   const needsAccountSignIn = useNeedsAccountSignIn(); // signalbox: accounts
   const handleNewThreadOnBranch = useCallback(
