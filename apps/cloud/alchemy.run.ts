@@ -194,6 +194,8 @@ function deploy(
       routes: [{ pattern: `${target.previewHost}/*`, zoneId: PREVIEW_ZONE.id }],
       assets,
       observability: workerObservability,
+      // Checking a directly uploaded drive pack streams through all of it (#406): up to 5 GiB.
+      limits: { cpuMs: 300_000 },
       env: {
         ...env,
         // Binding and class names are the Durable Objects' identity.

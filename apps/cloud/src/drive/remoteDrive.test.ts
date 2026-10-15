@@ -337,6 +337,87 @@ describe("a drive backed by a remote", () => {
     }).pipe(Effect.provide(makeMemoryDrives().layer)),
   );
 
+  it.effect(
+    "holds the remote commits a rebased branch sits on one deep, and pushes only its own",
+    () =>
+      Effect.gen(function* () {
+        const remote = setup();
+        const handle = (yield* DriveDirectory).forDrive(DRIVE);
+        yield* handle.setRemote(REMOTE);
+        yield* handle.setup({ name: "owner/repo", members: [MANAGER] });
+        yield* uploadPack({
+          driveId: DRIVE,
+          threadId: "t1",
+          // As the Runner mirrors it: commit and folders, the files promised (#406).
+          ...remote.pack([remote.head], [], "blob:none"),
+          remoteHead: remote.head,
+        });
+        yield* handle.mirror(writer("t1"), { expectedMain: null, newMain: remote.head });
+        yield* handle.open(writer("t1"));
+        // The thread's first push, on the drive's main.
+        const before = remote.commit("notes.md", "mine\n", "Mine");
+        yield* uploadPack({
+          driveId: DRIVE,
+          threadId: "t1",
+          ...remote.pack([before], [remote.head]),
+        });
+        yield* handle.updateRefs(writer("t1"), [
+          { name: threadRef("t1"), old: remote.head, new: before },
+        ]);
+        const ref = "refs/heads/signalbox/t1";
+        const push = (head: string, old: string | null, force?: boolean) =>
+          Effect.gen(function* () {
+            const refs = yield* handle.refs("t1");
+            const packed = yield* packForPush({
+              driveId: DRIVE,
+              head,
+              old,
+              remoteHas: [remote.head, ...refs.shallow],
+              ...(force === undefined ? {} : { force }),
+            });
+            const answer = run(
+              remote.github,
+              ["receive-pack", "--stateless-rpc", "."],
+              receivePackRequest({ ref, old, next: head, pack: packed.pack }),
+            );
+            return { ...packed, result: receivePackResult(new Uint8Array(answer), ref) };
+          });
+        expect((yield* push(before, null)).result).toEqual({ _tag: "ok" });
+
+        // Main moves on by two commits; the thread rebases onto it.
+        remote.upstream.write("src/app.ts", "export const a = 1;\n");
+        remote.upstream.commit("third");
+        remote.upstream.write("src/app.ts", "export const a = 2;\n");
+        const main = remote.upstream.commit("fourth");
+        run(remote.github, ["fetch", "-q", remote.upstream.dir, "work:work"]);
+        remote.git(["fetch", "-q", "--depth=1", "origin", "work"]);
+        remote.git(["rebase", "-q", "--onto", main, remote.head]);
+        const rebased = remote.git(["rev-parse", "HEAD"]);
+        const packed = remote.pack([rebased], [before, `${before}^{tree}`]);
+        // The main it sits on isn't in the drive: only a remote commit, checked as one, may lean on that.
+        expect((yield* uploadPack({ driveId: DRIVE, threadId: "t1", ...packed }))._tag).toBe(
+          "refused",
+        );
+        expect(
+          (yield* uploadPack({ driveId: DRIVE, threadId: "t1", ...packed, remoteCommits: [main] }))
+            ._tag,
+        ).toBe("ok");
+        expect((yield* handle.refs("t1")).shallow).toContain(main);
+        yield* handle.updateRefs(writer("t1"), [
+          { name: threadRef("t1"), old: before, new: rebased },
+        ]);
+
+        // The pushed branch isn't on the rebased one: refused, unless the thread took it in (a lease).
+        expect((yield* push(rebased, before).pipe(Effect.flip))._tag).toBe("PushRefused");
+        const forced = yield* push(rebased, before, true);
+        expect(forced.result).toEqual({ _tag: "ok" });
+        // Only the thread's own commit travels; GitHub has main.
+        expect(forced.commits).toBe(1);
+        expect(run(remote.github, ["rev-parse", ref]).toString().trim()).toBe(rebased);
+        expect(gitOk(remote.github, ["fsck", "--connectivity-only", "--no-dangling"])).toBe(true);
+      }).pipe(Effect.provide(makeMemoryDrives().layer)),
+  );
+
   it("reads a remote's refusal", () => {
     const line = (text: string) => `${(text.length + 4).toString(16).padStart(4, "0")}${text}`;
     const body = new TextEncoder().encode(

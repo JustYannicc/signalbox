@@ -6,7 +6,7 @@ import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks } from "./DrivePacks.ts";
 import type { StoredCommit } from "./DriveStore.ts";
 import { parseCommit, parseTree } from "./git/gitObjects.ts";
-import { PackError, verifyPack } from "./git/gitPack.ts";
+import { PackError, type VerifiedPack, verifyPack } from "./git/gitPack.ts";
 import type { Bytes, Oid } from "./git/gitObjects.ts";
 
 /**
@@ -17,13 +17,14 @@ import type { Bytes, Oid } from "./git/gitObjects.ts";
  * file in R2.
  *
  * The exception to "everything referenced is in the drive" is a remote's
- * head (`remoteHead`), which the caller has checked against the remote: its
- * parents stay on the remote, so a remote-backed drive holds its main line
- * one commit deep. And its files stay there too (#406): the pack holds the
- * commit and its folders, and the files those folders name that the drive
- * lacks become promised, kept by the remote. Only a checked head promises,
- * and only files its own folders name, so what the drive relies on the remote
- * for is exactly what the remote has.
+ * commits, which the caller has checked against the remote: its head
+ * (`remoteHead`), and others a thread's branch sits on (`remoteCommits`,
+ * #394). Their parents stay on the remote, so a remote-backed drive holds
+ * them one commit deep. And their files stay there too (#406): the pack holds
+ * the commits and their folders, and the files those folders name that the
+ * drive lacks become promised, kept by the remote. Only a checked commit
+ * promises, and only files its own folders name, so what the drive relies on
+ * the remote for is exactly what the remote has.
  */
 
 export type UploadResult =
@@ -34,43 +35,56 @@ class InvalidPack extends Schema.TaggedError<InvalidPack>()("InvalidPack", {
   reason: Schema.String,
 }) {}
 
-const refused = (reason: string): UploadResult => ({ _tag: "refused", reason });
+export const refused = (reason: string): UploadResult => ({ _tag: "refused", reason });
 
-export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = never>(input: {
+/**
+ * A checked pack, accepted or refused: the closure check, then `store` puts
+ * its bytes where the drive keeps packs, and only then the drive indexes it.
+ * Both ways a pack arrives end here: in a request's body (`uploadPack`), or
+ * uploaded straight to storage and read back (`directUploads.ts`).
+ */
+export const acceptPack = Effect.fn("DriveUploads.acceptPack")(function* <
+  E,
+  R1,
+  R2 = never,
+>(input: {
   readonly driveId: string;
   readonly threadId: string;
-  readonly idx: Bytes;
-  readonly pack: Bytes;
+  readonly pack: VerifiedPack;
+  /** The pack's length in bytes. */
+  readonly size: number;
+  readonly store: Effect.Effect<void, E, R1>;
   /** A commit in the pack that is the remote's current head. Its parents and files may be absent. */
   readonly remoteHead?: Oid;
+  /** Other commits in the pack that are on the remote; their parents and files may be absent too. */
+  readonly remoteCommits?: ReadonlyArray<Oid>;
   /** The sizes of the remote head's files as the remote lists them, asked only when it promises any. */
-  readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
+  readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R2>;
 }) {
-  if (input.pack.length > MAX_PACK_BYTES) {
-    return refused(`Packs over ${MAX_PACK_BYTES} bytes are not stored yet.`);
-  }
-  const verified = yield* Effect.tryPromise({
-    try: () => verifyPack(input.pack, input.idx),
-    catch: (cause) =>
-      new InvalidPack({
-        reason: cause instanceof PackError ? cause.message : "The pack could not be read.",
-      }),
-  }).pipe(Effect.result);
-  if (verified._tag === "Failure") return refused(verified.failure.reason);
-  const pack = verified.success;
+  const { pack } = input;
+  const remoteCommits = [
+    ...(input.remoteHead === undefined ? [] : [input.remoteHead]),
+    ...(input.remoteCommits ?? []),
+  ];
   const drive = (yield* DriveDirectory).forDrive(input.driveId);
-  const head = input.remoteHead === undefined ? undefined : pack.structure.get(input.remoteHead);
-  if (input.remoteHead !== undefined && head?.type !== "commit") {
-    return refused(`The pack does not hold commit ${input.remoteHead}.`);
+  const parentsOf = new Map<Oid, ReadonlyArray<Oid>>();
+  const roots: Array<Oid> = [];
+  for (const oid of remoteCommits) {
+    const commit = pack.structure.get(oid);
+    if (commit?.type !== "commit") return refused(`The pack does not hold commit ${oid}.`);
+    const parsed = parseCommit(commit.content);
+    parentsOf.set(oid, parsed.parents);
+    roots.push(parsed.tree);
   }
-  // One lookup: the head's parents the drive lacks stay on the remote; anything else is refused.
-  const parents = new Set(head === undefined ? [] : parseCommit(head.content).parents);
+  // One lookup: remote commits' parents the drive lacks stay on the remote; anything else is refused.
+  // A parent in this same pack isn't lacking: it comes along.
+  const parents = new Set([...parentsOf.values()].flat().filter((oid) => !pack.structure.has(oid)));
   const lacking = yield* drive.missing([...pack.external, ...parents]);
   const onRemote = new Set(lacking.filter((oid) => parents.has(oid)));
-  // A checked head's folders name files the remote keeps: those it lacks, the drive is promised.
+  // A checked commit's folders name files the remote keeps: those it lacks, the drive is promised.
   // Only the folders it reaches: another tree in the pack could name anything as a file.
   const files = new Set<Oid>();
-  const folders = head === undefined ? [] : [parseCommit(head.content).tree];
+  const folders = [...roots];
   for (const seen = new Set<Oid>(); folders.length > 0;) {
     const oid = folders.pop()!;
     const folder = pack.structure.get(oid);
@@ -89,12 +103,7 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
   if (absent.length > 0) {
     return refused(`The pack references ${absent.length} objects the drive does not have.`);
   }
-  yield* (yield* DrivePacks).put({
-    driveId: input.driveId,
-    name: pack.name,
-    idx: input.idx,
-    pack: input.pack,
-  });
+  yield* input.store;
   const commits: Array<StoredCommit> = [];
   for (const [oid, object] of pack.structure) {
     if (object.type !== "commit") continue;
@@ -111,12 +120,14 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
   }
   const registered = yield* drive.registerPack({
     name: pack.name,
-    size: input.pack.length,
+    size: input.size,
     threadId: input.threadId,
     objects: pack.objects,
     commits,
     external,
-    ...(onRemote.size > 0 && input.remoteHead !== undefined ? { shallow: [input.remoteHead] } : {}),
+    shallow: [...parentsOf]
+      .filter(([, commitParents]) => commitParents.some((parent) => onRemote.has(parent)))
+      .map(([oid]) => oid),
     ...(promised.length > 0
       ? {
           promised: yield* Effect.map(
@@ -132,4 +143,43 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
     );
   }
   return { _tag: "ok", name: pack.name, objects: pack.objects.length } satisfies UploadResult;
+});
+
+/** A pack uploaded in a request's body, checked in memory. */
+export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = never>(input: {
+  readonly driveId: string;
+  readonly threadId: string;
+  readonly idx: Bytes;
+  readonly pack: Bytes;
+  readonly remoteHead?: Oid;
+  readonly remoteCommits?: ReadonlyArray<Oid>;
+  readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
+}) {
+  if (input.pack.length > MAX_PACK_BYTES) {
+    return refused(`Packs over ${MAX_PACK_BYTES} bytes are not stored yet.`);
+  }
+  const verified = yield* Effect.tryPromise({
+    try: () => verifyPack(input.pack, input.idx),
+    catch: (cause) =>
+      new InvalidPack({
+        reason: cause instanceof PackError ? cause.message : "The pack could not be read.",
+      }),
+  }).pipe(Effect.result);
+  if (verified._tag === "Failure") return refused(verified.failure.reason);
+  const packs = yield* DrivePacks;
+  return yield* acceptPack({
+    driveId: input.driveId,
+    threadId: input.threadId,
+    pack: verified.success,
+    size: input.pack.length,
+    store: packs.put({
+      driveId: input.driveId,
+      name: verified.success.name,
+      idx: input.idx,
+      pack: input.pack,
+    }),
+    ...(input.remoteHead === undefined ? {} : { remoteHead: input.remoteHead }),
+    ...(input.remoteCommits === undefined ? {} : { remoteCommits: input.remoteCommits }),
+    ...(input.promisedSizes === undefined ? {} : { promisedSizes: input.promisedSizes }),
+  });
 });

@@ -46,7 +46,7 @@ import type { HarnessStderr } from "./harnessStderr.ts";
 import type { RunnerAttachments } from "./RunnerAttachments.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
-import { DriveClientError, DriveTooLargeError } from "./RunnerDriveClient.ts";
+import { DriveClientError, DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSecrets } from "./RunnerSecrets.ts";
@@ -149,7 +149,7 @@ const isInstructionsError = Schema.is(RunnerInstructionsError);
 const isTurnError = Schema.is(RunnerTurnError);
 const isRunnerGitError = Schema.is(RunnerGitError);
 const isDriveClientError = Schema.is(DriveClientError);
-const isDriveTooLarge = Schema.is(DriveTooLargeError);
+const isDriveTooLarge = Schema.is(Schema.Union([DriveTooLargeError, DriveRefusedError]));
 
 /**
  * The failure text a thread may store: bounded and with credentials redacted.
@@ -710,7 +710,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         input.attachments === undefined || sessionAccess === null
           ? null
           : yield* Effect.forkChild(
-              input.attachments.bring(sessionAccess.token, turn.message.attachments),
+              input.attachments
+                .bring(sessionAccess.token, turn.message.attachments)
+                // Its message says why, naming the turn's own files when they're the reason.
+                .pipe(Effect.mapError((error) => new RunnerTurnError({ message: error.message }))),
             );
       const session = yield* sessionFor(adapter, turn, runtimePolicy, {
         instructions: prepared.drive?.instructions ?? "",

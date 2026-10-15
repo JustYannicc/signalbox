@@ -21,6 +21,7 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-github": "workspace:*",
+    "aws4fetch": "1.0.20",
     "diff": "8.0.3",
     "effect": "catalog:",
     "jose": "catalog:"

@@ -20,16 +20,17 @@ interface WranglerConfig {
   readonly durable_objects: {
     readonly bindings: ReadonlyArray<{ name: string; class_name: string }>;
   };
-  readonly containers: ReadonlyArray<{ class_name: string }>;
+  readonly containers: ReadonlyArray<{ class_name: string; max_instances: number }>;
   readonly workflows: ReadonlyArray<{ binding: string; name: string; class_name: string }>;
   readonly worker_loaders: ReadonlyArray<{ binding: string }>;
   readonly vars: Readonly<Record<string, string>>;
   readonly env: { readonly dev: Pick<WranglerConfig, "workflows" | "worker_loaders"> };
 }
 
-const wrangler = parseJsonc(
-  NodeFS.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
-) as WranglerConfig;
+const readWrangler = (file: string) =>
+  parseJsonc(NodeFS.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"));
+
+const wrangler = readWrangler("wrangler.jsonc") as WranglerConfig;
 
 describe("cloudStage", () => {
   it("keeps production's wrangler-made names", () => {
@@ -114,6 +115,15 @@ describe("wrangler.jsonc", () => {
       DURABLE_OBJECT_BINDINGS.POOLS,
       DURABLE_OBJECT_BINDINGS.THREADS,
     ]);
+    const production = cloudStage("production");
+    expect(
+      Object.fromEntries(
+        wrangler.containers.map((container) => [container.class_name, container.max_instances]),
+      ),
+    ).toEqual({
+      [DURABLE_OBJECT_BINDINGS.POOLS]: production.poolContainer.maxInstances,
+      [DURABLE_OBJECT_BINDINGS.THREADS]: production.threadContainer.maxInstances,
+    });
   });
 
   it("runs the automation Workflow and loader, in dev too", () => {
@@ -131,6 +141,9 @@ describe("wrangler.jsonc", () => {
 
   it("runs production's compatibility date and identity", () => {
     expect(wrangler.compatibility_date).toBe(COMPATIBILITY_DATE);
+    expect(
+      (readWrangler("wrangler.model-gateway.jsonc") as WranglerConfig).compatibility_date,
+    ).toBe(COMPATIBILITY_DATE);
     expect(wrangler.vars.ENVIRONMENT_ID).toBe(cloudStage("production").vars.ENVIRONMENT_ID);
   });
 });

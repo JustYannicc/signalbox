@@ -90,6 +90,14 @@ export function homeOfProject(
   return snapshot.projectHomes.find((home) => home.projectId === projectId)?.folderId ?? null;
 }
 
+/**
+ * Whether a thread was filed away from where its project's threads live, like
+ * a draft started in a folder that shares its owner's files.
+ */
+export function isFiledAway(snapshot: SignalboxFoldersSnapshot, thread: ThreadRef): boolean {
+  return homeOfThread(snapshot, thread) !== homeOfProject(snapshot, thread.projectId);
+}
+
 const lookupCache = new WeakMap<SignalboxFoldersSnapshot, (thread: ThreadRef) => FolderId | null>();
 
 /** Each thread's home, for grouping many threads at once. The same function for the same snapshot. */

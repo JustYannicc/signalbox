@@ -1,4 +1,5 @@
 import { type OrchestrationProjectShell, ProjectId, ThreadId } from "@t3tools/contracts";
+import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import {
   PERSONAL_CONTEXT_ID,
   type SignalboxContext,
@@ -118,10 +119,7 @@ const THREADS_SEGMENT = "/threads/";
  * unlikely to collide within one repository.
  */
 export const remoteThreadWorktree = (driveId: string, threadId: ThreadId): ThreadWorktree => ({
-  branch: `signalbox/${threadId
-    .replace(/[^0-9a-zA-Z]/g, "")
-    .slice(-8)
-    .toLowerCase()}`,
+  branch: threadRemoteBranch(threadId),
   path: `${driveRoot(driveId)}${THREADS_SEGMENT}${threadId}`,
 });
 

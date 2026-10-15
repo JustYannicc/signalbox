@@ -3,6 +3,9 @@ import {
   DRIVE_PATHS,
   type DriveState,
   driveJson,
+  MAX_DIRECT_PACK_BYTES,
+  MAX_REMOTE_COMMITS,
+  REMOTE_COMMITS_HEADER,
   Oid,
   PACK_INDEX_LENGTH_HEADER,
   PACKS_AFTER_HEADER,
@@ -10,6 +13,7 @@ import {
   REMOTE_HEAD_HEADER,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import { ThreadId } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
@@ -23,6 +27,7 @@ import {
 } from "../context/contextRoutes.ts";
 import * as ContextTool from "../context/ContextTool.ts";
 import * as GitHub from "../github/GitHub.ts";
+import * as Platform from "../platform.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
@@ -37,9 +42,21 @@ import {
 } from "./DriveStore.ts";
 import { isAutomationApiPath, serveAutomationRequest } from "./automationRoutes.ts";
 import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
+import {
+  type DirectUploads,
+  type DirectUploadsEnv,
+  makeDirectUploads,
+  s3Storage,
+} from "./directUploads.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import { threadOfDriveToken } from "./driveToken.ts";
-import { forwardRemote, isRemoteHead, proxyRemote, remoteFileSizes } from "./remoteRoutes.ts";
+import {
+  areRemoteCommits,
+  forwardRemote,
+  isRemoteHead,
+  proxyRemote,
+  remoteFileSizes,
+} from "./remoteRoutes.ts";
 import { decodeBody, json, packResponse, text } from "./routeResponses.ts";
 import { shortcutRoute } from "./shortcutRoutes.ts";
 
@@ -53,7 +70,7 @@ import { shortcutRoute } from "./shortcutRoutes.ts";
  * thread's own remote token, never the drive token.
  */
 
-export interface DriveRouteEnv extends GitHub.GitHubEnv {
+export interface DriveRouteEnv extends GitHub.GitHubEnv, DirectUploadsEnv {
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
   readonly USERS: UserDirectory.UserObjectNamespace;
   readonly DRIVES: DriveDirectory.DriveObjectNamespace;
@@ -62,6 +79,7 @@ export interface DriveRouteEnv extends GitHub.GitHubEnv {
 }
 
 type Services =
+  | Crypto.Crypto
   | DriveDirectory.DriveDirectory
   | DrivePacks.DrivePacks
   | UserDirectory.UserDirectory
@@ -112,6 +130,8 @@ async function authorize(
 }
 
 let runtime: ManagedRuntime.ManagedRuntime<Services, never> | undefined;
+/** Uploads straight to storage (#406), or null when this cloud has no S3 credentials. */
+let direct: DirectUploads | null | undefined;
 
 /** One drive API request. Anything unexpected is logged and answered 500, which the Runner retries. */
 export async function handleDriveRequest(
@@ -125,6 +145,7 @@ export async function handleDriveRequest(
         Layer.mergeAll(
           DriveDirectory.layerDurableObjects(env.DRIVES, options),
           DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
+          Platform.layerCrypto,
           UserDirectory.layerDurableObjects(env.USERS, options),
           ThreadDirectory.layerDurableObjects(env.THREADS, options),
           // Only users' own tokens act on GitHub here; the App's client stays in their objects.
@@ -135,6 +156,13 @@ export async function handleDriveRequest(
       ),
     ),
   );
+  if (direct === undefined) {
+    const storage = s3Storage(env);
+    direct =
+      storage === null
+        ? null
+        : makeDirectUploads({ bucket: env.DRIVE_PACKS, storage, prefix: env.DRIVE_PACKS_PREFIX });
+  }
   try {
     if (new URL(request.url).pathname.startsWith(`${DRIVE_PATHS.remote}/`)) {
       const resolved = await runtime.runPromise(proxyRemote(env.THREADS, request, options));
@@ -145,6 +173,41 @@ export async function handleDriveRequest(
     await runtime.runPromise(Effect.logError("drive request failed", { cause: String(cause) }));
     return text("The drive is unavailable right now.", 500);
   }
+}
+
+/**
+ * An upload's remote commits, each checked against the remote as the
+ * thread's user: its head, and others its branch sits on (#394). What may
+ * lean on the remote, or the refusal.
+ */
+async function checkedRemote(
+  run: <A, E>(effect: Effect.Effect<A, E, Services>) => Promise<A>,
+  auth: { readonly driveId: string; readonly userId: string },
+  remoteHead: Oid | null,
+  remoteCommits: ReadonlyArray<Oid>,
+) {
+  if (remoteCommits.length > MAX_REMOTE_COMMITS) {
+    return text(`More than ${MAX_REMOTE_COMMITS} remote commits in one upload.`, 400);
+  }
+  if (remoteHead !== null && !(await run(isRemoteHead(auth.driveId, auth.userId, remoteHead)))) {
+    return text("That is not the remote's head.", 422);
+  }
+  if (
+    remoteCommits.length > 0 &&
+    !(await run(areRemoteCommits(auth.driveId, auth.userId, remoteCommits)))
+  ) {
+    return text("The remote doesn't hold those commits.", 422);
+  }
+  // Other remote commits' files are promised with unknown sizes: read when first needed.
+  return {
+    ...(remoteHead === null
+      ? {}
+      : {
+          remoteHead,
+          promisedSizes: remoteFileSizes(auth.driveId, auth.userId, remoteHead),
+        }),
+    ...(remoteCommits.length === 0 ? {} : { remoteCommits }),
+  };
 }
 
 async function route(
@@ -219,24 +282,65 @@ async function route(
       const headerValue = request.headers.get(REMOTE_HEAD_HEADER);
       const remoteHead = headerValue === null ? null : decodeOid(headerValue);
       if (remoteHead?._tag === "None") return text(`Bad ${REMOTE_HEAD_HEADER}.`, 400);
-      if (
-        remoteHead !== null &&
-        !(await run(isRemoteHead(auth.driveId, auth.userId, remoteHead.value)))
-      ) {
-        return text("That is not the remote's head.", 422);
+      const listed = request.headers.get(REMOTE_COMMITS_HEADER);
+      const remoteCommits = listed === null ? [] : listed.split(",").map((oid) => decodeOid(oid));
+      if (remoteCommits.some((oid) => oid._tag === "None")) {
+        return text(`Bad ${REMOTE_COMMITS_HEADER}.`, 400);
       }
+      const remote = await checkedRemote(
+        run,
+        auth,
+        remoteHead?.value ?? null,
+        remoteCommits.flatMap((oid) => (oid._tag === "Some" ? [oid.value] : [])),
+      );
+      if (remote instanceof Response) return remote;
       const result = await run(
         uploadPack({
           driveId: auth.driveId,
           threadId: auth.threadId,
           idx: body.subarray(0, idxLength),
           pack: body.subarray(idxLength),
-          ...(remoteHead === null
-            ? {}
-            : {
-                remoteHead: remoteHead.value,
-                promisedSizes: remoteFileSizes(auth.driveId, auth.userId, remoteHead.value),
-              }),
+          ...remote,
+        }),
+      );
+      return result._tag === "ok"
+        ? json(driveJson.packUpload.encode({ name: result.name, objects: result.objects }))
+        : text(result.reason, 422);
+    }
+    case DRIVE_PATHS.directUpload: {
+      const parsed = decodeBody(driveJson.directUpload.decode, await request.text());
+      if (parsed === null) return text("Unreadable request.", 400);
+      if (direct === null || direct === undefined) {
+        return json(driveJson.directOffer.encode({ _tag: "inline" }));
+      }
+      const offered = await run(direct.offer(auth.driveId, parsed));
+      if (offered._tag === "too_large") {
+        return text(
+          `A pack of ${parsed.packSize} bytes is more than a drive takes at once (${MAX_DIRECT_PACK_BYTES}).`,
+          413,
+        );
+      }
+      return json(driveJson.directOffer.encode(offered));
+    }
+    case DRIVE_PATHS.directCommit: {
+      const parsed = decodeBody(driveJson.directCommit.decode, await request.text());
+      if (parsed === null) return text("Unreadable request.", 400);
+      if (direct === null || direct === undefined) {
+        return text("This cloud takes packs in a request's body.", 404);
+      }
+      const remote = await checkedRemote(
+        run,
+        auth,
+        parsed.remoteHead ?? null,
+        parsed.remoteCommits ?? [],
+      );
+      if (remote instanceof Response) return remote;
+      const result = await run(
+        direct.commit({
+          driveId: auth.driveId,
+          threadId: auth.threadId,
+          uploadId: parsed.uploadId,
+          ...remote,
         }),
       );
       return result._tag === "ok"

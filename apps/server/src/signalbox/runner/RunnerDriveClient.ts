@@ -10,12 +10,14 @@ import {
   type ReconcileRequest,
   type RefUpdate,
   type RefWriteResult,
+  REMOTE_COMMITS_HEADER,
   REMOTE_HEAD_HEADER,
   type DriveShortcut,
   shortcutPacksPath,
   shortcutRemotePath,
 } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
@@ -41,6 +43,12 @@ export class DriveTooLargeError extends Schema.TaggedError<DriveTooLargeError>()
   { message: Schema.String },
 ) {}
 
+/** A save the drive won't take as it is, with what to do about it, said for the thread's person. */
+export class DriveRefusedError extends Schema.TaggedError<DriveRefusedError>()(
+  "DriveRefusedError",
+  { message: Schema.String },
+) {}
+
 const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`;
 
 export interface DriveClient {
@@ -51,11 +59,15 @@ export interface DriveClient {
   readonly state: Effect.Effect<DriveState, DriveClientError>;
   /** Puts `pack-<name>.pack` and `.idx` into `packDir`; idx last, so git never sees half a pack. */
   readonly downloadPack: (name: string, packDir: string) => Effect.Effect<void, DriveClientError>;
-  /** `remoteHead`: the pack holds the remote's head, whose parents stay on the remote. */
+  /**
+   * Uploads the pack and index at these paths: straight to storage when the
+   * cloud offers it (#406), else in a request's body. `remoteHead`: the pack
+   * holds the remote's head; `remoteCommits`: other commits it holds from the
+   * remote (#394). Their parents and files stay on the remote.
+   */
   readonly uploadPack: (
-    idx: Uint8Array,
-    pack: Uint8Array,
-    options?: { readonly remoteHead?: string },
+    files: { readonly idx: string; readonly pack: string },
+    options?: { readonly remoteHead?: string; readonly remoteCommits?: ReadonlyArray<string> },
   ) => Effect.Effect<typeof PackUploadResult.Type, DriveClientError | DriveTooLargeError>;
   readonly updateRefs: (
     updates: ReadonlyArray<RefUpdate>,
@@ -188,13 +200,21 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
   const downloadPack: DriveClient["downloadPack"] = (name, packDir) =>
     fetchPack(DRIVE_PATHS.packs, name, packDir);
 
-  const uploadPack: DriveClient["uploadPack"] = (idx, pack, options = {}) =>
+  /** Bytes in a request's body: what a cloud without direct uploads takes, up to `MAX_PACK_BYTES`. */
+  const uploadInline = (
+    files: { readonly idx: string; readonly pack: string },
+    packSize: number,
+    options: { readonly remoteHead?: string; readonly remoteCommits?: ReadonlyArray<string> },
+  ) =>
     Effect.gen(function* () {
-      if (pack.byteLength > MAX_PACK_BYTES) {
+      if (packSize > MAX_PACK_BYTES) {
         return yield* new DriveTooLargeError({
-          message: `This save is ${megabytes(pack.byteLength)}, more than the ${megabytes(MAX_PACK_BYTES)} a drive takes in one upload.`,
+          message: `This save is ${megabytes(packSize)}, more than the ${megabytes(MAX_PACK_BYTES)} a drive takes in one upload.`,
         });
       }
+      const [idx, pack] = yield* Effect.all([fs.readFile(files.idx), fs.readFile(files.pack)]).pipe(
+        Effect.mapError(fileError("reading a pack")),
+      );
       const body = new Uint8Array(idx.byteLength + pack.byteLength);
       body.set(idx, 0);
       body.set(pack, idx.byteLength);
@@ -204,9 +224,95 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
           options.remoteHead === undefined
             ? (request) => request
             : HttpClientRequest.setHeader(REMOTE_HEAD_HEADER, options.remoteHead),
+          options.remoteCommits === undefined || options.remoteCommits.length === 0
+            ? (request) => request
+            : HttpClientRequest.setHeader(REMOTE_COMMITS_HEADER, options.remoteCommits.join(",")),
           HttpClientRequest.bodyUint8Array(body, "application/octet-stream"),
         ),
         "uploading a pack",
+      );
+      return yield* decodeWith(driveJson.packUpload.decode, "pack answer")(answer);
+    });
+
+  /**
+   * `PUT`s a file to a presigned storage URL: no bearer, the URL is the
+   * permission. Through Node's own HTTP, which sends the file's length:
+   * fetch streams a file body chunked, and storage refuses a `PUT` without one.
+   */
+  const putFile = (url: string, file: string, label: string) =>
+    Effect.gen(function* () {
+      const request = yield* HttpClientRequest.put(url).pipe(
+        HttpClientRequest.bodyFile(file, { contentType: "application/octet-stream" }),
+        Effect.mapError(fileError(label)),
+      );
+      const response = yield* (yield* HttpClient.HttpClient)
+        .execute(request)
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new DriveClientError({ message: `${label}: ${error.message}`, retryable: true }),
+          ),
+        );
+      if (response.status < 200 || response.status >= 300) {
+        return yield* new DriveClientError({
+          message: `${label} failed with HTTP ${response.status}`,
+          status: response.status,
+          retryable: isRetryableStatus(response.status),
+        });
+      }
+    }).pipe(
+      Effect.provide(NodeHttpClient.layerNodeHttp),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.retry(RETRY),
+    );
+
+  const uploadPack: DriveClient["uploadPack"] = (files, options = {}) =>
+    Effect.gen(function* () {
+      const [idxStat, packStat] = yield* Effect.all([fs.stat(files.idx), fs.stat(files.pack)]).pipe(
+        Effect.mapError(fileError("sizing a pack")),
+      );
+      const idxSize = Number(idxStat.size);
+      const packSize = Number(packStat.size);
+      const offered = yield* postJson(
+        DRIVE_PATHS.directUpload,
+        driveJson.directUpload.encode({ packSize, idxSize }),
+        "asking to upload a pack",
+      ).pipe(
+        Effect.flatMap(decodeWith(driveJson.directOffer.decode, "upload offer")),
+        // A cloud from before direct uploads has no such route: upload inline.
+        Effect.catchIf(
+          (error) => error.status === 404,
+          () => Effect.succeed({ _tag: "inline" } as const),
+        ),
+        Effect.catchIf(
+          (error) => error.status === 413,
+          (error) =>
+            Effect.fail(
+              new DriveTooLargeError({
+                message: `This save is ${megabytes(packSize)}, more than a drive takes in one upload. ${error.message}`,
+              }),
+            ),
+        ),
+      );
+      if (offered._tag === "inline") return yield* uploadInline(files, packSize, options);
+      // Nothing reads an upload before it is committed, so both go at once.
+      yield* Effect.all(
+        [
+          putFile(offered.pack, files.pack, "uploading a pack"),
+          putFile(offered.idx, files.idx, "uploading a pack's index"),
+        ],
+        { concurrency: 2, discard: true },
+      );
+      const answer = yield* postJson(
+        DRIVE_PATHS.directCommit,
+        driveJson.directCommit.encode({
+          uploadId: offered.uploadId,
+          ...(options.remoteHead === undefined ? {} : { remoteHead: options.remoteHead }),
+          ...(options.remoteCommits === undefined || options.remoteCommits.length === 0
+            ? {}
+            : { remoteCommits: options.remoteCommits }),
+        }),
+        "storing an uploaded pack",
       );
       return yield* decodeWith(driveJson.packUpload.decode, "pack answer")(answer);
     });

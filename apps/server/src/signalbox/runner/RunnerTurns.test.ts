@@ -32,6 +32,7 @@ import type {
   ProviderAdapterV2,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { DriveOutcome, PreparedDrive, RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
+import { RunnerAttachmentsError } from "./RunnerAttachments.ts";
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
@@ -279,6 +280,7 @@ describe("RunnerTurns", () => {
               return { _tag: "not_landed", reason: "abandoned" } as const;
             }),
             saveBranch: () => Effect.die(new Error("not in this test")),
+            published: () => Effect.void,
           };
           const reported: Array<RunnerItem> = [];
           const turns = yield* makeRunnerTurns({
@@ -440,6 +442,7 @@ describe("RunnerTurns", () => {
             return { _tag: "not_landed", reason: "abandoned" } as const;
           }),
           saveBranch: () => Effect.die(new Error("not in this test")),
+          published: () => Effect.void,
         };
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
@@ -700,6 +703,7 @@ describe("RunnerTurns", () => {
         continueAfterResolution: Effect.die(new Error("not in this test")),
         abandonMerge: Effect.die(new Error("not in this test")),
         saveBranch: () => Effect.die(new Error("not in this test")),
+        published: () => Effect.void,
       }) as RunnerDrive;
     const access = { driveId: "drive-1", token: "drive-token", remoteToken: "remote-token" };
     const withMessage = (turn: RunnerTurn): RunnerTurn =>
@@ -970,6 +974,43 @@ describe("RunnerTurns", () => {
           yield* Deferred.succeed(fake.loaded, undefined);
           for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
           expect(fake.calls.at(-1)).toBe("start run-2 continuing run-1");
+        }),
+      ),
+    );
+
+    it.effect("fails the turn naming the pasted file that couldn't reach the machine", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const { sessions } = yield* makeFakeSessions([]);
+          const reported: Array<RunnerItem> = [];
+          const message = `Signalbox couldn't get "notes.txt" onto this thread's machine: the download stalled for 30 seconds`;
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            sessions,
+            attachments: {
+              bring: () => Effect.fail(new RunnerAttachmentsError({ message, retryable: true })),
+            },
+          });
+          yield* Deferred.succeed(fake.loaded, undefined);
+          const pasted = { ...turnFor(1), message: { text: "See notes", attachments: [] } };
+          yield* turns.start({
+            turn: pasted as unknown as RunnerTurn,
+            modelToken: "token-1",
+            drive: null,
+            sessions: { token: "sbs1.t.1" },
+          });
+          yield* settle;
+
+          expect(reported.map(label)).toEqual(["log run-1 error", "turn.failed run-1"]);
+          const failed = reported[1];
+          expect(failed?.kind === "turn.failed" && failed.message).toBe(message);
+          expect(fake.calls.some((call) => call.startsWith("start"))).toBe(false);
         }),
       ),
     );

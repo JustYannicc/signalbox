@@ -17,6 +17,11 @@ import { jsonCodec } from "./jsonCodec.ts";
  *   object, and accepts the pack only if everything its commits and trees
  *   point at is in it or already in the drive. Nothing is registered until
  *   the pack is stored, so a machine killed mid-upload leaves no trace.
+ * - `POST packs/direct` asks to upload straight to storage instead (#406):
+ *   the answer is a pair of short-lived URLs to `PUT` the pack and its index
+ *   to, or `inline` when this cloud has none to give. `POST packs/direct/commit`
+ *   then has the cloud read the upload back, check it the same way (streamed,
+ *   so its size never meets a request's or an isolate's limit) and store it.
  * - `refs` moves the thread's own `thread` and `wip` refs, each a CAS from an
  *   old value, to commits the drive already has.
  * - `reconcile` fast-forwards `main` to the thread's branch. Only while the
@@ -33,10 +38,12 @@ import { jsonCodec } from "./jsonCodec.ts";
  * - `remote` is the remote repository over git's smart HTTP, fetch only, with
  *   the turn's remote token as bearer. The cloud adds the credential; the
  *   machine never holds one, and the token stops working when the turn ends.
- * - `main` mirrors the remote's default branch: the machine fetches its head
- *   (one commit deep), uploads it with `REMOTE_HEAD_HEADER`, and `mirror`s
- *   `main` to it. The cloud checks both against the remote. Such a drive
- *   never `reconcile`s; merging a pull request on the remote lands the work.
+ * - `main` mirrors the remote's default branch: the machine fetches the
+ *   remote's history (blobless, #394), uploads its head with
+ *   `REMOTE_HEAD_HEADER` (the drive holds it one commit deep, its files
+ *   promised), and `mirror`s `main` to it. The cloud checks both against the
+ *   remote. Such a drive never `reconcile`s; merging a pull request on the
+ *   remote lands the work.
  *
  * A drive's shortcuts (#142) show other drives at paths of its tree, read-only
  * and with their own history. The machine mounts each one as a repository of
@@ -60,6 +67,8 @@ export const DRIVE_PATHS = {
   refs: `${DRIVE_API_PREFIX}/refs`,
   reconcile: `${DRIVE_API_PREFIX}/reconcile`,
   mirror: `${DRIVE_API_PREFIX}/mirror`,
+  directUpload: `${DRIVE_API_PREFIX}/packs/direct`,
+  directCommit: `${DRIVE_API_PREFIX}/packs/direct/commit`,
   /** A git smart-HTTP remote: `<remote>/info/refs` and `<remote>/git-upload-pack`. */
   remote: `${DRIVE_API_PREFIX}/remote`,
   shortcuts: `${DRIVE_API_PREFIX}/shortcuts`,
@@ -81,6 +90,25 @@ export const shortcutRemotePath = (target: string) =>
 export const REMOTE_HEAD_HEADER = "x-signalbox-remote-head";
 
 /**
+ * Header on a pack upload: other commits in the pack that are on the remote,
+ * comma-separated, at most `MAX_REMOTE_COMMITS` (#394). A thread with the
+ * remote's history works on top of commits the drive doesn't hold: a main
+ * newer than the drive's that it rebased onto, commits pulled from its own
+ * branch on the remote. The pack carries those commits and their folders;
+ * once the cloud has checked the remote has each, their parents and files
+ * stay on the remote, as a remote head's do.
+ */
+export const REMOTE_COMMITS_HEADER = "x-signalbox-remote-commits";
+export const MAX_REMOTE_COMMITS = 16;
+
+/** A thread's own branch on its drive's remote, where pushing and its pull request go. */
+export const threadRemoteBranch = (threadId: string) =>
+  `signalbox/${threadId
+    .replace(/[^0-9a-zA-Z]/g, "")
+    .slice(-8)
+    .toLowerCase()}`;
+
+/**
  * Header on every call: the highest pack sequence the machine already has.
  * States list only newer packs, so a drive's growing pack list is sent once.
  */
@@ -89,8 +117,15 @@ export const PACKS_AFTER_HEADER = "x-signalbox-packs-after";
 /** Header on a pack upload: the index's length. The body is the index, then the pack. */
 export const PACK_INDEX_LENGTH_HEADER = "x-signalbox-idx-length";
 
-/** Biggest pack a drive accepts in one upload. Large files are stored apart from packs later (#119). */
+/**
+ * Biggest pack a drive accepts in a request's body (`POST packs`): the cloud
+ * reads the whole body into memory to check it. A direct upload has no such
+ * limit (`MAX_DIRECT_PACK_BYTES`).
+ */
 export const MAX_PACK_BYTES = 64 * 1024 * 1024;
+
+/** Biggest pack a direct upload takes: what storage takes in one `PUT`, a little under 5 GiB. */
+export const MAX_DIRECT_PACK_BYTES = 5 * 1024 ** 3 - 5 * 1024 ** 2;
 
 export const Oid = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
 export type Oid = typeof Oid.Type;
@@ -251,6 +286,32 @@ export const DriveFileChange = Schema.Struct({
 });
 export type DriveFileChange = typeof DriveFileChange.Type;
 
+/** A machine asking to upload a pack straight to storage. */
+export const DirectUploadRequest = Schema.Struct({
+  packSize: NonNegativeInt,
+  idxSize: NonNegativeInt,
+});
+
+/** Where to `PUT` the pack and its index, or `inline`: upload it in a request's body instead. */
+export const DirectUploadOffer = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("direct"),
+    uploadId: Schema.String,
+    pack: Schema.String,
+    idx: Schema.String,
+  }),
+  Schema.Struct({ _tag: Schema.Literal("inline") }),
+]);
+export type DirectUploadOffer = typeof DirectUploadOffer.Type;
+
+/** A direct upload to check and store; `remoteHead` as `REMOTE_HEAD_HEADER` says it. */
+export const DirectCommitRequest = Schema.Struct({
+  uploadId: Schema.String,
+  remoteHead: Schema.optional(Oid),
+  /** As `REMOTE_COMMITS_HEADER` says them. */
+  remoteCommits: Schema.optional(Schema.Array(Oid)),
+});
+
 export const driveJson = {
   state: jsonCodec(DriveState),
   packUpload: jsonCodec(PackUploadResult),
@@ -260,5 +321,8 @@ export const driveJson = {
   mirror: jsonCodec(ReconcileRequest),
   refWrite: jsonCodec(RefWriteResult),
   shortcutsRequest: jsonCodec(ShortcutsRequest),
+  directUpload: jsonCodec(DirectUploadRequest),
+  directOffer: jsonCodec(DirectUploadOffer),
+  directCommit: jsonCodec(DirectCommitRequest),
   shortcuts: jsonCodec(ShortcutsAnswer),
 };

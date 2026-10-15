@@ -339,12 +339,13 @@ jobs:
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # A pull request's checkout is GitHub's merge of it into its base, whose
+        # first parent is that base: comparing the two judges what merging does.
+        # The PR head alone lacks whatever the base merged since it branched,
+        # which would read as removing those migrations.
         run: |
           case "$EVENT_NAME" in
-            pull_request) set -- --base "$BASE_SHA" --head "$HEAD_SHA" ;;
-            push) set -- --base HEAD^1 ;;
+            pull_request | push) set -- --base HEAD^1 ;;
             *) set -- --base origin/main ;;
           esac
           node scripts/cloud-migrations/check.ts "$@"
