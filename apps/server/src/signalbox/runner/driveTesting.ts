@@ -160,8 +160,10 @@ export const makeFakeDrive = (
             }
           }
         }),
-      uploadPack: (idx, pack, upload = {}) =>
+      uploadPack: (files, upload = {}) =>
         Effect.sync(() => {
+          const idx = NodeFS.readFileSync(files.idx);
+          const pack = NodeFS.readFileSync(files.pack);
           const name = Buffer.from(pack.subarray(pack.length - 20)).toString("hex");
           if (upload.remoteHead !== undefined && upload.remoteHead !== upstreamHead()) {
             throw new Error("not the remote's head");

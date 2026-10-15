@@ -38,11 +38,11 @@ export interface PackIndex {
   readonly packChecksum: string;
 }
 
-const u32 = (bytes: Bytes, at: number) =>
+export const u32 = (bytes: Uint8Array, at: number) =>
   ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0;
 
 /** Reads a version 2 `.idx`. */
-async function parsePackIndex(idx: Bytes): Promise<PackIndex> {
+export async function parsePackIndex(idx: Bytes): Promise<PackIndex> {
   if (idx.length < 8 + 1024 + 40 || u32(idx, 0) !== 0xff744f63 || u32(idx, 4) !== 2) {
     throw new PackError("Not a version 2 pack index.");
   }
@@ -112,8 +112,8 @@ export function readEntryHeader(bytes: Bytes, at = 0): EntryHeader {
   return { kind, size, headerLength: pos - at };
 }
 
-/** Applies a git delta to `base`. */
-export function applyDelta(base: Bytes, delta: Bytes): Bytes {
+/** The two sizes a delta starts with, its base's and its result's, and the bytes they take. */
+export function deltaSizes(delta: Uint8Array) {
   let at = 0;
   const varint = () => {
     let value = 0;
@@ -126,8 +126,17 @@ export function applyDelta(base: Bytes, delta: Bytes): Bytes {
     } while (byte & 0x80);
     return value;
   };
-  if (varint() !== base.length) throw new PackError("Delta base size mismatch.");
-  const out = new Uint8Array(varint());
+  const base = varint();
+  const result = varint();
+  return { base, result, length: at };
+}
+
+/** Applies a git delta to `base`. */
+export function applyDelta(base: Bytes, delta: Bytes): Bytes {
+  const sizes = deltaSizes(delta);
+  if (sizes.base !== base.length) throw new PackError("Delta base size mismatch.");
+  let at = sizes.length;
+  const out = new Uint8Array(sizes.result);
   let written = 0;
   while (at < delta.length) {
     const op = delta[at++]!;

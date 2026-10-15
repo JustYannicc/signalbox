@@ -227,6 +227,25 @@ A machine follows `RUNNER_IMAGE` at its next wake. Bump the Runner protocol
 only together with a published image, since a machine on an older image is
 refused.
 
+### Direct pack uploads
+
+A machine uploads a drive's packs straight to R2 with presigned URLs, and the
+cloud reads each back as a stream to check and store it, so no pack meets the
+Worker's 100 MB request body or 128 MB of memory (#406). It needs S3
+credentials for the packs bucket; without them the cloud answers `inline` and
+machines upload in a request's body, up to 64 MiB a pack.
+
+| Name                               | Kind   | What                                                                 |
+| ---------------------------------- | ------ | -------------------------------------------------------------------- |
+| `DRIVE_PACKS_S3_ACCESS_KEY_ID`     | secret | An R2 API token's access key, Object Read & Write on the bucket      |
+| `DRIVE_PACKS_S3_SECRET_ACCESS_KEY` | secret | Its secret                                                           |
+| `DRIVE_PACKS_S3_ENDPOINT`          | var    | `https://<account id>.eu.r2.cloudflarestorage.com`                   |
+| `DRIVE_PACKS_BUCKET_NAME`          | var    | The bucket `DRIVE_PACKS` binds: `signalbox-drives`, or the preview's |
+
+Uploads wait under `incoming/` until committed. Each bucket needs a lifecycle
+rule that deletes `incoming/` objects after a day, for uploads nobody
+committed. These come from 1Password through the Alchemy stack (#348, #298).
+
 ### Account pools
 
 Each account pool is a `PoolObject` (`apps/cloud/src/pool/`), and a managed

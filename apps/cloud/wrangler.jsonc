@@ -8,6 +8,8 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Local dev only; deployed Workers take theirs from alchemy.run.ts (`limits` there too).
+  "limits": { "cpu_ms": 300000 },
   // One origin: sign-in callbacks, cookies and saved connections all key on it.
   "workers_dev": false,
   "preview_urls": false,

@@ -244,6 +244,9 @@ importers:
       '@t3tools/source-control-github':
         specifier: workspace:*
         version: link:../../packages/source-control-github
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
       diff:
         specifier: 8.0.3
         version: 8.0.3
@@ -19114,8 +19117,7 @@ snapshots:
 
   aws4@1.13.2: {}
 
-  aws4fetch@1.0.20:
-    optional: true
+  aws4fetch@1.0.20: {}
 
   axobject-query@4.1.0: {}
 
