@@ -1,5 +1,9 @@
 import type { ServerProviderUsageLimits } from "@t3tools/contracts";
-import { PoolLinkInfo } from "@t3tools/contracts/accountHub";
+import {
+  DEFAULT_POOL_ROUTING,
+  PoolLinkInfo,
+  type PoolRouting,
+} from "@t3tools/contracts/accountHub";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -46,18 +50,19 @@ export type PoolLoginProvider = "claude" | "codex";
 const yamlString = (value: string) => JSON.stringify(value);
 
 /**
- * What every managed pool's CLIProxyAPI runs with, in its v8 config tree:
- * seeded into a new pool's config and patched into an older one's
- * (`applyManagedConfig`). Usage statistics feed the pool's usage reads.
+ * What a managed pool's CLIProxyAPI runs with, in its v8 config tree: the
+ * pool's routing, which its admins choose, and usage statistics, which feed
+ * the pool's usage reads. Seeded into a new pool's config and patched into
+ * the running one whenever it changes (`applyManagedConfig`).
  */
-export const MANAGED_CONFIG = {
+export const managedConfig = (routing: PoolRouting) => ({
   routing: {
-    strategy: "round-robin",
-    // A thread keeps one account so cached prompts and encrypted reasoning stay valid.
-    "session-affinity": true,
+    strategy: routing.strategy,
+    "session-affinity": routing.sessionAffinity,
+    "session-affinity-rebind-on": routing.moveOn,
   },
   observability: { usage: { "usage-statistics-enabled": true } },
-} as const;
+});
 
 type ConfigTree = { readonly [key: string]: string | boolean | ConfigTree };
 
@@ -76,10 +81,13 @@ const yamlTree = (tree: ConfigTree, indent = ""): ReadonlyArray<string> =>
  * must allow remote calls: the pool object reaches the container over its
  * network, never its loopback.
  */
-export const renderConfig = (keys: {
-  readonly managementKey: string;
-  readonly clientKey: string;
-}) =>
+export const renderConfig = (
+  keys: {
+    readonly managementKey: string;
+    readonly clientKey: string;
+  },
+  routing: PoolRouting = DEFAULT_POOL_ROUTING,
+) =>
   [
     "# Seeded by Signalbox Cloud when the pool was created.",
     "config-version: 8",
@@ -93,7 +101,7 @@ export const renderConfig = (keys: {
     "access:",
     "  api-keys:",
     `    - ${yamlString(keys.clientKey)}`,
-    ...yamlTree(MANAGED_CONFIG),
+    ...yamlTree(managedConfig(routing)),
     "",
   ].join("\n");
 
@@ -503,14 +511,14 @@ export const removeAccount = (endpoint: PoolEndpoint, name: string) =>
     Effect.flatMap(expectOk(endpoint, () => "could not remove the account.")),
   );
 
-/** Merges `MANAGED_CONFIG` into the CLIProxyAPI's config, which it saves to the pool's store. */
-export const applyManagedConfig = (endpoint: PoolEndpoint) =>
-  management(endpoint, "PATCH", "config", MANAGED_CONFIG).pipe(
+/** Merges `managedConfig` into the CLIProxyAPI's config, which it saves to the pool's store. */
+export const applyManagedConfig = (endpoint: PoolEndpoint, routing: PoolRouting) =>
+  management(endpoint, "PATCH", "config", managedConfig(routing)).pipe(
     Effect.flatMap(expectOk(endpoint, (status) => `answered ${status} to a config change.`)),
   );
 
-/** `MANAGED_CONFIG` as JSON, which a pool records once it is applied. */
-export const MANAGED_CONFIG_JSON = encodeJson(MANAGED_CONFIG);
+/** `managedConfig` as JSON, which a pool records once it is applied. */
+export const managedConfigJson = (routing: PoolRouting) => encodeJson(managedConfig(routing));
 
 const ApiCallResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
 

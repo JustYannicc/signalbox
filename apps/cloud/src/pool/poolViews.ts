@@ -3,6 +3,7 @@ import {
   type AccountPool,
   type AccountPoolOverview,
   type AccountPoolProvider,
+  type PoolRouting,
   POOL_INSTANCE_KINDS,
   poolInstanceEntry,
   poolSourceId,
@@ -50,14 +51,18 @@ export interface PoolEntry {
   readonly models: ReadonlyArray<ServedModel>;
   /** The user's role in the pool, null when it couldn't be read. */
   readonly role: PoolRole | null;
+  /** How it spreads turns, when the user may change it. */
+  readonly routing: PoolRouting | null;
 }
 
-export const accountPool = (pool: UserPool): AccountPool => ({
+/** A pool as the user's clients list it, with its routing when they may change it. */
+export const accountPool = (pool: UserPool, routing: PoolRouting | null = null): AccountPool => ({
   id: pool.id,
   name: pool.name,
   sourceId: poolSourceId(pool.id),
   backing: pool.backing,
   personal: pool.personal,
+  ...(routing === null ? {} : { routing }),
 });
 
 /** CLIProxyAPI's credential types, as the drivers clients draw them with. */

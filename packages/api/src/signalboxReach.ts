@@ -20,6 +20,7 @@ export const SIGNALBOX_RPC_REACH = {
   "accountPool.rename": write({ name: "pools.rename" }),
   "accountPool.delete": write({ name: "pools.delete", destructive: true }),
   "accountPool.setBacking": write({ name: "pools.setBacking" }),
+  "accountPool.setRouting": write({ name: "pools.setRouting" }),
   "accountPool.importAccounts": write({ name: "pools.importAccounts" }),
   // An API key is a secret the person types; agents never hold one (#335 decision 4).
   "accountPool.addApiKey": write({ name: "pools.addApiKey", humanOnly: true }),
@@ -38,13 +39,13 @@ export const SIGNALBOX_RPC_REACH = {
   }),
   "automations.subscribeRun": read({
     name: "automations.runs.get",
-    summary: "One run with its graph and steps.",
+    summary: "Read one run of an automation: its graph and steps.",
   }),
   "automations.setEnabled": write(),
   "automations.delete": write({ destructive: true }),
   "automations.rotateWebhook": write(),
   "automations.setWebhookSecret": write(),
-  "automations.runNow": write({ name: "automations.run", summary: "Start a run now." }),
+  "automations.runNow": write({ name: "automations.run", summary: "Run an automation now." }),
   "automations.customize": write(),
   "automations.stopAttached": write(),
   "automations.cancelRun": write({ name: "automations.runs.cancel" }),
@@ -60,6 +61,12 @@ export const SIGNALBOX_RPC_REACH = {
   "automations.connectionStatus": read(),
   "automations.connect": write(),
   "automations.disconnect": write(),
+  "automations.validate": read({
+    summary: "Check an automation file without saving it: its outline, or what to fix.",
+  }),
+  "automations.save": write({
+    summary: "Save an automation file in a folder; new, or a new version with automationId.",
+  }),
 
   "sections.subscribe": read({ name: "sections.list" }),
   "sections.create": write(),

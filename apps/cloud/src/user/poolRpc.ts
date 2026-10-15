@@ -50,6 +50,7 @@ export const POOL_METHODS = [
   WS_METHODS.accountPoolAddApiKey,
   WS_METHODS.accountPoolMoveNativeLogins,
   WS_METHODS.accountPoolSetOpenCode,
+  WS_METHODS.accountPoolSetRouting,
   WS_METHODS.accountPoolReceive,
   WS_METHODS.accountPoolMoveToCloud,
   WS_METHODS.usageLimitSourceUpdateAccount,
@@ -72,6 +73,7 @@ export const POOL_REQUIRED_SCOPES = {
   [WS_METHODS.accountPoolAddApiKey]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolMoveNativeLogins]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolSetOpenCode]: AuthProvidersManageScope,
+  [WS_METHODS.accountPoolSetRouting]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolReceive]: AuthProvidersManageScope,
   [WS_METHODS.accountPoolMoveToCloud]: AuthProvidersManageScope,
   [WS_METHODS.usageLimitSourceUpdateAccount]: AuthProvidersManageScope,
@@ -222,7 +224,7 @@ export const makePoolHandlers = (input: {
     const handlers = {
       [WS_METHODS.accountPoolSubscribe]: () =>
         followPools(pools, actor).pipe(
-          Stream.map((state) => state.map((entry) => accountPool(entry.pool))),
+          Stream.map((state) => state.map((entry) => accountPool(entry.pool, entry.routing))),
         ),
       [WS_METHODS.accountPoolSubscribeViews]: () =>
         followPools(pools, actor).pipe(
@@ -236,6 +238,8 @@ export const makePoolHandlers = (input: {
         pools.create(actor, request),
       [WS_METHODS.accountPoolRename]: (request: Parameters<typeof pools.rename>[1]) =>
         pools.rename(actor, request),
+      [WS_METHODS.accountPoolSetRouting]: (request: Parameters<typeof pools.setRouting>[1]) =>
+        pools.setRouting(actor, request),
       [WS_METHODS.accountPoolDelete]: (request: Parameters<typeof pools.delete>[1]) =>
         pools.delete(actor, request),
       [WS_METHODS.accountPoolSetBacking]: (request: Parameters<typeof pools.setBacking>[1]) =>

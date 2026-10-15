@@ -44,6 +44,11 @@ import * as Platform from "./platform.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PreviewSetupRoutes from "./previewSetup/previewSetupRoutes.ts";
 import { handleApiRequest } from "./api/apiRoutes.ts";
+import {
+  handleMcpRequest,
+  PROTECTED_RESOURCE_PATHS,
+  protectedResourceMetadata,
+} from "./api/mcpRoutes.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
 import type { LocalKeyVerifier } from "./thread/runner/modelGrants.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
@@ -184,6 +189,8 @@ export interface CloudApp {
   readonly verifyLocalKey: LocalKeyVerifier;
   /** `/api/v1/`: the public API (`api/apiRoutes.ts`), streams and all. */
   readonly api: (request: Request) => Promise<Response>;
+  /** `/mcp` and its protected-resource metadata (`api/mcpRoutes.ts`). */
+  readonly mcp: (request: Request) => Promise<Response>;
 }
 
 export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp => {
@@ -217,5 +224,11 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
     webSocket: (request) => runtime.runPromise(openSocket(request)),
     verifyLocalKey: (token) => runtime.runPromise(verifyLocalKey(token)),
     api: (request) => runtime.runPromise(handleApiRequest(request)),
+    mcp: (request) =>
+      runtime.runPromise(
+        PROTECTED_RESOURCE_PATHS.has(new URL(request.url).pathname)
+          ? protectedResourceMetadata(request)
+          : handleMcpRequest(request),
+      ),
   };
 };
