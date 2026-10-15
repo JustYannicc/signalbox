@@ -4,6 +4,7 @@ import { runTitle } from "@t3tools/client-runtime/automations/runs";
 import {
   startsFromPayloadOnly,
   triggerSummary,
+  watchedSource,
 } from "@t3tools/client-runtime/automations/triggers";
 import {
   isAtomCommandInterrupted,
@@ -153,6 +154,14 @@ function AutomationContent(props: {
 
       <GroupedCard>
         <DetailRow label="Runs" value={triggerSummary(automation.triggers)} />
+        {(detail.watching ?? []).map((source) => (
+          <DetailRow
+            key={source.sourceId}
+            label="Watching"
+            value={`${watchedSource(source, now).subject} · ${watchedSource(source, now).status}`}
+            border
+          />
+        ))}
         <DetailRow label="Status" value={status} border />
         {automation.webhook ? (
           <WebhookRow environmentId={environmentId} webhook={automation.webhook} />

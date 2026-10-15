@@ -3,6 +3,7 @@ import {
   type AutomationDefaults,
   type AutomationError,
   type WorkflowDuration,
+  type WorkflowSourceWatch,
 } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
@@ -15,7 +16,7 @@ import * as Effect from "effect/Effect";
 
 import type { Attachments } from "./attachments.ts";
 import type { CallbackLink } from "./callbacks.ts";
-import { waitForEventProblem } from "./compiler/eventTriggers.ts";
+import { sourceWatchProblem, waitForEventProblem } from "./compiler/eventTriggers.ts";
 import type { AuthorizeAutomation } from "./catalog.ts";
 import { automationError, fail } from "./errors.ts";
 import type { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
@@ -39,6 +40,10 @@ export interface WaitRequest {
   readonly message?: string | undefined;
   readonly on?: string | ReadonlyArray<string> | undefined;
   readonly where?: Readonly<Record<string, unknown>> | undefined;
+  /** A connected source to watch; `on` may narrow it to source.item.added and so on. */
+  readonly watch?: WorkflowSourceWatch | undefined;
+  /** With `watch`: what a change has to show, in words. */
+  readonly condition?: string | undefined;
   readonly callback?: boolean | undefined;
   readonly at?: string | undefined;
   readonly timeout?: WorkflowDuration | undefined;
@@ -99,16 +104,30 @@ export const makeWaits = (deps: {
   const start = <E = never>(request: WaitRequest, access: WaitAccess<E>) =>
     Effect.gen(function* () {
       const kinds = [
-        request.on !== undefined,
+        request.on !== undefined || request.watch !== undefined,
         request.callback === true,
         request.at !== undefined,
       ].filter(Boolean).length;
       if (kinds !== 1)
-        return yield* explained("Say what to wait for with exactly one of on, callback or at.", {
-          fix: 'e.g. { until: "checks on #12 to fail", on: "pr.checks.failed", where: { number: 12 } }, { until: "the payment", callback: true }, or { until: "tomorrow morning", at: "2026-10-16T08:00:00Z" }.',
-        });
+        return yield* explained(
+          "Say what to wait for with exactly one of on, watch, callback or at.",
+          {
+            fix: 'e.g. { until: "checks on #12 to fail", on: "pr.checks.failed", where: { number: 12 } }, { until: "the invoice to be paid", watch: { operation: "stripe.invoices.list", key: "id" }, condition: "its status is paid" }, { until: "the payment", callback: true }, or { until: "tomorrow morning", at: "2026-10-16T08:00:00Z" }.',
+          },
+        );
+      if (request.condition !== undefined && request.watch === undefined)
+        return yield* explained(
+          "`condition` judges changes to a watched source; pass `watch` too.",
+          {
+            fix: 'e.g. { watch: { operation: "stripe.invoices.list", key: "id" }, condition: "its status is paid" }',
+          },
+        );
       // Checked here, so a mistake comes back to the agent instead of failing after its turn ended.
-      const problem = request.on === undefined ? null : waitForEventProblem(request.on);
+      const problem =
+        (request.on === undefined
+          ? null
+          : waitForEventProblem(request.on, request.watch !== undefined)) ??
+        (request.watch === undefined ? null : sourceWatchProblem(request.watch, request.on));
       if (problem) return yield* explained(problem.message, { fix: problem.hint });
       if (request.at !== undefined && Number.isNaN(Date.parse(request.at)))
         return yield* explained(`"${request.at}" isn't a time.`, {
@@ -125,6 +144,8 @@ export const makeWaits = (deps: {
           message: request.message,
           on: request.on,
           where: request.where,
+          watch: request.watch,
+          condition: request.condition,
           callback: hookId,
           at: request.at,
           timeout: request.timeout,

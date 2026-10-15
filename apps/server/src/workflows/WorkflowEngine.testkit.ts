@@ -13,11 +13,14 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -297,6 +300,34 @@ export function withEngine<A, E>(
   body: Effect.Effect<A, E, WorkflowEngine | Layer.Success<ReturnType<typeof makeDependencies>>>,
 ) {
   return body.pipe(Effect.provide(engineLayer.pipe(Layer.provideMerge(makeDependencies(options)))));
+}
+
+/**
+ * Like `withEngine`, but `body` starts the engine itself and can stop and
+ * start it again over the same database and fakes, like a server restart.
+ */
+export function withRestartableEngine<A, E>(
+  options: EngineOptions,
+  body: (
+    start: Effect.Effect<
+      { readonly engine: WorkflowEngine["Service"]; readonly stop: Effect.Effect<void> },
+      never,
+      Scope.Scope
+    >,
+  ) => Effect.Effect<A, E, Layer.Success<ReturnType<typeof makeDependencies>> | Scope.Scope>,
+) {
+  return Effect.gen(function* () {
+    const dependencies = yield* Layer.build(makeDependencies(options));
+    const start = Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const built = yield* Layer.buildWithScope(engineLayer, scope).pipe(
+        Effect.provideContext(dependencies),
+        Effect.orDie,
+      );
+      return { engine: Context.get(built, WorkflowEngine), stop: Scope.close(scope, Exit.void) };
+    });
+    return yield* body(start).pipe(Effect.provideContext(dependencies));
+  }).pipe(Effect.scoped);
 }
 
 /** Saves `source`, failing the test with its diagnostics when it doesn't compile. */
