@@ -2,7 +2,7 @@ import { WorkflowStepVerb, type WorkflowDetailValue } from "@t3tools/contracts";
 import type { CallExpression, Node } from "oxc-parser";
 
 import { readAskDetail } from "./ask.ts";
-import { eventTriggerProblem } from "./eventTriggers.ts";
+import { waitForEventProblem } from "./eventTriggers.ts";
 import { detailValue, evaluateLiteral, objectProperties, readString, unwrap } from "./literals.ts";
 import type { WorkflowSource } from "./source.ts";
 
@@ -224,29 +224,22 @@ export function readStepDetail(
         )
       )
         return null;
-      if (on) {
-        // Literal, so the engine knows from the diagram which events to keep for the run.
-        const literal = evaluateLiteral(on);
-        if (!literal.ok) {
-          source.error(
-            on,
-            "`on` must be a literal event name or list, so the run can collect matching events from its start.",
-            example,
-          );
-          return null;
-        }
-        const problem = eventTriggerProblem([{ on: literal.value }]);
+      // A literal `on` is known from the diagram, so the run keeps matching events from its
+      // start. A computed one (a built-in waiting on what its caller named) is checked when the
+      // step starts and collects from then on.
+      const literal = on ? evaluateLiteral(on) : undefined;
+      if (on && literal?.ok) {
+        const problem = waitForEventProblem(literal.value);
         if (problem) {
-          source.error(
-            on,
-            problem.message.replace("meta.triggers listens for", "w.waitFor waits for"),
-            problem.hint,
-          );
+          source.error(on, problem.message, problem.hint);
           return null;
         }
       }
       return { detail };
     }
+    case "hook":
+      // Only a label: the link is the step's result.
+      return { detail: {} };
     case "recall":
     case "remember": {
       const example =
