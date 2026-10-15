@@ -173,6 +173,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -2277,6 +2278,7 @@ export function GeneralSettingsPanel() {
     DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
   );
 
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   return (
     <SettingsPageContainer>
       {/* signalbox: accounts */}
@@ -2287,6 +2289,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection id="organization" title="Organization">
         <SettingsRow
           {...searchableSetting("project-grouping")}
+          hidden={!showsEnvironmentUi} // signalbox: one environment, nothing to combine
           description="Combine matching repositories across environments."
           resetAction={
             settings.sidebarProjectGroupingMode !==

@@ -130,6 +130,7 @@ import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
+import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
@@ -827,6 +828,7 @@ function OpenCommandPaletteDialog(props: {
       ),
     [environments],
   );
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   const projectEnvironmentLocationById = useMemo(
     () =>
       new Map(
@@ -1250,6 +1252,8 @@ function OpenCommandPaletteDialog(props: {
           }).searchTerms;
         },
         renderDescription: (project) => {
+          // signalbox: one environment, so a project is just its path.
+          if (!showsEnvironmentUi) return <span className="truncate">{project.workspaceRoot}</span>;
           const members = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`)
             ?.memberProjects ?? [project];
           const metadata = buildCommandPaletteProjectMetadata({
@@ -1278,6 +1282,7 @@ function OpenCommandPaletteDialog(props: {
       pickerProjects,
       projectEnvironmentLocationById,
       projectGroupByTargetKey,
+      showsEnvironmentUi,
     ],
   );
 
@@ -1299,6 +1304,7 @@ function OpenCommandPaletteDialog(props: {
           ];
         },
         renderDescription: (project) => {
+          if (!showsEnvironmentUi) return <span className="truncate">{project.workspaceRoot}</span>;
           const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
             kind: "remote",
             label: "Remote",
@@ -1367,6 +1373,7 @@ function OpenCommandPaletteDialog(props: {
     projectGroupByTargetKey,
     scratchTargetEnvironmentId,
     scratchWorkspaceRootFor,
+    showsEnvironmentUi,
     startScratchThread,
   ]);
 
@@ -1785,7 +1792,9 @@ function OpenCommandPaletteDialog(props: {
 
   // While environments connect the view stays empty, so the palette shows the connecting status.
   const addProjectEnvironmentGroupItems =
-    addProjectEnvironmentItems.length > 0 || addProjectAvailability === "connecting"
+    addProjectEnvironmentItems.length > 0 ||
+    addProjectAvailability === "connecting" ||
+    !showsEnvironmentUi
       ? addProjectEnvironmentItems
       : [
           {
@@ -1814,7 +1823,7 @@ function OpenCommandPaletteDialog(props: {
   const openAddProjectFlow = useCallback(() => {
     // With nothing connected or connecting there is nothing to browse, so the
     // only useful next step is connecting one.
-    if (addProjectAvailability === "unavailable") {
+    if (addProjectAvailability === "unavailable" && showsEnvironmentUi) {
       setOpen(false);
       void navigate({ to: "/settings/connections" });
       return;
@@ -1837,6 +1846,7 @@ function OpenCommandPaletteDialog(props: {
     navigate,
     pushPaletteView,
     setOpen,
+    showsEnvironmentUi,
     startAddProjectSourceSelection,
   ]);
 

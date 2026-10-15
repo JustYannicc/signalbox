@@ -35,6 +35,14 @@ export class DriveClientError extends Schema.TaggedError<DriveClientError>()("Dr
   retryable: Schema.Boolean,
 }) {}
 
+/** An upload bigger than the drive takes, said for the person whose thread it is. */
+export class DriveTooLargeError extends Schema.TaggedError<DriveTooLargeError>()(
+  "DriveTooLargeError",
+  { message: Schema.String },
+) {}
+
+const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`;
+
 export interface DriveClient {
   /** Records that this machine has every pack up to `seq`; later states list only newer ones. */
   readonly havePacksThrough: (seq: number) => void;
@@ -48,7 +56,7 @@ export interface DriveClient {
     idx: Uint8Array,
     pack: Uint8Array,
     options?: { readonly remoteHead?: string },
-  ) => Effect.Effect<typeof PackUploadResult.Type, DriveClientError>;
+  ) => Effect.Effect<typeof PackUploadResult.Type, DriveClientError | DriveTooLargeError>;
   readonly updateRefs: (
     updates: ReadonlyArray<RefUpdate>,
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
@@ -183,9 +191,8 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
   const uploadPack: DriveClient["uploadPack"] = (idx, pack, options = {}) =>
     Effect.gen(function* () {
       if (pack.byteLength > MAX_PACK_BYTES) {
-        return yield* new DriveClientError({
-          message: `A pack of ${pack.byteLength} bytes is bigger than the drive takes (${MAX_PACK_BYTES}).`,
-          retryable: false,
+        return yield* new DriveTooLargeError({
+          message: `This save is ${megabytes(pack.byteLength)}, more than the ${megabytes(MAX_PACK_BYTES)} a drive takes in one upload.`,
         });
       }
       const body = new Uint8Array(idx.byteLength + pack.byteLength);

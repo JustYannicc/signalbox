@@ -20,6 +20,8 @@ import {
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { targetsSupporting } from "./signalboxSettingsTargets"; // signalbox
 import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
+import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -64,6 +66,7 @@ function ConfiguredSettingsRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   const accountLabel = !isLoaded
     ? "Checking"
     : !isSignedIn
@@ -87,15 +90,18 @@ function ConfiguredSettingsRouteScreen() {
             disabled={!isLoaded}
             onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
           />
-          <SettingsRow
-            icon="desktopcomputer"
-            label="Environments"
-            value={`${Object.keys(savedConnectionsById).length}`}
-            valuePosition="trailing"
-            target="SettingsEnvironments"
-          />
+          {showsEnvironments ? (
+            <SettingsRow
+              icon="desktopcomputer"
+              label="Environments"
+              value={`${Object.keys(savedConnectionsById).length}`}
+              valuePosition="trailing"
+              target="SettingsEnvironments"
+            />
+          ) : null}
           <SettingsRow icon="bell.badge" label="Notifications" target="SettingsNotifications" />
         </SettingsSection>
+        {showsEnvironments ? null : <OnlyEnvironmentAccountSections />}
 
         <SettingsIndexSections />
       </ScrollView>
@@ -107,6 +113,7 @@ function LocalSettingsRouteScreen() {
   const insets = useSafeAreaInsets();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const environmentCount = Object.keys(savedConnectionsById).length;
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -119,15 +126,20 @@ function LocalSettingsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
-        <SettingsSection title="Connections">
-          <SettingsRow
-            icon="desktopcomputer"
-            label="Environments"
-            value={`${environmentCount}`}
-            valuePosition="trailing"
-            target="SettingsEnvironments"
-          />
-        </SettingsSection>
+        {/* signalbox: the one environment shows as its account instead */}
+        {showsEnvironments ? (
+          <SettingsSection title="Connections">
+            <SettingsRow
+              icon="desktopcomputer"
+              label="Environments"
+              value={`${environmentCount}`}
+              valuePosition="trailing"
+              target="SettingsEnvironments"
+            />
+          </SettingsSection>
+        ) : (
+          <OnlyEnvironmentAccountSections />
+        )}
 
         <SettingsIndexSections />
       </ScrollView>

@@ -87,7 +87,12 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
-import { ConnectingEnvironmentState, useAddProjectAvailability } from "./signalboxAddProject"; // signalbox
+import {
+  ConnectingEnvironmentState,
+  SignalboxUnavailableState,
+  useAddProjectAvailability,
+} from "./signalboxAddProject"; // signalbox
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import {
   addProjectCloneSources,
   addProjectSourceSupport,
@@ -465,8 +470,10 @@ function useSelectedEnvironment(): {
 
 function EmptyEnvironmentState() {
   const navigation = useNavigation();
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   // signalbox: an environment still connecting is not one to go and add.
   if (useAddProjectAvailability() === "connecting") return <ConnectingEnvironmentState />;
+  if (!showsEnvironments) return <SignalboxUnavailableState />; // signalbox: none to add
 
   return (
     <View className="items-center gap-3 rounded-2xl bg-grouped-card px-5 py-8">
@@ -540,6 +547,7 @@ function SourceControlRow(props: {
 
 export function AddProjectSourceScreen() {
   const navigation = useNavigation();
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   const { environmentOptions, selectedEnvironment, setSelectedEnvironmentId } =
     useSelectedEnvironment();
   const canWriteSourceControl = useEnvironmentScope(
@@ -568,7 +576,7 @@ export function AddProjectSourceScreen() {
     <AddProjectShell title="Add project">
       {selectedEnvironment === null ? <EmptyEnvironmentState /> : null}
 
-      {environmentOptions.length > 1 ? (
+      {showsEnvironments && environmentOptions.length > 1 ? (
         <>
           <SectionTitle>Environments</SectionTitle>
           <ListSection>
@@ -1094,8 +1102,10 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
 
   // Shown when there is a choice, or when the selected machine went away and
   // another one can take over.
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox: no choice of machine
   const showMachines =
-    environmentOptions.length > 1 || (environment === null && environmentOptions.length > 0);
+    (showsEnvironments && environmentOptions.length > 1) ||
+    (environment === null && environmentOptions.length > 0);
   const machineRows = showMachines ? (
     <ListSection>
       {environmentOptions.map((option, index) => {

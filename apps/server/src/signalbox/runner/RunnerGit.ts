@@ -27,6 +27,17 @@ export interface GitRunOptions {
   readonly env?: Record<string, string>;
 }
 
+/**
+ * Where the turn's remote token waits for git's credential helper (#406):
+ * next to the thread's working directory, never inside it, so nothing in the
+ * workspace holds it. Rewritten each turn; the token is fetch-only and dies
+ * with the turn anyway.
+ */
+export const remoteCredentialFile = (cwd: string) => {
+  const at = cwd.replace(/\/+$/, "").lastIndexOf("/");
+  return `${cwd.slice(0, at)}/.${cwd.slice(at + 1)}.remote-credential`;
+};
+
 /** The empty tree's id, the base of a branch that had no commit yet. */
 export { EMPTY_TREE } from "@signalbox/runner-protocol/DriveProtocol";
 
@@ -137,6 +148,32 @@ export const makeRunnerGit = Effect.fn("makeRunnerGit")(function* (cwd: string) 
         : ({ _tag: "fetched", head } as const);
     });
 
+  /**
+   * Makes `url`, the cloud's fetch proxy for a remote-backed drive, this
+   * repository's promisor (#406): such a drive holds the remote's commits and
+   * folders but not its files, so git fetches a file it lacks from there when
+   * it needs it, checking out included, the agent's own git too. The
+   * credentials come from `credentialFile` (`remoteCredentialFile`), outside
+   * the working directory, through a credential helper: the repository's
+   * config only says where they are.
+   */
+  const usePromisor = (url: string, credentialFile: string) =>
+    Effect.forEach(
+      [
+        ["core.repositoryformatversion", "1"],
+        ["extensions.partialClone", "origin"],
+        ["remote.origin.url", url],
+        ["remote.origin.promisor", "true"],
+        ["remote.origin.partialclonefilter", "blob:none"],
+        [
+          `credential.${url}.helper`,
+          `!f() { test "$1" = get && cat '${credentialFile.replaceAll("'", "'\\''")}'; }; f`,
+        ],
+      ] as const,
+      ([key, value]) => run(["config", "--replace-all", key, value]),
+      { discard: true },
+    );
+
   const lines = (text: string) => text.split("\n").filter((line) => line.length > 0);
 
   /** What `head` changed since `base` (a commit or tree), renames detected; binary files count 0/0. */
@@ -167,7 +204,7 @@ export const makeRunnerGit = Effect.fn("makeRunnerGit")(function* (cwd: string) 
       return files;
     });
 
-  return { exec, run, resolve, isAncestor, setRef, fetchHead, lines, changedFiles };
+  return { exec, run, resolve, isAncestor, setRef, fetchHead, usePromisor, lines, changedFiles };
 });
 
 const KINDS: Record<string, DriveFileChange["kind"]> = {

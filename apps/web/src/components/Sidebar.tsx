@@ -299,6 +299,7 @@ import {
 import { readThreadKind, useThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thread kinds
 import { ThreadKindAge, ThreadKindButton } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
 import { selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
+import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -2560,12 +2561,17 @@ export default function Sidebar() {
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
 
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment, no labels
   const environmentLabelById = useMemo(
     () =>
       new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
+        showsEnvironmentUi
+          ? environments.map(
+              (environment) => [environment.environmentId, environment.label] as const,
+            )
+          : [],
       ),
-    [environments],
+    [environments, showsEnvironmentUi],
   );
   const environmentMachineById = useEnvironmentMachines();
   const projectGroups = useSidebarProjectGroups();

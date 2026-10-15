@@ -81,6 +81,8 @@ import { FolderEmptyState, scopeFilterOptions } from "../folders/FolderListParts
 import { useFolderScope } from "../folders/use-folder-filter"; // signalbox: folders
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { withOneEnvironmentCopy } from "./oneEnvironmentCopy"; // signalbox
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -274,6 +276,7 @@ function renderHomeScrollView(props: ScrollViewProps) {
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const workspace = useWorkspaceTabs();
   const [initialScrollOffset] = useState(() => workspace?.getScrollOffset("threads") ?? 0);
@@ -936,10 +939,15 @@ export function HomeScreen(props: HomeScreenProps) {
   // Connection state surfaces in the header title slot
   // (WorkspaceConnectionTitle) — nothing renders inside the list, so
   // reconnects never shift the rows.
-  const emptyState = deriveEmptyState({
+  const upstreamEmptyState = deriveEmptyState({
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
+  // signalbox: no environments to add; the cloud's states read as Signalbox.
+  const emptyState = showsEnvironments
+    ? upstreamEmptyState
+    : withOneEnvironmentCopy(upstreamEmptyState);
+  const offersAddEnvironment = showsEnvironments && !props.catalogState.hasReadyEnvironment;
 
   if (!hasAnyThreads) {
     return (
@@ -961,10 +969,10 @@ export function HomeScreen(props: HomeScreenProps) {
             <EmptyState
               title={emptyState.title}
               detail={emptyState.detail}
-              actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
-              onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
+              actionLabel={offersAddEnvironment ? "Add environment" : undefined}
+              onAction={offersAddEnvironment ? props.onAddConnection : undefined}
               action={
-                Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
+                Platform.OS === "android" && offersAddEnvironment ? (
                   <MaterialFloatingActionButton
                     label="Add environment"
                     icon="plus"
