@@ -50,9 +50,11 @@ export interface CatalogShape extends DraftsShape {
   ) =>
     | { readonly ok: true; readonly graph: WorkflowGraph }
     | { readonly ok: false; readonly diagnostics: ReadonlyArray<WorkflowDiagnostic> };
+  /** Saves agents make count as `agent`; only built-ins save as `signalbox`. */
   readonly save: <E = never>(
     input: AutomationSaveInput,
     authorize?: AuthorizeAutomation<E>,
+    approvedBy?: "signalbox",
   ) => Effect.Effect<AutomationSaveResult, AutomationError | E>;
   readonly list: () => Effect.Effect<ReadonlyArray<Automation>, AutomationError>;
   readonly get: (automationId: string) => Effect.Effect<AutomationDetail, AutomationError>;
@@ -107,7 +109,7 @@ export const makeCatalog = (deps: {
       : { ok: false, diagnostics: compiled.diagnostics };
   };
 
-  const save: CatalogShape["save"] = (input, authorize) =>
+  const save: CatalogShape["save"] = (input, authorize, approvedBy) =>
     Effect.gen(function* () {
       const compiled = compileWorkflow(input.source);
       if (!compiled.ok) return { ok: false, diagnostics: compiled.diagnostics } as const;
@@ -173,6 +175,7 @@ export const makeCatalog = (deps: {
             meta_json: toJson(meta),
             defaults_json: toJson(input.defaults),
             created_at: nowText,
+            approved_by: approvedBy ?? "agent",
           }),
           store.upsertAutomation(row),
         ]),
