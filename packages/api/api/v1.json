@@ -658,7 +658,7 @@
       "rpc": "accountPool.create",
       "access": "write",
       "input": "174129b6",
-      "output": "22e2194e"
+      "output": "185e3b9d"
     },
     {
       "name": "pools.delete",
@@ -681,7 +681,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "0b87ca75"
+      "output": "5882b80c"
     },
     {
       "name": "pools.moveNativeLogins",
@@ -709,14 +709,14 @@
       "rpc": "accountPool.rename",
       "access": "write",
       "input": "8c826655",
-      "output": "22e2194e"
+      "output": "185e3b9d"
     },
     {
       "name": "pools.setBacking",
       "rpc": "accountPool.setBacking",
       "access": "write",
       "input": "06e7aef0",
-      "output": "22e2194e"
+      "output": "185e3b9d"
     },
     {
       "name": "pools.setOpenCode",
@@ -724,6 +724,13 @@
       "access": "write",
       "input": "313db31a",
       "output": "794c92c1"
+    },
+    {
+      "name": "pools.setRouting",
+      "rpc": "accountPool.setRouting",
+      "access": "write",
+      "input": "7396acb3",
+      "output": "185e3b9d"
     },
     {
       "name": "pools.updateAccount",
