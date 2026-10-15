@@ -1,7 +1,6 @@
 export const meta = {
   name: "Watch pull request",
-  description:
-    "Watches a thread's pull request: wakes the thread's agent when checks fail or pass, someone else comments or reviews, or the branch conflicts, and stops when it merges or closes.",
+  description: "Watches a thread's pull request: wakes the thread's agent when checks fail or pass, someone else comments or reviews, or the branch conflicts, and stops when it merges or closes.",
   intent: "watch this pull request and wake the agent when something needs it",
 } as const;
 
@@ -15,13 +14,7 @@ type Input = {
   quietWakes?: number;
   readFailures?: number;
 };
-type Remark = {
-  author: string | null;
-  body: string | null;
-  path: string | null;
-  reviewState: string | null;
-  url: string | null;
-};
+type Remark = { author: string | null; body: string | null; path: string | null; reviewState: string | null; url: string | null };
 type FailedCheck = { name: string; status: string; url: string | null };
 type News = {
   event: string;
@@ -49,38 +42,22 @@ function wakeMessage(news: News, stopping: boolean) {
   const lines: string[] = [];
   if (news.event === "pr.checks.failed") {
     lines.push(`Checks failed on ${pr}:`);
-    lines.push(
-      ...listed(
-        news.failedChecks ?? [],
-        (check) =>
-          `- ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${check.url ? ` ${check.url}` : ""}`,
-      ),
-    );
+    lines.push(...listed(news.failedChecks ?? [], (check) => `- ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${check.url ? ` ${check.url}` : ""}`));
     lines.push("Look at the failures and fix them.");
   } else if (news.event === "pr.conflicted") {
-    lines.push(
-      `${pr} now conflicts with its base branch. Bring the base in and resolve the conflicts.`,
-    );
+    lines.push(`${pr} now conflicts with its base branch. Bring the base in and resolve the conflicts.`);
   } else if ((news.event === "pr.commented" || news.event === "pr.reviewed") && !news.remarks) {
-    lines.push(
-      `There's new activity on ${pr}, but I couldn't read it. Look at the conversation on the host.`,
-    );
+    lines.push(`There's new activity on ${pr}, but I couldn't read it. Look at the conversation on the host.`);
   } else if (news.event === "pr.commented" || news.event === "pr.reviewed") {
     lines.push(`New ${news.event === "pr.reviewed" ? "reviews" : "comments"} on ${pr}:`);
-    lines.push(
-      ...listed(news.remarks ?? [], (remark) => {
-        const where = remark.path ? ` on ${remark.path}` : "";
-        const said = remark.body
-          ? `"${remark.body.slice(0, 200)}"`
-          : (remark.reviewState ?? "reviewed");
-        return `- ${remark.author ?? "someone"}${where}: ${said}${remark.url ? ` ${remark.url}` : ""}`;
-      }),
-    );
+    lines.push(...listed(news.remarks ?? [], (remark) => {
+      const where = remark.path ? ` on ${remark.path}` : "";
+      const said = remark.body ? `"${remark.body.slice(0, 200)}"` : (remark.reviewState ?? "reviewed");
+      return `- ${remark.author ?? "someone"}${where}: ${said}${remark.url ? ` ${remark.url}` : ""}`;
+    }));
     lines.push("Look into each one and act on it as your task requires.");
   } else {
-    lines.push(
-      `Checks passed on ${pr}. Check it's ready, then carry on with what you were asked to do with it.`,
-    );
+    lines.push(`Checks passed on ${pr}. Check it's ready, then carry on with what you were asked to do with it.`);
   }
   lines.push(
     "",
@@ -93,31 +70,18 @@ function wakeMessage(news: News, stopping: boolean) {
 
 export default workflow(async (w, input: Input, trigger: { attach?: { threadId: string } }) => {
   const threadId = input.threadId ?? trigger.attach?.threadId;
-  if (!threadId)
-    throw new Error("Pass threadId, or start the run attached to the pull request's thread.");
+  if (!threadId) throw new Error("Pass threadId, or start the run attached to the pull request's thread.");
   const where = input.repository
     ? { threadId, number: input.number, repository: input.repository }
     : { threadId, number: input.number };
   // pr.* events come from the thread's linked pull requests.
-  if (input.url)
-    await w.call("Link it to the thread", "signalbox.link_pull_request", {
-      threadId,
-      url: input.url,
-    });
+  if (input.url) await w.call("Link it to the thread", "signalbox.link_pull_request", { threadId, url: input.url });
 
   let quiet = input.quietWakes ?? 0;
   let failures = input.readFailures ?? 0;
   const watched = await w.repeat("Watch the pull request", { max: 20 }, async (w) => {
     const news: News | null = await w.waitFor("Wait for news on the pull request", {
-      on: [
-        "pr.checks.failed",
-        "pr.checks.passed",
-        "pr.conflicted",
-        "pr.commented",
-        "pr.reviewed",
-        "pr.merged",
-        "pr.closed",
-      ],
+      on: ["pr.checks.failed", "pr.checks.passed", "pr.conflicted", "pr.commented", "pr.reviewed", "pr.merged", "pr.closed"],
       where,
       timeout: { minutes: 30 },
     });
@@ -125,9 +89,7 @@ export default workflow(async (w, input: Input, trigger: { attach?: { threadId: 
     if (news === null) {
       let listed: { pullRequests: Array<{ number: number; state: string | null }> };
       try {
-        listed = await w.call("Check it's still open", "signalbox.list_thread_pull_requests", {
-          threadId,
-        });
+        listed = await w.call("Check it's still open", "signalbox.list_thread_pull_requests", { threadId });
         failures = 0;
       } catch (error) {
         failures += 1;

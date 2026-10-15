@@ -11,7 +11,8 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -29,7 +30,7 @@ const mergeGateModule = execFileSync(
   ["show", "origin/feat/merge-gate:apps/server/src/workflows/defaults/mergeGate.ts"],
   { encoding: "utf8" },
 );
-const mergeGatePath = join(out, ".mergeGate.module.ts");
+const mergeGatePath = join(mkdtempSync(join(tmpdir(), "spike-349-")), "mergeGate.ts");
 writeFileSync(mergeGatePath, mergeGateModule);
 const { MERGE_GATE } = (await import(pathToFileURL(mergeGatePath).href)) as { MERGE_GATE: string };
 

@@ -1,7 +1,6 @@
 export const meta = {
   name: "Merge gate",
-  description:
-    "Decides whether a thread's pull request merges: asks you, then merges it, deletes its branch and tells the agent.",
+  description: "Decides whether a thread's pull request merges: asks you, then merges it, deletes its branch and tells the agent.",
   intent: "ask me before an agent merges its pull request",
 } as const;
 
@@ -21,8 +20,7 @@ async function tell(w, threadId: string, message: string) {
 
 export default workflow(async (w, input: Input, trigger: { attach?: { threadId: string } }) => {
   const threadId = input.threadId ?? trigger.attach?.threadId;
-  if (!threadId)
-    throw new Error("Pass threadId, or start the run attached to the pull request's thread.");
+  if (!threadId) throw new Error("Pass threadId, or start the run attached to the pull request's thread.");
   const pr = `${input.repository}#${input.number} (${input.url})`;
 
   const answer = await w.ask(`Merge ${input.repository}#${input.number}?`, {
@@ -40,42 +38,22 @@ export default workflow(async (w, input: Input, trigger: { attach?: { threadId: 
 
   let merged: { state: string };
   try {
-    merged = await w.call("Merge it", "signalbox.pull_request_action", {
-      threadId,
-      url: input.url,
-      action: "merge",
-    });
+    merged = await w.call("Merge it", "signalbox.pull_request_action", { threadId, url: input.url, action: "merge" });
   } catch (error) {
-    await tell(
-      w,
-      threadId,
-      `Merging ${pr} failed: ${String(error)}. Fix what it says, then call merge_pull_request again.`,
-    );
+    await tell(w, threadId, `Merging ${pr} failed: ${String(error)}. Fix what it says, then call merge_pull_request again.`);
     return "failed";
   }
   // A host with a merge queue takes it in instead of merging; the branch stays until it lands.
   if (merged.state !== "merged") {
-    await tell(
-      w,
-      threadId,
-      `${pr} is approved and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`,
-    );
+    await tell(w, threadId, `${pr} is approved and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`);
     return "queued";
   }
   let cleanedUp = true;
   try {
-    await w.call("Delete its branch", "signalbox.pull_request_action", {
-      threadId,
-      url: input.url,
-      action: "delete-branch",
-    });
+    await w.call("Delete its branch", "signalbox.pull_request_action", { threadId, url: input.url, action: "delete-branch" });
   } catch {
     cleanedUp = false;
   }
-  await tell(
-    w,
-    threadId,
-    `Merged ${pr}${cleanedUp ? " and deleted its branch" : ""}. Wrap up and hand the work back.`,
-  );
+  await tell(w, threadId, `Merged ${pr}${cleanedUp ? " and deleted its branch" : ""}. Wrap up and hand the work back.`);
   return "merged";
 });

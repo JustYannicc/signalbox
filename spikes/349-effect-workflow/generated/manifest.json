@@ -23,7 +23,7 @@
   "fix-an-alert": {
     "name": "Fix an alert",
     "origin": "spikes/349-effect-workflow/automations/fix-an-alert.ts (#294 shape)",
-    "sourceSha256": "77643bbebfd7a318bac2984bf6ae09c6830db1aba2532426f5bad18a50c5b3ae",
+    "sourceSha256": "9d6f2c1d997307910ede9d7bc02cbdb16f64661e1b2e65bcec05ae3660b31882",
     "scriptSha256": "f540ef7fe207fb386ebe5d4e1634f46b2d3e0e78db8e01e4fa4ad200106b5d73",
     "graphNodes": 12
   }

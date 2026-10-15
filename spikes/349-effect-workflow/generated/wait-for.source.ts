@@ -1,7 +1,6 @@
 export const meta = {
   name: "Wait for",
-  description:
-    "Waits for one thing on behalf of a thread's agent (an event, a call to a callback link, or a time), then tells the agent once what happened.",
+  description: "Waits for one thing on behalf of a thread's agent (an event, a call to a callback link, or a time), then tells the agent once what happened.",
   intent: "wait for this and wake me when it happens",
 } as const;
 
@@ -24,19 +23,8 @@ const SHOWN = 2000;
 
 /** "5 minutes", "2 hours", for the message that says nothing happened. */
 function describe(duration: Duration) {
-  const seconds =
-    (duration.seconds ?? 0) +
-    (duration.minutes ?? 0) * 60 +
-    (duration.hours ?? 0) * 3600 +
-    (duration.days ?? 0) * 86400;
-  const [amount, unit] =
-    seconds >= 172800
-      ? [seconds / 86400, "days"]
-      : seconds >= 7200
-        ? [seconds / 3600, "hours"]
-        : seconds >= 120
-          ? [seconds / 60, "minutes"]
-          : [seconds, "seconds"];
+  const seconds = (duration.seconds ?? 0) + (duration.minutes ?? 0) * 60 + (duration.hours ?? 0) * 3600 + (duration.days ?? 0) * 86400;
+  const [amount, unit] = seconds >= 172800 ? [seconds / 86400, "days"] : seconds >= 7200 ? [seconds / 3600, "hours"] : seconds >= 120 ? [seconds / 60, "minutes"] : [seconds, "seconds"];
   return `${Math.round(amount * 10) / 10} ${unit}`;
 }
 
@@ -53,11 +41,7 @@ function describeEvent(event: Record<string, unknown>) {
 
 /** What the agent reads when the wait ends; it doesn't see the automation. */
 function wakeMessage(input: Input, news: string) {
-  return [
-    `You were waiting for ${input.until}.`,
-    news,
-    ...(input.message ? ["", input.message] : []),
-  ].join("\n");
+  return [`You were waiting for ${input.until}.`, news, ...(input.message ? ["", input.message] : [])].join("\n");
 }
 
 export default workflow(async (w, input: Input, trigger: { attach?: { threadId: string } }) => {
@@ -76,18 +60,16 @@ export default workflow(async (w, input: Input, trigger: { attach?: { threadId: 
       where: { hookId: input.callback },
       timeout: input.timeout,
     });
-    news =
-      call === null
-        ? `Nobody called the callback link ${waited}, so I stopped waiting.`
-        : `The callback link was called (${call.method}) with: ${shown(call.body)}`;
+    news = call === null
+      ? `Nobody called the callback link ${waited}, so I stopped waiting.`
+      : `The callback link was called (${call.method}) with: ${shown(call.body)}`;
   } else if (input.on) {
     const event = await w.waitFor(`Waiting for ${input.until}`, {
       on: input.on,
       where: input.where,
       timeout: input.timeout,
     });
-    news =
-      event === null ? `It didn't happen ${waited}, so I stopped waiting.` : describeEvent(event);
+    news = event === null ? `It didn't happen ${waited}, so I stopped waiting.` : describeEvent(event);
   } else {
     throw new Error("Say what to wait for: on, callback or at.");
   }

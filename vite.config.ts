@@ -98,6 +98,8 @@ export default defineConfig({
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
       "*.icon/**",
+      // Spike output must stay byte-identical to the compiler's (#349 branch only).
+      "spikes/**/generated/**",
     ],
     sortPackageJson: {},
     overrides: [
