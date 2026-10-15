@@ -34,7 +34,7 @@ export class OnePasswordAccount extends Context.Service<
   }
 >()("@signalbox/cloud/user/OnePasswordAccount") {}
 
-/** Part of `UserStore`'s `0014` migration. */
+/** Part of `UserStore`'s `0015` migration. */
 export const createTables = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE TABLE onepassword_account (

@@ -55,7 +55,7 @@ const setup = Effect.gen(function* () {
       return yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
         Effect.provide(
           Layer.mergeAll(
-            CloudRpc.layerHandlers({ identity, userId: person.userId }),
+            CloudRpc.layerHandlers({ identity, userId: person.userId, sid: "test-session" }),
             CloudRpc.layerScopeAuthorization([
               AuthOrchestrationReadScope,
               AuthOrchestrationOperateScope,

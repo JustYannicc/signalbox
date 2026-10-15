@@ -275,6 +275,10 @@
       "types": "./src/state/signalboxPreviews.ts",
       "default": "./src/state/signalboxPreviews.ts"
     },
+    "./state/signalboxPush": {
+      "types": "./src/state/signalboxPush.ts",
+      "default": "./src/state/signalboxPush.ts"
+    },
     "./state/signalboxRepositories": {
       "types": "./src/state/signalboxRepositories.ts",
       "default": "./src/state/signalboxRepositories.ts"

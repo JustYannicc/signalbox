@@ -1,15 +1,52 @@
-# The Runner image: what every thread's VM runs. Node, git, the Runner, and
-# exact `claude` and `codex` versions. No Signalbox server and no provider
-# keys: the harnesses reach their models through the ModelGateway.
+# syntax=docker/dockerfile:1
+# The Runner image: what every thread's VM runs. Node, git, the Runner, exact
+# `claude` and `codex` versions, and a pinned headless browser. No Signalbox
+# server and no provider keys: the harnesses reach their models through the
+# ModelGateway.
 #
 # The build context is the bundled Runner (`vp run runner:bundle` in
 # apps/server writes dist/runner/main.mjs). `.github/workflows/runner-image.yml`
 # publishes it as ghcr.io/justyannicc/signalbox-runner for nightly and stable.
+
+# The headless browser agents check their own work with (#402): the Chrome for
+# Testing headless shell `PreviewBrowser.ts` pins, at the same version and
+# checksums (RunnerImage.test.ts keeps them equal). Each architecture fetches
+# only its own archive.
+ARG CHROME_HEADLESS_SHELL_VERSION=154.0.8037.92
+FROM scratch AS chrome-amd64
+ARG CHROME_HEADLESS_SHELL_VERSION
+ADD --checksum=sha256:636aa5c79f2693632e9921b8bbb050038ba11672e02346c06c20f991aed096f9 \
+  https://storage.googleapis.com/chrome-for-testing-public/${CHROME_HEADLESS_SHELL_VERSION}/linux64/chrome-headless-shell-linux64.zip /chrome.zip
+FROM scratch AS chrome-arm64
+ARG CHROME_HEADLESS_SHELL_VERSION
+ADD --checksum=sha256:0ed0e47d9e9f639197f508d62ada09e5c6b4c4c60edab3160a9312a733091df6 \
+  https://storage.googleapis.com/chrome-for-testing-public/${CHROME_HEADLESS_SHELL_VERSION}/linux-arm64/chrome-headless-shell-linux-arm64.zip /chrome.zip
+ARG TARGETARCH
+FROM chrome-${TARGETARCH} AS chrome-archive
+FROM node:24-bookworm-slim AS chrome
+COPY --from=chrome-archive /chrome.zip /tmp/chrome.zip
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+  && unzip -q /tmp/chrome.zip -d /opt \
+  && mv /opt/chrome-headless-shell-linux* /opt/chrome-headless-shell
+
 FROM node:24-bookworm-slim
 
-# Bump these to move every new machine to another harness release.
-ARG CLAUDE_CODE_VERSION=2.1.292
-ARG CODEX_VERSION=0.160.1
+# The browser's libraries (`DEBIAN_PACKAGES` in PreviewBrowserHost.ts) and
+# fonts for its screenshots; Playwright beside the Runner, which loads it from
+# disk, at the version apps/server pins.
+ARG PLAYWRIGHT_CORE_VERSION=1.60.0
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libnss3 libglib2.0-0 libatk1.0-0 libatk-bridge2.0-0 \
+    libatspi2.0-0 libdbus-1-3 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
+    libxrandr2 libxkbcommon0 libgbm1 libasound2 libexpat1 fonts-liberation \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install --prefix /opt/signalbox --no-fund --no-audit --no-save "playwright-core@${PLAYWRIGHT_CORE_VERSION}" \
+  && npm cache clean --force
+COPY --from=chrome /opt/chrome-headless-shell /opt/chrome-headless-shell
+# The machine is the thread's own sandbox and its containers can't create the
+# user namespace Chrome's sandbox needs; the browser carries no logins.
+ENV SIGNALBOX_BROWSER_EXECUTABLE=/opt/chrome-headless-shell/chrome-headless-shell \
+  T3CODE_SERVER_BROWSER_SANDBOX=0
 
 # rclone and fuse3 mount every drive the user can read at /drives (RunnerDrivesMount.ts).
 # Python, make, a C/C++ compiler and pkg-config are what node-gyp and most
@@ -21,6 +58,10 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && install -d -o node -g node /drives
 
+# Bump these to move every new machine to another harness release. Declared
+# here so a bump leaves the layers above alone.
+ARG CLAUDE_CODE_VERSION=2.1.292
+ARG CODEX_VERSION=0.160.1
 # npm 11 skips install scripts unless allowed; Claude Code's links its native binary.
 RUN npm install --global --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code \
     "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \

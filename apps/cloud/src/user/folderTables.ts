@@ -45,7 +45,7 @@ export const createTables = Effect.gen(function* () {
 });
 
 /**
- * `UserStore`'s `0014` migration, with the user's 1Password account
+ * `UserStore`'s `0015` migration, with the user's 1Password account
  * (`OnePasswordAccount`): each level's 1Password Environment (#395), a
  * reference only, never a value.
  */
