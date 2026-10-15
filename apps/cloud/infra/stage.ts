@@ -27,8 +27,13 @@ export const PREVIEW_ZONE = {
 
 const previewHost = (tag: string) => `*-${tag}.${PREVIEW_ZONE.name}`;
 
-/** Same as wrangler.jsonc, so `wrangler dev` runs what deploys. */
-export const COMPATIBILITY_DATE = "2026-09-30";
+/**
+ * Same as wrangler.jsonc, so `wrangler dev` runs what deploys. From
+ * 2026-10-01 pending I/O (`ctx.container.monitor()`, DO RPC, service binding
+ * calls, `waitUntil`) keeps a Durable Object up with no client connected, so a
+ * ThreadObject or PoolObject isn't evicted while its container still works.
+ */
+export const COMPATIBILITY_DATE = "2026-10-01";
 
 /**
  * Durable Object bindings and the classes behind them. A binding is its

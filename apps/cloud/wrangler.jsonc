@@ -6,7 +6,7 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "signalbox-cloud",
   "main": "src/worker.ts",
-  "compatibility_date": "2026-09-30",
+  "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   // One origin: sign-in callbacks, cookies and saved connections all key on it.
   "workers_dev": false,

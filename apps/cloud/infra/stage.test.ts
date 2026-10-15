@@ -23,9 +23,10 @@ interface WranglerConfig {
   readonly vars: Readonly<Record<string, string>>;
 }
 
-const wrangler = parseJsonc(
-  NodeFS.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
-) as WranglerConfig;
+const readWrangler = (file: string) =>
+  parseJsonc(NodeFS.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"));
+
+const wrangler = readWrangler("wrangler.jsonc") as WranglerConfig;
 
 describe("cloudStage", () => {
   it("keeps production's wrangler-made names", () => {
@@ -112,6 +113,9 @@ describe("wrangler.jsonc", () => {
 
   it("runs production's compatibility date and identity", () => {
     expect(wrangler.compatibility_date).toBe(COMPATIBILITY_DATE);
+    expect(
+      (readWrangler("wrangler.model-gateway.jsonc") as WranglerConfig).compatibility_date,
+    ).toBe(COMPATIBILITY_DATE);
     expect(wrangler.vars.ENVIRONMENT_ID).toBe(cloudStage("production").vars.ENVIRONMENT_ID);
   });
 });
