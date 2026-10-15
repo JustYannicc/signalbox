@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 import { contextAllows } from "../drive/driveAccess.ts";
 import * as Context from "effect/Context";
@@ -39,6 +40,7 @@ import {
   onPool,
   type TurnInstructions,
   type TurnPools,
+  type TurnSecrets,
 } from "./turnPool.ts";
 import { poolErrorMessage } from "../pool/PoolDirectory.ts";
 import type { ThreadSnapshotWire, ThreadSummaryWire } from "./threadWire.ts";
@@ -114,6 +116,11 @@ export interface ThreadCreation {
    * `pools`; a turn it starts keeps them for the Runner. Absent: unresolved.
    */
   readonly instructions?: TurnInstructions;
+  /**
+   * The 1Password Environments on the thread's chain (#395), resolved with
+   * `pools`; a turn it starts keeps them for the thread. Absent: unresolved.
+   */
+  readonly secrets?: TurnSecrets;
 }
 
 const NO_CONTEXT =
@@ -266,7 +273,7 @@ const make = Effect.gen(function* () {
 
   const stamp = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
     Effect.forEach(events, (event) =>
-      Effect.map(Effect.orDie(crypto.randomUUIDv4), (id) => ({ ...event, id: EventId.make(id) })),
+      Effect.map(Effect.orDie(crypto.randomUUIDv4()), (id) => ({ ...event, id: EventId.make(id) })),
     );
 
   /** Commits decided events and publishes them. Callers hold the lock. */
@@ -285,6 +292,8 @@ const make = Effect.gen(function* () {
       readonly runId: string;
       readonly levels: ReadonlyArray<FolderInstructions>;
     };
+    /** The chain's secrets, as of the run this commit starts. */
+    readonly secrets?: ReadonlyArray<OnePasswordEnvironmentId>;
   }) {
     const current = yield* Ref.get(state);
     const owner = current.thread?.owner ?? input.owner;
@@ -302,6 +311,7 @@ const make = Effect.gen(function* () {
         events,
         ...(input.command ? { command: input.command } : {}),
         ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+        ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
         ...(current.thread === null ? { owner } : {}),
         ...(input.machine ? { machine: input.machine } : {}),
         summaryChanged: nextKey !== current.summaryKey,
@@ -445,6 +455,9 @@ const make = Effect.gen(function* () {
                   levels: forThread(creation.instructions, projectId),
                 },
               }),
+          ...(started === undefined || creation.secrets === undefined || projectId === undefined
+            ? {}
+            : { secrets: forThread(creation.secrets, projectId) }),
         });
         return { sequence, replayed: false };
       }),

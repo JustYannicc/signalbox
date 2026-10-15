@@ -165,7 +165,7 @@ describe("GitHub-backed drives", () => {
       const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
         Effect.provide(
           Layer.mergeAll(
-            CloudRpc.layerHandlers({ identity, userId }),
+            CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
             CloudRpc.layerScopeAuthorization([
               AuthOrchestrationReadScope,
               AuthOrchestrationOperateScope,
@@ -343,7 +343,7 @@ describe("GitHub-backed drives", () => {
       const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
         Effect.provide(
           Layer.mergeAll(
-            CloudRpc.layerHandlers({ identity, userId }),
+            CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
             CloudRpc.layerScopeAuthorization([
               AuthOrchestrationReadScope,
               AuthOrchestrationOperateScope,

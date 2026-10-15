@@ -31,7 +31,8 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2,
 } from "@t3tools/provider-core/server/ProviderAdapter";
-import type { DriveOutcome, PreparedDrive, RunnerDrive } from "./RunnerDrive.ts";
+import type { DriveOutcome, PreparedDrive, RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
+import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { DriveTooLargeError } from "./RunnerDriveClient.ts";
@@ -651,35 +652,6 @@ describe("RunnerTurns", () => {
     ),
   );
 
-  it.effect("tells the thread when its repository is too big for the drive", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const reported: Array<RunnerItem> = [];
-        const tooBig = new DriveTooLargeError({
-          message: "Signalbox can't save owner/repo to its drive: big.bin is 80 MB.",
-        });
-        const adapter = {
-          instanceId,
-          driver,
-          openSession: () => Effect.fail(tooBig),
-        } as unknown as ProviderAdapterV2["Service"];
-        const turns = yield* makeRunnerTurns({
-          threadId,
-          adapters: new Map([[instanceId, adapter]]),
-          cwd: "/tmp",
-          useModelToken: () => Effect.void,
-          usage: Effect.succeed(unmeasured),
-          emit: (item) => Effect.sync(() => void reported.push(item)),
-        });
-        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
-        yield* settle;
-
-        const failed = reported.find((item) => item.kind === "turn.failed");
-        expect(failed?.kind === "turn.failed" && failed.message).toBe(tooBig.message);
-      }),
-    ),
-  );
-
   it.effect("records a failed native resume before starting fresh", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -714,7 +686,7 @@ describe("RunnerTurns", () => {
   describe("shortcut instructions", () => {
     /** A drive whose turn starts answer `prepared`, one per turn, in order. */
     const preparingDrive = (
-      prepared: Array<Effect.Effect<PreparedDrive, RunnerInstructionsError>>,
+      prepared: Array<Effect.Effect<PreparedDrive, RunnerDriveError | RunnerInstructionsError>>,
     ) =>
       ({
         prepare: () => prepared.shift()!,
@@ -876,6 +848,77 @@ describe("RunnerTurns", () => {
           expect(reported.map(label)).toEqual(["log run-1 error", "turn.failed run-1"]);
           const failed = reported[1];
           expect(failed?.kind === "turn.failed" && failed.message).toBe(message);
+          expect(fake.calls).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect("fails the turn with what's too big when the drive can't take it", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const reported: Array<RunnerItem> = [];
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            openDrive: () =>
+              Effect.succeed(
+                preparingDrive([
+                  Effect.fail(
+                    new DriveTooLargeError({
+                      message: "Signalbox can't save owner/repo to its drive: This save is 80 MB.",
+                    }),
+                  ),
+                ]),
+              ),
+          });
+          yield* turns.start({ turn: turnFor(1), modelToken: "token-1", drive: access });
+          yield* settle;
+
+          const failed = reported.find((item) => item.kind === "turn.failed");
+          expect(failed?.kind === "turn.failed" && failed.message).toBe(
+            "Signalbox couldn't get this thread's files ready: Signalbox can't save owner/repo to its drive: This save is 80 MB.",
+          );
+        }),
+      ),
+    );
+
+    it.effect("fails the turn with why its files couldn't be readied, credentials redacted", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fake = yield* makeFakeAdapter;
+          const reported: Array<RunnerItem> = [];
+          const turns = yield* makeRunnerTurns({
+            threadId,
+            adapters: new Map([[instanceId, fake.adapter]]),
+            cwd: "/tmp",
+            useModelToken: () => Effect.void,
+            usage: Effect.succeed(unmeasured),
+            emit: (item) => Effect.sync(() => void reported.push(item)),
+            openDrive: () =>
+              Effect.succeed(
+                preparingDrive([
+                  Effect.fail(
+                    new RunnerGitError({
+                      message:
+                        "Saving owner/repo's latest version failed: A pack of 110795399 bytes is bigger than the drive takes (67108864). token=abc123",
+                    }),
+                  ),
+                ]),
+              ),
+          });
+          yield* turns.start({ turn: turnFor(1), modelToken: "token-1", drive: access });
+          yield* settle;
+
+          expect(reported.map(label)).toEqual(["log run-1 error", "turn.failed run-1"]);
+          const failed = reported[1];
+          expect(failed?.kind === "turn.failed" && failed.message).toBe(
+            "Signalbox couldn't get this thread's files ready: Saving owner/repo's latest version failed: A pack of 110795399 bytes is bigger than the drive takes (67108864). token=[REDACTED]",
+          );
           expect(fake.calls).toEqual([]);
         }),
       ),

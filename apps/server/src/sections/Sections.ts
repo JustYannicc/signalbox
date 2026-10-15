@@ -105,7 +105,7 @@ const make = Effect.gen(function* () {
   const create: Sections["Service"]["create"] = (input) =>
     validateName(input.name).pipe(
       Effect.flatMap((name) =>
-        crypto.randomUUIDv4.pipe(
+        crypto.randomUUIDv4().pipe(
           Effect.mapError((cause) => new SectionStorageError({ operation: "generate-id", cause })),
           Effect.flatMap((rawId) => {
             const id = rawId as SectionId;

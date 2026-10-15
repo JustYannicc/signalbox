@@ -37,6 +37,7 @@ import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { makeDevAutoAuth } from "../signalbox/devAutoAuth.ts"; // signalbox: dev auto-auth
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -216,6 +217,38 @@ const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateT
     ),
   );
 
+/** Sets the cookies for an issued browser session, retiring the normal cookie when asked. */
+const appendBrowserSessionCookies = Effect.fnUntraced(function* (
+  normalCookieName: string,
+  result: Effect.Success<
+    ReturnType<EnvironmentAuth.EnvironmentAuth["Service"]["createBrowserSession"]>
+  >,
+) {
+  const cookieName = result.cookieName ?? normalCookieName;
+  const selectedCookie = yield* Effect.fromResult(
+    Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
+      expires: DateTime.toDate(result.response.expiresAt),
+      httpOnly: true,
+      path: "/",
+      sameSite: "lax",
+    }),
+  ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
+  const sessionCookies = result.expireNormalCookie
+    ? yield* Effect.fromResult(
+        Cookies.expireCookie(selectedCookie, normalCookieName, {
+          httpOnly: true,
+          path: "/",
+          sameSite: "lax",
+        }),
+      ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
+    : selectedCookie;
+
+  yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
+  );
+  yield* appendCredentialResponseHeaders;
+});
+
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -265,6 +298,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const devAutoAuth = yield* makeDevAutoAuth; // signalbox: dev auto-auth
 
     return handlers
       .handle(
@@ -288,7 +322,9 @@ export const layer = HttpApiBuilder.group(
               yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
               yield* appendCredentialResponseHeaders;
             }
-            return result;
+            return yield* devAutoAuth.upgradeSession(request, result, (session) =>
+              appendBrowserSessionCookies(sessions.cookieName, session),
+            ); // signalbox: dev auto-auth
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
@@ -314,29 +350,7 @@ export const layer = HttpApiBuilder.group(
                 ? previousCredential.token
                 : undefined,
             );
-            const cookieName = result.cookieName ?? sessions.cookieName;
-            const selectedCookie = yield* Effect.fromResult(
-              Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
-                expires: DateTime.toDate(result.response.expiresAt),
-                httpOnly: true,
-                path: "/",
-                sameSite: "lax",
-              }),
-            ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
-            const sessionCookies = result.expireNormalCookie
-              ? yield* Effect.fromResult(
-                  Cookies.expireCookie(selectedCookie, sessions.cookieName, {
-                    httpOnly: true,
-                    path: "/",
-                    sameSite: "lax",
-                  }),
-                ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
-              : selectedCookie;
-
-            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
-              Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
-            );
-            yield* appendCredentialResponseHeaders;
+            yield* appendBrowserSessionCookies(sessions.cookieName, result);
             return result.response;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>

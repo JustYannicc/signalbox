@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { PERSONAL_POOL_ID } from "@t3tools/contracts/accountHub";
 import {
   WORKOS_TEST_ENV,
@@ -14,6 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
+import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
 import * as CloudConfig from "./CloudConfig.ts";
@@ -26,6 +28,7 @@ import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
+import * as PushNotifier from "./push/PushNotifier.ts";
 import * as UserPreviewSetup from "./previewSetup/UserPreviewSetup.ts";
 import { makeMemoryPools } from "./pool/testing.ts";
 import * as CloudThreadService from "./thread/CloudThreadService.ts";
@@ -49,6 +52,7 @@ import { contextOfProject } from "./user/contextProjects.ts";
 import * as DrivePeople from "./user/DrivePeople.ts";
 import * as DriveSharing from "./user/DriveSharing.ts";
 import * as DriveShortcuts from "./user/DriveShortcuts.ts";
+import * as OnePasswordAccount from "./user/OnePasswordAccount.ts";
 import * as ResourceBindings from "./user/ResourceBindings.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
@@ -84,7 +88,12 @@ export const layerConfig = (env: Readonly<Record<string, string>> = CLOUD_TEST_E
 export const layerMemoryStore = LegacySections.layer.pipe(
   Layer.provideMerge(UserFolders.layer),
   Layer.provideMerge(
-    Layer.mergeAll(UserStore.layer, UserContexts.layerWithDrives, ResourceBindings.layer),
+    Layer.mergeAll(
+      UserStore.layer,
+      UserContexts.layerWithDrives,
+      ResourceBindings.layer,
+      OnePasswordAccount.layer,
+    ),
   ),
   Layer.provideMerge(Layer.effectDiscard(UserStore.migrate)),
   Layer.provideMerge(
@@ -109,6 +118,7 @@ export const layerPersonalThreadContexts = (userId: string) =>
         Effect.succeed({
           pools: { top: PERSONAL_POOL_ID, projects: {} },
           instructions: { top: [], projects: {} },
+          secrets: { top: [], projects: {} },
         }),
     }),
   );
@@ -147,6 +157,8 @@ export const layerThreadObject = (
     ) => Effect.Effect<boolean, UserDirectory.UserObjectError>;
     /** Who an owner's commits are by; nobody (the fallback) unless given. */
     readonly commitAuthor?: ThreadRunner.ThreadDrives["Service"]["commitAuthor"];
+    /** An owner's 1Password token; none connected unless given. */
+    readonly secretsToken?: ThreadRunner.ThreadSecrets["Service"]["token"];
     readonly analytics?: Layer.Layer<
       CloudAnalytics.CloudAnalytics,
       never,
@@ -164,6 +176,11 @@ export const layerThreadObject = (
         commitAuthor: options.commitAuthor ?? (() => Effect.succeed(null)),
       }),
     ),
+    Layer.provideMerge(
+      Layer.succeed(ThreadRunner.ThreadSecrets, {
+        token: options.secretsToken ?? (() => Effect.succeed(null)),
+      }),
+    ),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
@@ -173,6 +190,12 @@ export const layerThreadObject = (
     Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
     Layer.provideMerge(Layer.mergeAll(NodeSqliteClient.layer({ filename }), Platform.layerCrypto)),
   );
+
+/** A user object's signing keys, as `UserObject` reads them. */
+const layerUserObjectTokens = CloudTokens.layerSessionSecret.pipe(
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: CLOUD_TEST_ENV }))),
+  Layer.orDie,
+);
 
 /** GitHub with no App and no network, for tests that never reach it. */
 const layerNoGitHub = GitHub.layer(null).pipe(Layer.provide(FetchHttpClient.layer));
@@ -184,10 +207,11 @@ const makeUserRuntime = (
   drives: Layer.Layer<DriveDirectory.DriveDirectory | DrivePacks.DrivePacks>,
   people: Layer.Layer<DrivePeople.DrivePeople>,
   github: Layer.Layer<GitHub.GitHub>,
+  observe: Layer.Layer<never>,
 ) =>
   ManagedRuntime.make(
     // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
-    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer).pipe(
+    Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
       Layer.provideMerge(
         Layer.mergeAll(
           UserShell.layer,
@@ -201,6 +225,17 @@ const makeUserRuntime = (
         ),
       ),
       Layer.provideMerge(Layer.mergeAll(ThreadContexts.layer, Platform.layerCrypto)),
+      // No push credentials, so phones are recorded and every push is skipped.
+      Layer.provideMerge(
+        PushNotifier.layerWithDevices(EnvironmentId.make(CLOUD_TEST_ENV.ENVIRONMENT_ID)).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              FetchHttpClient.layer,
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            ),
+          ),
+        ),
+      ),
       Layer.provideMerge(Layer.mergeAll(UserDrives.layer, UserPools.layer)),
       Layer.provideMerge(Layer.mergeAll(layerMemoryStore, ModelManifest.layerBundled)),
       Layer.provideMerge(Layer.mergeAll(drives, people, github)),
@@ -209,8 +244,10 @@ const makeUserRuntime = (
           Layer.succeed(UserDirectory.UserDirectory, users),
           Layer.succeed(ThreadDirectory.ThreadDirectory, threads),
           Layer.succeed(PoolDirectory.PoolDirectory, pools),
+          layerUserObjectTokens,
         ),
       ),
+      Layer.provideMerge(observe),
     ),
   );
 
@@ -227,6 +264,8 @@ export const makeMemoryCloud = (
     readonly github?: Layer.Layer<GitHub.GitHub>;
     /** What pools backed by a CLIProxyAPI elsewhere reach. */
     readonly poolFetch?: (request: Request) => Promise<Response>;
+    /** Loggers or a tracer every object here runs with, to see what they log and trace. */
+    readonly observe?: Layer.Layer<never>;
   } = {},
 ) => {
   const users = new Map<
@@ -269,6 +308,7 @@ export const makeMemoryCloud = (
       drives.layer,
       people,
       options.github ?? layerNoGitHub,
+      options.observe ?? Layer.empty,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -282,11 +322,15 @@ export const makeMemoryCloud = (
         drives: true,
         writes: (userId, driveId) =>
           Effect.map(userDirectory.forUser(userId).driveAccess(driveId), canWrite),
+        secretsToken: (userId) => userDirectory.forUser(userId).onePasswordToken(),
         // Turns check their pool as in production, with the scripted provider on.
         models: TurnModels.layer({ scripted: true }).pipe(
           Layer.provide(Layer.succeed(PoolDirectory.PoolDirectory, pools.directory)),
         ),
-      }).pipe(Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, userDirectory))),
+      }).pipe(
+        Layer.provideMerge(Layer.succeed(UserDirectory.UserDirectory, userDirectory)),
+        Layer.provideMerge(options.observe ?? Layer.empty),
+      ),
     );
     const run = <A, E>(
       effect: Effect.Effect<
@@ -346,6 +390,13 @@ export const makeMemoryCloud = (
     threadOwner: (threadId: string) =>
       Effect.promise(() =>
         threadFor(threadId).run(ThreadStore.ThreadStore.use((store) => Effect.orDie(store.owner))),
+      ),
+    /** The 1Password Environments a thread's turns get, top level first. */
+    threadSecrets: (threadId: string) =>
+      Effect.promise(() =>
+        threadFor(threadId).run(
+          ThreadStore.ThreadStore.use((store) => Effect.orDie(store.secrets)),
+        ),
       ),
     /** The instructions each of a thread's runs was started with, by run id. */
     runInstructions: (threadId: string, runId: string) =>

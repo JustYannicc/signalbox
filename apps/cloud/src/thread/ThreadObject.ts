@@ -140,6 +140,14 @@ const layerThreadDrives = (env: ThreadObjectEnv) =>
     })),
   );
 
+/** The owner's 1Password token for their turns' secrets, asked of their own object. */
+const layerThreadSecrets = Layer.effect(
+  ThreadRunner.ThreadSecrets,
+  Effect.map(UserDirectory.UserDirectory, (users) => ({
+    token: (userId: string) => users.forUser(userId).onePasswordToken(),
+  })),
+);
+
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
 // `machine`: the object's own container, the light class's machine where the deployment has one.
 const makeRuntime = (
@@ -156,7 +164,7 @@ const makeRuntime = (
           lastActiveAt: Effect.sync(() => previews.lastActiveAt),
         }),
       ),
-      Layer.provideMerge(layerThreadDrives(env)),
+      Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(

@@ -6,6 +6,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
+import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -193,6 +194,48 @@ describe("turn pools", () => {
           { label: "Top level", text: "Be brief." },
           { label: "Work", text: "End every reply with BANANA." },
         ]);
+        yield* cloud.settle;
+      }),
+  );
+
+  it.effect(
+    "hands a thread its chain's 1Password Environments, and its new home's after a move",
+    () =>
+      Effect.gen(function* () {
+        const { threads, folders, cloud, send } = yield* setup;
+        const env = OnePasswordEnvironmentId.make;
+        const work = (yield* folders.create({ name: "Work", parentId: null })).folders[0]!.id;
+        const home = (yield* folders.create({ name: "Home", parentId: null })).folders.find(
+          (folder) => folder.name === "Home",
+        )!.id;
+        yield* folders.setSecrets({
+          level: { _tag: "top" },
+          secrets: { environmentId: env("env-top") },
+        });
+        yield* folders.setSecrets({
+          level: { _tag: "folder", folderId: work },
+          secrets: { environmentId: env("env-work") },
+        });
+        yield* folders.moveThread({ threadId, folderId: work });
+        yield* threads.launchThread(actor, {
+          commandId: CommandId.make("launch-secrets"),
+          threadId,
+          projectId: SCRATCH,
+          title: "Hello",
+          modelSelection: claudeOn("claude_hub"),
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: { messageId: MessageId.make("message-0"), text: "Hi", attachments: [] },
+        });
+        expect(yield* cloud.threadSecrets(threadId)).toEqual(["env-top", "env-work"]);
+        yield* cloud.settle;
+
+        // Moved to Home, which names none: its next turn gets the top level's only.
+        yield* folders.moveThread({ threadId, folderId: home });
+        expect(yield* cloud.threadSecrets(threadId)).toEqual(["env-top", "env-work"]);
+        yield* send(claudeOn("claude_hub"));
+        expect(yield* cloud.threadSecrets(threadId)).toEqual(["env-top"]);
         yield* cloud.settle;
       }),
   );

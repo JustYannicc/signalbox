@@ -3,6 +3,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,16 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../../../package.json" with { type: "json" };
 import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
+import {
+  BROWSER_EXECUTABLE_ENV,
+  type BrowserBackend,
+  makeHeadlessBrowser,
+} from "./RunnerBrowser.ts";
+import {
+  BROWSER_INSTRUCTIONS,
+  BROWSER_SERVER_NAME,
+  layerBrowserTools,
+} from "./RunnerBrowserTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import {
   CONTEXT_INSTRUCTIONS,
@@ -25,6 +36,7 @@ import {
 import { DAV_PATH, serveDav } from "./RunnerDrivesDav.ts";
 import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
+import type { RunnerMcpServers } from "./RunnerModelAccess.ts";
 
 /**
  * One Runner's context server (#141), on a loopback port of its own: the
@@ -33,14 +45,16 @@ import { makeDrivesView } from "./RunnerDrivesView.ts";
  * the Runner: both read through the turn's `ContextClient`, which `pin`
  * replaces at every turn start along with the view of the drives. The MCP
  * server also publishes the thread's branch, saving it through the drive
- * `attachDrive` gives it.
+ * `attachDrive` gives it. `/browser` serves the thread's headless browser
+ * (#402) as its own MCP server, under the name agents know it by locally.
  */
 
 const MCP_PATH = "/mcp";
+const BROWSER_PATH = "/browser";
 
 export interface ContextServer {
-  /** The MCP endpoint the harnesses are configured with. */
-  readonly mcpUrl: string;
+  /** The MCP endpoints the harnesses are configured with, by server name. */
+  readonly mcpServers: RunnerMcpServers;
   /** Takes this turn's view of the drives; a failure keeps the last one. */
   readonly pin: (client: ContextClient) => Effect.Effect<void>;
   /** The thread's drive, once a turn opens it: what publishing saves first. */
@@ -50,9 +64,16 @@ export interface ContextServer {
 export const startContextServer = Effect.fn("startContextServer")(function* (input: {
   /** Where to mount `/drives`; null serves the tools only (a development host). */
   readonly mountPoint: string | null;
+  /** The browser behind the `preview_*` tools; the machine's headless Chromium by default. */
+  readonly browser?: BrowserBackend;
 }) {
   const view = makeDrivesView();
   let drive: BranchDrive | null = null;
+  // Chromium starts with the first browser call and stops with the thread.
+  const env = yield* HostProcess.Environment;
+  const browser =
+    input.browser ?? makeHeadlessBrowser({ executable: env[BROWSER_EXECUTABLE_ENV], env });
+  yield* Effect.addFinalizer(() => Effect.tryPromise(() => browser.close()).pipe(Effect.ignore));
 
   const dav = HttpRouter.add("*", `${DAV_PATH}/*`, (request) =>
     serveDav(view, {
@@ -89,8 +110,23 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
       }),
     ),
   );
+  // Fresh: every MCP server layer shares `McpServer.layer`, so a memoized one
+  // would put the browser's tools on the context server too.
+  const browserMcp = Layer.fresh(
+    layerBrowserTools(browser).pipe(
+      Layer.provide(
+        McpServer.layerHttp({
+          name: BROWSER_SERVER_NAME,
+          version: packageJson.version,
+          instructions: BROWSER_INSTRUCTIONS,
+          path: BROWSER_PATH,
+          protocols: [McpProtocol.v2025_06_18],
+        }),
+      ),
+    ),
+  );
   const served = yield* Layer.build(
-    HttpRouter.serve(Layer.mergeAll(dav, mcp), {
+    HttpRouter.serve(Layer.mergeAll(dav, mcp, browserMcp), {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(
@@ -109,7 +145,10 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
       : yield* mountDrives({ davUrl: `${origin}${DAV_PATH}/`, mountPoint: input.mountPoint });
 
   return {
-    mcpUrl: `${origin}${MCP_PATH}`,
+    mcpServers: {
+      [CONTEXT_SERVER_NAME]: `${origin}${MCP_PATH}`,
+      [BROWSER_SERVER_NAME]: `${origin}${BROWSER_PATH}`,
+    },
     pin: (client) =>
       view.pin(client).pipe(
         // Only a changed view needs rclone to drop what it listed.
@@ -130,10 +169,10 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
 /** What a turn hands over for its drives: opens a client for that access. */
 export type OpenContextClient = (access: DriveAccess) => Effect.Effect<ContextClient>;
 
-/** `inner` with every Claude query reaching the context server, its tools pre-approved. */
+/** `inner` with every Claude query reaching the Runner's MCP servers, their tools pre-approved. */
 export const withContextServer = (
   inner: ClaudeAgentSdkQueryRunnerShape,
-  mcpUrl: string,
+  mcpServers: RunnerMcpServers,
 ): ClaudeAgentSdkQueryRunnerShape => ({
   ...inner,
   open: (input) =>
@@ -143,9 +182,14 @@ export const withContextServer = (
         ...input.options,
         mcpServers: {
           ...input.options.mcpServers,
-          [CONTEXT_SERVER_NAME]: { type: "http", url: mcpUrl },
+          ...Object.fromEntries(
+            Object.entries(mcpServers).map(([name, url]) => [name, { type: "http", url }] as const),
+          ),
         },
-        allowedTools: [...(input.options.allowedTools ?? []), `mcp__${CONTEXT_SERVER_NAME}__*`],
+        allowedTools: [
+          ...(input.options.allowedTools ?? []),
+          ...Object.keys(mcpServers).map((name) => `mcp__${name}__*`),
+        ],
       },
     }),
 });

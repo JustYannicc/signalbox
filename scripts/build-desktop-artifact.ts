@@ -626,7 +626,7 @@ export class InlinedNativePackageError extends Schema.TaggedError<InlinedNativeP
   { packages: Schema.Array(Schema.String) },
 ) {
   override get message(): string {
-    return `The server bundle inlined packages that load native binaries: ${this.packages.join(", ")}. A node-gyp-build style loader resolves prebuilds relative to its own file, so inlined into a chunk it finds none and the importer quietly falls back to a slower JS path. Add them to CLI_RUNTIME_EXTERNAL_PREFIXES in scripts/lib/cli-external-packages.ts so they stay external and are staged in the sidecar.`;
+    return `The server bundle inlined packages that load native binaries: ${this.packages.join(", ")}. A node-gyp-build or napi-rs style loader resolves its binary relative to its own file, so inlined into a chunk it finds none: the importer either falls back to a slower JS path or, for napi-rs, throws at startup. Add them to CLI_RUNTIME_EXTERNAL_PREFIXES in scripts/lib/cli-external-packages.ts so they stay external and are staged in the sidecar.`;
   }
 }
 
@@ -2047,6 +2047,9 @@ export function ancestorNodeModulesPaths(
 const NativeMarkerManifest = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  // napi-rs packages declare their binding config here and load a per-platform
+  // optional package instead of shipping binding.gyp or prebuilds.
+  napi: Schema.optional(Schema.Unknown),
 });
 const decodeNativeMarkerManifest = Schema.decodeUnknownSync(
   Schema.fromJsonString(NativeMarkerManifest),
@@ -2077,7 +2080,9 @@ const findStorePackageDirectory = Effect.fn("findStorePackageDirectory")(functio
 });
 
 /** Whether a package builds or ships a native addon it loads at runtime. */
-const hasNativeLoaderMarkers = Effect.fn("hasNativeLoaderMarkers")(function* (packageDir: string) {
+export const hasNativeLoaderMarkers = Effect.fn("hasNativeLoaderMarkers")(function* (
+  packageDir: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const exists = (candidate: string) =>
@@ -2094,6 +2099,7 @@ const hasNativeLoaderMarkers = Effect.fn("hasNativeLoaderMarkers")(function* (pa
     Effect.orElseSucceed(() => null),
   );
   if (manifest === null) return false;
+  if (manifest.napi !== undefined) return true;
   return Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies }).some(
     (dependency) => dependency.startsWith("node-gyp-build"),
   );
@@ -2821,6 +2827,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
       extendInfo: {
+        // macOS 26 offers Messages/Mail codes in every text field unless opted out.
+        NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
         NSLocalNetworkUsageDescription:
           "Signalbox connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
         NSScreenCaptureUsageDescription:

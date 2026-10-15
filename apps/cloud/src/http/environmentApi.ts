@@ -14,6 +14,8 @@ import {
   EnvironmentResourceNotFoundError,
   EnvironmentScopeRequiredError,
   type EnvironmentSessionPrincipalShape,
+  type OrchestrationV2ThreadTranscript,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ThreadId,
 } from "@t3tools/contracts";
 import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
@@ -235,6 +237,18 @@ const layerAuth = HttpApiBuilder.group(
   }),
 );
 
+const utf8 = new TextEncoder();
+
+/** The composer attaches a transcript as one file, so it shares the turn file limit. */
+const transcriptFitsAttachment = (transcript: OrchestrationV2ThreadTranscript) => {
+  let sizeBytes = 0;
+  for (const row of transcript.items) {
+    sizeBytes += utf8.encode(JSON.stringify(row)).byteLength + 1;
+    if (sizeBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) return false;
+  }
+  return true;
+};
+
 const layerOrchestration = HttpApiBuilder.group(
   CloudHttpApi,
   "orchestration",
@@ -277,6 +291,29 @@ const layerOrchestration = HttpApiBuilder.group(
         ),
       )
       .handle("threadSnapshot", ({ params }) => snapshotOf(params.threadId))
+      .handle("threadTranscript", ({ params }) =>
+        snapshotOf(params.threadId).pipe(
+          Effect.flatMap(({ projection }) => {
+            const transcript: OrchestrationV2ThreadTranscript = {
+              threadId: projection.thread.id,
+              title: projection.thread.title,
+              updatedAt: projection.updatedAt,
+              items: projection.visibleTurnItems,
+            };
+            return transcriptFitsAttachment(transcript)
+              ? Effect.succeed(transcript)
+              : Effect.flatMap(traceId, (id) =>
+                  Effect.fail(
+                    new EnvironmentRequestInvalidError({
+                      code: "invalid_request",
+                      reason: "thread_transcript_too_large",
+                      traceId: id,
+                    }),
+                  ),
+                );
+          }),
+        ),
+      )
       .handle("threadBoundedSnapshot", ({ params }) => snapshotOf(params.threadId))
       .handle("threadHistoryPage", ({ params }) =>
         actorOf.pipe(
