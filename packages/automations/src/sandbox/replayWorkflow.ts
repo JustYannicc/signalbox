@@ -1,8 +1,7 @@
 import type { WorkflowStepVerb } from "@t3tools/contracts";
 import type { QuickJSContext, QuickJSHandle, QuickJSWASMModule } from "quickjs-emscripten-core";
 
-import { installGuestGlobals } from "./guestGlobals.ts";
-import { installGuestRuntime } from "./guestRuntime.ts";
+import { GUEST_RUNTIME } from "./guestSource.ts";
 
 /** What the journal knows about a step that finished; `at` is when it finished, in epoch ms. */
 export type JournalResult =
@@ -70,7 +69,6 @@ const MAX_LOGS = 200;
 const MAX_LOG_BYTES = 64 * 1024;
 const MAX_LOG_LENGTH = 2_000;
 const LOG_LEVELS = new Set<string>(["log", "info", "warn", "error", "debug"]);
-const GUEST_RUNTIME = `(${installGuestGlobals.toString()})();\n(${installGuestRuntime.toString()})();`;
 
 /** How a host runs QuickJS: the build it loads, and the budget that stops runaway code. */
 export interface QuickJsSandboxOptions {

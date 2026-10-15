@@ -3,7 +3,7 @@
  * Plain-JS stand-ins for the web globals QuickJS lacks: structuredClone,
  * TextEncoder/TextDecoder (UTF-8 only), atob/btoa, URLSearchParams and
  * queueMicrotask. Installed before the compiled module so top-level code can
- * use them. Like the guest runtime, it's serialized with `Function#toString`
+ * use them. Like the guest runtime, it ships as source text (`guestSource.ts`)
  * and must not reference anything outside its own body. Globals that can't be
  * shimmed honestly (Intl, URL, Buffer, …) are compile errors instead; see
  * `UNAVAILABLE_GLOBALS` in the compiler.
