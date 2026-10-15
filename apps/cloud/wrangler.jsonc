@@ -1,7 +1,8 @@
 {
-  // Signalbox Cloud. `wrangler dev` runs fully local (its own state under
-  // .wrangler/, secrets from .dev.vars); only `wrangler deploy` reaches
-  // Cloudflare. See docs/operations/cloud.md.
+  // Signalbox Cloud for `wrangler dev`, which runs fully local (its own state
+  // under .wrangler/, secrets from .dev.vars). Deploys go through the Alchemy
+  // stack (alchemy.run.ts), which declares the same Durable Objects, containers
+  // and buckets: change both together. See docs/operations/cloud.md.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "signalbox-cloud",
   "main": "src/worker.ts",
@@ -12,7 +13,7 @@
   "preview_urls": false,
   "routes": [{ "pattern": "app.signalbox.run", "custom_domain": true }],
   "assets": {
-    // The web app, built by `vp run deploy`. Same origin as the API.
+    // The web app (`vp run --filter @t3tools/web build`). Same origin as the API.
     "directory": "../web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
@@ -41,8 +42,8 @@
   // `class_name` gets its own container from `image`, started and stopped
   // through `ctx.container` in that object (see src/pool/PoolContainer.ts and
   // src/thread/runner/cloudflare/). `max_instances` caps how many run at once
-  // across all objects of the class. Not inherited by `env`, so dev and the
-  // preview repeat it (dev without threads, which run on the local Runner host).
+  // across all objects of the class. Not inherited by `env`, so dev repeats it
+  // (without threads, which run on the local Runner host).
   "containers": [
     {
       // A managed pool's CLIProxyAPI. Small on purpose: every pool has one.
@@ -120,58 +121,6 @@
       ],
       // The scripted provider: a reply without a model, for trying the cloud locally.
       "vars": { "SCRIPTED_PROVIDER": "1" },
-    },
-    // A pull request preview: its own Worker and Durable Objects, so it never
-    // shares state with production. The workflow passes the name, domain and
-    // identity per pull request.
-    "preview": {
-      "routes": [],
-      "durable_objects": {
-        "bindings": [
-          { "name": "USERS", "class_name": "UserObject" },
-          { "name": "THREADS", "class_name": "ThreadObject" },
-          { "name": "POOLS", "class_name": "PoolObject" },
-          { "name": "DRIVES", "class_name": "DriveObject" },
-          { "name": "PREVIEW_LINKS", "class_name": "PreviewLinkRegistry" },
-        ],
-      },
-      // Previews never touch production's packs.
-      "r2_buckets": [
-        {
-          "binding": "DRIVE_PACKS",
-          "bucket_name": "signalbox-drives-preview",
-          "jurisdiction": "eu",
-        },
-        {
-          // The cleanup route has no token in previews; this binding is unused here.
-          "binding": "PREVIEW_DRIVE_PACKS",
-          "bucket_name": "signalbox-drives-preview",
-          "jurisdiction": "eu",
-        },
-      ],
-      "containers": [
-        {
-          // The deploy workflow puts the pull request's number in place of
-          // PR_NUMBER, so each preview has its own container application.
-          "name": "signalbox-cloud-pr-PR_NUMBER-pools",
-          "class_name": "PoolObject",
-          "image": "./containers/cliproxyapi/Dockerfile",
-          "instance_type": "lite",
-          "max_instances": 2,
-          "constraints": { "jurisdiction": "eu" },
-        },
-        {
-          "name": "signalbox-cloud-pr-PR_NUMBER-threads",
-          "class_name": "ThreadObject",
-          "image": "../server/src/signalbox/runner/image/Dockerfile",
-          "image_build_context": "../server/dist/runner",
-          "instance_type": "basic",
-          "max_instances": 2,
-          "constraints": { "jurisdiction": "eu" },
-        },
-      ],
-      // Where a preview takes each user's setup from (`src/previewSetup/`).
-      "vars": { "PREVIEW_SETUP_SOURCE": "https://app.signalbox.run" },
     },
   },
 }

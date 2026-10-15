@@ -20,7 +20,7 @@ while true; do
 done
 
 failed=0
-containers="$(npx --yes wrangler@4 containers list --json)"
+containers="$(apps/cloud/node_modules/.bin/wrangler containers list --json)"
 # Without production's list, Cloudflare resources still get swept.
 if ! assets="$(bash .github/scripts/call-preview-cleanup.sh list)"; then
   echo "::error::Could not list production's preview packs and links."

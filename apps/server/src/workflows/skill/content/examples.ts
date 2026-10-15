@@ -1,3 +1,4 @@
+import { WAIT_FOR } from "../../defaults/waitFor.ts";
 import { WATCH_PULL_REQUEST } from "../../defaults/watchPullRequest.ts";
 
 /**
@@ -5,8 +6,9 @@ import { WATCH_PULL_REQUEST } from "../../defaults/watchPullRequest.ts";
  * A test compiles every one, so they stay valid as the SDK changes.
  */
 export const EXAMPLES: Readonly<Record<string, string>> = {
-  // The built-in, exactly as it runs.
+  // The built-ins, exactly as they run.
   "watch-pull-request.ts": WATCH_PULL_REQUEST,
+  "wait-for.ts": WAIT_FOR,
   "rss-digest.ts": `import Parser from "rss-parser";
 
 export const meta = {

@@ -48,8 +48,9 @@
       "ignoreDependencies": ["@effect/platform-node-shared", "@t3tools/web", "@napi-rs/keyring"],
     },
     "apps/cloud": {
-      // The ModelGateway Worker's entry, named in `wrangler.model-gateway.jsonc`.
-      "entry": ["src/modelGateway/worker.ts!"],
+      // The ModelGateway Worker's entry, the Alchemy stack the deploy runs, and
+      // the plan guard CI runs with node.
+      "entry": ["src/modelGateway/worker.ts!", "alchemy.run.ts!", "infra/check-plan.ts"],
       // `cloudflare:workers` is a Workers runtime module, not a package.
       "ignoreDependencies": ["cloudflare"],
     },
