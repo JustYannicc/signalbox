@@ -23,6 +23,27 @@ const finishing = (finishTurn: RunnerDrive["finishTurn"]) =>
   });
 
 describe("finishDriveTurn", () => {
+  it.effect("says nothing about saving when the thread has nothing saved", () =>
+    Effect.gen(function* () {
+      const notices = yield* finishing(() =>
+        Effect.succeed({ checkpoint: null, outcome: { _tag: "nothing_saved" } }),
+      );
+      expect(notices).toEqual([]);
+    }),
+  );
+
+  it.effect("says saved files didn't land on main, and why", () =>
+    Effect.gen(function* () {
+      const notices = yield* finishing(() =>
+        Effect.succeed({
+          checkpoint: { start: null, commit: "c".repeat(40), files: [] },
+          outcome: { _tag: "not_landed", reason: "Main moved." },
+        }),
+      );
+      expect(notices).toEqual(["This turn's files are saved but not merged yet: Main moved."]);
+    }),
+  );
+
   it.effect("says what's too big when the drive can't take the turn's files", () =>
     Effect.gen(function* () {
       const notices = yield* finishing(() =>

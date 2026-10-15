@@ -44,12 +44,24 @@ const send = (request: HttpClientRequest.HttpClientRequest) =>
     return { status: response.status, body };
   });
 
+/** Marks a call as an agent's (`signalbox mcp`); it can only narrow what the key may do. */
+const CALLER_HEADER = "x-signalbox-caller";
+
 /** A POST that answers JSON; anything but 2xx fails with what the API said. */
-export const postJson = (target: Target, path: string, body: unknown, key?: string) =>
+export const postJson = (
+  target: Target,
+  path: string,
+  body: unknown,
+  key?: string,
+  options: { readonly asAgent?: boolean } = {},
+) =>
   Effect.gen(function* () {
     const request = HttpClientRequest.post(endpoint(target, path)).pipe(
       HttpClientRequest.bodyJsonUnsafe(body),
       key === undefined ? (self) => self : HttpClientRequest.bearerToken(key),
+      options.asAgent === true
+        ? HttpClientRequest.setHeader(CALLER_HEADER, "agent")
+        : (self) => self,
     );
     const answer = yield* send(request);
     if (answer.status < 200 || answer.status >= 300) {
@@ -64,9 +76,37 @@ const keyOf = (target: Target) =>
     onSome: Effect.succeed,
   });
 
-/** Calls an operation as the signed-in person. */
-export const callOperation = (target: Target, name: string, input: unknown) =>
-  Effect.flatMap(keyOf(target), (key) => postJson(target, name, input, key));
+/** Calls an operation as the signed-in person, or as an agent working for them. */
+export const callOperation = (
+  target: Target,
+  name: string,
+  input: unknown,
+  options: { readonly asAgent?: boolean } = {},
+) => Effect.flatMap(keyOf(target), (key) => postJson(target, name, input, key, options));
+
+const Listing = Schema.Struct({
+  operations: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      cloud: Schema.Struct({
+        served: Schema.Boolean,
+        issue: Schema.optionalKey(Schema.String),
+        reason: Schema.optionalKey(Schema.String),
+      }),
+    }),
+  ),
+});
+
+const decodeListing = Schema.decodeUnknownEffect(Listing);
+
+/** Which operations this Signalbox serves, by name (`GET operations`). */
+export const listCoverage = (target: Target) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.get(endpoint(target, "operations"));
+    const listing = yield* decodeListing(yield* response.json);
+    return new Map(listing.operations.map((operation) => [operation.name, operation.cloud]));
+  });
 
 /** Follows a streaming operation: one JSON value per line, as the API sends them. */
 export const followOperation = (target: Target, name: string, input: unknown) =>

@@ -25,6 +25,7 @@ import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
+import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -37,6 +38,7 @@ import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
 import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
+import * as KindClassifier from "../threadKinds/KindClassifier.ts";
 import { serveConnection } from "./connection.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import {
@@ -59,6 +61,8 @@ import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as ChatArchive from "./chatArchive.ts";
 
 /**
  * One per WorkOS user, named by their user id, always in the EU jurisdiction.
@@ -71,7 +75,8 @@ import * as UserStore from "./UserStore.ts";
  * while a client is connected.
  */
 
-export interface UserObjectEnv extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv {
+export interface UserObjectEnv
+  extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv, KindClassifier.KindClassifierEnv {
   /**
    * Drives' objects and packs: clients browse and share them through this
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
@@ -127,6 +132,19 @@ const layerDrives = (env: UserObjectEnv) => {
   };
 };
 
+/** The object's alarm, which only the idle-chat sweep uses (`chatArchive.ts`). */
+const layerAlarm = (storage: DurableObjectStorage) =>
+  Layer.succeed(
+    ChatArchive.ChatArchiveAlarm,
+    ChatArchive.ChatArchiveAlarm.of({
+      armBy: (atMs) =>
+        Effect.promise(async () => {
+          const current = await storage.getAlarm();
+          if (current === null || current > atMs) await storage.setAlarm(atMs);
+        }),
+    }),
+  );
+
 // The whole storage, not just `storage.sql`: migrations run in transactions.
 const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
   const drives = layerDrives(env);
@@ -148,16 +166,22 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         Layer.mergeAll(
           ThreadContexts.layer,
           UserPools.layer,
+          UserThreadKinds.layerTurns,
           // Pasted screenshots and files, signed with the same keys as asset URLs.
           CloudAttachments.layer(attachmentStorage(env)),
         ),
       ),
+      Layer.provideMerge(UserThreadKinds.layer),
       Layer.provideMerge(
-        PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              FetchHttpClient.layer,
-              ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+        Layer.mergeAll(
+          KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+          layerAlarm(storage),
+          PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                FetchHttpClient.layer,
+                ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) })),
+              ),
             ),
           ),
         ),
@@ -203,6 +227,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
 export class UserObject extends DurableObject<UserObjectEnv> implements UserObjectApi {
   private readonly runtime: ReturnType<typeof makeRuntime>;
   private readonly identity: Environment.CloudEnvironmentIdentity;
+  /** The person's MCP server (`api/mcpObject.ts`), made on first use. */
+  private mcp: ReturnType<typeof makeMcpHandler> | undefined;
   /** Open sockets per session, so revoking a session also disconnects it. */
   private readonly connections = new Map<string, Set<Fiber.Fiber<void>>>();
 
@@ -223,7 +249,23 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       attachments: env.DRIVE_PACKS !== undefined,
     };
     this.runtime = makeRuntime(ctx.storage, env);
-    void ctx.blockConcurrencyWhile(() => this.runtime.runPromise(UserStore.migrate));
+    void ctx.blockConcurrencyWhile(async () => {
+      await this.runtime.runPromise(UserStore.migrate);
+      // An alarm lost to a crash between sweeps is set again; one that's set is enough.
+      if ((await ctx.storage.getAlarm()) !== null) return;
+      await this.runtime.runPromise(
+        UserThreadKinds.UserThreadKinds.use((kinds) => kinds.arm).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("arming the idle-chat sweep failed", { cause }),
+          ),
+        ),
+      );
+    });
+  }
+
+  /** Idle chats archive themselves (`UserThreadKinds`). */
+  override async alarm() {
+    await this.runtime.runPromise(UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm));
   }
 
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
@@ -382,11 +424,24 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.publishBranch(input);
   }
 
+  sweepThreadKinds(asOfMs: number) {
+    return this.api.sweepThreadKinds(asOfMs);
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const apiCredential = decodeApiCredential(request.headers.get(API_HEADER));
     if (apiCredential._tag === "Some") {
       const profile = await this.profile();
       if (!profile) return new Response("Unauthorized", { status: 401 });
+      if (new URL(request.url).pathname === MCP_PATH) {
+        // One MCP server per object: its sessions last as long as the object does.
+        this.mcp ??= makeMcpHandler({
+          identity: this.identity,
+          userId: profile.id,
+          context: await this.runtime.runPromise(Effect.context()),
+        });
+        return this.mcp.handler(request);
+      }
       return this.runtime.runPromise(
         serveApiRequest(request, {
           identity: this.identity,

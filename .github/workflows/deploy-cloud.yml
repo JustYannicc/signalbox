@@ -69,6 +69,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       STAGE: production
       T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+      # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
+      WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
       # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
@@ -82,6 +84,9 @@ jobs:
       T3CODE_WORKOS_WEBHOOK_SECRET: ${{ secrets.T3CODE_WORKOS_WEBHOOK_SECRET }}
       # Optional: Claude and Codex on boat VMs (docs/operations/cloud.md).
       BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+      # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
       APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
@@ -215,11 +220,16 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       STAGE: pr-${{ github.event.pull_request.number }}
       T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
+      # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
+      WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
       MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
       # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
       EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
       T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
       BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+      # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       # The pull request's own Runner on boat machines, when it changes the Runner.
       RUNNER_IMAGE: ${{ needs.runner_image.outputs.image }}
       # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").

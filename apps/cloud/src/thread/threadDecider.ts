@@ -67,6 +67,8 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request.link",
   "thread.pull-request.unlink",
   "thread.pull-request-link.sync",
+  "thread.archive",
+  "thread.unarchive",
 ] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
@@ -221,6 +223,8 @@ export function decide(
   projection: Projection | null,
   command: OrchestrationV2Command,
   ctx: DecisionContext,
+  /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
+  expected: { readonly idleSinceMs?: number } = {},
 ): Decision {
   if (!isCloudCommand(command)) return reject(unsupported(command.type));
   if (command.type === "thread.create") {
@@ -271,6 +275,25 @@ export function decide(
         ? accept([])
         : updateThread(projection, "thread.metadata-updated", { title: command.title }, ctx);
     }
+    // As upstream's: archiving twice or bringing back a thread that isn't
+    // archived is refused. A thread mid-turn isn't archived from under its
+    // agent. Both move the thread's `updatedAt`, so a chat brought back waits
+    // its full idle time again before it archives itself (#46).
+    case "thread.archive":
+      if (projection.thread.archivedAt !== null) return reject("This thread is already archived.");
+      if (activeRun(projection) !== undefined) {
+        return reject("This thread is still working. Stop it or let it finish, then archive it.");
+      }
+      if (
+        expected.idleSinceMs !== undefined &&
+        DateTime.toEpochMillis(projection.updatedAt) > expected.idleSinceMs
+      ) {
+        return reject("This thread changed since it went idle.");
+      }
+      return updateThread(projection, "thread.archived", { archivedAt: ctx.now }, ctx);
+    case "thread.unarchive":
+      if (projection.thread.archivedAt === null) return reject("This thread is not archived.");
+      return updateThread(projection, "thread.unarchived", { archivedAt: null }, ctx);
     case "thread.model-selection.set":
       return updateThread(
         projection,

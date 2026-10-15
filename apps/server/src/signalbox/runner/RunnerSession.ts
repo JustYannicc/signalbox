@@ -26,8 +26,9 @@ import type { RunnerTurns } from "./RunnerTurns.ts";
  * dropped socket loses nothing. Each reconnect says `hello` with the last
  * acknowledged batch, and once the thread answers with the last batch it
  * committed, everything after it is sent again in order. The thread ignores
- * anything it already has, so nothing arrives twice. A connection that took
- * more than one try leaves a line saying so in the outbox.
+ * anything it already has, so nothing arrives twice. A new process on the
+ * same generation numbers its batches after what the thread already has. A
+ * connection that took more than one try leaves a line saying so in the outbox.
  */
 
 export class RunnerConnectionError extends Schema.TaggedError<RunnerConnectionError>()(
@@ -95,6 +96,8 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
   const current = yield* Ref.make<RunnerConnection | null>(null);
   /** Whether the latest connection got as far as `welcome`. */
   const welcomed = yield* Ref.make(false);
+  /** Whether any connection of this session did. */
+  const everWelcomed = yield* Ref.make(false);
   /** Connections that failed or dropped since the last `welcome`, and why the latest one did. */
   const troubles = yield* Ref.make<{ readonly count: number; readonly cause: string | null }>({
     count: 0,
@@ -134,6 +137,25 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
       acked: Math.max(state.acked, sequence),
       pending: state.pending.filter((batch) => batch.sequence > sequence),
     }));
+
+  /**
+   * Numbers this session's batches after `sequence`, the last one the thread
+   * committed. Before its first `welcome` a session has sent nothing, so what
+   * the thread holds came from an earlier process on this generation (the
+   * machine restarted or moved): ours follow it rather than repeat its numbers,
+   * which the thread would take for resends and drop (#502).
+   */
+  const continueAfter = (sequence: number) =>
+    wire.withPermits(1)(
+      Ref.update(outbox, (state) => ({
+        acked: sequence,
+        next: sequence + state.pending.length + 1,
+        pending: state.pending.map((batch, index) => ({
+          ...batch,
+          sequence: sequence + index + 1,
+        })),
+      })),
+    );
 
   const handle = (connection: RunnerConnection, message: ThreadMessage) => {
     switch (message.type) {
@@ -176,7 +198,9 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
           message: `Expected welcome, got ${answer.type}.`,
         });
       }
-      yield* acknowledge(answer.ackedSequence);
+      yield* (yield* Ref.getAndSet(everWelcomed, true))
+        ? acknowledge(answer.ackedSequence)
+        : continueAfter(answer.ackedSequence);
       yield* Ref.set(welcomed, true);
       const before = yield* Ref.getAndSet(troubles, { count: 0, cause: null });
       if (before.count > 0) {

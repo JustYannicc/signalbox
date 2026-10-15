@@ -2,12 +2,12 @@ import { AuthOrchestrationReadScope, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerRequest } from "effect/http";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
-import { NO_STORE_HEADERS, requestCredentials, traceId } from "./credentials.ts";
+import { failure, json, requestCredentials } from "./credentials.ts";
 
 /**
  * A thread's turn diagnostics, for its owner (see
@@ -25,18 +25,6 @@ import { NO_STORE_HEADERS, requestCredentials, traceId } from "./credentials.ts"
 export const DIAGNOSTICS_PATH = "/api/cloud/threads/:threadId/diagnostics";
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
-
-const json = (body: string | object, status: number) =>
-  typeof body === "string"
-    ? HttpServerResponse.text(body, {
-        status,
-        contentType: "application/json",
-        headers: NO_STORE_HEADERS,
-      })
-    : HttpServerResponse.jsonUnsafe(body, { status, headers: NO_STORE_HEADERS });
-
-const failure = (code: string, status: number) =>
-  Effect.map(traceId, (id) => json({ code, traceId: id }, status));
 
 const internalError = (cause: unknown) =>
   Effect.logError("cloud diagnostics failed", { cause }).pipe(

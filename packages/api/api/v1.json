@@ -264,6 +264,13 @@
       "output": "775208a7"
     },
     {
+      "name": "automations.save",
+      "rpc": "automations.save",
+      "access": "write",
+      "input": "e2698ed3",
+      "output": "e9ad0c58"
+    },
+    {
       "name": "automations.setEnabled",
       "rpc": "automations.setEnabled",
       "access": "write",
@@ -283,6 +290,13 @@
       "access": "write",
       "input": "1276a316",
       "output": "78961bd6"
+    },
+    {
+      "name": "automations.validate",
+      "rpc": "automations.validate",
+      "access": "read",
+      "input": "9df3bde6",
+      "output": "7c407bde"
     },
     {
       "name": "backgroundPolicy.subscribe",
@@ -644,7 +658,7 @@
       "rpc": "accountPool.create",
       "access": "write",
       "input": "174129b6",
-      "output": "22e2194e"
+      "output": "185e3b9d"
     },
     {
       "name": "pools.delete",
@@ -667,7 +681,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "0b87ca75"
+      "output": "5882b80c"
     },
     {
       "name": "pools.moveNativeLogins",
@@ -695,14 +709,14 @@
       "rpc": "accountPool.rename",
       "access": "write",
       "input": "8c826655",
-      "output": "22e2194e"
+      "output": "185e3b9d"
     },
     {
       "name": "pools.setBacking",
       "rpc": "accountPool.setBacking",
       "access": "write",
       "input": "06e7aef0",
-      "output": "22e2194e"
+      "output": "185e3b9d"
     },
     {
       "name": "pools.setOpenCode",
@@ -710,6 +724,13 @@
       "access": "write",
       "input": "313db31a",
       "output": "794c92c1"
+    },
+    {
+      "name": "pools.setRouting",
+      "rpc": "accountPool.setRouting",
+      "access": "write",
+      "input": "7396acb3",
+      "output": "185e3b9d"
     },
     {
       "name": "pools.updateAccount",
@@ -1411,7 +1432,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "5b8da39a"
+      "output": "52c2d3b1"
     },
     {
       "name": "server.refreshProviders",
@@ -1448,7 +1469,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "982df33b"
+      "output": "e9a1a308"
     },
     {
       "name": "settings.get",
@@ -1573,6 +1594,21 @@
       "stream": "snapshot",
       "input": "03c2b661",
       "output": "fd689900"
+    },
+    {
+      "name": "threadKinds.list",
+      "rpc": "signalbox.threadKinds.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "0496a06b"
+    },
+    {
+      "name": "threadKinds.setArchiveChatsAfterDays",
+      "rpc": "signalbox.threadKinds.setArchiveChatsAfterDays",
+      "access": "write",
+      "input": "26b73c17",
+      "output": "0496a06b"
     },
     {
       "name": "threads.active.reorder",
@@ -1871,6 +1907,13 @@
       "access": "write",
       "input": "1fac6d00",
       "output": "aebf4e45"
+    },
+    {
+      "name": "threads.setKind",
+      "rpc": "signalbox.threadKinds.setKind",
+      "access": "write",
+      "input": "171e8cf9",
+      "output": "0496a06b"
     },
     {
       "name": "threads.settle",

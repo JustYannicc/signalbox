@@ -40,6 +40,11 @@ export const ThreadSummaryWire = Schema.Struct({
   contextId: SignalboxContextId,
   revision: NonNegativeInt,
   shell: OrchestrationV2ThreadShell,
+  /**
+   * When a turn first changed files (`threadProjection.workStartedAt`), for
+   * the thread's kind. Absent: none yet, or an object from before #46.
+   */
+  workStartedAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 
 export const LaunchInputWire = Schema.Struct({

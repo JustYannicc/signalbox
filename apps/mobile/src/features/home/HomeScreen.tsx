@@ -83,6 +83,7 @@ import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import { withOneEnvironmentCopy } from "./oneEnvironmentCopy"; // signalbox
+import { useRevealSectionsPanel } from "../sections/use-reveal-sections-panel"; // signalbox: sections
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -361,6 +362,12 @@ export function HomeScreen(props: HomeScreenProps) {
       animated: false,
     });
   }, [searchMode, insets.top, restoredOffset]);
+  useRevealSectionsPanel(props.sectionsOpen, () =>
+    listRef.current?.scrollToOffset({
+      offset: Platform.OS === "ios" ? -insets.top : 0,
+      animated: true,
+    }),
+  ); // signalbox: sections
   const swipeRowActivation = useMemo(() => createSwipeRowActivation(), []);
   const activateVisibleRows = useCallback(
     (rows: ReadonlyArray<ThreadListV2ListItem>) => {
