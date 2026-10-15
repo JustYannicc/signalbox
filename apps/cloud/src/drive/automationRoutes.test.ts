@@ -4,6 +4,7 @@ import { AutomationError, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { automationTool } from "../automations/automationTool.ts";
 import { CloudAutomations } from "../automations/CloudAutomations.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
@@ -31,7 +32,8 @@ const cloud = makeMemoryCloud({
     CloudAutomations,
     CloudAutomations.of({
       threadEvents: () => Effect.void,
-      wake: Effect.succeed(null),
+      wake: Effect.void,
+      settle: Effect.void,
       tool: (caller, name, input) =>
         Effect.gen(function* () {
           engineCalls.push({ threadId: caller.threadId, name, input });
@@ -158,12 +160,25 @@ describe("automation tools from a thread's machine (#434)", () => {
     }),
   );
 
-  it.effect("answer that automations don't run in a cloud without an engine", () =>
+  it.effect("reach the owner's real engine, which answers for the calling thread", () =>
     Effect.gen(function* () {
-      const bare = makeMemoryCloud();
+      // The memory cloud's objects run the real engine; this thread was never created.
+      const real = makeMemoryCloud();
+      yield* real.userDirectory
+        .forUser(OWNER)
+        .recordSignIn({ id: OWNER, email: "owner@example.test" });
       expect(
-        yield* bare.userDirectory.forUser(OWNER).automationTool(RUNNING, "automation_list", {}),
-      ).toEqual({ _tag: "failed", message: "Automations aren't running in this cloud yet." });
+        yield* real.userDirectory.forUser(OWNER).automationTool(RUNNING, "automation_list", {}),
+      ).toEqual({ _tag: "failed", message: "The calling thread is gone." });
+    }),
+  );
+
+  it.effect("answer that automations don't run in an object without an engine", () =>
+    Effect.gen(function* () {
+      expect(yield* automationTool(RUNNING, "automation_list", {})).toEqual({
+        _tag: "failed",
+        message: "Automations aren't running in this cloud yet.",
+      });
     }),
   );
 });

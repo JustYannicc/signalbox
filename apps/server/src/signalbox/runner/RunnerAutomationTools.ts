@@ -27,17 +27,22 @@ import type { DrivesView } from "./RunnerDrivesView.ts";
  */
 
 /**
- * Tools the cloud's engine answers as the agent calls them. The server's
- * others (turning automations on and off, cancelling, deleting, drafts,
- * webhook secrets, customizing built-ins) stay off until the cloud runs them.
+ * Tools the cloud's engine answers as the agent calls them
+ * (`apps/cloud/src/automations/cloudTools.ts`). `automation_set_webhook_secret`
+ * stays off until the cloud takes secrets from `request_secret`.
  */
 const FORWARDED = [
   "automation_list",
   "automation_read",
   "automation_publish",
+  "automation_discard_draft",
+  "automation_set_enabled",
+  "automation_delete",
+  "automation_customize",
   "automation_run",
   "automation_run_read",
   "automation_run_retry",
+  "automation_cancel_run",
   "automation_emit",
   "wait_for",
   "list_waits",

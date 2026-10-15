@@ -24,5 +24,7 @@ export const automationTool = (threadId: string, name: string, input: unknown) =
     );
   }).pipe(
     // The thread and the tool, never what it was asked or answered.
-    Effect.withSpan("UserObject.automationTool", { attributes: { threadId, tool: name } }),
+    Effect.withSpan("UserObject.automationTool", {
+      attributes: { "thread.id": threadId, "tool.name": name },
+    }),
   );

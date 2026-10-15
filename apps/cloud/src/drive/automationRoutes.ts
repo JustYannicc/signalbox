@@ -27,7 +27,7 @@ export const serveAutomationRequest = (
     if (!auth.live) return text("Only a running turn uses automation tools.", 403);
     const request = decodeBody(automationJson.toolRequest.decode, body);
     if (request === null) return text("Unreadable request.", 400);
-    yield* Effect.annotateCurrentSpan({ tool: request.name });
+    yield* Effect.annotateCurrentSpan({ "tool.name": request.name });
     const users = yield* UserDirectory;
     const result = yield* users
       .forUser(auth.userId)
@@ -35,7 +35,7 @@ export const serveAutomationRequest = (
     return json(automationJson.tool.encode(result));
   }).pipe(
     // The thread and the tool, never what it was asked or answered.
-    Effect.withSpan("AutomationRoutes.tool", { attributes: { threadId: auth.threadId } }),
+    Effect.withSpan("AutomationRoutes.tool", { attributes: { "thread.id": auth.threadId } }),
     // The owner's object didn't answer; the machine retries.
     Effect.catchTags({
       UserObjectError: (error) =>
