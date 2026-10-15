@@ -39,6 +39,14 @@ const makeObject = () => {
   let lifetime = 0;
   let current: ClientSockets | undefined;
 
+  /** Hands a client's frame to the live object. One cut off by `stop` fails with the runtime, harmlessly. */
+  const deliver = (handler: (object: ClientSockets) => Promise<void>) => {
+    if (current === undefined) return;
+    handler(current).catch((cause: unknown) => {
+      if (current !== undefined) throw cause;
+    });
+  };
+
   /** The client's side: an Effect `WebSocketLike` whose frames go to the live object. */
   const clientEnd = (index: () => number) => {
     const listeners = new Map<string, Set<Listener>>();
@@ -56,10 +64,12 @@ const makeObject = () => {
         listeners.get(type)?.delete(listener);
       },
       send: (data: string) => {
-        queueMicrotask(() => void current?.message(handle(index(), lifetime), data));
+        queueMicrotask(() => deliver((object) => object.message(handle(index(), lifetime), data)));
       },
       close: () => {
-        queueMicrotask(() => void current?.closed(handle(index(), lifetime), 1000, ""));
+        queueMicrotask(() =>
+          deliver((object) => object.closed(handle(index(), lifetime), 1000, "")),
+        );
       },
     };
   };
@@ -117,6 +127,10 @@ const makeObject = () => {
   return {
     kv,
     sockets,
+    /** The object goes away for good: frames still in flight reach nothing. */
+    stop: () => {
+      current = undefined;
+    },
     /** Starts a lifetime of the object, restoring what its sockets had open. */
     wake: async (host: Omit<ClientSocketHost, "ctx">, now = 0) => {
       lifetime += 1;
@@ -182,7 +196,10 @@ const setup = Effect.gen(function* () {
     identity,
     run: (effect) => run(Effect.provideContext(effect, context)),
   };
-  return { host, object: makeObject() };
+  const object = makeObject();
+  // Runs before the runtime closes, so frames a closing client sends find no object.
+  yield* Effect.addFinalizer(() => Effect.sync(object.stop));
+  return { host, object };
 });
 
 describe("ClientSockets", () => {
