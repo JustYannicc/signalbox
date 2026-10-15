@@ -126,7 +126,7 @@ export const layer = Layer.effect(
       getThreadShell: (threadId) =>
         projection(threadId).pipe(
           Effect.map(threadShellFromProjection),
-          Effect.catchTag("ThreadNotFoundError", () => Effect.succeed(null)),
+          Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
           Effect.mapError(hostError("Couldn't read the thread")),
         ),
       getThreadRecords: (threadId, fields, filter) =>

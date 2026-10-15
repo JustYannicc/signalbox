@@ -11,12 +11,10 @@ import {
   CommandId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
-  type OrchestrationV2DomainEvent,
   ProjectId,
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -87,9 +85,6 @@ const setup = () => {
   };
   return { bare, machine, pack, head: git(machine, ["rev-parse", "HEAD"]) };
 };
-
-const syncedEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
-  events.flatMap((event) => (event.type === "thread.pull-request-synced" ? [event] : []));
 
 describe("cloud automations watch a cloud thread's pull request", () => {
   it.effect("wakes the thread when CI finishes on the pull request it opened (#397)", () => {
