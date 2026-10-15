@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 
 import type { CatalogShape } from "../catalog.ts";
 import { automationDefaults } from "../columns.ts";
-import { compileWorkflow } from "../compiler/compileWorkflow.ts";
+import type { WorkflowCompileResult } from "../compiled.ts";
 import { fail } from "../errors.ts";
 import type { Change } from "../liveFeed.ts";
 import { explained } from "../runLog.ts";
@@ -27,6 +27,7 @@ export const makeBuiltIns = (deps: {
   readonly store: WorkflowStore;
   readonly hosts: HostStore;
   readonly catalog: CatalogShape;
+  readonly compile: (source: string) => WorkflowCompileResult;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly requireAutomation: (
     automationId: string,
@@ -92,7 +93,7 @@ export const makeBuiltIns = (deps: {
   /** Refuses saves that would change a built-in's host row; only the code changes it. */
   const guardSave = (input: AutomationSaveInput) =>
     Effect.gen(function* () {
-      const compiled = compileWorkflow(input.source);
+      const compiled = deps.compile(input.source);
       const target = input.automationId
         ? yield* store.getAutomation(input.automationId)
         : compiled.ok

@@ -1,9 +1,9 @@
 import { AutomationBuiltIn } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { builtInId, type BuiltInAutomation } from "../defaults/registry.ts";
-import { outlineGraph } from "../outline.ts";
-import type { CatalogShape } from "../catalog.ts";
+import { builtInId, type BuiltInAutomation } from "@signalbox/automations/defaults/registry";
+import { outlineGraph } from "@signalbox/automations/outline";
+import type { CatalogShape } from "@signalbox/automations/catalog";
 import type { ReadResult } from "./summaries.ts";
 
 /** Built-ins as automation_list and automation_read show them before they run in a project. */

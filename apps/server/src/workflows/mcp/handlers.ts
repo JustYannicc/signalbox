@@ -9,10 +9,10 @@ import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import { readCaller, type Caller } from "../../mcp/threadAccess.ts";
 import { callerDefaults, saveForCaller, withinLimits } from "../callerAccess.ts";
-import { builtInById } from "../defaults/registry.ts";
+import { builtInById } from "@signalbox/automations/defaults/registry";
 import { EXAMPLES } from "../skill/content/examples.ts";
 import { SKILL_TOPICS, skillReference } from "../skill/files.ts";
-import * as WorkflowEngine from "../WorkflowEngine.ts";
+import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import { builtInReadResult } from "./builtIns.ts";
 import {
   automationSummary,

@@ -12,16 +12,15 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
-import type { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { automationTriggers, stepArgs } from "./columns.ts";
-import type { EndRun, LaunchRun, Settlement } from "./engineTypes.ts";
+import type { EndRun, EngineServices, LaunchRun, Settlement } from "./engineTypes.ts";
+import type { AutomationFunctions, AutomationThreads } from "./host.ts";
 import { asRecord } from "./json.ts";
 import type { Change } from "./liveFeed.ts";
 import { isModelVerb, modelResult } from "./modelSteps.ts";
 import type { ReplayQueue } from "./replayQueue.ts";
 import type { RunLinkStore } from "./runLinkStore.ts";
 import type { RunLogs } from "./runLog.ts";
-import type { makeRunFunction } from "./runFunction.ts";
 import { describeDuration, retries, stepOptions, stepTimeoutMs } from "./stepPolicy.ts";
 import { agentResult } from "./steps.ts";
 import { isoAt } from "./time.ts";
@@ -51,9 +50,9 @@ const THREAD_SWEEP_INTERVAL_MS = 60 * 1000;
 export interface EngineCore {
   readonly store: WorkflowStore;
   readonly links: RunLinkStore;
-  readonly threads: ThreadManagementService["Service"];
-  readonly services: Context.Context<ThreadManagementService>;
-  readonly runFunction: Effect.Success<typeof makeRunFunction>;
+  readonly threads: AutomationThreads["Service"];
+  readonly services: Context.Context<EngineServices>;
+  readonly functions: AutomationFunctions["Service"];
   readonly runLogs: RunLogs;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly runChanged: (runId: string, summary: boolean) => Effect.Effect<void, AutomationError>;
@@ -109,8 +108,7 @@ export const makeTimedWork = (core: EngineCore) =>
         const text = result.ok ? String((result.value as { text: unknown }).text) : "";
         const outcome = result.ok ? modelResult(step.verb, options, text) : result;
         yield* threads
-          .dispatch({
-            type: "thread.settle",
+          .settle({
             commandId: CommandId.make(
               `automation:${step.run_id}:${step.step_key}:settle${step.attempt > 1 ? `:${step.attempt}` : ""}`,
             ),
@@ -138,7 +136,7 @@ export const makeTimedWork = (core: EngineCore) =>
         const automation = yield* core.automationOfRun(step.run_id);
         if (automation && step.thread_id !== null) {
           yield* threads
-            .interruptThread({
+            .interrupt({
               projectId: ProjectId.make(automation.project_id),
               commandId: CommandId.make(
                 `automation:${step.run_id}:${step.step_key}:timeout:${step.attempt}`,
@@ -262,7 +260,7 @@ export const makeTimedWork = (core: EngineCore) =>
             automation.version,
             ...(running.get(automation.automation_id) ?? []).map((run) => run.version),
           ]);
-          yield* core.runFunction
+          yield* core.functions
             .prune(automation.automation_id, keep)
             .pipe(core.ignoreFailure("old versions couldn't be deleted"));
         }

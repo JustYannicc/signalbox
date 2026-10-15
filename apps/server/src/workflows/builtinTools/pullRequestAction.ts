@@ -23,7 +23,7 @@ import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import { PullRequestSyncReactor } from "../../orchestration-v2/PullRequestSyncReactor.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
-import { errorMessage } from "../errors.ts";
+import { errorMessage } from "@signalbox/automations/errors";
 
 /**
  * `signalbox.pull_request_action`: upstream's pull request actions (merge,

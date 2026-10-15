@@ -30,63 +30,57 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type * as HttpClient from "effect/http/HttpClient";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import type { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
-import * as ProcessRunner from "../processRunner.ts";
-import { ProjectService } from "../project/ProjectService.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import {
-  isTerminalRunStatus,
-  ThreadManagementService,
-} from "../orchestration-v2/ThreadManagementService.ts";
-import {
-  ScheduledTaskWebhookOrigin,
-  type WebhookTriggerRequest,
-  type WebhookTriggerResult,
-} from "../scheduledTasks/ScheduledTaskService.ts";
-import { Scheduler } from "../scheduling/Scheduler.ts";
-import { forkParked } from "../serverActivation.ts";
 import { makeAttachments } from "./attachments.ts";
 import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
 import { makeCatalog, type AuthorizeAutomation, type CatalogShape } from "./catalog.ts";
 import { automationDefaults, errorDetailOf, runLogLines, stepArgs, stepAsk } from "./columns.ts";
 import { makeConnections } from "./connections.ts";
 import { makeTimedWork } from "./engineTick.ts";
-import type { EndRun, Launch, LaunchRun, RunOutcome, Settlement } from "./engineTypes.ts";
+import type {
+  EndRun,
+  EngineServices,
+  Launch,
+  LaunchRun,
+  RunOutcome,
+  Settlement,
+} from "./engineTypes.ts";
 import { automationError, causeText, fail, isAutomationError, logFailure } from "./errors.ts";
 import { makeBuiltIns, type BuiltInPlace } from "./defaults/builtIns.ts";
 import * as HostStore from "./defaults/hostStore.ts";
 import { BUILT_IN_AUTOMATIONS, builtInSummary } from "./defaults/registry.ts";
 import { makeEventTriggers } from "./events/eventTriggers.ts";
 import { makePullRequestTracker } from "./events/pullRequestFacts.ts";
-import type { PullRequestReads } from "./events/pullRequestReads.ts";
+import type { PullRequestReads } from "./events/pullRequestDetails.ts";
 import { makeRunWaits, stepWatch } from "./events/runWaits.ts";
-import * as ExecutorSettings from "./executorSettings.ts";
+import {
+  AutomationCompiler,
+  AutomationFunctions,
+  AutomationIngress,
+  AutomationModels,
+  AutomationThreads,
+  forkRoot,
+} from "./host.ts";
 import { fromJson, toJson } from "./json.ts";
 import { automationShows, listShows, makeLiveFeed, runShows, type Change } from "./liveFeed.ts";
 import { automationNotice, failureNotice } from "./notices.ts";
 import { makeReplayQueue } from "./replayQueue.ts";
 import { makeRestart } from "./restart.ts";
-import { makeRunFunction } from "./runFunction.ts";
 import * as RunLinkStore from "./runLinkStore.ts";
 import { replayWorkflow, type JournalResult } from "./sandbox/replayWorkflow.ts";
 import { makeInheritance, makeRetryRun, type RetryRun } from "./retry.ts";
+import { isTerminalRunStatus } from "./runs.ts";
 import { makeStartStep, type StepOutcome } from "./startStep.ts";
 import { retryDelayMs, retryPolicy, transientCause } from "./stepPolicy.ts";
 import { errorDetail, makeRunLogs } from "./runLog.ts";
 import { afterMs } from "./steps.ts";
 import { isoAt, nowIso } from "./time.ts";
 import { runSummary, runTitle } from "./views.ts";
-import { makeWebhooks } from "./webhooks.ts";
-import { makeCallbacks } from "./callbacks.ts";
 import { makeWaits, type Waits } from "./waits.ts";
 import * as SourceStore from "./sources/sourceStore.ts";
 import { makeSourceWatches } from "./sources/sourceWatches.ts";
 import { scopeOf, sourceIdOf } from "./sources/watch.ts";
 import { watchersOf } from "./sources/watchers.ts";
-import { setPullRequestWatchHandler } from "./pullRequestWatchHook.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 type Store = WorkflowStore.WorkflowStore;
@@ -130,14 +124,6 @@ export interface WorkflowEngineShape extends CatalogShape {
   readonly registerBuiltinTools: (handler: BuiltinToolHandler) => Effect.Effect<void>;
   /** The server registers pull request reads once its pull request service exists. */
   readonly registerPullRequestReads: (reads: PullRequestReads) => Effect.Effect<void>;
-  /** A request to a run's `w.hook` callback link, from upstream's webhook route. */
-  readonly receiveCallback: (
-    request: WebhookTriggerRequest,
-  ) => Effect.Effect<WebhookTriggerResult, AutomationError>;
-  /** Takes a request to `/api/hooks/<automationId>/<token>` (see webhooks.ts). */
-  readonly receiveWebhook: (
-    request: WebhookTriggerRequest,
-  ) => Effect.Effect<WebhookTriggerResult, AutomationError>;
   /** Sets or clears (null) the webhook signing secret; it is never read back. */
   readonly setWebhookSecret: <E = never>(input: {
     readonly automationId: string;
@@ -176,7 +162,7 @@ export interface WorkflowEngineShape extends CatalogShape {
   readonly subscribeNotices: Effect.Effect<Stream.Stream<AutomationNotice>, never, Scope.Scope>;
   /**
    * Due crons, timers, timeouts, retries and agent checks, plus hourly
-   * cleanup. The scheduler calls this every few seconds; one bad item never
+   * cleanup. The host calls this every few seconds; one bad item never
    * blocks the rest.
    */
   readonly tick: Effect.Effect<void, AutomationError>;
@@ -185,7 +171,7 @@ export interface WorkflowEngineShape extends CatalogShape {
 }
 
 export class WorkflowEngine extends Context.Service<WorkflowEngine, WorkflowEngineShape>()(
-  "t3/workflows/WorkflowEngine",
+  "@signalbox/automations/WorkflowEngine",
 ) {}
 
 const REPLAY_MISMATCH: AutomationErrorDetail = {
@@ -208,21 +194,18 @@ const make = Effect.gen(function* () {
     projectOfThread: (threadId) => projectOfThread(threadId),
   });
   const crypto = yield* Crypto.Crypto;
-  const threads = yield* ThreadManagementService;
-  const scheduler = yield* Scheduler;
+  const threads = yield* AutomationThreads;
   // Steps run in forked fibers; they get the services they use from here.
-  const required = yield* Effect.context<
-    ThreadLaunchService | ThreadManagementService | HttpClient.HttpClient
-  >();
-  // The provider catalog, when the server has one, tells agent steps each model's option names.
-  const providerCatalog = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-  const services = Option.isSome(providerCatalog)
-    ? Context.add(required, ProviderRegistry.ProviderRegistry, providerCatalog.value)
+  const required = yield* Effect.context<EngineServices>();
+  // The host's models, when it has a catalog, tell agent steps each model's option names.
+  const models = yield* Effect.serviceOption(AutomationModels);
+  const services = Option.isSome(models)
+    ? Context.add(required, AutomationModels, models.value)
     : required;
   const scope = yield* Effect.scope;
   const changes = yield* PubSub.unbounded<Change>();
-  const projects = yield* ProjectService;
-  const runFunction = yield* makeRunFunction;
+  const functions = yield* AutomationFunctions;
+  const compiler = yield* AutomationCompiler;
   const connections = yield* makeConnections;
   const runLogs = yield* makeRunLogs;
   const replays = yield* makeReplayQueue;
@@ -247,9 +230,6 @@ const make = Effect.gen(function* () {
     cancel: (runId) => endRunById(runId, { status: "cancelled" }),
   });
   let pullRequestReads: PullRequestReads | undefined;
-  const webhookOrigin = yield* ScheduledTaskWebhookOrigin;
-  // Called only once requests arrive, after launchRun below exists.
-  const webhooks = yield* makeWebhooks({ store, launchRun: (launch) => launchRun(launch) });
   const events = yield* makeEventTriggers({
     store,
     threads,
@@ -261,10 +241,11 @@ const make = Effect.gen(function* () {
     pullRequests: makePullRequestTracker((yield* DateTime.now).epochMilliseconds),
     pullRequestReads: () => pullRequestReads,
   });
-  const callbacks = makeCallbacks({
+  const ingress = yield* (yield* AutomationIngress).make({
     store,
     newId,
-    relayHookBaseUrl: webhookOrigin.pipe(Effect.map((origin) => origin.relayHookBaseUrl)),
+    // Called only once requests arrive, after launchRun below exists.
+    launchRun: (launch) => launchRun(launch),
     deliverTo: (runId, envelope) =>
       runWaits
         .deliver(envelope, [{ runId, projectId: envelope.projectId, patterns: ["hook.called"] }])
@@ -441,11 +422,10 @@ const make = Effect.gen(function* () {
   const startStep = makeStartStep({
     store,
     services,
-    projects,
-    runFunction,
+    functions,
     connections,
     builtinTools,
-    callback: (runId) => callbacks.create(runId),
+    callback: (runId) => ingress.createCallback(runId),
     resolveBuiltIn: (name, automation) =>
       builtIns.resolveName(name, {
         projectId: automation.project_id,
@@ -553,7 +533,7 @@ const make = Effect.gen(function* () {
       if (!ended) return false;
       yield* replays.forget(run.run_id);
       yield* runWaits.ended(run.run_id);
-      yield* callbacks.ended(run.run_id);
+      yield* ingress.runEnded(run.run_id);
       yield* attachments.refresh(run.run_id);
       yield* interruptSteps(run.run_id);
       const automation = yield* store.getAutomation(run.automation_id);
@@ -562,7 +542,7 @@ const make = Effect.gen(function* () {
           continue;
         if (!automation) continue;
         yield* threads
-          .interruptThread({
+          .interrupt({
             projectId: ProjectId.make(automation.project_id),
             commandId: CommandId.make(`automation:${run.run_id}:${step.step_key}:stop`),
             threadId: ThreadId.make(step.thread_id),
@@ -881,8 +861,8 @@ const make = Effect.gen(function* () {
         yield* endRunById(runId, { status: "cancelled" });
       }
       yield* store.withTransaction(store.deleteAutomation(automationId));
-      yield* webhooks.forget(automationId);
-      yield* runFunction.remove(automationId).pipe(ignoreFailure("files couldn't be deleted"));
+      yield* ingress.forget(automationId);
+      yield* functions.remove(automationId).pipe(ignoreFailure("files couldn't be deleted"));
       yield* changed({ kind: "definition", automationId });
     });
 
@@ -890,7 +870,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const automation = yield* requireAutomation(input.automationId);
       if (input.authorize) yield* input.authorize(automationDefaults(automation));
-      yield* webhooks.setSecret(input.automationId, input.secret);
+      yield* ingress.setSecret(input.automationId, input.secret);
       yield* changed({ kind: "automation", automationId: input.automationId });
       return (yield* catalog.get(input.automationId)).automation;
     });
@@ -938,10 +918,18 @@ const make = Effect.gen(function* () {
     newId,
     changed,
     requireAutomation,
-    relayHookBaseUrl: webhookOrigin.pipe(Effect.map((origin) => origin.relayHookBaseUrl)),
+    relayHookBaseUrl: ingress.hookBaseUrl,
+    compile: compiler.compile,
     watching: sources.statusOf,
   });
-  const builtIns = makeBuiltIns({ store, hosts, catalog, changed, requireAutomation });
+  const builtIns = makeBuiltIns({
+    store,
+    hosts,
+    catalog,
+    compile: compiler.compile,
+    changed,
+    requireAutomation,
+  });
   const waits = makeWaits({
     store,
     threads,
@@ -949,18 +937,16 @@ const make = Effect.gen(function* () {
     attachments,
     newId,
     start: (input) => startRun({ ...input, trigger: "manual" }),
-    callback: (runId, hookId) => callbacks.create(runId, hookId),
+    callback: (runId, hookId) => ingress.createCallback(runId, hookId),
     cancel: (runId) => endRunById(runId, { status: "cancelled" }),
   });
-  setPullRequestWatchHandler(waits.watchPullRequest);
-  yield* Effect.addFinalizer(() => Effect.sync(() => setPullRequestWatchHandler(undefined)));
 
   const timed = yield* makeTimedWork({
     store,
     links,
     threads,
     services,
-    runFunction,
+    functions,
     runLogs,
     changed,
     runChanged,
@@ -978,7 +964,7 @@ const make = Effect.gen(function* () {
   const tick = timed.tick.pipe(Effect.ensuring(sources.tick));
 
   const feed = yield* makeLiveFeed(changes);
-  yield* forkParked(events.worker);
+  yield* forkRoot(events.worker);
 
   // Replays that fail outside the code (storage, sandbox) are retried by the tick with
   // backoff, and only fail the run once retries run out.
@@ -999,7 +985,7 @@ const make = Effect.gen(function* () {
   // Thread-backed steps finish when their thread's run ends. Settling reads the thread, so it
   // runs off the domain event stream, which event triggers match against too.
   const settles = yield* Queue.unbounded<string>();
-  yield* forkParked(
+  yield* forkRoot(
     Queue.take(settles).pipe(
       Effect.flatMap((threadId) =>
         store.stepForThread(threadId).pipe(
@@ -1011,8 +997,8 @@ const make = Effect.gen(function* () {
       Effect.forever,
     ),
   );
-  yield* forkParked(
-    Stream.runForEach(threads.streamDomainEvents, (event) =>
+  yield* forkRoot(
+    Stream.runForEach(threads.domainEvents, (event) =>
       events
         .offer(event)
         .pipe(
@@ -1031,7 +1017,7 @@ const make = Effect.gen(function* () {
   );
 
   // Startup recovery: restart steps a restart cut off, then replay running runs.
-  yield* forkParked(
+  yield* forkRoot(
     Effect.gen(function* () {
       for (const step of yield* store.stepsWithStatus("running")) {
         const automation = yield* automationOfRun(step.run_id);
@@ -1041,7 +1027,6 @@ const make = Effect.gen(function* () {
       yield* attachments.recover;
     }).pipe(logFailure("Automation recovery failed")),
   );
-  yield* scheduler.register("automations", tick);
 
   return {
     ...catalog,
@@ -1063,8 +1048,6 @@ const make = Effect.gen(function* () {
       Effect.sync(() => {
         pullRequestReads = reads;
       }),
-    receiveWebhook: webhooks.receive,
-    receiveCallback: callbacks.receive,
     setWebhookSecret,
     cancelRun,
     retryRun,
@@ -1084,8 +1067,5 @@ const make = Effect.gen(function* () {
   } satisfies WorkflowEngineShape;
 });
 
-export const layer = Layer.effect(WorkflowEngine, make).pipe(
-  Layer.provide(
-    Layer.mergeAll(ProcessRunner.layer, ExecutorSettings.layer, ServerSecretStore.layer),
-  ),
-);
+/** The engine, on the host services in host.ts; each host provides them (the server's: serverHost.ts). */
+export const layer = Layer.effect(WorkflowEngine, make);

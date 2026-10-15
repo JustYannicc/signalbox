@@ -3,7 +3,7 @@ import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as TxRef from "effect/TxRef";
 
-import { forkParked } from "../serverActivation.ts";
+import { forkRoot } from "./host.ts";
 
 /**
  * Which runs need replaying, and when the engine is idle. A run replays once
@@ -79,7 +79,7 @@ export const makeReplayQueue = Effect.gen(function* () {
     start: (
       replay: (runId: string) => Effect.Effect<void>,
     ): Effect.Effect<void, never, Scope.Scope> =>
-      Effect.forEach(Array.from({ length: REPLAY_CONCURRENCY }), () => forkParked(worker(replay)), {
+      Effect.forEach(Array.from({ length: REPLAY_CONCURRENCY }), () => forkRoot(worker(replay)), {
         discard: true,
       }),
     /**

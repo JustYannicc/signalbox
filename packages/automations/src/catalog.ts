@@ -16,7 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { automationDefaults, automationTriggers, runLogLines, runMarks } from "./columns.ts";
-import { compileWorkflow } from "./compiler/compileWorkflow.ts";
+import type { WorkflowCompileResult } from "./compiled.ts";
 import { liveColumns, makeDrafts, type DraftsShape } from "./drafts.ts";
 import { fail } from "./errors.ts";
 import { stepWatch } from "./events/runWaits.ts";
@@ -79,13 +79,15 @@ export const makeCatalog = (deps: {
   ) => Effect.Effect<AutomationRow, AutomationError>;
   /** The Signalbox Connect prefix for webhook URLs, read per view since linking can change. */
   readonly relayHookBaseUrl: Effect.Effect<string | null>;
+  /** The host's compiler (see host.ts). */
+  readonly compile: (source: string) => WorkflowCompileResult;
   /** How reading these watched sources goes (sources/sourceWatches.ts). */
   readonly watching: (
     scope: SourceScope,
     watches: ReadonlyArray<WorkflowSourceWatch>,
   ) => Effect.Effect<ReadonlyArray<AutomationSourceStatus>, AutomationError>;
 }): CatalogShape => {
-  const { store, newId, changed, requireAutomation, relayHookBaseUrl } = deps;
+  const { store, newId, changed, requireAutomation, relayHookBaseUrl, compile } = deps;
 
   const versions = new Map<string, VersionView>();
   /** A saved version's file and diagram, read and decoded once. */
@@ -112,7 +114,7 @@ export const makeCatalog = (deps: {
     });
 
   const validate: CatalogShape["validate"] = (source) => {
-    const compiled = compileWorkflow(source);
+    const compiled = compile(source);
     return compiled.ok
       ? { ok: true, graph: compiled.workflow.graph }
       : { ok: false, diagnostics: compiled.diagnostics };
@@ -120,7 +122,7 @@ export const makeCatalog = (deps: {
 
   const save: CatalogShape["save"] = (input, authorize, approvedBy) =>
     Effect.gen(function* () {
-      const compiled = compileWorkflow(input.source);
+      const compiled = compile(input.source);
       if (!compiled.ok) return { ok: false, diagnostics: compiled.diagnostics } as const;
       const { meta, graph, script, runModule } = compiled.workflow;
       const byName = yield* store.getAutomationByName(input.projectId, meta.name);

@@ -5,9 +5,15 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { isoAt } from "./time.ts";
-import { WorkflowEngine } from "./WorkflowEngine.ts";
-import { acceptedRun, saveOk, webhookRequest, withEngine } from "./WorkflowEngine.testkit.ts";
+import { isoAt } from "@signalbox/automations/time";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
+import {
+  acceptedRun,
+  receiveWebhook,
+  saveOk,
+  webhookRequest,
+  withEngine,
+} from "./WorkflowEngine.testkit.ts";
 
 const source = (name: string, trigger: string) =>
   `export const meta = { name: "${name}", triggers: [${trigger}] } as const;
@@ -22,7 +28,7 @@ it.effect("starts one run per delivery, by sender key or relay id, with redacted
       const engine = yield* WorkflowEngine;
       const automation = yield* saveOk(source("Hook", "{ webhook: true }"));
       const deliver = (init: Parameters<typeof webhookRequest>[1]) =>
-        engine.receiveWebhook(webhookRequest(automation, { body: '{"a":1}', ...init }));
+        receiveWebhook(webhookRequest(automation, { body: '{"a":1}', ...init }));
 
       const first = yield* acceptedRun(
         yield* deliver({
@@ -68,10 +74,10 @@ it.effect("starts one run per delivery, by sender key or relay id, with redacted
 
       const rotated = yield* engine.rotateWebhook(automation.id);
       expect(rotated.webhook?.path).not.toBe(automation.webhook?.path);
-      expect(yield* engine.receiveWebhook(webhookRequest(automation))).toEqual({
+      expect(yield* receiveWebhook(webhookRequest(automation))).toEqual({
         _tag: "not_found",
       });
-      yield* acceptedRun(yield* engine.receiveWebhook(webhookRequest(rotated)));
+      yield* acceptedRun(yield* receiveWebhook(webhookRequest(rotated)));
     }),
   ),
 );
@@ -96,7 +102,7 @@ it.effect("checks the signature with the stored secret, and logs what it turns a
           },
         });
       // No secret yet: nothing can be verified.
-      expect(yield* engine.receiveWebhook(signed("s3cret"))).toEqual({
+      expect(yield* receiveWebhook(signed("s3cret"))).toEqual({
         _tag: "rejected_signature",
       });
       const updated = yield* engine.setWebhookSecret({
@@ -104,8 +110,8 @@ it.effect("checks the signature with the stored secret, and logs what it turns a
         secret: "s3cret",
       });
       expect(updated.webhook?.hasSecret).toBe(true);
-      yield* acceptedRun(yield* engine.receiveWebhook(signed("s3cret")));
-      expect(yield* engine.receiveWebhook(signed("wrong"))).toEqual({
+      yield* acceptedRun(yield* receiveWebhook(signed("s3cret")));
+      expect(yield* receiveWebhook(signed("wrong"))).toEqual({
         _tag: "rejected_signature",
       });
 
@@ -116,7 +122,7 @@ it.effect("checks the signature with the stored secret, and logs what it turns a
       ]);
       const cleared = yield* engine.setWebhookSecret({ automationId: automation.id, secret: null });
       expect(cleared.webhook?.hasSecret).toBe(false);
-      expect(yield* engine.receiveWebhook(signed("s3cret"))).toEqual({
+      expect(yield* receiveWebhook(signed("s3cret"))).toEqual({
         _tag: "rejected_signature",
       });
     }),
@@ -136,18 +142,18 @@ it.effect("refuses paused automations, floods and stale held requests", () =>
           relayDeliveryId: `relay-${minutesAgo}`,
           receivedAt: isoAt(now - minutesAgo * 60_000),
         });
-      expect(yield* engine.receiveWebhook(held(10))).toEqual({ _tag: "expired" });
-      yield* acceptedRun(yield* engine.receiveWebhook(held(2)));
+      expect(yield* receiveWebhook(held(10))).toEqual({ _tag: "expired" });
+      yield* acceptedRun(yield* receiveWebhook(held(2)));
 
       const paused = yield* saveOk(source("Paused", "{ webhook: true }"));
       yield* engine.setEnabled(paused.id, false);
       for (let request = 0; request < 60; request++) {
-        expect(yield* engine.receiveWebhook(webhookRequest(paused))).toEqual({
+        expect(yield* receiveWebhook(webhookRequest(paused))).toEqual({
           _tag: "disabled",
         });
       }
       for (let request = 0; request < 3; request++) {
-        expect(yield* engine.receiveWebhook(webhookRequest(paused))).toEqual({
+        expect(yield* receiveWebhook(webhookRequest(paused))).toEqual({
           _tag: "rate_limited",
           outcome: "rate_limited",
         });
@@ -161,7 +167,7 @@ it.effect("refuses paused automations, floods and stale held requests", () =>
       );
 
       yield* TestClock.adjust("1 minute");
-      expect(yield* engine.receiveWebhook(webhookRequest(paused))).toEqual({ _tag: "disabled" });
+      expect(yield* receiveWebhook(webhookRequest(paused))).toEqual({ _tag: "disabled" });
     }),
   ),
 );

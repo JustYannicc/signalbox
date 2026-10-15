@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import { fakeHttp, fakeThreads, saveOk, withEngine } from "./WorkflowEngine.testkit.ts";
 
 const run = (source: string, input?: unknown) =>

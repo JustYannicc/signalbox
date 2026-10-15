@@ -6,7 +6,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { forkParked } from "../serverActivation.ts";
+import { forkRoot } from "./host.ts";
 import { toJson } from "./json.ts";
 
 /** What changed, so live views recompute only when it shows in them. */
@@ -70,7 +70,7 @@ export const makeLiveFeed = (changes: PubSub.PubSub<Change>) =>
   Effect.gen(function* () {
     const batches = yield* PubSub.unbounded<ReadonlyArray<Change>>();
     const incoming = yield* PubSub.subscribe(changes);
-    yield* forkParked(
+    yield* forkRoot(
       Effect.gen(function* () {
         const first = yield* PubSub.takeAll(incoming);
         yield* Effect.sleep(COALESCE_WINDOW);
@@ -103,7 +103,7 @@ export const makeLiveFeed = (changes: PubSub.PubSub<Change>) =>
       );
 
     const batchSubscription = yield* PubSub.subscribe(batches);
-    yield* forkParked(
+    yield* forkRoot(
       Stream.runForEach(Stream.fromSubscription(batchSubscription), (batch) =>
         Effect.forEach(
           [...views.values()].filter((view) => batch.some(view.shows)),

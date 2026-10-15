@@ -8,22 +8,24 @@ import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { WorkflowEngine } from "./WorkflowEngine.ts";
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 import {
+  acceptedRun,
   DEFAULTS,
-  PROJECT,
   fakeHttp,
   fakeThreads,
-  withEngine as withEngineOptions,
-  acceptedRun,
+  PROJECT,
+  receiveWebhook,
   webhookRequest,
+  withEngine as withEngineOptions,
 } from "./WorkflowEngine.testkit.ts";
+import type { AutomationHooks } from "./serverHost.ts";
 
 const executor = fakeHttp();
 
 function withEngine<A, E>(
   threads: ReturnType<typeof fakeThreads>,
-  body: Effect.Effect<A, E, WorkflowEngine>,
+  body: Effect.Effect<A, E, WorkflowEngine | AutomationHooks>,
   environment?: NodeJS.ProcessEnv,
 ) {
   return withEngineOptions(
@@ -262,11 +264,11 @@ export default workflow(async (w, issue: { title: string }) => {
         throw new Error(saved.diagnostics.map((diagnostic) => diagnostic.message).join("\n"));
       expect(saved.automation.webhook?.path).toMatch(/^\/api\/hooks\/automation_[^/]+\/hook_/);
 
-      expect(
-        yield* engine.receiveWebhook(webhookRequest(saved.automation, { token: "wrong" })),
-      ).toEqual({ _tag: "not_found" });
+      expect(yield* receiveWebhook(webhookRequest(saved.automation, { token: "wrong" }))).toEqual({
+        _tag: "not_found",
+      });
       const started = yield* acceptedRun(
-        yield* engine.receiveWebhook(
+        yield* receiveWebhook(
           webhookRequest(saved.automation, { body: '{"title":"Login crash"}' }),
         ),
       );

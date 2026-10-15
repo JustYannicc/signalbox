@@ -17,16 +17,11 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Stream from "effect/Stream";
 
 import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";
-import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import {
-  isTerminalRunStatus,
-  latestRun,
-  ThreadManagementService,
-} from "../orchestration-v2/ThreadManagementService.ts";
 import { automationError, errorMessage, fail, isAutomationError } from "./errors.ts";
+import { AutomationModels, AutomationThreads, type AgentWorkspace } from "./host.ts";
 import { asRecord, jsonOrText } from "./json.ts";
 import { explained } from "./runLog.ts";
+import { isTerminalRunStatus, latestRun } from "./runs.ts";
 import { describeDuration, durationMs, TransientFailure } from "./stepPolicy.ts";
 import type { StepRow } from "./WorkflowStore.ts";
 
@@ -72,7 +67,7 @@ function agentLaunchIds(step: Pick<StepRow, "run_id" | "step_key" | "attempt">) 
 }
 
 /** `worktree: "main"`, or `{ base, branch?, fromOrigin? }` to name the branch and start from the remote. */
-function workspaceFor(worktree: unknown) {
+function workspaceFor(worktree: unknown): AgentWorkspace {
   if (typeof worktree === "string" && worktree.trim()) {
     return { type: "worktree" as const, baseRef: worktree.trim() };
   }
@@ -95,19 +90,9 @@ function workspaceFor(worktree: unknown) {
  */
 const effortOption = (instanceId: string, model: string) =>
   Effect.gen(function* () {
-    const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-    if (Option.isNone(registry)) return { id: "effort", values: null };
-    const providers = yield* registry.value.getProviders;
-    const descriptors =
-      providers
-        .find((provider) => provider.instanceId === instanceId)
-        ?.models.find((candidate) => candidate.slug === model)?.capabilities?.optionDescriptors ??
-      [];
-    const descriptor = descriptors.find(
-      (candidate) => candidate.type === "select" && /effort/i.test(candidate.id),
-    );
-    if (descriptor?.type !== "select") return null;
-    return { id: descriptor.id, values: descriptor.options.map((option) => option.id) };
+    const models = yield* Effect.serviceOption(AutomationModels);
+    if (Option.isNone(models)) return { id: "effort", values: null };
+    return yield* models.value.effortOption(instanceId, model);
   });
 
 /** The defaults' model, with `provider`, `model` and `effort` from the step's options applied. */
@@ -181,7 +166,7 @@ export const launchAgent = (input: {
 
     if (typeof options.thread === "string" && options.thread.trim()) {
       const threadId = ThreadId.make(options.thread.trim());
-      const threads = yield* ThreadManagementService;
+      const threads = yield* AutomationThreads;
       const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
       if (shell === null || shell.deletedAt !== null) {
         return yield* fail(`There's no thread ${threadId} to continue.`);
@@ -194,7 +179,7 @@ export const launchAgent = (input: {
         typeof options.model === "string" ||
         typeof options.effort === "string";
       const sent = yield* threads
-        .sendToThread({
+        .send({
           projectId: shell.projectId,
           commandId,
           threadId,
@@ -202,7 +187,6 @@ export const launchAgent = (input: {
           text: prompt,
           attachments: [],
           ...(switched ? { modelSelection } : {}),
-          mode: "queue",
           createdBy: "system",
           creationSource: "server",
         })
@@ -219,20 +203,17 @@ export const launchAgent = (input: {
       } satisfies StepStart;
     }
 
-    const launch = yield* ThreadLaunchService;
-    const launched = yield* launch
+    const threads = yield* AutomationThreads;
+    const launched = yield* threads
       .launch({
         commandId,
         projectId: ProjectId.make(input.projectId),
         title: input.step.label,
-        generateTitle: false,
         modelSelection,
         runtimeMode: input.defaults.runtimeMode,
         interactionMode: input.interactionMode ?? input.defaults.interactionMode,
-        workspaceStrategy: workspaceFor(options.worktree),
-        initialMessage: { messageId, text: prompt, attachments: [] },
-        createdBy: "system",
-        creationSource: "server",
+        workspace: workspaceFor(options.worktree),
+        message: { messageId, text: prompt },
       })
       .pipe(
         Effect.mapError((cause) =>
@@ -250,7 +231,7 @@ export const launchAgent = (input: {
  */
 export const agentResult = (threadId: string, runId?: string | null) =>
   Effect.gen(function* () {
-    const threads = yield* ThreadManagementService;
+    const threads = yield* AutomationThreads;
     const id = ThreadId.make(threadId);
     const shell = yield* threads.getThreadShell(id);
     if (shell === null || shell.deletedAt !== null) {

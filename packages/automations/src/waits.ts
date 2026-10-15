@@ -15,11 +15,11 @@ import {
 import * as Effect from "effect/Effect";
 
 import type { Attachments } from "./attachments.ts";
-import type { CallbackLink } from "./callbacks.ts";
+import type { CallbackLink } from "./host.ts";
 import { sourceWatchProblem, waitForEventProblem } from "./compiler/eventTriggers.ts";
 import type { AuthorizeAutomation } from "./catalog.ts";
 import { automationError, fail } from "./errors.ts";
-import type { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import type { AutomationThreads } from "./host.ts";
 import type { RunLinkStore } from "./runLinkStore.ts";
 import { explained } from "./runLog.ts";
 import type { WorkflowStore } from "./WorkflowStore.ts";
@@ -80,7 +80,7 @@ export interface WaitAccess<E> {
 
 export const makeWaits = (deps: {
   readonly store: WorkflowStore;
-  readonly threads: ThreadManagementService["Service"];
+  readonly threads: AutomationThreads["Service"];
   readonly links: RunLinkStore;
   readonly attachments: Attachments;
   readonly newId: (prefix: string) => Effect.Effect<string, AutomationError>;

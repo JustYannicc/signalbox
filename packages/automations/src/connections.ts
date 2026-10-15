@@ -7,7 +7,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { automationError, errorMessage, fail, isAutomationError } from "./errors.ts";
-import * as ExecutorSettings from "./executorSettings.ts";
+import { ExecutorSettingsStore, type ExecutorSettings } from "./executorConnection.ts";
 import { toJson } from "./json.ts";
 import { explained } from "./runLog.ts";
 import { TransientFailure } from "./stepPolicy.ts";
@@ -77,7 +77,7 @@ return { ok: true, value: listed.data.connections.map((c) => ({ integration: c.i
  */
 const runExecutor = (
   http: HttpClient.HttpClient,
-  settings: Pick<ExecutorSettings.ExecutorSettings, "url" | "apiKey">,
+  settings: Pick<ExecutorSettings, "url" | "apiKey">,
   code: string,
   options: {
     readonly timeout?: Duration.Input;
@@ -168,7 +168,7 @@ const decodeBody = Schema.decodeUnknownOption(Schema.fromJsonString(ExecutorBody
 /** The accounts the user connected in Executor, sorted by integration then name. */
 export const listExecutorServices = (
   http: HttpClient.HttpClient,
-  settings: Pick<ExecutorSettings.ExecutorSettings, "url" | "apiKey">,
+  settings: Pick<ExecutorSettings, "url" | "apiKey">,
 ) =>
   runExecutor(http, settings, LIST_CONNECTIONS_CODE, {
     timeout: LIST_TIMEOUT,
@@ -189,7 +189,7 @@ export const listExecutorServices = (
 
 export const makeConnections = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
-  const store = yield* ExecutorSettings.ExecutorSettingsStore;
+  const store = yield* ExecutorSettingsStore;
 
   /** Calls `operation` on the user's connected service and returns the API's data. */
   const call = (input: {

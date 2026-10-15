@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeCrypto from "node:crypto";
-
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 import { WorkflowSourceWatch } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -34,7 +33,7 @@ function canonicalJson(value: unknown): string {
 
 /** A short, stable digest of a value: equal values, equal fingerprints. */
 const fingerprint = (value: unknown) =>
-  NodeCrypto.createHash("sha256").update(canonicalJson(value)).digest("hex").slice(0, 16);
+  bytesToHex(sha256(utf8ToBytes(canonicalJson(value)))).slice(0, 16);
 
 export const isSourceWatch = Schema.is(WorkflowSourceWatch);
 

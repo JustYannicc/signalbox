@@ -2,9 +2,13 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import * as Sqlite from "../persistence/Sqlite.ts";
-import { toJson } from "./json.ts";
-import { automationNotice, failureNotice, relayNotificationForNotice } from "./notices.ts";
-import * as WorkflowStore from "./WorkflowStore.ts";
+import { toJson } from "@signalbox/automations/json";
+import {
+  automationNotice,
+  failureNotice,
+  relayNotificationForNotice,
+} from "@signalbox/automations/notices";
+import * as WorkflowStore from "@signalbox/automations/WorkflowStore";
 
 const automation = { automation_id: "automation_1", name: "Triage Sentry" };
 const AT = "2026-10-06T09:00:00.000Z";

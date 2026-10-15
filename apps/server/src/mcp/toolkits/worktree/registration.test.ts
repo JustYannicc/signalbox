@@ -33,7 +33,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
-import { WorkflowEngine } from "../../../workflows/WorkflowEngine.ts"; // signalbox: automations
+import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine"; // signalbox: automations
 import * as AccountPools from "../../../accountHub/AccountPools.ts"; // signalbox
 import * as Sections from "../../../sections/Sections.ts"; // signalbox
 import * as UsageLimitSources from "../../../usage/UsageLimitSources.ts"; // signalbox
