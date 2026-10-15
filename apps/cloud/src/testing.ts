@@ -15,7 +15,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as CloudAccounts from "./account/CloudAccounts.ts";
-import { serveApiRequest } from "./api/apiObject.ts";
+import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObject.ts";
+import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudSessions from "./auth/CloudSessions.ts";
 import * as CloudTokens from "./auth/CloudTokens.ts";
@@ -294,16 +295,31 @@ export const makeMemoryCloud = (
       ) => Promise<A>;
     }
   >();
+  const mcpHandlers = new Map<string, ReturnType<typeof makeMcpHandler>>();
   const userDirectory: UserDirectory.UserDirectory["Service"] = {
     forUser: (userId) => UserDirectory.handleFor(userFor(userId).api),
     connect: () => Effect.die("Sockets are not part of these tests"),
-    // The object's own API handler, against its in-memory services.
+    // The object's own API and MCP handlers, against its in-memory services.
     callApi: (userId, request, credential) =>
-      Effect.promise(() =>
-        userFor(userId).runtime.runPromise(
-          serveApiRequest(request, { identity: API_TEST_IDENTITY, userId, credential }),
-        ),
-      ),
+      Effect.promise(async () => {
+        const { runtime } = userFor(userId);
+        if (new URL(request.url).pathname !== MCP_PATH) {
+          return runtime.runPromise(
+            serveApiRequest(request, { identity: API_TEST_IDENTITY, userId, credential }),
+          );
+        }
+        const mcp =
+          mcpHandlers.get(userId) ??
+          makeMcpHandler({
+            identity: API_TEST_IDENTITY,
+            userId,
+            context: await runtime.runPromise(Effect.context()),
+          });
+        mcpHandlers.set(userId, mcp);
+        const headers = new Headers(request.headers);
+        headers.set(API_HEADER, encodeApiCredential(credential));
+        return mcp.handler(new Request(request, { headers }));
+      }),
   };
   const threadDirectory: ThreadDirectory.ThreadDirectory["Service"] = {
     forThread: (threadId) => ThreadDirectory.handleFor(threadFor(threadId).api),
