@@ -5,6 +5,12 @@ import { linkedConnections, linkedToken } from "../connections/linkedConnections
 import { publishBranch } from "../github/branchPublishing.ts";
 import type * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
+import * as LocalKeys from "../localKeys/LocalKeys.ts";
+import {
+  authorizeLocalModel,
+  localKeysView,
+  recordLocalModelRequest,
+} from "../localKeys/localModelAccess.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import { wire } from "../thread/threadWire.ts";
 import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
@@ -12,8 +18,10 @@ import * as UserContexts from "./UserContexts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserDrives from "./UserDrives.ts";
+import * as ResourceBindings from "./ResourceBindings.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
 
 /**
  * A user object's answers, given a way to run its effects. The Durable Object
@@ -35,6 +43,9 @@ export const makeUserObjectApi = (
       | UserDrives.UserDrives
       | UserPreviewSetup.UserPreviewSetup
       | GitHubBranches.GitHubBranches
+      | UserThreadKinds.UserThreadKinds
+      | LocalKeys.LocalKeys
+      | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
     >,
   ) => Promise<A>,
@@ -58,8 +69,16 @@ export const makeUserObjectApi = (
     syncOrganizations: (organizations) =>
       run(UserContexts.UserContexts.use((contexts) => contexts.syncOrganizations(organizations))),
     shellSnapshot: async () => shellSnapshotWire.encode(await shell((service) => service.snapshot)),
-    recordThreadSummary: (summary) =>
-      shell((service) => service.recordThreadSummary(wire.summary.decode(summary))),
+    recordThreadSummary: (encoded) => {
+      const summary = wire.summary.decode(encoded);
+      return run(
+        Effect.flatMap(UserShell.UserShell, (shell) =>
+          UserThreadKinds.UserThreadKinds.use((kinds) =>
+            kinds.recordSummary(summary, shell.recordThreadSummary(summary)),
+          ),
+        ),
+      );
+    },
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
     beginGitHubConnect: (input) => github((service) => service.begin(input)),
     completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),
@@ -73,6 +92,12 @@ export const makeUserObjectApi = (
       run(ConnectionLinks.ConnectionLinks.use((links) => links.revoke(id))),
     linkedConnections: (secret) => run(linkedConnections(secret)),
     linkedToken: (input) => run(linkedToken(input)),
+    createLocalKey: (label, options) =>
+      run(LocalKeys.LocalKeys.use((keys) => keys.create(label, options))),
+    localKeys: () => run(localKeysView),
+    revokeLocalKey: (id) => run(LocalKeys.LocalKeys.use((keys) => keys.revoke(id))),
+    authorizeLocalModel: (secret) => run(authorizeLocalModel(secret)),
+    recordLocalModelRequest: (input) => run(recordLocalModelRequest(input)),
     issuePreviewSetupCode: (input) =>
       run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.issueCode(input))),
     redeemPreviewSetup: (input) =>
@@ -94,5 +119,11 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
+    sweepThreadKinds: async (asOfMs) => {
+      const { archived } = await run(
+        UserThreadKinds.UserThreadKinds.use((kinds) => kinds.sweep(asOfMs)),
+      );
+      return { archived };
+    },
   };
 };

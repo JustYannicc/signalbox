@@ -17,6 +17,7 @@ import {
 } from "../../state/client-cache-state";
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -28,6 +29,7 @@ export function SettingsClientStorageRouteScreen() {
   const clearCache = useAtomSet(clearClientCacheAtom);
   const { savedConnectionsById } = useSavedRemoteConnections();
   const serverConfigs = useServerConfigs();
+  const showsEnvironments = useShowsEnvironmentUi(); // signalbox
   const isClearing = clearResult.waiting;
   const summary = AsyncResult.isSuccess(summaryResult) ? summaryResult.value : null;
   const environmentSummaries = useMemo(
@@ -83,7 +85,7 @@ export function SettingsClientStorageRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
       >
-        <SettingsSection title="Environment caches">
+        <SettingsSection title={showsEnvironments ? "Environment caches" : "Offline cache"}>
           {AsyncResult.isFailure(summaryResult) ? (
             <View className="items-center gap-2 px-6 py-8">
               <SymbolView

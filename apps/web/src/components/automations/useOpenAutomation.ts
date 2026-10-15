@@ -1,7 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
-import { useSidebarView } from "../sidebar/sidebarView";
 import { useSidebar } from "../ui/sidebar";
 import { automationRoute, type AutomationRouteTarget } from "./automationFormat";
 
@@ -22,12 +21,10 @@ export function useOpenAutomation() {
   );
 }
 
-/** Opens the overview with the Automations panel in the sidebar, from anywhere. */
+/** Opens the overview, from anywhere. */
 export function useOpenAutomations() {
   const navigate = useNavigate();
-  const [, setView] = useSidebarView();
   return useCallback(async () => {
-    setView("automations");
     await navigate({ to: "/automations" });
-  }, [navigate, setView]);
+  }, [navigate]);
 }

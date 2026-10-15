@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import { latestUnheldRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import * as DateTime from "effect/DateTime";
 
 import { isLiveRun } from "./runLifecycle.ts";
@@ -55,13 +56,28 @@ export function applyEvents(
   return next;
 }
 
+/**
+ * When a turn first changed files: the earliest checkpoint with any. A chat
+ * that has one started real work (#46). Null: no turn changed a file yet.
+ */
+export function workStartedAt(projection: OrchestrationV2ThreadProjection): DateTime.Utc | null {
+  let earliest: DateTime.Utc | null = null;
+  for (const checkpoint of projection.checkpoints) {
+    if (checkpoint.files.length === 0) continue;
+    if (earliest === null || DateTime.isLessThan(checkpoint.capturedAt, earliest)) {
+      earliest = checkpoint.capturedAt;
+    }
+  }
+  return earliest;
+}
+
 const byOrdinalDesc = (left: OrchestrationV2Run, right: OrchestrationV2Run) =>
   right.ordinal - left.ordinal;
 
 /**
  * The thread's sidebar row. Follows upstream's `threadShellFromProjection` for
- * everything a scripted thread can have; runtime requests, pull requests,
- * goals and background work never occur here yet, so they stay empty.
+ * everything a cloud thread can have; runtime requests, goals and background
+ * work never occur here yet, so they stay empty.
  */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
@@ -89,7 +105,7 @@ export function threadShellFromProjection(
     interactionMode: thread.interactionMode,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
-    pullRequests: [],
+    pullRequests: threadPullRequestsOf(thread),
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
     activeProviderThreadId: thread.activeProviderThreadId,

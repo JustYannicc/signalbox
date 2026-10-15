@@ -1,10 +1,11 @@
-import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Navigate, redirect, useRouter } from "@tanstack/react-router";
 
 import {
   HostedPairingRouteSurface,
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
+import { useEnvironmentUiState } from "../state/environmentCapabilities";
 
 export const Route = createFileRoute("/pair")({
   beforeLoad: async ({ context }) => {
@@ -29,12 +30,16 @@ export const Route = createFileRoute("/pair")({
 function PairRouteView() {
   const router = useRouter();
   const { authGateState } = Route.useRouteContext();
+  const environmentUi = useEnvironmentUiState(); // signalbox: one environment
 
   if (!authGateState) {
     return null;
   }
 
   if (authGateState.status === "hosted-pairing") {
+    // signalbox: pairing adds another environment; the cloud is the only one.
+    if (environmentUi === "unknown") return null;
+    if (environmentUi === "hidden") return <Navigate to="/" replace />;
     return <HostedPairingRouteSurface />;
   }
 

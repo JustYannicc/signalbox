@@ -67,11 +67,40 @@ const ConnectionLinkClaims = Schema.TaggedStruct("connection-link", {
   exp: ExpiresAt,
 });
 
+/** A local harness's key to the user's pool (`localKeys/LocalKeys.ts`). Lives until revoked. */
+const LocalKeyClaims = Schema.TaggedStruct("local-key", {
+  u: UserId,
+  s: Schema.String,
+  exp: ExpiresAt,
+});
+
 /** A preview's one-time claim on the user's setup (`previewSetup/`), bound to its origin. */
 const PreviewSetupClaims = Schema.TaggedStruct("preview-setup", {
   u: UserId,
   gid: Schema.String,
   o: Schema.String,
+  exp: ExpiresAt,
+});
+
+/** One upload's bytes, as `attachments.createUploadUrl` promised them (`attachments/`). */
+const AttachmentUploadClaims = Schema.TaggedStruct("attachment-upload", {
+  u: UserId,
+  a: Schema.String,
+  t: Schema.Literals(["image", "file"]),
+  m: Schema.String,
+  s: Schema.Number,
+  exp: ExpiresAt,
+});
+
+/**
+ * One attachment of a thread (`assets/CloudAssets.ts`), for the user it was
+ * issued to, with the name and disposition the URL serves it under.
+ */
+const AttachmentFileClaims = Schema.TaggedStruct("attachment-file", {
+  u: UserId,
+  a: Schema.String,
+  n: Schema.optionalKey(Schema.String),
+  d: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
   exp: ExpiresAt,
 });
 
@@ -97,8 +126,11 @@ const SignedClaims = Schema.Union([
   HandoffClaims,
   GitHubConnectClaims,
   ConnectionLinkClaims,
+  LocalKeyClaims,
   PreviewSetupClaims,
   ToolOutputImageClaims,
+  AttachmentUploadClaims,
+  AttachmentFileClaims,
 ]);
 export type SignedClaims = typeof SignedClaims.Type;
 type SignedKind = SignedClaims["_tag"];

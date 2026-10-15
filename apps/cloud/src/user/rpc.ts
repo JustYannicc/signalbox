@@ -4,6 +4,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
+  AuthStandardClientScopes,
   EnvironmentAuthorizationError,
   GitCommandError,
   ORCHESTRATION_V2_WS_METHODS,
@@ -19,7 +20,7 @@ import {
   RpcScopeAuthorization,
   type ProjectCloneListEvent,
   SectionsRpcError,
-  type ThreadId,
+  ThreadId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -48,9 +49,18 @@ import {
   SIGNALBOX_PUSH_WS_METHODS,
 } from "@t3tools/contracts/signalboxPush";
 import {
+  SIGNALBOX_KEYS_REQUIRED_SCOPES,
+  SIGNALBOX_KEYS_WS_METHODS,
+} from "@t3tools/contracts/signalboxKeys";
+import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
+import {
+  SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
+  SIGNALBOX_THREAD_KINDS_WS_METHODS,
+  SignalboxThreadKindsError,
+} from "@t3tools/contracts/signalboxThreadKinds";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -61,6 +71,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
@@ -70,12 +81,14 @@ import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { makePushHandlers } from "../push/pushRpc.ts";
+import { makeKeysHandlers } from "./keysRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
+import * as UserThreadKinds from "./UserThreadKinds.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
@@ -105,11 +118,12 @@ const SERVED = [
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.subscribeServerLifecycle,
   ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+  ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
   ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
   ORCHESTRATION_V2_WS_METHODS.launchThread,
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
-  // Images tools returned in a thread (`assets/CloudAssets.ts`).
+  // Images tools returned in a thread and attachments (`assets/CloudAssets.ts`).
   WS_METHODS.assetsCreateUrl,
   WS_METHODS.projectsEnsureScratch,
   // Drives, browsed without a machine (`driveBrowsing.ts`).
@@ -119,6 +133,9 @@ const SERVED = [
   WS_METHODS.reviewGetDiffPreview,
   ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
   ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
+  // Pasted screenshots and files (`attachments/CloudAttachments.ts`).
+  WS_METHODS.attachmentsCreateUploadUrl,
+  WS_METHODS.attachmentsDelete,
   // GitHub repositories as drives (`github/`): import, branch status, push and pull requests.
   WS_METHODS.serverDiscoverSourceControl,
   WS_METHODS.sourceControlLookupRepository,
@@ -136,6 +153,8 @@ const SERVED = [
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
+  ...Object.values(SIGNALBOX_THREAD_KINDS_WS_METHODS),
+  ...Object.values(SIGNALBOX_KEYS_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
 ] as const;
@@ -161,6 +180,7 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
@@ -174,6 +194,8 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
+  [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
+  [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
@@ -190,6 +212,8 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   ...SIGNALBOX_PUSH_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
+  ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
+  ...SIGNALBOX_KEYS_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -266,6 +290,23 @@ const folderCall = <A>(
     }),
   );
 
+/** A kinds change as an RPC answers it: storage failures logged, a message for the user. */
+const kindsCall = <A>(effect: Effect.Effect<A, SqlError>) =>
+  effect.pipe(
+    Effect.catchTags({
+      SqlError: (cause) =>
+        Effect.logError("cloud thread kinds storage failed", { cause }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new SignalboxThreadKindsError({
+                message: "Could not load or change chat and task kinds.",
+              }),
+            ),
+          ),
+        ),
+    }),
+  );
+
 const storageFailed = (cause: unknown) =>
   Effect.logError("cloud sections storage failed", { cause }).pipe(
     Effect.andThen(Effect.fail(sectionsStorageFailure())),
@@ -286,6 +327,8 @@ export const layerHandlers = (input: {
   readonly userId: string;
   /** The socket's session; phones it registers get pushes while it lives. */
   readonly sid: string;
+  /** What the connection's credential holds; new keys get no more. Defaults to an app's. */
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -295,6 +338,7 @@ export const layerHandlers = (input: {
       const contexts = yield* UserContexts.UserContexts;
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
+      const kinds = yield* UserThreadKinds.UserThreadKinds;
       const userDrives = yield* UserDrives.UserDrives;
       const sharing = yield* Effect.serviceOption(DriveSharing);
       const shortcuts = yield* Effect.serviceOption(DriveShortcuts);
@@ -306,6 +350,7 @@ export const layerHandlers = (input: {
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
       const githubImport = yield* makeGitHubImport();
       const branches = yield* GitHubBranches.GitHubBranches;
+      const attachments = yield* CloudAttachments;
       /**
        * Fails with not-found once the user leaves a context and so can't see
        * the thread anymore. Only a context going away is worth asking the
@@ -343,9 +388,14 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
+      const keys = yield* makeKeysHandlers({
+        userId,
+        scopes: input.scopes ?? AuthStandardClientScopes,
+      });
       return {
         ...pools.handlers,
         ...pushes,
+        ...keys,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),
@@ -381,6 +431,23 @@ export const layerHandlers = (input: {
                     cause,
                   }),
               ),
+            ),
+          ),
+        // Settings' Archived list: the shell's archived threads.
+        [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
+          shell.snapshot.pipe(
+            Effect.map((snapshot) => ({
+              schemaVersion: snapshot.schemaVersion,
+              snapshotSequence: snapshot.snapshotSequence,
+              projects: snapshot.projects,
+              threads: snapshot.archivedThreads,
+            })),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Archived threads are unavailable right now.",
+                  cause,
+                }),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
@@ -478,6 +545,10 @@ export const layerHandlers = (input: {
             .pipe(
               Effect.mapError((message) => new OrchestrationGetFullThreadDiffError({ message })),
             ),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (request) =>
+          attachments.issueUpload(userId, request),
+        [WS_METHODS.attachmentsDelete]: (request) =>
+          attachments.deletePending(userId, request.attachmentId),
         [WS_METHODS.serverDiscoverSourceControl]: () => githubImport.discover,
         [WS_METHODS.sourceControlLookupRepository]: (request) =>
           githubImport.lookup(request.repository),
@@ -576,6 +647,19 @@ export const layerHandlers = (input: {
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
           folderCall(folders.setInstructions(request)),
+        [SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe]: () =>
+          kinds.changes.pipe(
+            Stream.tapError((cause) =>
+              Effect.logError("cloud thread kinds stream failed", { cause }),
+            ),
+            Stream.mapError(
+              () =>
+                new SignalboxThreadKindsError({ message: "Could not load chat and task kinds." }),
+            ),
+          ),
+        [SIGNALBOX_THREAD_KINDS_WS_METHODS.setKind]: (request) => kindsCall(kinds.setKind(request)),
+        [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: (request) =>
+          kindsCall(kinds.setArchiveChatsAfterDays(request.days)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: (request) =>
           folderCall(folders.setSecrets(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: (request) =>

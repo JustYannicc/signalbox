@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { waitPatterns } from "../events/runWaits.ts";
+import { waitListens } from "../events/runWaits.ts";
 import { compileWorkflow } from "./compileWorkflow.ts";
 
 const compile = (body: string) =>
@@ -18,16 +18,16 @@ describe("w.waitFor({ on })", () => {
 const news = await w.waitFor("Wait for news", { on: ["pr.merged", "pr.checks.*"], where: { number: input.number }, timeout: { minutes: 30 } });
 const reply = await w.waitFor("Wait for the reply", { event: \`reply:\${input.id}\` });
 return [news, reply];`);
-    expect(result.ok ? waitPatterns(result.workflow.graph.nodes) : result.diagnostics).toEqual([
-      "pr.merged",
-      "pr.checks.*",
-    ]);
+    expect(
+      result.ok ? waitListens(result.workflow.graph.nodes).patterns : result.diagnostics,
+    ).toEqual(["pr.merged", "pr.checks.*"]);
   });
 
-  it("rejects computed or unknown events, with the closest names", () => {
-    expect(messages(`await w.waitFor("Wait", { on: input.event });`)[0]).toContain(
-      "`on` must be a literal",
-    );
+  it("accepts a computed event, checked when the step starts", () => {
+    expect(messages(`await w.waitFor("Wait", { on: input.event });`)).toEqual([]);
+  });
+
+  it("rejects unknown events, with the closest names", () => {
     expect(messages(`await w.waitFor("Wait", { on: "pr.merge" });`)[0]).toContain(
       'w.waitFor waits for an unknown event "pr.merge". Did you mean "pr.merged"',
     );

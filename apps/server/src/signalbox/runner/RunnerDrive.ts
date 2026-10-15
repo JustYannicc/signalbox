@@ -66,7 +66,9 @@ export type DriveOutcome =
   /** A remote-backed drive's branch, saved for the user to push. */
   | { readonly _tag: "saved"; readonly head: string }
   | { readonly _tag: "conflict"; readonly files: ReadonlyArray<string> }
-  | { readonly _tag: "not_landed"; readonly reason: string };
+  | { readonly _tag: "not_landed"; readonly reason: string }
+  /** The thread's branch has no commit yet: nothing to save or land. */
+  | { readonly _tag: "nothing_saved" };
 
 export type RunnerDriveError =
   | RunnerGitError
@@ -237,7 +239,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     for (let attempt = 0; attempt < RECONCILE_ATTEMPTS; attempt++) {
       const { main } = yield* drive.open;
       const before = yield* git.resolve("HEAD");
-      if (before === null) return { _tag: "not_landed", reason: "Nothing to save yet." } as const;
+      if (before === null) return { _tag: "nothing_saved" } as const;
       if (main !== null && !(yield* git.isAncestor(main, before))) {
         const merge = yield* git.exec([
           "merge",
@@ -446,9 +448,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
                 commit: head,
                 files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, head),
               };
-        if (head === null) {
-          return { checkpoint, outcome: { _tag: "not_landed", reason: "Nothing to save yet." } };
-        }
+        if (head === null) return { checkpoint, outcome: { _tag: "nothing_saved" } };
         if (remote !== null && remote !== undefined) {
           const refused = yield* drive.saveBranch(head);
           return {

@@ -27,6 +27,9 @@ import { PullRequestsToolkit } from "../../mcp/toolkits/pullRequests/tools.ts";
 import * as ThreadHandlers from "../../mcp/toolkits/thread/handlers.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { automationError, errorMessage } from "../errors.ts";
+import * as PullRequestReads from "../events/pullRequestReads.ts";
+import * as PullRequestAction from "./pullRequestAction.ts";
+import { PullRequestActionToolkit } from "./pullRequestAction.ts";
 import { asRecord } from "../json.ts";
 import * as WorkflowEngine from "../WorkflowEngine.ts";
 import type { BuiltinToolCall } from "./runner.ts";
@@ -99,6 +102,8 @@ const register = Effect.gen(function* () {
     (yield* PullRequestsToolkit) as unknown as HandledToolkit,
     (yield* EnvironmentToolkit) as unknown as HandledToolkit,
     (yield* SectionsToolkit) as unknown as HandledToolkit,
+    // Automations only: agents merge through the merge gate.
+    (yield* PullRequestActionToolkit) as unknown as HandledToolkit,
   ];
   const routes = new Map<string, HandledToolkit>();
   for (const toolkit of toolkits)
@@ -143,7 +148,7 @@ const register = Effect.gen(function* () {
   yield* engine.registerBuiltinTools({ tools: [...routes.keys()].toSorted(), call });
 });
 
-export const layer = Layer.effectDiscard(register).pipe(
+const toolsLayer = Layer.effectDiscard(register).pipe(
   Layer.provide(
     Layer.mergeAll(
       McpToolAccess.HandlersLayer.layer(OrchestratorHandlers.layer),
@@ -152,7 +157,11 @@ export const layer = Layer.effectDiscard(register).pipe(
       McpToolAccess.HandlersLayer.layer(PullRequestsHandlers.layer),
       McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer),
       McpToolAccess.HandlersLayer.layer(SectionsHandlers.layer),
+      McpToolAccess.HandlersLayer.layer(PullRequestAction.layer),
     ),
   ),
   Layer.provide(Layer.mergeAll(OrchestratorMcpService.layer, ThreadMetadataMcpService.layer)),
 );
+
+/** Hands the engine Signalbox's tools, and the pull request reads behind `pr.*` event details. */
+export const layer = Layer.mergeAll(toolsLayer, PullRequestReads.layer);

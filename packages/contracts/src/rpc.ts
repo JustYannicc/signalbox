@@ -13,6 +13,7 @@ import {
   AccountPoolMoveNativeLoginsInput,
   AccountPoolMoveNativeLoginsResult,
   AccountPoolSetOpenCodeInput,
+  AccountPoolSetRoutingInput,
   AccountPoolReceiveInput,
   AccountPoolReceiveResult,
   AccountPoolMoveToCloudInput,
@@ -53,6 +54,8 @@ import { SIGNALBOX_FOLDERS_RPCS } from "./signalboxFolders.ts"; // signalbox: fo
 import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_PUSH_RPCS } from "./signalboxPush.ts"; // signalbox: push devices
 import { SIGNALBOX_REPOSITORIES_RPCS } from "./signalboxRepositories.ts"; // signalbox: repositories
+import { SIGNALBOX_THREAD_KINDS_RPCS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
+import { SIGNALBOX_KEYS_RPCS } from "./signalboxKeys.ts"; // signalbox: personal keys
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -454,6 +457,7 @@ export const WS_METHODS = {
   accountPoolAddApiKey: "accountPool.addApiKey",
   accountPoolMoveNativeLogins: "accountPool.moveNativeLogins",
   accountPoolSetOpenCode: "accountPool.setOpenCode",
+  accountPoolSetRouting: "accountPool.setRouting",
   accountPoolReceive: "accountPool.receive",
   accountPoolMoveToCloud: "accountPool.moveToCloud",
   providerAuthComplete: "provider.auth.complete",
@@ -751,6 +755,11 @@ const WsAccountPoolAddApiKeyRpc = Rpc.make(WS_METHODS.accountPoolAddApiKey, {
   payload: AccountPoolAddApiKeyInput,
   error: AccountPoolRpcFailure,
 });
+const WsAccountPoolSetRoutingRpc = Rpc.make(WS_METHODS.accountPoolSetRouting, {
+  payload: AccountPoolSetRoutingInput,
+  success: AccountPool,
+  error: AccountPoolRpcFailure,
+});
 const WsAccountPoolSetOpenCodeRpc = Rpc.make(WS_METHODS.accountPoolSetOpenCode, {
   payload: AccountPoolSetOpenCodeInput,
   error: AccountPoolRpcFailure,
@@ -787,6 +796,7 @@ const ACCOUNT_POOL_RPCS = [
   WsAccountPoolAddApiKeyRpc,
   WsAccountPoolMoveNativeLoginsRpc,
   WsAccountPoolSetOpenCodeRpc,
+  WsAccountPoolSetRoutingRpc,
   WsAccountPoolReceiveRpc,
   WsAccountPoolMoveToCloudRpc,
 ] as const;
@@ -2037,6 +2047,8 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_PREVIEWS_RPCS,
   ...SIGNALBOX_PUSH_RPCS,
   ...SIGNALBOX_REPOSITORIES_RPCS,
+  ...SIGNALBOX_THREAD_KINDS_RPCS,
+  ...SIGNALBOX_KEYS_RPCS,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(

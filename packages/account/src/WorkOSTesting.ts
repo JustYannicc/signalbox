@@ -38,6 +38,10 @@ export type WorkOSCodes = Readonly<
 >;
 
 export const EMAIL_VERIFICATION_GRANT = "urn:workos:oauth:grant-type:email-verification:code";
+export const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+
+/** What the fake's device authorization hands out; approve it by adding a `codes` entry for it. */
+export const TEST_DEVICE_CODE = "device-1";
 
 const decodeBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
@@ -99,6 +103,19 @@ export const workosStubLayer = (
         if (url.pathname === "/user_management/users") {
           return HttpClientResponse.fromWeb(request, findUsers(url, codes));
         }
+        if (url.pathname === "/user_management/authorize/device") {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              device_code: TEST_DEVICE_CODE,
+              user_code: "ABCD-EFGH",
+              verification_uri: "https://authkit.test/device",
+              verification_uri_complete: "https://authkit.test/device?user_code=ABCD-EFGH",
+              expires_in: 300,
+              interval: 5,
+            }),
+          );
+        }
         const body =
           request.body._tag === "Uint8Array"
             ? decodeBody(new TextDecoder().decode(request.body.body))
@@ -120,6 +137,14 @@ export const workosStubLayer = (
             return body.code === entry.verify.code
               ? signedIn(entry.verify.user)
               : Response.json({ code: "email_verification_code_invalid" }, { status: 400 });
+          }
+          if (body.grant_type === DEVICE_CODE_GRANT) {
+            // Not approved yet, until `codes` has a plain user for the device code.
+            const approved =
+              typeof body.device_code === "string" ? codes[body.device_code] : undefined;
+            return approved && !("fail" in approved) && !("verify" in approved)
+              ? signedIn(approved)
+              : Response.json({ error: "authorization_pending" }, { status: 400 });
           }
           const entry = typeof body.code === "string" ? codes[body.code] : undefined;
           if (!entry) return Response.json({ error: "invalid_grant" }, { status: 400 });

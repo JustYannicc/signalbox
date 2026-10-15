@@ -1,4 +1,5 @@
 import {
+  type ChatAttachment,
   type OrchestrationV2Command,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadBoundedSnapshot,
@@ -6,6 +7,7 @@ import {
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadStreamItem,
+  type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
@@ -18,16 +20,18 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import { ThreadContexts, type ThreadPlace, type ThreadTurn } from "../user/threadContexts.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
+import { ThreadKindTurns, withLevel } from "./ThreadKindTurns.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
   type ThreadCreation,
-  type ThreadNotFoundError,
+  ThreadNotFoundError,
 } from "./ThreadEngine.ts";
 
 /**
@@ -151,6 +155,8 @@ export class CloudThreadService extends Context.Service<
       ReadonlyArray<PreviewPort>,
       ThreadNotFoundError | ThreadDirectory.ThreadObjectError
     >;
+    /** Whether `actor` can see `threadId` right now. */
+    readonly canSee: (actor: Actor, threadId: ThreadId) => Effect.Effect<boolean>;
     /** A link that opens `actor`'s preview of `port` (see `preview/PreviewGateway.ts`). */
     readonly openPreview: (
       actor: Actor,
@@ -196,6 +202,45 @@ const placed = (
   ...(turn === null ? {} : { instructions: turn.instructions, secrets: turn.secrets }),
 });
 
+/**
+ * Runs `send` with `attachments` claimed into `threadId` (`CloudAttachments.claim`).
+ * A thread that refuses the message never holds the copies, so they go again; after
+ * any other failure the message may have landed, so they stay.
+ */
+const withClaimed = <A, E>(
+  claims: CloudAttachments["Service"],
+  input: {
+    readonly actor: Actor;
+    readonly threadId: ThreadId;
+    readonly command: { readonly id: string; readonly type: string };
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+  },
+  send: (claimed: ReadonlyArray<ChatAttachment>) => Effect.Effect<A, E>,
+) =>
+  input.attachments.length === 0
+    ? send(input.attachments)
+    : claims
+        .claim({
+          userId: input.actor.userId,
+          threadId: input.threadId,
+          commandId: input.command.id,
+          attachments: input.attachments,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            ThreadCommandRejectedError.forCommand(input.command, error.reason),
+          ),
+          Effect.flatMap((claimed) =>
+            send(claimed.attachments).pipe(
+              Effect.tapError((error) => (isRefusal(error) ? claimed.release : Effect.void)),
+            ),
+          ),
+        );
+
+const isRejected = Schema.is(ThreadCommandRejectedError);
+const isNotFound = Schema.is(ThreadNotFoundError);
+const isRefusal = (error: unknown) => isRejected(error) || isNotFound(error);
+
 /** Commands that can start a turn or pick a model: they carry the resolved pools, instructions and secrets. */
 const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.create",
@@ -203,10 +248,31 @@ const PICKS_A_POOL: ReadonlySet<OrchestrationV2Command["type"]> = new Set([
   "thread.model-selection.set",
 ]);
 
+/** What a command sends, for the thread's kind (`ThreadKindTurns`). */
+const messageOf = (command: OrchestrationV2Command) =>
+  command.type === "message.dispatch" ? { text: command.text, title: command.titleSeed } : null;
+
 const make = Effect.gen(function* () {
   const directory = yield* ThreadDirectory.ThreadDirectory;
   const crypto = yield* Crypto.Crypto;
   const threadContexts = yield* ThreadContexts;
+  const attachments = yield* CloudAttachments;
+  const kindTurns = yield* ThreadKindTurns;
+
+  /** The thread's turn from its home's chain, with its kind's level last on it. */
+  const turnOf = (
+    threadId: ThreadId,
+    projectId: ProjectId | null,
+    message: Parameters<ThreadKindTurns["Service"]["beforeTurn"]>[1],
+  ) =>
+    Effect.map(
+      // A first message waits on its classifier; the chain resolves meanwhile.
+      Effect.all(
+        [threadContexts.turn(threadId, projectId), kindTurns.beforeTurn(threadId, message)],
+        { concurrency: 2 },
+      ),
+      ([turn, level]) => ({ ...turn, instructions: withLevel(turn.instructions, level) }),
+    );
 
   const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) =>
     Effect.gen(function* () {
@@ -225,14 +291,29 @@ const make = Effect.gen(function* () {
           : null;
       // Resolved on every turn start, so a thread that moved runs on its new home's chain.
       const turn = PICKS_A_POOL.has(command.type)
-        ? yield* threadContexts.turn(
+        ? yield* turnOf(
             threadId,
             command.type === "thread.create" ? command.projectId : null,
+            messageOf(command),
           )
         : null;
-      return yield* directory
-        .forThread(threadId)
-        .dispatch(actor, command, placed(place, threadId, turn));
+      const creation = placed(place, threadId, turn);
+      if (command.type !== "message.dispatch") {
+        return yield* directory.forThread(threadId).dispatch(actor, command, creation);
+      }
+      return yield* withClaimed(
+        attachments,
+        {
+          actor,
+          threadId,
+          command: { id: command.commandId, type: command.type },
+          attachments: command.attachments,
+        },
+        (claimed) =>
+          directory
+            .forThread(threadId)
+            .dispatch(actor, { ...command, attachments: claimed }, creation),
+      );
     });
 
   const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
@@ -249,13 +330,37 @@ const make = Effect.gen(function* () {
               .pipe(Effect.map(Hex.encode)),
           )}`,
         );
-      return yield* directory
-        .forThread(threadId)
-        .launch(
+      const message = input.initialMessage;
+      const creation = placed(
+        place,
+        threadId,
+        yield* turnOf(
+          threadId,
+          input.projectId,
+          message === undefined ? null : { text: message.text, title: input.title },
+        ),
+      );
+      return yield* withClaimed(
+        attachments,
+        {
           actor,
-          { ...input, threadId },
-          placed(place, threadId, yield* threadContexts.turn(threadId, input.projectId)),
-        );
+          threadId,
+          command: { id: input.commandId, type: "thread.launch" },
+          attachments: message?.attachments ?? [],
+        },
+        (claimed) =>
+          directory.forThread(threadId).launch(
+            actor,
+            {
+              ...input,
+              threadId,
+              ...(message === undefined
+                ? {}
+                : { initialMessage: { ...message, attachments: claimed } }),
+            },
+            creation,
+          ),
+      );
     });
 
   const threadSnapshot: CloudThreadService["Service"]["threadSnapshot"] = (actor, threadId) =>
@@ -318,7 +423,17 @@ const make = Effect.gen(function* () {
   const openPreview: CloudThreadService["Service"]["openPreview"] = (actor, threadId, port) =>
     directory.forThread(threadId).previewLink(actor, port);
 
+  const canSee: CloudThreadService["Service"]["canSee"] = (actor, threadId) =>
+    directory
+      .forThread(threadId)
+      .summary(actor)
+      .pipe(
+        Effect.map((summary) => summary !== null),
+        Effect.orElseSucceed(() => false),
+      );
+
   return CloudThreadService.of({
+    canSee,
     previews,
     openPreview,
     dispatchCommand,

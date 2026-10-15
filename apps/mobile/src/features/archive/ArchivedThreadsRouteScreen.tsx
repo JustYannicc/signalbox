@@ -15,11 +15,18 @@ import {
   refreshArchivedThreadsForEnvironment,
   useArchivedThreadSnapshots,
 } from "./useArchivedThreadSnapshots";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { visibleEnvironmentSelection } from "../home/environmentFilter"; // signalbox
 
 export function ArchivedThreadsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const [chosenEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
+  // signalbox: a hidden environment filter can't narrow what's shown.
+  const selectedEnvironmentId = visibleEnvironmentSelection(
+    chosenEnvironmentId,
+    useShowsEnvironmentUi(),
+  );
   const [sortOrder, setSortOrder] = useState<ArchivedThreadSortOrder>("newest");
   const environments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
     () =>

@@ -41,6 +41,7 @@ import {
   type UsagePriceTarget,
   type UsagePriceWriteResult,
 } from "./usagePriceTargets";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
@@ -109,6 +110,7 @@ export function UsagePriceOverrides({
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const environments = useAtomValue(priceTargetsAtom);
+  const showsEnvironmentUi = useShowsEnvironmentUi(); // signalbox: one environment
   const [selectedIds, setSelectedIds] = useState(initialSelectedEnvironmentIds);
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),
@@ -287,12 +289,17 @@ export function UsagePriceOverrides({
         <DialogHeader>
           <DialogTitle>Custom model prices</DialogTitle>
           <DialogDescription>
-            Prices and mappings apply to all past and future usage on the environments you select.
+            {showsEnvironmentUi
+              ? "Prices and mappings apply to all past and future usage on the environments you select."
+              : "Prices and mappings apply to all past and future usage."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
+            {/* signalbox: one environment, nothing to apply to. */}
+            <div
+              className={cn("flex min-w-0 items-center gap-2", !showsEnvironmentUi && "invisible")}
+            >
               <Label id="usage-prices-apply-label" className="shrink-0">
                 Apply to
               </Label>

@@ -2,7 +2,14 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { requestHeaders, responseHeaders } from "./previewHeaders.ts";
-import { labelOfHost, previewLabel, previewSettings, withoutCookie } from "./previewHost.ts";
+import {
+  isPreviewHost,
+  labelOfHost,
+  previewLabel,
+  previewOrigin,
+  previewSettings,
+  withoutCookie,
+} from "./previewHost.ts";
 import { previewToken, threadOfPreviewToken, verifyPreviewToken } from "./previewToken.ts";
 
 const threadId = ThreadId.make("thread:4f1c");
@@ -37,11 +44,38 @@ describe("preview hosts", () => {
     expect(await previewLabel(threadId, 5173)).toBe(label);
     expect(await previewLabel(threadId, 3000)).not.toBe(label);
     const settings = previewSettings({ PREVIEW_DOMAIN: "localhost:8787", LOCAL_WORKERD: "1" });
-    expect(settings).toEqual({ domain: "localhost:8787", hostname: "localhost", scheme: "http" });
+    expect(settings).toEqual({
+      suffix: ".localhost:8787",
+      hostSuffix: ".localhost",
+      scheme: "http",
+    });
     expect(labelOfHost(settings!, `${label}.localhost`)).toBe(label);
+    expect(previewOrigin(settings!, label)).toBe(`http://${label}.localhost:8787`);
     expect(labelOfHost(settings!, "localhost")).toBeNull();
     expect(labelOfHost(settings!, "app.localhost")).toBeNull();
     expect(previewSettings({})).toBeNull();
+  });
+
+  // Universal SSL covers one level of subdomains, so a deployment's previews
+  // sit beside each other's in one zone, told apart after the label.
+  it("take a host pattern, so several deployments share one zone", async () => {
+    const label = await previewLabel(threadId, 5173);
+    const settings = previewSettings({ PREVIEW_DOMAIN: "*-pr12.Signalbox-Preview.dev" })!;
+    expect(settings).toEqual({
+      suffix: "-pr12.signalbox-preview.dev",
+      hostSuffix: "-pr12.signalbox-preview.dev",
+      scheme: "https",
+    });
+    expect(previewOrigin(settings, label)).toBe(`https://${label}-pr12.signalbox-preview.dev`);
+    expect(labelOfHost(settings, `${label}-pr12.signalbox-preview.dev`)).toBe(label);
+    expect(labelOfHost(settings, `${label}-pr123.signalbox-preview.dev`)).toBeNull();
+    expect(labelOfHost(settings, `${label}-app.signalbox-preview.dev`)).toBeNull();
+    expect(isPreviewHost(settings, `${label}-pr12.signalbox-preview.dev`)).toBe(true);
+    expect(isPreviewHost(settings, "nope-pr12.signalbox-preview.dev")).toBe(true);
+    expect(isPreviewHost(settings, "app.signalbox.run")).toBe(false);
+    // A pattern that would claim every host turns previews off instead.
+    expect(previewSettings({ PREVIEW_DOMAIN: "*" })).toBeNull();
+    expect(previewSettings({ PREVIEW_DOMAIN: "*foo.dev" })).toBeNull();
   });
 });
 

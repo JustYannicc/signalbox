@@ -1,9 +1,11 @@
 import {
+  ANY_SOURCE_ITEM_EVENT,
   automationEventMatches,
   WorkflowGraph,
   type AutomationError,
   type WorkflowEventTrigger,
   type WorkflowNode,
+  type WorkflowSourceWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -13,18 +15,21 @@ import { stepArgs } from "../columns.ts";
 import type { Settlement } from "../engineTypes.ts";
 import { asRecord, fromJson, toJson } from "../json.ts";
 import type { RunLinkStore } from "../runLinkStore.ts";
-import type { StepRow, WorkflowStore } from "../WorkflowStore.ts";
+import type { AutomationRow, StepRow, WorkflowStore } from "../WorkflowStore.ts";
+import { isSourceWatch as isWatch, scopeOf, watchMatches } from "../sources/watch.ts";
 import { whereMatches } from "./subscriptions.ts";
 
 /**
  * `w.waitFor(label, { on, where?, timeout? })`: a step that waits for an
  * event from the same catalog event triggers use, matched the same way.
  *
- * The compiler requires `on` to be a literal, so the patterns a run can wait
- * for are known from its version's diagram when it starts. From then on every
- * matching event in the run's project goes into the run's inbox, whether or
- * not a step is waiting yet, so one that arrives between two steps isn't
- * lost. A waiting step takes the oldest inbox event that matches its `on` and
+ * A literal `on` is known from the run's diagram when it starts. From then on
+ * every matching event in the run's project goes into the run's inbox,
+ * whether or not a step is waiting yet, so one that arrives between two steps
+ * isn't lost. A computed `on` (the built-in "Wait for" waits on whatever its
+ * caller named) is only known once its step starts waiting, so it collects
+ * from then on, until the run ends: a loop that judges each change between
+ * waits doesn't miss one arriving meanwhile. A waiting step takes the oldest inbox event that matches its `on` and
  * `where`; each event goes to one step. A step only ever starts waiting and
  * then looks in the inbox, so an event racing the step's start is still
  * found.
@@ -45,11 +50,17 @@ export interface RunWaitListener {
   readonly runId: string;
   readonly projectId: string;
   readonly patterns: ReadonlyArray<string>;
+  /** Sources its `waitFor` steps watch, and whose they are, for the source poller. */
+  readonly watches?: ReadonlyArray<WorkflowSourceWatch>;
+  readonly automation?: AutomationRow;
+  /** When the run started listening, so a source's changes from before it don't reach it. */
+  readonly startedAt?: string;
 }
 
-/** The `on` patterns of every `waitFor` in a diagram. */
-export function waitPatterns(nodes: ReadonlyArray<WorkflowNode>): string[] {
+/** The `on` patterns and literal `watch` sources of every `waitFor` in a diagram. */
+export function waitListens(nodes: ReadonlyArray<WorkflowNode>) {
   const found: string[] = [];
+  const watches: WorkflowSourceWatch[] = [];
   const visit = (list: ReadonlyArray<WorkflowNode>) => {
     for (const node of list) {
       switch (node.type) {
@@ -59,6 +70,11 @@ export function waitPatterns(nodes: ReadonlyArray<WorkflowNode>): string[] {
           if (typeof value === "string") found.push(value);
           else if (Array.isArray(value))
             found.push(...value.filter((item): item is string => typeof item === "string"));
+          const watch = node.verb === "waitFor" ? node.detail.watch : undefined;
+          if (watch && "literal" in watch && isWatch(watch.literal)) {
+            watches.push(watch.literal);
+            if (!on) found.push(ANY_SOURCE_ITEM_EVENT);
+          }
           break;
         }
         case "branch":
@@ -80,21 +96,30 @@ export function waitPatterns(nodes: ReadonlyArray<WorkflowNode>): string[] {
     }
   };
   visit(nodes);
-  return [...new Set(found)];
+  return { patterns: [...new Set(found)], watches };
 }
 
 /** What a `waitFor` step listens for: `on` patterns and `where` fields from its options. */
 function stepListens(step: Pick<StepRow, "args_json">) {
   const options = asRecord(stepArgs(step)[0]);
-  const on = options.on;
+  // A watch without `on` waits for any change to its source.
+  const on = options.on ?? (isWatch(options.watch) ? ANY_SOURCE_ITEM_EVENT : undefined);
   const patterns =
     typeof on === "string"
       ? [on]
       : Array.isArray(on)
         ? on.filter((item): item is string => typeof item === "string")
         : [];
-  return { patterns, where: options.where as WorkflowEventTrigger["where"] };
+  return {
+    patterns,
+    where: options.where as WorkflowEventTrigger["where"],
+    watch: isWatch(options.watch) ? options.watch : undefined,
+  };
 }
+
+/** The source a waiting `waitFor` step watches, if any. */
+export const stepWatch = (step: Pick<StepRow, "verb" | "args_json">) =>
+  step.verb === "waitFor" ? stepListens(step).watch : undefined;
 
 /** Whether a `waitFor` step uses `on` rather than a named `event`. */
 export const waitsOnEvents = (step: Pick<StepRow, "verb" | "args_json">) =>
@@ -113,7 +138,7 @@ export interface RunWaitDependencies {
 
 export const makeRunWaits = (deps: RunWaitDependencies) => {
   const { store, links } = deps;
-  const patternsByVersion = new Map<string, ReadonlyArray<string>>();
+  const patternsByVersion = new Map<string, ReturnType<typeof waitListens>>();
   let listeners: ReadonlyArray<RunWaitListener> | null = null;
   let generation = 0;
 
@@ -123,28 +148,51 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
       const cached = patternsByVersion.get(key);
       if (cached) return cached;
       const row = yield* store.getVersion(automationId, version);
-      const patterns = row ? waitPatterns(decodeGraph(row.graph_json).nodes) : [];
-      patternsByVersion.set(key, patterns);
-      return patterns;
+      const listens = row
+        ? waitListens(decodeGraph(row.graph_json).nodes)
+        : { patterns: [], watches: [] };
+      patternsByVersion.set(key, listens);
+      return listens;
     });
 
-  /** Running runs that wait for events, rebuilt only after a run starts or ends. */
+  /** Running runs that wait for events, rebuilt only after a run starts or ends or a step starts waiting. */
   const current = Effect.suspend(() => {
     if (listeners) return Effect.succeed(listeners);
     const seen = generation;
     return Effect.gen(function* () {
       const built: RunWaitListener[] = [];
-      const projects = new Map<string, string | undefined>();
+      const automations = new Map<string, AutomationRow | undefined>();
+      // A computed `on` isn't in the diagram; its step's arguments say what it waits for.
+      const computed = new Map<string, string[]>();
+      // A loop waits on the same watch again and again; one of each is enough.
+      const computedWatches = new Map<string, Map<string, WorkflowSourceWatch>>();
+      for (const step of yield* store.runningWaitForSteps()) {
+        const listens = stepListens(step);
+        computed.set(step.run_id, [...(computed.get(step.run_id) ?? []), ...listens.patterns]);
+        if (listens.watch) {
+          const watches = computedWatches.get(step.run_id) ?? new Map();
+          watches.set(toJson(listens.watch), listens.watch);
+          computedWatches.set(step.run_id, watches);
+        }
+      }
       for (const run of yield* store.runningRuns()) {
-        const patterns = yield* versionPatterns(run.automation_id, run.version);
+        const fromDiagram = yield* versionPatterns(run.automation_id, run.version);
+        const patterns = [
+          ...new Set([...fromDiagram.patterns, ...(computed.get(run.run_id) ?? [])]),
+        ];
         if (patterns.length === 0) continue;
-        if (!projects.has(run.automation_id))
-          projects.set(
-            run.automation_id,
-            (yield* store.getAutomation(run.automation_id))?.project_id,
-          );
-        const projectId = projects.get(run.automation_id);
-        if (projectId) built.push({ runId: run.run_id, projectId, patterns });
+        if (!automations.has(run.automation_id))
+          automations.set(run.automation_id, yield* store.getAutomation(run.automation_id));
+        const automation = automations.get(run.automation_id);
+        if (automation)
+          built.push({
+            runId: run.run_id,
+            startedAt: run.started_at,
+            projectId: automation.project_id,
+            patterns,
+            watches: [...fromDiagram.watches, ...(computedWatches.get(run.run_id)?.values() ?? [])],
+            automation,
+          });
       }
       if (seen === generation) listeners = built;
       return built;
@@ -156,6 +204,23 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
     listeners = null;
     generation += 1;
   };
+
+  /** A `waitFor` step started waiting: listen for a computed `on` or `watch` its run's listener lacks. */
+  const stepWaiting = (step: Pick<StepRow, "run_id" | "verb" | "args_json">) =>
+    Effect.sync(() => {
+      const listener = listeners?.find((candidate) => candidate.runId === step.run_id);
+      const listens = stepListens(step);
+      if (
+        listens.watch !== undefined ||
+        listens.patterns.some((pattern) => !(listener?.patterns ?? []).includes(pattern))
+      )
+        invalidate();
+    });
+
+  /** Every running run's watched sources, for the source poller. */
+  const watching = current.pipe(
+    Effect.map((all) => all.filter((listener) => (listener.watches?.length ?? 0) > 0)),
+  );
 
   /** Runs whose code waits for `name`; cheap enough to ask for every event. */
   const lookup = (name: string) =>
@@ -176,14 +241,29 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
       if (waiting.length === 0) return;
       const inbox = yield* links.unconsumed(runId);
       if (inbox.length === 0) return;
+      // Read only when a source event needs matching: whose run it is, and since when it listens.
+      const runWatcher = yield* Effect.cached(
+        Effect.gen(function* () {
+          const run = yield* store.getRunMeta(runId);
+          const automation = run ? yield* store.getAutomation(run.automation_id) : undefined;
+          return run && automation
+            ? { scope: scopeOf(automation), startedAt: run.started_at }
+            : undefined;
+        }),
+      );
       const taken = new Set<number>();
       for (const step of waiting) {
-        const { patterns, where } = stepListens(step);
+        const { patterns, where, watch } = stepListens(step);
         for (const event of inbox) {
           if (taken.has(event.seq)) continue;
           if (!patterns.some((pattern) => automationEventMatches(pattern, event.name))) continue;
           const envelope = asRecord(fromJson(event.envelope_json));
           if (!whereMatches(where, envelope)) continue;
+          // A source's changes go only to steps watching it.
+          if (envelope.sourceId !== undefined || watch) {
+            const watcher = yield* runWatcher;
+            if (!watch || !watcher || !watchMatches(watcher, watch, envelope)) continue;
+          }
           if (!(yield* links.consume(runId, event.seq, step.step_key))) continue;
           taken.add(event.seq);
           yield* deps.complete(runId, step.step_key, { ok: true, value: envelope });
@@ -217,7 +297,7 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
   const ended = (runId: string) =>
     Effect.sync(invalidate).pipe(Effect.andThen(links.trimInbox(runId, 0)));
 
-  return { lookup, deliver, deliverPending, invalidate, ended };
+  return { lookup, deliver, deliverPending, invalidate, stepWaiting, ended, watching };
 };
 
 export type RunWaits = ReturnType<typeof makeRunWaits>;

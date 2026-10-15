@@ -11,6 +11,7 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { isHarnessInstance } from "./providerCatalog.ts";
+import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import { activeRun, resumeQueueEvents, startRunEvents } from "./runLifecycle.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
@@ -52,6 +53,35 @@ export interface ThreadWorktree {
 /** The rejection for a command the cloud does not serve yet. */
 export const unsupported = (commandType: string) =>
   `${commandType} is not available in the cloud yet.`;
+
+const CLOUD_COMMAND_TYPES = [
+  "thread.create",
+  "message.dispatch",
+  "run.interrupt",
+  "queue.resume",
+  "thread.visit",
+  "thread.metadata.update",
+  "thread.model-selection.set",
+  "thread.runtime-mode.set",
+  "thread.interaction-mode.set",
+  "thread.pull-request.link",
+  "thread.pull-request.unlink",
+  "thread.pull-request-link.sync",
+  "thread.archive",
+  "thread.unarchive",
+] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
+type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
+
+/**
+ * The commands `decide` serves; its switch is exhaustive over them. The public
+ * API lists the rest as gaps (`api/cloudCoverage.ts`).
+ */
+export const CLOUD_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set(
+  CLOUD_COMMAND_TYPES,
+);
+
+const isCloudCommand = (command: OrchestrationV2Command): command is CloudCommand =>
+  CLOUD_COMMANDS.has(command.type);
 
 /** The thread a command addresses. Commands without a single target thread are not served. */
 export function commandThreadId(command: OrchestrationV2Command) {
@@ -193,7 +223,10 @@ export function decide(
   projection: Projection | null,
   command: OrchestrationV2Command,
   ctx: DecisionContext,
+  /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
+  expected: { readonly idleSinceMs?: number } = {},
 ): Decision {
+  if (!isCloudCommand(command)) return reject(unsupported(command.type));
   if (command.type === "thread.create") {
     return projection === null ? createThread(command, ctx) : reject("This thread already exists.");
   }
@@ -242,6 +275,25 @@ export function decide(
         ? accept([])
         : updateThread(projection, "thread.metadata-updated", { title: command.title }, ctx);
     }
+    // As upstream's: archiving twice or bringing back a thread that isn't
+    // archived is refused. A thread mid-turn isn't archived from under its
+    // agent. Both move the thread's `updatedAt`, so a chat brought back waits
+    // its full idle time again before it archives itself (#46).
+    case "thread.archive":
+      if (projection.thread.archivedAt !== null) return reject("This thread is already archived.");
+      if (activeRun(projection) !== undefined) {
+        return reject("This thread is still working. Stop it or let it finish, then archive it.");
+      }
+      if (
+        expected.idleSinceMs !== undefined &&
+        DateTime.toEpochMillis(projection.updatedAt) > expected.idleSinceMs
+      ) {
+        return reject("This thread changed since it went idle.");
+      }
+      return updateThread(projection, "thread.archived", { archivedAt: ctx.now }, ctx);
+    case "thread.unarchive":
+      if (projection.thread.archivedAt === null) return reject("This thread is not archived.");
+      return updateThread(projection, "thread.unarchived", { archivedAt: null }, ctx);
     case "thread.model-selection.set":
       return updateThread(
         projection,
@@ -266,8 +318,12 @@ export function decide(
         { interactionMode: command.interactionMode },
         ctx,
       );
+    case "thread.pull-request.link":
+    case "thread.pull-request.unlink":
+    case "thread.pull-request-link.sync":
+      return accept(pullRequestLinkEvents(projection, command, ctx));
     default:
-      return reject(unsupported(command.type));
+      return command satisfies never;
   }
 }
 

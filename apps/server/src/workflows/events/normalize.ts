@@ -1,9 +1,15 @@
 import {
   AUTOMATION_RAW_EVENT_PREFIX,
   OrchestrationV2DomainEvent,
+  SOURCE_ITEM_EVENTS,
   type AutomationEventName,
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
+import {
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -17,7 +23,11 @@ import {
   TERMINAL_ITEMS,
   type Candidate,
 } from "./candidate.ts";
-import { PULL_REQUEST_FACT_EVENTS, pullRequestFacts } from "./pullRequestFacts.ts";
+import {
+  PULL_REQUEST_FACT_EVENTS,
+  PULL_REQUEST_REMARK_EVENTS,
+  pullRequestFacts,
+} from "./pullRequestFacts.ts";
 import { itemCandidates } from "./turnItems.ts";
 import { requestCandidates, runCandidates } from "./turns.ts";
 
@@ -62,7 +72,22 @@ const rawCandidate = (event: DomainEvent): Candidate => ({
     })),
 });
 
-const threadFields = (thread: OrchestrationV2AppThread) => ({
+/** What a thread's shell and its event payloads share. */
+type ThreadFieldsSource = Pick<
+  OrchestrationV2AppThread,
+  | "title"
+  | "providerInstanceId"
+  | "modelSelection"
+  | "runtimeMode"
+  | "interactionMode"
+  | "branch"
+  | "worktreePath"
+  | "snoozedUntil"
+  | "pullRequests"
+  | "branchPullRequest"
+>;
+
+const threadFields = (thread: ThreadFieldsSource) => ({
   title: thread.title,
   provider: thread.providerInstanceId,
   model: thread.modelSelection.model,
@@ -92,10 +117,11 @@ const THREAD_EVENTS = {
   "thread.pull-request-synced": "pr.updated",
 } as const satisfies Partial<Record<DomainEvent["type"], AutomationEventName>>;
 
-const pullRequestFields = (thread: OrchestrationV2AppThread) => ({
-  pullRequests: (thread.pullRequests ?? [])
-    .filter((link) => link.source !== "stack-dismissed")
-    .map((link) => ({ ...pullRequestFacts(link), source: link.source })),
+const pullRequestFields = (thread: ThreadFieldsSource) => ({
+  pullRequests: visibleThreadPullRequests(thread.pullRequests ?? []).map((link) => ({
+    ...pullRequestFacts(link),
+    source: link.source,
+  })),
   branchPullRequest: thread.branchPullRequest
     ? {
         repository: thread.branchPullRequest.repository,
@@ -138,6 +164,30 @@ const MAPPERS: Mappers = {
         createdBy: actorOf(event.payload.createdBy),
         parentThreadId: event.payload.lineage.parentThreadId,
       })),
+    },
+  ],
+  // The sync reactor's periodic syncs carry just the link, so the thread around it is read
+  // (with this link folded in) only when someone listens. Same fields as a full sync.
+  "thread.pull-request-link-updated": (event) => [
+    {
+      name: "pr.updated",
+      id: event.id,
+      build: (reads) =>
+        reads.shell.pipe(
+          Effect.map((shell) =>
+            shell === null
+              ? null
+              : {
+                  ...threadFields(shell),
+                  ...pullRequestFields({
+                    ...shell,
+                    pullRequests: threadPullRequestsOf(shell).map((link) =>
+                      threadPullRequestKeysEqual(link, event.payload) ? event.payload : link,
+                    ),
+                  }),
+                },
+          ),
+        ),
     },
   ],
   "run.created": (event) => [
@@ -238,7 +288,7 @@ export function candidatesFor(event: DomainEvent): ReadonlyArray<Candidate> {
   return [...(mapper?.(event) ?? []), rawCandidate(event)];
 }
 
-/** Public names the table can produce, so a test can hold it to the catalog. */
+/** Public names the engine can produce, so a test can hold it to the catalog. */
 export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   ...Object.values(THREAD_EVENTS),
   "thread.created",
@@ -263,4 +313,9 @@ export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   "checkpoint.captured",
   "checkpoint.restore-requested",
   ...PULL_REQUEST_FACT_EVENTS,
+  ...PULL_REQUEST_REMARK_EVENTS,
+  // A run's callback link was called (callbacks.ts).
+  "hook.called",
+  // A watched source changed (sources/sourceWatches.ts).
+  ...SOURCE_ITEM_EVENTS,
 ] satisfies ReadonlyArray<AutomationEventName>);

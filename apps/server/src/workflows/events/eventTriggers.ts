@@ -18,7 +18,10 @@ import type { AutomationRow, WorkflowStore } from "../WorkflowStore.ts";
 import type { ReadError } from "./candidate.ts";
 import { candidatesFor, type Actor, type Candidate, type EventReads } from "./normalize.ts";
 import type { PullRequestTracker } from "./pullRequestFacts.ts";
+import type { PullRequestReads } from "./pullRequestReads.ts";
 import type { RunWaitListener, RunWaits } from "./runWaits.ts";
+import type { SourceEnvelope } from "../sources/sourceWatches.ts";
+import { liveSince, scopeOf, watchMatches } from "../sources/watch.ts";
 import {
   ACTORS,
   buildIndex,
@@ -47,7 +50,7 @@ import {
 
 const MINUTE_MS = 60_000;
 
-type Envelope = Readonly<Record<string, unknown>> & {
+export type Envelope = Readonly<Record<string, unknown>> & {
   readonly event: string;
   readonly id: string;
   readonly projectId: string;
@@ -90,8 +93,10 @@ export interface EventTriggerDependencies {
   readonly launchRun: LaunchRun;
   /** Runs whose `w.waitFor({ on })` steps want events too. */
   readonly runWaits: RunWaits;
-  /** Derives `pr.*` facts from pull request syncs. */
+  /** Derives `pr.*` facts from pull request syncs, full and per link. */
   readonly pullRequests: PullRequestTracker;
+  /** Host reads for pull request details, once the server registered them. */
+  readonly pullRequestReads: () => PullRequestReads | undefined;
 }
 
 export const makeEventTriggers = (deps: EventTriggerDependencies) =>
@@ -134,13 +139,26 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.gen(function* () {
         // Pull request facts are transitions, so every sync is seen, wanted or not.
         const facts =
-          event.type === "thread.pull-request-synced" ? deps.pullRequests.observe(event) : [];
+          event.type === "thread.pull-request-synced"
+            ? deps.pullRequests.observe(event)
+            : event.type === "thread.pull-request-link-updated"
+              ? deps.pullRequests.observeLink(event)
+              : [];
         if (event.type === "thread.deleted") deps.pullRequests.forget(event.threadId);
         const current = yield* currentIndex;
         const hits: Array<Extract<Work, { type: "domain" }>["hits"][number]> = [];
         for (const candidate of [...candidatesFor(event), ...facts]) {
-          const subs = current.empty ? [] : current.lookup(candidate.name);
-          const waiting = yield* deps.runWaits.lookup(candidate.name);
+          // A candidate that knows its project skips listeners elsewhere before anything is read
+          // for it (pull request details are host reads).
+          const here = (projectId: string) =>
+            candidate.projectId === undefined || projectId === candidate.projectId;
+          const subs = (current.empty ? [] : current.lookup(candidate.name)).filter(
+            (sub) =>
+              (sub.trigger.scope ?? "project") !== "project" || here(sub.automation.project_id),
+          );
+          const waiting = (yield* deps.runWaits.lookup(candidate.name)).filter((listener) =>
+            here(listener.projectId),
+          );
           if (subs.length > 0 || waiting.length > 0) hits.push({ candidate, subs, waiting });
         }
         if (hits.length > 0) yield* enqueue({ type: "domain", event, hits });
@@ -184,6 +202,30 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
         });
       }).pipe(logged("publishing"));
 
+    /** A watched source changed (sources/sourceWatches.ts). */
+    const sourceEvent = (envelope: SourceEnvelope) =>
+      Effect.gen(function* () {
+        const current = yield* currentIndex;
+        const subs = current.empty ? [] : current.lookup(envelope.event);
+        const waiting = (yield* deps.runWaits.lookup(envelope.event)).filter((listener) => {
+          const { automation, startedAt } = listener;
+          if (!automation || startedAt === undefined) return false;
+          const watcher = { scope: scopeOf(automation), startedAt };
+          return (listener.watches ?? []).some((watch) => watchMatches(watcher, watch, envelope));
+        });
+        if (subs.length === 0 && waiting.length === 0) return;
+        yield* enqueue({
+          type: "ready",
+          envelope,
+          subs,
+          waiting,
+          context: { fromAutomation: Effect.succeed(false), depth: 0 },
+        });
+      }).pipe(logged("publishing"));
+
+    /** Every live automation trigger that watches a source. */
+    const watchingTriggers = currentIndex.pipe(Effect.map((current) => current.watches));
+
     /** A turn or thread automations started: the thread's first message, or this turn's, was theirs. */
     const automationCaused = (event: OrchestrationV2DomainEvent, reads: EventReads) =>
       Effect.gen(function* () {
@@ -209,6 +251,13 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
           if (!context.actor || !allowed.includes(context.actor)) return false;
         }
         if (!whereMatches(trigger.where, envelope)) return false;
+        // A trigger watching a source takes only that source's changes, and only to its fields.
+        // Only a trigger watching a source gets its changes, so nobody sees another's sources.
+        if (envelope.sourceId !== undefined || trigger.watch) {
+          // A trigger watches from when its live version went live or it was switched on.
+          const watcher = { scope: scopeOf(automation), startedAt: liveSince(automation) };
+          if (!trigger.watch || !watchMatches(watcher, trigger.watch, envelope)) return false;
+        }
         if (trigger.includeAutomationThreads !== true && (yield* context.fromAutomation))
           return false;
         return true;
@@ -289,6 +338,7 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
               .pipe(Effect.orElseSucceed(() => null)),
           ),
           threads,
+          pullRequests: deps.pullRequestReads(),
         };
         const caused = yield* Effect.cached(automationCaused(event, reads));
         for (const { candidate, subs, waiting } of item.hits) {
@@ -330,7 +380,7 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.forever,
     );
 
-    return { offer, automationEvent, invalidate, worker };
+    return { offer, automationEvent, sourceEvent, watchingTriggers, invalidate, worker };
   });
 
 export type EventTriggers = Effect.Success<ReturnType<typeof makeEventTriggers>>;

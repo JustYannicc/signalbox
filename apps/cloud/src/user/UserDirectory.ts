@@ -21,6 +21,10 @@ import type {
   LinkedToken,
 } from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
+import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiObject.ts";
+import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
+import type { LocalKeysView, LocalModelAuthorization } from "../localKeys/localModelAccess.ts";
+import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type {
   PreviewSetupApplied,
@@ -122,6 +126,16 @@ export interface UserObjectApi {
     readonly secret: string;
     readonly provider: LinkedProvider;
   }) => Promise<LinkedToken>;
+  /** A new key for the harnesses on one of the user's computers (`localKeys/LocalKeys.ts`). */
+  readonly createLocalKey: (label: string, options?: KeyOptions) => Promise<CreatedKey>;
+  readonly localKeys: () => Promise<LocalKeysView>;
+  readonly revokeLocalKey: (id: string) => Promise<void>;
+  /** A ModelGateway request with a local key: which pool it may use (`localKeys/localModelAccess.ts`). */
+  readonly authorizeLocalModel: (secret: string) => Promise<LocalModelAuthorization>;
+  readonly recordLocalModelRequest: (input: {
+    readonly keyId: string;
+    readonly usage: ModelUsage | null;
+  }) => Promise<void>;
   /** Production: a one-time claim on this user's setup for a preview (`previewSetup/`). */
   readonly issuePreviewSetupCode: (input: {
     readonly origin: string;
@@ -161,6 +175,13 @@ export interface UserObjectApi {
     readonly driveId: string;
     readonly request: PublishRequest;
   }) => Promise<PublishResult>;
+  /**
+   * The idle-chat sweep as of `asOfMs` instead of now, for previews' test
+   * clock (`http/threadKindRoutes.ts`). What it archived.
+   */
+  readonly sweepThreadKinds: (
+    asOfMs: number,
+  ) => Promise<{ readonly archived: ReadonlyArray<string> }>;
 }
 
 type Method = keyof UserObjectApi;
@@ -184,6 +205,15 @@ export class UserDirectory extends Context.Service<
     readonly connect: (
       session: { readonly userId: string; readonly sessionId: string },
       request: Request,
+    ) => Effect.Effect<Response, UserObjectError>;
+    /**
+     * Hands a public API call to the user's object (`api/apiObject.ts`). The
+     * Worker checked only the credential's signature; the object checks the rest.
+     */
+    readonly callApi: (
+      userId: string,
+      request: Request,
+      credential: ApiCredential,
     ) => Effect.Effect<Response, UserObjectError>;
   }
 >()("@signalbox/cloud/user/UserDirectory") {}
@@ -211,6 +241,11 @@ const METHODS = Object.keys({
   connectionLinks: true,
   revokeConnectionLink: true,
   linkedConnections: true,
+  createLocalKey: true,
+  localKeys: true,
+  revokeLocalKey: true,
+  authorizeLocalModel: true,
+  recordLocalModelRequest: true,
   linkedToken: true,
   issuePreviewSetupCode: true,
   redeemPreviewSetup: true,
@@ -222,6 +257,7 @@ const METHODS = Object.keys({
   driveAccess: true,
   readableDrives: true,
   publishBranch: true,
+  sweepThreadKinds: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;
 
 /** Results that cross RPC encoded, decoded on arrival. */
@@ -265,12 +301,20 @@ export interface UserObjectNamespace {
  * `localWorkerd`: local workerd has no jurisdictions, so `wrangler dev` names
  * objects in the plain namespace. Deployments always use the EU one.
  */
+export const userObjectStub = (
+  namespace: UserObjectNamespace,
+  userId: string,
+  options: { readonly localWorkerd: boolean },
+) => {
+  const ids = options.localWorkerd ? namespace : namespace.jurisdiction(USER_OBJECT_JURISDICTION);
+  return namespace.get(ids.idFromName(userId));
+};
+
 export const layerDurableObjects = (
   namespace: UserObjectNamespace,
   options: { readonly localWorkerd: boolean },
 ) => {
-  const ids = options.localWorkerd ? namespace : namespace.jurisdiction(USER_OBJECT_JURISDICTION);
-  const stubFor = (userId: string) => namespace.get(ids.idFromName(userId));
+  const stubFor = (userId: string) => userObjectStub(namespace, userId, options);
   return Layer.succeed(
     UserDirectory,
     UserDirectory.of({
@@ -279,10 +323,21 @@ export const layerDurableObjects = (
         Effect.tryPromise({
           try: () => {
             const headers = new Headers(request.headers);
+            // Only `callApi` may say a request is an API call; a client can't.
+            headers.delete(API_HEADER);
             headers.set(CONNECTION_HEADER, encodeConnectionInfo({ sid: session.sessionId }));
             return stubFor(session.userId).fetch(new Request(request, { headers }));
           },
           catch: (cause) => new UserObjectError({ operation: "connect", cause }),
+        }),
+      callApi: (userId, request, credential) =>
+        Effect.tryPromise({
+          try: () => {
+            const headers = new Headers(request.headers);
+            headers.set(API_HEADER, encodeApiCredential(credential));
+            return stubFor(userId).fetch(new Request(request, { headers }));
+          },
+          catch: (cause) => new UserObjectError({ operation: "callApi", cause }),
         }),
     }),
   );

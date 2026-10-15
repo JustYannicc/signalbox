@@ -18,6 +18,12 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { DriveObjectNamespace } from "../drive/DriveDirectory.ts";
+import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
+import {
+  isRunnerAttachmentsPath,
+  serveRunnerAttachments,
+} from "../attachments/runnerAttachments.ts";
+import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -49,6 +55,7 @@ import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import { scriptedProviderEnabled } from "./scriptedProvider.ts";
+import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
 
 /**
  * One per thread, named by its thread id, always in the EU jurisdiction. It
@@ -57,7 +64,8 @@ import { scriptedProviderEnabled } from "./scriptedProvider.ts";
  * in over a WebSocket (see `runner/`).
  *
  * Work after a commit runs from the object's alarm: one scripted step per
- * firing, the summary outbox, then the machine lease. Alarms are durable and
+ * firing, the summary outbox, the machine lease, then its linked pull
+ * requests' sync (`pullRequests/PullRequestSync.ts`). Alarms are durable and
  * retried, and the object re-arms one whenever it wakes with work
  * outstanding, so neither an eviction nor a deploy strands a turn, a sidebar
  * update or a machine.
@@ -68,7 +76,11 @@ import { scriptedProviderEnabled } from "./scriptedProvider.ts";
  */
 
 export interface ThreadObjectEnv
-  extends MachineBackend.MachineBackendEnv, CloudAnalytics.CloudAnalyticsEnv, PreviewEnv {
+  extends
+    MachineBackend.MachineBackendEnv,
+    CloudAnalytics.CloudAnalyticsEnv,
+    PreviewEnv,
+    GitHub.GitHubEnv {
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly USERS: UserDirectory.UserObjectNamespace;
@@ -78,7 +90,9 @@ export interface ThreadObjectEnv
   readonly SCRIPTED_PROVIDER?: string;
   /** Drives' objects and packs (`drive/`). Turns work in a drive only when both are bound. */
   readonly DRIVES?: DriveObjectNamespace;
-  readonly DRIVE_PACKS?: PackBucket;
+  /** Also where the thread's attachments live (`attachments/`), under `DRIVE_PACKS_PREFIX`. */
+  readonly DRIVE_PACKS?: PackBucket & AttachmentObjects;
+  readonly DRIVE_PACKS_PREFIX?: string;
 }
 
 /** Time between streamed chunks of a scripted reply. */
@@ -165,6 +179,10 @@ const makeRuntime = (
         }),
       ),
       Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
+      // Its linked pull requests' sync reads GitHub only through the API, with the owner's token.
+      Layer.provideMerge(
+        PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
+      ),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
@@ -337,13 +355,17 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   /**
    * HTTP into the object, all routed by the Worker: requests to the thread's
    * preview origins, the Runner's preview tunnel, its session API
-   * (`session/sessionRoutes.ts`), and the Runner's socket.
+   * (`session/sessionRoutes.ts`) and attachments (`attachments/runnerAttachments.ts`),
+   * and the Runner's socket.
    */
   override async fetch(request: Request) {
     const preview = this.gateway.serve(request);
     if (preview !== null) return preview;
     const { pathname } = new URL(request.url);
     if (pathname === PREVIEW_TUNNEL_PATH) return this.gateway.acceptTunnel();
+    if (isRunnerAttachmentsPath(pathname)) {
+      return this.runtime.runPromise(serveRunnerAttachments(request, attachmentStorage(this.env)));
+    }
     if (isSessionApiPath(pathname)) {
       return handleSessionRequest(request, (effect) => this.runtime.runPromise(effect));
     }
@@ -420,7 +442,12 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         );
       }),
     );
-    if (hasWork) await this.setAlarmNoLaterThan(await this.now());
+    if (hasWork) return this.setAlarmNoLaterThan(await this.now());
+    // An alarm that fires now sets the next pull request read itself.
+    const pullRequestsAt = await this.runtime.runPromise(
+      PullRequestSync.PullRequestSync.use((sync) => sync.dueAt),
+    );
+    if (pullRequestsAt !== null) await this.setAlarmNoLaterThan(pullRequestsAt);
   }
 
   /**
@@ -628,6 +655,16 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       ),
     );
     this.stepFailures = step.ok ? 0 : this.stepFailures + 1;
+    // Before the summary goes out: a synced pull request changes the summary too.
+    const pullRequestsWakeAt = await this.runtime.runPromise(
+      PullRequestSync.PullRequestSync.use((sync) => sync.sync).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("pull request sync failed", Cause.pretty(cause)).pipe(
+            Effect.as(now + retryDelay(1)),
+          ),
+        ),
+      ),
+    );
     if (now >= this.nextDeliveryAt) {
       const delivered = await this.runtime.runPromise(
         deliverPendingSummary.pipe(
@@ -651,6 +688,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.nextDeliveryAt > 0 ? this.nextDeliveryAt : null,
       machineWakeAt,
       diagnosticsWakeAt,
+      pullRequestsWakeAt,
     ].filter((at) => at !== null);
     if (due.length > 0) await this.setAlarmNoLaterThan(Math.min(...due));
   }

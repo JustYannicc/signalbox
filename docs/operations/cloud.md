@@ -84,7 +84,7 @@ servers it finds listening (upstream's port discovery, `lsof` in the image),
 and carries HTTP and WebSockets to them. The machine accepts no inbound
 connections.
 
-Each thread and port gets its own origin, `<label>.<PREVIEW_DOMAIN>`, because
+Each thread and port gets its own origin, under `PREVIEW_DOMAIN`, because
 dev servers expect to own one (absolute paths, HMR sockets, cookies). Clients
 ask for a link (`signalbox.previews.open`); the link carries a ticket that the
 origin trades for an HttpOnly cookie. Tickets and cookies are signed with the
@@ -97,23 +97,18 @@ Locally, add `PREVIEW_DOMAIN=localhost:8787` to `.dev.vars`: preview origins
 are `http://<label>.localhost:8787`, which browsers resolve to loopback. With
 the local Runner host, every thread sees the dev servers on your own machine.
 
-To turn previews on for a deployment, it needs a domain whose subdomains reach
-the Worker:
-
-1. Pick the domain. Use a registrable domain of its own (the way GitHub serves
-   user content from `githubusercontent.com`), so preview pages aren't
-   same-site with `app.signalbox.run`. Subdomains of `signalbox.run` also work,
-   but are same-site with the app.
-2. In its Cloudflare zone, add a proxied wildcard DNS record (`*`) and a
-   Worker route `*.<domain>/*` for `signalbox-cloud` (in `wrangler.jsonc`'s
-   `routes`, so deploys keep it). Universal SSL covers one level of
-   subdomains.
-3. Set the `PREVIEW_DOMAIN` variable in the `cloud-production` GitHub
-   environment. The deploy passes it; unset, previews are off and clients hide
-   the control.
-
-Pull request previews don't serve dev-server previews: each would need a
-wildcard domain of its own.
+Deployments serve previews from `signalbox-preview.dev`, a registrable domain
+of its own (the way GitHub serves user content from `githubusercontent.com`):
+preview pages are never same-site with `app.signalbox.run` and never get its
+cookies. Universal SSL covers one level of subdomains, so every stage's
+previews sit side by side in that zone, told apart after the label:
+`<label>-app.signalbox-preview.dev` for production and
+`<label>-pr<number>.signalbox-preview.dev` for a pull request's preview.
+`PREVIEW_DOMAIN` holds that pattern (`*-app.signalbox-preview.dev`; a plain
+domain means `*.<domain>`). `apps/cloud/infra/stage.ts` sets it per stage;
+`apps/cloud/alchemy.run.ts` keeps one proxied wildcard record for the zone and
+gives each stage's Worker a route for its own pattern only, so no route relies on being more specific
+than another.
 
 ### Machines on boat
 
@@ -167,13 +162,13 @@ a remote repo is heavy; every other thread (a chat, or a task in My Drive) is
 light.
 
 - **Light:** a Cloudflare Container bound to the thread's own object
-  (`containers` in `wrangler.jsonc`, `basic`: ¼ vCPU, 1 GiB, 4 GB disk),
+  (`THREADS` in `apps/cloud/alchemy.run.ts`, `basic`: ¼ vCPU, 1 GiB, 4 GB disk),
   started in about a second with a fresh disk and stopped after a 30-second
   idle tail. Its files come from the drive and its session from the thread,
   so the fresh disk loses nothing. The container stops by itself ten minutes
   after its object goes idle, so a thread object that is gone cannot leak one.
   It runs the Runner image built with the Worker: the deploy bundles the
-  Runner (`vp run runner:bundle` in `apps/server`) and wrangler builds
+  Runner (`vp run runner:bundle` in `apps/server`) and Alchemy builds
   `apps/server/src/signalbox/runner/image/Dockerfile` from it, so the light
   machine and the Worker always speak the same protocol. A deploy rolls the
   containers, which the thread treats as a lost machine.
@@ -268,6 +263,16 @@ A turn on a model its pool doesn't serve is refused at turn start
 offered only where `SCRIPTED_PROVIDER=1`: `wrangler dev` and tests, never
 production.
 
+#### Connectors in local harnesses
+
+The local harness setup (`apps/cloud/src/localKeys/localSetup.ts`) also adds
+an Executor as the MCP server `signalbox` in Codex and Claude Code when the
+`EXECUTOR_MCP_URL` variable is set in the GitHub environment (the Executor's
+MCP endpoint, e.g. `https://executor.example/mcp`). Unset, setup adds none and
+removes one an earlier run added. Each harness signs in to the Executor with its
+own MCP sign-in (`/mcp` in Claude Code, `codex mcp login signalbox`), and
+`--undo` removes the entry again. Previews use the same variable.
+
 #### CLIProxyAPI updates
 
 The `CLIProxyAPI release sync` workflow checks upstream daily. The shared
@@ -302,7 +307,7 @@ server's harnesses use instead of their own hub. It forwards through the same
 reaches the pool object straight from the cloud Worker; #158 moves self-hosted
 use onto the gateway.
 
-`wrangler dev` and `wrangler deploy` build the image with Docker, so local
+`wrangler dev` and the Alchemy deploy build the image with Docker, so local
 development needs Docker running. Containers need the Cloudflare account on the
 Workers Paid plan; on any other plan every deploy fails at
 `/containers/me`. Each preview gets its own container application,
@@ -382,9 +387,9 @@ Clients from before folders still get `sections.*`, served as a view of the
 folders (`legacySections.ts`). A pool placed at a folder made since is stored
 as a `folder` level, which a build from before folders can't read.
 
-`wrangler dev` keeps the bucket locally. Deployments need both buckets
-created once (`wrangler r2 bucket create signalbox-drives --jurisdiction eu`,
-and the same for `-preview`); without them the deploy fails.
+`wrangler dev` keeps the bucket locally. Both buckets are in the stack and
+retained: no stage's destroy ever deletes one, and every stage that declares
+them keeps their settings (no lifecycle rules, CORS or public access).
 
 The preview bucket may still contain keys written before PR prefixes existed.
 A preview whose prefixed read misses falls back to the unprefixed key, so
@@ -394,6 +399,41 @@ workflow manually with `cleanup_legacy_preview_packs` enabled once, after every
 preview that was open when prefixes landed has closed (a redeploy isn't enough:
 it still reads the old keys). It deletes only unprefixed keys in
 `signalbox-drives-preview`.
+
+### Chats and tasks
+
+Each user object keeps whether their threads are chats or tasks
+(`apps/cloud/src/user/UserThreadKinds.ts`, #46). A thread's first message is
+classified once, before its turn starts, by a semantic decision model: Jev
+(`TYPESAFE_API_KEY`) or OpenAI's Decisions API (`OPENAI_API_KEY`). With both
+keys set, Jev is asked unless `THREAD_KIND_CLASSIFIER=openai`. Without either,
+nothing is classified and every thread stays a task. The call times out after
+1.5 seconds and its span carries no title or message text. The question is the
+one the classifier benchmark measured, so change it only with a new run.
+
+Idle chats archive themselves on the user object's alarm, which only this
+uses. Threads from before kinds have no record and stay tasks. Previews and `wrangler dev` set
+`THREAD_KIND_TEST_CLOCK=1`, which serves `POST /api/cloud/thread-kinds/sweep`
+with `{"asOf": "<ISO time>"}`: it runs the caller's sweep as if it were that
+time, so archiving can be tried without waiting a week. Everywhere else the
+route is a 404.
+
+### Attachments
+
+Pasted screenshots and files share the drives bucket, under
+`<preview prefix>attachments/` (`apps/cloud/src/attachments/`), so a preview's
+attachments go with its prefix. A client uploads to a signed URL and gets a
+`pending-…` id, stored under `attachments/pending/`; sending the message copies
+each upload under an id of the thread, derived from the command so a retry
+rewrites the same copy. Uploads nobody sent are swept after a day, beside the
+next upload; an R2 lifecycle rule on `attachments/pending/` would do the same
+without the sweep. Clients load a sent attachment through the same signed
+`/api/assets` URLs as tools' images (`apps/cloud/src/assets/`), issued only to
+its uploader and to people who can see its thread. Limits are the contract's (`chatAttachment.ts`): 10 MiB
+per image, 50 MiB per file, 80 MiB of images and 100 attachments per message.
+Before each turn the Runner downloads every attachment the thread's messages
+hold into the adapters' attachments directory with its session token, so a
+new machine after a sleep has the earlier ones too.
 
 ### Secrets
 
@@ -479,6 +519,12 @@ shared like any drive. Its drive keeps GitHub as its home
   `/api/drive/branch/publish` with the drive token. The thread and drive come
   from the token, never the request, and the owner's object runs the git
   panel's `GitHubBranches.publish` (`runner-protocol/src/BranchProtocol.ts`).
+- **The pull request it opens is linked to the thread, and the thread keeps
+  it current.** The thread object's alarm reads linked pull requests from
+  GitHub with the owner's token (`thread/pullRequests/PullRequestSync.ts`),
+  and a change goes out as `thread.pull-request-synced` with the whole thread,
+  never upstream's `thread.pull-request-link-updated`: automations derive
+  `pr.*` facts from `thread.pull-request-synced` only.
 - **No GitHub credential reaches a machine.** Users connect GitHub through
   WorkOS Pipes, which keeps and refreshes their OAuth tokens. Their own object
   only records that they connected, and as whom, and asks Pipes for a token
@@ -611,20 +657,37 @@ yarn the agent's shell runs.
 
 ## Deploying
 
-`.github/workflows/deploy-cloud.yml` builds the web app and runs `wrangler
-deploy` with the Worker's secrets attached to the new version:
+Everything the cloud runs on is one Alchemy stack, `apps/cloud/alchemy.run.ts`:
+both Workers, the Durable Objects, the thread and pool containers, the drive
+buckets, secrets and custom domains. `.github/workflows/deploy-cloud.yml`
+deploys one stage of it (`apps/cloud/infra/stage.ts`):
 
 - **Production:** every push to `main` that touches the cloud or what it serves,
-  and manual runs from `main`, deploy `app.signalbox.run`.
-- **Previews:** same-repository pull requests opened by `JustYannicc` deploy
-  `preview-<number>.signalbox.run`. Each preview is its own Worker
-  (`signalbox-cloud-pr-<number>`, the `preview` environment in
-  `wrangler.jsonc`) with its own Durable Objects, so it never shares users or
-  sessions with production. Closing the pull request deletes it.
+  and manual runs from `main`, deploy the `production` stage at
+  `app.signalbox.run`.
+- **Previews:** same-repository pull requests opened by `JustYannicc` deploy the
+  `pr-<number>` stage at `preview-<number>.signalbox.run`. Each preview is its
+  own Worker (`signalbox-cloud-pr-<number>`) with its own Durable Objects, so it
+  never shares users or sessions with production. Closing the pull request
+  destroys the stage. The same run plans the `production` stage, so the pull
+  request shows what merging it would do to production.
+
+Every deploy plans first (`alchemy deploy --dry-run`, in the job summary) and
+stops if the plan would replace, delete, orphan or unbind anything
+(`apps/cloud/infra/check-plan.ts`). Production's names, binding names and class
+names are what hold everyone's data: a renamed Worker or binding is a new,
+empty Durable Object namespace. Production's resources are also retained, so
+even a destroy only drops them from Alchemy's state.
+
+Alchemy keeps its state in the account (`Cloudflare.state()`: an
+`alchemy-state-store` Worker and the account's Secrets Store). It manages
+Durable Object migrations itself, so new Durable Object classes go in the stack
+as a new binding; the `migrations` in `wrangler.jsonc` are for `wrangler dev`.
 
 Closing a pull request also deletes its R2 prefix and removes its pool links
-from production. The close workflow removes both Workers and both container
-applications first, then asks production for the rest; if production's cleanup
+from production. The close workflow destroys the preview's stage first (and
+deletes any Worker or container a wrangler-era preview left), then asks
+production for the rest; if production's cleanup
 route fails, the job goes red and the weekly sweep retries. Reopening a pull
 request clears its closed-link marker before deploying the preview again.
 
@@ -639,15 +702,17 @@ Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
 which each preview derives its own session secret.
 
-| Name                           | Kind     | What                                                                                             |
-| ------------------------------ | -------- | ------------------------------------------------------------------------------------------------ |
-| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts: Edit, Account › Containers: Edit and Account › Account Settings: Read |
-| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                                           |
-| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.                          |
-| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                                 |
-| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                  |
-| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                                           |
-| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                             |
+| Name                           | Kind     | What                                                                                                |
+| ------------------------------ | -------- | --------------------------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts, Containers, Workers R2 Storage, Secrets Store and Account Settings: Edit |
+| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                                              |
+| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.                             |
+| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                                    |
+| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                     |
+| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                                              |
+| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                                |
+| `TYPESAFE_API_KEY`             | secret   | Optional. Jev, which tells chats from tasks ([Chats and tasks](#chats-and-tasks))                   |
+| `OPENAI_API_KEY`               | secret   | Optional. OpenAI's Decisions API, the other chat or task classifier                                 |
 
 The production deploy derives the preview-cleanup token from
 `CLOUDFLARE_API_TOKEN`. Keep the same token value in both GitHub environments
@@ -666,7 +731,7 @@ immediate, add a WorkOS webhook endpoint for
 its signing secret as `T3CODE_WORKOS_WEBHOOK_SECRET`. Previews don't receive
 it.
 
-`ENVIRONMENT_ID` in `wrangler.jsonc` is the cloud's identity. Clients key saved
+`ENVIRONMENT_ID` in `apps/cloud/infra/stage.ts` is the cloud's identity. Clients key saved
 connections on it, so never change it for a live deployment.
 
 ### Durable Object migrations
@@ -681,8 +746,8 @@ The Cloud Migrations CI check fails a pull request that does, and reports
 whether its new migrations are additive, so the previous version still runs on
 the migrated schema, or ship-only. Additive means new tables and indexes, new
 columns that are nullable or have a default, and rows in tables the same pull
-request creates. Anything else is ship-only, including a new entry in
-`migrations` in `wrangler.jsonc`. Ship-only never blocks.
+request creates. Anything else is ship-only, including a new Durable Object
+class (an entry in `migrations` in `wrangler.jsonc`). Ship-only never blocks.
 
 ### What a preview starts with
 
@@ -695,7 +760,7 @@ server to server, and takes in the setup. Not signed in on production, or
 signed in as someone else, sign-in just goes on. No secret is shared with pull
 request builds: production lists the origins it answers in
 `PREVIEW_SETUP_ORIGINS`, previews name production in `PREVIEW_SETUP_SOURCE`
-(both in `wrangler.jsonc`).
+(both in `apps/cloud/infra/stage.ts`).
 
 - **Pools are links, not copies.** Each of your pools on the preview, under the
   same id, is backed by a preview link into production's pool, so production

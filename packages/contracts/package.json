@@ -51,6 +51,10 @@
       "types": "./src/signalboxFolders.ts",
       "import": "./src/signalboxFolders.ts"
     },
+    "./signalboxThreadKinds": {
+      "types": "./src/signalboxThreadKinds.ts",
+      "import": "./src/signalboxThreadKinds.ts"
+    },
     "./signalboxPreviews": {
       "types": "./src/signalboxPreviews.ts",
       "import": "./src/signalboxPreviews.ts"
@@ -58,6 +62,10 @@
     "./signalboxPush": {
       "types": "./src/signalboxPush.ts",
       "import": "./src/signalboxPush.ts"
+    },
+    "./signalboxKeys": {
+      "types": "./src/signalboxKeys.ts",
+      "import": "./src/signalboxKeys.ts"
     },
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",

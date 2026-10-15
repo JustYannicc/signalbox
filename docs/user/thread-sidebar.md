@@ -8,8 +8,8 @@ need a separate branch and working directory.
 The icon rail on the left edge of the sidebar switches between two views of your
 threads. **Home** groups them by where they live. **Pipeline** orders them by what
 needs your attention, and is the view the rest of this page describes. Collapsing the
-sidebar hides the view but keeps the rail. The back and forward arrows beside the
-sidebar toggle step through where you've been.
+sidebar hides the view but keeps the rail. **New**, pinned above both views, starts a
+thread. The back and forward arrows beside the sidebar toggle step through where you've been.
 
 To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
 **Settings**.
@@ -51,6 +51,30 @@ Each level can have instructions for agents, its own `AGENTS.md`. Choose **Instr
 folder's menu, or in the menu beside Personal for the top level. Agents follow the top level's
 first, then each folder's on the way down to the thread's own folder. Leave them empty to remove
 them.
+
+### Secrets
+
+Each level can load secrets from a 1Password Environment, so threads there get them as environment
+variables for things like `vp run dev` or tests. Signalbox never shows their values.
+
+1. In the 1Password desktop app, create an Environment under **Developer › View Environments**. You
+   can import a `.env` file there. Copy its ID from **Manage environment › Copy environment ID**.
+2. On 1Password.com, create a service account with read access to that Environment. 1Password shows
+   its token (`ops_…`) only once.
+3. Choose **Secrets…** in a folder's menu, or in the menu beside Personal for the top level, and
+   paste the Environment ID and the token.
+
+You add the token once; it covers all your folders. **Disconnect** in any folder's Secrets stops
+secrets loading everywhere.
+
+- Secrets load when a thread starts. New threads get a change right away; a running thread gets it
+  the next time it starts up again.
+- A thread gets the secrets of every level from the top level down to its folder. When two levels
+  set the same name, the nearer folder wins.
+- Variables the agent needs for its own model access (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `CLAUDE_CODE_OAUTH_TOKEN`) and ones Signalbox sets itself, such as `HOME` or `PATH`, are skipped.
+- Values show as `***` in transcripts, unless the variable is set to show its value by default in
+  1Password. Values of 6 characters or fewer aren't hidden.
 
 ### Sections on your own server
 
@@ -125,6 +149,18 @@ To send the same prompt to several models on web or desktop, **Shift-click** mod
 in a new thread's model picker to add or remove them. A regular click returns to a
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
+
+## Chats and tasks
+
+In Signalbox Cloud, every thread is a chat or a task, shown by the icon at the start of its row.
+A chat is for thinking out loud: questions, research, weighing options. A task is work you want
+done. Signalbox picks one from your first message, and a chat that starts changing files becomes a
+task on its own. Click the icon to switch; **⌘Z** undoes it. The kind changes what the agent is
+told, never what it can do.
+
+Tasks leave through **Done** when you hover their row. Chats you leave alone archive themselves
+after seven idle days; hover a chat's icon to see when. Change or turn this off in **Settings →
+General → Archive idle chats after**. Bring an archived chat back from **Settings → Archive**.
 
 ## Pin and reorder threads
 

@@ -1,6 +1,7 @@
 // @effect-diagnostics globalConsole:off globalDate:off - container logs go straight to Workers logs; alarms are wall-clock.
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
@@ -95,8 +96,10 @@ export class PoolObject
       throw new Error("Pool objects must live in the EU jurisdiction.");
     }
     this.runtime = makeRuntime(ctx);
+    const poolObject = ctx.id.toString();
     this.api = makePoolObjectApi(
-      (effect) => this.runtime.runPromise(effect),
+      // Every span the pool records names it (#284); never its name or accounts.
+      (effect) => this.runtime.runPromise(Effect.annotateSpans(effect, "pool.object", poolObject)),
       // Erased, the object is an empty pool again, so a repeated delete still answers.
       async () => {
         await ctx.storage.deleteAll();
@@ -123,6 +126,10 @@ export class PoolObject
 
   rename(...args: Parameters<PoolObjectApi["rename"]>) {
     return this.api.rename(...args);
+  }
+
+  setRouting(...args: Parameters<PoolObjectApi["setRouting"]>) {
+    return this.api.setRouting(...args);
   }
 
   setBacking(...args: Parameters<PoolObjectApi["setBacking"]>) {

@@ -100,6 +100,7 @@ import {
   saveUsagePagePreferences,
   type UsagePagePreferences,
 } from "./usagePagePreferences";
+import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
@@ -1259,11 +1260,15 @@ function UsageEnvironmentFilter({
   readonly onOpenModelPrices: () => void;
 }) {
   const allSelected = selectedEnvironmentIds === null;
-  const label = allSelected
-    ? "All environments"
-    : selectedEnvironments.length === 1
-      ? selectedEnvironments[0]!.label
-      : `${selectedEnvironments.length} environments`;
+  // signalbox: one environment, so this menu only carries status and model prices.
+  const showsEnvironmentUi = useShowsEnvironmentUi();
+  const label = !showsEnvironmentUi
+    ? "Details"
+    : allSelected
+      ? "All environments"
+      : selectedEnvironments.length === 1
+        ? selectedEnvironments[0]!.label
+        : `${selectedEnvironments.length} environments`;
   const hasIssue =
     selectedEnvironments.some((environment) => environment.error !== null) ||
     contractMismatches.length > 0;
@@ -1287,15 +1292,19 @@ function UsageEnvironmentFilter({
         </span>
       </MenuTrigger>
       <MenuPopup align="start">
-        <MenuCheckboxItem
-          checked={allSelected}
-          closeOnClick={false}
-          onCheckedChange={(checked) => onSelectionChange(checked ? null : new Set())}
-        >
-          All environments
-        </MenuCheckboxItem>
-        <MenuSeparator />
-        {environments.map((environment) => {
+        {showsEnvironmentUi ? (
+          <>
+            <MenuCheckboxItem
+              checked={allSelected}
+              closeOnClick={false}
+              onCheckedChange={(checked) => onSelectionChange(checked ? null : new Set())}
+            >
+              All environments
+            </MenuCheckboxItem>
+            <MenuSeparator />
+          </>
+        ) : null}
+        {(showsEnvironmentUi ? environments : []).map((environment) => {
           const checked =
             selectedEnvironmentIds === null ||
             selectedEnvironmentIds.has(environment.environmentId);
@@ -1346,7 +1355,7 @@ function UsageEnvironmentFilter({
             </MenuCheckboxItem>
           );
         })}
-        {environments.length === 0 ? (
+        {showsEnvironmentUi && environments.length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">No environments connected.</p>
         ) : null}
         {showUsageStatus && isPartial ? (

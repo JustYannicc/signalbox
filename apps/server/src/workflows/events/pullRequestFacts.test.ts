@@ -1,31 +1,35 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
+import type { Candidate, EventReads } from "./candidate.ts";
 import { makePullRequestTracker } from "./pullRequestFacts.ts";
+import type { PullRequestReads, Remark } from "./pullRequestReads.ts";
 
-const sync = (snapshot: Record<string, unknown> | null, syncedAt = "2026-10-06T10:00:00.000Z") =>
+const link = (snapshot: Record<string, unknown> | null, syncedAt = "2026-10-06T10:00:00.000Z") => ({
+  host: "github.com",
+  repository: "acme/app",
+  number: 7,
+  url: "https://github.com/acme/app/pull/7",
+  source: "agent",
+  snapshot: snapshot && {
+    title: "T",
+    headBranch: "h",
+    baseBranch: "main",
+    isDraft: false,
+    syncedAt,
+    ...snapshot,
+  },
+});
+
+const sync = (snapshot: Record<string, unknown> | null, syncedAt?: string) =>
   ({
     threadId: "thread-1",
-    payload: {
-      projectId: "project-1",
-      pullRequests: [
-        {
-          host: "github.com",
-          repository: "acme/app",
-          number: 7,
-          url: "https://github.com/acme/app/pull/7",
-          source: "agent",
-          snapshot: snapshot && {
-            title: "T",
-            headBranch: "h",
-            baseBranch: "main",
-            isDraft: false,
-            syncedAt,
-            ...snapshot,
-          },
-        },
-      ],
-    },
+    payload: { projectId: "project-1", pullRequests: [link(snapshot, syncedAt)] },
   }) as never;
+
+/** One pull request's own sync, which carries only its link. */
+const linkSync = (snapshot: Record<string, unknown> | null, syncedAt?: string) =>
+  ({ threadId: "thread-1", payload: link(snapshot, syncedAt) }) as never;
 
 const names = (tracker: ReturnType<typeof makePullRequestTracker>, event: unknown) =>
   tracker.observe(event as never).map((candidate) => candidate.name);
@@ -50,6 +54,44 @@ describe("pull request facts", () => {
     });
   });
 
+  it("folds a pull request's own sync onto what the thread's syncs showed", () => {
+    const tracker = makePullRequestTracker(0);
+    const linkNames = (event: never) => tracker.observeLink(event).map((c) => c.name);
+    expect(names(tracker, sync({ state: "open", checksState: "pending" }))).toEqual([]);
+    const [passed] = tracker.observeLink(linkSync({ state: "open", checksState: "passing" }));
+    expect(passed).toMatchObject({ name: "pr.checks.passed", projectId: "project-1" });
+    expect(linkNames(linkSync({ state: "open", checksState: "passing" }))).toEqual([]);
+    expect(linkNames(linkSync({ state: "merged", checksState: "passing" }))).toEqual(["pr.merged"]);
+    // A later full sync of the same state doesn't repeat it.
+    expect(names(tracker, sync({ state: "merged", checksState: "passing" }))).toEqual([]);
+  });
+
+  it.effect("reads the project from the thread when a pull request's sync comes first", () =>
+    Effect.gen(function* () {
+      const refs: unknown[] = [];
+      const reads = {
+        shell: Effect.succeed({ projectId: "project-9" } as never),
+        threads: {} as never,
+        pullRequests: {
+          remarksSince: () => Effect.succeed([]),
+          failedChecks: (ref) =>
+            Effect.sync(() => {
+              refs.push(ref);
+              return [];
+            }),
+        },
+      } satisfies EventReads;
+      const tracker = makePullRequestTracker(0);
+      const [failed] = tracker.observeLink(linkSync({ state: "open", checksState: "failing" }));
+      expect(failed!.name).toBe("pr.checks.failed");
+      expect(failed!.projectId).toBeUndefined();
+      expect(yield* failed!.build(reads)).toMatchObject({ number: 7, failedChecks: [] });
+      expect(refs).toEqual([
+        { projectId: "project-9", host: "github.com", repository: "acme/app", number: 7 },
+      ]);
+    }),
+  );
+
   it("after a restart, counts only state synced since then", () => {
     const tracker = makePullRequestTracker(Date.parse("2026-10-06T12:00:00.000Z"));
     expect(names(tracker, sync({ state: "merged" }, "2026-10-06T10:00:00.000Z"))).toEqual([]);
@@ -58,4 +100,69 @@ describe("pull request facts", () => {
       "pr.merged",
     ]);
   });
+
+  it.effect(
+    "reads remarks once per moved updatedAt and splits them into comments and reviews",
+    () =>
+      Effect.gen(function* () {
+        const asked: string[] = [];
+        const remark = (id: string, kind: Remark["kind"]): Remark => ({
+          id,
+          kind,
+          author: "reviewer",
+          body: id,
+          path: null,
+          reviewState: null,
+          url: null,
+          at: "2026-10-06T10:05:00.000Z",
+        });
+        const pullRequests: PullRequestReads = {
+          remarksSince: (_ref, since) =>
+            Effect.sync(() => {
+              asked.push(since);
+              return [remark("c1", "issue-comment"), remark("r1", "review")];
+            }),
+          failedChecks: () => Effect.succeed([{ name: "lint", status: "failure", url: null }]),
+        };
+        const reads = {
+          shell: Effect.succeed(null),
+          threads: {} as never,
+          pullRequests,
+        } satisfies EventReads;
+        const build = (candidate: Candidate) => candidate.build(reads);
+
+        const tracker = makePullRequestTracker(0);
+        // The first snapshot has no "before": nothing to read since.
+        expect(
+          names(tracker, sync({ state: "open", updatedAt: "2026-10-06T10:00:00.000Z" })),
+        ).toEqual([]);
+        expect(
+          names(tracker, sync({ state: "open", updatedAt: "2026-10-06T10:00:00.000Z" })),
+        ).toEqual([]);
+        const moved = tracker.observe(
+          sync({ state: "open", updatedAt: "2026-10-06T10:05:00.000Z" }),
+        );
+        expect(moved.map((candidate) => candidate.name)).toEqual(["pr.commented", "pr.reviewed"]);
+        expect(yield* build(moved[0]!)).toMatchObject({ number: 7, remarks: [{ id: "c1" }] });
+        expect(yield* build(moved[1]!)).toMatchObject({ remarks: [{ id: "r1" }] });
+        expect(asked).toEqual(["2026-10-06T10:00:00.000Z"]);
+
+        // A read that failed still says something happened, once, without the details.
+        const unread = tracker.observe(
+          sync({ state: "open", updatedAt: "2026-10-06T10:09:00.000Z" }),
+        );
+        const blind = {
+          ...reads,
+          pullRequests: { ...pullRequests, remarksSince: () => Effect.succeed(null) },
+        };
+        expect(yield* unread[0]!.build(blind)).toMatchObject({ number: 7, remarks: null });
+        expect(yield* unread[1]!.build(blind)).toBeNull();
+
+        const [failed] = tracker.observe(
+          sync({ state: "open", checksState: "failing", updatedAt: "2026-10-06T10:09:00.000Z" }),
+        );
+        expect(failed!.name).toBe("pr.checks.failed");
+        expect(yield* build(failed!)).toMatchObject({ failedChecks: [{ name: "lint" }] });
+      }),
+  );
 });
