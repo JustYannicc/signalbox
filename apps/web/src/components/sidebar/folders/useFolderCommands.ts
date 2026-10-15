@@ -1,6 +1,7 @@
 /**
  * Folder changes, each answering the tree after it or null when it failed.
- * A failure shows the server's reason, which is written for the user.
+ * A failure shows the server's reason, which is written for the user: in a
+ * toast, or (`Attempt`) for the dialog that made it to show inline.
  */
 import {
   isAtomCommandInterrupted,
@@ -15,6 +16,7 @@ import type {
   FolderId,
   FolderLevel,
   FolderMoveInput,
+  OnePasswordEnvironmentId,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
 import { useMemo } from "react";
@@ -44,6 +46,19 @@ async function reported<E>(
   return null;
 }
 
+/** Null when it worked; else why not, or null too when it was cut off (nothing to show). */
+export type Attempt = Promise<{ readonly error: string | null } | null>;
+
+async function attempted<E>(
+  command: Promise<AtomCommandResult<SignalboxFoldersSnapshot, E>>,
+): Attempt {
+  const result = await command;
+  if (result._tag === "Success") return null;
+  if (isAtomCommandInterrupted(result)) return { error: null };
+  const error = squashAtomCommandFailure(result);
+  return { error: error instanceof Error ? error.message : "An error occurred." };
+}
+
 export function useFolderCommands() {
   const create = useAtomCommand(signalboxFolders.createFolder, { reportFailure: false });
   const update = useAtomCommand(signalboxFolders.updateFolder, { reportFailure: false });
@@ -51,6 +66,10 @@ export function useFolderCommands() {
   const remove = useAtomCommand(signalboxFolders.deleteFolder, { reportFailure: false });
   const moveThread = useAtomCommand(signalboxFolders.moveThread, { reportFailure: false });
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, {
+    reportFailure: false,
+  });
+  const setSecrets = useAtomCommand(signalboxFolders.setSecrets, { reportFailure: false });
+  const setOnePassword = useAtomCommand(signalboxFolders.setOnePassword, {
     reportFailure: false,
   });
 
@@ -94,8 +113,27 @@ export function useFolderCommands() {
           "Could not save instructions",
           setInstructions({ environmentId, input: { level, instructions } }),
         ),
+      /** Null stops loading secrets at this level. */
+      setSecrets: (
+        environmentId: EnvironmentId,
+        level: FolderLevel,
+        secretsEnvironmentId: OnePasswordEnvironmentId | null,
+      ): Attempt =>
+        attempted(
+          setSecrets({
+            environmentId,
+            input: {
+              level,
+              secrets:
+                secretsEnvironmentId === null ? null : { environmentId: secretsEnvironmentId },
+            },
+          }),
+        ),
+      /** The user's service account token, for every level; null disconnects it. */
+      setOnePassword: (environmentId: EnvironmentId, token: string | null): Attempt =>
+        attempted(setOnePassword({ environmentId, input: { token } })),
     }),
-    [create, move, moveThread, remove, setInstructions, update],
+    [create, move, moveThread, remove, setInstructions, setOnePassword, setSecrets, update],
   );
 }
 
