@@ -117,7 +117,7 @@ export const makeDirectUploads = (input: {
     if (request.packSize > MAX_DIRECT_PACK_BYTES || request.idxSize > MAX_IDX_BYTES) {
       return { _tag: "too_large" } as const;
     }
-    const uploadId = yield* Effect.orDie((yield* Crypto.Crypto).randomUUIDv4);
+    const uploadId = yield* Effect.orDie((yield* Crypto.Crypto).randomUUIDv4());
     const [pack, idx] = yield* Effect.all(
       [
         presignPut(incomingKey(driveId, uploadId, "pack", prefix)),
