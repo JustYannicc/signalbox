@@ -13,11 +13,11 @@ import { durationMs } from "../stepPolicy.ts";
  * which source an event came from.
  */
 
-export const DEFAULT_EVERY_MS = 5 * 60_000;
+const DEFAULT_EVERY_MS = 5 * 60_000;
 export const MIN_EVERY_MS = 60_000;
 
 /** JSON with object keys sorted, so equal values always print the same. */
-export function canonicalJson(value: unknown): string {
+function canonicalJson(value: unknown): string {
   const sort = (input: unknown): unknown => {
     if (Array.isArray(input)) return input.map(sort);
     if (input === null || typeof input !== "object") return input;
@@ -31,7 +31,7 @@ export function canonicalJson(value: unknown): string {
 }
 
 /** A short, stable digest of a value: equal values, equal fingerprints. */
-export const fingerprint = (value: unknown) =>
+const fingerprint = (value: unknown) =>
   NodeCrypto.createHash("sha256").update(canonicalJson(value)).digest("hex").slice(0, 16);
 
 export const isSourceWatch = Schema.is(WorkflowSourceWatch);
@@ -69,7 +69,7 @@ export function everyMsOf(watch: WorkflowSourceWatch): number {
 }
 
 /** `a.b.c` into a value's own fields; undefined when any part is missing. */
-export function pathValue(value: unknown, path: string): unknown {
+function pathValue(value: unknown, path: string): unknown {
   let current = value;
   for (const part of path.split(".")) {
     if (current === null || typeof current !== "object" || !Object.hasOwn(current, part))
@@ -83,7 +83,7 @@ export function pathValue(value: unknown, path: string): unknown {
  * What an operation answered, without an MCP tool's envelope: Executor passes
  * MCP-backed tools' results through as `{ content, structuredContent }`.
  */
-export function unwrapToolResult(answer: unknown): unknown {
+function unwrapToolResult(answer: unknown): unknown {
   if (answer === null || typeof answer !== "object" || Array.isArray(answer)) return answer;
   const record = answer as Record<string, unknown>;
   if (!("content" in record) || !Array.isArray(record.content)) return answer;

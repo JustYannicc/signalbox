@@ -48,7 +48,7 @@ function sourcePhrase(pattern: string, subject: string): string {
  * A watched source in words, from the operation it reads:
  * `github.actions.listWorkflowRunsForRepo` → "Github workflow runs for repo".
  */
-export function describeSource(operation: string): string {
+function describeSource(operation: string): string {
   const [service = "", ...rest] = operation.split(".");
   const name = serviceIdentity(service)?.name ?? service;
   const words = (rest.at(-1) ?? "")
