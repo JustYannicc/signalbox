@@ -1,12 +1,26 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
+import { Atom } from "effect/reactivity";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { ControlPill } from "../../components/ui/ControlPill";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentServerConfigsAtom } from "../../state/server";
+import { navigationToggleCopy } from "../folders/panel-copy";
 
-function sectionToggleLabel(open: boolean): string {
-  return open ? "Hide sections" : "Browse sections";
+// signalbox: the label follows the panel's own copy (folders on the cloud).
+const toggleCopyAtom = Atom.make((get) =>
+  navigationToggleCopy(
+    [...get(environmentServerConfigsAtom).values()].map(
+      (config) => config.environment.capabilities,
+    ),
+  ),
+).pipe(Atom.withLabel("mobile:section-toggle-copy"));
+
+function sectionToggleLabel(open: boolean, copy = appAtomRegistry.get(toggleCopyAtom)): string {
+  return open ? copy.hide : copy.show;
 }
 
 export function sectionToggleSfSymbol(open: boolean): "folder.fill" | "folder" {
@@ -25,7 +39,7 @@ export function SectionNavigationToggle(props: {
   readonly onPress: () => void;
   readonly variant: "android-header" | "native-toolbar" | "pill";
 }) {
-  const accessibilityLabel = sectionToggleLabel(props.open);
+  const accessibilityLabel = sectionToggleLabel(props.open, useAtomValue(toggleCopyAtom));
   if (props.variant === "android-header") {
     return (
       <AndroidHeaderIconButton

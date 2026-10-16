@@ -16,22 +16,23 @@ To drop the rail and keep only the project tree, turn on **Sidebar (legacy)** in
 
 ## Organize with folders
 
-In Signalbox Cloud, Home shows Personal and every work organization you belong to, side by side.
-You don't switch accounts, and organizations you join show up the next time you sign in. Each has
-its own folders, nested as deep as you like. Choose **New folder** at the bottom of Personal or an
-organization, or **New folder inside** in a folder's menu; the command palette has **New folder**
-too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves its
+In Signalbox Cloud, Home is your top level: your threads and folders sit right in it, and every
+work organization you belong to shows inside it as a level of its own. You don't switch accounts,
+and organizations you join show up the next time you sign in. Your top level and each organization
+have their own folders, nested as deep as you like. Choose **New folder** at the bottom of Home or
+inside an organization, or **New folder inside** in a folder's menu; the command palette has **New
+folder** too. A folder's menu also renames, moves, reorders, and deletes it. Deleting a folder moves its
 folders and threads up a level. No thread or file is deleted.
 
 ### Where threads live
 
-Every thread lives in one place: a folder, or the top level of Personal or an organization. It lives
-where you start it: use the new thread button on a folder, or **New thread** in the menu beside
-Personal or an organization. To move a thread, right-click it and choose **Move to folder…**, or use
-**Move thread to folder…** in the command palette. A thread can move anywhere within its own
-Personal or organization, never between them.
+Every thread lives in one place: a folder, your top level, or the top of an organization. It lives
+where you start it: use the new thread button on a folder or an organization, or **New thread** in
+the **⋯** menu next to **Folders** for your top level. To move a thread, right-click it and choose
+**Move to folder…**, or use **Move thread to folder…** in the command palette. A thread can move
+anywhere within your own levels or within its organization, never between them.
 
-A thread acts as the Personal or organization it starts in, for good: a work thread uses that
+A thread acts as the level it starts in, yours or an organization's, for good: a work thread uses that
 organization's identity and connections, a personal one uses yours. Moving a thread changes what it
 runs on from its next message, its folder's pool and instructions. Its files stay the ones it
 started in.
@@ -39,16 +40,16 @@ started in.
 ### A folder's files
 
 A folder can have its own files: a shared drive, or a folder shared from a My Drive, of the same
-Personal or organization. Pick them under **Files** in the folder's menu, or **No files of its own**.
+owner, you or the organization. Pick them under **Files** in the folder's menu, or **No files of its own**.
 They show as one **Files** row inside the folder; open it to browse them. Threads started in the
-folder work in those files. In a folder without files of its own, they work in the files of its
-Personal or organization. Each drive you're given starts out as a folder of its own, which you can
+folder work in those files. In a folder without files of its own, they work in the files of the
+top level it sits in. Each drive you're given starts out as a folder of its own, which you can
 move, rename, or hand its files to another folder.
 
 ### Instructions
 
 Each level can have instructions for agents, its own `AGENTS.md`. Choose **Instructions…** in a
-folder's menu, or in the menu beside Personal for the top level. Agents follow the top level's
+folder's menu, or in the **⋯** menu next to **Folders** for the top level. Agents follow the top level's
 first, then each folder's on the way down to the thread's own folder. Leave them empty to remove
 them.
 
@@ -61,7 +62,7 @@ variables for things like `vp run dev` or tests. Signalbox never shows their val
    can import a `.env` file there. Copy its ID from **Manage environment › Copy environment ID**.
 2. On 1Password.com, create a service account with read access to that Environment. 1Password shows
    its token (`ops_…`) only once.
-3. Choose **Secrets…** in a folder's menu, or in the menu beside Personal for the top level, and
+3. Choose **Secrets…** in a folder's menu, or in the **⋯** menu next to **Folders** for the top level, and
    paste the Environment ID and the token.
 
 You add the token once; it covers all your folders. **Disconnect** in any folder's Secrets stops
@@ -92,7 +93,7 @@ Folders and sections organize where work lives. **Pinned**, **Active**, **Snooze
 
 ### Drives and sharing
 
-Personal and each organization have a private **My Drive**. In a work organization, choose **New
+Your top level and each organization have a private **My Drive**. In a work organization, choose **New
 shared drive** beside its name to create a drive for the organization; it shows up as a new folder. To share a folder from My Drive, right-click it in
 **Files** and choose **Share folder…**. People you share it with can see that folder and its history.
 Removing someone cuts their access everywhere at once. Threads stay private, even in a shared drive;

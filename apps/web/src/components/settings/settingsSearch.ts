@@ -526,7 +526,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",
-    searchTerms: ["ask before thread pinned section"],
+    searchTerms: ["ask before thread pinned unpin"],
   },
   {
     id: "archive-confirmation",
