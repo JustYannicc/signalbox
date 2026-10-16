@@ -1434,7 +1434,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "bb7af725"
+      "output": "9dce70e8"
     },
     {
       "name": "server.refreshProviders",
@@ -1471,7 +1471,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "4ad97d04"
+      "output": "df01d231"
     },
     {
       "name": "settings.get",
@@ -1486,6 +1486,36 @@
       "access": "write",
       "input": "a5f17099",
       "output": "6d87d19e"
+    },
+    {
+      "name": "signIn.check",
+      "rpc": "signalbox.signIn.check",
+      "access": "read",
+      "input": "85e653bb",
+      "output": "16d11c26"
+    },
+    {
+      "name": "signIn.grant",
+      "rpc": "signalbox.signIn.grant",
+      "access": "write",
+      "humanOnly": true,
+      "input": "64aaff93",
+      "output": "ba3329ab"
+    },
+    {
+      "name": "signIn.grants",
+      "rpc": "signalbox.signIn.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "ba3329ab"
+    },
+    {
+      "name": "signIn.revoke",
+      "rpc": "signalbox.signIn.revoke",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "ba3329ab"
     },
     {
       "name": "sourceControl.cloneRepository",

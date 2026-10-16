@@ -30,6 +30,7 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
+import * as SignInGrants from "../signIn/SignInGrants.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
@@ -192,6 +193,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               drives.services,
               ConnectionLinks.layer,
               LocalKeys.layer,
+              SignInGrants.layer,
             ),
           ),
           // Below the drive services: the files panel reads promised files with it (#406).
@@ -487,6 +489,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   browserSession(input: Parameters<UserObjectApi["browserSession"]>[0]) {
     return this.api.browserSession(input);
+  }
+
+  checkSignIn(input: Parameters<UserObjectApi["checkSignIn"]>[0]) {
+    return this.api.checkSignIn(input);
   }
 
   endBrowser(input: Parameters<UserObjectApi["endBrowser"]>[0]) {

@@ -80,6 +80,7 @@ import {
   automationSettingsScreens,
   automationStackScreens,
 } from "./features/automations/routes"; // signalbox: automations
+import { signInSettingsScreens } from "./features/signIn/routes"; // signalbox: sign-in grants
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectNewRoute } from "./features/projects/AddProjectNewRoute";
@@ -347,6 +348,7 @@ const SettingsContentStack = createV5SheetStackNavigator({
       },
     }),
     ...automationSettingsScreens(), // signalbox: automations
+    ...signInSettingsScreens(), // signalbox: sign-in grants
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
       linking: "scheduled-tasks/new",

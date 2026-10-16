@@ -17,6 +17,7 @@ import {
   GitBranchIcon,
   HardDriveIcon,
   KeyboardIcon,
+  KeyRoundIcon,
   LayersIcon,
   Link2Icon,
   PaletteIcon,
@@ -55,6 +56,7 @@ import {
   useUnsupportedSettingsCapabilities,
 } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { useSignInGrantsEnvironmentId } from "../../state/signalboxSignIn"; // signalbox: sign-in grants
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -90,6 +92,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/pools": LayersIcon, // signalbox
+  "/settings/sign-in": KeyRoundIcon, // signalbox: sign-in grants
   "/settings/integrations": BlocksIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,
@@ -121,9 +124,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
   const unsupportedCapabilities = useUnsupportedSettingsCapabilities(scopeSearch);
+  const signInGrants = useSignInGrantsEnvironmentId() !== null; // signalbox: sign-in grants
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) =>
       (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
+      (item.to !== "/settings/sign-in" || signInGrants) && // signalbox: sign-in grants
       isSettingsPathAvailable(item.to, unsupportedCapabilities),
   );
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();

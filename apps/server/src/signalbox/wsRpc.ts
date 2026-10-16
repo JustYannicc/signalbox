@@ -27,6 +27,7 @@ import { signalboxFoldersWsHandlers } from "./folders/rpc.ts";
 import { signalboxPreviewsWsHandlers } from "./previews/rpc.ts";
 import { signalboxPushWsHandlers } from "./push/rpc.ts";
 import { signalboxKeysWsHandlers } from "./keys/rpc.ts";
+import { signalboxSignInWsHandlers } from "./signIn/rpc.ts";
 import { signalboxRepositoriesWsHandlers } from "./repositories/rpc.ts";
 import { signalboxThreadKindsWsHandlers } from "./threadKinds/rpc.ts";
 
@@ -66,6 +67,7 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
         ...signalboxRepositoriesWsHandlers,
         ...signalboxThreadKindsWsHandlers,
         ...signalboxKeysWsHandlers,
+        ...signalboxSignInWsHandlers,
         [WS_METHODS.accountPoolSubscribe]: () => pools.changes,
         [WS_METHODS.accountPoolSubscribeViews]: () => PoolAccess.poolViews,
         [WS_METHODS.accountPoolSubscribeAdvice]: () => poolUsage.advice,

@@ -139,4 +139,23 @@ export const SIGNALBOX_RPC_REACH = {
     summary: "Make a personal key for a script or a computer's harnesses.",
   }),
   "signalbox.keys.revoke": write({ name: "keys.revoke", summary: "Revoke a personal key." }),
+
+  "signalbox.signIn.subscribe": read({
+    name: "signIn.grants",
+    summary: "Where agents may sign in with your 1Password without asking.",
+  }),
+  // Granting is the person deciding for their agents; an agent never grants itself.
+  "signalbox.signIn.grant": write({
+    name: "signIn.grant",
+    humanOnly: true,
+    summary: "Let agents sign in to a site, or everywhere, without asking.",
+  }),
+  "signalbox.signIn.revoke": write({
+    name: "signIn.revoke",
+    summary: "Stop agents signing in to a site without asking.",
+  }),
+  "signalbox.signIn.check": read({
+    name: "signIn.check",
+    summary: "Whether agents would sign in to a site without asking.",
+  }),
 } as const satisfies Partial<Record<WsRpcMethod, Reach>>;
