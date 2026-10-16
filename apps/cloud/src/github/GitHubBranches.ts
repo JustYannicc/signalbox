@@ -435,15 +435,20 @@ const make = Effect.gen(function* () {
       const ref = `refs/heads/${branch}`;
       // The pack streams from the drive as it goes: a read failing cuts the push, which isn't GitHub's doing.
       let unreadable = false;
-      const pack = packed.pack.pipe(Stream.tapError(() => Effect.sync(() => (unreadable = true))));
+      let sent = 0;
+      const pack = packed.pack.pipe(
+        Stream.tap((bytes) => Effect.sync(() => (sent += bytes.length))),
+        Stream.tapError(() => Effect.sync(() => (unreadable = true))),
+      );
       const request = receivePackRequest({ ref, old, next: head, pack, size: packed.size });
-      const answer = yield* github.api
-        .receivePack(userToken, repository, request.body)
-        .pipe(
-          Effect.mapError((error) =>
-            unreadable ? driveUnavailable() : gitHubRefusal("push")(error),
-          ),
-        );
+      const answer = yield* github.api.receivePack(userToken, repository, request.body).pipe(
+        Effect.tapError(() =>
+          Effect.logWarning("push cut off", { sent, size: packed.size, unreadable }),
+        ),
+        Effect.mapError((error) =>
+          unreadable ? driveUnavailable() : gitHubRefusal("push")(error),
+        ),
+      );
       if (answer.status !== 200) {
         const reason = reasonForStatus(answer.status);
         return yield* refusal(
