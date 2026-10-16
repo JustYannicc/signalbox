@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import packageJson from "../../../../package.json" with { type: "json" };
 import { previewBrowserRelease } from "../../../preview/PreviewBrowser.ts";
+import { GATEWAY_PINS_CHECKED_ON } from "../RunnerGatewayPins.ts";
 
 /**
  * The Runner image's browser (#402) is the one the server's browser pins, so
@@ -25,6 +26,13 @@ describe("Runner image pins", () => {
         `ADD --checksum=sha256:${release.sha256} \\\n  ${release.url.replace(release.version, "${CHROME_HEADLESS_SHELL_VERSION}")} /chrome.zip`,
       );
     }
+  });
+
+  // Which settings and variables move a harness off the gateway changes between
+  // releases, so a bump re-checks them first (#600, `RunnerGatewayPins.ts`).
+  it("installs the harnesses the gateway pins were checked against", () => {
+    expect(arg("CLAUDE_CODE_VERSION")).toBe(GATEWAY_PINS_CHECKED_ON.claudeCode);
+    expect(arg("CODEX_VERSION")).toBe(GATEWAY_PINS_CHECKED_ON.codex);
   });
 
   it("installs the Playwright the server pins", () => {
