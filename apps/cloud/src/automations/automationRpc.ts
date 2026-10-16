@@ -55,6 +55,12 @@ const compileWhere = fail(COMPILE_WHERE);
  */
 export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(function* (options: {
   readonly newThreadModel: Effect.Effect<ModelSelection | null>;
+  /**
+   * Whether publishing vouches for the reviewed version: only a person's app
+   * session can say a person looked at it. Keys, the CLI and MCP may be an
+   * agent holding the person's credential.
+   */
+  readonly personReviews: boolean;
 }) {
   const engine = yield* WorkflowEngine.WorkflowEngine;
   const automations = yield* CloudAutomations;
@@ -171,12 +177,14 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
       ),
     [METHODS.automationsRetryRun]: (input: Payload<typeof METHODS.automationsRetryRun>) =>
       flushed(engine.retryRun({ runId: input.runId, version: input.version })),
-    // People publish in the app, vouching for the version they saw; agents publish through MCP and vouch for nothing.
+    // People publish in the app, vouching for the version they saw; the public API publishes and vouches for nothing.
     [METHODS.automationsPublish]: (input: Payload<typeof METHODS.automationsPublish>) =>
       flushed(
         engine.publish(
           input.automationId,
-          input.version === undefined ? undefined : { version: input.version },
+          options.personReviews && input.version !== undefined
+            ? { version: input.version }
+            : undefined,
         ),
       ),
     [METHODS.automationsDiscardDraft]: (input: Payload<typeof METHODS.automationsDiscardDraft>) =>
