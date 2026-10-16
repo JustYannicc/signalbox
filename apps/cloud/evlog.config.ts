@@ -12,7 +12,9 @@ import { redactContent } from "./src/observability/content.ts";
  * (`nodejs_compat`). The deploy passes them (`alchemy.run.ts`):
  *
  * - `SENTRY_DSN`: wide events as Sentry logs, and errors as Sentry issues.
- * - `POSTHOG_API_KEY`, `POSTHOG_HOST`: wide events as PostHog logs. Off with
+ * - `POSTHOG_API_KEY` and `POSTHOG_HOST`: wide events as PostHog logs. Both
+ *   are required: there is no default host, since Signalbox's PostHog is to be
+ *   an EU project (#358) and evlog's default is US. Off with
  *   `T3CODE_TELEMETRY_ENABLED=false`, the self-hosted server's switch.
  * - `SIGNALBOX_STAGE`: the event's environment. evlog reads `APP_VERSION`
  *   (the release) itself.
@@ -26,7 +28,9 @@ const telemetryOff = ["false", "no", "off", "0", "n"].includes(
 
 const drains = [
   process.env.SENTRY_DSN ? createSentryDrain({ issues: true }) : null,
-  process.env.POSTHOG_API_KEY && !telemetryOff ? createPostHogDrain() : null,
+  process.env.POSTHOG_API_KEY && process.env.POSTHOG_HOST && !telemetryOff
+    ? createPostHogDrain({ host: process.env.POSTHOG_HOST })
+    : null,
 ].filter((drain) => drain !== null);
 
 // Batched per isolate; each unit hands the batch's send to `waitUntil`.

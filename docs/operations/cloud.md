@@ -690,8 +690,9 @@ and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
   issue, and both Workers' own traces through a Cloudflare observability
   destination to Sentry's OTLP endpoint (all of a preview's requests, a tenth
   of production's).
-- `POSTHOG_API_KEY` (and the `POSTHOG_HOST` variable for a non-US project):
-  every event as a PostHog log, filed under its `person.id`.
+- `POSTHOG_API_KEY` with the `POSTHOG_HOST` variable, both required (no
+  default host): every event as a PostHog log. Unset until Signalbox's EU
+  PostHog project exists (#358), so PostHog gets nothing yet.
 
 After each deploy, CI sends one `release` event naming the stage and commit
 (`apps/cloud/infra/release-event.ts`). Without either key the events still go
