@@ -19,6 +19,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
+import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 import {
@@ -280,6 +281,9 @@ const migrations = Migrator.fromRecord({
   }),
   // The values of the thread's secrets, for the ModelGateway to scrub (#591).
   "0010_secret_values": migrateSecretValues,
+  // The thread's browser tabs and their recent changes (#585, `browsing/browsingTables.ts`).
+  // Same id as the one above on purpose: the runner keys by id and name (`storage/migrations.ts`).
+  "0010_browsing": migrateBrowsing,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

@@ -109,6 +109,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.
     poolFeatures: CLOUD_POOL_KINDS,
     signalboxPreviews: identity.previews === true,
+    threadBrowsing: true,
     // Uploaded to R2 and claimed into the thread on send (`attachments/CloudAttachments.ts`).
     ...(identity.attachments === true
       ? {

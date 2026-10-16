@@ -51,6 +51,7 @@ import { handleSessionRequest, isSessionApiPath } from "./session/sessionRoutes.
 import { deliverPendingEvents } from "./eventOutbox.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
+import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import * as ThreadStore from "./ThreadStore.ts";
@@ -185,6 +186,8 @@ const makeRuntime = (
       Layer.provideMerge(
         PullRequestSync.layer.pipe(Layer.provide(GitHub.layer(null, GitHub.gitHubEndpoints(env)))),
       ),
+      // The thread's browser tabs (#585), beside its conversation.
+      Layer.provideMerge(ThreadBrowsing.layer),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
@@ -318,6 +321,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   setMonitors(...args: Parameters<ThreadObjectApi["setMonitors"]>) {
     return this.api.setMonitors(...args);
+  }
+
+  browsing(...args: Parameters<ThreadObjectApi["browsing"]>) {
+    return this.api.browsing(...args);
+  }
+
+  browse(...args: Parameters<ThreadObjectApi["browse"]>) {
+    return this.api.browse(...args);
+  }
+
+  browsingRecord(...args: Parameters<ThreadObjectApi["browsingRecord"]>) {
+    return this.api.browsingRecord(...args);
   }
 
   /** The ModelGateway reporting a request it served for this thread (see `modelGrants.ts`). */

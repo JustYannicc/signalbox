@@ -8,6 +8,7 @@ import type {
 import { useShallow } from "zustand/react/shallow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { BrowsingTabEngine } from "~/browsing/BrowsingTabEngine"; // signalbox: synced tabs (#585)
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
@@ -322,6 +323,16 @@ export function HostedBrowserWebview(props: {
       data-preview-rendering={renderingActive ? "active" : "suspended"}
       data-preview-viewport={runtimeTabId}
     >
+      {/* signalbox: a synced thread's tab follows the record (#585) */}
+      <BrowsingTabEngine
+        threadRef={threadRef}
+        tabId={tabId}
+        runtimeTabId={runtimeTabId}
+        initialUrl={initialUrl}
+        webviewRef={webviewRef}
+        webviewGeneration={webviewGeneration}
+        visible={active}
+      />
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
         {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
           <BrowserDeviceToolbar

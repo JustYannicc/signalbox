@@ -191,6 +191,18 @@
       "types": "./src/automations/runs.ts",
       "default": "./src/automations/runs.ts"
     },
+    "./browsing": {
+      "types": "./src/browsing/browsingRecord.ts",
+      "default": "./src/browsing/browsingRecord.ts"
+    },
+    "./browsing/page-position": {
+      "types": "./src/browsing/pagePosition.ts",
+      "default": "./src/browsing/pagePosition.ts"
+    },
+    "./state/browsing": {
+      "types": "./src/state/browsing.ts",
+      "default": "./src/state/browsing.ts"
+    },
     "./state/automations": {
       "types": "./src/state/automations.ts",
       "default": "./src/state/automations.ts"
