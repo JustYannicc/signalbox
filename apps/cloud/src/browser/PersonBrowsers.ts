@@ -54,6 +54,13 @@ export class PersonBrowsers extends Context.Service<
       readonly threadId: string;
       readonly sessionId: string;
     }) => Effect.Effect<void, SqlError>;
+    /**
+     * The login service's first step (#576): deletes the thread's session and
+     * the one that writes the profile back, saving it, since only that one
+     * could save the profile over a login made after it. The thread's next
+     * session loads the login.
+     */
+    readonly endForSignIn: (threadId: string | null) => Effect.Effect<void, SqlError>;
   }
 >()("@signalbox/cloud/browser/PersonBrowsers") {}
 
@@ -170,27 +177,39 @@ const make = (kernel: KernelApi | null) =>
         return answer;
       }).pipe(traced("PersonBrowsers.open", { "thread.id": threadId }));
 
+    /** Deletes a session, which saves its profile; one Kernel didn't delete stays recorded. */
+    const remove = (api: KernelApi, sessionId: string) =>
+      api.deleteBrowser(sessionId).pipe(
+        Effect.andThen(sessions.ended(sessionId)),
+        // Still open, it keeps counting as the writer until Kernel's timeout deletes it.
+        Effect.catchTags({
+          KernelApiError: (error: KernelApiError) =>
+            logKernelError("ending a person's browser failed")(error),
+        }),
+      );
+
     const end: PersonBrowsers["Service"]["end"] = ({ threadId, sessionId }) =>
       Effect.gen(function* () {
         if (kernel === null) return;
         // Only the thread's own session; another thread's id ends nothing.
         if ((yield* sessions.ofThread(threadId))?.session_id !== sessionId) return;
-        const deleted = yield* kernel.deleteBrowser(sessionId).pipe(
-          Effect.as(true),
-          // Still open, it keeps counting as the writer until Kernel's timeout deletes it.
-          Effect.catchTags({
-            KernelApiError: (error: KernelApiError) =>
-              logKernelError("ending a person's browser failed")(error).pipe(Effect.as(false)),
-          }),
-        );
-        if (deleted) yield* sessions.ended(sessionId);
+        yield* remove(kernel, sessionId);
       }).pipe(
         // Under the same permit as opening, so an open never hands out a session being deleted.
         opening.withPermits(1),
         traced("PersonBrowsers.end", { "thread.id": threadId }),
       );
 
-    return PersonBrowsers.of({ open, end });
+    const endForSignIn: PersonBrowsers["Service"]["endForSignIn"] = (threadId) =>
+      Effect.gen(function* () {
+        if (kernel === null) return;
+        const ending = (yield* sessions.open).filter(
+          (row) => row.writer || row.thread_id === threadId,
+        );
+        yield* Effect.forEach(ending, (row) => remove(kernel, row.session_id), { discard: true });
+      }).pipe(opening.withPermits(1), traced("PersonBrowsers.endForSignIn", {}));
+
+    return PersonBrowsers.of({ open, end, endForSignIn });
   });
 
 /** On `kernel`, or with no person's browser when it's null. */

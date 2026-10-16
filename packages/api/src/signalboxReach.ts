@@ -140,11 +140,13 @@ export const SIGNALBOX_RPC_REACH = {
 
   "signalbox.browsing.subscribe": read({
     name: "browsing.get",
-    summary: "A thread's browser tabs: which one is active and where each was read to.",
+    summary:
+      "A thread's browser tabs: which one is active, where each was read to, and which are shared.",
   }),
   "signalbox.browsing.dispatch": write({
     name: "browsing.change",
-    summary: "Open, navigate, move, switch to, close or position one of a thread's browser tabs.",
+    summary:
+      "Open, navigate, move, switch to, close, position, share or stop sharing one of a thread's browser tabs.",
   }),
 
   "signalbox.push.registerDevice": exempt(

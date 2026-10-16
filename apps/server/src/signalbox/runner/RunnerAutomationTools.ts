@@ -48,6 +48,7 @@ const FORWARDED = [
   "wait_for",
   "list_waits",
   "stop_waiting",
+  "merge_pull_request",
 ] as const;
 
 /**

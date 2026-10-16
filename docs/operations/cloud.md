@@ -785,18 +785,20 @@ Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
 which each preview derives its own session secret.
 
-| Name                           | Kind     | What                                                                                                |
-| ------------------------------ | -------- | --------------------------------------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts, Containers, Workers R2 Storage, Secrets Store and Account Settings: Edit |
-| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                                              |
-| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.                             |
-| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                                    |
-| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                     |
-| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                                              |
-| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                                |
-| `TYPESAFE_API_KEY`             | secret   | Optional. Jev, which tells chats from tasks ([Chats and tasks](#chats-and-tasks))                   |
-| `OPENAI_API_KEY`               | secret   | Optional. OpenAI's Decisions API, the other chat or task classifier                                 |
-| `KERNEL_API_KEY`               | secret   | Optional. Kernel, which runs each person's browser for real sites; unset, machines browse headless  |
+| Name                           | Kind     | What                                                                                                 |
+| ------------------------------ | -------- | ---------------------------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts, Containers, Workers R2 Storage, Secrets Store and Account Settings: Edit  |
+| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                                               |
+| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.                              |
+| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                                     |
+| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                      |
+| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                                               |
+| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                                 |
+| `TYPESAFE_API_KEY`             | secret   | Optional. Jev, which tells chats from tasks ([Chats and tasks](#chats-and-tasks))                    |
+| `OPENAI_API_KEY`               | secret   | Optional. OpenAI's Decisions API, the other chat or task classifier                                  |
+| `KERNEL_API_KEY`               | secret   | Optional. Kernel, which runs each person's browser for real sites; unset, machines browse headless   |
+| `EXECUTOR_LOGIN_SERVICE_URL`   | var      | Optional. Executor's origin for agents' sign-ins from 1Password (`src/signIn/`); needs the token too |
+| `EXECUTOR_LOGIN_SERVICE_TOKEN` | secret   | Optional. Executor's `EXECUTOR_LOGIN_SERVICE_TOKEN`; unset, `sign_in` says it can't read logins      |
 
 The production deploy derives the preview-cleanup token from
 `CLOUDFLARE_API_TOKEN`. Keep the same token value in both GitHub environments

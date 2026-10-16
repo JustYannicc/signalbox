@@ -390,8 +390,12 @@ export const fakeSocket = (): FakeSocket => {
   return { socket, sent };
 };
 
-/** A host over `sockets`, running the object's effects on `runner`. */
-export const hostFor = (runner: ThreadRunner.ThreadRunner["Service"], sockets: Array<WebSocket>) =>
+/** A host over `sockets`, running the object's effects on `runner`; `holds`: its turn waits for reads. */
+export const hostFor = (
+  runner: ThreadRunner.ThreadRunner["Service"],
+  sockets: Array<WebSocket>,
+  holds: () => boolean = () => false,
+) =>
   Effect.map(Effect.context<never>(), (context): RunnerSocketHost => ({
     ctx: {
       getWebSockets: () => sockets,
@@ -401,5 +405,6 @@ export const hostFor = (runner: ThreadRunner.ThreadRunner["Service"], sockets: A
       Effect.runPromiseWith(context)(
         Effect.provideService(effect, ThreadRunner.ThreadRunner, runner),
       ),
+    holdsTurn: () => Promise.resolve(holds()),
     afterChange: () => Promise.resolve(),
   }));

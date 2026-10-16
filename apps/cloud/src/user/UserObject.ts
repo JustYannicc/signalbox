@@ -30,6 +30,7 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
+import * as LoginService from "../signIn/LoginService.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -86,7 +87,8 @@ export interface UserObjectEnv
     PreviewEnv,
     GitHub.GitHubEnv,
     KindClassifier.KindClassifierEnv,
-    PersonBrowsers.PersonBrowsersEnv {
+    PersonBrowsers.PersonBrowsersEnv,
+    LoginService.LoginServiceEnv {
   /**
    * Drives' objects and packs: clients browse and share them through this
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
@@ -164,6 +166,13 @@ const layerAutomationAlarm = (storage: DurableObjectStorage) =>
     }),
   );
 
+/** The login service's side of the object's alarm: its next re-login sweep (#576). */
+const layerLoginAlarm = (storage: DurableObjectStorage) =>
+  Layer.succeed(
+    LoginService.LoginAlarm,
+    LoginService.LoginAlarm.of({ armBy: (atMs) => Effect.promise(() => armBy(storage, atMs)) }),
+  );
+
 /** The idle-chat sweep's side of the object's alarm. */
 const layerAlarm = (storage: DurableObjectStorage) =>
   Layer.succeed(
@@ -185,7 +194,13 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       // Building it only touches the object's own SQLite, which the object can't run without either.
       Layer.orDie,
       Layer.provideMerge(
-        Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
+        Layer.mergeAll(
+          GitHubBranches.layer,
+          UserPreviewSetup.layer,
+          CloudAssets.layer,
+          // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
+          LoginService.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+        ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
               UserShell.layer,
@@ -215,6 +230,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
               layerAlarm(storage),
+              layerLoginAlarm(storage),
               PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
                 Layer.provide(
                   Layer.mergeAll(
@@ -505,6 +521,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.browserSession(input);
   }
 
+  browserSignIn(input: Parameters<UserObjectApi["browserSignIn"]>[0]) {
+    return this.api.browserSignIn(input);
+  }
+
   checkSignIn(input: Parameters<UserObjectApi["checkSignIn"]>[0]) {
     return this.api.checkSignIn(input);
   }
@@ -579,7 +599,8 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   /**
    * Expired sessions' sockets close, idle chats archive themselves
-   * (`UserThreadKinds`), and due crons start. Each re-arms it.
+   * (`UserThreadKinds`), due crons start, and sites Kernel found logged out
+   * are logged in again (`LoginService`). Each re-arms it.
    */
   override async alarm() {
     const next = await this.sockets.expire(await this.now());
@@ -592,6 +613,9 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           ),
           CloudAutomations.use((automations) => automations.wake).pipe(
             Effect.catchCause((cause) => Effect.logError("automation crons failed", { cause })),
+          ),
+          LoginService.LoginService.use((logins) => logins.sweep).pipe(
+            Effect.catchCause((cause) => Effect.logError("re-login sweep failed", { cause })),
           ),
         ],
         { discard: true },

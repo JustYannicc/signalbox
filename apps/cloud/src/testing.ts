@@ -20,6 +20,7 @@ import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
 import type { KernelApi } from "./browser/KernelApi.ts";
+import type { KernelAuth } from "./browser/KernelAuth.ts";
 import * as PersonBrowsers from "./browser/PersonBrowsers.ts";
 import type { AttachmentObjects } from "./attachments/attachmentObjects.ts";
 import { makeMemoryObjects } from "./attachments/attachmentTesting.ts";
@@ -76,6 +77,8 @@ import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LocalKeys from "./localKeys/LocalKeys.ts";
+import type { ExecutorLogins } from "./signIn/ExecutorLogins.ts";
+import * as LoginService from "./signIn/LoginService.ts";
 import * as SignInGrants from "./signIn/SignInGrants.ts";
 import * as LegacySections from "./user/legacySections.ts";
 import * as CloudEngine from "./automations/cloudEngine.ts";
@@ -263,6 +266,7 @@ const makeUserRuntime = (
   /** Replaces the real automations, for tests that watch what they're handed. */
   automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
   kernel: KernelApi | null,
+  logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
@@ -270,9 +274,16 @@ const makeUserRuntime = (
       Layer.provide(Layer.mergeAll(runner, alarm)),
       Layer.provideMerge(
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
-        Layer.mergeAll(GitHubBranches.layer, UserPreviewSetup.layer, CloudAssets.layer).pipe(
+        Layer.mergeAll(
+          GitHubBranches.layer,
+          UserPreviewSetup.layer,
+          CloudAssets.layer,
+          LoginService.layer(logins),
+        ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
+              // Sweeps run when a test asks; nothing arms an alarm here.
+              Layer.succeed(LoginService.LoginAlarm, { armBy: () => Effect.void }),
               UserShell.layer,
               DriveSharing.layer,
               DriveShortcuts.layer,
@@ -347,6 +358,9 @@ export const makeMemoryCloud = (
     readonly automations?: Layer.Layer<CloudAutomations.CloudAutomations>;
     /** Kernel for every person's browser (#574); none unless given, so it's `unconfigured`. */
     readonly kernel?: KernelApi;
+    /** Kernel's Managed Auth and Executor for agents' sign-ins (#576); none unless given. */
+    readonly kernelAuth?: KernelAuth;
+    readonly executorLogins?: ExecutorLogins;
   } = {},
 ) => {
   const users = new Map<
@@ -429,6 +443,7 @@ export const makeMemoryCloud = (
       workflows.layerFor(userId),
       options.automations ?? Layer.empty,
       options.kernel ?? null,
+      { kernel: options.kernelAuth ?? null, executor: options.executorLogins ?? null },
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
@@ -472,7 +487,11 @@ export const makeMemoryCloud = (
     ) => runtime.runPromise(effect);
     // No machine runs in memory, so nothing serves previews.
     const api: ThreadDirectory.ThreadObjectApi = {
-      ...makeThreadObjectApi(run, async () => {}),
+      ...makeThreadObjectApi(
+        run,
+        async () => {},
+        async () => {},
+      ),
       previews: async () =>
         new ReadableStream({
           start: (c) => c.enqueue(new TextEncoder().encode(`${previewsLine([], false)}\n`)),

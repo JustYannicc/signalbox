@@ -96,10 +96,16 @@ invoice being paid in a connected service, or tomorrow morning, and it ends its 
 keeps waking it on failed checks, other people's comments and reviews, and conflicts until it
 merges.
 
-When the work is done, the agent asks to merge instead of merging. You get a needs-you, "Merge
-acme/app#12?", showing the commit it would merge: **merge** merges that commit and deletes its
-branch, **not yet** sends the agent your reason. If new commits land after you approve, nothing
-merges and the agent asks again. To have a project merge on its own when checks pass, have an agent
+When the work is done, the agent asks to merge instead of merging, and the folder's **Merge gate**
+decides. Until checks pass at the latest commit, review threads are resolved and nothing conflicts,
+the agent is sent back with what's missing and you hear nothing. A ready change that's easy to undo
+merges by itself, and its branch is deleted. You get a needs-you, "Merge acme/app#12?", only for a
+change that's hard to undo (a database migration, sign-in or access control, deleting data) or one
+the agent says needs a decision. It shows the commit, the checks, the review state and why it's
+asking: **merge** merges that commit, **not yet** sends the agent your reason. If new commits land
+after the gate read them, nothing merges and the agent asks again.
+
+To have a folder ask you about every merge, or to add its own hard-to-undo paths, have an agent
 customize the built-in **Merge gate** there as a draft, then publish it yourself.
 
 **Thread details → Waiting on** lists what the thread waits for. Open a row to see the run behind

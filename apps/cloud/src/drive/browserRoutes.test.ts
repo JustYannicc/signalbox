@@ -115,6 +115,29 @@ describe("the person's browser from a thread's machine (#574)", () => {
     }),
   );
 
+  it.effect("signs in only for a running turn, through the owner's login service (#576)", () =>
+    Effect.gen(function* () {
+      yield* signIn(cloud);
+      const site = { site: "https://example.com/login" };
+      const idle = yield* post(env, BROWSER_PATHS.signIn, yield* tokenFor(IDLE), site);
+      expect(browserJson.signIn.decode(idle.text)).toEqual({
+        _tag: "not_allowed",
+        site: "https://example.com/login",
+        message: "Only a running turn signs agents in.",
+      });
+      // This cloud has no Managed Auth, and the login service says so in words.
+      const running = yield* post(env, BROWSER_PATHS.signIn, yield* tokenFor(RUNNING), site);
+      expect(browserJson.signIn.decode(running.text)).toEqual({
+        _tag: "failed",
+        site: "example.com",
+        message: "This Signalbox has no cloud browser to sign in with.",
+      });
+      expect(
+        yield* post(env, BROWSER_PATHS.signIn, yield* tokenFor(RUNNING), { url: "x" }),
+      ).toEqual({ status: 400, text: "Unreadable request." });
+    }),
+  );
+
   it.effect("answers unconfigured in a cloud without a Kernel key", () =>
     Effect.gen(function* () {
       // The owner's object answers; no Kernel behind it.
