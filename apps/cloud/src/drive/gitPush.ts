@@ -46,15 +46,16 @@ export interface HostLimits {
 /**
  * GitHub refuses files over 100 MB and pushes over 2 GB (docs: "Repository
  * limits"). A push leaves from a Worker, though, and on the current
- * Cloudflare plan a Worker's request is cut off past its 100 MB request body
- * limit: an 80 MB push went through and a 110 MB one was cut off (#660). So
- * a push stops below it, and says why, until the plan changes.
+ * Cloudflare plan the connection drops once a request's body passes 100 MiB,
+ * its plan's body limit (measured in #660: cut off at 104,869,457 bytes of a
+ * 566 MB push). So a push stops below it, and says why, until the plan
+ * changes (#684).
  */
 export const GITHUB_LIMITS: HostLimits = {
   host: "GitHub",
   maxFileBytes: 100 * 1024 * 1024,
   maxPushBytes: 95 * 1024 * 1024,
-  pushLimitReason: "on the current Cloudflare plan, which caps a request's body at 100 MB",
+  pushLimitReason: "on the current Cloudflare plan, which cuts a request off past 100 MB",
 };
 
 const ZERO_OID: Oid = "0".repeat(40);
