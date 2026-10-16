@@ -32,6 +32,7 @@ const cloud = makeMemoryCloud({
     CloudAutomations,
     CloudAutomations.of({
       threadEvents: () => Effect.void,
+      driveEvents: () => Effect.void,
       wake: Effect.void,
       flush: Effect.void,
       start: Effect.void,

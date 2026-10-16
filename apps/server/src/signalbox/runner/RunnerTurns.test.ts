@@ -113,7 +113,11 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
       providerThreadId: providerThread.id,
       nodeId: NodeId.make(`node-${n}`),
       runAttemptId: RunAttemptId.make(`attempt-${n}`),
+      nativeTurnRef: null,
+      ordinal: n,
       status: "running",
+      startedAt: null,
+      completedAt: null,
     },
   }) as unknown as ProviderAdapterV2Event;
 
@@ -125,6 +129,7 @@ const makeFakeAdapter = Effect.gen(function* () {
   const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
   const loaded = yield* Deferred.make<void>();
   const calls: Array<string> = [];
+  const opened = { count: 0 };
   const session = {
     providerSessionId: ProviderSessionId.make("session-1"),
     providerSession: {},
@@ -142,13 +147,20 @@ const makeFakeAdapter = Effect.gen(function* () {
       ),
     interruptTurn: (input: { readonly providerTurnId: string }) =>
       Effect.sync(() => void calls.push(`interrupt ${input.providerTurnId}`)),
+    steerTurn: (input: {
+      readonly providerTurnId: string;
+      readonly message: { readonly messageId: string };
+    }) =>
+      Effect.sync(
+        () => void calls.push(`steer ${input.providerTurnId} ${input.message.messageId}`),
+      ),
   } as unknown as ProviderAdapterV2SessionRuntime;
   const adapter = {
     instanceId,
     driver,
-    openSession: () => Effect.succeed(session),
+    openSession: () => Effect.sync(() => (opened.count++, session)),
   } as unknown as ProviderAdapterV2["Service"];
-  return { adapter, events, loaded, calls };
+  return { adapter, events, loaded, calls, opened };
 });
 
 describe("RunnerTurns", () => {
@@ -170,17 +182,130 @@ describe("RunnerTurns", () => {
           yield* Deferred.succeed(fake.loaded, undefined);
           yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
           yield* Effect.yieldNow;
-          // Stopped before the harness reported its turn id, then the next run starts.
+          // Stopped before the harness reported its turn id, then the next run is handed over.
           yield* turns.interrupt(RunId.make("run-1"));
           yield* turns.start({ turn: turnFor(2), modelToken: "token-2" });
           yield* Effect.yieldNow;
           yield* Queue.offer(fake.events, providerTurnStarted(1));
-          yield* Queue.offer(fake.events, providerTurnStarted(2));
-          for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+          yield* settle;
+          // The next turn waits until the stopped one has ended on the harness.
+          expect(fake.calls).toEqual(["start run-1", "interrupt native-1"]);
+          yield* Queue.offer(fake.events, turnEnded(1));
+          yield* settle;
 
-          expect(fake.calls).toEqual(["start run-1", "start run-2", "interrupt native-1"]);
+          expect(fake.calls).toEqual(["start run-1", "interrupt native-1", "start run-2"]);
         }),
       ),
+  );
+
+  it.effect("stops the turn the thread no longer wants when it hands over the next one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const reported: Array<RunnerItem> = [];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* settle;
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* settle;
+        // The thread ended run 1, but its `interrupt` never reached this machine (#562).
+        yield* turns.start({ turn: turnFor(2), modelToken: "token-2" });
+        yield* settle;
+        expect(fake.calls).toEqual(["start run-1", "interrupt native-1"]);
+
+        yield* Queue.offer(fake.events, turnEnded(1));
+        yield* settle;
+        expect(fake.calls).toEqual(["start run-1", "interrupt native-1", "start run-2"]);
+        expect(reported.map(label)).not.toContain("turn.failed run-2");
+      }),
+    ),
+  );
+
+  it.effect("restarts the harness's session when a stopped turn never ends", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const reported: Array<RunnerItem> = [];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* settle;
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* settle;
+        // A command that ignores the interrupt: the harness never ends the turn.
+        yield* turns.interrupt(RunId.make("run-1"));
+        yield* turns.start({ turn: turnFor(2), modelToken: "token-2" });
+        yield* settle;
+        expect(fake.calls).toEqual(["start run-1", "interrupt native-1"]);
+        expect(fake.opened.count).toBe(1);
+
+        yield* TestClock.adjust("20 seconds");
+        yield* settle;
+        expect(fake.opened.count).toBe(2);
+        expect(fake.calls).toEqual(["start run-1", "interrupt native-1", "start run-2"]);
+        expect(reported.map(label)).toContain("log run-2 warning");
+        expect(reported.map(label)).not.toContain("turn.failed run-2");
+      }),
+    ),
+  );
+
+  it.effect("hands each message steered into a turn to the harness once it names the turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: () => Effect.void,
+        });
+        const message = (n: number) => ({
+          messageId: MessageId.make(`message-${n}`),
+          text: `steer ${n}`,
+          attachments: [],
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
+        yield* settle;
+        // Sent before the harness named its turn: held until it does.
+        yield* turns.steer(RunId.make("run-1"), message(2));
+        yield* settle;
+        expect(fake.calls).toEqual(["start run-1"]);
+
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* settle;
+        // A reconnect hands it over again, and another one follows.
+        yield* turns.steer(RunId.make("run-1"), message(2));
+        yield* turns.steer(RunId.make("run-1"), message(3));
+        // A run this machine doesn't hold takes nothing.
+        yield* turns.steer(RunId.make("run-9"), message(4));
+        yield* settle;
+        expect(fake.calls).toEqual([
+          "start run-1",
+          "steer native-1 message-2",
+          "steer native-1 message-3",
+        ]);
+      }),
+    ),
   );
 
   it.effect("never starts a turn the thread stopped while its session loaded", () =>
@@ -224,6 +349,9 @@ describe("RunnerTurns", () => {
         yield* Deferred.succeed(fake.loaded, undefined);
         yield* turns.start({ turn: turnFor(1), modelToken: "token-1" });
         for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
+        yield* Queue.offer(fake.events, providerTurnStarted(1));
+        yield* Queue.offer(fake.events, turnEnded(1));
+        yield* settle;
         yield* turns.start({ turn: turnFor(2), modelToken: "token-2" });
         for (let round = 0; round < 10; round++) yield* Effect.yieldNow;
 

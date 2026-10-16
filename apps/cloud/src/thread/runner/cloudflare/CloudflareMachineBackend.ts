@@ -1,5 +1,5 @@
 // @effect-diagnostics globalTimers:off globalDate:off - readiness polling runs on the Durable Object's own clock.
-import { machineEnsureJson } from "@signalbox/runner-protocol/RunnerProtocol";
+import { MACHINE_HOME, machineEnsureJson } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -56,7 +56,6 @@ const CONNECT_TIMEOUT_MS = 2 * 60_000;
 const READY_TIMEOUT_MS = 10_000;
 const READY_POLL_MS = 200;
 
-const HOME = "/home/node/signalbox";
 const RUNNER = "/opt/signalbox/runner.mjs";
 
 export interface CloudflareMachineSettings {
@@ -140,7 +139,7 @@ export const makeCloudflareMachineBackend = ({
         "--listen",
         "0.0.0.0",
         "--home",
-        HOME,
+        MACHINE_HOME,
         "--machine-id",
         `cloudflare:${request.threadId}`,
       ],

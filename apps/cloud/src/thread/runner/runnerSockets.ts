@@ -29,6 +29,10 @@ interface Attachment {
   readonly sentRunId: RunId | null;
   /** The drain this socket's Runner was asked for (#493); absent: none. */
   readonly sentDrainId?: number | undefined;
+  /** This socket's Runner takes `steer` (#562), as its `hello` said. */
+  readonly steers?: boolean | undefined;
+  /** How many of `sentRunId`'s steers this socket's Runner was handed; absent: none. */
+  readonly sentSteers?: number | undefined;
 }
 
 export interface RunnerSocketHost {
@@ -85,8 +89,9 @@ export function endRunners(ctx: DurableObjectState, generation: number, reason: 
 
 /**
  * Hands the connected Runner what the thread wants now: `turn.start` for a
- * run waiting on it, `interrupt` for a run it was handed that is no longer
- * live. Safe to call any time; the Runner ignores repeats.
+ * run waiting on it, `steer` for each message sent into the run it holds, and
+ * `interrupt` for a run it was handed that is no longer live. Safe to call
+ * any time; the Runner ignores repeats.
  */
 export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunner.RunnerWork> {
   const work = await host.run(runner.use((service) => service.work));
@@ -121,9 +126,11 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     const attachment = attachmentOf(socket);
     if (attachment === null || attachment.generation !== work.generation) continue;
     let sentRunId = attachment.sentRunId;
+    let sentSteers = attachment.sentSteers ?? 0;
     if (sentRunId !== null && sentRunId !== work.activeRunId) {
       send(socket, { type: "interrupt", runId: sentRunId });
       sentRunId = null;
+      sentSteers = 0;
     }
     if (turn !== null && sentRunId !== turn.turn.runId) {
       send(socket, {
@@ -138,6 +145,14 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
           : { secrets: { token: secretsToken, environments: work.secrets } }),
       });
       sentRunId = turn.turn.runId;
+      sentSteers = 0;
+    }
+    // Steers count from the oldest, so the ones not handed out yet are the tail.
+    if (attachment.steers === true && sentRunId !== null && sentRunId === work.activeRunId) {
+      for (const message of work.steers.slice(sentSteers)) {
+        send(socket, { type: "steer", runId: sentRunId, message });
+      }
+      sentSteers = Math.max(sentSteers, work.steers.length);
     }
     // A drain asked for and not answered yet, once per connection (#493).
     let sentDrainId = attachment.sentDrainId;
@@ -145,8 +160,17 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       send(socket, { type: "drain", id: work.drain });
       sentDrainId = work.drain;
     }
-    if (sentRunId !== attachment.sentRunId || sentDrainId !== attachment.sentDrainId) {
-      socket.serializeAttachment({ ...attachment, sentRunId, sentDrainId } satisfies Attachment);
+    if (
+      sentRunId !== attachment.sentRunId ||
+      sentDrainId !== attachment.sentDrainId ||
+      sentSteers !== (attachment.sentSteers ?? 0)
+    ) {
+      socket.serializeAttachment({
+        ...attachment,
+        sentRunId,
+        sentDrainId,
+        sentSteers,
+      } satisfies Attachment);
     }
   }
   return work;
@@ -177,10 +201,13 @@ export async function onRunnerMessage(
       for (const other of host.ctx.getWebSockets(RUNNER_TAG)) {
         if (other !== socket) close(other, CLOSE.replaced, "Replaced by a newer connection.");
       }
+      // A reconnect already holds its live run: what the thread decides about
+      // that run (a Stop above all) is told on this connection.
       socket.serializeAttachment({
         generation: result.generation,
         connection: result.connection,
-        sentRunId: null,
+        sentRunId: result.heldRunId,
+        steers: message.steers === true,
       } satisfies Attachment);
       send(socket, {
         type: "welcome",
