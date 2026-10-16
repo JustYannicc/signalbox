@@ -120,6 +120,15 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.previews.subscribe": read({ name: "previews.list" }),
   "signalbox.previews.open": write(),
 
+  "signalbox.browsing.subscribe": read({
+    name: "browsing.get",
+    summary: "A thread's browser tabs: which one is active and where each was read to.",
+  }),
+  "signalbox.browsing.dispatch": write({
+    name: "browsing.change",
+    summary: "Open, navigate, move, switch to, close or position one of a thread's browser tabs.",
+  }),
+
   "signalbox.push.registerDevice": exempt(
     "client-local",
     "Registers the calling app's own push token; only that app has one.",

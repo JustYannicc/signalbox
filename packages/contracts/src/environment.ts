@@ -166,6 +166,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadKinds: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Signalbox Cloud opens threads' dev servers through its PreviewGateway (`signalboxPreviews.ts`). */
   signalboxPreviews: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: Server keeps each thread's browser tabs in sync across devices (`signalboxBrowsing.ts`). */
+  threadBrowsing: Schema.optionalKey(Schema.Boolean),
   /** signalbox: What this environment's pools can do. Absent: everything (`accountHub.ts`). */
   poolFeatures: Schema.optionalKey(Schema.Array(PoolFeature)),
   ...SignalboxEnvironmentCapabilityFields,

@@ -30,6 +30,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+import { readEnvironmentSupportsThreadBrowsing } from "~/state/browsing"; // signalbox: synced tabs (#585)
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -145,7 +146,10 @@ function ChatRouteGlobalShortcuts() {
         event.preventDefault();
         event.stopPropagation();
         if (!routeThreadRef || (!canOperatePreview && !previewOpen)) return;
-        if (!isPreviewAvailableFor(routeThreadRef.environmentId)) {
+        if (
+          !isPreviewAvailableFor(routeThreadRef.environmentId) &&
+          !readEnvironmentSupportsThreadBrowsing(routeThreadRef.environmentId) // signalbox: synced tabs list on web (#585)
+        ) {
           toastManager.add(
             stackedThreadToast({
               type: "info",

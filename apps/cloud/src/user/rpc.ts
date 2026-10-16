@@ -3,6 +3,7 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
   AuthStandardClientScopes,
   EnvironmentAuthorizationError,
@@ -38,6 +39,10 @@ import {
   SIGNALBOX_FOLDERS_WS_METHODS,
   SignalboxFolderError,
 } from "@t3tools/contracts/signalboxFolders";
+import {
+  SIGNALBOX_BROWSING_REQUIRED_SCOPES,
+  SIGNALBOX_BROWSING_WS_METHODS,
+} from "@t3tools/contracts/signalboxBrowsing";
 import {
   SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   SIGNALBOX_PREVIEWS_WS_METHODS,
@@ -81,6 +86,7 @@ import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
@@ -108,6 +114,21 @@ import * as UserThreadKinds from "./UserThreadKinds.ts";
  * else gets a per-request "unknown request tag" failure rather than a dropped
  * connection.
  */
+
+/** The browser panel's RPCs, served from each thread's browsing record (`thread/browsing/browsingRpc.ts`). */
+const BROWSING_PREVIEW_METHODS = [
+  WS_METHODS.previewOpen,
+  WS_METHODS.previewNavigate,
+  WS_METHODS.previewResize,
+  WS_METHODS.previewAdjust,
+  WS_METHODS.previewRefresh,
+  WS_METHODS.previewClose,
+  WS_METHODS.previewList,
+  WS_METHODS.previewClearProfile,
+  WS_METHODS.previewReportProfiles,
+  WS_METHODS.previewReportStatus,
+  WS_METHODS.subscribePreviewEvents,
+] as const;
 
 /** `WS_METHODS`' sections RPCs (`sectionsRpc.ts`), served from the user's folders for older clients. */
 const SECTION_METHODS = [
@@ -159,6 +180,9 @@ const SERVED = [
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
+  // A thread's synced browser tabs (`thread/browsing/`), and the browser panel's own RPCs on them.
+  ...Object.values(SIGNALBOX_BROWSING_WS_METHODS),
+  ...BROWSING_PREVIEW_METHODS,
   ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...Object.values(SIGNALBOX_THREAD_KINDS_WS_METHODS),
@@ -221,6 +245,19 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
+  ...SIGNALBOX_BROWSING_REQUIRED_SCOPES,
+  // The same scopes a self-hosted server requires for its browser panel.
+  [WS_METHODS.previewOpen]: AuthPreviewOperateScope,
+  [WS_METHODS.previewNavigate]: AuthPreviewOperateScope,
+  [WS_METHODS.previewResize]: AuthPreviewOperateScope,
+  [WS_METHODS.previewAdjust]: AuthPreviewOperateScope,
+  [WS_METHODS.previewRefresh]: AuthPreviewOperateScope,
+  [WS_METHODS.previewClose]: AuthPreviewOperateScope,
+  [WS_METHODS.previewList]: AuthOrchestrationReadScope,
+  [WS_METHODS.previewClearProfile]: AuthPreviewOperateScope,
+  [WS_METHODS.previewReportProfiles]: AuthPreviewOperateScope,
+  [WS_METHODS.previewReportStatus]: AuthPreviewOperateScope,
+  [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   ...SIGNALBOX_PUSH_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
@@ -362,6 +399,10 @@ export const layerHandlers = (input: {
       );
       const drives = yield* DriveBrowsing.makeDriveBrowsing(userId, actorNow);
       const githubImport = yield* makeGitHubImport();
+      const browsing = yield* makeBrowsingHandlers({
+        actorNow,
+        you: yield* deviceMember(userId, input.sid),
+      });
       const branches = yield* GitHubBranches.GitHubBranches;
       const attachments = yield* CloudAttachments;
       /**
@@ -631,6 +672,7 @@ export const layerHandlers = (input: {
           shortcutsCall((service) => service.add(request)),
         [SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]: (request) =>
           shortcutsCall((service) => service.remove(request)),
+        ...browsing,
         [SIGNALBOX_PREVIEWS_WS_METHODS.subscribe]: ({ threadId }) =>
           identity.previews !== true
             ? Stream.fail(new SignalboxPreviewsUnavailableError())

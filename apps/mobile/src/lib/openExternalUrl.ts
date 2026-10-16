@@ -8,6 +8,7 @@ const ExternalUrlTarget = Schema.Literals([
   "provider-auth",
   "html-render",
   "mcp-app",
+  "synced-browser", // signalbox: #585
 ]);
 
 export type ExternalUrlTarget = typeof ExternalUrlTarget.Type;

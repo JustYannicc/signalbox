@@ -104,6 +104,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
 import { useThreadServerBrowserTabs } from "../../state/preview";
+import { useThreadBrowsingTabCount } from "../../state/browsing";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
@@ -360,6 +361,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     },
     [navigation, props.environmentId, props.selectedThread.id],
   );
+  // signalbox: synced tabs (#585) take the globe when the thread has any.
+  const syncedTabCount = useThreadBrowsingTabCount(props.environmentId, props.selectedThread.id);
+  const openSyncedBrowser = useCallback(() => {
+    Keyboard.dismiss();
+    navigation.navigate("ThreadBrowsing", {
+      environmentId: props.environmentId,
+      threadId: props.selectedThread.id,
+    });
+  }, [navigation, props.environmentId, props.selectedThread.id]);
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
@@ -1165,9 +1175,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       : null
                   }
                   browserPreview={
-                    browserTabs.tabs.length > 0
-                      ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
-                      : null
+                    syncedTabCount > 0
+                      ? { count: syncedTabCount, onPress: openSyncedBrowser }
+                      : browserTabs.tabs.length > 0
+                        ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
+                        : null
                   }
                   showScrollToEnd={showScrollToEndButton}
                   onScrollToEnd={handleScrollToEnd}

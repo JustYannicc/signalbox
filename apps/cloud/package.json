@@ -24,6 +24,7 @@
     "aws4fetch": "1.0.20",
     "diff": "8.0.3",
     "effect": "catalog:",
+    "fractional-indexing": "4.0.0",
     "jose": "catalog:",
     "tldts": "catalog:"
   },
