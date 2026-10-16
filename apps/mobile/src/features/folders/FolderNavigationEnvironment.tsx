@@ -14,7 +14,7 @@ import { useEnvironmentFolders, useFolderOwners } from "../../state/signalboxFol
 import { useEnvironmentHasNotes } from "../../state/signalboxNotes";
 import { NotesSheet } from "../notes/NotesSheet";
 import { useOpenThread } from "../threads/use-open-thread";
-import { folderCountsAtom, folderPoolChoicesAtom } from "./folder-atoms";
+import { folderCountsAtom, folderPoolChoicesAtom, folderStatusSummariesAtom } from "./folder-atoms";
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";
 import { folderMenuActions, topLevelMenuActions } from "./folder-menus";
 import { FolderInstructionsSheet } from "./FolderInstructionsSheet";
@@ -37,6 +37,7 @@ export function FolderNavigationEnvironment(props: {
   const snapshot = folders.data;
   const owners = useFolderOwners(environmentId);
   const counts = useAtomValue(folderCountsAtom(environmentId));
+  const summaries = useAtomValue(folderStatusSummariesAtom(environmentId));
   const pools = useAtomValue(folderPoolChoicesAtom(environmentId));
   const actions = useFolderActions({ environmentId, snapshot, pools });
   const hasNotes = useEnvironmentHasNotes(environmentId);
@@ -143,6 +144,7 @@ export function FolderNavigationEnvironment(props: {
                 depth={depth + 1}
                 ancestorPath=""
                 counts={counts}
+                summaries={summaries}
                 selectedFolderId={selectedHere?._tag === "folder" ? selectedHere.folderId : null}
                 collapsed={collapsed}
                 menus={menus}

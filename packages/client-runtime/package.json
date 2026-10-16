@@ -291,6 +291,10 @@
       "types": "./src/state/folders.ts",
       "default": "./src/state/folders.ts"
     },
+    "./state/foldersModel": {
+      "types": "./src/state/foldersModel.ts",
+      "default": "./src/state/foldersModel.ts"
+    },
     "./state/signalboxNotes": {
       "types": "./src/state/notes.ts",
       "default": "./src/state/notes.ts"
@@ -318,6 +322,14 @@
     "./state/signalboxAgentBrowserMirror": {
       "types": "./src/state/signalboxAgentBrowserMirror.ts",
       "default": "./src/state/signalboxAgentBrowserMirror.ts"
+    },
+    "./state/signalboxThreadStatus": {
+      "types": "./src/state/signalboxThreadStatus.ts",
+      "default": "./src/state/signalboxThreadStatus.ts"
+    },
+    "./state/threadStatusLine": {
+      "types": "./src/state/threadStatusLine.ts",
+      "default": "./src/state/threadStatusLine.ts"
     },
     "./state/signalboxThreadKinds": {
       "types": "./src/state/signalboxThreadKinds.ts",

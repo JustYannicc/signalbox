@@ -35,13 +35,18 @@ function RowMenu(props: {
   );
 }
 
-/** A selectable level: its name, how many threads are in it or below, and a menu. */
+/**
+ * A selectable level: its name, how many threads are in it or below, and a
+ * menu. A folder where something moves says so quietly under its name.
+ */
 function LevelRow(props: {
   readonly depth: number;
   readonly icon: "folder" | "folder.fill" | "building.2";
   readonly name: string;
   readonly accessibilityLabel: string;
   readonly count: number;
+  /** signalbox: status roll-up (#670), "2 working · 1 waiting"; null when nothing moves. */
+  readonly summary?: string | null;
   readonly selected: boolean;
   readonly onSelect: () => void;
   readonly leading?: ReactNode;
@@ -55,7 +60,11 @@ function LevelRow(props: {
       <View className="size-10 items-center justify-center">{props.leading}</View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={props.accessibilityLabel}
+        accessibilityLabel={
+          props.summary
+            ? `${props.accessibilityLabel}, ${props.summary.replaceAll(" · ", ", ")}`
+            : props.accessibilityLabel
+        }
         accessibilityState={{ selected: props.selected }}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 py-1 active:opacity-75"
         onPress={props.onSelect}
@@ -65,16 +74,21 @@ function LevelRow(props: {
           size={16}
           tintColorClassName={props.selected ? "accent-primary" : "accent-icon-muted"}
         />
-        <AppText
-          className={
-            props.depth === 0
-              ? "min-w-0 flex-1 font-t3-medium text-foreground"
-              : "min-w-0 flex-1 text-sm text-foreground"
-          }
-          numberOfLines={1}
-        >
-          {props.name}
-        </AppText>
+        <View className="min-w-0 flex-1">
+          <AppText
+            className={
+              props.depth === 0 ? "font-t3-medium text-foreground" : "text-sm text-foreground"
+            }
+            numberOfLines={1}
+          >
+            {props.name}
+          </AppText>
+          {props.summary ? (
+            <AppText className="text-xs text-foreground-muted" numberOfLines={1}>
+              {props.summary}
+            </AppText>
+          ) : null}
+        </View>
         {props.count > 0 ? (
           <AppText className="text-xs tabular-nums text-foreground-muted">{props.count}</AppText>
         ) : null}
@@ -122,6 +136,8 @@ export const OwnerTopLevelRow = memo(function OwnerTopLevelRow(props: {
 
 export interface FolderRowContext {
   readonly counts: ReadonlyMap<FolderId, number>;
+  /** Each folder's status roll-up line, where something moves. */
+  readonly summaries: ReadonlyMap<FolderId, string>;
   readonly selectedFolderId: FolderId | null;
   readonly collapsed: ReadonlySet<FolderId>;
   /** Each folder's menu, built once per snapshot. */
@@ -156,6 +172,7 @@ export const FolderNodeRow = memo(function FolderNodeRow(
         name={folder.name}
         accessibilityLabel={`Threads in ${path}`}
         count={props.counts.get(folder.id) ?? 0}
+        summary={props.summaries.get(folder.id) ?? null}
         selected={props.selectedFolderId === folder.id}
         onSelect={handleSelect}
         leading={

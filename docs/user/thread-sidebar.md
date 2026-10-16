@@ -177,6 +177,17 @@ Tasks leave through **Done** when you hover their row. Chats you leave alone arc
 after seven idle days; hover a chat's icon to see when. Change or turn this off in **Settings →
 General → Archive idle chats after**. Bring an archived chat back from **Settings → Archive**.
 
+## See where a thread got to
+
+In Signalbox Cloud, every thread keeps a status line: what it's doing or waiting on, the next step,
+and where the work got to, written so someone who has never seen the thread can pick it up. It's at
+the top of **Thread details**, and on a phone at the top of the thread's settings. The next step
+also shows under the thread in its folder. The agent updates the status line every turn. If it
+doesn't, Signalbox writes one from the turn. Everyone with access to the thread sees the same line.
+
+A folder shows how many of its threads are working or waiting. Hover its name to see the idle ones
+too.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

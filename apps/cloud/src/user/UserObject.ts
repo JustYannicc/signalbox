@@ -70,6 +70,7 @@ import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as UserThreadStatus from "./UserThreadStatus.ts";
 import * as ChatArchive from "./chatArchive.ts";
 
 /**
@@ -217,6 +218,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           Layer.provideMerge(
             Layer.mergeAll(
               UserShell.layer,
+              UserThreadStatus.layer,
               CloudThreadService.layer,
               PoolSignIns.layer,
               drives.services,
@@ -519,6 +521,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   automationTool(threadId: string, name: string, input: unknown) {
     return this.api.automationTool(threadId, name, input);
+  }
+
+  folderStatus(threadId: string) {
+    return this.api.folderStatus(threadId);
   }
 
   browserSession(input: Parameters<UserObjectApi["browserSession"]>[0]) {

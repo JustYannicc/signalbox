@@ -18,6 +18,7 @@ import {
   SIGNALBOX_PREVIEWS_WS_METHODS,
 } from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "@t3tools/contracts/signalboxThreadKinds"; // signalbox: thread kinds
+import { SIGNALBOX_THREAD_STATUS_WS_METHODS } from "@t3tools/contracts/signalboxStatusLine"; // signalbox: status lines
 import type { AutomationSubscriptionRpcTag } from "@t3tools/contracts"; // signalbox: automations
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -98,7 +99,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof SIGNALBOX_SIGN_IN_WS_METHODS.subscribe // signalbox: sign-in grants
   | typeof SIGNALBOX_BROWSING_WS_METHODS.subscribe // signalbox: browsing
   | typeof SIGNALBOX_AGENT_BROWSER_WS_METHODS.watch // signalbox: agent browser
-  | typeof SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe; // signalbox: thread kinds
+  | typeof SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe // signalbox: thread kinds
+  | typeof SIGNALBOX_THREAD_STATUS_WS_METHODS.subscribe; // signalbox: status lines
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe

@@ -137,6 +137,11 @@ export const SIGNALBOX_RPC_REACH = {
     name: "threadKinds.setArchiveChatsAfterDays",
   }),
 
+  "signalbox.threadStatus.subscribe": read({
+    name: "threadStatus.list",
+    summary: "Each thread's status note: the next step, and where the work got to.",
+  }),
+
   "signalbox.previews.subscribe": read({ name: "previews.list" }),
   "signalbox.previews.open": write(),
   // The agent's browser (#587): agents drive it through their own `preview_*` tools.

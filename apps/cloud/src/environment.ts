@@ -106,6 +106,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     signInGrants: true,
     // Chats and tasks, and idle chats archiving themselves (`user/UserThreadKinds.ts`).
     threadKinds: true,
+    // Threads' status notes, written by their agents or the runtime (`user/UserThreadStatus.ts`).
+    threadStatusNotes: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
     serverResolvedCommandContext: true,
     // Each account pool reports its accounts as a source (`pool/poolViews.ts`).

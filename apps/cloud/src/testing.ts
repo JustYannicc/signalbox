@@ -52,6 +52,8 @@ import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
 import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
+import * as StatusNoteModel from "./thread/statusLine/StatusNoteModel.ts";
+import * as ThreadStatusNotes from "./thread/statusLine/ThreadStatusNotes.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
@@ -93,6 +95,7 @@ import { makeUserObjectApi } from "./user/userObjectApi.ts";
 import * as PoolSignIns from "./user/PoolSignIns.ts";
 import * as UserPools from "./user/UserPools.ts";
 import * as UserShell from "./user/UserShell.ts";
+import * as UserThreadStatus from "./user/UserThreadStatus.ts";
 import * as UserStore from "./user/UserStore.ts";
 import * as UserThreadKinds from "./user/UserThreadKinds.ts";
 import * as ChatArchive from "./user/chatArchive.ts";
@@ -204,6 +207,8 @@ export const layerThreadObject = (
     >;
     /** Which models turns may start on; any, unless given. */
     readonly models?: Layer.Layer<TurnModels.TurnModels>;
+    /** What writes runtime status notes; no model, unless given. */
+    readonly statusNoteModel?: Layer.Layer<StatusNoteModel.StatusNoteModel>;
   } = {},
 ) =>
   ThreadRunner.layer.pipe(
@@ -220,6 +225,11 @@ export const layerThreadObject = (
       }),
     ),
     Layer.provideMerge(ThreadBrowsing.layer),
+    Layer.provideMerge(
+      ThreadStatusNotes.layer.pipe(
+        Layer.provide(options.statusNoteModel ?? StatusNoteModel.layerNone),
+      ),
+    ),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
@@ -289,6 +299,7 @@ const makeUserRuntime = (
               // Sweeps run when a test asks; nothing arms an alarm here.
               Layer.succeed(LoginService.LoginAlarm, { armBy: () => Effect.void }),
               UserShell.layer,
+              UserThreadStatus.layer,
               DriveSharing.layer,
               DriveShortcuts.layer,
               DriveFiles.layer,
