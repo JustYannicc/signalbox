@@ -1386,7 +1386,9 @@ function OpenCommandPaletteDialog(props: {
               project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
               projectTitle={projectTitle ?? null}
               environmentLabel={
-                projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote"
+                showsEnvironmentUi // signalbox: one environment, nothing to name
+                  ? (projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote")
+                  : null
               }
               branch={thread.branch}
               worktreePath={thread.worktreePath}
@@ -1431,6 +1433,7 @@ function OpenCommandPaletteDialog(props: {
       projectEnvironmentLocationById,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
+      showsEnvironmentUi,
       threadContentMatchByKey,
       threadSearch.query,
       threadSearchQuery,
