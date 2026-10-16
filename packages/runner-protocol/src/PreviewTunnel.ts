@@ -1,5 +1,9 @@
 import { NonNegativeInt, PositiveInt, ThreadId } from "@t3tools/contracts";
-import { SignalboxPreviewPort } from "@t3tools/contracts/signalboxPreviews";
+import {
+  AgentBrowserInput,
+  AgentBrowserStep,
+  SignalboxPreviewPort,
+} from "@t3tools/contracts/signalboxPreviews";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec as frameCodec } from "./jsonCodec.ts";
@@ -25,10 +29,25 @@ import { jsonCodec as frameCodec } from "./jsonCodec.ts";
  *    both ways as data until either side sends `ws.close`. `cancel` drops a
  *    stream the thread no longer wants.
  *
+ * 5. The agent's browser (#587), when the Runner's `hello` says `mirror`:
+ *    `mirror.open` streams one viewer's mirror of a tab as newline-delimited
+ *    `AgentBrowserUpdate` JSON in body data frames, until either side ends
+ *    it (`cancel` from the thread; `end` or `fail` from the Runner).
+ *    `mirror.input` is that viewer's input. Every finished step travels the
+ *    other way as `trail.step` on a stream the Runner numbers from
+ *    `RUNNER_STREAM_BASE` up, its rrweb recording as body data, then `end`;
+ *    the thread keeps it in the thread's browser trail.
+ *
  * The heartbeat is the Runner protocol's (`ping`/`pong`).
  */
 
 export const PREVIEW_TUNNEL_VERSION = 1;
+
+/**
+ * Streams the Runner opens (`trail.step`) are numbered from here; the thread
+ * numbers its own below it.
+ */
+export const RUNNER_STREAM_BASE = 0x8000_0000;
 
 /** Where a Runner opens its tunnel, with `?threadId=`. The token travels in `hello`, never the URL. */
 export const PREVIEW_TUNNEL_PATH = "/api/runner/preview";
@@ -50,8 +69,12 @@ export const TunnelRunnerMessage = Schema.Union([
     threadId: ThreadId,
     generation: PositiveInt,
     token: Schema.String,
+    /** The Runner mirrors its agent's browser (`mirror.*`, `trail.step`). */
+    mirror: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({ type: Schema.Literal("ports"), ports: Schema.Array(PreviewPort) }),
+  /** A finished step of the agent's browsing; its recording follows as body data. */
+  Schema.Struct({ type: Schema.Literal("trail.step"), stream: Stream, step: AgentBrowserStep }),
   Schema.Struct({
     type: Schema.Literal("head"),
     stream: Stream,
@@ -102,6 +125,14 @@ export const TunnelThreadMessage = Schema.Union([
     code: Schema.Number,
     reason: Schema.String,
   }),
+  /** A viewer starts watching the agent's browser; null follows the agent's current tab. */
+  Schema.Struct({
+    type: Schema.Literal("mirror.open"),
+    stream: Stream,
+    tabId: Schema.NullOr(Schema.String),
+  }),
+  /** That viewer's input to the tab it watches. */
+  Schema.Struct({ type: Schema.Literal("mirror.input"), stream: Stream, input: AgentBrowserInput }),
 ]);
 export type TunnelThreadMessage = typeof TunnelThreadMessage.Type;
 
