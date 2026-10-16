@@ -39,7 +39,7 @@ import { ServerBrowserContexts } from "../../preview/ServerBrowserContexts.ts";
 import * as ServerBrowserPage from "../../preview/ServerBrowserPage.ts";
 import type { Timer } from "./RunnerBrowserControl.ts";
 import { type BrowserMirror, makeBrowserMirror } from "./RunnerBrowserMirror.ts";
-import { maskCardNumbers } from "./RunnerBrowserPayment.ts";
+import { maskCardNumbers, showsCard } from "./RunnerBrowserPayment.ts";
 import { type BrowserRoute, browserFor } from "./RunnerBrowserRoute.ts";
 
 /**
@@ -180,6 +180,14 @@ const navigationUrl = (input: PreviewAutomationNavigateInput) => {
   const path = target.path ?? "";
   return `${target.protocol ?? "http"}://localhost:${target.port}${path === "" || path.startsWith("/") ? path : `/${path}`}`;
 };
+
+/** A screenshot not taken, because the page shows a card number (`RunnerBrowserTools.ts` says so). */
+export const WITHHELD_SCREENSHOT = {
+  mimeType: "image/png",
+  data: "",
+  width: 0,
+  height: 0,
+} as const;
 
 /** What the agent reads of a tab: card numbers on the person's browser are masked. */
 const readable = <A>(tab: { readonly route: BrowserRoute }, value: A): A =>
@@ -534,6 +542,8 @@ export const makeRunnerBrowser = (
 
   const statusOf = async (tab: Tab | undefined): Promise<PreviewAutomationStatus> => {
     const viewport = tab?.page.viewportSize() ?? undefined;
+    // While a person has the tab, the agent learns where it is, never what the page says.
+    const theirs = tab !== undefined && controlOf(tab.tabId).owner === "human";
     return {
       available: true,
       visible: false,
@@ -543,12 +553,12 @@ export const makeRunnerBrowser = (
       title:
         tab === undefined
           ? null
-          : tab.dialog !== null
+          : tab.dialog !== null || theirs
             ? ""
             : await tab.page.title().catch(() => ""),
       loading: false,
       dialog:
-        tab?.dialog == null
+        tab?.dialog == null || theirs
           ? null
           : {
               type: tab.dialog.type(),
@@ -710,7 +720,12 @@ export const makeRunnerBrowser = (
           ...tab,
           renderScale: RENDER_SCALE,
         });
-        return { ...readable(tab, page), screenshot };
+        if (tab.route !== "person") return { ...page, screenshot };
+        // A card number in a field is masked in the text, but not in pixels.
+        return {
+          ...readable(tab, page),
+          screenshot: (await showsCard(tab.page)) ? WITHHELD_SCREENSHOT : screenshot,
+        };
       }),
     click: (input) =>
       act(input, "click", (tab) => ServerBrowserPage.click(tab.page, input).then(constVoid)),

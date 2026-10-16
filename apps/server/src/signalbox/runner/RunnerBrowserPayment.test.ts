@@ -37,6 +37,7 @@ const SITES: Record<string, string> = {
   "https://shop.test/filled": `<title>Filled</title><input aria-label="Card number" value="4242 4242 4242 4242"><p>Order 4242 4242 4242 4241</p>`,
   "https://shop.test/thanks": `<title>Thanks</title><p>Order placed</p>`,
   "https://shop.test/hidden-card": `<title>Hidden</title><input autocomplete="cc-number" style="display:none">`,
+  "https://shop.test/snake-card": `<title>Card</title><input name="card_number" aria-label="Card">`,
   "https://shop.test/card-frame": `<title>Elements</title><iframe src="https://js.payments.test/inner-card"></iframe>`,
   "https://js.payments.test/inner-card": `<input name="cardnumber" aria-label="Card">`,
   "https://shop.test/3ds-frame": `<title>Confirm</title><iframe src="https://hooks.payments.test/3d_secure_2/authenticate"></iframe>`,
@@ -166,6 +167,7 @@ describe("pageKind", () => {
       expect(await kindAt("https://shop.test/checkout")).toBe("payment");
       // Card fields inside another origin's frame, as Stripe Elements puts them.
       expect(await kindAt("https://shop.test/card-frame")).toBe("payment");
+      expect(await kindAt("https://shop.test/snake-card")).toBe("payment");
       expect(await kindAt("https://shop.test/3ds-frame")).toBe("payment");
       expect(await kindAt("https://acs.bank.test/challenge")).toBe("payment");
 
@@ -212,7 +214,8 @@ describe("a payment handed to the person", () => {
           update.handoff?.runId === "run-1" &&
           update.handoff.site === "shop.test",
       );
-      expect((await browser.status({})).control).toMatchObject({ owner: "human" });
+      // The agent learns who has the tab, never what the page says.
+      expect(await browser.status({})).toMatchObject({ control: { owner: "human" }, title: "" });
 
       // Neither the tool nor reads get anything until the person answers.
       const first = payments.request({});
@@ -244,8 +247,12 @@ describe("a payment handed to the person", () => {
       timers.fire(PAYMENT_POLL_MS);
       expect(await second).toMatchObject({ status: "done", note: "Paid 12 CHF" });
       await next((update) => update._tag === "state" && update.handoff === null);
-      expect((await browser.status({})).control).toMatchObject({ owner: "agent" });
-      expect((await browser.snapshot({})).title).toBe("Pay");
+      // A read waits until the person's input settled, then the tab is the agent's again.
+      const after = await browser.snapshot({});
+      expect(after.title).toBe("Pay");
+      // The card the person typed is still in its field: no screenshot carries it.
+      expect(after.screenshot.data).toBe("");
+      expect(await browser.status({})).toMatchObject({ control: { owner: "agent" }, title: "Pay" });
       expect(asking.cancelled).toEqual([]);
 
       // The person answered: the agent can't pay on that page itself, only ask again.
@@ -418,6 +425,19 @@ describe("maskCardNumbers", () => {
     expect(maskCardNumbers("order 4242 4242 4242 4241")).toBe("order 4242 4242 4242 4241");
     expect(maskCardNumbers("call 044 668 18 00")).toBe("call 044 668 18 00");
   });
+
+  it("finds a card number among the digits written around it, whatever the spaces", () => {
+    // An expiry and CVC after it, or a quantity before it.
+    expect(maskCardNumbers("4242 4242 4242 4242 12 30 123")).toBe("•••• 4242 12 30 123");
+    expect(maskCardNumbers("Qty 1 4242 4242 4242 4242")).toBe("Qty 1 •••• 4242");
+    // No-break, thin and repeated separators, as formatted card fields write them.
+    expect(maskCardNumbers("4242\u00a04242\u00a04242\u00a04242")).toBe("•••• 4242");
+    expect(maskCardNumbers("5555\u202f5555\u202f5555\u202f4444")).toBe("•••• 4444");
+    expect(maskCardNumbers("3782-822463-10005 ok")).toBe("•••• 0005 ok");
+    expect(maskCardNumbers("+1 415 555 0100, order 1234567890123")).toBe(
+      "+1 415 555 0100, order 1234567890123",
+    );
+  });
 });
 
 describe("the person's browser, read by the agent", () => {
@@ -434,6 +454,10 @@ describe("the person's browser, read by the agent", () => {
       expect(await browser.evaluate({ expression: "document.querySelector('input').value" })).toBe(
         "•••• 4242",
       );
+      // Pixels can't be masked, so the screenshot is withheld while a field shows a card.
+      expect(read.screenshot.data).toBe("");
+      await browser.navigate({ url: "https://shop.test/thanks" });
+      expect((await browser.snapshot({})).screenshot.data).not.toBe("");
     } finally {
       await payments.close();
       await browser.close();

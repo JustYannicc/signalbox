@@ -55,7 +55,7 @@ export const RECORDING_CHECKOUT_CHARS = 8_000_000;
  */
 export const CARD_FIELD = `((input) =>
   /(^|\\s)cc-(number|csc|exp)/i.test((input.getAttribute && input.getAttribute("autocomplete")) || "") ||
-  /\\b(card-?number|cc-?number|cvc|cvv2?)\\b/i.test((input.name || "") + " " + (input.id || "")))`;
+  /card[-_]?number|(?<![a-z])(cc[-_]?number|cvc|cvv2?)(?![a-z])/i.test((input.name || "") + " " + (input.id || "")))`;
 
 /**
  * A name for a tab's recorder in its pages. Keep one per tab: a reconnect

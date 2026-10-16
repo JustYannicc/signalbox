@@ -63,6 +63,9 @@ const run = <A>(operation: () => Promise<A>) =>
 export const answer = <A>(operation: () => Promise<A>) =>
   Effect.map(run(operation), (result) => json(result ?? { ok: true }));
 
+const SCREENSHOT_WITHHELD =
+  "No screenshot: the page shows a card number. Read the page from the snapshot's text, where card numbers are masked.";
+
 /**
  * A snapshot as the agent reads it. The screenshot rides along as an image
  * only when asked: providers replay images on every later request.
@@ -72,13 +75,22 @@ const presentSnapshot = (
   options: { readonly includeImage: boolean; readonly save: boolean },
 ): ReadonlyArray<McpSchema.ContentBlock> => {
   const { screenshot, ...page } = snapshot;
+  // Withheld (`WITHHELD_SCREENSHOT`): the page shows a card number.
+  const withheld = screenshot.data === "";
   const image: McpSchema.ContentBlock = {
     type: "image",
     data: Buffer.from(screenshot.data, "base64"),
     mimeType: screenshot.mimeType,
   };
   if (options.save && !options.includeImage)
-    return [{ type: "text", text: json({ url: page.url, savedToThread: true }) }, image];
+    return withheld
+      ? [
+          {
+            type: "text",
+            text: json({ url: page.url, savedToThread: false, screenshot: SCREENSHOT_WITHHELD }),
+          },
+        ]
+      : [{ type: "text", text: json({ url: page.url, savedToThread: true }) }, image];
   const metadata = {
     ...page,
     visibleText: cut(page.visibleText, SNAPSHOT_TEXT_LIMITS.visibleText),
@@ -92,15 +104,13 @@ const presentSnapshot = (
     networkEntries: page.networkEntries
       .slice(-SNAPSHOT_ENTRY_LIMIT)
       .map((entry) => ({ ...entry, url: cut(entry.url, SNAPSHOT_TEXT_LIMITS.entry) })),
-    screenshot: {
-      mimeType: screenshot.mimeType,
-      width: screenshot.width,
-      height: screenshot.height,
-    },
+    screenshot: withheld
+      ? SCREENSHOT_WITHHELD
+      : { mimeType: screenshot.mimeType, width: screenshot.width, height: screenshot.height },
   };
   return [
     { type: "text", text: json(metadata) },
-    ...(options.includeImage || options.save ? [image] : []),
+    ...((options.includeImage || options.save) && !withheld ? [image] : []),
   ];
 };
 

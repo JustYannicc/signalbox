@@ -86,8 +86,13 @@ const FRAME_SIGNALS = `(() => {
   return signals;
 })()`;
 
-/** Runs of 13 to 19 digits, spaced or dashed the way card numbers are written. */
-const DIGIT_RUN = /(?<![\d-])\d(?:[ -]?\d){12,18}(?![\d-])/g;
+/**
+ * Runs of digit groups, spaced or dashed the way card numbers are written
+ * (no-break and thin spaces too). A card number is found among a run's
+ * groups, so digits written beside it (an expiry, a quantity) don't hide it.
+ */
+const DIGIT_RUN = /(?<![\d-])\d+(?:[ \u00a0\u2009\u202f-]\d+)*(?![\d-])/g;
+const GROUP = /\d+|[^\d]+/g;
 
 const passesLuhn = (digits: string) => {
   let sum = 0;
@@ -99,16 +104,39 @@ const passesLuhn = (digits: string) => {
   return sum % 10 === 0;
 };
 
+/** A run with each card number in it (13 to 19 digits of whole groups, passing Luhn) masked. */
+const maskRun = (run: string) => {
+  const parts = run.match(GROUP) ?? [];
+  const out: Array<string> = [];
+  let index = 0;
+  while (index < parts.length) {
+    let digits = "";
+    let found = -1;
+    for (let end = index; end < parts.length && digits.length <= 19; end += 2) {
+      digits += parts[end];
+      if (digits.length >= 13 && digits.length <= 19 && passesLuhn(digits)) found = end;
+    }
+    if (found === -1) {
+      out.push(parts[index]!, parts[index + 1] ?? "");
+      index += 2;
+      continue;
+    }
+    const card = parts
+      .slice(index, found + 1)
+      .join("")
+      .replace(/\D/g, "");
+    out.push(`•••• ${card.slice(-4)}`, parts[found + 1] ?? "");
+    index = found + 2;
+  }
+  return out.join("");
+};
+
 /**
  * `text` with every card number in it masked to its last four digits. A card
  * the person typed stays in its field after they hand the tab back, so what
  * the agent reads of the person's browser goes through this (`RunnerBrowser.ts`).
  */
-export const maskCardNumbers = (text: string): string =>
-  text.replace(DIGIT_RUN, (run) => {
-    const digits = run.replace(/[ -]/g, "");
-    return passesLuhn(digits) ? `•••• ${digits.slice(-4)}` : run;
-  });
+export const maskCardNumbers = (text: string): string => text.replace(DIGIT_RUN, maskRun);
 
 /** Hosts that run 3-D Secure checks: a bank's access control server, or Cardinal (Visa). */
 const SECURE_HOSTS = [/^acs[\w-]*\./i, /(^|\.)cardinalcommerce\.com$/i];
@@ -238,6 +266,51 @@ export const paymentAsker = (ask: AutomationCaller, threadId: string): PaymentAs
   cancel: (runId) =>
     Effect.runPromise(ask("automation_cancel_run", { runId }, false).pipe(Effect.asVoid)),
 });
+
+/**
+ * Runs in each frame: whether a visible input holds a card number, a card
+ * field with anything in it or a value that passes as one. Only the answer
+ * leaves the page.
+ */
+const FRAME_SHOWS_CARD = `(() => {
+  const card = ${CARD_FIELD};
+  const luhn = (digits) => {
+    let sum = 0;
+    for (let index = 0; index < digits.length; index += 1) {
+      let digit = Number(digits[digits.length - 1 - index]);
+      if (index % 2 === 1) digit = digit * 2 > 9 ? digit * 2 - 9 : digit * 2;
+      sum += digit;
+    }
+    return sum % 10 === 0;
+  };
+  for (const input of document.querySelectorAll("input")) {
+    const value = input.value || "";
+    if (value === "") continue;
+    const digits = value.replace(/[\\s-]/g, "");
+    if (!card(input) && !(/^\\d{13,19}$/.test(digits) && luhn(digits))) continue;
+    if (input.getClientRects().length > 0 && getComputedStyle(input).visibility !== "hidden")
+      return true;
+  }
+  return false;
+})()`;
+
+/**
+ * Whether `page` shows a card number in a field, in any frame: a screenshot
+ * of it would carry the number the text masks. A frame that doesn't answer in
+ * time counts as showing one.
+ */
+export const showsCard = async (page: Page): Promise<boolean> => {
+  const frames = page.frames().slice(0, FRAME_LIMIT);
+  const shown = await Promise.all(
+    frames.map((frame) =>
+      within(
+        frame.evaluate<boolean>(FRAME_SHOWS_CARD).catch(() => false),
+        FRAME_TIMEOUT_MS,
+      ),
+    ),
+  );
+  return shown.some((each) => each !== false);
+};
 
 /** What the "Payment" built-in returns (`defaults/payment.ts`). */
 type PaymentOutcome = "done" | "failed";
