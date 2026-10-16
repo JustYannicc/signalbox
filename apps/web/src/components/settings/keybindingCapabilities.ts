@@ -16,6 +16,8 @@ export function keybindingCapability(
       return "otherEnvironments";
     case "composer.workspace":
     case "composer.previousWorktree":
+    // Without worktrees a thread's branch is its own, so there is no branch picker to open.
+    case "composer.branch":
       return "worktrees";
     case "editor.openFavorite":
       return "localFilesystem";

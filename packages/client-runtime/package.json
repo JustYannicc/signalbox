@@ -323,6 +323,10 @@
       "types": "./src/state/signalboxThreadKinds.ts",
       "default": "./src/state/signalboxThreadKinds.ts"
     },
+    "./state/signalboxOwnBranch": {
+      "types": "./src/state/signalboxOwnBranch.ts",
+      "default": "./src/state/signalboxOwnBranch.ts"
+    },
     "./state/signalboxPush": {
       "types": "./src/state/signalboxPush.ts",
       "default": "./src/state/signalboxPush.ts"
