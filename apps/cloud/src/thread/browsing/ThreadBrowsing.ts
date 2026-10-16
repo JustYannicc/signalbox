@@ -158,9 +158,18 @@ const make = Effect.gen(function* () {
       return next;
     });
 
+  /**
+   * The record for upkeep, which runs on every object: null before the thread
+   * exists, when it has no tables to read yet.
+   */
+  const created = Effect.flatMap(engine.projection, (projection) =>
+    projection === null ? Effect.succeed(null) : current,
+  );
+
   const expire = serialized(
     Effect.gen(function* () {
-      const from = yield* current;
+      const from = yield* created;
+      if (from === null) return null;
       if (nextSharingEnd(from.record) === null) return null;
       const at = DateTime.formatIso(yield* DateTime.now);
       const next = yield* land(
@@ -217,7 +226,9 @@ const make = Effect.gen(function* () {
     dispatch,
     record: recordOf,
     expire,
-    sharingEndsAt: Effect.map(current, (loaded) => nextSharingEnd(loaded.record)),
+    sharingEndsAt: Effect.map(created, (loaded) =>
+      loaded === null ? null : nextSharingEnd(loaded.record),
+    ),
   });
 });
 

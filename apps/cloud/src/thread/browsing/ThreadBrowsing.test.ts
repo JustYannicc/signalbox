@@ -47,6 +47,18 @@ const withThread = <A, E>(use: (browsing: ThreadBrowsing["Service"]) => Effect.E
   );
 
 describe("ThreadBrowsing sharing", () => {
+  it.effect("reads nothing on an object whose thread doesn't exist yet", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // A brand-new object arms its alarm before the thread (and its tables) exist.
+        const context = yield* Layer.build(layerThreadObject(":memory:"));
+        const browsing = Context.get(context, ThreadBrowsing);
+        expect(yield* browsing.sharingEndsAt).toBeNull();
+        expect(yield* browsing.expire).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("ends a share on time and tells everyone following the thread", () =>
     withThread((browsing) =>
       Effect.gen(function* () {
