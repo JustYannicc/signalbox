@@ -201,12 +201,29 @@ export type AgentBrowserUpdate = typeof AgentBrowserUpdate.Type;
 const Modifiers = Schema.Number;
 const MouseButton = Schema.Literals(["none", "left", "middle", "right"]);
 
+/**
+ * The element a pointer is over in the mirror, and where inside it. The
+ * mirror lays the page out with the viewer's fonts, so its coordinates can
+ * miss the agent's page; the machine aims at this element's box there instead,
+ * falling back to `x`/`y` when it has no such element.
+ */
+export const AgentBrowserPointerTarget = Schema.Struct({
+  /** rrweb's id for the element, from the recording. */
+  node: Schema.Number,
+  /** Where the pointer is across the element's box, 0 at its left edge and 1 at its right. */
+  fx: Schema.Number,
+  /** The same, 0 at its top edge and 1 at its bottom. */
+  fy: Schema.Number,
+});
+export type AgentBrowserPointerTarget = typeof AgentBrowserPointerTarget.Type;
+
 /** Input that drives the page, while the viewer holds the tab. Coordinates are the page's CSS pixels. */
 export const AgentBrowserDrivingInput = Schema.Union([
   Schema.TaggedStruct("mouse", {
     action: Schema.Literals(["move", "down", "up"]),
     x: Schema.Number,
     y: Schema.Number,
+    target: Schema.optionalKey(AgentBrowserPointerTarget),
     button: MouseButton,
     /** Pressed buttons: left 1, right 2, middle 4. */
     buttons: Schema.Number,
@@ -216,6 +233,7 @@ export const AgentBrowserDrivingInput = Schema.Union([
   Schema.TaggedStruct("wheel", {
     x: Schema.Number,
     y: Schema.Number,
+    target: Schema.optionalKey(AgentBrowserPointerTarget),
     deltaX: Schema.Number,
     deltaY: Schema.Number,
     modifiers: Modifiers,

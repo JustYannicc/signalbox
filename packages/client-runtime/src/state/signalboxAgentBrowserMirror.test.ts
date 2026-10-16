@@ -28,6 +28,14 @@ describe("parseAgentBrowserMirrorPageMessage", () => {
     ).toEqual({ type: "viewport", width: 1280, height: 720 });
   });
 
+  it("keeps the element a pointer aims at", () => {
+    const aimed = { ...click, target: { node: 42, fx: 0.25, fy: 0.5 } };
+    expect(parseAgentBrowserMirrorPageMessage({ type: "input", input: aimed })).toEqual({
+      type: "input",
+      input: aimed,
+    });
+  });
+
   it("refuses anything else, including taking control from inside the page", () => {
     expect(parseAgentBrowserMirrorPageMessage("{")).toBeNull();
     expect(parseAgentBrowserMirrorPageMessage({ type: "events" })).toBeNull();

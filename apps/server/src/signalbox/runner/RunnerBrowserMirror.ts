@@ -18,7 +18,14 @@ import {
   type TabControl,
   type Timer,
 } from "./RunnerBrowserControl.ts";
-import { injectRecorder, markStep, readReport, recordCanvas } from "./RunnerBrowserRecorder.ts";
+import {
+  injectRecorder,
+  markStep,
+  nodeBox,
+  readReport,
+  recordCanvas,
+  recorderKey,
+} from "./RunnerBrowserRecorder.ts";
 import type { BrowserRoute } from "./RunnerBrowserRoute.ts";
 import { makeSegment, type Segment } from "./RunnerBrowserSegment.ts";
 
@@ -129,6 +136,8 @@ interface Viewer {
 
 interface Hub {
   readonly tabId: string;
+  /** What the tab's recorder is called in its pages. */
+  readonly key: string;
   page: Page | null;
   readonly segment: Segment;
   url: string;
@@ -152,8 +161,10 @@ export const makeBrowserMirror = (
   const hubFor = (tabId: string): Hub => {
     const existing = hubs.get(tabId);
     if (existing !== undefined) return existing;
+    const key = recorderKey();
     const hub: Hub = {
       tabId,
+      key,
       page: null,
       segment: makeSegment(),
       url: "",
@@ -170,6 +181,7 @@ export const makeBrowserMirror = (
           refresh();
         },
         settle: (takenAt, cdp) => endStep(hub, "person", takenAt, cdp !== null),
+        locate: (cdp, node) => nodeBox(cdp, key, node),
       }),
       watched: false,
     };
@@ -195,7 +207,7 @@ export const makeBrowserMirror = (
       const watched = shown.has(hub.tabId);
       if (watched === hub.watched) continue;
       hub.watched = watched;
-      if (hub.page !== null) void recordCanvas(hub.page, watched);
+      if (hub.page !== null) void recordCanvas(hub.page, hub.key, watched);
     }
   };
 
@@ -286,7 +298,7 @@ export const makeBrowserMirror = (
     hub.url = report.url;
     hub.title = report.title;
     // A new document records as the page's script starts it: without canvases.
-    if (report.full && report.canvas !== hub.watched) void recordCanvas(page, hub.watched);
+    if (report.full && report.canvas !== hub.watched) void recordCanvas(page, hub.key, hub.watched);
     let line: Uint8Array | undefined;
     for (const viewer of viewers)
       if (viewer.shown === hub.tabId)
@@ -310,7 +322,7 @@ export const makeBrowserMirror = (
       };
       // A page that never answers (e.g. one stuck in a long task) ends the step unmarked.
       const cancel = timer(unmarked, MARK_TIMEOUT_MS);
-      markStep(page, stepId).then(
+      markStep(page, hub.key, stepId).then(
         (marked) => {
           cancel();
           if (marked) resolve();
@@ -348,7 +360,9 @@ export const makeBrowserMirror = (
     attach: async (tabId, page, cdp) => {
       const hub = hubFor(tabId);
       hub.page = page;
-      await injectRecorder(page, cdp, (payload) => ingest(hub, page, payload)).catch(constVoid);
+      await injectRecorder(page, cdp, hub.key, (payload) => ingest(hub, page, payload)).catch(
+        constVoid,
+      );
     },
     changed: refresh,
     agentTurn: (tabId, action) => {

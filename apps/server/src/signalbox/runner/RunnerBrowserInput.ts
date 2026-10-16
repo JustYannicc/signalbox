@@ -1,12 +1,22 @@
-import type { AgentBrowserDrivingInput } from "@t3tools/contracts/signalboxPreviews";
+import type {
+  AgentBrowserDrivingInput,
+  AgentBrowserPointerTarget,
+} from "@t3tools/contracts/signalboxPreviews";
 import { constVoid } from "effect/Function";
 import type { CDPSession } from "playwright-core";
+
+import type { NodeBox } from "./RunnerBrowserRecorder.ts";
 
 /**
  * A person's input to the tab they took over (#587), dispatched over the
  * tab's CDP session as upstream's viewer input is (`ServerBrowser.ts`
  * `dispatchViewerInput`). It remembers what is held down, so handing back
  * never leaves a key or button pressed in the agent's tab.
+ *
+ * Pointer input aims at the element the person pointed at in the mirror
+ * (`target`), at the same spot across its box here: the mirror lays the page
+ * out with the viewer's fonts, so its coordinates can land on a neighbour.
+ * The coordinates are the fallback when the element is gone or out of view.
  */
 
 type Button = "left" | "middle" | "right";
@@ -27,15 +37,55 @@ const editingCommand = (key: string, modifiers: number) => {
   return command === null ? {} : { commands: [command] };
 };
 
+/**
+ * The spot `fx`, `fy` across `box`, kept inside the part of it in view; null
+ * when none of it is.
+ */
+const pointIn = (
+  box: NodeBox,
+  fx: number,
+  fy: number,
+): { readonly x: number; readonly y: number } | null => {
+  const along = (start: number, size: number, view: number, fraction: number) => {
+    const from = Math.max(start, 0);
+    const to = Math.min(start + size, view);
+    if (!(to > from)) return null;
+    // Half a pixel in from the edges, where a neighbour's box begins.
+    const inset = Math.min(0.5, (to - from) / 2);
+    const at = start + Math.min(Math.max(finite(fraction, 0.5), 0), 1) * size;
+    return Math.min(Math.max(at, from + inset), to - inset);
+  };
+  const x = along(box.left, box.width, box.viewWidth, fx);
+  const y = along(box.top, box.height, box.viewHeight, fy);
+  return x === null || y === null ? null : { x, y };
+};
+
+/** Where rrweb's element `node` is in the tab's page now. */
+export type LocateNode = (cdp: CDPSession, node: number) => Promise<NodeBox | null>;
+
 export interface InputDriver {
   readonly dispatch: (cdp: CDPSession, input: AgentBrowserDrivingInput) => Promise<void>;
   /** Lets go of every key and button still held down. */
   readonly release: (cdp: CDPSession) => Promise<void>;
 }
 
-export const makeInputDriver = (): InputDriver => {
+export const makeInputDriver = (locate?: LocateNode): InputDriver => {
   const keys = new Map<string, { key: string; code: string }>();
   const buttons = new Map<Button, { x: number; y: number }>();
+
+  const aim = async (
+    cdp: CDPSession,
+    input: {
+      readonly x: number;
+      readonly y: number;
+      readonly target?: AgentBrowserPointerTarget | undefined;
+    },
+  ) => {
+    const fallback = { x: finite(input.x), y: finite(input.y) };
+    if (input.target === undefined || locate === undefined) return fallback;
+    const box = await locate(cdp, input.target.node).catch(() => null);
+    return (box && pointIn(box, input.target.fx, input.target.fy)) ?? fallback;
+  };
 
   const dispatch = async (cdp: CDPSession, input: AgentBrowserDrivingInput) => {
     switch (input._tag) {
@@ -46,7 +96,7 @@ export const makeInputDriver = (): InputDriver => {
             : input.action === "up"
               ? "mouseReleased"
               : "mouseMoved";
-        const point = { x: finite(input.x), y: finite(input.y) };
+        const point = await aim(cdp, input);
         await cdp.send("Input.dispatchMouseEvent", {
           type,
           ...point,
@@ -60,17 +110,17 @@ export const makeInputDriver = (): InputDriver => {
         else if (input.action === "up") buttons.delete(input.button);
         return;
       }
-      case "wheel":
-        return cdp
-          .send("Input.dispatchMouseEvent", {
-            type: "mouseWheel",
-            x: finite(input.x),
-            y: finite(input.y),
-            deltaX: finite(input.deltaX),
-            deltaY: finite(input.deltaY),
-            modifiers: modifiersOf(input.modifiers),
-          })
-          .then(constVoid);
+      case "wheel": {
+        const point = await aim(cdp, input);
+        await cdp.send("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          ...point,
+          deltaX: finite(input.deltaX),
+          deltaY: finite(input.deltaY),
+          modifiers: modifiersOf(input.modifiers),
+        });
+        return;
+      }
       case "key": {
         const { key, code, text } = input;
         const modifiers = modifiersOf(input.modifiers);

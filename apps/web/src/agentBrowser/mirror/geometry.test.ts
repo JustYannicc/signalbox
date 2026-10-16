@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { fitPage, inputModifiers, keyText, toPagePoint, wheelDeltaPx } from "./geometry";
+import {
+  fitPage,
+  fractionIn,
+  inputModifiers,
+  keyText,
+  toPagePoint,
+  wheelDeltaPx,
+} from "./geometry";
 
 const page = { width: 1280, height: 720 };
 
@@ -30,6 +37,24 @@ describe("toPagePoint", () => {
     expect(toPagePoint(320, 50, fit, page, false)).toBeNull();
     expect(toPagePoint(320, 50, fit, page, true)).toEqual({ x: 640, y: 0 });
     expect(toPagePoint(700, 590, fit, page, true)).toEqual({ x: 1280, y: 720 });
+  });
+});
+
+describe("fractionIn", () => {
+  const box = { left: 100, top: 20, width: 200, height: 40 };
+
+  it("says where a point sits across an element's box", () => {
+    expect(fractionIn(box, 100, 20)).toEqual({ fx: 0, fy: 0 });
+    expect(fractionIn(box, 150, 50)).toEqual({ fx: 0.25, fy: 0.75 });
+    expect(fractionIn(box, 300, 60)).toEqual({ fx: 1, fy: 1 });
+  });
+
+  it("keeps a point just outside the box on its edge, and aims at an empty box's middle", () => {
+    expect(fractionIn(box, 99.5, 61)).toEqual({ fx: 0, fy: 1 });
+    expect(fractionIn({ left: 10, top: 10, width: 0, height: 0 }, 10, 10)).toEqual({
+      fx: 0.5,
+      fy: 0.5,
+    });
   });
 });
 

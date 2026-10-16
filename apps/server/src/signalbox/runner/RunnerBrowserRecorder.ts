@@ -13,7 +13,10 @@ import type { CDPSession, Page } from "playwright-core";
  * (`recordCrossOriginIframes`). It reports over a CDP binding on the tab's own
  * session, under a random name the script takes and deletes before the page's
  * own scripts run, so a site sees no automation global (Playwright's
- * `exposeBinding` would leave `__playwright__binding__` behind).
+ * `exposeBinding` would leave `__playwright__binding__` behind). What the
+ * runner asks of the recorder (end a step, record canvases, find an element
+ * by rrweb id) lives on one non-enumerable property of the top window, under
+ * the tab's own random name (`recorderKey`): nothing names it after us.
  *
  * Events leave the page in ~100 ms batches. A batch never carries a full
  * snapshot after other events, so one starting with rrweb's `Meta` is where a
@@ -44,7 +47,13 @@ export type RecorderReport =
 const BATCH_MS = 100;
 /** Characters a page sends after a full snapshot before it takes a fresh one. */
 export const RECORDING_CHECKOUT_CHARS = 8_000_000;
-const STATE_KEY = "signalbox.mirror";
+
+/**
+ * A name for a tab's recorder in its pages. Keep one per tab: a reconnect
+ * injects again into the same document, and stops the recorder already there
+ * by this name.
+ */
+export const recorderKey = (): string => `__${NodeCrypto.randomBytes(6).toString("hex")}`;
 
 // rrweb's IIFE build ships as a file; createRequire also resolves it beside the bundled Runner.
 const requireRecorder = NodeModule.createRequire(import.meta.url);
@@ -70,12 +79,12 @@ const readRecorder = (): string | null => {
  * records only `change` events: a person typing through the mirror sees each
  * key land.
  */
-const pageScript = (recorder: string, binding: string) => `(() => {
+const pageScript = (recorder: string, binding: string, key: string) => `(() => {
   const send = globalThis[${JSON.stringify(binding)}];
   try { delete globalThis[${JSON.stringify(binding)}]; } catch {}
   const top = window.top === window;
   if (top && typeof send !== "function") return;
-  const key = Symbol.for(${JSON.stringify(STATE_KEY)});
+  const key = ${JSON.stringify(key)};
   // Reconnecting to the person's browser injects again into the same document.
   if (top) globalThis[key]?.stop();
   const holder = {};
@@ -158,6 +167,27 @@ ${recorder}}).call(holder);
         flush(false);
         return true;
       },
+      // Where rrweb's element with this id is in the top window's viewport now, through
+      // the same-origin frames it sits in; null when it's gone or has no box.
+      box: (id) => {
+        let node = record.mirror && record.mirror.getNode(id);
+        if (node && node.nodeType !== 1) node = node.parentElement;
+        if (!node || !node.isConnected || typeof node.getBoundingClientRect !== "function") return null;
+        const rect = node.getBoundingClientRect();
+        if (!(rect.width > 0 && rect.height > 0)) return null;
+        let x = rect.left;
+        let y = rect.top;
+        let view = node.ownerDocument.defaultView;
+        while (view && view !== window) {
+          const frame = view.frameElement;
+          if (!frame) return null;
+          const at = frame.getBoundingClientRect();
+          x += at.left + frame.clientLeft;
+          y += at.top + frame.clientTop;
+          view = frame.ownerDocument.defaultView;
+        }
+        return { left: x, top: y, width: rect.width, height: rect.height, viewWidth: innerWidth, viewHeight: innerHeight };
+      },
     },
   });
 })();`;
@@ -193,6 +223,7 @@ export const readReport = (payload: string): RecorderReport | null => {
 export const injectRecorder = async (
   page: Page,
   cdp: CDPSession,
+  key: string,
   report: (payload: string) => void,
 ): Promise<boolean> => {
   const recorder = readRecorder();
@@ -204,7 +235,7 @@ export const injectRecorder = async (
   // Chromium installs a session's bindings only while its Runtime domain is on.
   await cdp.send("Runtime.enable");
   await cdp.send("Runtime.addBinding", { name: binding });
-  const script = pageScript(recorder, binding);
+  const script = pageScript(recorder, binding, key);
   await page.addInitScript({ content: script });
   // The document already open; a page still loading records from its next one.
   await page.evaluate(script).catch(() => undefined);
@@ -215,27 +246,64 @@ export const injectRecorder = async (
  * Ends the page's current step: what it sent so far, then a `step` report,
  * then a fresh full snapshot. False when the page records nothing.
  */
-export const markStep = (page: Page, stepId: string): Promise<boolean> =>
+export const markStep = (page: Page, key: string, stepId: string): Promise<boolean> =>
   page.evaluate(
-    ([key, id]) => {
-      const state = (globalThis as Record<symbol, { step?: (id: string) => boolean } | undefined>)[
-        Symbol.for(key)
+    ([name, id]) => {
+      const state = (globalThis as Record<string, { step?: (id: string) => boolean } | undefined>)[
+        name
       ];
       return state?.step?.(id) === true;
     },
-    [STATE_KEY, stepId] as const,
+    [key, stepId] as const,
   );
 
 /** Has the page record its canvases, or stop; a page that records nothing ignores it. */
-export const recordCanvas = (page: Page, on: boolean): Promise<void> =>
+export const recordCanvas = (page: Page, key: string, on: boolean): Promise<void> =>
   page
     .evaluate(
-      ([key, value]) => {
+      ([name, value]) => {
         const state = (
-          globalThis as Record<symbol, { canvas?: (on: boolean) => void } | undefined>
-        )[Symbol.for(key)];
+          globalThis as Record<string, { canvas?: (on: boolean) => void } | undefined>
+        )[name];
         state?.canvas?.(value);
       },
-      [STATE_KEY, on] as const,
+      [key, on] as const,
     )
     .catch(() => undefined);
+
+/** An element's box in the top window's viewport, and that viewport's size, in CSS pixels. */
+export interface NodeBox {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+  readonly viewWidth: number;
+  readonly viewHeight: number;
+}
+
+const isNodeBox = (value: unknown): value is NodeBox =>
+  typeof value === "object" &&
+  value !== null &&
+  ["left", "top", "width", "height", "viewWidth", "viewHeight"].every((field) =>
+    Number.isFinite((value as Record<string, unknown>)[field]),
+  );
+
+/**
+ * Where rrweb's element `node` is in the tab's page now, asked over the tab's
+ * CDP session (no Playwright utility world, so nothing more shows in the
+ * page); null when the page records nothing or has no such element.
+ */
+export const nodeBox = async (
+  cdp: CDPSession,
+  key: string,
+  node: number,
+): Promise<NodeBox | null> => {
+  if (!Number.isSafeInteger(node)) return null;
+  const result = await cdp.send("Runtime.evaluate", {
+    expression: `(() => { const state = globalThis[${JSON.stringify(key)}]; return state && typeof state.box === "function" ? state.box(${node}) : null; })()`,
+    returnByValue: true,
+    silent: true,
+  });
+  const value: unknown = result.exceptionDetails ? null : result.result.value;
+  return isNodeBox(value) ? value : null;
+};

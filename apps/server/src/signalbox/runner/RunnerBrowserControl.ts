@@ -4,7 +4,7 @@ import { constVoid } from "effect/Function";
 import type { CDPSession } from "playwright-core";
 
 import * as ServerBrowserPage from "../../preview/ServerBrowserPage.ts";
-import { makeInputDriver } from "./RunnerBrowserInput.ts";
+import { type LocateNode, makeInputDriver } from "./RunnerBrowserInput.ts";
 
 /**
  * Who drives one tab of the agent's browser (#587): the agent, or the one
@@ -74,6 +74,8 @@ export const makeTabControl = <V>(options: {
   ) => void;
   /** After the hand-back's input settled, before the browser may let go: the person's step ends. */
   readonly settle: (takenAt: string, cdp: CDPSession | null) => Promise<void>;
+  /** Finds the element a pointer input aims at; without it, pointers go by coordinates. */
+  readonly locate?: LocateNode;
 }): TabControl<V> => {
   let driving: Driving<V> | null = null;
   /** The agent waits while a person drives and until the hand-back settled. */
@@ -134,7 +136,7 @@ export const makeTabControl = <V>(options: {
         viewer,
         takenAt: new Date().toISOString(),
         opened: opening.catch(() => null),
-        input: makeInputDriver(),
+        input: makeInputDriver(options.locate),
         tail: Promise.resolve(),
         cancelIdle: constVoid,
       };
@@ -153,10 +155,12 @@ export const makeTabControl = <V>(options: {
       const current = driving;
       if (current === null || current.viewer !== viewer) return;
       armIdle(current);
+      // Queued while they held the tab, so it runs even if they hand back
+      // first: the hand-back waits for this queue before letting go.
       current.tail = current.tail
         .then(async () => {
           const cdp = (await current.opened)?.cdp() ?? null;
-          if (cdp !== null && driving === current) await current.input.dispatch(cdp, input);
+          if (cdp !== null) await current.input.dispatch(cdp, input);
         })
         .catch(constVoid);
     },

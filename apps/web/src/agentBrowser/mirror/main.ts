@@ -11,13 +11,14 @@ import "./mirror.css";
 
 import { Replayer } from "@rrweb/replay";
 import { EventType, type eventWithTime } from "@rrweb/types";
+import type { AgentBrowserDrivingInput } from "@t3tools/contracts/signalboxPreviews";
 import type {
   AgentBrowserMirrorHostMessage,
   AgentBrowserMirrorPageMessage,
 } from "@t3tools/client-runtime/state/signalboxAgentBrowserMirror";
 
 import { sampledCanvasPlugin } from "./canvas";
-import { fitPage, toPagePoint, type Fit, type Size } from "./geometry";
+import { fitPage, fractionIn, toPagePoint, type Fit, type Size } from "./geometry";
 import { attachInput } from "./input";
 
 declare global {
@@ -162,8 +163,48 @@ function receive(raw: unknown) {
   }
 }
 
+/**
+ * The innermost replayed element at a point in the page's CSS pixels, with
+ * the point in that element's own frame: nested frames are entered, not
+ * stopped at.
+ */
+function elementAt(x: number, y: number): { element: Element; x: number; y: number } | null {
+  let document = replayer?.iframe.contentDocument ?? null;
+  let at = { x, y };
+  for (let depth = 0; document !== null && depth < 8; depth += 1) {
+    const element = document.elementFromPoint(at.x, at.y);
+    if (!element) return null;
+    const inner = element.nodeName === "IFRAME" ? (element as HTMLIFrameElement) : null;
+    const innerDocument = inner?.contentDocument ?? null;
+    if (inner === null || innerDocument === null) return { element, ...at };
+    const box = inner.getBoundingClientRect();
+    at = { x: at.x - box.left - inner.clientLeft, y: at.y - box.top - inner.clientTop };
+    document = innerDocument;
+  }
+  return null;
+}
+
+/** Elements that span the page: a spot across them says less than the point itself. */
+const PAGE_ELEMENTS = new Set(["HTML", "BODY"]);
+
+/**
+ * Adds the element under a pointer input to it: the machine aims at that
+ * element's box in the agent's page, which the viewer's fonts may lay out
+ * differently from this replay. Moves are already coalesced to one per
+ * frame by now, so this looks up once per sent input, not per pointer event.
+ */
+function anchored(input: AgentBrowserDrivingInput): AgentBrowserDrivingInput {
+  if (input._tag !== "mouse" && input._tag !== "wheel") return input;
+  const hit = elementAt(input.x, input.y);
+  if (hit === null || replayer === null || PAGE_ELEMENTS.has(hit.element.nodeName)) return input;
+  const node = replayer.getMirror().getId(hit.element);
+  if (node < 0) return input;
+  const at = fractionIn(hit.element.getBoundingClientRect(), hit.x, hit.y);
+  return { ...input, target: { node, ...at } };
+}
+
 function isEditableAt(x: number, y: number): boolean {
-  const element = replayer?.iframe.contentDocument?.elementFromPoint(x, y);
+  const element = elementAt(x, y)?.element;
   if (!element) return false;
   if (element.nodeName === "TEXTAREA" || element.nodeName === "SELECT") return true;
   if (element.nodeName === "INPUT")
@@ -187,7 +228,7 @@ attachInput({
   scale: () => fit.scale,
   pageHeight: () => page?.height ?? 0,
   isEditableAt,
-  send: (input) => post({ type: "input", input }),
+  send: (input) => post({ type: "input", input: anchored(input) }),
 });
 
 for (const type of ["pointerdown", "pointermove", "keydown", "wheel"] as const) {

@@ -43,6 +43,26 @@ export function toPagePoint(
   };
 }
 
+/**
+ * Where a point sits across a box, 0 to 1 each way: what a pointer target
+ * carries, so the machine aims at the same spot of the element whatever size
+ * its own layout gives it. A box with no width or height is aimed at its middle.
+ */
+export function fractionIn(
+  box: {
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+    readonly height: number;
+  },
+  x: number,
+  y: number,
+): { readonly fx: number; readonly fy: number } {
+  const across = (from: number, size: number, at: number) =>
+    size > 0 ? Math.min(Math.max((at - from) / size, 0), 1) : 0.5;
+  return { fx: across(box.left, box.width, x), fy: across(box.top, box.height, y) };
+}
+
 const WHEEL_LINE_PX = 16;
 
 /** A wheel delta in pixels, whatever unit the device reported it in. */

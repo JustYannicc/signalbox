@@ -73,6 +73,16 @@ const keyDown = {
 } as const;
 
 describe("a tab's control", () => {
+  it("still sends input that was queued when the person hands back", async () => {
+    const { control, log, logged } = setup();
+    control.take("ada");
+    control.drive("ada", { _tag: "text", text: "Signalbox" });
+    control.handBack(null);
+    await logged("released");
+    expect(log.indexOf("Input.insertText Signalbox")).toBeGreaterThan(-1);
+    expect(log.indexOf("Input.insertText Signalbox")).toBeLessThan(log.indexOf("released"));
+  });
+
   it("lets one viewer drive, and hands back after two minutes without input", async () => {
     const { control, log, logged, fire } = setup();
     expect(control.take("ada")).toBe(true);

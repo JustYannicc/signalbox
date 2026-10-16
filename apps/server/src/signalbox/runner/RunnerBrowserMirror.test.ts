@@ -23,6 +23,13 @@ const CANVAS_PAGE = `<title>Canvas</title>
 <button>Go</button>
 <script>const c = document.getElementById("art").getContext("2d"); c.fillStyle = "red"; c.fillRect(0, 0, 40, 40);</script>`;
 
+// Two buttons side by side; the test swaps them after the mirror recorded them.
+const TARGETS_PAGE = `<title>Targets</title>
+<style>body { margin: 0 } button { position: absolute; top: 20px; width: 100px; height: 40px; border: 0 }</style>
+<button id="target" style="left: 20px" onclick="hits.push('target')">Target</button>
+<button id="decoy" style="left: 140px" onclick="hits.push('decoy')">Decoy</button>
+<script>window.hits = [];</script>`;
+
 let server: NodeHttp.Server;
 let origin = "";
 let chrome: Browser;
@@ -30,7 +37,9 @@ let chrome: Browser;
 beforeAll(async () => {
   server = NodeHttp.createServer((request, response) => {
     response.setHeader("content-type", "text/html");
-    response.end(request.url === "/canvas" ? CANVAS_PAGE : PAGE);
+    response.end(
+      request.url === "/canvas" ? CANVAS_PAGE : request.url === "/targets" ? TARGETS_PAGE : PAGE,
+    );
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -104,16 +113,38 @@ const collect = <A>() => {
   };
 };
 
+interface RrwebNode {
+  readonly id: number;
+  readonly attributes?: Record<string, unknown>;
+  readonly childNodes?: ReadonlyArray<RrwebNode>;
+}
 interface RrwebEvent {
   readonly type: number;
-  readonly data?: { readonly source?: number; readonly text?: string };
+  readonly data?: {
+    readonly source?: number;
+    readonly type?: number;
+    readonly text?: string;
+    readonly node?: RrwebNode;
+  };
 }
+/** rrweb's id for the element with this `id` attribute in a recorded page. */
+const recordedId = (node: RrwebNode | undefined, id: string): number | undefined => {
+  if (node === undefined) return undefined;
+  if (node.attributes?.id === id) return node.id;
+  for (const child of node.childNodes ?? []) {
+    const found = recordedId(child, id);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
 const eventsOf = (update: AgentBrowserUpdate): ReadonlyArray<RrwebEvent> =>
   update._tag === "events" ? (JSON.parse(update.events) as ReadonlyArray<RrwebEvent>) : [];
 const decoder = new TextDecoder();
 const FULL_SNAPSHOT = 2;
 const INCREMENTAL = 3;
 const META = 4;
+const MOUSE_INTERACTION = 2;
+const CLICK = 2;
 
 describe("the agent's browser, mirrored", () => {
   it("shows a viewer the page and its changes, and lets them type into it", async () => {
@@ -214,6 +245,79 @@ describe("the agent's browser, mirrored", () => {
       );
       expect((await browser.status({})).control).toMatchObject({ owner: "agent" });
       await steps.next((each) => each.step.action === "click");
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
+
+  it("clicks the element the person pointed at, wherever the page laid it out", async () => {
+    const browser = makeRunnerBrowser(
+      { machine: await machineTabs(), person: null },
+      { timer: manualTimers().timer },
+    );
+    const updates = collect<AgentBrowserUpdate>();
+    try {
+      await browser.navigate({ url: `${origin}/targets` });
+      const viewer = browser.mirror!.watch({
+        viewerId: "viewer-1",
+        tabId: null,
+        send: (line) => updates.push(JSON.parse(decoder.decode(line)) as AgentBrowserUpdate),
+        end: () => {},
+      });
+      const isSnapshot = (update: AgentBrowserUpdate) =>
+        update._tag === "events" &&
+        eventsOf(update).some((event) => event.type === FULL_SNAPSHOT) &&
+        update.events.includes("Decoy");
+      // The viewer catches up from the step's snapshot, then watching restarts the
+      // recording (with canvases) from a fresh one, as the mirror page then replays.
+      const caughtUp = await updates.next(isSnapshot);
+      const snapshot = await updates.next(isSnapshot, updates.seen.indexOf(caughtUp) + 1);
+      const node = recordedId(
+        eventsOf(snapshot).find((event) => event.type === FULL_SNAPSHOT)?.data?.node,
+        "target",
+      );
+      expect(node).toBeTypeOf("number");
+
+      // The mirror drew Target at (20..120, 20..60). The page lays out differently
+      // now, as it does when the viewer's fonts differ: Decoy is where Target was.
+      await browser.evaluate({
+        expression:
+          "document.getElementById('target').style.left = '140px'; document.getElementById('decoy').style.left = '20px'",
+      });
+
+      viewer.input({ _tag: "take" });
+      await updates.next((update) => update._tag === "state" && update.control === "you");
+      const click = (target?: {
+        readonly node: number;
+        readonly fx: number;
+        readonly fy: number;
+      }) => {
+        const at = { x: 70, y: 40, clickCount: 1, modifiers: 0, ...(target ? { target } : {}) };
+        viewer.input({ _tag: "mouse", action: "down", button: "left", buttons: 1, ...at });
+        viewer.input({ _tag: "mouse", action: "up", button: "left", buttons: 0, ...at });
+      };
+      const before = updates.seen.length;
+      // By coordinates alone, the click lands on Decoy.
+      click();
+      // Aimed at Target, it lands on Target, at the same spot across its box.
+      click({ node: node!, fx: 0.5, fy: 0.5 });
+      // An element the page no longer has falls back to the coordinates.
+      click({ node: 999_999, fx: 0.5, fy: 0.5 });
+      // Hand back once the page saw all three.
+      const clicks = () =>
+        updates.seen
+          .slice(before)
+          .flatMap(eventsOf)
+          .filter((event) => event.data?.source === MOUSE_INTERACTION && event.data.type === CLICK)
+          .length;
+      await updates.next(() => clicks() >= 3, before);
+      viewer.input({ _tag: "release" });
+
+      expect(await browser.evaluate({ expression: "window.hits" })).toEqual([
+        "decoy",
+        "target",
+        "decoy",
+      ]);
     } finally {
       await browser.close();
     }
