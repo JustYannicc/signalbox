@@ -4,6 +4,8 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import { MACHINE_HOME } from "@signalbox/runner-protocol/RunnerProtocol";
+
 import packageJson from "../../../../package.json" with { type: "json" };
 import { previewBrowserRelease } from "../../../preview/PreviewBrowser.ts";
 
@@ -44,5 +46,10 @@ describe("Runner image pins", () => {
     expect(installs[0]).toContain('"playwright-core@${PLAYWRIGHT_CORE_VERSION}"');
     expect(installs[0]).toContain('"@1password/sdk@${ONEPASSWORD_SDK_VERSION}"');
     expect(installs[0]).toContain('"oxc-parser@${OXC_VERSION}"');
+  });
+
+  // A light machine's Runner keeps threads' workspaces there, as a boat VM's does (#620).
+  it("gives the Runner's user the folder every machine class keeps workspaces in", () => {
+    expect(dockerfile).toMatch(new RegExp(`install -d -o node -g node .*${MACHINE_HOME}\\b`));
   });
 });
