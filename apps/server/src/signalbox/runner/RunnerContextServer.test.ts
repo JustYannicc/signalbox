@@ -9,10 +9,17 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { RUNNER_AUTOMATION_TOOLS } from "./RunnerAutomationTools.ts";
+import { RUNNER_SCHEDULED_TASK_TOOLS } from "./RunnerScheduledTaskTools.ts";
 import type { BranchDrive } from "./RunnerBranchTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { startContextServer } from "./RunnerContextServer.ts";
 import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
+
+/** Tools that answer from the cloud's automation engine, tested in their own files. */
+const AUTOMATION_SIDE = new Set<string>([
+  ...RUNNER_AUTOMATION_TOOLS,
+  ...RUNNER_SCHEDULED_TASK_TOOLS,
+]);
 
 /**
  * The context server as the harnesses and `rclone mount` reach it: MCP and
@@ -280,7 +287,7 @@ describe("context server (#141)", () => {
         annotations: { readOnlyHint: boolean };
       }>;
       const reads = tools.filter(
-        (tool) => tool.annotations.readOnlyHint && !RUNNER_AUTOMATION_TOOLS.includes(tool.name),
+        (tool) => tool.annotations.readOnlyHint && !AUTOMATION_SIDE.has(tool.name),
       );
       expect(reads.map((tool) => tool.name)).toEqual([
         "search_context",
@@ -354,10 +361,7 @@ describe("context server (#141)", () => {
       }>;
       expect(
         tools
-          .filter(
-            (tool) =>
-              !tool.annotations.readOnlyHint && !RUNNER_AUTOMATION_TOOLS.includes(tool.name),
-          )
+          .filter((tool) => !tool.annotations.readOnlyHint && !AUTOMATION_SIDE.has(tool.name))
           .map((tool) => tool.name),
       ).toEqual(["push", "create_pr"]);
 

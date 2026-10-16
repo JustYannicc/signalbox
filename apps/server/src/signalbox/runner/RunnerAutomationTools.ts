@@ -132,19 +132,20 @@ const mcp = <S extends Input>(
 });
 
 /** Answers the way the server's MCP tools do: the result as JSON text. */
-const answer = (result: unknown) => (result === undefined ? "" : JSON.stringify(result));
+export const answer = (result: unknown) => (result === undefined ? "" : JSON.stringify(result));
 
-/** The automation tools, reaching the cloud through `view`'s client. */
-export const layerAutomationTools = (view: DrivesView) => {
+/**
+ * Calls the cloud's engine through `view`'s client, answering the tool's
+ * result. Only a read is retried, so a write never happens twice.
+ */
+export const automationCaller = (view: DrivesView) => {
   const client = Effect.suspend((): Effect.Effect<ContextClient, ToolError> => {
     const current = view.client();
     return current === null
       ? fail("Automations open with the thread's first turn.")
       : Effect.succeed(current);
   });
-
-  /** Asks the cloud's engine; only a read is retried, so a write never happens twice. */
-  const call = (name: string, input: unknown, retry: boolean) =>
+  return (name: string, input: unknown, retry: boolean) =>
     Effect.gen(function* () {
       const result = yield* (yield* client).automationTool({ name, input }, { retry }).pipe(
         Effect.mapError(
@@ -158,8 +159,32 @@ export const layerAutomationTools = (view: DrivesView) => {
         ),
       );
       if (result._tag === "failed") return yield* fail(result.message);
-      return answer(result.result);
+      return result.result;
     });
+};
+
+export type AutomationCaller = ReturnType<typeof automationCaller>;
+
+/**
+ * Saves `input` (an `automation_save` input, as sent) through the cloud with
+ * its file compiled here. A file that doesn't compile answers its diagnostics,
+ * as the server's save does, without asking the cloud.
+ */
+export const saveCompiled = (
+  ask: AutomationCaller,
+  input: { readonly source: string } & Readonly<Record<string, unknown>>,
+) => {
+  const compiled = compileForCloud(input.source);
+  return compiled.ok
+    ? ask("automation_save", { ...input, compiled: compiled.compiled }, false)
+    : Effect.succeed({ ok: false, diagnostics: compiled.diagnostics });
+};
+
+/** The automation tools, reaching the cloud through `view`'s client. */
+export const layerAutomationTools = (view: DrivesView) => {
+  const ask = automationCaller(view);
+  const call = (name: string, input: unknown, retry: boolean) =>
+    ask(name, input, retry).pipe(Effect.map(answer));
 
   /** Serves a tool the cloud answers, with the input encoded back to what the agent sent. */
   const forward = (name: string, declaration: Declared<Input>) => {
@@ -209,17 +234,11 @@ export const layerAutomationTools = (view: DrivesView) => {
       register({
         ...mcp("automation_save", tools.automation_save),
         handle: (input) =>
-          Effect.gen(function* () {
-            const compiled = compileForCloud(input.source);
-            // What the server's save answers for a file that doesn't compile.
-            if (!compiled.ok) return answer({ ok: false, diagnostics: compiled.diagnostics });
-            const encoded = yield* encodeSave(input).pipe(Effect.mapError(badArguments));
-            return yield* call(
-              "automation_save",
-              { ...encoded, compiled: compiled.compiled },
-              false,
-            );
-          }),
+          encodeSave(input).pipe(
+            Effect.mapError(badArguments),
+            Effect.flatMap((encoded) => saveCompiled(ask, encoded)),
+            Effect.map(answer),
+          ),
       }),
     ]),
   );

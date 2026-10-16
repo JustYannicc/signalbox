@@ -27,7 +27,9 @@ To see every automation, open **Automations** from the command palette (`mod+alt
 
 Automations in your cloud folders run in Signalbox Cloud, so they fire on schedules, thread events
 and pull request news with every app closed, and their questions reach your phone. Ask an agent in
-a cloud thread to write one. Some steps don't run in the cloud yet: webhooks and callback links
+a cloud thread to write one. When an agent there schedules recurring work for itself ("every 5
+minutes, post the time"), that's an automation in the thread's folder too: pause or delete it like
+any other, or ask the agent to stop it. Some steps don't run in the cloud yet: webhooks and callback links
 (`w.hook`), calls to connected services, `w.run` functions, and model steps (`w.llm`, `w.judge`,
 `w.extract`). Use a self-hosted server for automations that need them.
 
