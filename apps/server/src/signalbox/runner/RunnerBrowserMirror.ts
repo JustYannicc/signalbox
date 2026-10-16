@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   AGENT_BROWSER_STEP_ACTIONS,
+  type AgentBrowserHandoff,
   type AgentBrowserInput,
   type AgentBrowserStep,
   type AgentBrowserTab,
@@ -41,6 +42,11 @@ import { makeSegment, type Segment } from "./RunnerBrowserSegment.ts";
  * A viewer can take over the tab it watches (`RunnerBrowserControl.ts`); its
  * view stays on that tab until it hands it back, and the stretch it drove is
  * a trail step of its own (`person`).
+ *
+ * The agent can also hand a tab to the person (`handOff`, #579). Viewers
+ * that follow the agent show that tab, with the handoff in their state.
+ * While a person holds or drives a tab, all of the agent's actions on it
+ * wait, reads included: nothing from the person's stretch reaches the agent.
  */
 
 /** A tab as the mirror sees the browser: open, or the person's tab while its browser rests. */
@@ -69,10 +75,10 @@ export interface MirrorRecorder {
   /** The tabs, the current tab or the person's browser may have changed. */
   readonly changed: () => void;
   /**
-   * Waits while a person drives `tabId` (`AGENT_WAIT_MS` at most), then marks
-   * the agent's `action` on it until the returned `done`. Reads go ahead.
+   * Waits while a person drives or holds `tabId` (`AGENT_WAIT_MS` at most),
+   * then marks the agent's action on it running until the returned `done`.
    */
-  readonly agentTurn: (tabId: string, action: string) => Promise<() => void>;
+  readonly agentTurn: (tabId: string) => Promise<() => void>;
   /**
    * An action on `tabId` finished; one in `AGENT_BROWSER_STEP_ACTIONS` ends a
    * trail step, and the others (hover, scroll, ...) ride with the next one.
@@ -83,11 +89,13 @@ export interface MirrorRecorder {
     startedAt: string,
     options: { readonly canMark: boolean },
   ) => void;
-  /** Who drives `tabId`, as `preview_status` reports it. */
+  /** Who drives `tabId`, as `preview_status` reports it: a human while the agent waits on it. */
   readonly control: (tabId: string | null) => {
     readonly owner: "agent" | "human";
     readonly generation: number;
   };
+  /** Hands `tabId` to the person, or back to the agent with null. */
+  readonly handOff: (tabId: string, handoff: AgentBrowserHandoff | null) => void;
   readonly close: () => void;
 }
 
@@ -116,8 +124,6 @@ export interface BrowserMirror {
 }
 
 const STEP_ACTIONS: ReadonlySet<string> = new Set(AGENT_BROWSER_STEP_ACTIONS);
-/** Actions that only read the page, so they never wait for a person to hand a tab back. */
-const READ_ACTIONS = new Set(["snapshot", "waitFor"]);
 const MARK_TIMEOUT_MS = 5_000;
 
 const encoder = new TextEncoder();
@@ -147,6 +153,7 @@ interface Hub {
   readonly control: TabControl<Viewer>;
   /** Someone watches the tab, so its page records canvases. */
   watched: boolean;
+  handoff: AgentBrowserHandoff | null;
 }
 
 export const makeBrowserMirror = (
@@ -184,6 +191,7 @@ export const makeBrowserMirror = (
         locate: (cdp, node) => nodeBox(cdp, key, node),
       }),
       watched: false,
+      handoff: null,
     };
     hubs.set(tabId, hub);
     return hub;
@@ -218,7 +226,8 @@ export const makeBrowserMirror = (
     for (const hub of gone) hubs.delete(hub.tabId);
     for (const hub of gone) hub.control.handBack("The tab closed.");
     if (viewers.size === 0) return watchCanvases();
-    const current = host.current();
+    // A tab handed to the person is what everyone following the agent needs to see.
+    const current = [...hubs.values()].find((hub) => hub.handoff !== null)?.tabId ?? host.current();
     const problem = host.problem();
     const listed = tabs.map(tabOf);
     /** Each tab's catch-up line, built once for every viewer switching to it. */
@@ -253,6 +262,7 @@ export const makeBrowserMirror = (
               : ("someone-else" as const),
         resting: shown !== undefined && shown.page === null,
         problem,
+        handoff: hub?.handoff ?? null,
       };
       const key = JSON.stringify(state);
       if (key !== viewer.sentState || viewer.notice !== null) {
@@ -365,11 +375,9 @@ export const makeBrowserMirror = (
       );
     },
     changed: refresh,
-    agentTurn: (tabId, action) => {
+    agentTurn: (tabId) => {
       const hub = hubs.get(tabId);
-      return hub === undefined || READ_ACTIONS.has(action)
-        ? Promise.resolve(constVoid)
-        : hub.control.agentTurn();
+      return hub === undefined ? Promise.resolve(constVoid) : hub.control.agentTurn();
     },
     step: (tabId, action, startedAt, { canMark }) => {
       const hub = hubs.get(tabId);
@@ -379,9 +387,16 @@ export const makeBrowserMirror = (
     control: (tabId) => {
       const hub = tabId === null ? undefined : hubs.get(tabId);
       return {
-        owner: (hub?.control.holder() ?? null) === null ? "agent" : "human",
+        owner: hub?.control.personal() === true ? "human" : "agent",
         generation: hub?.control.generation() ?? 0,
       };
+    },
+    handOff: (tabId, handoff) => {
+      // A tab that closed has nothing to give back.
+      const hub = handoff === null ? hubs.get(tabId) : hubFor(tabId);
+      if (hub === undefined) return;
+      hub.handoff = handoff;
+      if (!hub.control.hold(handoff !== null)) refresh();
     },
     close: () => {
       for (const hub of hubs.values()) hub.control.handBack(null);

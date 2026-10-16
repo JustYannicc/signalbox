@@ -51,6 +51,15 @@ const BATCH_MS = 100;
 export const RECORDING_CHECKOUT_CHARS = 8_000_000;
 
 /**
+ * Page-side: whether an input is a payment card field, by its autocomplete,
+ * name or id. The recorder masks these, and a page with one visible is a
+ * payment (`RunnerBrowserPayment.ts`), by the same rule.
+ */
+export const CARD_FIELD = `((input) =>
+  /(^|\\s)cc-(number|csc|exp)/i.test((input.getAttribute && input.getAttribute("autocomplete")) || "") ||
+  /card[-_]?number|(?<![a-z])(cc[-_]?number|cvc|cvv2?)(?![a-z])/i.test((input.name || "") + " " + (input.id || "")))`;
+
+/**
  * A name for a tab's recorder in its pages. Keep one per tab: a reconnect
  * injects again into the same document, and stops the recorder already there
  * by this name.
@@ -87,6 +96,7 @@ const pageScript = (recorder: string, binding: string, key: string) => `(() => {
   const top = window.top === window;
   if (top && typeof send !== "function") return;
   const key = ${JSON.stringify(key)};
+  const cardField = ${CARD_FIELD};
   // Reconnecting to the person's browser injects again into the same document.
   if (top) globalThis[key]?.stop();
   const holder = {};
@@ -125,7 +135,11 @@ ${recorder}}).call(holder);
     recordAfter: "DOMContentLoaded",
     recordCrossOriginIframes: true,
     inlineStylesheet: true,
-    maskInputOptions: { password: true },
+    // Every input goes through maskInputFn, which masks passwords and card
+    // fields: what a person pays with stays out of the mirror and the trail.
+    maskInputOptions: { password: true, input: true },
+    maskInputFn: (text, element) =>
+      element && (element.type === "password" || cardField(element)) ? "*".repeat(text.length) : text,
     sampling: { scroll: 150, mousemove: false },
   };
   // A full snapshot replays every cross-origin frame empty until that frame

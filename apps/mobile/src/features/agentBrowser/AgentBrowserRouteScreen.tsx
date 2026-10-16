@@ -35,6 +35,7 @@ import { signalboxAgentBrowser, useAgentBrowserTrail } from "../../state/signalb
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { agentBrowserMirrorPageUrl } from "./agentBrowserMirrorBridge";
+import { AgentBrowserHandoffNotice } from "./AgentBrowserHandoffNotice";
 import { AgentBrowserMirrorWebView } from "./AgentBrowserMirrorWebView";
 import { AgentBrowserStatusBar } from "./AgentBrowserStatusBar";
 import { AgentBrowserTrailList } from "./AgentBrowserTrailList";
@@ -318,6 +319,15 @@ function AgentBrowserScreen({
                   }
         }
       />
+
+      {live && view.handoff !== null && selectedStepId === null ? (
+        <AgentBrowserHandoffNotice
+          environmentId={environmentId}
+          site={view.handoff.site}
+          runId={view.handoff.runId}
+          ownBrowserUrl={view.handoff.ownBrowserUrl}
+        />
+      ) : null}
 
       {/* Kernel's own words, also when it refused to open a tab at all. */}
       {view !== null && !view.offline && view.problem !== null ? (
