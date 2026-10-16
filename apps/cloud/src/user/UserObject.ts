@@ -483,6 +483,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.threadEvents(input);
   }
 
+  driveEvents(input: Parameters<UserObjectApi["driveEvents"]>[0]) {
+    return this.api.driveEvents(input);
+  }
+
   automationTool(threadId: string, name: string, input: unknown) {
     return this.api.automationTool(threadId, name, input);
   }

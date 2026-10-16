@@ -316,6 +316,9 @@ export const MAPPED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   ...PULL_REQUEST_REMARK_EVENTS,
   // A run's callback link was called (callbacks.ts).
   "hook.called",
+  // A cloud drive's ref moved; the cloud delivers them (`deliverEvent`).
+  "drive.changed",
+  "drive.branch-saved",
   // A watched source changed (sources/sourceWatches.ts).
   ...SOURCE_ITEM_EVENTS,
 ] satisfies ReadonlyArray<AutomationEventName>);

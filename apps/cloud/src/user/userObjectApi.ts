@@ -1,11 +1,13 @@
 import { AutomationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
+import { DriveRefEvent } from "../drive/DriveEvents.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
 import { publishBranch } from "../github/branchPublishing.ts";
 import type * as GitHubBranches from "../github/GitHubBranches.ts";
@@ -28,6 +30,8 @@ import * as ResourceBindings from "./ResourceBindings.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
+
+const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
 /**
  * A user object's answers, given a way to run its effects. The Durable Object
@@ -106,6 +110,17 @@ export const makeUserObjectApi = (
         ).pipe(
           // Ids only, never what happened (#284).
           Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
+        ),
+      ),
+    driveEvents: ({ driveId, events }) =>
+      run(
+        Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
+          Option.isNone(automations)
+            ? Effect.void
+            : automations.value.driveEvents({ driveId, events: decodeDriveEvents(events) }),
+        ).pipe(
+          // Ids only, never what changed (#284).
+          Effect.withSpan("UserObject.driveEvents", { attributes: { "drive.id": driveId } }),
         ),
       ),
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
