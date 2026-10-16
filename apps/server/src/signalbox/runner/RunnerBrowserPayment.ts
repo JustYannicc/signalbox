@@ -30,11 +30,11 @@ import { register } from "./RunnerContextTools.ts";
  * it; the agent keeps its turn, and so its browser, while it waits.
  */
 
-export const PAYMENT_AUTOMATION = "builtin:payment";
+const PAYMENT_AUTOMATION = "builtin:payment";
 /** How often the Runner reads whether the person answered, while the agent waits on it. */
 export const PAYMENT_POLL_MS = 2_000;
 /** The same while nobody waits: the agent hears the outcome on its next call. */
-export const PAYMENT_IDLE_POLL_MS = 15_000;
+const PAYMENT_IDLE_POLL_MS = 15_000;
 /** How long a payment waits on the person before it's withdrawn. */
 export const PAYMENT_PATIENCE_MS = 30 * 60_000;
 
