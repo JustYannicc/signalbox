@@ -1,6 +1,7 @@
 import type { AutomationBuiltIn } from "@t3tools/contracts";
 
 import { MERGE_GATE } from "./mergeGate.ts";
+import { PAYMENT } from "./payment.ts";
 import { WAIT_FOR } from "./waitFor.ts";
 import { WATCH_PULL_REQUEST } from "./watchPullRequest.ts";
 
@@ -47,6 +48,13 @@ export const BUILT_IN_AUTOMATIONS: ReadonlyArray<BuiltInAutomation> = [
     description:
       "Decides whether a thread's pull request merges: by default it sends an unready one back to the agent, merges a ready one that's easy to undo by itself, and asks you first when it's hard to undo or undecided. merge_pull_request runs it; customize it to change who or what decides.",
     source: MERGE_GATE,
+  },
+  {
+    slug: "payment",
+    name: "Payment",
+    description:
+      "Hands a payment an agent's browser reached to you: by default you finish it in the agent's live browser and answer Done or Failed, and the agent carries on. needs_you_payment runs it; customize it to change who or what decides.",
+    source: PAYMENT,
   },
 ];
 

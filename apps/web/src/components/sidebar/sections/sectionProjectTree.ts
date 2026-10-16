@@ -8,11 +8,6 @@ import type {
 } from "../../../sidebarProjectGrouping";
 import type { EnvironmentSectionsView } from "../../../state/sections";
 import type { SidebarThreadSummary } from "../../../types";
-import {
-  contextFoldId,
-  groupSectionTreeByContext,
-} from "@t3tools/client-runtime/state/signalboxContexts"; // signalbox: contexts
-import type { SignalboxContextsSnapshot } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
 
 export interface SectionSidebarProject {
   readonly id: SidebarProjectSnapshot["id"];
@@ -24,8 +19,6 @@ export interface SectionSidebarProject {
 export interface SectionSidebarEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  /** signalbox: Signalbox Cloud's contexts, which group the tree; null elsewhere. */
-  readonly contexts?: SignalboxContextsSnapshot | null;
   readonly snapshot: EnvironmentSectionsView["snapshot"];
   readonly orderedProjects: ReadonlyArray<OrchestrationProjectShell>;
   readonly tree: SectionTree<SectionSidebarProject>;
@@ -76,21 +69,6 @@ export function visibleSectionProjectRows(
   };
 
   for (const environment of environments) {
-    // signalbox: a cloud environment lists its contexts' rows in display order.
-    if (environment.contexts) {
-      for (const group of groupSectionTreeByContext(environment.tree, environment.contexts)) {
-        const foldKey = sectionSidebarSectionKey(
-          environment.environmentId,
-          contextFoldId(group.context.id),
-        );
-        if (collapsedSections.has(foldKey)) continue;
-        for (const node of group.roots) visit(environment, node);
-        for (const project of group.projects) {
-          rows.push({ environmentId: environment.environmentId, project });
-        }
-      }
-      continue;
-    }
     for (const node of environment.tree.roots) visit(environment, node);
     for (const project of [
       ...environment.tree.rootProjects,

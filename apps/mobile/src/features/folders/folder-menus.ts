@@ -79,6 +79,16 @@ export function folderMenuActions(input: {
       ],
     });
   }
+  // Shown while lent too, so a lend whose files went away can still be stopped.
+  if (folder.files || folder.githubLend) {
+    actions.push({
+      id: "folder:github-lend",
+      title: folder.githubLend
+        ? `CI steps run as @${folder.githubLend.login}`
+        : "Lend my GitHub to CI steps",
+      state: folder.githubLend ? "on" : undefined,
+    });
+  }
   if (input.notes) actions.push({ id: "folder:notes", title: "Scratch pad" });
   actions.push(
     { id: "folder:instructions", title: "Instructions…" },
@@ -92,6 +102,7 @@ export type FolderMenuChoice =
   | { readonly _tag: "rename" }
   | { readonly _tag: "move"; readonly input: FolderMoveInput }
   | { readonly _tag: "pool"; readonly poolId: AccountPoolId | null }
+  | { readonly _tag: "githubLend"; readonly lent: boolean }
   | { readonly _tag: "instructions" }
   | { readonly _tag: "notes" }
   | { readonly _tag: "delete" };
@@ -107,6 +118,8 @@ export function parseFolderMenuEvent(input: {
   if (event === "folder:new-child") return { _tag: "newChild" };
   if (event === "folder:rename") return { _tag: "rename" };
   if (event === "folder:instructions") return { _tag: "instructions" };
+  // A switch: choosing it flips the lend.
+  if (event === "folder:github-lend") return { _tag: "githubLend", lent: !folder.githubLend };
   if (event === "folder:notes") return { _tag: "notes" };
   if (event === "folder:delete") return { _tag: "delete" };
   if (event === "folder:up" || event === "folder:down") {

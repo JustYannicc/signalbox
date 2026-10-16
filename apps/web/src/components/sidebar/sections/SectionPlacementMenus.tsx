@@ -1,5 +1,6 @@
 import {
   projectSiblingMoveInput,
+  sectionDestinations,
   sectionMoveDestinations,
   sectionSiblingMoveInput,
 } from "@t3tools/client-runtime/state/sections";
@@ -26,11 +27,6 @@ import {
 } from "../../ui/menu";
 import { usePoolViews } from "../../../state/accountPools";
 import { PoolRadioSubmenu } from "../../accountPool/PoolRadioSubmenu";
-import {
-  contextIdOfProject,
-  projectSectionDestinations,
-  projectsInContextOf,
-} from "@t3tools/client-runtime/state/signalboxContexts"; // signalbox: contexts
 import { useSectionSidebarActions } from "./SectionSidebarActions";
 import type { SectionSidebarEnvironment, SectionSidebarProject } from "./sectionProjectTree";
 import { DriveProjectShareMenuItem } from "../../drives/DriveProjectShareMenuItem"; // signalbox: drives
@@ -166,20 +162,14 @@ export function ProjectPlacementMenu(props: {
   const snapshot = props.environment.snapshot;
   const index = props.siblingProjectIds.indexOf(props.project.id);
   if (!snapshot) return null;
-  // signalbox: a project stays in its context's sections (both absent outside the cloud).
-  const contexts = props.environment.contexts ?? null;
-  const destinations = projectSectionDestinations(
-    snapshot,
-    contextIdOfProject(contexts, props.project.id),
-  );
+  const destinations = sectionDestinations(snapshot);
 
   const moveOrder = (direction: "up" | "down") => {
     const input = projectSiblingMoveInput({
       projectId: props.project.id,
       direction,
       snapshot,
-      // signalbox: reorder among the project's own context only.
-      projects: projectsInContextOf(contexts, props.project.id, props.environment.orderedProjects),
+      projects: props.environment.orderedProjects,
     });
     if (input) void actions.moveProject(props.environment.environmentId, input);
   };

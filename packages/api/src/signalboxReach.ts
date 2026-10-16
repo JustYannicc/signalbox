@@ -104,6 +104,9 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.folders.setInstructions": write(),
   "signalbox.folders.setSecrets": write(),
   "signalbox.folders.setOnePassword": write(),
+  "signalbox.folders.setGitHubLend": write({
+    summary: "Lend your connected GitHub to a folder's CI steps, or stop lending it.",
+  }),
 
   "signalbox.notes.subscribe": read({
     name: "notes.list",

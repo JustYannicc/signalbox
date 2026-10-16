@@ -20,6 +20,9 @@ import {
   isFiledAway,
   newThreadIn,
   ownerFilesProject,
+  inOwnerLevel,
+  ownerLevelName,
+  ownerLevels,
   poolOfHome,
   poolOfTarget,
   threadFolderChoices,
@@ -243,5 +246,26 @@ describe("foldersModel", () => {
     expect(
       ownerFilesProject({ id: PERSONAL, kind: "personal", name: "Personal", projectIds: [] }),
     ).toBeNull();
+  });
+
+  it("puts organizations inside your own top level", () => {
+    const personal = { id: PERSONAL, kind: "personal" as const, name: "Personal", projectIds: [] };
+    const acme = {
+      id: SignalboxContextId.make("org_acme"),
+      kind: "organization" as const,
+      name: "Acme",
+      projectIds: [],
+    };
+    const levels = ownerLevels([acme, personal], (context) => context);
+    expect(levels.top).toBe(personal);
+    expect(levels.members).toEqual([acme]);
+    // A work-only account: every owner is a member level.
+    expect(ownerLevels([acme], (context) => context)).toEqual({ top: null, members: [acme] });
+    expect(ownerLevelName(personal)).toBe("Top level");
+    expect(ownerLevelName(acme)).toBe("Acme");
+    expect(inOwnerLevel(personal)).toBe("at the top level");
+    expect(inOwnerLevel(acme)).toBe("in Acme");
+    // An organization named like your own level still reads as itself.
+    expect(inOwnerLevel({ ...acme, name: "Top level" })).toBe("in Top level");
   });
 });

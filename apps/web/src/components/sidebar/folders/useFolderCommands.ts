@@ -70,6 +70,7 @@ export function useFolderCommands() {
     reportFailure: false,
   });
   const setSecrets = useAtomCommand(signalboxFolders.setSecrets, { reportFailure: false });
+  const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, { reportFailure: false });
   const setOnePassword = useAtomCommand(signalboxFolders.setOnePassword, {
     reportFailure: false,
   });
@@ -91,6 +92,12 @@ export function useFolderCommands() {
         reported(
           "Could not change this folder's files",
           update({ environmentId, input: { id, files } }),
+        ),
+      /** Lends the user's GitHub to the folder's CI steps (#641), or stops lending it. */
+      setGitHubLend: (environmentId: EnvironmentId, id: FolderId, lent: boolean): Change =>
+        reported(
+          lent ? "Could not lend your GitHub" : "Could not stop lending your GitHub",
+          setGitHubLend({ environmentId, input: { id, lent } }),
         ),
       move: (environmentId: EnvironmentId, input: FolderMoveInput): Change =>
         reported("Could not move folder", move({ environmentId, input })),
@@ -134,7 +141,17 @@ export function useFolderCommands() {
       setOnePassword: (environmentId: EnvironmentId, token: string | null): Attempt =>
         attempted(setOnePassword({ environmentId, input: { token } })),
     }),
-    [create, move, moveThread, remove, setInstructions, setOnePassword, setSecrets, update],
+    [
+      create,
+      move,
+      moveThread,
+      remove,
+      setGitHubLend,
+      setInstructions,
+      setOnePassword,
+      setSecrets,
+      update,
+    ],
   );
 }
 

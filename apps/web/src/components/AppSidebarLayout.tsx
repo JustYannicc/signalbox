@@ -33,7 +33,6 @@ import {
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
-import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
@@ -345,11 +344,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           }}
           style={windowControlsInsetStyle}
         >
-          {/* signalbox: view rail, unless the legacy sidebar setting is on */}
+          {/* signalbox: view rail; the legacy sidebar setting is retired (#683) */}
           {!legacySidebarEnabled ? (
             <SidebarViews
               home={<LegacyThreadSidebar />}
-              pipeline={<ThreadSidebar />}
               panelOverride={isOnSettings ? <SettingsSidebarNav pathname={pathname} /> : undefined}
             />
           ) : isOnSettings ? (

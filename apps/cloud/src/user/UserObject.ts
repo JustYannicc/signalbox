@@ -24,6 +24,7 @@ import * as DriveFiles from "../drive/DriveFiles.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
+import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
@@ -197,6 +198,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
       Layer.provideMerge(
         Layer.mergeAll(
           GitHubBranches.layer,
+          GitHubActions.layer,
           UserPreviewSetup.layer,
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.

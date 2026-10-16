@@ -723,7 +723,7 @@ describe("when: ref has no upstream configured", () => {
     assert.deepInclude(quick, {
       kind: "show_hint",
       label: "Push",
-      hint: "No local commits to push.",
+      hint: "No new commits to push.",
       disabled: true,
     });
   });
@@ -903,7 +903,7 @@ describe("when: ref has no upstream configured", () => {
     assert.deepInclude(quick, {
       kind: "show_hint",
       label: "Push",
-      hint: "No local commits to push.",
+      hint: "No new commits to push.",
       disabled: true,
     });
   });

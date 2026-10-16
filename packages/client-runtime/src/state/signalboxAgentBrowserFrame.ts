@@ -50,7 +50,11 @@ export function agentBrowserStatus(input: {
     };
   }
   return {
-    control: agentBrowserControlLabel(view.control),
+    // A tab handed to the person waits on them even while nobody drives it.
+    control:
+      view.handoff !== null && view.control === "agent"
+        ? "Waiting for you · the agent waits"
+        : agentBrowserControlLabel(view.control),
     detail: view.notice ?? (view.resting ? "Resting · showing the last state" : null),
   };
 }

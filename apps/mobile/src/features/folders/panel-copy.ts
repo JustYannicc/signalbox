@@ -35,3 +35,20 @@ export function navigationPanelCopy(input: {
 }): NavigationPanelCopy {
   return { projects: SECTIONS, folders: FOLDERS, mixed: MIXED }[folderWording(input)];
 }
+
+/**
+ * The panel toggle's words across every environment the app knows. Folders
+ * until one reports otherwise, so the cloud never says sections while loading.
+ */
+export function navigationToggleCopy(
+  capabilities: Iterable<{ readonly folders?: boolean | undefined }>,
+): Pick<NavigationPanelCopy, "show" | "hide"> {
+  let total = 0;
+  let withFolders = 0;
+  for (const capability of capabilities) {
+    total += 1;
+    if (capability.folders === true) withFolders += 1;
+  }
+  const { show, hide } = total === 0 ? FOLDERS : navigationPanelCopy({ withFolders, total });
+  return { show, hide };
+}
