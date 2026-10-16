@@ -57,7 +57,7 @@ export function personalSignIn(list: SignInGrants): {
 }
 
 /** A check's answer in words, the same on every client. */
-export function describeSignInAnswer(host: string, answer: SignInAnswer): string {
+function describeSignInAnswer(host: string, answer: SignInAnswer): string {
   switch (answer._tag) {
     case "allowed":
       return answer.grant.site === SIGN_IN_EVERYWHERE
