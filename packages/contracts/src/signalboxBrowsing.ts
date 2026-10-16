@@ -13,9 +13,10 @@
  * a person or an agent, and only the owner drives it: navigates, positions or
  * closes it (#343). A person's own tabs load in their devices' engines; an
  * agent's tabs live in its cloud browser and never in a person's engine.
- * Following, copying, sharing and lending a tab build on the owner (#597). A tab's position is a
- * text fragment (what Chrome's Send Tab to Self carries) with a scroll ratio
- * as the fallback.
+ * A tab is private to its owner until they share it, for now or a number of
+ * days (#597). Copying a tab is opening your own at its address: nothing of
+ * the owner's session comes with it. A tab's position is a text fragment
+ * (what Chrome's Send Tab to Self carries) with a scroll ratio as the fallback.
  *
  * Changes are events in the thread's own browsing log, separate from its
  * conversation, so scrolling never reaches the turn stream or automations.
@@ -96,6 +97,29 @@ export const BrowsingPosition = Schema.Struct({
 });
 export type BrowsingPosition = typeof BrowsingPosition.Type;
 
+export const BROWSING_SHARE_MAX_DAYS = 30;
+
+/**
+ * Who besides its owner may see a shared tab: everyone who can see the
+ * thread. Who "the team" is joins it once #640 decides.
+ */
+export const BrowsingShareAudience = Schema.Literal("Thread");
+export type BrowsingShareAudience = typeof BrowsingShareAudience.Type;
+
+/**
+ * A tab its owner shared. Without it a tab is private: nobody else learns it
+ * exists. Sharing ends at `until` on its own, or whenever the owner stops it.
+ */
+export const BrowsingSharing = Schema.Struct({
+  audience: BrowsingShareAudience,
+  /** Null: until the owner stops sharing. */
+  until: Schema.NullOr(Schema.String),
+  since: Schema.String,
+  /** Who shared it: the owner, from one of their devices or as the agent. */
+  by: BrowsingMember,
+});
+export type BrowsingSharing = typeof BrowsingSharing.Type;
+
 export const BrowsingTab = Schema.Struct({
   id: BrowsingTabId,
   /** Null for a new tab nobody has navigated yet. */
@@ -107,6 +131,7 @@ export const BrowsingTab = Schema.Struct({
   position: Schema.optional(BrowsingPosition),
   /** Who last moved `position`, so a device doesn't restore what it reported itself. */
   positionBy: Schema.optional(BrowsingMember),
+  sharing: Schema.optional(BrowsingSharing),
   updatedAt: Schema.String,
 });
 export type BrowsingTab = typeof BrowsingTab.Type;
@@ -156,6 +181,17 @@ export const BrowsingEvent = Schema.Union([
     tabId: BrowsingTabId,
     position: BrowsingPosition,
   }),
+  Schema.TaggedStruct("TabShared", {
+    ...eventBase,
+    tabId: BrowsingTabId,
+    sharing: BrowsingSharing,
+  }),
+  /** `Expired`: its `until` passed, and `by` is whoever shared it. */
+  Schema.TaggedStruct("TabUnshared", {
+    ...eventBase,
+    tabId: BrowsingTabId,
+    reason: Schema.Literals(["Stopped", "Expired"]),
+  }),
 ]);
 export type BrowsingEvent = typeof BrowsingEvent.Type;
 
@@ -179,6 +215,16 @@ export const BrowsingCommand = Schema.Union([
   Schema.TaggedStruct("Close", { tabId: BrowsingTabId }),
   Schema.TaggedStruct("CloseAll", {}),
   Schema.TaggedStruct("Position", { tabId: BrowsingTabId, position: BrowsingPosition }),
+  /**
+   * Shares the tab for `days`, or until stopped for null. Sharing again
+   * replaces the end. Only the owner shares.
+   */
+  Schema.TaggedStruct("Share", {
+    tabId: BrowsingTabId,
+    audience: BrowsingShareAudience,
+    days: Schema.NullOr(PositiveInt.check(Schema.isLessThanOrEqualTo(BROWSING_SHARE_MAX_DAYS))),
+  }),
+  Schema.TaggedStruct("Unshare", { tabId: BrowsingTabId }),
 ]);
 export type BrowsingCommand = typeof BrowsingCommand.Type;
 

@@ -9,11 +9,14 @@ import {
   type BrowsingHistoryEntry,
   type BrowsingMember,
   type BrowsingOwner,
+  type BrowsingCommand,
   type BrowsingRecord,
+  type BrowsingSharing,
   type BrowsingStreamItem,
   type BrowsingTab,
   EMPTY_BROWSING_RECORD,
 } from "@t3tools/contracts/signalboxBrowsing";
+import * as DateTime from "effect/DateTime";
 
 /**
  * A thread's browsing record folded from its stream (`signalboxBrowsing.ts`).
@@ -108,7 +111,39 @@ export function applyBrowsingEvent(record: BrowsingRecord, event: BrowsingEvent)
         positionBy: event.by,
         updatedAt: event.at,
       }));
+    case "TabShared":
+      return updateTab(record, event.tabId, (tab) => ({
+        ...tab,
+        sharing: event.sharing,
+        updatedAt: event.at,
+      }));
+    case "TabUnshared":
+      return updateTab(record, event.tabId, ({ sharing: _sharing, ...tab }) => ({
+        ...tab,
+        updatedAt: event.at,
+      }));
   }
+}
+
+/** Whether the tab is shared at `now` (epoch ms): shared, and its end hasn't passed. */
+export function isSharedAt<T extends Pick<BrowsingTab, "sharing">>(
+  tab: T,
+  now: number,
+): tab is T & { readonly sharing: BrowsingSharing } {
+  const sharing = tab.sharing;
+  return sharing !== undefined && (sharing.until === null || Date.parse(sharing.until) > now);
+}
+
+/** When the next share in the record ends on its own (epoch ms), or null when none will. */
+export function nextSharingEnd(record: BrowsingRecord): number | null {
+  let next: number | null = null;
+  for (const tab of record.tabs) {
+    const until = tab.sharing?.until;
+    if (until == null) continue;
+    const at = Date.parse(until);
+    if (next === null || at < next) next = at;
+  }
+  return next;
 }
 
 /**
@@ -238,5 +273,79 @@ export function browsingTabSnapshot(threadId: ThreadId, tab: BrowsingTab): Previ
     canGoForward: false,
     runtime: "desktop",
     updatedAt: tab.updatedAt,
+  };
+}
+
+/**
+ * How long the clients offer to share a tab for, as the end of "Share …" or
+ * "Keep sharing …". Null days: until the owner stops.
+ */
+export const BROWSING_SHARE_CHOICES = [
+  { days: null, label: "until I stop" },
+  { days: 1, label: "for a day" },
+  { days: 3, label: "for 3 days" },
+  { days: 7, label: "for a week" },
+] as const;
+
+/** When a share ends, short enough for a menu: "Mon 19 Oct, 16:40" in the reader's zone and locale. */
+export function formatSharingEnd(at: number): string {
+  return DateTime.formatLocal(DateTime.makeUnsafe(at), {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * Who can see the tab and until when, in one sentence, for its owner. A
+ * share whose end passed reads as private before the thread records it.
+ */
+export function browsingSharingNote(
+  tab: Pick<BrowsingTab, "sharing">,
+  now: number,
+  formatEnd: (at: number) => string = formatSharingEnd,
+): string {
+  const sharing = tab.sharing;
+  if (sharing === undefined || !isSharedAt(tab, now)) return "Private: only you can see this tab.";
+  return sharing.until === null
+    ? "Anyone in this thread can see it until you stop sharing."
+    : `Anyone in this thread can see it until ${formatEnd(Date.parse(sharing.until))}.`;
+}
+
+/** One way to share, as a menu item: its title and the command it sends. */
+export interface BrowsingShareChoice {
+  readonly key: string;
+  readonly title: string;
+  readonly command: BrowsingCommand;
+}
+
+/**
+ * The share menu for one of your own tabs, the same on every client: whether
+ * it's shared now, the menu's name, who can see it and until when, the ways
+ * to share, and the command that stops sharing (null while private).
+ */
+export function browsingShareMenu(
+  tab: Pick<BrowsingTab, "id" | "sharing">,
+  now: number,
+): {
+  readonly shared: boolean;
+  readonly label: string;
+  readonly note: string;
+  readonly choices: ReadonlyArray<BrowsingShareChoice>;
+  readonly stop: BrowsingCommand | null;
+} {
+  const shared = isSharedAt(tab, now);
+  return {
+    shared,
+    label: shared ? "Shared with this thread" : "Share with this thread",
+    note: browsingSharingNote(tab, now),
+    choices: BROWSING_SHARE_CHOICES.map((choice) => ({
+      key: String(choice.days),
+      title: shared ? `Keep sharing ${choice.label}` : `Share ${choice.label}`,
+      command: { _tag: "Share", tabId: tab.id, audience: "Thread", days: choice.days },
+    })),
+    stop: shared ? { _tag: "Unshare", tabId: tab.id } : null,
   };
 }

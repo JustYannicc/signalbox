@@ -470,7 +470,11 @@ export const makeMemoryCloud = (
     ) => runtime.runPromise(effect);
     // No machine runs in memory, so nothing serves previews.
     const api: ThreadDirectory.ThreadObjectApi = {
-      ...makeThreadObjectApi(run, async () => {}),
+      ...makeThreadObjectApi(
+        run,
+        async () => {},
+        async () => {},
+      ),
       previews: async () =>
         new ReadableStream({
           start: (c) => c.enqueue(new TextEncoder().encode(`${previewsLine([], false)}\n`)),

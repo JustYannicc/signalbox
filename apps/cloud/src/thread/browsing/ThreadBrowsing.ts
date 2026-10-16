@@ -1,4 +1,4 @@
-import { applyBrowsingEvent } from "@t3tools/client-runtime/browsing";
+import { applyBrowsingEvent, nextSharingEnd } from "@t3tools/client-runtime/browsing";
 import {
   type BrowsingCommand,
   BrowsingEvent,
@@ -22,7 +22,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { type Actor, ThreadEngine, ThreadNotFoundError } from "../ThreadEngine.ts";
-import { decideBrowsing } from "./browsingDecider.ts";
+import { decideBrowsing, expireBrowsingSharing } from "./browsingDecider.ts";
 
 /**
  * A thread's browsing log (#585), inside its Durable Object beside the
@@ -75,6 +75,13 @@ export class ThreadBrowsing extends Context.Service<
     ) => Effect.Effect<BrowsingDispatched, ThreadNotFoundError | BrowsingRejectedError>;
     /** The record as of now, for the preview panel's list. */
     readonly record: (actor: Actor) => Effect.Effect<Head, ThreadNotFoundError>;
+    /**
+     * Ends every share whose time is up (#597). When the next one ends, in
+     * epoch ms, for the object's alarm; null when none will on its own.
+     */
+    readonly expire: Effect.Effect<number | null>;
+    /** When the next share ends on its own (epoch ms), so a woken object can arm its alarm. */
+    readonly sharingEndsAt: Effect.Effect<number | null>;
   }
 >()("@signalbox/cloud/thread/browsing/ThreadBrowsing") {}
 
@@ -133,6 +140,37 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** Commits `events` on top of `from` and publishes them; the head they leave. Under the lock. */
+  const land = (events: ReadonlyArray<BrowsingEvent>, from: Head) =>
+    Effect.gen(function* () {
+      const last = events.at(-1);
+      if (last === undefined) return from;
+      const next: Head = {
+        sequence: last.sequence,
+        record: events.reduce(applyBrowsingEvent, from.record),
+      };
+      yield* commit(events, next);
+      yield* Ref.set(head, next);
+      yield* PubSub.publish(
+        published,
+        events.map((event): BrowsingStreamItem => ({ _tag: "Event", event })),
+      );
+      return next;
+    });
+
+  const expire = serialized(
+    Effect.gen(function* () {
+      const from = yield* current;
+      if (nextSharingEnd(from.record) === null) return null;
+      const at = DateTime.formatIso(yield* DateTime.now);
+      const next = yield* land(
+        expireBrowsingSharing(from.record, { at, sequence: from.sequence }),
+        from,
+      );
+      return nextSharingEnd(next.record);
+    }),
+  );
+
   const dispatch: ThreadBrowsing["Service"]["dispatch"] = (actor, by, command) =>
     Effect.andThen(
       visible(actor),
@@ -144,23 +182,11 @@ const make = Effect.gen(function* () {
           if (decision._tag === "Rejected") {
             return yield* new BrowsingRejectedError({ reason: decision.reason });
           }
-          const { events } = decision;
           const tabAfter = (state: BrowsingRecord) =>
             "tabId" in command
               ? (state.tabs.find((tab) => tab.id === command.tabId) ?? null)
               : null;
-          const last = events.at(-1);
-          if (last === undefined) return { sequence, tab: tabAfter(record) };
-          const next: Head = {
-            sequence: last.sequence,
-            record: events.reduce(applyBrowsingEvent, record),
-          };
-          yield* commit(events, next);
-          yield* Ref.set(head, next);
-          yield* PubSub.publish(
-            published,
-            events.map((event): BrowsingStreamItem => ({ _tag: "Event", event })),
-          );
+          const next = yield* land(decision.events, { sequence, record });
           return { sequence: next.sequence, tab: tabAfter(next.record) };
         }),
       ),
@@ -186,7 +212,13 @@ const make = Effect.gen(function* () {
   const recordOf: ThreadBrowsing["Service"]["record"] = (actor) =>
     Effect.andThen(visible(actor), serialized(current));
 
-  return ThreadBrowsing.of({ subscribe, dispatch, record: recordOf });
+  return ThreadBrowsing.of({
+    subscribe,
+    dispatch,
+    record: recordOf,
+    expire,
+    sharingEndsAt: Effect.map(current, (loaded) => nextSharingEnd(loaded.record)),
+  });
 });
 
 export const layer = Layer.effect(ThreadBrowsing, make);
