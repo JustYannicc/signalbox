@@ -66,6 +66,8 @@ We are building Photoshop, not Canva. Canva feels restrictive. Photoshop trusts 
 
 AI is a force multiplier. It amplifies whatever you give it, a well-designed system to the extreme, and a mess just as much. So every system has to be well designed, at every level, technical or not. When a system is designed well, it fades away. You stop noticing the complexity you're working with.
 
+I move fast. Signalbox should lay the rail tracks hastily in front of me, and once I'm through, clean up behind me and finish the hasty version into something good and usable. Speed first, then the finishing pass, never polish that makes me wait.
+
 Most of this has been figured out somewhere. Before designing anything, look at how others solved it, take the best parts, and combine them. The quick capture is Todoist's, and that's fine. The combination is what makes Signalbox good.
 
 Two interaction models I don't want. The first is the department bot: a university chatbot, a company's accounting agent, Grokbot's roster of bots. Grokbot made AI dead simple to start, and that was a real step for most people. But it doesn't remove the complexity. You still pay the supervisor tax of picking the right bot and managing it. People want to go to the one assistant they already use and have it handle everything from there. The second is the void: OpenClaw started as a CLI, and its front ends still feel bolted on. I tell it something and trust the void to handle it. That trust is the goal. But when something breaks, I need to see what happened. T3 Code's site shows you the app immediately. That difference is felt before anything else.
