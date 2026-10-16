@@ -265,8 +265,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.gateway,
       {
         container: ctx.container,
-        onExit: (detail, generation) =>
-          void this.machineExited(detail, generation).catch((cause: unknown) =>
+        onExit: (exit, generation) =>
+          void this.machineExited(exit, generation).catch((cause: unknown) =>
             this.runtime.runPromise(Effect.logError("machine exit failed", String(cause))),
           ),
       },
@@ -316,9 +316,9 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   }
 
   /** The thread's container stopped on its own: its lease is over (see `ThreadRunner.machineExited`). */
-  private async machineExited(detail: string, generation: number) {
+  private async machineExited(exit: MachineBackend.MachineExit, generation: number) {
     await this.runtime.runPromise(
-      ThreadRunner.ThreadRunner.use((runner) => runner.machineExited(generation, detail)),
+      ThreadRunner.ThreadRunner.use((runner) => runner.machineExited(generation, exit)),
     );
     await this.armAlarm();
   }

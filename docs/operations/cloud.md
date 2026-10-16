@@ -194,8 +194,10 @@ command it should not run there: a build, test, install or dev server
 memory (exit 137). The Runner saves the turn's files and session rows, reports
 `machine.outgrown`, and the thread continues the run on a heavy machine the
 same way it continues one whose machine was lost (below): the command shows as
-interrupted and the agent runs it again there. A light container that exits
-mid-turn moves its run up too.
+interrupted and the agent runs it again there. A light container that runs out
+of memory mid-turn (exit 137) moves its run up too. Any other exit, including
+Cloudflare restarting the container for a deploy's rollout, is a lost machine:
+the run continues on a new light one.
 
 Each preview gets its own container application,
 `signalbox-cloud-pr-<number>-threads`, deleted with the preview. Containers

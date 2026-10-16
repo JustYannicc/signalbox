@@ -42,7 +42,7 @@ import { applyEvents } from "../threadProjection.ts";
 import * as ThreadStore from "../ThreadStore.ts";
 import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
-import { MachineBackend } from "./MachineBackend.ts";
+import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
 import { freshSessionTurn } from "./freshSession.ts";
@@ -75,8 +75,9 @@ import {
  * starts it again at a new generation.
  *
  * A run on a light machine that needs more moves up the same way: its Runner
- * reports `machine.outgrown` once everything is saved (or its machine dies
- * mid-turn), and the run continues on a heavy machine, as does every later one.
+ * reports `machine.outgrown` once everything is saved (or its machine runs out
+ * of memory mid-turn), and the run continues on a heavy machine, as does every
+ * later one.
  *
  * An open preview (`PreviewHold`) keeps a connected machine up as a live run
  * does, and the idle tail counts from the later of the last run and the last
@@ -277,10 +278,10 @@ export class ThreadRunner extends Context.Service<
     readonly ended: (generation: number, reason: string) => Effect.Effect<void>;
     /**
      * The machine running `generation` stopped on its own (its backend saw it
-     * exit). A light one that dies mid-turn most likely ran out of memory, so
-     * its run moves up. An exit of an older generation's machine changes nothing.
+     * exit). Its run goes on, on a heavy machine only when a light one ran out
+     * of memory. An exit of an older generation's machine changes nothing.
      */
-    readonly machineExited: (generation: number, detail: string) => Effect.Effect<void>;
+    readonly machineExited: (generation: number, exit: MachineExit) => Effect.Effect<void>;
     readonly disconnected: (input: {
       readonly generation: number;
       readonly connection: number;
@@ -690,12 +691,19 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const machineExited: ThreadRunner["Service"]["machineExited"] = (generation, detail) =>
+  const machineExited: ThreadRunner["Service"]["machineExited"] = (generation, exit) =>
     withLease(({ projection, lease, now }, ctx) =>
       projection === null || lease.status === "none" || lease.generation !== generation
         ? Effect.succeed(keep(undefined))
         : Effect.map(
-            machineGone({ projection, lease, now, ctx, detail, moveUp: true }),
+            machineGone({
+              projection,
+              lease,
+              now,
+              ctx,
+              detail: exit.detail,
+              moveUp: exit.outOfMemory,
+            }),
             (gone) => ({ ...gone, result: undefined }),
           ),
     );
