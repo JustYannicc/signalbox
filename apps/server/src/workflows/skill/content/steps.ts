@@ -47,6 +47,7 @@ Asks the user and waits, for days if needed. It reaches their phone.
 | \`multi: true\` | Returns an array of chosen options. |
 | \`fields\` | A form: \`{ name: { type, label?, default?, required?, options? } }\`, types \`text\`, \`longText\`, \`number\`, \`boolean\`, \`choice\`. Returns \`{ choice, values }\`. A \`longText\` field with \`default: draft\` is how the user edits something before it's used. |
 | \`timeout\`, \`onTimeout\` | Stop waiting after a duration and go on with that option (or \`"fail"\`). |
+| \`open\` | \`{ threadId, view?: "browser" }\`: what the user can open beside the question, the thread or its agent's live browser. |
 
 Without fields it returns the chosen option. Branch on it with \`if\`/\`switch\`; with fields, branch on \`answer.choice\`.
 

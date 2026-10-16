@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { AutomationAskField } from "./automationAsk.ts";
+import { AutomationAskField, AutomationAskOpen } from "./automationAsk.ts";
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
@@ -90,6 +90,8 @@ export const AutomationWaitingQuestion = Schema.Struct({
   multi: Schema.Boolean,
   /** The form to fill in before answering. */
   fields: Schema.Array(AutomationAskField),
+  /** What to open beside it: a thread, or its agent's live browser. */
+  open: Schema.optionalKey(Schema.NullOr(AutomationAskOpen)),
   since: IsoDateTime,
 });
 export type AutomationWaitingQuestion = typeof AutomationWaitingQuestion.Type;

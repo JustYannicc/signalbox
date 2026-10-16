@@ -28,6 +28,7 @@ import {
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
+import type { AgentBrowserHandoff } from "@t3tools/contracts/signalboxPreviews";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { constVoid } from "effect/Function";
@@ -57,7 +58,8 @@ import { type BrowserRoute, browserFor } from "./RunnerBrowserRoute.ts";
  *
  * Every tab records itself for the people watching the agent's browser
  * (`RunnerBrowserMirror.ts`), and a tab a person took over makes the agent's
- * actions on it wait.
+ * actions on it wait. So does a tab the agent handed to the person (#579),
+ * which a `PageGuard` does by itself when the agent reaches a payment.
  */
 
 type TabInput = PreviewAutomationTabTargetInput;
@@ -86,7 +88,36 @@ export interface BrowserBackend {
   readonly close: () => Promise<void>;
   /** The browser as people watch it; absent on a browser that isn't mirrored. */
   readonly mirror?: BrowserMirror;
+  /** The tab's page, for looking at it outside the agent's actions. */
+  readonly pageOf?: (input: TabInput) => Promise<{ readonly tabId: string; readonly page: Page }>;
+  /** Hands the tab to the person, or back to the agent with null; the agent's actions on it wait. */
+  readonly handOff?: (tabId: string, handoff: AgentBrowserHandoff | null) => void;
 }
+
+/**
+ * Looks at a page of the person's browser around the agent's actions on it
+ * (`RunnerBrowserPayment.ts`): before one that acts on the page, and after
+ * one that may have changed it. A rejection refuses the action in its words.
+ */
+export type PageGuard = (tab: {
+  readonly tabId: string;
+  readonly page: Page;
+  /** After the action: the page may still be loading. */
+  readonly after: boolean;
+}) => Promise<void>;
+
+/** Actions that act on the page, so a guard sees it first. */
+const ACTS_ON_PAGE: ReadonlySet<string> = new Set([
+  "click",
+  "type",
+  "press",
+  "select",
+  "drag",
+  "upload",
+  "evaluate",
+]);
+/** Actions that may land on another page, so a guard sees it after. */
+const CHANGES_PAGE: ReadonlySet<string> = new Set(["navigate", "click", "press", "select"]);
 
 /** Where the Runner image puts the pinned headless shell (see `image/Dockerfile`). */
 export const BROWSER_EXECUTABLE_ENV = "SIGNALBOX_BROWSER_EXECUTABLE";
@@ -190,7 +221,7 @@ export const makeRunnerBrowser = (
     readonly machine: TabSource;
     readonly person: TabSource | null;
   },
-  options: { readonly timer?: Timer } = {},
+  options: { readonly timer?: Timer; readonly guard?: PageGuard } = {},
 ): BrowserBackend => {
   const tabs = new Map<string, Tab>();
   let current: string | null = null;
@@ -290,8 +321,12 @@ export const makeRunnerBrowser = (
       dialog: null,
     };
     const now = () => new Date().toISOString();
+    // What a page logs while a person has the tab is theirs; the agent never reads it.
+    const keep = <A>(buffer: Array<A>, entry: A) => {
+      if (recorder.control(tab.tabId).owner === "agent") pushBounded(buffer, entry);
+    };
     page.on("console", (message) =>
-      pushBounded(tab.consoleEntries, {
+      keep(tab.consoleEntries, {
         level: message.type(),
         text: message.text().slice(0, 2_000),
         timestamp: now(),
@@ -299,7 +334,7 @@ export const makeRunnerBrowser = (
     );
     // Uncaught exceptions never reach the console API, but they are what breaks a page.
     page.on("pageerror", (error) =>
-      pushBounded(tab.consoleEntries, {
+      keep(tab.consoleEntries, {
         level: "error",
         text: (error.stack ?? error.message).slice(0, 2_000),
         timestamp: now(),
@@ -307,7 +342,7 @@ export const makeRunnerBrowser = (
       }),
     );
     page.on("response", (response) =>
-      pushBounded(tab.networkEntries, {
+      keep(tab.networkEntries, {
         url: response.url(),
         method: response.request().method(),
         status: response.status(),
@@ -316,7 +351,7 @@ export const makeRunnerBrowser = (
       }),
     );
     page.on("requestfailed", (request) =>
-      pushBounded(tab.networkEntries, {
+      keep(tab.networkEntries, {
         url: request.url(),
         method: request.method(),
         status: null,
@@ -363,7 +398,8 @@ export const makeRunnerBrowser = (
   };
 
   const createTab = async (route: BrowserRoute): Promise<Tab> => {
-    const oldest = tabs.values().next().value;
+    // A tab the person has (a payment they're finishing) is never the one to go.
+    const oldest = [...tabs.values()].find((tab) => recorder.control(tab.tabId).owner === "agent");
     if (oldest !== undefined && tabs.size >= TAB_LIMIT) await oldest.page.close().catch(constVoid);
     const opened = await pageOn(route);
     return track(opened.page, opened.route);
@@ -422,14 +458,10 @@ export const makeRunnerBrowser = (
     );
   };
 
-  /** The agent's `action` on a tab: unless it only reads, it waits while a person drives the tab. */
-  const agentTurn = async <A>(
-    input: TabInput,
-    action: string,
-    run: (tab: Tab) => Promise<A>,
-  ): Promise<A> => {
+  /** The agent's action on a tab, once no person drives or holds it. */
+  const agentTurn = async <A>(input: TabInput, run: (tab: Tab) => Promise<A>): Promise<A> => {
     const found = await findTab(input);
-    const done = await recorder.agentTurn(found.tabId, action);
+    const done = await recorder.agentTurn(found.tabId);
     try {
       return await run(requireTab({ tabId: found.tabId }));
     } finally {
@@ -438,9 +470,20 @@ export const makeRunnerBrowser = (
     }
   };
 
+  /** The guard on `tab` around `action`, when `actions` has it: only the person's browser has payments. */
+  const guarded = (tab: Tab | undefined, action: string, actions: ReadonlySet<string>) =>
+    options.guard !== undefined && tab?.route === "person" && actions.has(action)
+      ? options.guard({ tabId: tab.tabId, page: tab.page, after: actions === CHANGES_PAGE })
+      : Promise.resolve();
+
   /** An action on a tab in the agent's turn, refused while a dialog waits, and kept in the tab's timeline. */
   const act = <A>(input: TabInput, action: string, run: (tab: Tab) => Promise<A>): Promise<A> =>
-    agentTurn(input, action, (tab) => actOn(tab, action, run));
+    agentTurn(input, async (tab) => {
+      const result = await actOn(tab, action, run);
+      // A tab the action closed (a popup) has no page left to look at.
+      await guarded(tabs.get(tab.tabId), action, CHANGES_PAGE);
+      return result;
+    });
 
   const actOn = async <A>(tab: Tab, action: string, run: (tab: Tab) => Promise<A>): Promise<A> => {
     if (tab.dialog !== null)
@@ -456,6 +499,7 @@ export const makeRunnerBrowser = (
     pushBounded(tab.actionTimeline, event, ACTION_TIMELINE_LIMIT);
     const release = sourceOf(tab.route).use?.() ?? constVoid;
     try {
+      await guarded(tab, action, ACTS_ON_PAGE);
       const result = await run(tab);
       event.status = "succeeded";
       return result;
@@ -556,7 +600,7 @@ export const makeRunnerBrowser = (
       return statusOf(tab);
     },
     dialog: (input) =>
-      agentTurn(input, "dialog", async (tab) => {
+      agentTurn(input, async (tab) => {
         const dialog = tab.dialog;
         if (dialog === null) throw failure("No dialog is pending.");
         const startedAt = new Date().toISOString();
@@ -614,5 +658,10 @@ export const makeRunnerBrowser = (
       await Promise.all([sources.machine.close(), sources.person?.close() ?? Promise.resolve()]);
     },
     mirror,
+    pageOf: async (input) => {
+      const tab = await findTab(input);
+      return { tabId: tab.tabId, page: tab.page };
+    },
+    handOff: (tabId, handoff) => recorder.handOff(tabId, handoff),
   };
 };

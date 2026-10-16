@@ -933,4 +933,49 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
     workerModule:
       'export function load(workflow) {\nconst meta = {\n\tname: "Merge gate",\n\tdescription: "Decides whether a thread\'s pull request merges: asks you, then merges it, deletes its branch and tells the agent.",\n\tintent: "ask me before an agent merges its pull request"\n};\n/** Tells the agent how it went; it doesn\'t see the automation. */\nasync function tell(w, threadId, message) {\n\tawait w.call("s4", "Tell the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage\n\t});\n}\nconst __signalboxWorkflow = workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the pull request\'s thread.");\n\t// What the person sees comes from the host, never from the input.\n\tconst pr = await w.call("s1", "Read the pull request", "signalbox.pull_request_read", {\n\t\tthreadId,\n\t\turl: input.url\n\t});\n\tconst name = `${pr.repository}#${pr.number} (${input.url})`;\n\tconst commit = pr.headSha ? pr.headSha.slice(0, 7) : "its current head";\n\t// Without a head commit from the host there\'s nothing to pin the approval to; say so.\n\tconst pinned = pr.headSha ? `At ${commit}.` : "The host didn\'t report a head commit, so this approval isn\'t pinned to one: whatever is the head when you choose merge, merges.";\n\t// The approval is for this commit; anything pushed later needs its own.\n\tconst answer = await w.ask("s2", `Merge ${pr.repository}#${pr.number}?`, {\n\t\tquestion: [\n\t\t\tpr.title,\n\t\t\tinput.url,\n\t\t\tpinned,\n\t\t\tinput.note\n\t\t].filter(Boolean).join("\\n\\n"),\n\t\toptions: ["merge", "not yet"],\n\t\tfields: { reason: {\n\t\t\ttype: "longText",\n\t\t\tlabel: "Anything to do first?"\n\t\t} }\n\t});\n\tif (answer.choice !== "merge") {\n\t\tw.$arm("s6", 0);\n\t\tconst asked = answer.values.reason ? ` They said: ${answer.values.reason} Do that, then call merge_pull_request again.` : " Ask them what\'s missing before calling merge_pull_request again.";\n\t\tawait tell(w.$frame("s3"), threadId, `Not merging ${name} yet.${asked}`);\n\t\treturn "not yet";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tlet merged;\n\ttry {\n\t\tw.$arm("s7", 0);\n\t\tmerged = await w.call("s8", "Merge it", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "merge",\n\t\t\t...pr.headSha ? { expectedHeadSha: pr.headSha } : {}\n\t\t});\n\t} catch (error) {\n\t\tw.$arm("s7", 1);\n\t\tawait tell(w.$frame("s9"), threadId, `Merging ${name} failed: ${String(error)}. Fix what it says, then call merge_pull_request again.`);\n\t\treturn "failed";\n\t}\n\tif (merged.moved) {\n\t\tw.$arm("s11", 0);\n\t\tawait tell(w.$frame("s12"), threadId, `Not merging ${name}: new commits landed after it was approved at ${commit}. Call merge_pull_request again so they can approve what\'s there now.`);\n\t\treturn "moved";\n\t} else {\n\t\tw.$arm("s11", 1);\n\t}\n\t// A host with a merge queue takes it in instead of merging; the branch stays until it lands.\n\tif (merged.state !== "merged") {\n\t\tw.$arm("s14", 0);\n\t\tawait tell(w.$frame("s15"), threadId, `${name} is approved and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`);\n\t\treturn "queued";\n\t} else {\n\t\tw.$arm("s14", 1);\n\t}\n\tlet cleanedUp = true;\n\ttry {\n\t\tw.$arm("s17", 0);\n\t\tawait w.call("s18", "Delete its branch", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "delete-branch"\n\t\t});\n\t} catch {\n\t\tw.$arm("s17", 1);\n\t\tcleanedUp = false;\n\t}\n\tawait tell(w.$frame("s19"), threadId, `Merged ${name}${cleanedUp ? " and deleted its branch" : ""}. Wrap up and hand the work back.`);\n\treturn "merged";\n});\n\nreturn __signalboxWorkflow;\n}\n',
   },
+  payment: {
+    meta: {
+      name: "Payment",
+      description:
+        "Hands a payment an agent's browser reached to you: you finish it in the agent's browser, answer Done or Failed, and the agent carries on.",
+      intent: "let me finish the payments my agents reach",
+    },
+    graph: {
+      nodes: [
+        {
+          type: "step",
+          id: "s1",
+          line: 20,
+          verb: "ask",
+          label: {
+            text: "Finish the payment on …",
+            dynamic: true,
+          },
+          detail: {
+            question: {
+              expression:
+                '[ input.note, "Open the agent\'s browser, take over and pay. The agent waits until you say how it went.", input.ownBrowserUrl ? `Or finish it in your own browser: ${input.ownBrowserUrl}` : null, ].filter(Boolean).join("\\n\\n")',
+            },
+            fields: {
+              literal: {
+                note: {
+                  type: "text",
+                  label: "Anything the agent should know?",
+                },
+              },
+            },
+            open: {
+              expression: '{ threadId, view: "browser" }',
+            },
+          },
+          outcomes: ["done", "failed"],
+        },
+      ],
+    },
+    script:
+      'export const meta = {\n\tname: "Payment",\n\tdescription: "Hands a payment an agent\'s browser reached to you: you finish it in the agent\'s browser, answer Done or Failed, and the agent carries on.",\n\tintent: "let me finish the payments my agents reach"\n};\nexport default workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the agent\'s thread.");\n\tconst answer = await w.ask("s1", `Finish the payment on ${input.site}`, {\n\t\tquestion: [\n\t\t\tinput.note,\n\t\t\t"Open the agent\'s browser, take over and pay. The agent waits until you say how it went.",\n\t\t\tinput.ownBrowserUrl ? `Or finish it in your own browser: ${input.ownBrowserUrl}` : null\n\t\t].filter(Boolean).join("\\n\\n"),\n\t\toptions: ["done", "failed"],\n\t\tfields: { note: {\n\t\t\ttype: "text",\n\t\t\tlabel: "Anything the agent should know?"\n\t\t} },\n\t\topen: {\n\t\t\tthreadId,\n\t\t\tview: "browser"\n\t\t}\n\t});\n\t// The agent reads this from the run: it waits on it, so nothing has to wake it.\n\treturn {\n\t\toutcome: answer.choice,\n\t\tnote: answer.values.note ?? null\n\t};\n});\n',
+    runModule: null,
+    workerModule:
+      'export function load(workflow) {\nconst meta = {\n\tname: "Payment",\n\tdescription: "Hands a payment an agent\'s browser reached to you: you finish it in the agent\'s browser, answer Done or Failed, and the agent carries on.",\n\tintent: "let me finish the payments my agents reach"\n};\nconst __signalboxWorkflow = workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the agent\'s thread.");\n\tconst answer = await w.ask("s1", `Finish the payment on ${input.site}`, {\n\t\tquestion: [\n\t\t\tinput.note,\n\t\t\t"Open the agent\'s browser, take over and pay. The agent waits until you say how it went.",\n\t\t\tinput.ownBrowserUrl ? `Or finish it in your own browser: ${input.ownBrowserUrl}` : null\n\t\t].filter(Boolean).join("\\n\\n"),\n\t\toptions: ["done", "failed"],\n\t\tfields: { note: {\n\t\t\ttype: "text",\n\t\t\tlabel: "Anything the agent should know?"\n\t\t} },\n\t\topen: {\n\t\t\tthreadId,\n\t\t\tview: "browser"\n\t\t}\n\t});\n\t// The agent reads this from the run: it waits on it, so nothing has to wake it.\n\treturn {\n\t\toutcome: answer.choice,\n\t\tnote: answer.values.note ?? null\n\t};\n});\n\nreturn __signalboxWorkflow;\n}\n',
+  },
 };
