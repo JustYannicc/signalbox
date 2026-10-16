@@ -31,21 +31,30 @@ export class PushRefused extends Schema.TaggedError<PushRefused>()("PushRefused"
   diverged: Schema.optional(Schema.Boolean),
 }) {}
 
-/** What a git host takes in one push. */
+/** What one push to a git host may hold. */
 export interface HostLimits {
   /** The host, as people know it. */
   readonly host: string;
   /** The biggest file it takes. */
   readonly maxFileBytes: number;
-  /** The biggest push, the pack as sent, it takes. */
+  /** The biggest push, the pack as sent. */
   readonly maxPushBytes: number;
+  /** Why pushes stop at `maxPushBytes` when that's below what the host itself takes. */
+  readonly pushLimitReason?: string;
 }
 
-/** GitHub refuses files over 100 MB and pushes over 2 GB (docs: "Repository limits"). */
+/**
+ * GitHub refuses files over 100 MB and pushes over 2 GB (docs: "Repository
+ * limits"). A push leaves from a Worker, though, and on the current
+ * Cloudflare plan a Worker's request is cut off past its 100 MB request body
+ * limit: an 80 MB push went through and a 110 MB one was cut off (#660). So
+ * a push stops below it, and says why, until the plan changes.
+ */
 export const GITHUB_LIMITS: HostLimits = {
   host: "GitHub",
   maxFileBytes: 100 * 1024 * 1024,
-  maxPushBytes: 2 * 1024 * 1024 * 1024,
+  maxPushBytes: 95 * 1024 * 1024,
+  pushLimitReason: "on the current Cloudflare plan, which caps a request's body at 100 MB",
 };
 
 const ZERO_OID: Oid = "0".repeat(40);
@@ -266,10 +275,14 @@ const checkLimits = (
     }
     const size = packSize(entries);
     if (size > limits.maxPushBytes) {
+      const limit = formatSize(limits.maxPushBytes);
       return yield* new PushRefused({
         message:
-          `This push is ${formatSize(size)}: ${limits.host} takes pushes up to ${formatSize(limits.maxPushBytes)}. ` +
-          "Nothing was pushed. Keep large generated files out of the branch, or split the work across branches, then push again.",
+          `This push is ${formatSize(size)}: ` +
+          (limits.pushLimitReason === undefined
+            ? `${limits.host} takes pushes up to ${limit}. `
+            : `Signalbox sends ${limits.host} pushes of up to ${limit} ${limits.pushLimitReason}. `) +
+          "Nothing was pushed. Keep large generated files out of the branch, or push the work in smaller commits one push at a time.",
       });
     }
     return size;

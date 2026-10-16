@@ -599,17 +599,23 @@ describe("a drive backed by a remote", () => {
         { name: threadRef("t1"), old: remote.head, new: head },
       ]);
 
-      const refused = yield* packForPush({
-        driveId: DRIVE,
-        head,
-        old: null,
-        remoteHas: [remote.head],
-        limits: { ...GITHUB_LIMITS, maxPushBytes: 1.5 * MiB },
-      }).pipe(Effect.flip);
-      expect(refused._tag).toBe("PushRefused");
-      expect(refused.message).toContain("This push is 3 MB");
-      expect(refused.message).toContain("GitHub takes pushes up to 2 MB");
-      expect(refused.message).toContain("Nothing was pushed");
+      const refusal = (limits: HostLimits) =>
+        packForPush({ driveId: DRIVE, head, old: null, remoteHas: [remote.head], limits }).pipe(
+          Effect.flip,
+        );
+      const byHost = yield* refusal({ host: "GitHub", maxFileBytes: MiB, maxPushBytes: 1.5 * MiB });
+      expect(byHost._tag).toBe("PushRefused");
+      expect(byHost.message).toContain("This push is 3 MB");
+      expect(byHost.message).toContain("GitHub takes pushes up to 2 MB");
+      expect(byHost.message).toContain("Nothing was pushed");
+
+      // Below the host's own limit, the cloud's: what Cloudflare lets a request carry.
+      const byPlan = yield* refusal({ ...GITHUB_LIMITS, maxPushBytes: 1.5 * MiB });
+      expect(byPlan.message).toContain("This push is 3 MB");
+      expect(byPlan.message).toContain("Signalbox sends GitHub pushes of up to 2 MB");
+      expect(byPlan.message).toContain("Cloudflare plan");
+      expect(byPlan.message).toContain("Nothing was pushed");
+      expect(GITHUB_LIMITS.maxPushBytes).toBeLessThan(100_000_000);
     }).pipe(Effect.provide(makeMemoryDrives().layer)),
   );
 
