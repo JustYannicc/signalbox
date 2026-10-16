@@ -172,8 +172,9 @@ export function DraftHeroHeadline({
   );
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const copy = useDraftHeroCopy(activeProjectRef?.environmentId ?? scratchTargetEnvironmentId); // signalbox: folder words
-  const isScratchDraft =
-    activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
+  // signalbox: projects know they're Scratch from the server config, connected or not; the
+  // connection only gates starting one. Otherwise Scratch reads as a folder while connecting.
+  const isScratchDraft = activeProject?.isScratch === true;
 
   const pickerItems = useMemo<readonly PickerItem[]>(
     () => [
