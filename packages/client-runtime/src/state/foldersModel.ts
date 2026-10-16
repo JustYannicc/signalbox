@@ -66,7 +66,7 @@ export function ownerFilesProject(context: SignalboxContext): ProjectId | null {
   return context.projectIds[0] ?? null;
 }
 
-interface ThreadRef {
+export interface ThreadRef {
   readonly id: ThreadId;
   readonly projectId: ProjectId;
 }

@@ -241,6 +241,7 @@ import { useThreadKind } from "../state/signalboxThreadKinds"; // signalbox: thr
 import { threadLeaveLabel } from "./threadKind/threadKind.logic"; // signalbox: thread kinds
 import { ThreadKindAge, ThreadKindButton, ThreadLeaveIcon } from "./threadKind/ThreadKindIcon"; // signalbox: thread kinds
 import { threadKindMenuItems, selectThreadKindMenuItem } from "./threadKind/threadKindMenu"; // signalbox: thread kinds
+import { ThreadRowTitle } from "./statusLine/ThreadRowNextStep"; // signalbox: status line
 import { useShowsEnvironmentUi } from "../state/environmentCapabilities"; // signalbox: one environment
 import { readProjectSettingsLabel } from "./sidebar/folders/useFolderCopy"; // signalbox: folder words
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -743,7 +744,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         data-size="sm"
         data-testid={`thread-row-${thread.id}`}
         className={cn(
-          "relative isolate flex h-8 w-full min-w-0 cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 text-left text-xs outline-hidden focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring group-data-[collapsible=icon]:hidden [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-muted-foreground",
+          "relative isolate flex min-h-8 w-full min-w-0 cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 text-left text-xs outline-hidden focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring group-data-[collapsible=icon]:hidden [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-muted-foreground",
           isActive
             ? "bg-sidebar-row-active font-medium text-sidebar-foreground hover:bg-sidebar-row-active"
             : isSelected
@@ -810,19 +811,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               onDoubleClick={handleRenameInputClick}
             />
           ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    className="min-w-0 flex-1 truncate text-sm"
-                    data-testid={`thread-title-${thread.id}`}
-                  >
-                    {thread.title}
-                  </span>
-                }
-              />
-              <TooltipPopup side="top">{thread.title}</TooltipPopup>
-            </Tooltip>
+            <ThreadRowTitle thread={thread} /* signalbox: next step under folders (#670) */>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="min-w-0 flex-1 truncate text-sm"
+                      data-testid={`thread-title-${thread.id}`}
+                    >
+                      {thread.title}
+                    </span>
+                  }
+                />
+                <TooltipPopup side="top">{thread.title}</TooltipPopup>
+              </Tooltip>
+            </ThreadRowTitle>
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">

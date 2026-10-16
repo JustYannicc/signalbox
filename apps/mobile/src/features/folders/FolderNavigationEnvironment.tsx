@@ -10,7 +10,7 @@ import { Pressable, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
 import { useEnvironmentFolders, useFolderOwners } from "../../state/signalboxFolders";
-import { folderCountsAtom, folderPoolChoicesAtom } from "./folder-atoms";
+import { folderCountsAtom, folderPoolChoicesAtom, folderStatusSummariesAtom } from "./folder-atoms";
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";
 import { folderMenuActions, topLevelMenuActions } from "./folder-menus";
 import { FolderInstructionsSheet } from "./FolderInstructionsSheet";
@@ -32,6 +32,7 @@ export function FolderNavigationEnvironment(props: {
   const snapshot = folders.data;
   const owners = useFolderOwners(environmentId);
   const counts = useAtomValue(folderCountsAtom(environmentId));
+  const summaries = useAtomValue(folderStatusSummariesAtom(environmentId));
   const pools = useAtomValue(folderPoolChoicesAtom(environmentId));
   const actions = useFolderActions({ environmentId, snapshot, pools });
   const [collapsed, setCollapsed] = useState<ReadonlySet<FolderId>>(() => new Set());
@@ -122,6 +123,7 @@ export function FolderNavigationEnvironment(props: {
                 depth={1}
                 ancestorPath=""
                 counts={counts}
+                summaries={summaries}
                 selectedFolderId={selectedHere?._tag === "folder" ? selectedHere.folderId : null}
                 collapsed={collapsed}
                 menus={menus}

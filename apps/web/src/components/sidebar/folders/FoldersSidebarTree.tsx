@@ -39,6 +39,11 @@ import { CollapsibleSectionHeader } from "../../ui/collapsible-section-header";
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "../../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import type { RenderProject } from "../sections/SectionsProjectTree";
+import {
+  FolderStatusCount,
+  FolderStatusTooltip,
+  useFolderStatus,
+} from "../../statusLine/FolderStatusCount";
 import { openFolderDialog } from "./folderDialogStore";
 import { FolderMenu, OwnerMenu } from "./FolderMenus";
 import {
@@ -185,6 +190,7 @@ const FolderRow = memo(function FolderRow(props: {
   const key = folderNodeKey(environment.environmentId, folder.id);
   const expanded = !collapsed.has(key);
   const count = counts.get(folder.id) ?? 0;
+  const status = useFolderStatus(key); // signalbox: status roll-up (#670)
   const empty = node.children.length === 0 && folder.files === undefined && count === 0;
   // A folder with its own files can start threads even where its owner has none.
   const canStart = owner.filesProjectId !== null || folder.files !== undefined;
@@ -224,15 +230,16 @@ const FolderRow = memo(function FolderRow(props: {
           ) : (
             <FolderClosedIcon aria-hidden className="size-3.5 shrink-0 text-icon-muted" />
           )}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-muted-foreground/85">
-            {folder.name}
-          </span>
-          {count > 0 ? (
-            <span className="shrink-0 pe-1 text-3xs tabular-nums text-sidebar-muted-foreground/50 group-hover/folder-row:hidden group-focus-within/folder-row:hidden group-has-data-popup-open/folder-row:hidden pointer-coarse:hidden">
-              {count}
-              <span className="sr-only"> {count === 1 ? "thread" : "threads"}</span>
+          <FolderStatusTooltip status={status}>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-muted-foreground/85">
+              {folder.name}
             </span>
-          ) : null}
+          </FolderStatusTooltip>
+          <FolderStatusCount
+            count={count}
+            status={status}
+            className="shrink-0 pe-1 text-3xs tabular-nums text-sidebar-muted-foreground/50 group-hover/folder-row:hidden group-focus-within/folder-row:hidden group-has-data-popup-open/folder-row:hidden pointer-coarse:hidden"
+          />
         </button>
         <span className="hidden shrink-0 items-center group-hover/folder-row:flex group-focus-within/folder-row:flex group-has-data-popup-open/folder-row:flex pointer-coarse:flex">
           {canStart ? (

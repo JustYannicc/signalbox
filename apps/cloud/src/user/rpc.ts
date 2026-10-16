@@ -71,6 +71,11 @@ import {
   SIGNALBOX_THREAD_KINDS_WS_METHODS,
   SignalboxThreadKindsError,
 } from "@t3tools/contracts/signalboxThreadKinds";
+import {
+  SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES,
+  SIGNALBOX_THREAD_STATUS_WS_METHODS,
+  SignalboxThreadStatusUnavailableError,
+} from "@t3tools/contracts/signalboxStatusLine";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -105,6 +110,7 @@ import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as UserThreadStatus from "./UserThreadStatus.ts";
 
 /**
  * The slice of the environment RPC protocol a user's object serves: enough
@@ -189,6 +195,8 @@ const SERVED = [
   ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...Object.values(SIGNALBOX_THREAD_KINDS_WS_METHODS),
+  // Threads' status notes (#670, `UserThreadStatus`).
+  ...Object.values(SIGNALBOX_THREAD_STATUS_WS_METHODS),
   ...Object.values(SIGNALBOX_KEYS_WS_METHODS),
   ...Object.values(SIGNALBOX_SIGN_IN_WS_METHODS),
   ...SECTION_METHODS,
@@ -264,6 +272,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_PUSH_REQUIRED_SCOPES,
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
+  ...SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES,
   ...SIGNALBOX_KEYS_REQUIRED_SCOPES,
   ...SIGNALBOX_SIGN_IN_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
@@ -392,6 +401,7 @@ export const layerHandlers = (input: {
       const sections = yield* LegacySections.LegacySections;
       const folders = yield* UserFolders.UserFolders;
       const kinds = yield* UserThreadKinds.UserThreadKinds;
+      const statusNotes = yield* UserThreadStatus.UserThreadStatus;
       const userDrives = yield* UserDrives.UserDrives;
       const sharing = yield* Effect.serviceOption(DriveSharing);
       const shortcuts = yield* Effect.serviceOption(DriveShortcuts);
@@ -778,6 +788,14 @@ export const layerHandlers = (input: {
               () =>
                 new SignalboxThreadKindsError({ message: "Could not load chat and task kinds." }),
             ),
+          ),
+        // A snapshot, then one small item per changed note; held open like the sidebar.
+        [SIGNALBOX_THREAD_STATUS_WS_METHODS.subscribe]: () =>
+          Stream.concat(statusNotes.changes, Stream.never).pipe(
+            Stream.tapError((cause) =>
+              Effect.logError("cloud thread status stream failed", { cause }),
+            ),
+            Stream.mapError(() => new SignalboxThreadStatusUnavailableError()),
           ),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.setKind]: (request) => kindsCall(kinds.setKind(request)),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: (request) =>

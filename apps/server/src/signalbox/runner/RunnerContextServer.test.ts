@@ -10,15 +10,17 @@ import * as Effect from "effect/Effect";
 
 import { RUNNER_AUTOMATION_TOOLS } from "./RunnerAutomationTools.ts";
 import { RUNNER_SCHEDULED_TASK_TOOLS } from "./RunnerScheduledTaskTools.ts";
+import { RUNNER_STATUS_LINE_TOOLS } from "./RunnerStatusLineTools.ts";
 import type { BranchDrive } from "./RunnerBranchTools.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { startContextServer } from "./RunnerContextServer.ts";
 import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
 
-/** Tools that answer from the cloud's automation engine, tested in their own files. */
+/** Tools that answer from the cloud's automation engine or status lines, tested apart. */
 const AUTOMATION_SIDE = new Set<string>([
   ...RUNNER_AUTOMATION_TOOLS,
   ...RUNNER_SCHEDULED_TASK_TOOLS,
+  ...RUNNER_STATUS_LINE_TOOLS,
 ]);
 
 /**
@@ -106,6 +108,7 @@ interface Calls {
   readonly log: Array<string>;
   readonly published: Array<PublishRequest>;
   answer: PublishResult;
+  readonly notes: Array<{ nextStep: string; whereItGotTo: string }>;
 }
 
 const PUBLISHED: PublishResult = {
@@ -182,13 +185,25 @@ const fakeClient = (calls: Calls): ContextClient => ({
       return calls.answer;
     }),
   automationTool: () => Effect.die("Automation tools aren't part of these tests."),
+  threadStatus: Effect.die("Reading the status line isn't part of these tests."),
+  setThreadStatus: (input) =>
+    Effect.sync(() => {
+      calls.notes.push(input);
+      return input.nextStep.includes("ACME-123")
+        ? { _tag: "failed", message: "Write it for someone new." }
+        : {
+            _tag: "written",
+            note: { ...input, writtenBy: "agent", writtenAt: "2026-10-16T09:00:00.000Z" },
+          };
+    }),
+  folderStatus: Effect.die("Folder roll-ups aren't part of these tests."),
   browserSession: Effect.die("The person's browser isn't part of these tests."),
   endBrowser: () => Effect.die("The person's browser isn't part of these tests."),
   browserSignIn: () => Effect.die("The person's browser isn't part of these tests."),
 });
 
 const serve = Effect.gen(function* () {
-  const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED };
+  const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED, notes: [] };
   const server = yield* startContextServer({ mountPoint: null });
   yield* server.pin(fakeClient(calls));
   yield* server.attachDrive(fakeDrive(calls));
@@ -421,6 +436,39 @@ describe("context server (#141)", () => {
         content: [{ text: "A merge is in progress here." }],
       });
       expect(calls.published).toHaveLength(before);
+    }),
+  );
+
+  it.effect("writes the thread's status note through the cloud, in the cloud's words", () =>
+    Effect.gen(function* () {
+      const { mcp, call, calls } = yield* serve;
+      const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
+        name: string;
+        annotations: { readOnlyHint: boolean };
+      }>;
+      expect(
+        tools
+          .filter((tool) => RUNNER_STATUS_LINE_TOOLS.some((name) => name === tool.name))
+          .map((tool) => [tool.name, tool.annotations.readOnlyHint]),
+      ).toEqual([
+        ["thread_status", true],
+        ["set_thread_status", false],
+        ["folder_status", true],
+      ]);
+      const note = {
+        nextStep: "You: say whether the draft can go out.",
+        whereItGotTo: "The draft is written and checked against last year's.",
+      };
+      const written = yield* call("set_thread_status", note);
+      expect(written.isError).toBeUndefined();
+      expect(JSON.parse(written.content[0]!.text)).toMatchObject({ written: true, note });
+      expect(calls.notes).toEqual([note]);
+
+      const refused = yield* call("set_thread_status", { ...note, nextStep: "Close ACME-123" });
+      expect(refused).toMatchObject({
+        isError: true,
+        content: [{ text: "Write it for someone new." }],
+      });
     }),
   );
 });

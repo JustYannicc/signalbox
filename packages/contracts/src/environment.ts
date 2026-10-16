@@ -164,6 +164,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   signInGrants: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps threads' chat and task kinds (`signalboxThreadKinds.ts`). */
   threadKinds: Schema.optionalKey(Schema.Boolean),
+  /** signalbox: Server keeps threads' status notes (`signalboxStatusLine.ts`). */
+  threadStatusNotes: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Signalbox Cloud opens threads' dev servers through its PreviewGateway (`signalboxPreviews.ts`). */
   signalboxPreviews: Schema.optionalKey(Schema.Boolean),
   /** signalbox: Server keeps each thread's browser tabs in sync across devices (`signalboxBrowsing.ts`). */

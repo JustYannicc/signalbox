@@ -31,6 +31,7 @@ import { signalboxKeysWsHandlers } from "./keys/rpc.ts";
 import { signalboxSignInWsHandlers } from "./signIn/rpc.ts";
 import { signalboxRepositoriesWsHandlers } from "./repositories/rpc.ts";
 import { signalboxThreadKindsWsHandlers } from "./threadKinds/rpc.ts";
+import { signalboxThreadStatusWsHandlers } from "./statusLine/rpc.ts";
 
 /**
  * Signalbox's RPCs. The middleware only shapes handler types like ws.ts's
@@ -68,6 +69,7 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
         ...signalboxPushWsHandlers,
         ...signalboxRepositoriesWsHandlers,
         ...signalboxThreadKindsWsHandlers,
+        ...signalboxThreadStatusWsHandlers,
         ...signalboxKeysWsHandlers,
         ...signalboxSignInWsHandlers,
         [WS_METHODS.accountPoolSubscribe]: () => pools.changes,
