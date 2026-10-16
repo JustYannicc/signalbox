@@ -7,6 +7,8 @@ import * as NodePath from "node:path";
 import {
   RUNNER_PROTOCOL_VERSION,
   type RunnerItem,
+  type ThreadMessage,
+  threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import { CLAUDE_STREAM_PREFIX } from "@signalbox/runner-protocol/SessionProtocol";
 import {
@@ -36,6 +38,7 @@ import * as Schema from "effect/Schema";
 import { layerThreadObject } from "../../testing.ts";
 import * as SessionRows from "../session/SessionRows.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
+import type { RunnerSocketHost } from "./runnerSockets.ts";
 import * as ThreadRunner from "./ThreadRunner.ts";
 
 /** A Claude thread's object with its Runner, and what a Runner reports, for tests. */
@@ -365,4 +368,38 @@ export const snapshot = (engine: ThreadEngine.ThreadEngine["Service"]) =>
   Effect.map(engine.snapshot(owner), ({ snapshotSequence, projection }) => ({
     head: snapshotSequence,
     projection,
+  }));
+
+/** A Runner's socket in memory: what the thread object told it, decoded. */
+export interface FakeSocket {
+  readonly socket: WebSocket;
+  readonly sent: Array<ThreadMessage>;
+}
+
+export const fakeSocket = (): FakeSocket => {
+  const sent: Array<ThreadMessage> = [];
+  let attachment: unknown = null;
+  const socket = {
+    send: (data: string) => void sent.push(threadFrame.decode(data)),
+    close: () => {},
+    serializeAttachment: (value: unknown) => {
+      attachment = structuredClone(value);
+    },
+    deserializeAttachment: () => attachment,
+  } as unknown as WebSocket;
+  return { socket, sent };
+};
+
+/** A host over `sockets`, running the object's effects on `runner`. */
+export const hostFor = (runner: ThreadRunner.ThreadRunner["Service"], sockets: Array<WebSocket>) =>
+  Effect.map(Effect.context<never>(), (context): RunnerSocketHost => ({
+    ctx: {
+      getWebSockets: () => sockets,
+      getTags: () => ["runner"],
+    } as unknown as DurableObjectState,
+    run: (effect) =>
+      Effect.runPromiseWith(context)(
+        Effect.provideService(effect, ThreadRunner.ThreadRunner, runner),
+      ),
+    afterChange: () => Promise.resolve(),
   }));
