@@ -1,5 +1,5 @@
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { browsingTabHost, browsingTabLabel } from "@t3tools/client-runtime/browsing";
+import { browsingTabLabel } from "@t3tools/client-runtime/browsing";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { BrowsingTab } from "@t3tools/contracts/signalboxBrowsing";
 import { useCallback, useEffect, useState } from "react";
@@ -13,7 +13,12 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { useBrowsingDispatch, useThreadBrowsing } from "../../state/browsing";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { uuidv4 } from "../../lib/uuid";
-import { shownBrowsingTab, type PendingActivation } from "./syncedBrowsing";
+import {
+  browsingTabEngine,
+  browsingTabSubtitle,
+  shownBrowsingTab,
+  type PendingActivation,
+} from "./syncedBrowsing";
 import { SyncedBrowserTab } from "./SyncedBrowserTab";
 
 type SyncedBrowserRouteScreenProps = StaticScreenProps<{
@@ -60,6 +65,8 @@ function SyncedBrowserScreen(props: {
   const state = browsing.data;
   const record = state?.record ?? null;
   const tab = record === null ? null : shownBrowsingTab(record, pending);
+  const you = state?.you ?? null;
+  const engine = tab === null ? null : browsingTabEngine(tab, you);
 
   const run = (command: Parameters<typeof act>[0], failure: string) =>
     act(command).then((result) => {
@@ -87,18 +94,19 @@ function SyncedBrowserScreen(props: {
 
   const tabs = record?.tabs ?? [];
   const tabItems: AppBarMenuItem[] = tabs.map((entry) => {
-    const host = browsingTabHost(entry.url);
+    const subtitle = browsingTabSubtitle(entry, you);
     return {
       id: entry.id,
       title: browsingTabLabel(entry),
-      ...(host !== null && host !== browsingTabLabel(entry) ? { subtitle: host } : {}),
+      ...(subtitle === undefined ? {} : { subtitle }),
       selected: entry.id === tab?.id,
       onPress: () => select(entry.id),
     };
   });
   const tabActions: AppBarMenuItem[] = [
     { id: "new-tab", title: "New tab", icon: "plus", onPress: openTab },
-    ...(tab
+    // Only the owner drives a tab, closing included.
+    ...(tab && engine === "here"
       ? [{ id: "close-tab", title: "Close this tab", icon: "xmark", onPress: () => closeTab(tab) }]
       : []),
   ];
@@ -127,7 +135,23 @@ function SyncedBrowserScreen(props: {
               ]
         }
       />
-      {tab !== null && state !== null ? (
+      {tab !== null && engine !== "here" ? (
+        <View className="flex-1 justify-center">
+          <EmptyState
+            variant="plain"
+            title={
+              engine === "agent"
+                ? "This tab is open in an agent's browser"
+                : "This tab is open in someone else's browser"
+            }
+            detail={
+              engine === "agent"
+                ? "The agent drives it from the cloud. Your own tabs open here."
+                : "Only the person who opened it can use it. Your own tabs open here."
+            }
+          />
+        </View>
+      ) : tab !== null && state !== null ? (
         <SyncedBrowserTab
           key={tab.id}
           tab={tab}

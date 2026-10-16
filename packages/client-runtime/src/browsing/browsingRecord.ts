@@ -8,6 +8,7 @@ import {
   type BrowsingEvent,
   type BrowsingHistoryEntry,
   type BrowsingMember,
+  type BrowsingOwner,
   type BrowsingRecord,
   type BrowsingStreamItem,
   type BrowsingTab,
@@ -142,6 +143,24 @@ export function foldBrowsingItem(state: BrowsingState, item: BrowsingStreamItem)
 /** The tab a device shows: the active one, else the first. */
 export function activeBrowsingTab(record: BrowsingRecord): BrowsingTab | null {
   return record.tabs.find((tab) => tab.id === record.activeTabId) ?? record.tabs[0] ?? null;
+}
+
+/** Who owns the tabs a member opens: the person behind a device, or the agent itself. */
+export function ownerOf(member: BrowsingMember): BrowsingOwner {
+  return member._tag === "Device"
+    ? { _tag: "Person", userId: member.userId }
+    : { _tag: "Agent", agentId: member.agentId };
+}
+
+/**
+ * Whether `member` drives the tab: any device of the person who owns it, or
+ * the agent that owns it. An engine only loads and reports the tabs it drives.
+ */
+export function isOwnedBy(tab: Pick<BrowsingTab, "owner">, member: BrowsingMember | null): boolean {
+  if (member === null) return false;
+  return member._tag === "Device"
+    ? tab.owner._tag === "Person" && tab.owner.userId === member.userId
+    : tab.owner._tag === "Agent" && tab.owner.agentId === member.agentId;
 }
 
 /** Whether this device made the change, so it doesn't reapply it to its own engine. */

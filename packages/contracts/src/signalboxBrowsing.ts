@@ -9,7 +9,11 @@
  * value. Per-device state (window layout, zoom, last seen) stays on the device.
  *
  * Modeled on Chrome's shared tab groups: one shared, editable tab list with
- * fractional order keys, last writer wins per field. A tab's position is a
+ * fractional order keys, last writer wins per field. Every tab has one owner,
+ * a person or an agent, and only the owner drives it: navigates, positions or
+ * closes it (#343). A person's own tabs load in their devices' engines; an
+ * agent's tabs live in its cloud browser and never in a person's engine.
+ * Following, copying, sharing and lending a tab build on the owner (#597). A tab's position is a
  * text fragment (what Chrome's Send Tab to Self carries) with a scroll ratio
  * as the fallback.
  *
@@ -69,6 +73,17 @@ export const BrowsingMember = Schema.Union([
 export type BrowsingMember = typeof BrowsingMember.Type;
 
 /**
+ * Who a tab belongs to: a person, on whichever of their devices, or an agent.
+ * Only the owner drives the tab; anyone in the thread may switch to it or
+ * reorder it.
+ */
+export const BrowsingOwner = Schema.Union([
+  Schema.TaggedStruct("Person", { userId: Schema.String }),
+  Schema.TaggedStruct("Agent", { agentId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)) }),
+]);
+export type BrowsingOwner = typeof BrowsingOwner.Type;
+
+/**
  * Where a tab was read to, portable across engines and page sizes.
  * `textFragment` is a text directive as in `#:~:text=` (percent-encoded
  * start, optionally `,end`); `scrollRatio` is the fallback when the text is
@@ -88,7 +103,7 @@ export const BrowsingTab = Schema.Struct({
   title: Title,
   /** Fractional index: tabs sort by it as plain strings. */
   orderKey: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
-  openedBy: BrowsingMember,
+  owner: BrowsingOwner,
   position: Schema.optional(BrowsingPosition),
   /** Who last moved `position`, so a device doesn't restore what it reported itself. */
   positionBy: Schema.optional(BrowsingMember),
@@ -200,7 +215,7 @@ export class SignalboxBrowsingUnavailableError extends Schema.TaggedError<Signal
   }
 }
 
-/** The command can't apply: no such thread or tab, or the thread is at its tab limit. */
+/** The command can't apply: no such thread or tab, not the tab's owner, or the thread is at its tab limit. */
 export class SignalboxBrowsingError extends Schema.TaggedError<SignalboxBrowsingError>()(
   "SignalboxBrowsingError",
   { message: Schema.String },

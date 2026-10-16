@@ -3,7 +3,14 @@
  * WebView reports to the thread's browsing record, and what it takes from it.
  * The record is shared; back/forward and the WebView's history stay on the device.
  */
-import { activeBrowsingTab, reportableUrl, samePageUrl } from "@t3tools/client-runtime/browsing";
+import {
+  activeBrowsingTab,
+  browsingTabHost,
+  browsingTabLabel,
+  isOwnedBy,
+  reportableUrl,
+  samePageUrl,
+} from "@t3tools/client-runtime/browsing";
 import {
   capturePagePositionScript,
   parseCapturedPosition,
@@ -35,11 +42,12 @@ export interface ReportedPage {
  */
 export function navigateCommand(
   tab: BrowsingTab,
+  you: BrowsingMember | null,
   page: { readonly url: string | null | undefined; readonly title: string | null | undefined },
   lastReported: ReportedPage | null,
 ): BrowsingCommand | null {
   const url = reportableUrl(page.url);
-  if (url === null) return null;
+  if (url === null || !isOwnedBy(tab, you)) return null;
   const title = (page.title ?? "").trim().slice(0, BROWSING_TITLE_MAX_LENGTH);
   const known = (candidate: ReportedPage | null) =>
     candidate !== null &&
@@ -56,12 +64,13 @@ export function navigateCommand(
  */
 export function positionCommand(
   tab: BrowsingTab,
+  you: BrowsingMember | null,
   captured: BrowsingPosition,
   pageUrl: string | null,
   lastReported: ReportedPage | null,
 ): BrowsingCommand | null {
   const onPage = samePageUrl(pageUrl, tab.url) || samePageUrl(pageUrl, lastReported?.url);
-  if (!onPage || !positionMoved(tab, captured)) return null;
+  if (!onPage || !isOwnedBy(tab, you) || !positionMoved(tab, captured)) return null;
   return { _tag: "Position", tabId: tab.id, position: captured };
 }
 
@@ -74,7 +83,7 @@ export function positionToRestore(
   you: BrowsingMember | null,
   restored: BrowsingPosition | null,
 ): BrowsingPosition | null {
-  const position = restorablePosition(tab, you);
+  const position = isOwnedBy(tab, you) ? restorablePosition(tab, you) : null;
   if (position === null) return null;
   return restored !== null && samePagePosition(restored, position) ? null : position;
 }
@@ -86,13 +95,15 @@ export function positionToRestore(
  * dragged back to the record's older page.
  */
 export function urlToFollow(input: {
+  readonly tab: BrowsingTab;
+  readonly you: BrowsingMember | null;
   readonly previousRecordUrl: string | null;
-  readonly recordUrl: string | null;
   readonly reported: ReadonlyArray<ReportedPage>;
   readonly viewUrl: string | null;
 }): string | null {
-  const { recordUrl } = input;
+  const recordUrl = input.tab.url;
   if (recordUrl === null || recordUrl === input.previousRecordUrl) return null;
+  if (!isOwnedBy(input.tab, input.you)) return null;
   if (samePageUrl(recordUrl, input.viewUrl)) return null;
   if (input.reported.some((page) => samePageUrl(page.url, recordUrl))) return null;
   return reportableUrl(recordUrl);
@@ -119,6 +130,32 @@ export function settleReports(
   const fresh = pending.filter((report) => now - report.at < REPORT_TTL_MS);
   const reached = fresh.findLastIndex((report) => samePageUrl(report.url, recordUrl));
   return reached === -1 ? fresh : fresh.slice(reached + 1);
+}
+
+/**
+ * Which engine runs a tab. Only the owner drives a tab, so only your own
+ * tabs load in this device's WebView; an agent's run in its browser in the
+ * cloud, and another person's in theirs.
+ */
+export function browsingTabEngine(
+  tab: BrowsingTab,
+  you: BrowsingMember | null,
+): "here" | "agent" | "person" {
+  if (isOwnedBy(tab, you)) return "here";
+  return tab.owner._tag === "Agent" ? "agent" : "person";
+}
+
+/** The tab switcher's second line: whose tab it is when it isn't yours, then its host. */
+export function browsingTabSubtitle(
+  tab: BrowsingTab,
+  you: BrowsingMember | null,
+): string | undefined {
+  const engine = browsingTabEngine(tab, you);
+  const owner = engine === "agent" ? "Agent" : engine === "person" ? "Someone else" : null;
+  const host = browsingTabHost(tab.url);
+  const shownHost = host !== null && host !== browsingTabLabel(tab) ? host : null;
+  const parts = [owner, shownHost].filter((part) => part !== null);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 /** A tab this device picked, until the record says which tab is active. */

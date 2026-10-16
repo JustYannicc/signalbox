@@ -1,6 +1,6 @@
 "use client";
 
-import type { BrowsingState } from "@t3tools/client-runtime/browsing";
+import { type BrowsingState, isOwnedBy } from "@t3tools/client-runtime/browsing";
 import {
   parseCapturedPosition,
   restorePagePositionScript,
@@ -49,9 +49,9 @@ interface Props {
 }
 
 /**
- * Loads a synced thread's tab (#585) into this desktop's `<webview>`: goes
- * where someone else took the tab, puts the page where they read to, and
- * reports where it's read to here. Renders nothing. Only for environments
+ * Loads a synced thread's tab (#585) that this person owns into this
+ * desktop's `<webview>`: goes where their other device took the tab, puts the
+ * page where they read to, and reports where it's read to here. Renders nothing. Only for environments
  * that advertise `capabilities.threadBrowsing`.
  */
 export function BrowsingTabEngine(props: Props) {
@@ -128,7 +128,8 @@ function SyncedTabEngine({
   // Someone else moved the tab or read on.
   const onRecord = useEffectEvent((state: BrowsingState | null) => {
     const tab = state?.record.tabs.find((candidate) => candidate.id === tabId);
-    if (!state || state.you === null || !tab) return;
+    // Only the owner drives a tab; this device never loads one it doesn't own.
+    if (!state || !tab || !isOwnedBy(tab, state.you)) return;
     const target = navigationToFollow({
       recordUrl: tab.url,
       previousRecordUrl: recordUrlRef.current,
@@ -186,7 +187,13 @@ function SyncedTabEngine({
     const url = webviewUrl(element);
     const raw = await element.executeJavaScript(captureIfReadScript).catch(() => null);
     if (raw === null) return;
-    const command = positionToReport(recordTab()?.tab, url, parseCapturedPosition(raw));
+    const current = recordTab();
+    const command = positionToReport(
+      current?.state.you ?? null,
+      current?.tab,
+      url,
+      parseCapturedPosition(raw),
+    );
     if (command !== null) void dispatchBrowsingCommand(threadRef, command);
   });
   useEffect(() => {

@@ -321,7 +321,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "1276a316",
-      "output": "6e63a414"
+      "output": "80883628"
     },
     {
       "name": "contexts.list",

@@ -7,6 +7,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   browsingPageScript,
+  browsingTabEngine,
+  browsingTabSubtitle,
   navigateCommand,
   parsePageMessage,
   positionCommand,
@@ -19,12 +21,15 @@ import {
 const desktop: BrowsingMember = { _tag: "Device", userId: "u1", deviceId: "desktop" };
 const phone: BrowsingMember = { _tag: "Device", userId: "u1", deviceId: "phone" };
 
+const agentOwner = { _tag: "Agent", agentId: "kernel" } as const;
+const teammateOwner = { _tag: "Person", userId: "u2" } as const;
+
 const tab = (overrides: Partial<BrowsingTab> = {}): BrowsingTab => ({
   id: "tab_a",
   url: "https://example.com/docs",
   title: "Docs",
   orderKey: "a1",
-  openedBy: desktop,
+  owner: { _tag: "Person", userId: "u1" },
   updatedAt: "2026-10-16T10:00:00.000Z",
   ...overrides,
 });
@@ -32,7 +37,7 @@ const tab = (overrides: Partial<BrowsingTab> = {}): BrowsingTab => ({
 describe("navigateCommand", () => {
   it("reports a page the record doesn't have", () => {
     expect(
-      navigateCommand(tab(), { url: "https://example.com/blog", title: " Blog " }, null),
+      navigateCommand(tab(), phone, { url: "https://example.com/blog", title: " Blog " }, null),
     ).toEqual({ _tag: "Navigate", tabId: "tab_a", url: "https://example.com/blog", title: "Blog" });
   });
 
@@ -40,6 +45,7 @@ describe("navigateCommand", () => {
     expect(
       navigateCommand(
         tab({ url: null, title: "" }),
+        phone,
         { url: "https://example.com/", title: "" },
         null,
       ),
@@ -48,7 +54,12 @@ describe("navigateCommand", () => {
 
   it("reports a title that arrived after the page", () => {
     expect(
-      navigateCommand(tab({ title: "" }), { url: "https://example.com/docs", title: "Docs" }, null),
+      navigateCommand(
+        tab({ title: "" }),
+        phone,
+        { url: "https://example.com/docs", title: "Docs" },
+        null,
+      ),
     ).toMatchObject({ title: "Docs" });
   });
 
@@ -56,6 +67,7 @@ describe("navigateCommand", () => {
     expect(
       navigateCommand(
         tab({ url: "https://example.com", title: "Home" }),
+        phone,
         { url: "https://example.com/", title: "Home" },
         null,
       ),
@@ -63,28 +75,46 @@ describe("navigateCommand", () => {
   });
 
   it("never blanks a known title for the same page", () => {
-    expect(navigateCommand(tab(), { url: "https://example.com/docs", title: "" }, null)).toBeNull();
+    expect(
+      navigateCommand(tab(), phone, { url: "https://example.com/docs", title: "" }, null),
+    ).toBeNull();
   });
 
   it("skips its own report while that report is still on the way", () => {
     const page = { url: "https://example.com/blog", title: "Blog" };
-    expect(navigateCommand(tab(), page, page)).toBeNull();
+    expect(navigateCommand(tab(), phone, page, page)).toBeNull();
   });
 
   it("reports going back to the record's page while its own report is on the way", () => {
     const reported = { url: "https://example.com/blog", title: "Blog" };
     expect(
-      navigateCommand(tab(), { url: "https://example.com/docs", title: "Docs" }, reported),
+      navigateCommand(tab(), phone, { url: "https://example.com/docs", title: "Docs" }, reported),
     ).toMatchObject({ url: "https://example.com/docs" });
   });
 
   it("skips pages that aren't on the web", () => {
     for (const url of ["about:blank", "data:text/html,hi", "file:///etc/hosts", "", null]) {
-      expect(navigateCommand(tab(), { url, title: "x" }, null)).toBeNull();
+      expect(navigateCommand(tab(), phone, { url, title: "x" }, null)).toBeNull();
     }
     expect(
-      navigateCommand(tab(), { url: `https://example.com/${"a".repeat(3000)}`, title: "" }, null),
+      navigateCommand(
+        tab(),
+        phone,
+        { url: `https://example.com/${"a".repeat(3000)}`, title: "" },
+        null,
+      ),
     ).toBeNull();
+  });
+});
+
+describe("navigateCommand ownership", () => {
+  const page = { url: "https://example.com/blog", title: "Blog" };
+
+  it("reports only tabs you own, from any of your devices", () => {
+    expect(navigateCommand(tab(), desktop, page, null)).not.toBeNull();
+    expect(navigateCommand(tab({ owner: agentOwner }), phone, page, null)).toBeNull();
+    expect(navigateCommand(tab({ owner: teammateOwner }), phone, page, null)).toBeNull();
+    expect(navigateCommand(tab(), null, page, null)).toBeNull();
   });
 });
 
@@ -92,7 +122,7 @@ describe("positionCommand", () => {
   const captured = { scrollRatio: 0.5, textFragment: "Getting%20started" };
 
   it("reports a new position on the record's page", () => {
-    expect(positionCommand(tab(), captured, "https://example.com/docs", null)).toEqual({
+    expect(positionCommand(tab(), phone, captured, "https://example.com/docs", null)).toEqual({
       _tag: "Position",
       tabId: "tab_a",
       position: captured,
@@ -103,6 +133,7 @@ describe("positionCommand", () => {
     expect(
       positionCommand(
         tab({ position: { scrollRatio: 0.505, textFragment: "Getting%20started" } }),
+        phone,
         captured,
         "https://example.com/docs",
         null,
@@ -112,33 +143,48 @@ describe("positionCommand", () => {
 
   it("reports for a page this device just reported, ahead of the record", () => {
     const reported = { url: "https://example.com/blog", title: "Blog" };
-    expect(positionCommand(tab(), captured, "https://example.com/blog", reported)).not.toBeNull();
+    expect(
+      positionCommand(tab(), phone, captured, "https://example.com/blog", reported),
+    ).not.toBeNull();
   });
 
   it("skips reporting the top of a page nobody moved", () => {
-    expect(positionCommand(tab(), { scrollRatio: 0 }, "https://example.com/docs", null)).toBeNull();
+    expect(
+      positionCommand(tab(), phone, { scrollRatio: 0 }, "https://example.com/docs", null),
+    ).toBeNull();
+  });
+
+  it("never reports a position for a tab you don't own", () => {
+    expect(
+      positionCommand(
+        tab({ owner: agentOwner }),
+        phone,
+        captured,
+        "https://example.com/docs",
+        null,
+      ),
+    ).toBeNull();
   });
 
   it("skips a page the record doesn't know about", () => {
-    expect(positionCommand(tab(), captured, "https://elsewhere.example/", null)).toBeNull();
-    expect(positionCommand(tab(), captured, null, null)).toBeNull();
+    expect(positionCommand(tab(), phone, captured, "https://elsewhere.example/", null)).toBeNull();
+    expect(positionCommand(tab(), phone, captured, null, null)).toBeNull();
   });
 });
 
 describe("positionToRestore", () => {
   const position = { scrollRatio: 0.4, textFragment: "Chapter%202" };
 
-  it("restores where another device left the tab", () => {
+  it("restores where another of your devices left the tab", () => {
     expect(positionToRestore(tab({ position, positionBy: desktop }), phone, null)).toEqual(
       position,
     );
+  });
+
+  it("never restores into a tab you don't own", () => {
     expect(
-      positionToRestore(
-        tab({ position, positionBy: { _tag: "Agent", agentId: "a" } }),
-        phone,
-        null,
-      ),
-    ).toEqual(position);
+      positionToRestore(tab({ owner: agentOwner, position, positionBy: desktop }), phone, null),
+    ).toBeNull();
   });
 
   it("doesn't restore this device's own position", () => {
@@ -163,13 +209,14 @@ describe("positionToRestore", () => {
 
 describe("urlToFollow", () => {
   const base = {
+    tab: tab({ url: "https://example.com/blog" }),
+    you: phone,
     previousRecordUrl: "https://example.com/docs",
-    recordUrl: "https://example.com/blog",
     reported: [],
     viewUrl: "https://example.com/docs",
   };
 
-  it("follows another member's navigation", () => {
+  it("follows a navigation from another of your devices", () => {
     expect(urlToFollow(base)).toBe("https://example.com/blog");
   });
 
@@ -196,8 +243,13 @@ describe("urlToFollow", () => {
   });
 
   it("ignores a cleared or non-web address", () => {
-    expect(urlToFollow({ ...base, recordUrl: null })).toBeNull();
-    expect(urlToFollow({ ...base, recordUrl: "javascript:alert(1)" })).toBeNull();
+    expect(urlToFollow({ ...base, tab: tab({ url: null }) })).toBeNull();
+    expect(urlToFollow({ ...base, tab: tab({ url: "javascript:alert(1)" }) })).toBeNull();
+  });
+
+  it("never follows a tab someone else owns", () => {
+    expect(urlToFollow({ ...base, tab: { ...base.tab, owner: agentOwner } })).toBeNull();
+    expect(urlToFollow({ ...base, you: null })).toBeNull();
   });
 });
 
@@ -254,6 +306,43 @@ describe("shownBrowsingTab", () => {
   it("drops a pick for a tab that closed", () => {
     expect(shownBrowsingTab(record, { tabId: "gone", sinceActiveTabId: "tab_a" })?.id).toBe(
       "tab_a",
+    );
+  });
+});
+
+describe("browsingTabEngine", () => {
+  it("loads your own tabs here, from whichever of your devices opened them", () => {
+    expect(browsingTabEngine(tab(), phone)).toBe("here");
+  });
+
+  it("leaves an agent's tabs in its own browser", () => {
+    expect(browsingTabEngine(tab({ owner: agentOwner }), phone)).toBe("agent");
+  });
+
+  it("leaves another person's tabs in their browser", () => {
+    expect(browsingTabEngine(tab({ owner: teammateOwner }), phone)).toBe("person");
+  });
+
+  it("loads nothing before it knows who you are", () => {
+    expect(browsingTabEngine(tab(), null)).toBe("person");
+    expect(browsingTabEngine(tab({ owner: agentOwner }), null)).toBe("agent");
+  });
+});
+
+describe("browsingTabSubtitle", () => {
+  it("names the host of your own tabs", () => {
+    expect(browsingTabSubtitle(tab(), phone)).toBe("example.com");
+    expect(browsingTabSubtitle(tab({ title: "" }), phone)).toBeUndefined();
+    expect(browsingTabSubtitle(tab({ url: null, title: "" }), phone)).toBeUndefined();
+  });
+
+  it("marks tabs other people and agents own", () => {
+    expect(browsingTabSubtitle(tab({ owner: agentOwner }), phone)).toBe("Agent · example.com");
+    expect(browsingTabSubtitle(tab({ owner: agentOwner, url: null, title: "" }), phone)).toBe(
+      "Agent",
+    );
+    expect(browsingTabSubtitle(tab({ owner: teammateOwner }), phone)).toBe(
+      "Someone else · example.com",
     );
   });
 });

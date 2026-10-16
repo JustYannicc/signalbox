@@ -1,7 +1,7 @@
 "use client";
 
 import { useAtomValue } from "@effect/atom-react";
-import { browsingTabHost, browsingTabLabel } from "@t3tools/client-runtime/browsing";
+import { browsingTabHost, browsingTabLabel, isOwnedBy } from "@t3tools/client-runtime/browsing";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { promptLinkDeepLink } from "@t3tools/shared/promptLinks";
@@ -12,19 +12,26 @@ import { PreviewFaviconIcon } from "~/components/preview/PreviewFaviconIcon";
 import { GetSignalboxButton, OpenInAppButton } from "~/components/promptLinks/OpenInAppButtons";
 import { Badge } from "~/components/ui/badge";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
-import { setActivePreviewTab, useThreadPreviewState } from "~/previewStateStore";
+import {
+  readThreadPreviewState,
+  setActivePreviewTab,
+  useThreadPreviewState,
+} from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
-import { threadBrowsingStateAtom } from "./threadBrowsingSync";
+import { shownBrowsingTabId } from "./browsingPanel";
+import { dispatchBrowsingCommand, threadBrowsingStateAtom } from "./threadBrowsingSync";
 
 /**
  * A synced thread's browser on a client with no engine of its own (#585):
  * the tabs the thread keeps, which one every device shows, and the way into
- * an app that loads them. Picking a tab switches it on every device.
+ * an app that loads them. Picking a tab switches it on every device. An
+ * agent's tabs run in its own cloud browser; they list here, marked as its.
  */
 export function ThreadBrowsingWebView({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
-  const tabs = useAtomValue(threadBrowsingStateAtom(scopedThreadKey(threadRef)))?.record.tabs;
-  const activeTabId = useThreadPreviewState(threadRef).activeTabId;
+  const state = useAtomValue(threadBrowsingStateAtom(scopedThreadKey(threadRef)));
+  const tabs = state?.record.tabs;
+  const activeTabId = shownBrowsingTabId(state, useThreadPreviewState(threadRef).activeTabId);
   const count = tabs?.length ?? 0;
   const deepLink = promptLinkDeepLink(
     `/${encodeURIComponent(threadRef.environmentId)}/${encodeURIComponent(threadRef.threadId)}`,
@@ -51,6 +58,8 @@ export function ThreadBrowsingWebView({ threadRef }: { readonly threadRef: Scope
                 tabId={tab.id}
                 url={tab.url}
                 title={tab.title}
+                agent={tab.owner._tag === "Agent"}
+                local={isOwnedBy(tab, state?.you ?? null)}
                 active={tab.id === activeTabId}
               />
             ))}
@@ -71,19 +80,30 @@ const BrowsingTabRow = memo(function BrowsingTabRow(props: {
   readonly tabId: string;
   readonly url: string | null;
   readonly title: string;
+  /** An agent drives it, in its own cloud browser. */
+  readonly agent: boolean;
+  /** This person drives it, so it has a page on their devices and a tab in the panel. */
+  readonly local: boolean;
   readonly active: boolean;
 }) {
-  const { threadRef, tabId, url, title, active } = props;
+  const { threadRef, tabId, url, title, agent, local, active } = props;
   const label = browsingTabLabel({ url, title });
   const host = browsingTabHost(url) ?? url ?? "New tab";
+  const activate = () => void dispatchBrowsingCommand(threadRef, { _tag: "Activate", tabId });
   const show = () => {
+    if (!local) return activate();
     const surfaceId = `browser:${tabId}`;
     const panel = useRightPanelStore.getState();
     const surfaces = panel.byThreadKey[scopedThreadKey(threadRef)]?.surfaces ?? [];
     if (surfaces.some((surface) => surface.id === surfaceId)) {
       panel.activateSurface(threadRef, surfaceId);
     }
-    // The thread sync sends the switch, so the desktop and phone follow.
+    // The thread sync sends the switch, so the desktop and phone follow; a tab
+    // this device already shows (while the thread shows an agent's) goes directly.
+    if (readThreadPreviewState(threadRef).activeTabId === tabId) {
+      if (!active) activate();
+      return;
+    }
     setActivePreviewTab(threadRef, tabId);
   };
   return (
@@ -99,10 +119,19 @@ const BrowsingTabRow = memo(function BrowsingTabRow(props: {
       title={label}
       description={label === host ? (url ?? host) : host}
       action={
-        active ? (
-          <Badge variant="secondary" size="sm">
-            Showing
-          </Badge>
+        agent || active ? (
+          <span className="flex shrink-0 items-center gap-1.5">
+            {agent ? (
+              <Badge variant="outline" size="sm">
+                Agent
+              </Badge>
+            ) : null}
+            {active ? (
+              <Badge variant="secondary" size="sm">
+                Showing
+              </Badge>
+            ) : null}
+          </span>
         ) : null
       }
       onClick={show}

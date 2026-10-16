@@ -18,6 +18,8 @@ import {
   samePageUrl,
   foldBrowsingItem,
   INITIAL_BROWSING_STATE,
+  isOwnedBy,
+  ownerOf,
   isOwnChange,
 } from "./browsingRecord.ts";
 
@@ -29,7 +31,7 @@ const tab = (id: string, orderKey: string, url: string | null = null): BrowsingT
   url,
   title: "",
   orderKey,
-  openedBy: desktop,
+  owner: { _tag: "Person", userId: "u1" },
   updatedAt: "2026-10-16T10:00:00.000Z",
 });
 
@@ -203,5 +205,19 @@ describe("pages", () => {
     expect(browsingTabSnapshot(ThreadId.make("t"), tab("b", "a2")).navStatus).toEqual({
       _tag: "Idle",
     });
+  });
+});
+
+describe("ownership", () => {
+  it("knows who owns a tab", () => {
+    const person = { _tag: "Person", userId: "u1" } as const;
+    expect(ownerOf(desktop)).toEqual(person);
+    expect(ownerOf({ _tag: "Agent", agentId: "k" })).toEqual({ _tag: "Agent", agentId: "k" });
+    expect(isOwnedBy({ owner: person }, phone)).toBe(true);
+    expect(isOwnedBy({ owner: person }, { _tag: "Device", userId: "u2", deviceId: "x" })).toBe(
+      false,
+    );
+    expect(isOwnedBy({ owner: person }, { _tag: "Agent", agentId: "k" })).toBe(false);
+    expect(isOwnedBy({ owner: person }, null)).toBe(false);
   });
 });

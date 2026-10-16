@@ -7,6 +7,7 @@ import {
   type BrowsingRecord,
   type BrowsingTab,
 } from "@t3tools/contracts/signalboxBrowsing";
+import { isOwnedBy, ownerOf } from "@t3tools/client-runtime/browsing";
 import { generateKeyBetween } from "fractional-indexing";
 
 /**
@@ -27,6 +28,7 @@ export type BrowsingDecision =
   | { readonly _tag: "Rejected"; readonly reason: string };
 
 const NOTHING: BrowsingDecision = { _tag: "Events", events: [] };
+const NOT_OWNER = "Only the tab's owner can change it.";
 
 /** An event before the thread numbers it. */
 type EventDraft = BrowsingEvent extends infer E
@@ -51,11 +53,21 @@ const drafts = (
   { by, at }: BrowsingDecisionContext,
 ): ReadonlyArray<EventDraft> | string => {
   if (command._tag === "CloseAll") {
-    // Closing the active tab clears it, so nothing needs activating after.
-    return record.tabs.map((tab): EventDraft => ({ _tag: "TabClosed", by, at, tabId: tab.id }));
+    // Everyone's own tabs only. Closing the active tab clears it, so nothing needs activating after.
+    return record.tabs
+      .filter((tab) => isOwnedBy(tab, by))
+      .map((tab): EventDraft => ({ _tag: "TabClosed", by, at, tabId: tab.id }));
   }
   const index = record.tabs.findIndex((tab) => tab.id === command.tabId);
   const tab = record.tabs[index];
+  // Only the owner drives a tab (#343); switching to it and reordering are the thread's.
+  if (
+    tab !== undefined &&
+    (command._tag === "Navigate" || command._tag === "Position" || command._tag === "Close") &&
+    !isOwnedBy(tab, by)
+  ) {
+    return NOT_OWNER;
+  }
   switch (command._tag) {
     case "Open": {
       if (tab !== undefined) return [];
@@ -79,7 +91,7 @@ const drafts = (
           url: command.url ?? null,
           title: command.title ?? "",
           orderKey,
-          openedBy: by,
+          owner: ownerOf(by),
           updatedAt: at,
         },
       };

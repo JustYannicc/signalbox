@@ -47,10 +47,11 @@ interface LocalNavigation {
 }
 
 /**
- * One synced tab in this device's own WebView. It loads the record's page,
- * reports where it went and where the reader got to, restores where someone
- * else left it, and follows navigations made elsewhere. Back, forward and
- * reload stay on this device. Mounted once per tab, so switching tabs starts fresh.
+ * One of your synced tabs in this device's own WebView. It loads the record's
+ * page, reports where it went and where you read to, restores where another of
+ * your devices left it, and follows navigations made there. Back, forward and
+ * reload stay on this device. Mounted once per tab, so switching tabs starts
+ * fresh. Only for tabs you own (`browsingTabEngine`): an agent's never load here.
  */
 export function SyncedBrowserTab(props: {
   readonly tab: BrowsingTab;
@@ -92,6 +93,7 @@ export function SyncedBrowserTab(props: {
     unsentPosition.current = null;
     const command = positionCommand(
       tab,
+      you,
       latest.position,
       latest.pageUrl,
       pending.current.at(-1) ?? null,
@@ -111,7 +113,7 @@ export function SyncedBrowserTab(props: {
   }, [live]);
 
   const reportPage = (url: string | null | undefined, title: string | null | undefined) => {
-    const command = navigateCommand(tab, { url, title }, pending.current.at(-1) ?? null);
+    const command = navigateCommand(tab, you, { url, title }, pending.current.at(-1) ?? null);
     if (command?._tag !== "Navigate") return;
     const sent = { url: command.url, title: command.title, at: Date.now() };
     pending.current = [...pending.current.slice(-7), sent];
@@ -136,8 +138,9 @@ export function SyncedBrowserTab(props: {
   // Someone else navigated this tab: go there too, unless it's where this device already is.
   const follow = useEffectEvent((recordUrl: string | null) => {
     const next = urlToFollow({
+      tab,
+      you,
       previousRecordUrl: previousRecordUrl.current,
-      recordUrl,
       reported: pending.current,
       viewUrl: local.url,
     });

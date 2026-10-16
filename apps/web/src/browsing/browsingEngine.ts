@@ -1,4 +1,4 @@
-import { reportableUrl, samePageUrl } from "@t3tools/client-runtime/browsing";
+import { isOwnedBy, reportableUrl, samePageUrl } from "@t3tools/client-runtime/browsing";
 import {
   capturePagePositionScript,
   positionMoved,
@@ -14,7 +14,9 @@ import type {
 /**
  * What one device's engine does with a record tab (#585): follow where someone
  * else took it, restore where they read to, and report where this device
- * reads. Pure; `BrowsingTabEngine.tsx` runs it against a desktop `<webview>`.
+ * reads. Only for tabs this device's person owns: an agent's tab lives in its
+ * own cloud browser and someone else's in theirs. Pure; `BrowsingTabEngine.tsx`
+ * runs it against a desktop `<webview>`.
  */
 
 /** A page this engine showed this recently is treated as an echo of its own report. */
@@ -113,20 +115,20 @@ export function positionToRestore(
   you: BrowsingMember | null,
   localUrl: string | null,
 ): BrowsingPosition | null {
-  if (tab === undefined || !samePageUrl(tab.url, localUrl)) return null;
+  if (tab === undefined || !isOwnedBy(tab, you) || !samePageUrl(tab.url, localUrl)) return null;
   return restorablePosition(tab, you);
 }
 
 /** The `Position` command for what this engine read to, unless it changes nothing worth syncing. */
 export function positionToReport(
+  you: BrowsingMember | null,
   tab: BrowsingTab | undefined,
   localUrl: string | null,
   captured: BrowsingPosition | null,
 ): BrowsingCommand | null {
-  if (tab === undefined || captured === null || !samePageUrl(tab.url, localUrl)) return null;
-  return positionMoved(tab, captured)
-    ? { _tag: "Position", tabId: tab.id, position: captured }
-    : null;
+  if (tab === undefined || captured === null || !isOwnedBy(tab, you)) return null;
+  if (!samePageUrl(tab.url, localUrl) || !positionMoved(tab, captured)) return null;
+  return { _tag: "Position", tabId: tab.id, position: captured };
 }
 
 /** Keys that scroll the page when nothing editable has focus. */

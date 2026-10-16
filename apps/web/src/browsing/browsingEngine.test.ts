@@ -123,7 +123,7 @@ const tab = (overrides: Partial<BrowsingTab> = {}): BrowsingTab => ({
   url: A,
   title: "A",
   orderKey: "a0",
-  openedBy: desktop,
+  owner: { _tag: "Person", userId: "u1" },
   updatedAt: "2026-10-16T10:00:00.000Z",
   ...overrides,
 });
@@ -153,9 +153,26 @@ describe("page scripts", () => {
   });
 });
 
+describe("tabs this device doesn't drive", () => {
+  const agent = { _tag: "Agent", agentId: "kernel" } as const;
+  const position = { scrollRatio: 0.5, textFragment: "Chapter%202" };
+
+  it("never restores or reports them", () => {
+    const agentTab = tab({
+      owner: agent,
+      position,
+      positionBy: { _tag: "Agent", agentId: "kernel" },
+    });
+    expect(positionToRestore(agentTab, desktop, A)).toBeNull();
+    expect(positionToReport(desktop, agentTab, A, { scrollRatio: 0.3 })).toBeNull();
+    const theirs = tab({ owner: { _tag: "Person", userId: "u2" } });
+    expect(positionToReport(desktop, theirs, A, { scrollRatio: 0.3 })).toBeNull();
+  });
+});
+
 describe("positionToReport", () => {
   it("reports a real move on the page the record has", () => {
-    expect(positionToReport(tab(), A, { scrollRatio: 0.3 })).toEqual({
+    expect(positionToReport(desktop, tab(), A, { scrollRatio: 0.3 })).toEqual({
       _tag: "Position",
       tabId: "a",
       position: { scrollRatio: 0.3 },
@@ -164,25 +181,25 @@ describe("positionToReport", () => {
 
   it("matches the record's page however the engine spells it", () => {
     expect(
-      positionToReport(tab({ url: "https://example.com" }), "https://example.com/", {
+      positionToReport(desktop, tab({ url: "https://example.com" }), "https://example.com/", {
         scrollRatio: 0.3,
       }),
     ).not.toBeNull();
   });
 
   it("skips the page top of a fresh page, near-identical positions and other pages", () => {
-    expect(positionToReport(tab(), A, { scrollRatio: 0 })).toBeNull();
+    expect(positionToReport(desktop, tab(), A, { scrollRatio: 0 })).toBeNull();
     expect(
-      positionToReport(tab({ position: { scrollRatio: 0.3 } }), A, { scrollRatio: 0.305 }),
+      positionToReport(desktop, tab({ position: { scrollRatio: 0.3 } }), A, { scrollRatio: 0.305 }),
     ).toBeNull();
-    expect(positionToReport(tab(), B, { scrollRatio: 0.3 })).toBeNull();
-    expect(positionToReport(tab(), A, null)).toBeNull();
-    expect(positionToReport(undefined, A, { scrollRatio: 0.3 })).toBeNull();
+    expect(positionToReport(desktop, tab(), B, { scrollRatio: 0.3 })).toBeNull();
+    expect(positionToReport(desktop, tab(), A, null)).toBeNull();
+    expect(positionToReport(desktop, undefined, A, { scrollRatio: 0.3 })).toBeNull();
   });
 
   it("reports scrolling back to the top once it had a position", () => {
     expect(
-      positionToReport(tab({ position: { scrollRatio: 0.3 } }), A, { scrollRatio: 0 }),
+      positionToReport(desktop, tab({ position: { scrollRatio: 0.3 } }), A, { scrollRatio: 0 }),
     ).toEqual({ _tag: "Position", tabId: "a", position: { scrollRatio: 0 } });
   });
 });

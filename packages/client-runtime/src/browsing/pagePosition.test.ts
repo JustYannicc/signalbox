@@ -82,7 +82,7 @@ describe("what to sync", () => {
     url: "https://example.com/",
     title: "",
     orderKey: "a0",
-    openedBy: desktop,
+    owner: { _tag: "Person", userId: "u" },
     updatedAt: "",
   };
 

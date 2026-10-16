@@ -15,6 +15,7 @@ import {
   NO_LOCAL_INTENT,
   remoteActivation,
   samePanelRecord,
+  shownBrowsingTabId,
   tabMovesForLocalOrder,
 } from "./browsingPanel";
 
@@ -25,8 +26,16 @@ const tab = (id: string, url: string | null = `https://example.com/${id}`): Brow
   url,
   title: url === null ? "" : `Page ${id}`,
   orderKey: id,
-  openedBy: desktop,
+  owner: { _tag: "Person", userId: "u1" },
   updatedAt: "2026-10-16T10:00:00.000Z",
+});
+const agentTab = (id: string): BrowsingTab => ({
+  ...tab(id),
+  owner: { _tag: "Agent", agentId: "kernel" },
+});
+const otherPersonTab = (id: string): BrowsingTab => ({
+  ...tab(id),
+  owner: { _tag: "Person", userId: "u2" },
 });
 
 const state = (
@@ -97,6 +106,15 @@ describe("browsingPreviewList", () => {
     expect(moved.sessions[0]?.navStatus._tag).toBe("Success");
   });
 
+  it("leaves out tabs someone else drives: an agent's, another person's", () => {
+    const list = browsingPreviewList(
+      ThreadId.make("t1"),
+      state([tab("a"), agentTab("k"), otherPersonTab("o"), tab("b")], "k"),
+      {},
+    );
+    expect(list.sessions.map((session) => session.tabId)).toEqual(["a", "b"]);
+  });
+
   it("ignores positions when deciding whether the panel changed", () => {
     const before = state([tab("a"), tab("b")], "a");
     const positioned = state(
@@ -140,6 +158,20 @@ describe("activation", () => {
     expect(remoteActivation({ ...record, sequence: 7 }, "a", landed)).toBe("b");
     // A failed command releases the hold without moving it.
     expect(localIntentSettled(sent, null)).toEqual(NO_LOCAL_INTENT);
+  });
+
+  it("loads nothing here when the thread switches to a tab this device doesn't drive", () => {
+    const toAgent = state([tab("a"), agentTab("k")], "k");
+    expect(remoteActivation(toAgent, "a", NO_LOCAL_INTENT)).toBeNull();
+    // This device's own switch away from the agent's tab still goes to the record.
+    expect(localActivation(toAgent, "a")).toEqual({ _tag: "Activate", tabId: "a" });
+  });
+
+  it("shows the thread's tab when it's one this device can't load, else this device's", () => {
+    expect(shownBrowsingTabId(state([tab("a"), agentTab("k")], "k"), "a")).toBe("k");
+    // This device's own switch shows at once, ahead of the record.
+    expect(shownBrowsingTabId(state([tab("a"), tab("b")], "a"), "b")).toBe("b");
+    expect(shownBrowsingTabId(null, "b")).toBe("b");
   });
 
   it("does nothing before the first snapshot", () => {

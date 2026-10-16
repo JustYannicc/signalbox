@@ -34,6 +34,18 @@ with the device that asked. The global `subscribePreviewEvents` stays empty in
 the cloud; panels read each thread's browsing stream instead. A self-hosted
 server keeps its in-memory panel and doesn't advertise `threadBrowsing`.
 
+## One owner per tab
+
+Every tab has one owner, a person or an agent, and only the owner navigates,
+positions or closes it (#343). Anyone in the thread can switch to a tab or
+reorder the list. A person's own tabs load in their devices' engines. An
+agent's tabs live in its cloud browser (Kernel or the runner's Chromium) and
+never load in a person's engine: agents always run in the cloud and never
+drive a person's local tab. The cloud enforces this in
+[`browsingDecider.ts`](../../apps/cloud/src/thread/browsing/browsingDecider.ts),
+and each engine only loads what `isOwnedBy` says it drives. Following,
+copying, sharing and lending a tab (#597) build on the owner.
+
 ## Who changed it
 
 Every event names its member: one of a person's devices or an agent. The cloud

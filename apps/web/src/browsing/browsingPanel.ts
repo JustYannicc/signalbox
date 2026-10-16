@@ -3,6 +3,7 @@ import {
   BROWSING_PREVIEW_EPOCH,
   type BrowsingState,
   browsingTabSnapshot,
+  isOwnedBy,
   samePageUrl,
 } from "@t3tools/client-runtime/browsing";
 import type { PreviewListResult, PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
@@ -37,13 +38,20 @@ function browsingSessionSnapshot(
   };
 }
 
+/**
+ * The panel's sessions: the tabs this device's person owns, each of which this
+ * device loads. An agent's tab runs in its own cloud browser and another
+ * person's in theirs, so neither ever becomes a local page.
+ */
 export function browsingPreviewList(
   threadId: ThreadId,
   state: BrowsingState,
   local: Readonly<Record<string, PreviewSessionSnapshot>>,
 ): PreviewListResult {
   return {
-    sessions: state.record.tabs.map((tab) => browsingSessionSnapshot(threadId, tab, local[tab.id])),
+    sessions: state.record.tabs
+      .filter((tab) => isOwnedBy(tab, state.you))
+      .map((tab) => browsingSessionSnapshot(threadId, tab, local[tab.id])),
     serverEpoch: BROWSING_PREVIEW_EPOCH,
     revision: state.sequence,
   };
@@ -93,15 +101,35 @@ export const localIntentSettled = (intent: LocalIntent, sequence: number | null)
 
 const recordActiveTabId = (state: BrowsingState) => activeBrowsingTab(state.record)?.id ?? null;
 
-/** The tab to switch to because someone else activated it, if any. */
+/**
+ * The tab to switch to because someone else activated it, if any. A tab this
+ * device doesn't drive (an agent's) has no local page, so the panel stays put.
+ */
 export function remoteActivation(
   state: BrowsingState,
   localActiveTabId: string | null,
   intent: LocalIntent,
 ): string | null {
   if (state.you === null || localIntentHeld(intent, state.sequence)) return null;
-  const active = recordActiveTabId(state);
-  return active === null || active === localActiveTabId ? null : active;
+  const active = activeBrowsingTab(state.record);
+  if (active === null || active.id === localActiveTabId || !isOwnedBy(active, state.you)) {
+    return null;
+  }
+  return active.id;
+}
+
+/**
+ * The tab a list of the thread's tabs marks as showing: this device's own
+ * pick, which lands in the record a moment later, unless the thread shows a
+ * tab this device doesn't drive.
+ */
+export function shownBrowsingTabId(
+  state: BrowsingState | null,
+  localActiveTabId: string | null,
+): string | null {
+  if (state === null) return localActiveTabId;
+  const active = activeBrowsingTab(state.record);
+  return active !== null && !isOwnedBy(active, state.you) ? active.id : localActiveTabId;
 }
 
 /** The command for a tab this device switched to, unless the record already has it. */

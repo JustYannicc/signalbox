@@ -1,4 +1,8 @@
-import { BROWSING_PREVIEW_EPOCH, browsingTabSnapshot } from "@t3tools/client-runtime/browsing";
+import {
+  BROWSING_PREVIEW_EPOCH,
+  browsingTabSnapshot,
+  isOwnedBy,
+} from "@t3tools/client-runtime/browsing";
 import {
   type PreviewListResult,
   type PreviewSessionSnapshot,
@@ -48,11 +52,15 @@ export const deviceMember = (userId: string, sid: string) =>
     })),
   );
 
+/** The panel's sessions: only the tabs this device's person drives, never an agent's (#343). */
 const previewList = (
   threadId: ThreadId,
   head: { readonly sequence: number; readonly record: BrowsingRecord },
+  you: BrowsingMember,
 ): PreviewListResult => ({
-  sessions: head.record.tabs.map((tab) => browsingTabSnapshot(threadId, tab)),
+  sessions: head.record.tabs
+    .filter((tab) => isOwnedBy(tab, you))
+    .map((tab) => browsingTabSnapshot(threadId, tab)),
   serverEpoch: BROWSING_PREVIEW_EPOCH,
   revision: head.sequence,
 });
@@ -236,10 +244,10 @@ export const makeBrowsingHandlers = Effect.fn("makeBrowsingHandlers")(function* 
       ),
     [WS_METHODS.previewList]: ({ threadId }: { readonly threadId: ThreadId }) =>
       head(threadId).pipe(
-        Effect.map((current) => previewList(threadId, current)),
+        Effect.map((current) => previewList(threadId, current, you)),
         // The panel lists nothing for a thread it can't see, as a self-hosted server would.
         Effect.orElseSucceed(() =>
-          previewList(threadId, { sequence: 0, record: EMPTY_BROWSING_RECORD }),
+          previewList(threadId, { sequence: 0, record: EMPTY_BROWSING_RECORD }, you),
         ),
       ),
     // Each device's own engine: its size, zoom, colours and reloads aren't the thread's.
