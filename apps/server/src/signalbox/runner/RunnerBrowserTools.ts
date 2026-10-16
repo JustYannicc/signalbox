@@ -36,7 +36,8 @@ import { json, register, ToolError } from "./RunnerContextTools.ts";
 export const BROWSER_SERVER_NAME = "t3-code";
 
 export const BROWSER_INSTRUCTIONS = [
-  "The preview_* tools drive a headless browser on this machine, with no logins or cookies. Use them to check your own work: start the dev server in the background, then open it at http://localhost:<port> (or preview_navigate with target {kind:'environment-port',port}).",
+  "The preview_* tools open each URL in the right browser for it. Your own work (localhost, this machine's ports and network) opens in a headless browser here, with no logins or cookies: start the dev server in the background, then open it at http://localhost:<port> (or preview_navigate with target {kind:'environment-port',port}).",
+  "Real sites open in the person's own cloud browser, signed in as them with the logins they have saved there. Act there as they would, and stop to ask before anything they'd want to decide: paying, sending, deleting, accepting terms. If a site asks you to sign in, say so rather than guessing credentials. A tab moves between the two browsers when its URL does, so dev tabs never carry the person's cookies.",
   "preview_snapshot returns the page's text, accessibility tree, console and network entries. To show the user a screenshot, call preview_snapshot with save=true: it appears in this thread with the tool call. Files on this machine can't be embedded in your reply.",
 ].join("\n");
 

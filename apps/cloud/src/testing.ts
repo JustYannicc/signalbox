@@ -19,6 +19,8 @@ import { API_HEADER, encodeApiCredential, serveApiRequest } from "./api/apiObjec
 import { MCP_PATH, makeMcpHandler } from "./api/mcpObject.ts";
 import * as CloudAssets from "./assets/CloudAssets.ts";
 import * as CloudAutomations from "./automations/CloudAutomations.ts";
+import type { KernelApi } from "./browser/KernelApi.ts";
+import * as PersonBrowsers from "./browser/PersonBrowsers.ts";
 import type { AttachmentObjects } from "./attachments/attachmentObjects.ts";
 import { makeMemoryObjects } from "./attachments/attachmentTesting.ts";
 import * as CloudAttachments from "./attachments/CloudAttachments.ts";
@@ -255,6 +257,7 @@ const makeUserRuntime = (
   runner: Layer.Layer<AutomationRunner>,
   /** Replaces the real automations, for tests that watch what they're handed. */
   automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
+  kernel: KernelApi | null,
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
@@ -274,6 +277,7 @@ const makeUserRuntime = (
               LocalKeys.layer,
               PoolSignIns.layer,
               CloudThreadService.layer,
+              PersonBrowsers.layer(kernel),
             ),
           ),
           Layer.provideMerge(
@@ -335,6 +339,8 @@ export const makeMemoryCloud = (
     readonly observe?: Layer.Layer<never>;
     /** Every user object's automations; none unless given, so thread events are dropped. */
     readonly automations?: Layer.Layer<CloudAutomations.CloudAutomations>;
+    /** Kernel for every person's browser (#574); none unless given, so it's `unconfigured`. */
+    readonly kernel?: KernelApi;
   } = {},
 ) => {
   const users = new Map<
@@ -415,6 +421,7 @@ export const makeMemoryCloud = (
       layerRecordedAlarm(alarms, userId),
       workflows.layerFor(userId),
       options.automations ?? Layer.empty,
+      options.kernel ?? null,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);
