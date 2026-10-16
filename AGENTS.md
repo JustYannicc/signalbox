@@ -96,9 +96,13 @@ We need to be on the same page with terminology. When communicating, use this la
 - **assistant** means a user's personal coordinator. It delegates and never executes.
 - **provider** means the agent runtime Signalbox talks to, such as Codex, Claude, Cursor, or OpenCode.
 - **client** means the web, desktop, or mobile app. Clients are gateways; they hold no work.
-- **environment** means one running server and the machine, filesystem, provider credentials, and state it owns.
-- **project** means an environment-local workspace record rooted at a directory.
-- **thread** means the durable conversation and work history. A thread shows as a chat or a task; the difference is display only.
+- **environment** means one running server and the state it owns. Signalbox runs one cloud environment and every client connects to it. Upstream code also uses the word for T3 Code's server on a person's own machine.
+- **folder** means where things live. Folders nest under a **top level** (a person, or an organisation) and the top level and every folder is a **level**. Each thing has one home and runs on its home's chain. Upstream code calls a directory-rooted workspace a **project**.
+- **thread** means the durable conversation and work history. A **task** is committed work with a done-condition, a **chat** is noncommittal; both end by being archived. A task's states are working, waiting, Considering, Ready and archived.
+- **status line** means what any thread shows at once: its state, what it waits on, its next step, and where it got to.
+- **pipeline** means where a person works through what needs them: Blockers, Ready items whose waiting has a cost, and resurfaced Considering items. Empty means every piece of work is done or moving.
+- **Blocker** means work that can't continue without a person's input. **Ready** means prepared work waiting only for a person's go at a decision gate. **Considering** means a decision that needs time, held outside the pipeline with an exit condition.
+- **note** means a half-formed thought with no status and no obligation. A folder's **scratch pad** is the view of its notes.
 - **turn** means one user-to-agent cycle, including follow-up work such as checkpointing.
 - **Signalbox home** means the base data directory. Runtime state normally lives below its userdata directory.
 
@@ -122,7 +126,7 @@ The most common defect in this repo is a change that works on the path you teste
 - **Agents and the public API.** Every RPC needs an entry in the reach map (`packages/api/src/*Reach.ts`). The API, the `signalbox` CLI and the MCP tools are all generated from it, so a new RPC is a type error until you choose its entry. The cloud then has to serve it or list it in `apps/cloud/src/api/cloudCoverage.ts`. That only works when the capability is a service method behind the RPC, not handler code.
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
-- **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
+- **Devices.** One cloud environment, many clients at once: the same person on web, desktop and phone, and teammates in the same folder. Device-only reach goes through the desktop gateway.
 - **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
 
 ## Dev servers
