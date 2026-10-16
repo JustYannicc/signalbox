@@ -189,12 +189,12 @@ export const layer = McpToolAccess.toLayer(
           ),
         ).pipe(Effect.map((stopped) => ({ stopped }))),
       ),
-      merge_pull_request: McpToolAccess.writes(({ url, note }) =>
+      merge_pull_request: McpToolAccess.writes(({ url, note, askBecause }) =>
         asCaller((caller) =>
           Effect.gen(function* () {
             const thread = yield* callingThread(caller);
             return yield* engine.requestMerge(
-              { threadId: thread.id, url, note },
+              { threadId: thread.id, url, note, askBecause },
               {
                 authorize: withinLimits(caller.limits),
                 builtInDefaults: yield* callerDefaults(caller, thread.projectId),
