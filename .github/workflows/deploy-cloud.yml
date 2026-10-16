@@ -3,7 +3,9 @@
 # never touch it. Setup: docs/operations/cloud.md.
 #
 # - main deploys the `production` stage: app.signalbox.run, and its
-#   ModelGateway at gateway.signalbox.run.
+#   ModelGateway at gateway.signalbox.run. A push that changes the Runner then
+#   publishes it as the Runner image's `nightly`, which production's boat
+#   machines run.
 # - Pull requests from JustYannicc deploy the `pr-<number>` stage at
 #   preview-<number>.signalbox.run: its own Worker, Durable Objects and
 #   ModelGateway (gateway-preview-<number>), destroyed when the pull request
@@ -29,6 +31,7 @@ on:
       # Light machines run the Runner built with the Worker, and a preview's
       # boat machines its own image (runner-image.yml has the same paths).
       - apps/server/src/signalbox/runner/**
+      - apps/server/src/preview/**
       - apps/server/src/orchestration-v2/Adapters/**
       # The Runner compiles automations its agents save.
       - apps/server/src/workflows/**
@@ -49,6 +52,17 @@ on:
     paths: *cloud-paths
   # Redeploys main, e.g. after rotating a secret.
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Deploy nothing: decide whether this ref changes the Runner (against main) and build its image without publishing"
+        required: false
+        default: false
+        type: boolean
+      base:
+        description: "Dry run: compare with this ref instead of main"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -59,7 +73,7 @@ env:
 jobs:
   deploy_production:
     name: Deploy production cloud
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -152,36 +166,69 @@ jobs:
         working-directory: apps/cloud
         run: ./node_modules/.bin/alchemy deploy --stage "$STAGE" --yes --no-input
 
-  # Whether the pull request changes what boat machines run (the paths
-  # runner-image.yml builds on). Then its preview runs its own Runner image.
+  # Whether the pull request or push changes what boat machines run (the
+  # paths runner-image.yml builds on). Then a preview runs its own Runner
+  # image, and main publishes `nightly` once production deploys.
   runner_changes:
     name: Runner changes
     if: >-
-      github.event_name == 'pull_request' &&
-      github.event.action != 'closed' &&
+      github.event_name != 'pull_request' ||
+      (github.event.action != 'closed' &&
       github.event.pull_request.user.login == 'JustYannicc' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       changed: ${{ steps.files.outputs.changed }}
     steps:
-      - name: List the pull request's files
+      - name: List the changed files
         id: files
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          MAIN: ${{ github.event.repository.default_branch }}
+          BASE: ${{ inputs.base }}
         run: |
-          # The files endpoint stops at 3000 files: a list shorter than the
-          # pull request's count builds the image to be safe.
-          expected="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')"
-          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename')"
-          listed="$(grep -c . <<< "$files" || true)"
-          # runner-image.yml's paths.
-          if [[ "$listed" -lt "$expected" ]] ||
-            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/automation-compiler/|packages/runner-protocol/|packages/automations/|\.github/workflows/runner-image\.yml$)' <<< "$files"; then
+          # A file renamed out of a Runner path changes the Runner too.
+          row='.filename, (.previous_filename // empty)'
+          if [[ "$EVENT" == "pull_request" ]]; then
+            # The files endpoint stops at 3000 files: a list shorter than the
+            # pull request's count builds the image to be safe.
+            expected="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')"
+            files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq ".[] | $row")"
+            listed="$(grep -c . <<< "$files" || true)"
+            complete="$([[ "$listed" -ge "$expected" ]] && echo true || echo false)"
+          else
+            # main compares with the commit `nightly` was built from, so a
+            # build that failed or a run a newer push replaced is caught up by
+            # the next push. Another ref (a dry run) compares with main or
+            # the `base` it names.
+            if [[ "$GITHUB_REF" == "refs/heads/$MAIN" ]]; then
+              # runner-image.yml's IMAGE.
+              base="$(docker buildx imagetools inspect ghcr.io/justyannicc/signalbox-runner:nightly \
+                --format '{{ index .Image.Config.Labels "org.opencontainers.image.revision" }}' || true)"
+            else
+              base="${BASE:-$MAIN}"
+            fi
+            echo "Compared with ${base:-nothing}." >> "$GITHUB_STEP_SUMMARY"
+            # The compare endpoint lists at most 300 files, and a base it
+            # can't find lists none: both build the image to be safe.
+            complete=false
+            listed=0
+            if [[ -n "$base" ]] && files="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$GITHUB_SHA" --jq ".files[]? | $row")"; then
+              listed="$(grep -c . <<< "$files" || true)"
+              if [[ "$listed" -lt 300 ]]; then complete=true; fi
+            fi
+          fi
+          echo "Listed $listed changed files, complete: $complete." >> "$GITHUB_STEP_SUMMARY"
+          # runner-image.yml's paths, without what never ships.
+          shipped="$(grep -Ev '\.(test\.tsx?|md)$' <<< "$files" || true)"
+          if [[ "$complete" != "true" ]] ||
+            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/preview/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/automation-compiler/|packages/runner-protocol/|packages/automations/|\.github/workflows/runner-image\.yml$)' <<< "$shipped"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -192,13 +239,71 @@ jobs:
   runner_image:
     name: Runner image
     needs: runner_changes
-    if: needs.runner_changes.outputs.changed == 'true'
+    if: github.event_name == 'pull_request' && needs.runner_changes.outputs.changed == 'true'
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/runner-image.yml
     with:
       pr_number: ${{ format('{0}', github.event.pull_request.number) }}
+
+  # main's Runner as `nightly`, which production's boat machines pull at their
+  # next wake. Only after the cloud deploys: the Worker's light machines and
+  # every thread object are already on this commit, and a deploy that fails
+  # leaves boat machines on the Runner that matches the cloud still running.
+  runner_nightly:
+    name: Runner image (nightly)
+    needs: [runner_changes, deploy_production]
+    if: >-
+      !cancelled() &&
+      github.event_name != 'pull_request' &&
+      needs.runner_changes.outputs.changed == 'true' &&
+      (needs.deploy_production.result == 'success' ||
+      (inputs.dry_run && needs.deploy_production.result == 'skipped'))
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/runner-image.yml
+    with:
+      channel: nightly
+      dry_run: ${{ inputs.dry_run == true }}
+
+  # One open issue while main's Runner change hasn't reached production's
+  # machines because a job failed, closed by the next push that finds
+  # `nightly` current (published by it, or by hand). A run a newer push
+  # replaced reports nothing: that push compares with `nightly`, so it builds
+  # what this one didn't.
+  runner_nightly_alert:
+    name: Report the Runner image
+    needs: [runner_changes, deploy_production, runner_nightly]
+    if: "!cancelled() && github.event_name == 'push'"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ALERT_TITLE: Production machines don't run main's Runner
+      RESULT: ${{ needs.runner_nightly.result }}
+      CHANGED: ${{ needs.runner_changes.outputs.changed }}
+      FAILED: ${{ contains(needs.*.result, 'failure') }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open or close the alert
+        run: |
+          open="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$ALERT_TITLE\"" \
+            --json number,title --jq 'map(select(.title == env.ALERT_TITLE)) | .[0].number // empty')"
+          if [[ "$RESULT" == "success" || "$CHANGED" == "false" ]]; then
+            [[ -z "$open" ]] || gh issue close "$open" --repo "$GITHUB_REPOSITORY" --comment "Fixed: \`nightly\` runs main's Runner as of $GITHUB_SHA ($RUN_URL)."
+          elif [[ "$FAILED" != "true" ]]; then
+            exit 0
+          elif [[ -z "$open" ]]; then
+            body="$GITHUB_SHA changed the Runner, but \`nightly\` wasn't published from it, so production's boat machines still run an older Runner: $RUN_URL"
+            body+=$'\n\n'"Fix the failing job and rerun it, or publish by hand with \`gh workflow run runner-image.yml -f channel=nightly\`. The next push that publishes closes this."
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ALERT_TITLE" --label area:cloud --body "$body"
+          else
+            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "$GITHUB_SHA didn't publish either: $RUN_URL"
+          fi
 
   # Same-repository pull requests opened by JustYannicc (including agents
   # working under that account). Forks never get a preview or the secrets.
@@ -208,6 +313,7 @@ jobs:
     # Without a Runner change the image job skips, and the preview runs `nightly`.
     if: >-
       !cancelled() &&
+      github.event_name == 'pull_request' &&
       needs.runner_changes.result == 'success' &&
       (needs.runner_image.result == 'success' || needs.runner_image.result == 'skipped')
     runs-on: ubuntu-latest
