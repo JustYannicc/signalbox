@@ -1,19 +1,27 @@
 // @effect-diagnostics nodeBuiltinImport:off - the remote is a real bare repository fed by git receive-pack.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { MAIN_REF, threadRef, wipRef } from "./DriveStore.ts";
 import { makeMemoryDrives, makeRepo } from "./driveTesting.ts";
 import { makeDriveReader } from "./DriveReader.ts";
 import { uploadPack } from "./DriveUploads.ts";
-import { packForPush, receivePackRequest, receivePackResult } from "./gitPush.ts";
-import type { Bytes } from "./git/gitObjects.ts";
+import {
+  GITHUB_LIMITS,
+  type HostLimits,
+  packForPush,
+  receivePackRequest,
+  receivePackResult,
+} from "./gitPush.ts";
+import { type Bytes, concatBytes } from "./git/gitObjects.ts";
 
 const DRIVE = "shared/personal/repo1";
 const MANAGER = { userId: "user_1", email: "a@b.c", name: null, role: "manager" } as const;
@@ -54,6 +62,33 @@ const gitOk = (cwd: string, args: ReadonlyArray<string>) => {
     return false;
   }
 };
+
+/** Sends `packed` to the bare repository `github` as `git push` would, checking it is the size it said. */
+const receive = <E>(
+  github: string,
+  input: {
+    readonly ref: string;
+    readonly old: string | null;
+    readonly next: string;
+    readonly packed: { readonly pack: Stream.Stream<Uint8Array, E>; readonly size: number };
+  },
+) =>
+  Effect.gen(function* () {
+    const request = receivePackRequest({
+      ref: input.ref,
+      old: input.old,
+      next: input.next,
+      pack: input.packed.pack,
+      size: input.packed.size,
+    });
+    const body = concatBytes(yield* Stream.runCollect(request.body));
+    expect(body.length).toBe(request.length);
+    const answer = run(github, ["receive-pack", "--stateless-rpc", "."], body);
+    return receivePackResult(new Uint8Array(answer), input.ref);
+  });
+
+/** Bytes that don't compress, as photos and datasets don't. */
+const noise = (bytes: number) => NodeCrypto.randomBytes(bytes);
 
 /**
  * GitHub, as far as a drive can tell: a repository with history, a bare copy
@@ -112,6 +147,41 @@ const setup = () => {
     return git(["rev-parse", "HEAD"]);
   };
   return { upstream, github, machine, head, git, pack, commit };
+};
+
+const MiB = 1024 * 1024;
+
+/** A drive backed by `remote`, holding its head as the Runner mirrors it, open for thread t1. */
+const openThread = (remote: ReturnType<typeof setup>) =>
+  Effect.gen(function* () {
+    const handle = (yield* DriveDirectory).forDrive(DRIVE);
+    yield* handle.setRemote(REMOTE);
+    yield* handle.setup({ name: "owner/repo", members: [MANAGER] });
+    yield* uploadPack({
+      driveId: DRIVE,
+      threadId: "t1",
+      ...remote.pack([remote.head], [], "blob:none"),
+      remoteHead: remote.head,
+    });
+    yield* handle.mirror(writer("t1"), { expectedMain: null, newMain: remote.head });
+    yield* handle.open(writer("t1"));
+    return handle;
+  });
+
+const put = (remote: ReturnType<typeof setup>, file: string, bytes: Uint8Array) => {
+  NodeFS.mkdirSync(NodePath.dirname(NodePath.join(remote.machine, file)), { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(remote.machine, file), bytes);
+};
+
+/** How many objects `packed` stores as deltas, as `git verify-pack` counts them. */
+const deltasIn = (packed: { readonly pack: Bytes; readonly idx: Bytes }) => {
+  const dir = tempDir("remote-verify-");
+  NodeFS.writeFileSync(NodePath.join(dir, "pack-x.pack"), packed.pack);
+  NodeFS.writeFileSync(NodePath.join(dir, "pack-x.idx"), packed.idx);
+  return run(dir, ["verify-pack", "-v", "pack-x.idx"])
+    .toString()
+    .split("\n")
+    .filter((line) => /^[0-9a-f]{40} \w+\s+\d+ \d+ \d+ \d+ [0-9a-f]{40}$/.test(line)).length;
 };
 
 describe("a drive backed by a remote", () => {
@@ -286,14 +356,11 @@ describe("a drive backed by a remote", () => {
             head,
             old,
             remoteHas: [remote.head],
+            limits: GITHUB_LIMITS,
           });
           const ref = "refs/heads/signalbox/t1";
-          const answer = run(
-            remote.github,
-            ["receive-pack", "--stateless-rpc", "."],
-            receivePackRequest({ ref, old, next: head, pack: packed.pack }),
-          );
-          return { ...packed, result: receivePackResult(new Uint8Array(answer), ref) };
+          const result = yield* receive(remote.github, { ref, old, next: head, packed });
+          return { ...packed, result };
         });
 
       const first = yield* push(turn, null);
@@ -331,6 +398,7 @@ describe("a drive backed by a remote", () => {
         head: next,
         old: elsewhere,
         remoteHas: [remote.head],
+        limits: GITHUB_LIMITS,
       }).pipe(Effect.flip);
       expect(refused._tag).toBe("PushRefused");
       expect(yield* handle.ref(MAIN_REF)).toBe(remote.head);
@@ -373,14 +441,11 @@ describe("a drive backed by a remote", () => {
               head,
               old,
               remoteHas: [remote.head, ...refs.shallow],
+              limits: GITHUB_LIMITS,
               ...(force === undefined ? {} : { force }),
             });
-            const answer = run(
-              remote.github,
-              ["receive-pack", "--stateless-rpc", "."],
-              receivePackRequest({ ref, old, next: head, pack: packed.pack }),
-            );
-            return { ...packed, result: receivePackResult(new Uint8Array(answer), ref) };
+            const result = yield* receive(remote.github, { ref, old, next: head, packed });
+            return { ...packed, result };
           });
         expect((yield* push(before, null)).result).toEqual({ _tag: "ok" });
 
@@ -416,6 +481,136 @@ describe("a drive backed by a remote", () => {
         expect(run(remote.github, ["rev-parse", ref]).toString().trim()).toBe(rebased);
         expect(gitOk(remote.github, ["fsck", "--connectivity-only", "--no-dangling"])).toBe(true);
       }).pipe(Effect.provide(makeMemoryDrives().layer)),
+  );
+
+  it.effect(
+    "streams a branch bigger than a push could hold, files stored as deltas included (#517)",
+    () =>
+      Effect.gen(function* () {
+        const remote = setup();
+        const handle = yield* openThread(remote);
+        // Two text files edited a little between two commits: one pack stores one copy of each as a
+        // delta of the other. Git deltas toward the bigger copy, so the shrunk notes lean on the
+        // first commit's, which the remote has by the second push, and the first commit's plan
+        // leans on the grown one, which only the drive has.
+        const lines = (count: number, what: string) =>
+          Array.from({ length: count }, (_, i) => `line ${i} of the ${what}\n`).join("");
+        put(remote, "docs/plan.md", new TextEncoder().encode(lines(2000, "plan")));
+        const first = remote.commit("docs/notes.md", lines(4000, "notes"), "Add notes");
+        put(remote, "media/clip.bin", noise(20 * MiB));
+        put(remote, "docs/plan.md", new TextEncoder().encode(lines(3000, "plan")));
+        const second = remote.commit("docs/notes.md", lines(3990, "notes"), "More");
+        const packed = remote.pack([second], [remote.head]);
+        expect(deltasIn(packed)).toBeGreaterThanOrEqual(2);
+        yield* uploadPack({ driveId: DRIVE, threadId: "t1", ...packed });
+        const ref = "refs/heads/signalbox/t1";
+        const pushed = (head: string, old: string | null) =>
+          Effect.gen(function* () {
+            yield* handle.updateRefs(writer("t1"), [
+              { name: threadRef("t1"), old: old ?? remote.head, new: head },
+            ]);
+            const packed = yield* packForPush({
+              driveId: DRIVE,
+              head,
+              old,
+              remoteHas: [remote.head],
+              limits: GITHUB_LIMITS,
+            });
+            expect(yield* receive(remote.github, { ref, old, next: head, packed })).toEqual({
+              _tag: "ok",
+            });
+            expect(run(remote.github, ["rev-parse", ref]).toString().trim()).toBe(head);
+            expect(gitOk(remote.github, ["fsck", "--no-dangling"])).toBe(true);
+            return packed;
+          });
+
+        // The first commit alone: the plan's base, the second commit's copy, travels with it.
+        yield* pushed(first, null);
+        const big = yield* pushed(second, first);
+        expect(big.size).toBeGreaterThan(20 * MiB);
+        expect(
+          run(remote.github, ["cat-file", "-s", `${second}:media/clip.bin`])
+            .toString()
+            .trim(),
+        ).toBe(String(20 * MiB));
+        expect(run(remote.github, ["cat-file", "blob", `${second}:docs/plan.md`]).toString()).toBe(
+          lines(3000, "plan"),
+        );
+        // The commit, its three folders and three files: no base the remote has comes along.
+        expect(big.objects).toBe(7);
+      }).pipe(Effect.provide(makeMemoryDrives().layer)),
+  );
+
+  it.effect(
+    "refuses a file bigger than the host takes before pushing, wherever in the branch",
+    () =>
+      Effect.gen(function* () {
+        const remote = setup();
+        const handle = yield* openThread(remote);
+        const limits: HostLimits = { ...GITHUB_LIMITS, maxFileBytes: 1 * MiB };
+        put(remote, "media/raw.bin", noise(2 * MiB));
+        remote.commit("README.md", "hello there\n", "Add a recording");
+        // Deleting it later leaves it in the branch's history, which the host still refuses.
+        remote.git(["rm", "-q", "media/raw.bin"]);
+        remote.git(["commit", "-q", "-m", "Drop the recording"]);
+        const head = remote.git(["rev-parse", "HEAD"]);
+        yield* uploadPack({
+          driveId: DRIVE,
+          threadId: "t1",
+          ...remote.pack([head], [remote.head]),
+        });
+        yield* handle.updateRefs(writer("t1"), [
+          { name: threadRef("t1"), old: remote.head, new: head },
+        ]);
+
+        const refused = yield* packForPush({
+          driveId: DRIVE,
+          head,
+          old: null,
+          remoteHas: [remote.head],
+          limits,
+        }).pipe(Effect.flip);
+        expect(refused._tag).toBe("PushRefused");
+        expect(refused.message).toContain("media/raw.bin");
+        expect(refused.message).toContain("GitHub takes files up to 1 MB");
+        expect(refused.message).toContain("Nothing was pushed");
+        // Within the limit, the same branch goes.
+        expect(
+          (yield* packForPush({
+            driveId: DRIVE,
+            head,
+            old: null,
+            remoteHas: [remote.head],
+            limits: GITHUB_LIMITS,
+          })).objects,
+        ).toBeGreaterThan(0);
+      }).pipe(Effect.provide(makeMemoryDrives().layer)),
+  );
+
+  it.effect("refuses a push bigger than the host takes before sending any of it", () =>
+    Effect.gen(function* () {
+      const remote = setup();
+      const handle = yield* openThread(remote);
+      put(remote, "data/a.bin", noise(1 * MiB));
+      put(remote, "data/b.bin", noise(1 * MiB));
+      const head = remote.commit("README.md", "with data\n", "Add data");
+      yield* uploadPack({ driveId: DRIVE, threadId: "t1", ...remote.pack([head], [remote.head]) });
+      yield* handle.updateRefs(writer("t1"), [
+        { name: threadRef("t1"), old: remote.head, new: head },
+      ]);
+
+      const refused = yield* packForPush({
+        driveId: DRIVE,
+        head,
+        old: null,
+        remoteHas: [remote.head],
+        limits: { ...GITHUB_LIMITS, maxPushBytes: 1.5 * MiB },
+      }).pipe(Effect.flip);
+      expect(refused._tag).toBe("PushRefused");
+      expect(refused.message).toContain("This push is 3 MB");
+      expect(refused.message).toContain("GitHub takes pushes up to 2 MB");
+      expect(refused.message).toContain("Nothing was pushed");
+    }).pipe(Effect.provide(makeMemoryDrives().layer)),
   );
 
   it("reads a remote's refusal", () => {
