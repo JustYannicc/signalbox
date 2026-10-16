@@ -56,6 +56,16 @@ export function personalSignIn(list: SignInGrants): {
   };
 }
 
+/** The host of what the person typed, for naming it back; what they typed when it has none. */
+function hostNamed(input: string): string {
+  const trimmed = input.trim();
+  try {
+    return new URL(/^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`).hostname;
+  } catch {
+    return trimmed;
+  }
+}
+
 /** A check's answer in words, the same on every client. */
 function describeSignInAnswer(host: string, answer: SignInAnswer): string {
   switch (answer._tag) {
@@ -79,13 +89,13 @@ export function signInFailureMessage<A, E>(result: AtomCommandResult<A, E>): str
     : "Something went wrong. Try again.";
 }
 
-/** What "Try a site" shows for a check's result; null when it was cut off. */
+/** What "Try a site" shows for a check of `origin`; null when it was cut off. */
 export function signInCheckShown(
-  host: string,
+  origin: string,
   result: AtomCommandResult<SignInAnswer, unknown>,
 ): { readonly text: string; readonly failed: boolean } | null {
   if (result._tag === "Success") {
-    return { text: describeSignInAnswer(host, result.value), failed: false };
+    return { text: describeSignInAnswer(hostNamed(origin), result.value), failed: false };
   }
   const failure = signInFailureMessage(result);
   return failure === null ? null : { text: failure, failed: true };

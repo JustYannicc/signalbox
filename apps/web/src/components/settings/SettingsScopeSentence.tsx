@@ -46,6 +46,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/snap-shot",
   "/settings/connections",
+  "/settings/sign-in", // signalbox: the person's own grants, under no project
 ]);
 
 interface SettingsScopeMenuProps {
