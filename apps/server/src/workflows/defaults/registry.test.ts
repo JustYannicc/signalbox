@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compileWorkflow } from "../compiler/compileWorkflow.ts";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { PRECOMPILED_BUILT_INS } from "@signalbox/automations/defaults/precompiled";
 import { BUILT_IN_AUTOMATIONS, builtInOfRow } from "@signalbox/automations/defaults/registry";
 

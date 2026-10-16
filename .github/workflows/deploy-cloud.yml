@@ -35,6 +35,7 @@ on:
       - apps/server/src/orchestration-v2/Adapters/**
       # The Runner compiles automations its agents save.
       - apps/server/src/workflows/**
+      - packages/automation-compiler/**
       - .github/workflows/runner-image.yml
       - pnpm-lock.yaml
       - patches/alchemy@*.patch
@@ -227,7 +228,7 @@ jobs:
           # runner-image.yml's paths, without what never ships.
           shipped="$(grep -Ev '\.(test\.tsx?|md)$' <<< "$files" || true)"
           if [[ "$complete" != "true" ]] ||
-            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/preview/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/runner-protocol/|packages/automations/|\.github/workflows/runner-image\.yml$)' <<< "$shipped"; then
+            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/preview/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/automation-compiler/|packages/runner-protocol/|packages/automations/|\.github/workflows/runner-image\.yml$)' <<< "$shipped"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

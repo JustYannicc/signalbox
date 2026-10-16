@@ -19,6 +19,8 @@ signalbox threads create --input @thread.json
 signalbox automations validate --source "$(cat triage.ts)"
 ```
 
+Automation files compile on your computer, so check and save them through the CLI or `signalbox mcp`. The cloud's own MCP address can run and read automations but can't save them.
+
 `signalbox --help`, or `--help` after any command, shows what's there and what each one takes.
 
 `signalbox pools use` sets up Claude Code and Codex on this computer to run on your pool. It works like **Set up a computer** in Settings › Pools.

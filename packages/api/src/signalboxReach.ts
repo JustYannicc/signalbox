@@ -63,9 +63,11 @@ export const SIGNALBOX_RPC_REACH = {
   "automations.disconnect": write(),
   "automations.validate": read({
     summary: "Check an automation file without saving it: its outline, or what to fix.",
+    compiles: true,
   }),
   "automations.save": write({
     summary: "Save an automation file in a folder; new, or a new version with automationId.",
+    compiles: true,
   }),
 
   "sections.subscribe": read({ name: "sections.list" }),

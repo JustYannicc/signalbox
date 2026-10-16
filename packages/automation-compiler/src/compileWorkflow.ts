@@ -1,7 +1,7 @@
 import type { WorkflowDiagnostic, WorkflowMeta } from "@t3tools/contracts";
 import type { Node } from "oxc-parser";
 
-import type { WorkflowCompileResult } from "@signalbox/automations/compiled";
+import { WORKER_MODULE_START, type WorkflowCompileResult } from "@signalbox/automations/compiled";
 import { WorkflowAnalyzer, type Edit, type FunctionNode } from "./analyze.ts";
 import { unwrap } from "./literals.ts";
 import { readMeta } from "./meta.ts";
@@ -298,5 +298,5 @@ export function compileWorkflow(text: string): WorkflowCompileResult {
  * so each run calls `load` for top-level state of its own.
  */
 function workerModule(code: string) {
-  return `export function load(workflow) {\n${code}\nreturn ${WORKER_DEFAULT};\n}\n`;
+  return `${WORKER_MODULE_START}\n${code}\nreturn ${WORKER_DEFAULT};\n}\n`;
 }
