@@ -61,6 +61,7 @@ import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
+import { BrowsingShareControl } from "~/browsing/BrowsingShareMenu"; // signalbox: sharing a synced tab (#597)
 import {
   commitBrowserViewportChange,
   subscribeBrowserViewportChange,
@@ -957,6 +958,7 @@ export function PreviewView({
             </Tooltip>
           ) : null
         }
+        shareAction={<BrowsingShareControl threadRef={threadRef} tabId={tabId} />} // signalbox
         trailingActions={
           moreMenuActions ? (
             <PreviewMoreMenu

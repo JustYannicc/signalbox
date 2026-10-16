@@ -16,7 +16,9 @@ import type { AgentBrowserInput, AgentBrowserTab } from "@t3tools/contracts/sign
 import { GlobeIcon, ServerIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { openOwnCopy } from "~/browsing/openOwnCopy";
 import { cn } from "~/lib/utils";
+import { useEnvironmentSupportsThreadBrowsing } from "~/state/browsing";
 import { signalboxAgentBrowser, useAgentBrowserTrail } from "~/state/signalboxAgentBrowser";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -54,6 +56,11 @@ export function AgentBrowserPanel(props: {
   const [pinnedTabId, setPinnedTabId] = useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const canDrive = useAtomValue(signalboxAgentBrowser.input.permissionAtom(environmentId));
+  const canCopy = useEnvironmentSupportsThreadBrowsing(environmentId);
+  const onCopy = useCallback(
+    (url: string) => void openOwnCopy({ environmentId, threadId }, url),
+    [environmentId, threadId],
+  );
   const sendInput = useAtomCommand(signalboxAgentBrowser.input, { reportFailure: false });
 
   const watch = useEnvironmentQuery(
@@ -271,6 +278,7 @@ export function AgentBrowserPanel(props: {
           interactive={interactive}
           onInput={onInput}
           onActivity={onActivity}
+          {...(canCopy ? { onCopy } : {})}
         />
         {frame.kind === "blank" || (frame.kind === "step" && recording.error !== null) ? (
           <div className="absolute inset-0 flex bg-background">

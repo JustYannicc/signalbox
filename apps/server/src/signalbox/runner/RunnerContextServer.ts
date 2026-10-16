@@ -41,7 +41,7 @@ import {
 import { DAV_PATH, serveDav } from "./RunnerDrivesDav.ts";
 import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
-import type { RunnerMcpServers } from "./RunnerModelAccess.ts";
+import { MCP_TOOL_TIMEOUT_SEC, type RunnerMcpServers } from "./RunnerModelAccess.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 
 /**
@@ -79,6 +79,7 @@ const personSession = (view: ReturnType<typeof makeDrivesView>): PersonSession =
   return {
     open: () => call((client) => client.browserSession),
     end: (sessionId) => call((client) => client.endBrowser({ sessionId })),
+    signIn: (site) => call((client) => client.browserSignIn({ site })),
   };
 };
 
@@ -241,7 +242,11 @@ export const withContextServer = (
         mcpServers: {
           ...input.options.mcpServers,
           ...Object.fromEntries(
-            Object.entries(mcpServers).map(([name, url]) => [name, { type: "http", url }] as const),
+            Object.entries(mcpServers).map(
+              ([name, url]) =>
+                // Claude gives an HTTP server's request 60 seconds; a sign-in (#576) can take minutes.
+                [name, { type: "http", url, timeout: MCP_TOOL_TIMEOUT_SEC * 1000 }] as const,
+            ),
           ),
         },
         allowedTools: [

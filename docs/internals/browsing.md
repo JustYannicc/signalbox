@@ -43,8 +43,26 @@ agent's tabs live in its cloud browser (Kernel or the runner's Chromium) and
 never load in a person's engine: agents always run in the cloud and never
 drive a person's local tab. The cloud enforces this in
 [`browsingDecider.ts`](../../apps/cloud/src/thread/browsing/browsingDecider.ts),
-and each engine only loads what `isOwnedBy` says it drives. Following,
-copying, sharing and lending a tab (#597) build on the owner.
+and each engine only loads what `isOwnedBy` says it drives.
+
+## Private until shared
+
+A tab is private to its owner until they share it (#597). Sharing is a field
+on the tab, `sharing`, with an end or none, so it costs nothing to read and
+nothing to keep. Copying a tab is just an `Open` of your own at its address:
+the copy signs in as you, and nothing of the other session travels.
+
+A share ends on its own at its `until`. The thread object's alarm
+(`ThreadBrowsing.expire`) records that as a `TabUnshared` event, so every
+subscriber sees it end on time even when nobody is connected, and clients
+treat a passed `until` as private in the meantime (`isSharedAt`).
+
+Today only a thread's owner can subscribe to its tabs, so nobody else reads
+the record yet. When shared threads (#242) let other people subscribe, their
+stream must carry only their own tabs and tabs shared at that moment. A
+private tab must not show up even as a row. Whose an agent's tabs are in a
+shared thread, who "the team" is, and how someone outside the thread reaches a
+shared tab are open in #640.
 
 ## Who changed it
 

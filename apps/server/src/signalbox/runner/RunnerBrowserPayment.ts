@@ -45,7 +45,7 @@ export const REACHED_PAYMENT =
 export const ALREADY_ANSWERED =
   "The person already answered for this payment; needs_you_payment tells you how it went. Don't act on the payment page yourself: call needs_you_payment again only if they want another try.";
 export const NOT_A_PAYMENT =
-  "This page asks to sign in or prove you're human, not to pay. Sign-ins, codes and CAPTCHAs never go to the person: sign in if you can, or say in your reply what's blocking you.";
+  "This page asks to sign in or prove you're human, not to pay. Sign-ins, codes and CAPTCHAs never go to the person: call sign_in, or say in your reply what's blocking you.";
 const STILL_WAITING =
   "The person hasn't finished the payment yet. Call needs_you_payment again to keep waiting. Don't end your turn: the browser closes with the machine.";
 const PAID =

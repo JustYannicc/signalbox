@@ -67,10 +67,11 @@ export class SignInGrants extends Context.Service<
   }
 >()("@signalbox/cloud/signIn/SignInGrants") {}
 
-const sourceKey = (source: SignInSource) =>
+/** How a source is stored: `person`, or `folder:<id>`. */
+export const sourceKey = (source: SignInSource) =>
   source._tag === "person" ? "person" : `folder:${source.folderId}`;
 
-const sourceOf = (key: string): SignInSource =>
+export const sourceOf = (key: string): SignInSource =>
   key.startsWith("folder:")
     ? { _tag: "folder", folderId: FolderId.make(key.slice("folder:".length)) }
     : { _tag: "person" };

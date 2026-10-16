@@ -17,6 +17,7 @@ import {
   PreviewAutomationUploadInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
+import type { BrowserSignInAnswer } from "@signalbox/runner-protocol/BrowserProtocol";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -29,7 +30,9 @@ import { json, register, ToolError } from "./RunnerContextTools.ts";
  * The `preview_*` tools (#402) for agents on a thread's machine, by the names
  * and argument contracts agents use locally (`mcp/toolkits/preview/tools.ts`),
  * so the work log shows them the same way. They run on `BrowserBackend`;
- * which browser that is never reaches the agent.
+ * which browser that is never reaches the agent. `sign_in` (#576) is
+ * Signalbox's own: one call signs the person's browser in from 1Password,
+ * and its answer, a status, is the sign-in's line in the thread's trail.
  */
 
 /** Served under upstream's MCP name, so tool names match local threads exactly. */
@@ -37,7 +40,7 @@ export const BROWSER_SERVER_NAME = "t3-code";
 
 export const BROWSER_INSTRUCTIONS = [
   "The preview_* tools open each URL in the right browser for it. Your own work (localhost, this machine's ports and network) opens in a headless browser here, with no logins or cookies: start the dev server in the background, then open it at http://localhost:<port> (or preview_navigate with target {kind:'environment-port',port}).",
-  "Real sites open in the person's own cloud browser, signed in as them with the logins they have saved there. Act there as they would, and stop to ask before anything they'd want to decide: sending, deleting, accepting terms. Payments go to the person to finish: call needs_you_payment right before paying, and keep calling it until they answer. If a site asks you to sign in, say so rather than guessing credentials. A tab moves between the two browsers when its URL does, so dev tabs never carry the person's cookies.",
+  "Real sites open in the person's own cloud browser, signed in as them with the logins they have saved there. Act there as they would, and stop to ask before anything they'd want to decide: sending, deleting, accepting terms. Payments go to the person to finish: call needs_you_payment right before paying, and keep calling it until they answer. If a site asks you to sign in, call sign_in: it signs the person's browser in with their saved 1Password login, which you never see, and their tabs reload signed in. Never type a password or code yourself. When sign_in can't, do what its message says, and never retry a failed one. A tab moves between the two browsers when its URL does, so dev tabs never carry the person's cookies.",
   "preview_snapshot returns the page's text, accessibility tree, console and network entries. To show the user a screenshot, call preview_snapshot with save=true: it appears in this thread with the tool call. Files on this machine can't be embedded in your reply.",
 ].join("\n");
 
@@ -100,6 +103,20 @@ const presentSnapshot = (
     ...(options.includeImage || options.save ? [image] : []),
   ];
 };
+
+/** A sign-in as the agent reads it: how it went, and the login by name only. */
+const presentSignIn = (answer: BrowserSignInAnswer) =>
+  json(
+    answer._tag === "signed_in"
+      ? {
+          status: answer._tag,
+          site: answer.site,
+          login: answer.item,
+          username: answer.username,
+          message: `Signed in to ${answer.site}${answer.username === null ? "" : ` as ${answer.username}`} from 1Password: ${answer.item}. The person's tabs reloaded signed in.`,
+        }
+      : { status: answer._tag, site: answer.site, message: answer.message },
+  );
 
 const acts = { destructive: true, openWorld: true } as const;
 const moves = { destructive: false, openWorld: true } as const;
@@ -245,6 +262,20 @@ export const layerBrowserTools = (browser: BrowserBackend) =>
           Effect.map(
             run(() => browser.evaluate(input)),
             (value) => json({ value: value ?? null }),
+          ),
+        writes: acts,
+      }),
+      register({
+        name: "sign_in",
+        description:
+          "Sign the person's browser in to a site with their saved 1Password login, which you never see. Call it when a page asks you to sign in; site defaults to the current tab's. It answers only how it went: signed_in (the tabs reload signed in), no_saved_login, not_allowed (ask the person what it says) or failed (tell the person; don't retry).",
+        parameters: Schema.Struct({
+          site: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
+        }),
+        handle: ({ site }) =>
+          Effect.map(
+            run(() => browser.signIn(site === undefined ? {} : { site })),
+            presentSignIn,
           ),
         writes: acts,
       }),

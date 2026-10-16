@@ -28,6 +28,7 @@ import {
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
+import type { BrowserSignInAnswer } from "@signalbox/runner-protocol/BrowserProtocol";
 import type { AgentBrowserHandoff } from "@t3tools/contracts/signalboxPreviews";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
@@ -86,6 +87,12 @@ export interface BrowserBackend {
   readonly scroll: (input: PreviewAutomationScrollInput) => Promise<void>;
   readonly evaluate: (input: PreviewAutomationEvaluateInput) => Promise<unknown>;
   readonly waitFor: (input: PreviewAutomationWaitForInput) => Promise<void>;
+  /**
+   * Signs the person's profile in to `site`, by default the current tab's
+   * (#576); the person's tabs come back where they were, loaded from the new
+   * session, so they show the login.
+   */
+  readonly signIn: (input: { readonly site?: string }) => Promise<BrowserSignInAnswer>;
   readonly close: () => Promise<void>;
   /** The browser as people watch it; absent on a browser that isn't mirrored. */
   readonly mirror?: BrowserMirror;
@@ -136,6 +143,8 @@ export interface TabSource {
   readonly reopen?: () => Promise<boolean>;
   /** Marks a tab action until the returned release, so an idle browser can let go between them. */
   readonly use?: () => () => void;
+  /** Signs the browser's profile in to `site`, letting go of the browser first. */
+  readonly signIn?: (site: string) => Promise<BrowserSignInAnswer>;
   /** Why this browser last refused to open, in its provider's words; null once it opens. */
   readonly problem?: () => string | null;
   readonly close: () => Promise<void>;
@@ -555,6 +564,70 @@ export const makeRunnerBrowser = (
     };
   };
 
+  /**
+   * The person's tabs after a sign-in: those its session kept come back as
+   * they were, reloaded once signed in; those a new session replaced reopen
+   * at their URL under the same id.
+   */
+  const restorePerson = async (
+    person: TabSource,
+    before: ReadonlyArray<{ readonly tabId: string; readonly url: string }>,
+    wasCurrent: string | null,
+    signedIn: boolean,
+  ) => {
+    if (before.length === 0) return;
+    if (await person.reopen?.()) await adopt();
+    for (const { tabId, url } of before) {
+      const kept = tabs.get(tabId);
+      if (kept !== undefined) {
+        if (signedIn) await kept.page.reload().catch(constVoid);
+        continue;
+      }
+      const page = await person.newPage().catch(() => null);
+      if (page === null) continue;
+      await track(page, "person", { tabId, background: true });
+      await page.goto(url, { timeout: NAVIGATION_TIMEOUT_MS }).catch(constVoid);
+    }
+    // The old session's pages are gone for good.
+    for (const [target, tabId] of parked) {
+      if (before.some((tab) => tab.tabId === tabId)) parked.delete(target);
+    }
+    if (wasCurrent !== null && tabs.has(wasCurrent)) current = wasCurrent;
+  };
+
+  const signIn: BrowserBackend["signIn"] = async (input) => {
+    const person = sources.person;
+    const tab = currentTab();
+    if (input.site === undefined && tab?.route === "machine") {
+      throw failure(
+        "The current tab runs in this machine's browser, which keeps no logins; sign_in is for real sites in the person's browser.",
+      );
+    }
+    const tabOrigin = tab === undefined ? null : new URL(tab.page.url()).origin;
+    // A blank tab's origin is "null".
+    const site = input.site ?? (tabOrigin === "null" ? null : tabOrigin);
+    if (site === null) throw failure("Open the site's page first, or pass its address as site.");
+    if (person?.signIn === undefined) {
+      return { _tag: "failed", site, message: "This thread has no person's browser to sign in." };
+    }
+    // Every tab this machine knows of, so none is lost when the session goes.
+    if (parked.size > 0 && (await person.reopen?.())) await adopt();
+    const before = [...tabs.values()]
+      .filter((tab) => tab.route === "person")
+      .map((tab) => ({ tabId: tab.tabId, url: tab.page.url() }));
+    const wasCurrent = current;
+    let answer: BrowserSignInAnswer | null = null;
+    try {
+      answer = await person.signIn(site);
+      return answer;
+    } finally {
+      // Tabs that can't come back mustn't hide how the sign-in went.
+      await restorePerson(person, before, wasCurrent, answer?._tag === "signed_in").catch(
+        constVoid,
+      );
+    }
+  };
+
   const goto = (tab: Tab, url: string, input: PreviewAutomationNavigateInput) =>
     tab.page
       .goto(url, {
@@ -659,6 +732,7 @@ export const makeRunnerBrowser = (
       ),
     waitFor: (input) =>
       act(input, "waitFor", (tab) => ServerBrowserPage.waitFor(tab.page, input).then(constVoid)),
+    signIn,
     close: async () => {
       recorder.close();
       await Promise.all([sources.machine.close(), sources.person?.close() ?? Promise.resolve()]);

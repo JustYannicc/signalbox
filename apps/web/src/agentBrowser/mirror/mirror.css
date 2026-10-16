@@ -34,7 +34,8 @@ body {
   touch-action: none;
 }
 
-body.interactive #surface {
+body.interactive #surface,
+body.copy-links #surface {
   pointer-events: auto;
 }
 
