@@ -37,7 +37,22 @@ export type OnePassword = (token: string) => Effect.Effect<OnePasswordClient, On
 const sdkMessage = (cause: unknown) =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "unknown error";
 
+// TEMPORARY (#592 live proof on the preview only): a fake account for one fake
+// token, so the proof never touches a real vault. Reverted before merge.
+const PREVIEW_FAKE_TOKEN = "ops_signalbox_preview_fake_592";
+const previewFake: OnePasswordClient = {
+  variables: (environmentId) =>
+    Effect.succeed(
+      environmentId === "sbfake-592"
+        ? [{ name: "TEST_KEY", value: "sbfake-7f3a9c2e51d84b06", masked: true }]
+        : [],
+    ),
+};
+
 export const onePasswordSdk: OnePassword = (token) =>
+  token === PREVIEW_FAKE_TOKEN ? Effect.succeed(previewFake) : onePasswordReal(token);
+
+const onePasswordReal: OnePassword = (token) =>
   Effect.tryPromise({
     try: async () => {
       const sdk = await import("@1password/sdk");
