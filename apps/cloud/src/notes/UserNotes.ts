@@ -196,7 +196,9 @@ const make = Effect.gen(function* () {
   const changedWith = <E>(change: Effect.Effect<boolean, E>) =>
     Effect.gen(function* () {
       const did = yield* sql.withTransaction(
-        Effect.tap(change, (changedAnything) => (changedAnything ? bump : Effect.void)),
+        Effect.tap(change, (changedAnything) =>
+          changedAnything ? Effect.asVoid(bump) : Effect.void,
+        ),
       );
       if (did) yield* PubSub.publish(changed, undefined);
       return did;

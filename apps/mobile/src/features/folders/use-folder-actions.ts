@@ -22,7 +22,7 @@ import { Alert } from "react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { signalboxFolders } from "../../state/signalboxFolders";
 import { useAtomCommand } from "../../state/use-atom-command";
-import type { NotesOpen } from "../notes/NotesSheet";
+import type { NotesOpen } from "../notes/note-menus";
 import { parseFolderMenuEvent, type PoolChoice } from "./folder-menus";
 
 /** A level whose instructions are open in the editor. */

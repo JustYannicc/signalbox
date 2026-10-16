@@ -6,8 +6,7 @@ import {
   notesShown,
   padNotes,
 } from "@t3tools/client-runtime/state/signalboxNotes";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { FolderLevel } from "@t3tools/contracts/signalboxFolders";
+import type { ThreadId } from "@t3tools/contracts";
 import {
   NOTE_TEXT_MAX_LENGTH,
   type Note,
@@ -32,13 +31,8 @@ import { Toast } from "../../components/ui/Toast";
 import { useEnvironmentFolders } from "../../state/signalboxFolders";
 import { useEnvironmentNotes } from "../../state/signalboxNotes";
 import { NoteRow } from "./NoteRow";
+import type { NotesOpen } from "./note-menus";
 import { useNoteActions } from "./use-note-actions";
-
-/** The level whose scratch pad is open. Its folder is read live, so renames and moves show. */
-export interface NotesOpen {
-  readonly environmentId: EnvironmentId;
-  readonly level: FolderLevel;
-}
 
 const VISIBILITY_OPTIONS = [
   { value: "private", label: "Only you" },

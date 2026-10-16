@@ -1,7 +1,15 @@
 // signalbox: what a note's long-press / ⋯ menu offers, and what each choice means.
 import type { MenuAction } from "@react-native-menu/menu";
 import { canReadAgain, otherVisibility } from "@t3tools/client-runtime/state/signalboxNotes";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { FolderLevel } from "@t3tools/contracts/signalboxFolders";
 import type { Note } from "@t3tools/contracts/signalboxNotes";
+
+/** The level whose scratch pad is open. Its folder is read live, so renames and moves show. */
+export interface NotesOpen {
+  readonly environmentId: EnvironmentId;
+  readonly level: FolderLevel;
+}
 
 export function noteMenuActions(note: Note, input: { readonly canShare: boolean }): MenuAction[] {
   return [
