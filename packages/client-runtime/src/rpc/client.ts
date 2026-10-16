@@ -11,8 +11,11 @@ import { SIGNALBOX_CONTEXTS_WS_METHODS } from "@t3tools/contracts/signalboxConte
 import { SIGNALBOX_FOLDERS_WS_METHODS } from "@t3tools/contracts/signalboxFolders"; // signalbox: folders
 import { SIGNALBOX_DRIVES_WS_METHODS } from "@t3tools/contracts/signalboxDrives"; // signalbox: drives
 import { SIGNALBOX_SIGN_IN_WS_METHODS } from "@t3tools/contracts/signalboxSignIn"; // signalbox: sign-in grants
-import { SIGNALBOX_PREVIEWS_WS_METHODS } from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
 import { SIGNALBOX_BROWSING_WS_METHODS } from "@t3tools/contracts/signalboxBrowsing"; // signalbox: browsing
+import {
+  SIGNALBOX_AGENT_BROWSER_WS_METHODS,
+  SIGNALBOX_PREVIEWS_WS_METHODS,
+} from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
 import { SIGNALBOX_THREAD_KINDS_WS_METHODS } from "@t3tools/contracts/signalboxThreadKinds"; // signalbox: thread kinds
 import type { AutomationSubscriptionRpcTag } from "@t3tools/contracts"; // signalbox: automations
 import * as Cause from "effect/Cause";
@@ -92,6 +95,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof SIGNALBOX_PREVIEWS_WS_METHODS.subscribe // signalbox: previews
   | typeof SIGNALBOX_SIGN_IN_WS_METHODS.subscribe // signalbox: sign-in grants
   | typeof SIGNALBOX_BROWSING_WS_METHODS.subscribe // signalbox: browsing
+  | typeof SIGNALBOX_AGENT_BROWSER_WS_METHODS.watch // signalbox: agent browser
   | typeof SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe; // signalbox: thread kinds
 
 export type EnvironmentStreamCommandRpcTag =

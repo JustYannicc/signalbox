@@ -7,6 +7,11 @@ import type {
   OrchestrationV2ThreadStreamItem,
   ThreadId,
 } from "@t3tools/contracts";
+import type {
+  AgentBrowserInput,
+  AgentBrowserStep,
+  AgentBrowserUpdate,
+} from "@t3tools/contracts/signalboxPreviews";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -38,6 +43,8 @@ import {
   type ThreadSummary,
 } from "./ThreadEngine.ts";
 import {
+  type BrowserReply,
+  BrowserWatchBehind,
   type LaunchInputWire,
   type ThreadMonitor,
   type ThreadObjectReply,
@@ -62,6 +69,24 @@ export class ThreadObjectError extends Schema.TaggedError<ThreadObjectError>()(
     return `Thread object call failed (${this.operation}).`;
   }
 }
+
+/** A watcher fell behind the agent's browser; its stream ended for good (see `preview/BrowserMirror.ts`). */
+export class BrowserWatchBehindError extends Schema.TaggedError<BrowserWatchBehindError>()(
+  "BrowserWatchBehindError",
+  {},
+) {
+  override get message(): string {
+    return "The view fell behind the browser.";
+  }
+}
+
+/** What the thread's machine serves, and whether the agent has browsed (its trail has a step). */
+export interface ThreadPreviews {
+  readonly ports: ReadonlyArray<PreviewPort>;
+  readonly browsed: boolean;
+}
+
+const isBehind = Schema.is(BrowserWatchBehind);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
@@ -89,6 +114,25 @@ export interface ThreadObjectApi {
   /** Newline-delimited `{ ports }` snapshots, or null when the actor cannot see the thread. */
   readonly previews: (actor: Actor) => Promise<ReadableStream<Uint8Array> | null>;
   readonly previewLink: (actor: Actor, port: number) => Promise<PreviewLinkResult>;
+  /**
+   * The agent's browser, mirrored: newline-delimited `AgentBrowserUpdate`s in
+   * their JSON encoding (`wire.browserUpdate`) while read, following `tabId`
+   * (null: the agent's current tab). Null when the actor can't see the thread.
+   */
+  readonly browserWatch: (
+    actor: Actor,
+    tabId: string | null,
+  ) => Promise<ReadableStream<Uint8Array> | null>;
+  /** Input from the actor's own watch stream `viewerId` (`wire.browserInput`). */
+  readonly browserInput: (
+    actor: Actor,
+    viewerId: string,
+    input: unknown,
+  ) => Promise<BrowserReply<null>>;
+  /** The browser trail, oldest first (`wire.browserSteps`). */
+  readonly browserTrail: (actor: Actor) => Promise<BrowserReply<unknown>>;
+  /** One trail step's rrweb recording, a JSON array. */
+  readonly browserStep: (actor: Actor, stepId: string) => Promise<BrowserReply<string>>;
   /** Which of `terms` the thread holds, for the context tool; null when none, or it's not the actor's to see. */
   readonly contextMatch: (
     actor: Actor,
@@ -151,11 +195,34 @@ export interface ThreadHandle {
   /** What the thread's machine serves, now and after every change. Ends when the object goes away. */
   readonly previews: (
     actor: Actor,
-  ) => Stream.Stream<ReadonlyArray<PreviewPort>, ThreadNotFoundError | ThreadObjectError>;
+  ) => Stream.Stream<ThreadPreviews, ThreadNotFoundError | ThreadObjectError>;
   readonly previewLink: (
     actor: Actor,
     port: number,
   ) => Effect.Effect<PreviewLinkResult, ThreadObjectError>;
+  /**
+   * See `ThreadObjectApi.browserWatch`. Ends when the object goes away, or
+   * fails with `BrowserWatchBehindError` when the watcher fell behind.
+   */
+  readonly browserWatch: (
+    actor: Actor,
+    tabId: string | null,
+  ) => Stream.Stream<
+    AgentBrowserUpdate,
+    ThreadNotFoundError | ThreadObjectError | BrowserWatchBehindError
+  >;
+  readonly browserInput: (
+    actor: Actor,
+    viewerId: string,
+    input: AgentBrowserInput,
+  ) => Effect.Effect<BrowserReply<null>, ThreadObjectError>;
+  readonly browserTrail: (
+    actor: Actor,
+  ) => Effect.Effect<BrowserReply<ReadonlyArray<AgentBrowserStep>>, ThreadObjectError>;
+  readonly browserStep: (
+    actor: Actor,
+    stepId: string,
+  ) => Effect.Effect<BrowserReply<string>, ThreadObjectError>;
   readonly contextMatch: (
     actor: Actor,
     terms: ReadonlyArray<string>,
@@ -281,9 +348,41 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       lines(
         "previews",
         () => api.previews(actor),
-        (line) => wire.previews.decode(line).ports,
+        (line): ThreadPreviews => {
+          const { ports, browsed } = wire.previews.decode(line);
+          return { ports, browsed: browsed === true };
+        },
       ),
     previewLink: (actor, port) => call("previewLink", () => api.previewLink(actor, port)),
+    browserWatch: (actor, tabId) =>
+      lines(
+        "browserWatch",
+        () => api.browserWatch(actor, tabId),
+        (line) => (isBehind(line) ? null : wire.browserUpdate.decode(line)),
+      ).pipe(
+        Stream.mapEffect((update) =>
+          update === null ? Effect.fail(new BrowserWatchBehindError()) : Effect.succeed(update),
+        ),
+      ),
+    browserInput: (actor, viewerId, input) =>
+      call("browserInput", () =>
+        api.browserInput(actor, viewerId, wire.browserInput.encode(input)),
+      ),
+    browserTrail: (actor) =>
+      call("browserTrail", () => api.browserTrail(actor)).pipe(
+        Effect.flatMap(
+          (
+            reply,
+          ): Effect.Effect<BrowserReply<ReadonlyArray<AgentBrowserStep>>, ThreadObjectError> =>
+            reply._tag === "ok"
+              ? decodeIn("browserTrail", () => ({
+                  _tag: "ok",
+                  value: wire.browserSteps.decode(reply.value),
+                }))
+              : Effect.succeed(reply),
+        ),
+      ),
+    browserStep: (actor, stepId) => call("browserStep", () => api.browserStep(actor, stepId)),
     contextMatch: (actor, terms) => call("contextMatch", () => api.contextMatch(actor, terms)),
     contextTurns: (actor, turn) => call("contextTurns", () => api.contextTurns(actor, turn)),
     setMonitors: (actor, monitors) =>

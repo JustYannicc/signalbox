@@ -655,6 +655,16 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2024 1Password"]
       }
+    },
+    {
+      "license": "MIT",
+      "repositoryUrl": "https://github.com/rrweb-io/rrweb",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": [
+          "Copyright (c) 2018 Contributors (https://github.com/rrweb-io/rrweb/graphs/contributors)"
+        ]
+      }
     }
   ]
 }

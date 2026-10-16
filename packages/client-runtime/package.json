@@ -299,6 +299,22 @@
       "types": "./src/state/signalboxPreviews.ts",
       "default": "./src/state/signalboxPreviews.ts"
     },
+    "./state/signalboxAgentBrowser": {
+      "types": "./src/state/signalboxAgentBrowser.ts",
+      "default": "./src/state/signalboxAgentBrowser.ts"
+    },
+    "./state/signalboxAgentBrowserFrame": {
+      "types": "./src/state/signalboxAgentBrowserFrame.ts",
+      "default": "./src/state/signalboxAgentBrowserFrame.ts"
+    },
+    "./state/signalboxAgentBrowserLease": {
+      "types": "./src/state/signalboxAgentBrowserLease.ts",
+      "default": "./src/state/signalboxAgentBrowserLease.ts"
+    },
+    "./state/signalboxAgentBrowserMirror": {
+      "types": "./src/state/signalboxAgentBrowserMirror.ts",
+      "default": "./src/state/signalboxAgentBrowserMirror.ts"
+    },
     "./state/signalboxThreadKinds": {
       "types": "./src/state/signalboxThreadKinds.ts",
       "default": "./src/state/signalboxThreadKinds.ts"

@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import * as NodeZlib from "node:zlib";
 
 import react from "@vitejs/plugin-react";
@@ -246,6 +247,13 @@ export default defineConfig(() => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: buildSourcemap,
+      // signalbox: agent browser mirror page, loaded in a frame by every client
+      rolldownOptions: {
+        input: {
+          main: NodeURL.fileURLToPath(new URL("./index.html", import.meta.url)),
+          "agent-browser": NodeURL.fileURLToPath(new URL("./agent-browser.html", import.meta.url)),
+        },
+      },
     },
     test: {
       projects: [defineProject(unitTestProject)],

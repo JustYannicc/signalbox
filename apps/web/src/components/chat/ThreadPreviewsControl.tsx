@@ -6,18 +6,28 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SignalboxPreviewPort } from "@t3tools/contracts/signalboxPreviews";
 import { useAtomValue } from "@effect/atom-react";
-import { ChevronDownIcon, GlobeIcon } from "lucide-react";
+import { AppWindowIcon, ChevronDownIcon, GlobeIcon } from "lucide-react";
 import { memo, useCallback, useRef } from "react";
 
 import { isElectron } from "~/env";
 import { ensureLocalApi } from "~/localApi";
-import { signalboxPreviews, useThreadPreviewPorts } from "~/state/signalboxPreviews";
+import { useRightPanelStore } from "~/rightPanelStore";
+import { signalboxPreviews, useThreadPreviews } from "~/state/signalboxPreviews";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
-import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -75,20 +85,40 @@ function useOpenThreadPreview(environmentId: EnvironmentId, threadId: ThreadId) 
 }
 
 /**
- * The thread's running dev servers, in the chat header. Shows up only when the
- * thread's Signalbox Cloud machine serves one: appearing is the notification.
+ * The thread's running dev servers and the agent's browser, in the chat
+ * header. Shows up only when the thread's Signalbox Cloud machine serves one
+ * or the agent has browsed: appearing is the notification. The browser opens
+ * in the side panel, only when asked.
  */
 export const ThreadPreviewsControl = memo(function ThreadPreviewsControl(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const ports = useThreadPreviewPorts(props.environmentId, props.threadId);
+  const { ports, browsed } = useThreadPreviews(props.environmentId, props.threadId);
   const canOpen = useAtomValue(signalboxPreviews.open.permissionAtom(props.environmentId));
   const openPreview = useOpenThreadPreview(props.environmentId, props.threadId);
-  const [first] = ports;
-  if (first === undefined || !canOpen) return null;
+  const openBrowser = () =>
+    useRightPanelStore
+      .getState()
+      .open(scopeThreadRef(props.environmentId, props.threadId), "agent-browser");
+  const offered = canOpen ? ports : [];
+  const [first] = offered;
 
-  if (ports.length === 1) {
+  if (first === undefined && !browsed) return null;
+
+  if (first === undefined) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<Button variant="ghost-muted" size="xs" onClick={openBrowser} />}>
+          <AppWindowIcon aria-hidden />
+          <span className="max-sm:sr-only">Browser</span>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">Watch the agent's browser</TooltipPopup>
+      </Tooltip>
+    );
+  }
+
+  if (offered.length === 1 && !browsed) {
     return (
       <Tooltip>
         <TooltipTrigger
@@ -110,13 +140,22 @@ export const ThreadPreviewsControl = memo(function ThreadPreviewsControl(props: 
       <MenuTrigger render={<Button variant="ghost-muted" size="xs" />}>
         <GlobeIcon aria-hidden />
         <span className="max-sm:sr-only">Previews</span>
-        <span className="tabular-nums sm:hidden">{ports.length}</span>
+        <span className="tabular-nums sm:hidden">{offered.length + (browsed ? 1 : 0)}</span>
         <ChevronDownIcon aria-hidden />
       </MenuTrigger>
       <MenuPopup align="end">
+        {browsed ? (
+          <>
+            <MenuItem onClick={openBrowser}>
+              <AppWindowIcon aria-hidden />
+              Agent's browser
+            </MenuItem>
+            <MenuSeparator />
+          </>
+        ) : null}
         <MenuGroup>
           <MenuGroupLabel>Open {OPENS_IN}</MenuGroupLabel>
-          {ports.map((port) => (
+          {offered.map((port) => (
             <MenuItem key={port.port} onClick={() => openPreview(port.port)}>
               <span className="tabular-nums">{previewPortLabel(port)}</span>
               {port.processName ? (

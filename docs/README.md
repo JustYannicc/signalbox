@@ -15,6 +15,7 @@
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Browser tabs that follow the thread](./user/browser-tabs.md)
+- [Watch the agent's browser](./user/agent-browser.md)
 - [Use Signalbox as your default browser](./user/default-browser.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)

@@ -31,6 +31,10 @@ describe("Runner image pins", () => {
     expect(arg("PLAYWRIGHT_CORE_VERSION")).toBe(packageJson.dependencies["playwright-core"]);
   });
 
+  it("installs the rrweb recorder the agent's browser pins", () => {
+    expect(arg("RRWEB_RECORD_VERSION")).toBe(packageJson.dependencies["@rrweb/record"]);
+  });
+
   it("installs the oxc the automation compiler pins", () => {
     expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-parser"]);
     expect(arg("OXC_VERSION")).toBe(packageJson.dependencies["oxc-transform"]);
@@ -42,6 +46,7 @@ describe("Runner image pins", () => {
     const installs = dockerfile.match(/npm install --prefix \/opt\/signalbox[^&]*/g) ?? [];
     expect(installs).toHaveLength(1);
     expect(installs[0]).toContain('"playwright-core@${PLAYWRIGHT_CORE_VERSION}"');
+    expect(installs[0]).toContain('"@rrweb/record@${RRWEB_RECORD_VERSION}"');
     expect(installs[0]).toContain('"@1password/sdk@${ONEPASSWORD_SDK_VERSION}"');
     expect(installs[0]).toContain('"oxc-parser@${OXC_VERSION}"');
   });

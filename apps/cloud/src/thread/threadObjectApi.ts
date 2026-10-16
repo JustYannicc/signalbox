@@ -24,7 +24,10 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing>,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
-): Omit<ThreadObjectApi, "previews" | "previewLink"> => {
+): Omit<
+  ThreadObjectApi,
+  "previews" | "previewLink" | "browserWatch" | "browserInput" | "browserTrail" | "browserStep"
+> => {
   const reply = <A>(
     effect: Effect.Effect<
       A,

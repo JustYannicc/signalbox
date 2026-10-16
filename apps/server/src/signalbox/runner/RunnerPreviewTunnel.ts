@@ -8,13 +8,16 @@ import {
   tunnelThreadFrame,
 } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ThreadId } from "@t3tools/contracts";
+import type { AgentBrowserStep } from "@t3tools/contracts/signalboxPreviews";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 
+import { makeTrailSender, serveMirror } from "./previewMirror.ts";
 import { proxyHttp, type ProxyStream, proxyWebSocket, type TunnelFrame } from "./previewProxy.ts";
+import type { BrowserMirror, MirrorViewer } from "./RunnerBrowserMirror.ts";
 import { RunnerConnectionError, reconnectDelay } from "./RunnerSession.ts";
 import { openThreadSocket } from "./runnerSocket.ts";
 
@@ -25,7 +28,14 @@ import { openThreadSocket } from "./runnerSocket.ts";
  * thread's HTTP requests and WebSockets to them (`previewProxy.ts`). It
  * reconnects after every drop, aborting the streams the drop broke, until
  * the thread refuses it or its scope closes with the Runner's generation.
+ *
+ * With the agent's browser (`mirror`), it also serves viewers' mirrors and
+ * uploads every finished trail step (`previewMirror.ts`). Steps that finish
+ * while the tunnel is down wait for the next connection, the newest kept.
  */
+
+/** Bytes of trail steps kept while the tunnel is down. */
+const TRAIL_BACKLOG_BYTES = 32 * 1024 * 1024;
 
 /** One open tunnel socket. `receive` fails once it closes. */
 export interface PreviewTunnelConnection {
@@ -54,12 +64,16 @@ export interface PreviewTunnelInput {
   readonly token: string;
   readonly transport: PreviewTunnelTransport;
   readonly ports: PreviewPortSource;
+  /** The agent's browser, which viewers watch through the thread. */
+  readonly mirror?: BrowserMirror;
 }
 
 export interface PreviewTunnel {
   /** Why the tunnel stopped: the thread refused it, or its scope closed. */
   readonly ended: Effect.Effect<string>;
 }
+
+const encoder = new TextEncoder();
 
 const decodeFrame = (frame: string | Uint8Array): TunnelThreadMessage | DataFrame => {
   if (typeof frame === "string") return tunnelThreadFrame.decode(frame);
@@ -89,6 +103,22 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
   /** Sends the ports on the welcomed connection, if there is one. */
   let reportPorts: ((ports: ReadonlyArray<PreviewPort>) => void) | null = null;
   let welcomed = false;
+  /** Steps waiting for a welcomed connection; `uploadStep` sends on the current one. */
+  const backlog: Array<{ readonly step: AgentBrowserStep; readonly events: Uint8Array }> = [];
+  let uploadStep: ((step: AgentBrowserStep, events: Uint8Array) => void) | null = null;
+  const sendTrailStep = makeTrailSender();
+  const mirror = input.mirror;
+  if (mirror !== undefined) {
+    const unsubscribe = mirror.onStep((step, events) => {
+      const bytes = encoder.encode(events);
+      if (uploadStep !== null) return uploadStep(step, bytes);
+      backlog.push({ step, events: bytes });
+      let kept = backlog.reduce((sum, entry) => sum + entry.events.byteLength, 0);
+      while (kept > TRAIL_BACKLOG_BYTES && backlog.length > 1)
+        kept -= backlog.shift()!.events.byteLength;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+  }
 
   yield* input.ports
     .watch((next) =>
@@ -109,6 +139,7 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
         threadId: input.threadId,
         generation: input.generation,
         token: input.token,
+        ...(mirror === undefined ? {} : { mirror: true }),
       });
       const answer = yield* connection.receive;
       if ("type" in answer && answer.type === "refused") {
@@ -124,18 +155,24 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
       // Streams answer from Node callbacks; one writer keeps their frames in order.
       const outbox = yield* Queue.unbounded<TunnelFrame>();
       const streams = new Map<number, ProxyStream>();
+      const mirrors = new Map<number, MirrorViewer>();
       const emit = (frame: TunnelFrame) => void Queue.offerUnsafe(outbox, frame);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           reportPorts = null;
+          uploadStep = null;
           // The thread fails its side of every stream when the socket goes.
           for (const stream of streams.values()) stream.abort();
           streams.clear();
+          for (const viewer of mirrors.values()) viewer.close();
+          mirrors.clear();
         }),
       );
       yield* Effect.sync(() => {
         reportPorts = (next) => emit({ type: "ports", ports: next });
         reportPorts(ports);
+        uploadStep = (step, events) => sendTrailStep(emit, step, events);
+        for (const entry of backlog.splice(0)) uploadStep(entry.step, entry.events);
       });
 
       const open = (message: Extract<TunnelThreadMessage, { type: "request" | "ws.open" }>) => {
@@ -157,6 +194,17 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
         }
       };
 
+      const watch = (message: Extract<TunnelThreadMessage, { type: "mirror.open" }>) => {
+        const { stream } = message;
+        mirrors.get(stream)?.close();
+        if (mirror === undefined)
+          return emit({ type: "fail", stream, message: "This machine has no browser to mirror." });
+        mirrors.set(
+          stream,
+          serveMirror(mirror, message, emit, () => void mirrors.delete(stream)),
+        );
+      };
+
       const dispatch = (message: TunnelThreadMessage | DataFrame) => {
         if (!("type" in message)) {
           return streams.get(message.stream)?.data(message.kind, message.payload);
@@ -165,9 +213,15 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
           case "request":
           case "ws.open":
             return open(message);
+          case "mirror.open":
+            return watch(message);
+          case "mirror.input":
+            return mirrors.get(message.stream)?.input(message.input);
           case "end":
             return streams.get(message.stream)?.end();
           case "cancel":
+            mirrors.get(message.stream)?.close();
+            mirrors.delete(message.stream);
             return streams.get(message.stream)?.abort();
           case "ws.close":
             return streams.get(message.stream)?.close(message.code, message.reason);

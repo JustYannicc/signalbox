@@ -24,6 +24,7 @@ import {
   machineTabs,
   makeRunnerBrowser,
 } from "./RunnerBrowser.ts";
+import type { BrowserMirror } from "./RunnerBrowserMirror.ts";
 import { type PersonSession, personTabs } from "./RunnerBrowserPerson.ts";
 import {
   BROWSER_INSTRUCTIONS,
@@ -86,6 +87,8 @@ export interface ContextServer {
   readonly pin: (client: ContextClient) => Effect.Effect<void>;
   /** The thread's drive, once a turn opens it: what publishing saves first. */
   readonly attachDrive: (drive: BranchDrive) => Effect.Effect<void>;
+  /** The `preview_*` tools' browser as people watch it, for the preview tunnel. */
+  readonly mirror: BrowserMirror | null;
 }
 
 export const startContextServer = Effect.fn("startContextServer")(function* (input: {
@@ -198,6 +201,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
       Effect.sync(() => {
         drive = next;
       }),
+    mirror: browser.mirror ?? null,
   } satisfies ContextServer;
 });
 

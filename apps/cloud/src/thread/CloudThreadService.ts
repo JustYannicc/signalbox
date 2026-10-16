@@ -17,6 +17,11 @@ import type {
   BrowsingRecord,
   BrowsingStreamItem,
 } from "@t3tools/contracts/signalboxBrowsing";
+import type {
+  AgentBrowserInput,
+  AgentBrowserStep,
+  AgentBrowserUpdate,
+} from "@t3tools/contracts/signalboxPreviews";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -34,6 +39,7 @@ import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
 import { ThreadKindTurns, withLevel } from "./ThreadKindTurns.ts";
+import type { BrowserReply } from "./threadWire.ts";
 import {
   type Actor,
   ThreadCommandRejectedError,
@@ -159,7 +165,7 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
     ) => Stream.Stream<
-      ReadonlyArray<PreviewPort>,
+      ThreadDirectory.ThreadPreviews,
       ThreadNotFoundError | ThreadDirectory.ThreadObjectError
     >;
     /**
@@ -198,6 +204,43 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
       port: number,
     ) => Effect.Effect<PreviewLinkResult, ThreadDirectory.ThreadObjectError>;
+    /**
+     * The agent's browser, mirrored, while the stream is read (see
+     * `preview/BrowserMirror.ts`). Survives its thread object, starting over
+     * as a new viewer; a viewer that fell behind ends with
+     * `BrowserWatchBehindError` instead, for its client to reopen.
+     */
+    readonly browserWatch: (
+      actor: Actor,
+      threadId: ThreadId,
+      tabId: string | null,
+    ) => Stream.Stream<
+      AgentBrowserUpdate,
+      | ThreadNotFoundError
+      | ThreadDirectory.ThreadObjectError
+      | ThreadDirectory.BrowserWatchBehindError
+    >;
+    /** Input from `actor`'s watch stream `viewerId`: take over, drive, hand back. */
+    readonly browserInput: (
+      actor: Actor,
+      threadId: ThreadId,
+      viewerId: string,
+      input: AgentBrowserInput,
+    ) => Effect.Effect<BrowserReply<null>, ThreadDirectory.ThreadObjectError>;
+    /** The thread's browser trail, oldest first (see `preview/BrowserTrail.ts`). */
+    readonly browserTrail: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Effect.Effect<
+      BrowserReply<ReadonlyArray<AgentBrowserStep>>,
+      ThreadDirectory.ThreadObjectError
+    >;
+    /** One trail step's rrweb recording, a JSON array. */
+    readonly browserStep: (
+      actor: Actor,
+      threadId: ThreadId,
+      stepId: string,
+    ) => Effect.Effect<BrowserReply<string>, ThreadDirectory.ThreadObjectError>;
     /**
      * A turn's diagnostic record (JSON), by its run or trace id, or the
      * thread's recent turns for null: what happened on its machines, the
@@ -477,6 +520,16 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => false),
       );
 
+  const browserWatch: CloudThreadService["Service"]["browserWatch"] = (actor, threadId, tabId) =>
+    Stream.unwrap(
+      resuming({
+        operation: "browserWatch",
+        threadId,
+        open: directory.forThread(threadId).browserWatch(actor, tabId),
+        delivered: () => Effect.void,
+      }),
+    );
+
   return CloudThreadService.of({
     canSee,
     previews,
@@ -485,6 +538,12 @@ const make = Effect.gen(function* () {
       directory.forThread(threadId).browse(actor, by, command),
     browsingRecord: (actor, threadId) => directory.forThread(threadId).browsingRecord(actor),
     openPreview,
+    browserWatch,
+    browserInput: (actor, threadId, viewerId, input) =>
+      directory.forThread(threadId).browserInput(actor, viewerId, input),
+    browserTrail: (actor, threadId) => directory.forThread(threadId).browserTrail(actor),
+    browserStep: (actor, threadId, stepId) =>
+      directory.forThread(threadId).browserStep(actor, stepId),
     dispatchCommand,
     launchThread,
     threadSnapshot,
