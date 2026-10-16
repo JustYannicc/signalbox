@@ -138,8 +138,51 @@ export const forwardModel = (endpoint: PoolEndpoint, path: string, request: Requ
     redirect: "manual",
     duplex: "half",
   };
-  return send(endpoint, new Request(`${endpoint.baseUrl}${path}`, init));
+  const sent = send(endpoint, new Request(`${endpoint.baseUrl}${path}`, init));
+  return path.startsWith("/v1/models") ? Effect.flatMap(sent, withoutPins) : sent;
 };
+
+const PinnableList = Schema.fromJsonString(
+  Schema.StructWithRest(
+    Schema.Struct({
+      data: Schema.Array(
+        Schema.StructWithRest(Schema.Struct({ id: Schema.String }), [
+          Schema.Record(Schema.String, Schema.Unknown),
+        ]),
+      ),
+    }),
+    [Schema.Record(Schema.String, Schema.Unknown)],
+  ),
+);
+const decodePinnableList = Schema.decodeUnknownOption(PinnableList);
+const encodePinnableList = Schema.encodeSync(PinnableList);
+
+/** `response` with its headers changed by `edit`, and its body replaced when `body` is given. */
+export const withHeaders = (
+  response: Response,
+  edit: (headers: Headers) => void,
+  body: BodyInit | null = response.body,
+) => {
+  const headers = new Headers(response.headers);
+  edit(headers);
+  return new Response(body, { status: response.status, statusText: response.statusText, headers });
+};
+
+/** A model list without the models accounts' pins list again (`pinnedModel`). */
+const withoutPins = (response: Response) =>
+  Effect.promise(async () => {
+    if (!response.ok) return response;
+    const text = await response.text();
+    const listed = Option.getOrNull(decodePinnableList(text));
+    const body =
+      listed === null
+        ? text
+        : encodePinnableList({
+            ...listed,
+            data: listed.data.filter((model) => !isPinnedModel(model.id)),
+          });
+    return withHeaders(response, (headers) => headers.delete("content-length"), body);
+  });
 
 /** A response's body as JSON, or `null` when it isn't JSON. */
 const readJson = (endpoint: PoolEndpoint, response: Response) =>
@@ -288,12 +331,63 @@ export const listModels = (endpoint: PoolEndpoint) =>
       ModelList,
       `${hostOf(endpoint)} returned an invalid model list.`,
     )(json);
-    return decoded.data.map((model): ServedModel => ({
-      id: model.id,
-      ownedBy: model.owned_by ?? "unknown",
-      created: model.created && model.created > 0 ? model.created : null,
-    }));
+    // A pinned account's models are listed again under its pin (`threadAccounts.ts`).
+    return decoded.data.flatMap((model): ReadonlyArray<ServedModel> =>
+      isPinnedModel(model.id)
+        ? []
+        : [
+            {
+              id: model.id,
+              ownedBy: model.owned_by ?? "unknown",
+              created: model.created && model.created > 0 ? model.created : null,
+            },
+          ],
+    );
   });
+
+/**
+ * Where a pool pins a thread to one account: CLIProxyAPI routes
+ * `<prefix>/<model>` to the account with that prefix alone, and asks the
+ * provider for `<model>`. Unprefixed models still reach every account
+ * (`routing.force-model-prefix` stays off). Named after the account's
+ * `auth_index`, a stable hash CLIProxyAPI keeps for it.
+ */
+const pinOf = (authIndex: string) => `sb-${authIndex}`;
+
+/**
+ * CLIProxyAPI's Anthropic-shaped model list shows an id that doesn't start
+ * with `claude-` as this plus the id reversed, and routes that alias back,
+ * but only while it leads the model name. A thinking suffix (`(high)`) stays.
+ */
+const CLAUDE_ALIAS = "claude-fable-5-dd-";
+
+const unaliased = (model: string) => {
+  if (!model.startsWith(CLAUDE_ALIAS)) return model;
+  const [, base = "", suffix = ""] =
+    /^(.*?)(\([^()]*\))?$/u.exec(model.slice(CLAUDE_ALIAS.length)) ?? [];
+  return `${[...base].toReversed().join("")}${suffix}`;
+};
+
+/** `model` routed to the account with `authIndex` alone. */
+export const pinnedModel = (authIndex: string, model: string) =>
+  `${pinOf(authIndex)}/${unaliased(model)}`;
+
+/** A model id as an account's pin lists it, which no harness should see. */
+export const isPinnedModel = (id: string) => /^sb-[^/]+\//u.test(unaliased(id));
+
+/** Gives the account its pin (`credentials/fields`), which CLIProxyAPI keeps in its file. */
+export const setAccountPin = (endpoint: PoolEndpoint, name: string, authIndex: string) =>
+  management(endpoint, "PATCH", "credentials/fields", { name, prefix: pinOf(authIndex) }).pipe(
+    Effect.flatMap(expectOk(endpoint, () => "could not pin the account.")),
+  );
+
+/**
+ * The `auth_index` of the account CLIProxyAPI served a model response from,
+ * as its `X-CPA-TRACE-ID` names it (`<time>-<auth_index>-<request id>`).
+ * Null when it served none, such as when it answered a cooldown itself.
+ */
+export const servedBy = (response: Response) =>
+  /^\d+-([^-]+)-/u.exec(response.headers.get("x-cpa-trace-id") ?? "")?.[1] ?? null;
 
 const LoginStart = Schema.Struct({
   url: Schema.String,

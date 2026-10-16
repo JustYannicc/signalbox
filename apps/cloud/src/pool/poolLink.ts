@@ -10,6 +10,7 @@ import type { PoolBackendError } from "./cliProxyApi.ts";
 import { poolObjectStub, type PoolObjectNamespace } from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";
 import * as PoolLinks from "./PoolLinks.ts";
+import * as ThreadAccounts from "./threadAccounts.ts";
 
 /**
  * The pool link's HTTP API (`POOL_LINK_PATH` in the contracts): how a
@@ -87,9 +88,10 @@ export const handleLinkRequest = (secret: string, request: Request) =>
     const path = url.pathname.slice(POOL_LINK_PATH.length);
     if (path.startsWith("/v1/")) {
       // The link token stays here; the pool sends its own key.
-      const forwarded = new Request(request, { headers: withoutCaller(request.headers) });
-      const { response } = yield* engine.forwardModel(actor, `${path}${url.search}`, forwarded);
-      return response;
+      const { thread, headers } = ThreadAccounts.threadOfLinkRequest(request);
+      const forwarded = new Request(request, { headers: withoutCaller(headers) });
+      const reply = yield* engine.forwardModel(actor, `${path}${url.search}`, forwarded, thread);
+      return ThreadAccounts.markMoved(reply);
     }
     if (path === "" && request.method === "GET") {
       return Response.json(yield* engine.linkInfo(actor));
