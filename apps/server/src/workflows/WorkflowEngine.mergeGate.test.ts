@@ -14,8 +14,25 @@ import {
 const access = { builtInDefaults: DEFAULTS };
 const PR_URL = "https://github.com/acme/app/pull/12";
 const HEAD = "abc1234def5678";
-/** What the host says about #12. */
-const READ = {
+const MIGRATION = "apps/server/src/persistence/Migrations/031_add_column.ts";
+/** What the host says about #12: ready, and easy to undo. */
+const READY = {
+  repository: "acme/app",
+  number: 12,
+  title: "Fix login",
+  state: "open",
+  headSha: HEAD,
+  isDraft: false,
+  mergeability: "mergeable",
+  reviewDecision: null,
+  checks: [{ name: "test", status: "success", url: null, required: true }],
+  openThreads: 0,
+  files: ["src/greeting.ts"],
+};
+/** #12 ready, but adding a migration: a person decides. */
+const READ = { ...READY, files: ["src/greeting.ts", MIGRATION] };
+/** What a host that reads only the basics says: nothing to judge by. */
+const BASICS = {
   repository: "acme/app",
   number: 12,
   title: "Fix login",
@@ -65,7 +82,7 @@ const requestMerge = (engine: WorkflowEngine["Service"], note?: string) =>
   });
 
 it.effect(
-  "merge_pull_request asks a person about a commit, then merges it and tells the agent",
+  "a change that's hard to undo goes to a person with its evidence, then merges at that commit",
   () => {
     const threads = linkedThreads();
     const tools = fakeTools({
@@ -87,7 +104,7 @@ it.effect(
         // The person sees what the host says, pinned to the head commit.
         expect(ask.ask.args).toEqual([
           expect.objectContaining({
-            question: `Fix login\n\n${PR_URL}\n\nAt abc1234.\n\nFixes login; tests pass.`,
+            question: `Fix login\n\n${PR_URL}\n\nAt abc1234. Checks: all 1 passed at abc1234. Review threads: all resolved. Changes 2 files.\n\nAsking because it changes a database migration (${MIGRATION}).\n\nFixes login; tests pass.`,
           }),
         ]);
 
@@ -102,7 +119,7 @@ it.effect(
           "read",
           "action:merge",
           "action:delete-branch",
-          `told:Merged acme/app#12 (${PR_URL}) and deleted its branch. Wrap up and hand the work back.`,
+          `told:Merged acme/app#12 (${PR_URL}) at abc1234 (approved) and deleted its branch. Wrap up and hand the work back.`,
         ]);
         expect(tools.calls[1]).toMatchObject({
           tool: "pull_request_action",
@@ -133,7 +150,7 @@ it.effect("commits pushed after the approval don't merge on it", () => {
       expect(actions(tools)).toEqual([
         "read",
         "action:merge",
-        `told:Not merging acme/app#12 (${PR_URL}): new commits landed after it was approved at abc1234. Call merge_pull_request again so they can approve what's there now.`,
+        `told:Not merging acme/app#12 (${PR_URL}): new commits landed after abc1234, which is what was checked. Call merge_pull_request again so the gate looks at what's there now.`,
       ]);
       expect((yield* engine.getRun(ask.runId)).output).toBe("moved");
     }),
@@ -203,7 +220,7 @@ it.effect("a merge the host refuses or only queued goes back to the agent as suc
       expect(actions(queueing)).toEqual([
         "read",
         "action:merge",
-        `told:acme/app#12 (${PR_URL}) is approved and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`,
+        `told:acme/app#12 (${PR_URL}) passed the gate and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`,
       ]);
     }),
   );
@@ -371,7 +388,7 @@ export default workflow(async (w) => {
 
 it.effect("an approval the host can't pin to a commit says so", () => {
   const threads = linkedThreads();
-  const tools = fakeTools({ pull_request_read: { ...READ, headSha: null } });
+  const tools = fakeTools({ pull_request_read: { ...BASICS, headSha: null } });
   return withEngine(
     { threads },
     Effect.gen(function* () {
@@ -380,9 +397,105 @@ it.effect("an approval the host can't pin to a commit says so", () => {
       const ask = yield* requestMerge(engine);
       expect(ask.ask.args).toEqual([
         expect.objectContaining({
-          question: expect.stringContaining("this approval isn't pinned to one"),
+          question: expect.stringContaining("the host didn't say which commit is the head"),
         }),
       ]);
     }),
+  );
+});
+
+it.effect("a ready change that's easy to undo merges by itself, pinned to its head", () => {
+  const threads = linkedThreads();
+  const tools = fakeTools({
+    t3_thread_send: { delivery: "queued" },
+    pull_request_read: READY,
+    pull_request_action: { state: "merged", moved: false },
+  });
+  return withEngine(
+    { threads },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      yield* engine.registerBuiltinTools(tools.handler);
+      const { waitId } = yield* engine.requestMerge({ threadId: "thread-9", url: PR_URL }, access);
+      yield* engine.drain;
+      const run = yield* engine.getRun(waitId);
+      expect(run.steps.some((step) => step.verb === "ask")).toBe(false);
+      expect(actions(tools)).toEqual([
+        "read",
+        "action:merge",
+        "action:delete-branch",
+        `told:Merged acme/app#12 (${PR_URL}) at abc1234 (ready and easy to undo) and deleted its branch. Wrap up and hand the work back.`,
+      ]);
+      expect(tools.calls[1]).toMatchObject({ args: { expectedHeadSha: HEAD } });
+      expect(run.output).toBe("merged");
+    }),
+  );
+});
+
+it.effect("an unready pull request goes back to the agent and never reaches a person", () => {
+  const threads = linkedThreads();
+  const unready = {
+    ...READ,
+    checks: [
+      { name: "test", status: "failure", url: null, required: true },
+      { name: "lint", status: "pending", url: null, required: true },
+    ],
+    openThreads: 2,
+    reviewDecision: "changes-requested",
+  };
+  const tools = fakeTools({ t3_thread_send: { delivery: "queued" }, pull_request_read: unready });
+  return withEngine(
+    { threads },
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine;
+      yield* engine.registerBuiltinTools(tools.handler);
+      const { waitId } = yield* engine.requestMerge({ threadId: "thread-9", url: PR_URL }, access);
+      yield* engine.drain;
+      const run = yield* engine.getRun(waitId);
+      expect(run.steps.some((step) => step.verb === "ask")).toBe(false);
+      expect(monitorsOf("thread-9")).toEqual([]);
+      expect(actions(tools)).toEqual([
+        "read",
+        `told:Not merging acme/app#12 (${PR_URL}) yet: checks failed: test; checks are still running: lint; 2 review threads are unresolved; a reviewer requested changes. Fix that (watch_pull_request wakes you when checks finish), then call merge_pull_request again.`,
+      ]);
+      expect(run.output).toBe("not ready");
+    }),
+  );
+});
+
+it.effect("the agent's reason or missing evidence makes it ask", () => {
+  const cases = [
+    {
+      read: READY,
+      askBecause: "Which plan gets this is undecided.",
+      says: "the agent asks: Which plan gets this is undecided.",
+    },
+    { read: BASICS, says: "the checks at the head couldn't be read" },
+    { read: { ...READY, checks: [] }, says: "no checks ran at the head" },
+  ];
+  return Effect.forEach(
+    cases,
+    ({ read, askBecause, says }) => {
+      const threads = linkedThreads();
+      const tools = fakeTools({ t3_thread_send: { delivery: "queued" }, pull_request_read: read });
+      return withEngine(
+        { threads },
+        Effect.gen(function* () {
+          const engine = yield* WorkflowEngine;
+          yield* engine.registerBuiltinTools(tools.handler);
+          const { waitId } = yield* engine.requestMerge(
+            { threadId: "thread-9", url: PR_URL, askBecause },
+            access,
+          );
+          yield* engine.drain;
+          const ask = (yield* engine.getRun(waitId)).steps.find((step) => step.verb === "ask");
+          expect(ask?.args).toEqual([
+            expect.objectContaining({ question: expect.stringContaining(says) }),
+          ]);
+          expect(actions(tools)).toEqual(["read"]);
+        }),
+      );
+    },
+    { discard: true },
   );
 });

@@ -17,6 +17,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
+import * as PullRequestMergesModule from "../github/PullRequestMerges.ts";
 import * as PullRequestReadsModule from "../github/PullRequestReads.ts";
 import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
@@ -110,7 +111,8 @@ const make = Effect.gen(function* () {
   );
 
   yield* ensureCursors.pipe(Effect.orDie);
-  yield* engine.registerBuiltinTools(makeCloudBuiltinTools({ threads, service, owner }));
+  const merges = yield* PullRequestMergesModule.PullRequestMerges;
+  yield* engine.registerBuiltinTools(makeCloudBuiltinTools({ threads, service, owner, merges }));
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
   const tools = makeCloudTools({ engine, compiler, threads });
 
@@ -269,6 +271,7 @@ export const layer = Layer.effect(CloudAutomations, make).pipe(
       CloudThreads.layer,
       CloudCompilerModule.layer,
       PullRequestReadsModule.layer,
+      PullRequestMergesModule.layer,
       layerUnhosted,
     ).pipe(Layer.provideMerge(CloudThreads.layerEventFeed)),
   ),
