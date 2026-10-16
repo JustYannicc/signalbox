@@ -64,6 +64,7 @@ vi.mock("~/lib/sourceControlActions", async () => {
 });
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.manager }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("~/state/environmentCapabilities", () => ({ useEnvironmentSupports: () => true }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => command,
 }));

@@ -20,6 +20,8 @@ import { useNavigation } from "@react-navigation/native";
 
 import { useCallback, useMemo } from "react";
 import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
+import { ownBranchQuickAction } from "@t3tools/client-runtime/state/signalboxOwnBranch"; // signalbox
 import {
   basename,
   getTerminalStatusLabel,
@@ -128,6 +130,11 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
   const busy = gitOperationLabel !== null;
   const isRepo = gitStatus?.isRepo ?? true;
+  // signalbox: a thread on its own branch (no `worktrees`) commits from its turns, never here.
+  const ownBranch = !useEnvironmentSupports(
+    environmentId ? EnvironmentId.make(String(environmentId)) : null,
+    "worktrees",
+  );
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus?.isDefaultRef ?? false;
 
@@ -140,7 +147,8 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
         hint: "This workspace is not a git repository.",
       };
     }
-    const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
+    const resolved = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
+    const action = ownBranch ? ownBranchQuickAction(resolved) : resolved; // signalbox
     return !canWriteSourceControl && (action.kind === "run_pull" || action.kind === "run_action")
       ? {
           ...action,
@@ -148,7 +156,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
           hint: "This connection cannot change source control.",
         }
       : action;
-  }, [busy, canWriteSourceControl, gitStatus, hasPrimaryRemote, isDefaultRef, isRepo]);
+  }, [busy, canWriteSourceControl, gitStatus, hasPrimaryRemote, isDefaultRef, isRepo, ownBranch]);
 
   const quickActionHint = quickAction.disabled
     ? (quickAction.hint ?? "This action is unavailable.")
@@ -265,6 +273,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    moreDescription: ownBranch ? "Push and pull requests" : "Commit, files, branches", // signalbox
     openFiles,
     openGitInspector,
     openReview,
@@ -395,7 +404,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
                 ]
               : []),
             {
-              description: "Commit, files, branches",
+              description: model.moreDescription,
               icon: { name: "ellipsis", type: "sfSymbol" },
               label: "More",
               onPress: model.openGitInspector,
@@ -412,6 +421,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
     [
       model.currentBranchLabel,
       model.isRepo,
+      model.moreDescription,
       model.openFiles,
       model.openGitInspector,
       model.openReview,
@@ -612,7 +622,7 @@ function threadGitMenuDefinition(
         id: "git-more",
         title: "More",
         icon: "ellipsis",
-        subtitle: "Commit, files, branches",
+        subtitle: model.moreDescription,
         onPress: model.openGitInspector,
       },
     ],
