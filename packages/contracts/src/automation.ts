@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { AutomationAskField, AutomationAskOpen } from "./automationAsk.ts";
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ExternalRun } from "./externalRun.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ScheduledTaskWebhookEndpoint } from "./scheduledTask.ts";
@@ -13,6 +14,7 @@ import {
 } from "./workflow.ts";
 
 export * from "./automationAsk.ts";
+export * from "./externalRun.ts";
 
 /**
  * Automations as users and agents see them: saved workflow files, their runs,
@@ -142,6 +144,8 @@ export const AutomationStep = Schema.Struct({
   attempt: Schema.Int,
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
+  /** The run in another system this step started, e.g. on GitHub Actions, as last read. */
+  external: Schema.optional(Schema.NullOr(ExternalRun)),
 });
 export type AutomationStep = typeof AutomationStep.Type;
 

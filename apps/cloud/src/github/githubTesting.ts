@@ -26,6 +26,8 @@ export const makeFakeGitHub = (options: {
   readonly bare: string;
   readonly repository: string;
   readonly defaultBranch: string;
+  /** More of GitHub's API (e.g. `actionsTesting.ts`): an answer, or null to fall through. */
+  readonly more?: (method: string, url: URL, body: Uint8Array) => Response | null;
 }) => {
   const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
   const git = (args: ReadonlyArray<string>, input?: Uint8Array) =>
@@ -465,7 +467,10 @@ export const makeFakeGitHub = (options: {
       const host = url.origin === WORKOS ? "workos" : url.origin === ENDPOINTS.web ? "web" : "api";
       calls.push(`${request.method} ${host}${url.pathname}`);
       const body = request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array();
-      return HttpClientResponse.fromWeb(request, answer(request.method, url, body));
+      return HttpClientResponse.fromWeb(
+        request,
+        options.more?.(request.method, url, body) ?? answer(request.method, url, body),
+      );
     }),
   );
 

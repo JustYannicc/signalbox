@@ -61,6 +61,7 @@ export function useFolderActions(input: {
   const moveFolder = useAtomCommand(signalboxFolders.moveFolder, QUIET);
   const deleteFolder = useAtomCommand(signalboxFolders.deleteFolder, QUIET);
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, QUIET);
+  const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, QUIET);
   const [editing, setEditing] = useState<InstructionsEditing | null>(null);
 
   const requestCreateFolder = useCallback(
@@ -115,6 +116,12 @@ export function useFolderActions(input: {
             updateFolder({ environmentId, input: { id: folder.id, poolId: choice.poolId } }),
           );
           return;
+        case "githubLend":
+          void run(
+            choice.lent ? "Couldn’t lend your GitHub" : "Couldn’t stop lending your GitHub",
+            setGitHubLend({ environmentId, input: { id: folder.id, lent: choice.lent } }),
+          );
+          return;
         case "instructions":
           setEditing({
             level: { _tag: "folder", folderId: folder.id },
@@ -144,6 +151,7 @@ export function useFolderActions(input: {
       pools,
       requestCreateFolder,
       run,
+      setGitHubLend,
       snapshot,
       updateFolder,
     ],

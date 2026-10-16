@@ -83,6 +83,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import * as Environment from "../environment.ts";
+import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
@@ -407,6 +408,7 @@ export const layerHandlers = (input: {
         you: yield* deviceMember(userId, input.sid),
       });
       const branches = yield* GitHubBranches.GitHubBranches;
+      const githubActions = yield* GitHubActions.GitHubActions;
       const attachments = yield* CloudAttachments;
       /**
        * Fails with not-found once the user leaves a context and so can't see
@@ -769,6 +771,8 @@ export const layerHandlers = (input: {
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
           folderCall(folders.setInstructions(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: (request) =>
+          folderCall(githubActions.setLend(request)),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe]: () =>
           kinds.changes.pipe(
             Stream.tapError((cause) =>

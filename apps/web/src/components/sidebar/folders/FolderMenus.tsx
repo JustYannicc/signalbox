@@ -1,6 +1,6 @@
 /**
  * The ⋯ menus of the folder tree: a folder's (make, rename, move, files,
- * pool, instructions, secrets, delete) and an owner's top level.
+ * pool, GitHub lend, instructions, secrets, delete) and an owner's top level.
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -33,6 +33,7 @@ import { DriveProjectShareMenuItem } from "../../drives/DriveProjectShareMenuIte
 import { Button } from "../../ui/button";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -48,6 +49,10 @@ import type { FolderOwner } from "./folderSidebarModel";
 import type { FolderCommands } from "./useFolderCommands";
 
 const NO_FILES = "none";
+
+/** Says whose account a folder's CI steps run as once it's lent. */
+const githubLendLabel = (folder: Folder) =>
+  folder.githubLend ? `CI steps run as @${folder.githubLend.login}` : "Lend my GitHub to CI steps";
 
 function MoreTrigger(props: { label: string }) {
   return (
@@ -176,6 +181,16 @@ function FolderMenuItems(props: FolderMenuProps) {
           inheritedPoolName={inheritedPoolName}
           onChange={(poolId) => void commands.setPool(environmentId, folder.id, poolId)}
         />
+      ) : null}
+      {/* Shown while lent too, so a lend whose files went away can still be stopped. */}
+      {folder.files || folder.githubLend ? (
+        <MenuCheckboxItem
+          variant="switch"
+          checked={folder.githubLend !== undefined}
+          onCheckedChange={(lent) => void commands.setGitHubLend(environmentId, folder.id, lent)}
+        >
+          {githubLendLabel(folder)}
+        </MenuCheckboxItem>
       ) : null}
       <MenuItem
         onClick={() =>

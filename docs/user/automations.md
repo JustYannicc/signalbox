@@ -33,6 +33,23 @@ any other, or ask the agent to stop it. Some steps don't run in the cloud yet: w
 (`w.hook`), calls to connected services, `w.run` functions, and model steps (`w.llm`, `w.judge`,
 `w.extract`). Use a self-hosted server for automations that need them.
 
+### Steps on GitHub Actions
+
+In a folder added from GitHub, a step can run on the repository's GitHub Actions runners, with its
+CI machines, secrets and environments. Ask the agent to run the step "on GitHub Actions". The
+first time, the agent opens a pull request that adds Signalbox's step workflow
+(`.github/workflows/signalbox-step.yml`); merge it.
+
+These steps run as your GitHub account, so you lend it to the folder first: in the folder's ⋯
+menu, turn on **Lend my GitHub to CI steps**. The switch then names the account the folder's CI
+steps run as. Turn it off to stop; steps started after that fail and say how to lend it again,
+while runs already going finish. If you connect a different GitHub account, lend it again. When
+folders get their own GitHub App, steps will run as the App instead.
+
+While a step runs, it shows the GitHub run's jobs and steps live, whose GitHub it runs as, the end
+of each job's log and a link to the run on GitHub. Its result goes on to the next step. Cancelling
+the automation run cancels the GitHub run.
+
 ## Connect your services
 
 Automations reach your accounts, like Gmail, GitHub or Linear, through

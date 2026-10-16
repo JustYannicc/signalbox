@@ -54,5 +54,9 @@ export function createSignalboxFoldersAtoms<R, E>(
       label: "signalbox-folders:set-one-password",
       tag: SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword,
     }),
+    setGitHubLend: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-folders:set-github-lend",
+      tag: SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend,
+    }),
   };
 }
