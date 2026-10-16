@@ -86,6 +86,30 @@ const FRAME_SIGNALS = `(() => {
   return signals;
 })()`;
 
+/** Runs of 13 to 19 digits, spaced or dashed the way card numbers are written. */
+const DIGIT_RUN = /(?<![\d-])\d(?:[ -]?\d){12,18}(?![\d-])/g;
+
+const passesLuhn = (digits: string) => {
+  let sum = 0;
+  for (let index = 0; index < digits.length; index += 1) {
+    let digit = Number(digits[digits.length - 1 - index]);
+    if (index % 2 === 1) digit = digit * 2 > 9 ? digit * 2 - 9 : digit * 2;
+    sum += digit;
+  }
+  return sum % 10 === 0;
+};
+
+/**
+ * `text` with every card number in it masked to its last four digits. A card
+ * the person typed stays in its field after they hand the tab back, so what
+ * the agent reads of the person's browser goes through this (`RunnerBrowser.ts`).
+ */
+export const maskCardNumbers = (text: string): string =>
+  text.replace(DIGIT_RUN, (run) => {
+    const digits = run.replace(/[ -]/g, "");
+    return passesLuhn(digits) ? `•••• ${digits.slice(-4)}` : run;
+  });
+
 /** Hosts that run 3-D Secure checks: a bank's access control server, or Cardinal (Visa). */
 const SECURE_HOSTS = [/^acs[\w-]*\./i, /(^|\.)cardinalcommerce\.com$/i];
 /** A 3-D Secure check inside a frame of the shop's page, e.g. Stripe's `hooks.stripe.com/3d_secure`. */

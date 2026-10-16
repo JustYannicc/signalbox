@@ -11,6 +11,7 @@ import { AGENT_WAIT_MS, PAYMENT_WAITING } from "./RunnerBrowserControl.ts";
 import {
   ALREADY_ANSWERED,
   makePayments,
+  maskCardNumbers,
   NOT_A_PAYMENT,
   PAYMENT_PATIENCE_MS,
   PAYMENT_POLL_MS,
@@ -33,6 +34,7 @@ const SITES: Record<string, string> = {
   "https://shop.test/product": `<title>Kettle</title><a href="/checkout">Checkout</a>`,
   "https://shop.test/checkout": `<title>Pay</title><form><input aria-label="Name">${CARD}<button type="button" onclick="location.href='https://acs.bank.test/challenge'">Pay 12 CHF</button></form>`,
   "https://shop.test/review": `<title>Review</title><button>Place order</button>`,
+  "https://shop.test/filled": `<title>Filled</title><input aria-label="Card number" value="4242 4242 4242 4242"><p>Order 4242 4242 4242 4241</p>`,
   "https://shop.test/thanks": `<title>Thanks</title><p>Order placed</p>`,
   "https://shop.test/hidden-card": `<title>Hidden</title><input autocomplete="cc-number" style="display:none">`,
   "https://shop.test/card-frame": `<title>Elements</title><iframe src="https://js.payments.test/inner-card"></iframe>`,
@@ -398,6 +400,40 @@ describe("a 3-D Secure check", () => {
       );
       expect(asking.started).toHaveLength(1);
       expect((await browser.status({})).control).toMatchObject({ owner: "human" });
+    } finally {
+      await payments.close();
+      await browser.close();
+    }
+  }, 60_000);
+});
+
+describe("maskCardNumbers", () => {
+  it("masks card numbers, keeping the last four, and leaves other numbers alone", () => {
+    expect(maskCardNumbers('Card number "4242 4242 4242 4242" exp 12/34')).toBe(
+      'Card number "•••• 4242" exp 12/34',
+    );
+    expect(maskCardNumbers("pan=5555-5555-5555-4444;")).toBe("pan=•••• 4444;");
+    expect(maskCardNumbers("378282246310005")).toBe("•••• 0005");
+    // Not a card: fails the Luhn check, or too short.
+    expect(maskCardNumbers("order 4242 4242 4242 4241")).toBe("order 4242 4242 4242 4241");
+    expect(maskCardNumbers("call 044 668 18 00")).toBe("call 044 668 18 00");
+  });
+});
+
+describe("the person's browser, read by the agent", () => {
+  it("masks a card number left on the page", async () => {
+    const { payments, browser } = await setup();
+    try {
+      await browser.navigate({ url: "https://shop.test/filled" });
+      const read = await browser.snapshot({});
+      const text = JSON.stringify({ ...read, screenshot: null });
+      expect(text).not.toContain("4242 4242 4242 4242");
+      expect(text).toContain("•••• 4242");
+      // Numbers that aren't cards stay.
+      expect(read.visibleText).toContain("Order 4242 4242 4242 4241");
+      expect(await browser.evaluate({ expression: "document.querySelector('input').value" })).toBe(
+        "•••• 4242",
+      );
     } finally {
       await payments.close();
       await browser.close();

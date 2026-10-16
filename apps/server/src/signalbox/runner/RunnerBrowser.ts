@@ -38,6 +38,7 @@ import { ServerBrowserContexts } from "../../preview/ServerBrowserContexts.ts";
 import * as ServerBrowserPage from "../../preview/ServerBrowserPage.ts";
 import type { Timer } from "./RunnerBrowserControl.ts";
 import { type BrowserMirror, makeBrowserMirror } from "./RunnerBrowserMirror.ts";
+import { maskCardNumbers } from "./RunnerBrowserPayment.ts";
 import { type BrowserRoute, browserFor } from "./RunnerBrowserRoute.ts";
 
 /**
@@ -170,6 +171,12 @@ const navigationUrl = (input: PreviewAutomationNavigateInput) => {
   const path = target.path ?? "";
   return `${target.protocol ?? "http"}://localhost:${target.port}${path === "" || path.startsWith("/") ? path : `/${path}`}`;
 };
+
+/** What the agent reads of a tab: card numbers on the person's browser are masked. */
+const readable = <A>(tab: { readonly route: BrowserRoute }, value: A): A =>
+  tab.route === "person" && value !== undefined
+    ? (JSON.parse(maskCardNumbers(JSON.stringify(value))) as A)
+    : value;
 
 const failure = (message: string) =>
   new ServerBrowserPage.ServerBrowserOperationError("PreviewAutomationExecutionError", message);
@@ -625,9 +632,13 @@ export const makeRunnerBrowser = (
         return { tabId: tab.tabId, colorScheme: input.colorScheme };
       }),
     snapshot: (input) =>
-      act(input, "snapshot", (tab) =>
-        ServerBrowserPage.snapshot({ ...tab, renderScale: RENDER_SCALE }),
-      ),
+      act(input, "snapshot", async (tab) => {
+        const { screenshot, ...page } = await ServerBrowserPage.snapshot({
+          ...tab,
+          renderScale: RENDER_SCALE,
+        });
+        return { ...readable(tab, page), screenshot };
+      }),
     click: (input) =>
       act(input, "click", (tab) => ServerBrowserPage.click(tab.page, input).then(constVoid)),
     type: (input) => act(input, "type", (tab) => ServerBrowserPage.type(tab.page, input)),
@@ -643,8 +654,8 @@ export const makeRunnerBrowser = (
     press: (input) => act(input, "press", (tab) => ServerBrowserPage.press(tab.page, input)),
     scroll: (input) => act(input, "scroll", (tab) => ServerBrowserPage.scroll(tab.page, input)),
     evaluate: (input) =>
-      act(input, "evaluate", (tab) =>
-        ServerBrowserPage.evaluate(tab.cdp, input, EVALUATE_TIMEOUT_MS),
+      act(input, "evaluate", async (tab) =>
+        readable(tab, await ServerBrowserPage.evaluate(tab.cdp, input, EVALUATE_TIMEOUT_MS)),
       ),
     waitFor: (input) =>
       act(input, "waitFor", (tab) => ServerBrowserPage.waitFor(tab.page, input).then(constVoid)),
