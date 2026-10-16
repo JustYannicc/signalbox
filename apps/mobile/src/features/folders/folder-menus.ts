@@ -77,6 +77,16 @@ export function folderMenuActions(input: {
       ],
     });
   }
+  // Shown while lent too, so a lend whose files went away can still be stopped.
+  if (folder.files || folder.githubLend) {
+    actions.push({
+      id: "folder:github-lend",
+      title: folder.githubLend
+        ? `CI steps run as @${folder.githubLend.login}`
+        : "Lend my GitHub to CI steps",
+      state: folder.githubLend ? "on" : undefined,
+    });
+  }
   // Phases by position: names can hold anything an id can't (#677).
   actions.push(
     folder.phase === undefined
@@ -107,6 +117,7 @@ export type FolderMenuChoice =
   | { readonly _tag: "pool"; readonly poolId: AccountPoolId | null }
   | { readonly _tag: "phase"; readonly current: string }
   | { readonly _tag: "phases" }
+  | { readonly _tag: "githubLend"; readonly lent: boolean }
   | { readonly _tag: "instructions" }
   | { readonly _tag: "delete" };
 
@@ -128,6 +139,8 @@ export function parseFolderMenuEvent(input: {
       ? null
       : { _tag: "phase", current };
   }
+  // A switch: choosing it flips the lend.
+  if (event === "folder:github-lend") return { _tag: "githubLend", lent: !folder.githubLend };
   if (event === "folder:delete") return { _tag: "delete" };
   if (event === "folder:up" || event === "folder:down") {
     const move = folderSiblingMove(snapshot, folder.id, event === "folder:up" ? "up" : "down");

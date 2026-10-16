@@ -1,5 +1,8 @@
 // signalbox: what the folder menus do: dialogs, confirmations, and the folder commands.
-import { folderDeleteMessage } from "@t3tools/client-runtime/state/signalboxFolders";
+import {
+  folderDeleteMessage,
+  ownerLevelName,
+} from "@t3tools/client-runtime/state/signalboxFolders";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -71,6 +74,7 @@ export function useFolderActions(input: {
   const deleteFolder = useAtomCommand(signalboxFolders.deleteFolder, QUIET);
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, QUIET);
   const setPhase = useAtomCommand(signalboxFolders.setPhase, QUIET);
+  const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, QUIET);
   const [editing, setEditing] = useState<InstructionsEditing | null>(null);
   const [editingPhases, setEditingPhases] = useState<PhasesEditing | null>(null);
 
@@ -138,6 +142,12 @@ export function useFolderActions(input: {
             ownerKind: owners.find((owner) => owner.id === folder.ownerId)?.kind ?? "personal",
           });
           return;
+        case "githubLend":
+          void run(
+            choice.lent ? "Couldn’t lend your GitHub" : "Couldn’t stop lending your GitHub",
+            setGitHubLend({ environmentId, input: { id: folder.id, lent: choice.lent } }),
+          );
+          return;
         case "instructions":
           setEditing({
             level: { _tag: "folder", folderId: folder.id },
@@ -169,6 +179,7 @@ export function useFolderActions(input: {
       requestCreateFolder,
       run,
       setPhase,
+      setGitHubLend,
       snapshot,
       updateFolder,
     ],
@@ -180,7 +191,7 @@ export function useFolderActions(input: {
       if (event === "top:instructions" && snapshot !== null) {
         setEditing({
           level: { _tag: "top" },
-          name: owner.name,
+          name: ownerLevelName(owner),
           instructions: snapshot.top.instructions ?? "",
         });
       }

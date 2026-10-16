@@ -4,6 +4,7 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironments } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
+import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 /** Hosted web receives only the one-time code; the selected environment verifies and stores tokens. */
 export function ProviderAuthCallbackCoordinator() {
@@ -38,7 +39,7 @@ export function ProviderAuthCallbackCoordinator() {
         toastManager.add({
           type: "error",
           title: "ChatGPT sign-in couldn't finish",
-          description: "Reconnect to the environment and try again.",
+          description: environmentCopy("Reconnect to the environment and try again."),
         }),
       )
       .finally(() => {

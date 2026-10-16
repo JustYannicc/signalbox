@@ -243,7 +243,7 @@ function getMenuActionDisabledReason({
 
   if (item.id === "commit") {
     if (!hasChanges) {
-      return "Worktree is clean. Make changes before committing.";
+      return "No changes to commit yet.";
     }
     return "Commit is currently unavailable.";
   }
@@ -262,7 +262,7 @@ function getMenuActionDisabledReason({
       return 'Add an "origin" remote before pushing.';
     }
     if (!isAhead) {
-      return "No local commits to push.";
+      return "No new commits to push.";
     }
     return "Push is currently unavailable.";
   }
@@ -274,7 +274,7 @@ function getMenuActionDisabledReason({
     return `Add an "origin" remote before creating a ${terminology.singular}.`;
   }
   if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
-    return `No local commits to include in a ${terminology.singular}.`;
+    return `No new commits to include in a ${terminology.singular}.`;
   }
   if (isBehind) {
     return `Branch is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;

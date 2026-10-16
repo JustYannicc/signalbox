@@ -12,7 +12,7 @@ function backingText(pool: AccountPool) {
   return pool.backing.mode === "managed"
     ? "Signalbox keeps its logins"
     : pool.backing.mode === "cloud"
-      ? "In Signalbox Cloud"
+      ? "In Signalbox"
       : `Logins in your CLIProxyAPI at ${new URL(pool.backing.url).host}`;
 }
 

@@ -1,4 +1,8 @@
-import { PROVIDER_DISPLAY_NAMES, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  EXTERNAL_RUN_SYSTEM_NAMES,
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
@@ -34,6 +38,9 @@ export type ServiceIdentity =
 export function serviceIdentity(service: string | undefined): ServiceIdentity | null {
   if (!service) return null;
   if (service === "signalbox") return { kind: "signalbox", name: "Signalbox" };
+  // `w.run(…, { on: "github-actions" })`: the step runs on the repository's CI.
+  if (service === "github-actions")
+    return { kind: "domain", domain: "github.com", name: EXTERNAL_RUN_SYSTEM_NAMES[service] };
   // Agent steps may name `claude`; the provider is `claudeAgent`.
   const provider = service === "claude" ? "claudeAgent" : service;
   const providerName = PROVIDER_NAMES.get(provider);

@@ -24,4 +24,5 @@ export const signalboxFoldersWsHandlers = {
   [SIGNALBOX_FOLDERS_WS_METHODS.setPhase]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: unavailable,
+  [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: unavailable,
 };
