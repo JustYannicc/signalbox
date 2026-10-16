@@ -36,7 +36,7 @@ export class NoteReader extends Context.Service<
   { readonly read: (request: ReadRequest) => Effect.Effect<Option.Option<NoteReading>> }
 >()("@signalbox/cloud/notes/NoteReader") {}
 
-/** Why a read ended without a reading, or what it read: span attributes only. */
+/** Why a read ended without a reading, or what it read. Misses are logged too: cloud exports no spans. */
 type Outcome =
   | "no-pool"
   | "no-model"
@@ -48,19 +48,25 @@ type Outcome =
   | "timeout"
   | NoteReading["_tag"];
 
+/** A read that ended without a reading for a reason other than the model's answer. */
+const missed = (value: Outcome, model?: string) =>
+  value === "offer" || value === "unclear"
+    ? Effect.void
+    : Effect.logWarning("a note read gave no reading", {
+        outcome: value,
+        ...(model === undefined ? {} : { model }),
+      });
+
 const readWith =
   (directory: PoolDirectory["Service"], modelsOf: (objectName: string) => PoolModelApi) =>
   (request: ReadRequest) =>
     Effect.gen(function* () {
       const { pool } = request;
       const outcome = (value: Outcome, model?: string) =>
-        Effect.as(
-          Effect.annotateCurrentSpan({
-            "note.read.outcome": value,
-            ...(model === undefined ? {} : { "note.read.model": model }),
-          }),
-          Option.none<NoteReading>(),
-        );
+        Effect.annotateCurrentSpan({
+          "note.read.outcome": value,
+          ...(model === undefined ? {} : { "note.read.model": model }),
+        }).pipe(Effect.andThen(missed(value, model)), Effect.as(Option.none<NoteReading>()));
       if (pool === null) return yield* outcome("no-pool");
       const served = yield* directory
         .forPool(pool.objectName)
@@ -109,9 +115,9 @@ const readWith =
       Effect.flatMap((read) =>
         Option.isSome(read)
           ? Effect.succeed(read.value)
-          : Effect.as(
-              Effect.annotateCurrentSpan("note.read.outcome", "timeout" satisfies Outcome),
-              Option.none<NoteReading>(),
+          : Effect.annotateCurrentSpan("note.read.outcome", "timeout" satisfies Outcome).pipe(
+              Effect.andThen(missed("timeout")),
+              Effect.as(Option.none<NoteReading>()),
             ),
       ),
       Effect.withSpan("NoteReader.read", {
