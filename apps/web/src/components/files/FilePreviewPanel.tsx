@@ -116,6 +116,7 @@ import {
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -1250,7 +1251,9 @@ export default function FilePreviewPanel({
     }
     return (
       <div className="p-4 text-sm text-muted-foreground">
-        {fileAccess.error ?? "This connection cannot read host files."}
+        {fileAccess.error
+          ? environmentCopy(fileAccess.error)
+          : "This connection cannot read host files."}
       </div>
     );
   }

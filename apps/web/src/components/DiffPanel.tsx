@@ -91,6 +91,7 @@ import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
+import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -1053,7 +1054,9 @@ export default function DiffPanel({
           <DiffPanelLoadingState label="Checking file access..." />
         ) : (
           <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-            {fileAccess.error ?? "This connection cannot read local diffs."}
+            {fileAccess.error
+              ? environmentCopy(fileAccess.error)
+              : "This connection cannot read local diffs."}
           </div>
         )
       ) : (

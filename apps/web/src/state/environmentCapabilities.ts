@@ -88,6 +88,11 @@ export function useEnvironmentUiState(): EnvironmentUiState {
   return useAtomValue(environmentUiStateAtom);
 }
 
+/** `useShowsEnvironmentUi` outside React, for toasts and thrown errors. */
+export function readShowsEnvironmentUi(): boolean {
+  return appAtomRegistry.get(environmentUiStateAtom) === "shown";
+}
+
 export function useShowsEnvironmentUi(): boolean {
   return useEnvironmentUiState() === "shown";
 }

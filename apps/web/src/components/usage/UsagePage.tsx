@@ -101,6 +101,7 @@ import {
   type UsagePagePreferences,
 } from "./usagePagePreferences";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
@@ -530,9 +531,11 @@ export function UsagePage() {
           <WorkspacePageContainer width="wide">
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                {environments.length === 0
-                  ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
-                  : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
+                {environmentCopy(
+                  environments.length === 0
+                    ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
+                    : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`,
+                )}
               </p>
             ) : showingLimits ? (
               <UsageLimitsSection

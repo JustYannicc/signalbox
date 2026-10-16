@@ -258,6 +258,7 @@ import {
 import type { Project } from "../types";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
+import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -1679,8 +1680,10 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Environment unavailable",
-            description: `${environment?.label ?? "The selected environment"} is not connected.`,
+            title: environmentCopy("Environment unavailable"),
+            description: environmentCopy(
+              `${environment?.label ?? "The selected environment"} is not connected.`,
+            ),
           }),
         );
         return;
@@ -2435,8 +2438,10 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Environment unavailable",
-            description: `${environment?.label ?? "The selected environment"} is not connected.`,
+            title: environmentCopy("Environment unavailable"),
+            description: environmentCopy(
+              `${environment?.label ?? "The selected environment"} is not connected.`,
+            ),
           }),
         );
         return;
@@ -2632,8 +2637,10 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Environment unavailable",
-          description: `${browseEnvironment?.label ?? "The selected environment"} is not connected.`,
+          title: environmentCopy("Environment unavailable"),
+          description: environmentCopy(
+            `${browseEnvironment?.label ?? "The selected environment"} is not connected.`,
+          ),
         }),
       );
       return;
