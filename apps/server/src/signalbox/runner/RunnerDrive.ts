@@ -7,6 +7,7 @@ import {
   type DriveRemote,
   type SkippedFolder,
 } from "@signalbox/runner-protocol/DriveProtocol";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,7 @@ import { CACHES_LINE, makeExcludes } from "./RunnerExcludes.ts";
 import { makeRunnerInstructions, type RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { DependencyTree, DependencyTreesError } from "./RunnerDependencies.ts";
 import { makeMachineState, type OutsideFolder } from "./RunnerMachineState.ts";
+import { mergedPullRequestOf } from "./mergedPullRequest.ts";
 import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
 import { commitSummary, parseNameStatus } from "./commitSummary.ts";
 import type { SecretMask } from "./secretMask.ts";
@@ -54,7 +56,12 @@ import type { SecretMask } from "./secretMask.ts";
  * there: the user pushes it or opens a pull request, and merging that on the
  * remote is what lands the work. Auto-saves never leave the drive.
  * `saveBranch` does the same mid-turn, so the thread's agent can publish its
- * work before the turn ends (`BranchProtocol.ts`).
+ * work before the turn ends (`BranchProtocol.ts`). Once the thread's pull
+ * request merged, `prepare` merges the remote's default branch into the
+ * thread's branch before the turn (#495), so the next pull request carries
+ * only new work. A merge that conflicts is undone there and reported;
+ * `takeInMain` redoes it once the agent is there to resolve it, and
+ * `continueAfterResolution` or `abandonMerge` carries on from there.
  *
  * `prepare` also mounts the drive's shortcuts (`RunnerShortcuts.ts`) and
  * writes the instructions they bring (`RunnerInstructions.ts`), answering
@@ -101,12 +108,22 @@ export type SavedBranch =
     }
   | { readonly _tag: "not_saved"; readonly reason: string };
 
+/** A merged pull request's main that conflicts with the thread's branch, not taken in yet. */
+export interface MainConflict {
+  readonly pullRequest: number;
+  /** The remote's default branch. */
+  readonly branch: string;
+  readonly files: ReadonlyArray<string>;
+}
+
 /** What a turn start left in the working directory. */
 export interface PreparedDrive {
   /** The instructions the shortcuts bring; changes when they do (see `RunnerInstructions.ts`). */
   readonly instructions: string;
-  /** What the thread should hear about its shortcuts. */
+  /** What the thread should hear about its shortcuts, and about taking in a merged pull request's main. */
   readonly notices: ReadonlyArray<string>;
+  /** For the agent to take in (`takeInMain`) and resolve before the turn. */
+  readonly mainConflict?: MainConflict;
 }
 
 export interface RunnerDrive {
@@ -116,12 +133,15 @@ export interface RunnerDrive {
    * turn's `remoteToken`, then mounts its shortcuts. Everything committed in
    * the checkout until the next turn start is by `author`, `DRIVE_COMMIT_AUTHOR`
    * when not given. `folders` is the `AGENTS.md` of the thread's chain, top
-   * level first. Fails when the instructions are too big to load.
+   * level first. `pullRequests` are the thread's links: once its own merged,
+   * the remote's default branch is merged into the thread's branch. Fails
+   * when the instructions are too big to load.
    */
   readonly prepare: (
     remoteToken: string | null,
     author?: CommitAuthor,
     folders?: ReadonlyArray<FolderInstructions>,
+    pullRequests?: ReadonlyArray<ThreadPullRequestLink>,
   ) => Effect.Effect<PreparedDrive, RunnerDriveError | RunnerInstructionsError>;
   /** Starts an auto-save, or queues one behind the running one. Never fails. */
   readonly autosave: Effect.Effect<void>;
@@ -149,6 +169,11 @@ export interface RunnerDrive {
     RunnerDriveError
   >;
   readonly continueAfterResolution: Effect.Effect<DriveOutcome, RunnerDriveError>;
+  /**
+   * Merges in the main `prepare` reported as `mainConflict`: `saved` once it
+   * is in, or the conflict for the agent to resolve.
+   */
+  readonly takeInMain: Effect.Effect<DriveOutcome, RunnerDriveError>;
   readonly abandonMerge: Effect.Effect<DriveOutcome, RunnerDriveError>;
   /**
    * Commits the worktree's changes with `message`, or a description of the
@@ -204,6 +229,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   let turnStart: string | null = null;
   /** Files the last merge left conflicted. */
   let conflicted: ReadonlyArray<string> = [];
+  /** The main a turn start reported conflicting, and its merge message, until taken in or dropped. */
+  let syncing: { readonly main: string; readonly message: string } | null = null;
   /** The remote the drive is backed by, once read; a drive's remote never changes. */
   let remote: DriveRemote | null | undefined = undefined;
   /** Whether a turn start opened the drive here: only then is there anything to save. */
@@ -365,6 +392,21 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
 
   const flush = Effect.suspend(() => (saving === null ? Effect.void : Deferred.await(saving)));
 
+  /** Commits everything in the worktree, when anything changed. */
+  /** Merges `ref` in, leaving a conflict in the worktree; any other failure is undone. */
+  const mergeIn = (ref: string, message: string, options: ReadonlyArray<string> = []) =>
+    Effect.gen(function* () {
+      const merge = yield* git.exec(["merge", "--no-edit", ...options, "-m", message, ref]);
+      if (merge.code === 0) return { _tag: "merged" } as const;
+      const files = git.lines(yield* git.run(["diff", "--name-only", "--diff-filter=U"]));
+      if (files.length > 0) {
+        conflicted = files;
+        return { _tag: "conflict", files } as const;
+      }
+      yield* git.exec(["merge", "--abort"]);
+      return { _tag: "failed", reason: merge.stderr.trim() || "git merge failed" } as const;
+    });
+
   /** Merges `main` in, saves the branch and fast-forwards `main` to it, until `main` holds still. */
   const land = Effect.gen(function* () {
     for (let attempt = 0; attempt < RECONCILE_ATTEMPTS; attempt++) {
@@ -372,25 +414,12 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       const before = yield* git.resolve("HEAD");
       if (before === null) return { _tag: "nothing_saved" } as const;
       if (main !== null && !(yield* git.isAncestor(main, before))) {
-        const merge = yield* git.exec([
-          "merge",
-          "--no-edit",
+        const merged = yield* mergeIn("refs/drive/main", DRIVE_MERGE_MESSAGE, [
           "--allow-unrelated-histories",
-          "-m",
-          DRIVE_MERGE_MESSAGE,
-          "refs/drive/main",
         ]);
-        if (merge.code !== 0) {
-          const files = git.lines(yield* git.run(["diff", "--name-only", "--diff-filter=U"]));
-          if (files.length > 0) {
-            conflicted = files;
-            return { _tag: "conflict", files } as const;
-          }
-          yield* git.exec(["merge", "--abort"]);
-          return {
-            _tag: "not_landed",
-            reason: `Merging main failed: ${merge.stderr.trim()}`,
-          } as const;
+        if (merged._tag === "conflict") return merged;
+        if (merged._tag === "failed") {
+          return { _tag: "not_landed", reason: `Merging main failed: ${merged.reason}` } as const;
         }
       }
       const head = (yield* git.resolve("HEAD"))!;
@@ -434,12 +463,45 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     return [];
   });
 
+  /**
+   * A remote-backed drive's merge is a turn start's (#495), concluded: the
+   * branch is saved, and the turn's checkpoint starts after the merge.
+   */
+  const saveSynced = Effect.gen(function* () {
+    const head = yield* git.resolve("HEAD");
+    const main = syncing?.main ?? null;
+    syncing = null;
+    if (head === null) return { _tag: "nothing_saved" } as const;
+    turnStart = head;
+    if (main !== null && !(yield* git.isAncestor(main, head))) {
+      return { _tag: "not_landed", reason: "the agent dropped the merge" } as const;
+    }
+    // The turn's end saves it again if the drive refuses it now.
+    const refused = yield* drive.saveBranch(head);
+    if (refused !== null) {
+      yield* Effect.logWarning("the drive refused the merged branch", { refused });
+    }
+    return { _tag: "saved", head } as const;
+  });
+
   const resolveAndLand = Effect.gen(function* () {
     if (yield* mergeInProgress) {
       const files = yield* concludeMerge;
       if (files.length > 0) return { _tag: "conflict", files } as DriveOutcome;
     }
-    return yield* land;
+    // Only a drive without a remote lands on its own main.
+    return syncing === null && (remote === null || remote === undefined)
+      ? yield* land
+      : yield* saveSynced;
+  });
+
+  const takeInMain = Effect.gen(function* () {
+    if (syncing === null) return { _tag: "not_landed", reason: "Nothing to take in." } as const;
+    const merged = yield* mergeIn(syncing.main, syncing.message, ["--no-verify"]);
+    if (merged._tag === "merged") return yield* saveSynced;
+    if (merged._tag === "conflict") return merged;
+    syncing = null;
+    return { _tag: "not_landed", reason: merged.reason } as const;
   });
 
   /** Keeps dependency trees off the branch, whatever the repository's own ignore files say. */
@@ -541,10 +603,36 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       });
     });
 
+  /**
+   * Merges the remote's default branch at `main`, as just fetched, into the
+   * thread's branch after the thread's pull request `number` merged there
+   * (#495). Uncommitted work is committed first, so the merge never touches
+   * it. A conflict is undone and kept in `syncing`: only the agent can resolve
+   * it, once its session runs. A merge or rebase the agent left in progress
+   * stays as it is.
+   */
+  const syncMain = (number: number, from: DriveRemote, main: string) =>
+    Effect.gen(function* () {
+      const head = yield* git.resolve("HEAD");
+      if (head === null || (yield* git.isAncestor(main, head))) return null;
+      if ((yield* mergeInProgress) || (yield* rebasing)) return null;
+      yield* commitAll();
+      const message = `Merge ${from.defaultBranch} after #${number} merged`;
+      const merged = yield* mergeIn(main, message, ["--no-verify"]);
+      if (merged._tag === "merged") yield* saveSynced;
+      if (merged._tag === "conflict") {
+        yield* git.run(["merge", "--abort"]);
+        conflicted = [];
+        syncing = { main, message };
+      }
+      return merged;
+    });
+
   const prepare: RunnerDrive["prepare"] = (
     remoteToken,
     author = DRIVE_COMMIT_AUTHOR,
     folders = [],
+    pullRequests = [],
   ) =>
     exclusive(
       Effect.gen(function* () {
@@ -554,6 +642,10 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         for (const [key, value] of configFor(author)) yield* git.run(["config", key, value]);
         yield* excludeCaches;
         const localThread = existed ? yield* git.resolve("refs/drive/thread") : null;
+        // A merge a turn start reported belongs to that turn alone.
+        syncing = null;
+        /** The remote's default branch, when this turn start fetched it: only then is it current. */
+        let fetchedMain: string | null = null;
         // A drive backed by a remote brings `main` up to it before opening pins the branch's base.
         // Unknown until read once; a drive with none never gets one.
         if (remote !== null && remoteToken !== null) {
@@ -575,6 +667,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           }
           yield* drive.adopt(current);
           if (fetched !== null) yield* syncRemote(fetched);
+          if (fetched?._tag === "fetched") fetchedMain = fetched.head;
         }
         const state = yield* drive.open;
         const notices: Array<string> = [];
@@ -612,6 +705,32 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
             ),
           );
         }
+        let mainConflict: MainConflict | undefined;
+        const merged =
+          fetchedMain === null ||
+          remote === null ||
+          remote === undefined ||
+          input.branch === undefined
+            ? null
+            : mergedPullRequestOf(pullRequests, {
+                branch: input.branch,
+                repository: remote.repository,
+              });
+        if (merged !== null && fetchedMain !== null && remote !== null && remote !== undefined) {
+          const main = remote.defaultBranch;
+          const outcome = yield* syncMain(merged, remote, fetchedMain);
+          if (outcome?._tag === "merged") {
+            notices.push(
+              `Pull request #${merged} merged, so this thread took in the latest ${main} first.`,
+            );
+          } else if (outcome?._tag === "failed") {
+            notices.push(
+              `Pull request #${merged} merged, but taking in the latest ${main} failed, so this turn works on the branch as it was: ${outcome.reason}`,
+            );
+          } else if (outcome?._tag === "conflict") {
+            mainConflict = { pullRequest: merged, branch: main, files: outcome.files };
+          }
+        }
         turnStart = yield* git.resolve("HEAD");
         prepared = true;
         const mounts = yield* shortcuts.mount(remoteToken);
@@ -619,6 +738,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         return {
           instructions: yield* instructions.compose(mounts.mounted, folders),
           notices: [...notices, ...mounts.notices],
+          ...(mainConflict === undefined ? {} : { mainConflict }),
         } satisfies PreparedDrive;
       }),
     );
@@ -702,6 +822,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     Effect.gen(function* () {
       if (yield* mergeInProgress) yield* git.run(["merge", "--abort"]);
       conflicted = [];
+      syncing = null;
       const head = yield* git.resolve("HEAD");
       const refused = head === null ? null : yield* drive.saveBranch(head);
       return {
@@ -783,6 +904,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           ),
     finishTurn,
     continueAfterResolution: exclusive(resolveAndLand),
+    takeInMain: exclusive(takeInMain),
     abandonMerge,
     saveBranch,
     published: (head) =>

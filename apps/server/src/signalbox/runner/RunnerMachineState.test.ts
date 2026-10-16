@@ -6,15 +6,19 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 
 import { type FakeDrive, git, makeFakeDrive, read, scopedTest, write } from "./driveTesting.ts";
 import type { DependencyTree } from "./RunnerDependencies.ts";
 import { makeRunnerDrive } from "./RunnerDrive.ts";
+import { CODEX_ROLLOUT_INDEXES, outsideFolders } from "./RunnerMachineFolders.ts";
+import type { OutsideFolder } from "./RunnerMachineState.ts";
+import { type MachineLayout, machineLayout } from "./RunnerModelAccess.ts";
 
 /**
  * A thread's machine: its checkout, and its home and harness folders beside
- * it, as `RunnerHost.ts` lays them out. `trees` stands in for
+ * it, as `RunnerHost.ts` lays them out and keeps them. `trees` stands in for
  * `RunnerDependencies.ts`: the dependency trees it would rebuild.
  */
 const threadMachine = (
@@ -22,34 +26,31 @@ const threadMachine = (
   root: string,
   name: string,
   threadId: string,
-  trees: () => ReadonlyArray<DependencyTree> = () => [],
+  {
+    trees = () => [],
+    outside = outsideFolders,
+  }: {
+    readonly trees?: () => ReadonlyArray<DependencyTree>;
+    readonly outside?: (layout: MachineLayout) => ReadonlyArray<OutsideFolder>;
+  } = {},
 ) => {
   const base = NodePath.join(root, name);
   const cwd = NodePath.join(base, "workspaces", threadId, "drive");
   const machineRoot = NodePath.join(base, "machines", threadId);
-  const home = NodePath.join(machineRoot, "home");
-  const claude = NodePath.join(machineRoot, "claude");
-  for (const dir of [home, claude]) NodeFS.mkdirSync(dir, { recursive: true });
-  // What the Runner itself writes at start, on every machine.
-  write(claude, "settings.json", `{"apiKeyHelper":"cat ${name}"}`);
-  return makeRunnerDrive({
-    cwd,
-    client: drive.client(threadId),
-    branch: threadRemoteBranch(threadId),
-    machine: {
-      outside: [
-        { name: "home", label: "~", dir: home, exclude: [], caches: [".cache"] },
-        {
-          name: "claude",
-          label: "~/.claude",
-          dir: claude,
-          exclude: ["settings.json", "projects"],
-          caches: [],
-        },
-      ],
-      trees: Effect.sync(trees),
-    },
-  }).pipe(Effect.map((runner) => ({ runner, cwd, home, claude })));
+  return Effect.gen(function* () {
+    const layout = machineLayout(yield* Path.Path, machineRoot);
+    const { home, claudeHome: claude, codexHome: codex } = layout;
+    for (const dir of [home, claude, codex]) NodeFS.mkdirSync(dir, { recursive: true });
+    // What the Runner itself writes at start, on every machine.
+    write(claude, "settings.json", `{"apiKeyHelper":"cat ${name}"}`);
+    const runner = yield* makeRunnerDrive({
+      cwd,
+      client: drive.client(threadId),
+      branch: threadRemoteBranch(threadId),
+      machine: { outside: outside(layout), trees: Effect.sync(trees) },
+    });
+    return { runner, cwd, home, claude, codex };
+  });
 };
 
 const exists = (dir: string, file: string) => NodeFS.existsSync(NodePath.join(dir, file));
@@ -231,13 +232,61 @@ describe("RunnerMachineState", () => {
   );
 
   it.effect(
+    "brings Codex's own state back, but not its indexes of the rollouts the store restores",
+    () =>
+      run((root) =>
+        Effect.gen(function* () {
+          const drive = makeFakeDrive(root);
+          // A light machine that saved before the indexes were left out (#644).
+          const savedBefore = (layout: MachineLayout) =>
+            outsideFolders(layout).map((folder) =>
+              folder.name === "codex"
+                ? {
+                    ...folder,
+                    exclude: folder.exclude.filter((file) => !CODEX_ROLLOUT_INDEXES.includes(file)),
+                  }
+                : folder,
+            );
+          const first = yield* threadMachine(drive, root, "light", "t1", { outside: savedBefore });
+          yield* first.runner.prepare("remote-token");
+          const rollout = "sessions/2026/10/16/rollout-2026-10-16T16-55-01-thread-1.jsonl";
+          write(first.codex, rollout, "{}\n");
+          // Codex's indexes name each rollout by its absolute path on this machine: on one
+          // where that path isn't, `thread/resume` finds no rollout.
+          for (const file of CODEX_ROLLOUT_INDEXES)
+            write(first.codex, file, NodePath.join(first.codex, rollout));
+          write(first.codex, "goals_1.sqlite", "goal");
+          yield* first.runner.autosave;
+          yield* first.runner.flush;
+          expect(filesOf(drive.store, drive.refs("t1").machine!)).toContain(
+            "outside/codex/state_5.sqlite",
+          );
+
+          const second = yield* threadMachine(drive, root, "heavy", "t1");
+          yield* second.runner.prepare("remote-token");
+          expect(read(second.codex, "goals_1.sqlite")).toBe("goal");
+          for (const file of CODEX_ROLLOUT_INDEXES) expect(exists(second.codex, file)).toBe(false);
+
+          // Codex rebuilds them here; the next save leaves them out.
+          for (const file of CODEX_ROLLOUT_INDEXES) write(second.codex, file, "rebuilt");
+          yield* second.runner.autosave;
+          yield* second.runner.flush;
+          expect(filesOf(drive.store, drive.refs("t1").machine!)).toEqual([
+            "dependencies.json",
+            "outside/codex/goals_1.sqlite",
+          ]);
+        }),
+      ),
+  );
+
+  it.effect(
     "leaves dependency trees to their recipe, keeping only files edited after the install",
     () =>
       run((root) =>
         Effect.gen(function* () {
           const drive = makeFakeDrive(root);
           let trees: ReadonlyArray<DependencyTree> = [];
-          const first = yield* threadMachine(drive, root, "vm-1", "t1", () => trees);
+          const first = yield* threadMachine(drive, root, "vm-1", "t1", { trees: () => trees });
           yield* first.runner.prepare("remote-token");
           const recipe = "pnpm install --frozen-lockfile, from pnpm-lock.yaml";
           trees = [installedTree(first.cwd, "node_modules", recipe)];
@@ -272,7 +321,7 @@ describe("RunnerMachineState", () => {
           ]);
 
           // A new machine: the edit waits until the recipe rebuilt the tree at the same key.
-          const second = yield* threadMachine(drive, root, "vm-2", "t1", () => trees);
+          const second = yield* threadMachine(drive, root, "vm-2", "t1", { trees: () => trees });
           trees = [];
           yield* second.runner.prepare("remote-token");
           expect(exists(second.cwd, "node_modules/pkg/patched.js")).toBe(false);
@@ -282,7 +331,7 @@ describe("RunnerMachineState", () => {
           expect(read(second.cwd, "node_modules/pkg/patched.js")).toBe("patched by the agent\n");
 
           // Rebuilt from another lockfile, the edit no longer applies.
-          const third = yield* threadMachine(drive, root, "vm-3", "t1", () => trees);
+          const third = yield* threadMachine(drive, root, "vm-3", "t1", { trees: () => trees });
           yield* third.runner.prepare("remote-token");
           write(third.cwd, "node_modules/pkg/patched.js", "original\n");
           trees = [

@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -17,13 +18,15 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  * A thread object's engine answers, given a way to run engine effects. The Durable
  * Object runs them on its own engine; tests run the same code in memory.
  * `afterChange` runs after anything that may have left work for the object
- * (a turn to drive, a summary to deliver).
+ * (a turn to drive, a summary to deliver); `wakeAt` asks for the alarm by an
+ * epoch-ms time (a share that ends on its own).
  */
 export const makeThreadObjectApi = (
   run: <A, E>(
     effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing>,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
+  wakeAt: (at: number) => Promise<void>,
 ): Omit<
   ThreadObjectApi,
   "previews" | "previewLink" | "browserWatch" | "browserInput" | "browserTrail" | "browserStep"
@@ -143,6 +146,17 @@ export const makeThreadObjectApi = (
         ThreadBrowsing.use((browsing) =>
           browsing.dispatch(actor, browsingWire.member.decode(by), decoded),
         ).pipe(
+          // The alarm ends a share on time, even with nobody connected.
+          Effect.tap(({ tab }) => {
+            const until = tab?.sharing?.until;
+            if (decoded._tag !== "Share" || until == null) return Effect.void;
+            // The share already landed; an alarm that failed to arm is re-armed on the next wake.
+            return Effect.tryPromise(() =>
+              wakeAt(DateTime.toEpochMillis(DateTime.makeUnsafe(until))),
+            ).pipe(
+              Effect.catch((cause) => Effect.logError("arming a share's end failed", { cause })),
+            );
+          }),
           Effect.map(browsingWire.dispatched.encode),
           // The browsing log has no command ids; the reason is what the client shows.
           Effect.catchTags({

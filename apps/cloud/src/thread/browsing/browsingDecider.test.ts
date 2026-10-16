@@ -1,4 +1,4 @@
-import { applyBrowsingEvent } from "@t3tools/client-runtime/browsing";
+import { applyBrowsingEvent, isSharedAt, nextSharingEnd } from "@t3tools/client-runtime/browsing";
 import {
   BROWSING_MAX_TABS,
   type BrowsingCommand,
@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts/signalboxBrowsing";
 import { describe, expect, it } from "@effect/vitest";
 
-import { decideBrowsing } from "./browsingDecider.ts";
+import { decideBrowsing, expireBrowsingSharing } from "./browsingDecider.ts";
 
 const desktop: BrowsingMember = { _tag: "Device", userId: "u1", deviceId: "desktop" };
 const at = "2026-10-16T10:00:00.000Z";
@@ -231,5 +231,99 @@ describe("owners", () => {
       decision._tag === "Events" &&
         decision.events.map((event) => event._tag === "TabClosed" && event.tabId),
     ).toEqual(["a"]);
+  });
+});
+
+describe("sharing a tab", () => {
+  const as = (record: BrowsingRecord, by: BrowsingMember, command: BrowsingCommand) =>
+    decideBrowsing(record, command, { by, at, sequence: 10 });
+  const share = (days: number | null): Extract<BrowsingCommand, { _tag: "Share" }> => ({
+    _tag: "Share",
+    tabId: "a",
+    audience: "Thread",
+    days,
+  });
+
+  it("is private until shared, then shared until the end it was given", () => {
+    const { record } = run([open("a", { url: "https://example.com/" })]);
+    expect(record.tabs[0]?.sharing).toBeUndefined();
+    const shared = run([share(3)], record).record;
+    expect(shared.tabs[0]?.sharing).toEqual({
+      audience: "Thread",
+      until: "2026-10-19T10:00:00.000Z",
+      since: at,
+      by: desktop,
+    });
+    expect(nextSharingEnd(shared)).toBe(Date.parse("2026-10-19T10:00:00.000Z"));
+  });
+
+  it("shares until stopped, and stopping makes it private again", () => {
+    const { record } = run([open("a"), share(null), { _tag: "Unshare", tabId: "a" }]);
+    expect(record.tabs[0]?.sharing).toBeUndefined();
+    const forNow = run([open("a"), share(null)]).record;
+    expect(forNow.tabs[0]?.sharing?.until).toBeNull();
+    expect(nextSharingEnd(forNow)).toBeNull();
+  });
+
+  it("keeps when it started across a new end, and changes nothing when the end is the same", () => {
+    const { record, decisions } = run([open("a"), share(1), share(1)]);
+    expect(decisions[2]).toEqual({ _tag: "Events", events: [] });
+    const later = decideBrowsing(record, share(7), {
+      by: phone,
+      at: "2026-10-17T09:00:00.000Z",
+      sequence: 9,
+    });
+    const event = later._tag === "Events" ? later.events[0] : undefined;
+    expect(event?._tag === "TabShared" && event.sharing).toMatchObject({
+      since: at,
+      until: "2026-10-24T09:00:00.000Z",
+    });
+  });
+
+  it("starts a new share when the old one's end has passed", () => {
+    const { record } = run([open("a"), share(1)]);
+    const again = decideBrowsing(record, share(3), {
+      by: desktop,
+      at: "2026-10-18T10:00:00.000Z",
+      sequence: 9,
+    });
+    const event = again._tag === "Events" ? again.events[0] : undefined;
+    expect(event?._tag === "TabShared" && event.sharing.since).toBe("2026-10-18T10:00:00.000Z");
+  });
+
+  it("only lets the owner share or stop sharing", () => {
+    const { record } = run([open("a"), share(1)]);
+    const refused = { _tag: "Rejected", reason: "Only the tab's owner can change it." };
+    expect(as(record, stranger, share(3))).toEqual(refused);
+    expect(as(record, agent, { _tag: "Unshare", tabId: "a" })).toEqual(refused);
+  });
+
+  it("ends a share when its time is up, naming whoever shared it", () => {
+    const { record } = run([open("a"), open("b"), share(1)]);
+    const sharedB = run([{ ...share(3), tabId: "b" }], record).record;
+    expect(expireBrowsingSharing(sharedB, { at: "2026-10-17T09:59:59.999Z", sequence: 9 })).toEqual(
+      [],
+    );
+    const expired = expireBrowsingSharing(sharedB, { at: "2026-10-17T10:00:00.000Z", sequence: 9 });
+    expect(expired).toEqual([
+      {
+        _tag: "TabUnshared",
+        sequence: 10,
+        at: "2026-10-17T10:00:00.000Z",
+        by: desktop,
+        tabId: "a",
+        reason: "Expired",
+      },
+    ]);
+    const after = expired.reduce(applyBrowsingEvent, sharedB);
+    expect(after.tabs.map((tab) => tab.sharing === undefined)).toEqual([true, false]);
+    expect(nextSharingEnd(after)).toBe(Date.parse("2026-10-19T10:00:00.000Z"));
+  });
+
+  it("counts a share as over the moment its end passes, before the thread records it", () => {
+    const { record } = run([open("a"), share(1)]);
+    const tab = record.tabs[0]!;
+    expect(isSharedAt(tab, Date.parse("2026-10-17T09:00:00.000Z"))).toBe(true);
+    expect(isSharedAt(tab, Date.parse("2026-10-17T10:00:00.000Z"))).toBe(false);
   });
 });

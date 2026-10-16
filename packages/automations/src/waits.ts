@@ -230,6 +230,7 @@ export const makeWaits = (deps: {
       readonly threadId: string;
       readonly url: string;
       readonly note?: string | undefined;
+      readonly askBecause?: string | undefined;
     },
     access: WaitAccess<E>,
   ) =>
@@ -259,11 +260,16 @@ export const makeWaits = (deps: {
       if (waiting) return { waitId: waiting, alreadyRequested: true };
       const run = yield* deps.start({
         automationId: "builtin:merge-gate",
-        input: { threadId: request.threadId, url: request.url, note: request.note },
+        input: {
+          threadId: request.threadId,
+          url: request.url,
+          note: request.note,
+          askBecause: request.askBecause,
+        },
         attach: {
           threadId: ThreadId.make(request.threadId),
           key,
-          label: `Waiting for an OK to merge #${linked.number}`,
+          label: `Merging #${linked.number}`,
         },
         ...access,
       });

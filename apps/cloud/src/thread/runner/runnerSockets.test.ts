@@ -120,6 +120,32 @@ const command = <T extends object>(type: string, fields: T) => ({
 });
 
 describe("runnerSockets", () => {
+  it.effect("holds a waiting turn back while its pull requests are being read (#495)", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const plan = yield* runner.reconcile;
+        if (plan.ensure === null) throw new Error("expected a machine request");
+        yield* runner.ensured(plan.ensure.generation);
+        const sockets: Array<WebSocket> = [];
+        let holds = true;
+        const host = yield* hostFor(runner, sockets, () => holds);
+        const socket = fakeSocket();
+        sockets.push(socket.socket);
+        yield* say(host, socket, {
+          ...hello(plan.ensure.generation, plan.ensure.token),
+          takenRunIds: [],
+        });
+        expect(socket.sent.map((message) => message.type)).toEqual(["welcome"]);
+
+        // The reads are in: the next hand-out gives the turn.
+        holds = false;
+        yield* Effect.promise(() => pushRunnerWork(host));
+        expect(socket.sent.map((message) => message.type)).toEqual(["welcome", "turn.start"]);
+      }),
+    ),
+  );
+
   it.effect("stops a running turn on a Runner that reconnected while it ran", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {

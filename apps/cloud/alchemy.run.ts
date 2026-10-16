@@ -129,6 +129,9 @@ function workerEnv(target: CloudStage) {
       OPENAI_API_KEY: yield* optionalSecret("OPENAI_API_KEY"),
       // Optional: the person's browser on Kernel (`src/browser/`); unset, machines browse headless.
       KERNEL_API_KEY: yield* optionalSecret("KERNEL_API_KEY"),
+      // Optional: agents' sign-ins from 1Password through Executor's login service (`src/signIn/`).
+      EXECUTOR_LOGIN_SERVICE_URL: yield* optional("EXECUTOR_LOGIN_SERVICE_URL"),
+      EXECUTOR_LOGIN_SERVICE_TOKEN: yield* optionalSecret("EXECUTOR_LOGIN_SERVICE_TOKEN"),
       // Optional: pushes to phones (`src/push/`).
       APNS_TEAM_ID: yield* optionalSecret("APNS_TEAM_ID"),
       APNS_KEY_ID: yield* optionalSecret("APNS_KEY_ID"),

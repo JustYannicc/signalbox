@@ -4,6 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { browsingTabHost, browsingTabLabel, isOwnedBy } from "@t3tools/client-runtime/browsing";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { BrowsingSharing } from "@t3tools/contracts/signalboxBrowsing";
 import { promptLinkDeepLink } from "@t3tools/shared/promptLinks";
 import { memo } from "react";
 
@@ -19,6 +20,7 @@ import {
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
+import { BrowsingShareMenu } from "./BrowsingShareMenu";
 import { shownBrowsingTabId } from "./browsingPanel";
 import { dispatchBrowsingCommand, threadBrowsingStateAtom } from "./threadBrowsingSync";
 
@@ -27,6 +29,7 @@ import { dispatchBrowsingCommand, threadBrowsingStateAtom } from "./threadBrowsi
  * the tabs the thread keeps, which one every device shows, and the way into
  * an app that loads them. Picking a tab switches it on every device. An
  * agent's tabs run in its own cloud browser; they list here, marked as its.
+ * Your own tabs can be shared with the thread from here.
  */
 export function ThreadBrowsingWebView({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const state = useAtomValue(threadBrowsingStateAtom(scopedThreadKey(threadRef)));
@@ -60,6 +63,7 @@ export function ThreadBrowsingWebView({ threadRef }: { readonly threadRef: Scope
                 title={tab.title}
                 agent={tab.owner._tag === "Agent"}
                 local={isOwnedBy(tab, state?.you ?? null)}
+                sharing={tab.sharing}
                 active={tab.id === activeTabId}
               />
             ))}
@@ -85,8 +89,10 @@ const BrowsingTabRow = memo(function BrowsingTabRow(props: {
   /** This person drives it, so it has a page on their devices and a tab in the panel. */
   readonly local: boolean;
   readonly active: boolean;
+  /** Same reference while only the position changes, so the memo holds. */
+  readonly sharing: BrowsingSharing | undefined;
 }) {
-  const { threadRef, tabId, url, title, agent, local, active } = props;
+  const { threadRef, tabId, url, title, agent, local, active, sharing } = props;
   const label = browsingTabLabel({ url, title });
   const host = browsingTabHost(url) ?? url ?? "New tab";
   const activate = () => void dispatchBrowsingCommand(threadRef, { _tag: "Activate", tabId });
@@ -106,7 +112,7 @@ const BrowsingTabRow = memo(function BrowsingTabRow(props: {
     }
     setActivePreviewTab(threadRef, tabId);
   };
-  return (
+  const row = (
     <DiscoveryListRow
       aria-current={active ? "true" : undefined}
       icon={
@@ -136,5 +142,13 @@ const BrowsingTabRow = memo(function BrowsingTabRow(props: {
       }
       onClick={show}
     />
+  );
+  if (!local) return row;
+  // Beside the row, not in it: the row is itself a button.
+  return (
+    <div className="flex items-center pe-3">
+      <div className="min-w-0 flex-1">{row}</div>
+      <BrowsingShareMenu threadRef={threadRef} tabId={tabId} sharing={sharing} />
+    </div>
   );
 });

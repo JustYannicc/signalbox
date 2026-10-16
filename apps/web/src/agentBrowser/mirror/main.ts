@@ -3,6 +3,8 @@
  * desktop and mobile clients. It replays the agent's tab from rrweb events into
  * a frame that runs no scripts, scaled to fit, and while the host makes it
  * interactive it turns the person's input into the agent browser's input.
+ * While only following, a click on a link asks the host for your own copy of
+ * it (#597); the agent's tab never moves.
  * The bridge messages are `AgentBrowserMirrorHostMessage` and
  * `AgentBrowserMirrorPageMessage` in client-runtime.
  */
@@ -51,6 +53,7 @@ let replayer: Replayer | null = null;
 let page: Size | null = null;
 let fit: Fit = { scale: 1, left: 0, top: 0 };
 let interactive = false;
+let copyLinks = false;
 let lastActivityAt = Number.NEGATIVE_INFINITY;
 
 function post(message: AgentBrowserMirrorPageMessage) {
@@ -156,6 +159,12 @@ function receive(raw: unknown) {
       document.body.classList.toggle("interactive", interactive);
       keyboard.disabled = !interactive;
       if (!interactive) keyboard.blur();
+      surface.style.cursor = "";
+      return;
+    case "copyLinks":
+      copyLinks = typed.on === true;
+      document.body.classList.toggle("copy-links", copyLinks);
+      if (!copyLinks) surface.style.cursor = "";
       return;
     case "reset":
       reset();
@@ -212,6 +221,45 @@ function isEditableAt(x: number, y: number): boolean {
   return (element as HTMLElement).isContentEditable === true;
 }
 
+/** The web address of the link under a point of the frame, or null. */
+function linkAt(clientX: number, clientY: number): string | null {
+  if (page === null) return null;
+  const point = toPagePoint(clientX, clientY, fit, page, false);
+  if (point === null) return null;
+  // rrweb records links as absolute addresses, so the replay's own base doesn't matter.
+  const href = elementAt(point.x, point.y)?.element.closest("a[href]")?.getAttribute("href");
+  if (!href) return null;
+  try {
+    const url = new URL(href);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+let hoverFrame: number | null = null;
+let hoverAt: { x: number; y: number } | null = null;
+
+/** Points at links while following, looked up once per frame at most. */
+function onFollowHover(event: PointerEvent) {
+  if (interactive || !copyLinks || event.pointerType !== "mouse") return;
+  hoverAt = { x: event.clientX, y: event.clientY };
+  hoverFrame ??= requestAnimationFrame(() => {
+    hoverFrame = null;
+    const at = hoverAt;
+    // Driving may have started since the move.
+    const following = !interactive && copyLinks && at !== null;
+    surface.style.cursor = following && linkAt(at.x, at.y) !== null ? "pointer" : "";
+  });
+}
+
+function onFollowClick(event: MouseEvent) {
+  // A double click is one copy, not two.
+  if (interactive || !copyLinks || event.detail > 1) return;
+  const url = linkAt(event.clientX, event.clientY);
+  if (url !== null) post({ type: "copy", url });
+}
+
 function noteActivity() {
   const now = Date.now();
   if (now - lastActivityAt < ACTIVITY_EVERY_MS) return;
@@ -234,6 +282,8 @@ attachInput({
 for (const type of ["pointerdown", "pointermove", "keydown", "wheel"] as const) {
   document.addEventListener(type, noteActivity, { passive: true, capture: true });
 }
+surface.addEventListener("pointermove", onFollowHover, { passive: true });
+surface.addEventListener("click", onFollowClick);
 window.addEventListener("resize", layout);
 window.addEventListener("message", (event) => {
   if (event.source !== window.parent || event.origin !== location.origin) return;
