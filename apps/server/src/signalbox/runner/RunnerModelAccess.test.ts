@@ -49,10 +49,9 @@ describe("RunnerModelAccess", () => {
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       });
       expect(claudeSettings(DEFAULT_CLAUDE_SETTINGS, layout).homePath).toBe(layout.claudeHome);
-      expect(codexSettings(DEFAULT_CODEX_SETTINGS, layout)).toMatchObject({
+      expect(codexSettings(DEFAULT_CODEX_SETTINGS, layout, GATEWAY)).toMatchObject({
         homePath: layout.codexHome,
         shadowHomePath: "",
-        launchArgs: "",
       });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -70,9 +69,11 @@ describe("RunnerModelAccess", () => {
         NodePath.join(layout.codexHome, "config.toml"),
         "utf8",
       );
-      expect(codexConfig).toContain('base_url = "http://127.0.0.1:8788/openai/v1"');
       expect(codexConfig).toContain(
-        `command = "cat"\nargs = [${JSON.stringify(layout.tokenFile)}]`,
+        'model_providers.signalbox.base_url = "http://127.0.0.1:8788/openai/v1"',
+      );
+      expect(codexConfig).toContain(
+        `model_providers.signalbox.auth.command = "cat"\nmodel_providers.signalbox.auth.args = [${JSON.stringify(layout.tokenFile)}]`,
       );
 
       expect(claudeHelper()).toBe("");

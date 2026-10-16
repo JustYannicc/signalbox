@@ -23,6 +23,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { type HarnessStderr, makeHarnessStderr } from "./harnessStderr.ts";
+import { type ClaudeGatewaySettings, claudeGatewaySettings } from "./RunnerGatewayPins.ts";
 import {
   claudeSettings,
   codexSettings,
@@ -46,23 +47,36 @@ import {
  * Each harness session also gets `sessionEnvironment` as it opens, under the
  * machine's own environment: the folder's secrets (`RunnerSecrets.ts`). Both
  * harness CLIs live as long as their session, so a session started after the
- * secrets change sees the new ones.
+ * secrets change sees the new ones. Each Claude query also gets the gateway's
+ * flag settings, and Codex its provider as launch arguments, over any config a
+ * repository or the agent writes (`RunnerGatewayPins.ts`).
  */
 
 type ClaudeQueryRunnerLayer = typeof layerClaudeQueryRunner;
 type SessionEnvironment = () => Readonly<Record<string, string>>;
 
-/** Claude Code's CLI, spawned per query, with the session environment under the machine's. */
+/**
+ * Claude Code's CLI, spawned per query, with the session environment under the
+ * machine's and the gateway's settings over the adapter's. The Runner never
+ * gives the adapter a settings file path, so one is dropped rather than merged.
+ */
 export const claudeWithSessionEnvironment = (
   inner: ClaudeAgentSdkQueryRunnerShape,
   extra: SessionEnvironment,
+  gateway: ClaudeGatewaySettings,
 ): ClaudeAgentSdkQueryRunnerShape => ({
   ...inner,
-  open: (input) =>
-    inner.open({
+  open: (input) => {
+    const settings = typeof input.options.settings === "object" ? input.options.settings : {};
+    return inner.open({
       ...input,
-      options: { ...input.options, env: { ...extra(), ...input.options.env } },
-    }),
+      options: {
+        ...input.options,
+        env: { ...extra(), ...input.options.env },
+        settings: { ...settings, ...gateway, env: { ...settings.env, ...gateway.env } },
+      },
+    });
+  },
 });
 
 /** Codex's app-server, spawned per session, the same way. */
@@ -76,11 +90,12 @@ export const codexWithSessionEnvironment = (
 const layerClaudeSessionEnvironment = (
   queryRunner: ClaudeQueryRunnerLayer,
   extra: SessionEnvironment,
+  gateway: ClaudeGatewaySettings,
 ): ClaudeQueryRunnerLayer =>
   Layer.effect(
     ClaudeAgentSdkQueryRunner,
     Effect.map(ClaudeAgentSdkQueryRunner, (inner) =>
-      ClaudeAgentSdkQueryRunner.of(claudeWithSessionEnvironment(inner, extra)),
+      ClaudeAgentSdkQueryRunner.of(claudeWithSessionEnvironment(inner, extra, gateway)),
     ),
   ).pipe(Layer.provide(queryRunner));
 
@@ -103,9 +118,10 @@ const layerAdapterServices = (
   claudeQueryRunner: ClaudeQueryRunnerLayer,
   stderr: HarnessStderr,
   sessionEnvironment: SessionEnvironment,
+  gateway: ClaudeGatewaySettings,
 ) =>
   Layer.mergeAll(
-    layerClaudeSessionEnvironment(claudeQueryRunner, sessionEnvironment),
+    layerClaudeSessionEnvironment(claudeQueryRunner, sessionEnvironment, gateway),
     layerCodexSessionEnvironment(sessionEnvironment),
     IdAllocator.layer,
     ServerConfig.layerTest(home, home),
@@ -158,6 +174,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
       machine.claudeQueryRunner ?? layerClaudeQueryRunner,
       stderr,
       machine.sessionEnvironment ?? (() => ({})),
+      claudeGatewaySettings(layout, machine.gatewayUrl),
     ),
   );
   const common = { displayName: undefined, environment: [], enabled: true } as const;
@@ -169,7 +186,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   const codex = yield* CodexAdapterV2Driver.create({
     ...common,
     instanceId: defaultInstanceIdForDriver(CodexAdapterV2Driver.driverKind),
-    config: codexSettings(CodexAdapterV2Driver.defaultConfig(), layout),
+    config: codexSettings(CodexAdapterV2Driver.defaultConfig(), layout, machine.gatewayUrl),
   }).pipe(Effect.provide(services));
   return {
     layout,

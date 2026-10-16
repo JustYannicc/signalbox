@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
+import { routesHarness } from "./RunnerGatewayPins.ts";
 import type { OnePassword } from "./RunnerOnePassword.ts";
 import type { SecretMask } from "./secretMask.ts";
 
@@ -24,7 +25,9 @@ import type { SecretMask } from "./secretMask.ts";
  *
  * Every value 1Password hides by default joins the machine's mask, and so does
  * the token. A variable Signalbox sets for the harness itself (its home, its
- * model access) is never replaced: the turn says which ones it skipped.
+ * model access) is never replaced, and neither is one that could take the
+ * harness off the gateway (`routesHarness`, #600): the turn says which ones it
+ * skipped.
  *
  * The model must not see them either (#591): before the harness gets a new
  * set, the masked values are registered with the thread, which the
@@ -67,19 +70,6 @@ export interface RunnerSecrets {
   readonly mask: (text: string) => string;
 }
 
-/**
- * Credentials that would take a harness off the ModelGateway: Claude Code
- * prefers any of them over the gateway token its `apiKeyHelper` reads.
- */
-const HARNESS_CREDENTIALS: ReadonlyArray<string> = [
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "CLAUDE_CODE_OAUTH_TOKEN",
-  // These send Claude Code to a cloud provider instead.
-  "CLAUDE_CODE_USE_BEDROCK",
-  "CLAUDE_CODE_USE_VERTEX",
-];
-
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const sameStrings = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
@@ -97,6 +87,8 @@ const sameVariables = (
 };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+const listed = (names: ReadonlySet<string>) => [...names].toSorted().join(", ");
 
 export const makeRunnerSecrets = (input: {
   readonly onePassword: OnePassword;
@@ -142,6 +134,7 @@ export const makeRunnerSecrets = (input: {
       const next: Record<string, string> = {};
       const hidden: Array<SecretValue> = [];
       const skipped = new Set<string>();
+      const routing = new Set<string>();
       const reserved = input.reserved();
       const client = yield* input.onePassword(token).pipe(
         Effect.catchTags({
@@ -172,8 +165,12 @@ export const makeRunnerSecrets = (input: {
       for (const variables of found) {
         for (const variable of variables) {
           if (!VARIABLE_NAME.test(variable.name)) continue;
-          if (reserved.has(variable.name) || HARNESS_CREDENTIALS.includes(variable.name)) {
+          if (reserved.has(variable.name)) {
             skipped.add(variable.name);
+            continue;
+          }
+          if (routesHarness(variable.name)) {
+            routing.add(variable.name);
             continue;
           }
           next[variable.name] = variable.value;
@@ -205,7 +202,12 @@ export const makeRunnerSecrets = (input: {
       }
       if (skipped.size > 0) {
         yield* report.notice(
-          `Skipped ${[...skipped].toSorted().join(", ")} from 1Password: Signalbox sets ${skipped.size === 1 ? "it" : "them"} for the agent's own harness.`,
+          `Skipped ${listed(skipped)} from 1Password: Signalbox sets ${skipped.size === 1 ? "it" : "them"} for the agent's own harness.`,
+        );
+      }
+      if (routing.size > 0) {
+        yield* report.notice(
+          `Skipped ${listed(routing)} from 1Password: ${routing.size === 1 ? "it" : "they"} could send the agent's model requests, or copies of them, around the gateway that keeps secrets out of them.`,
         );
       }
       return version;

@@ -1,10 +1,16 @@
-import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ClaudeSettings, CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import {
+  claudeGateway,
+  claudeKeyHelper,
+  codexGatewayArgs,
+  codexGatewayConfig,
+  tomlString,
+} from "./RunnerGatewayPins.ts";
 import { INSTRUCTIONS_MAX_BYTES, ROOT_MARKER } from "./RunnerInstructions.ts";
 
 /**
@@ -21,6 +27,9 @@ import { INSTRUCTIONS_MAX_BYTES, ROOT_MARKER } from "./RunnerInstructions.ts";
  * login or key the host has (`~/.codex/auth.json`, the keychain,
  * `ANTHROPIC_API_KEY`) never reaches them. The token is readable by the
  * agent's shell by design: outside its turn, thread and provider it is useless.
+ *
+ * Nothing a repository, the agent or a folder secret sets takes them off it
+ * (#600, `RunnerGatewayPins.ts`).
  *
  * Both harnesses are also set up to read every instruction file a drive with
  * shortcuts brings (#142, `RunnerInstructions.ts`): Claude Code loads
@@ -74,47 +83,21 @@ export function harnessEnvironment(
     const value = host[name];
     if (value !== undefined) environment[name] = value;
   }
-  return {
-    ...environment,
-    ...caches,
-    HOME: layout.home,
-    ANTHROPIC_BASE_URL: gatewayEndpoint(gatewayUrl, "anthropic"),
-    // Telemetry and update checks would go to Anthropic directly, with no key.
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-  };
+  return { ...environment, ...caches, HOME: layout.home, ...claudeGateway(gatewayUrl) };
 }
-
-const gatewayEndpoint = (gatewayUrl: string, provider: keyof typeof MODEL_GATEWAY_PATHS) =>
-  `${gatewayUrl.replace(/\/+$/, "")}${MODEL_GATEWAY_PATHS[provider]}`;
-
-const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-
-/** A TOML basic string. */
-const tomlString = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 
 /** The Runner's loopback MCP servers, by the name the harnesses know each as. */
 export type RunnerMcpServers = Readonly<Record<string, string>>;
 
 /**
- * Codex's model provider: the gateway's OpenAI endpoint, with the turn's token
- * as bearer; and the Runner's MCP servers.
+ * Codex's model provider and telemetry (`codexGatewayConfig`), its project
+ * docs, and the Runner's MCP servers.
  */
 const codexConfig = (layout: MachineLayout, gatewayUrl: string, mcpServers: RunnerMcpServers) =>
   [
-    'model_provider = "signalbox"',
+    ...codexGatewayConfig(layout, gatewayUrl),
     `project_root_markers = [${tomlString(ROOT_MARKER)}]`,
     `project_doc_max_bytes = ${INSTRUCTIONS_MAX_BYTES}`,
-    "",
-    "[model_providers.signalbox]",
-    'name = "Signalbox"',
-    `base_url = ${tomlString(`${gatewayEndpoint(gatewayUrl, "openai")}/v1`)}`,
-    'wire_api = "responses"',
-    "requires_openai_auth = false",
-    "supports_websockets = false",
-    "",
-    "[model_providers.signalbox.auth]",
-    'command = "cat"',
-    `args = [${tomlString(layout.tokenFile)}]`,
     "",
     ...Object.entries(mcpServers).flatMap(([name, url]) => [
       `[mcp_servers.${tomlString(name)}]`,
@@ -128,12 +111,16 @@ export const claudeSettings = (base: ClaudeSettings, layout: MachineLayout): Cla
   homePath: layout.claudeHome,
 });
 
-/** Codex reads its provider from `config.toml` in its own home (see `prepareMachine`). */
-export const codexSettings = (base: CodexSettings, layout: MachineLayout): CodexSettings => ({
+/** Codex reads its provider from `config.toml` in its own home (see `prepareMachine`), and again from its launch arguments. */
+export const codexSettings = (
+  base: CodexSettings,
+  layout: MachineLayout,
+  gatewayUrl: string,
+): CodexSettings => ({
   ...base,
   homePath: layout.codexHome,
   shadowHomePath: "",
-  launchArgs: "",
+  launchArgs: codexGatewayArgs(layout, gatewayUrl),
 });
 
 /** The user settings Claude Code reads from its config dir. */
@@ -165,7 +152,7 @@ export const prepareMachine = Effect.fn("prepareMachine")(function* (
     yield* fs.makeDirectory(directory, { recursive: true });
   }
   const settings = yield* encodeClaudeUserSettings({
-    apiKeyHelper: `cat ${shellQuote(layout.tokenFile)}`,
+    apiKeyHelper: claudeKeyHelper(layout),
     // A CLAUDE.md in one folder must not keep another folder's AGENTS.md out.
     pluginConfigs: {
       "agents-md@builtin": { options: { instructionFiles: "claude-md-and-agents-md" } },
