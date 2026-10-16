@@ -1,7 +1,7 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
-import { SignInBrowserError, SignInBrowsers } from "./SignInBrowsers.ts";
+import { SIGN_IN_VIEWPORT, SignInBrowserError, SignInBrowsers } from "./SignInBrowsers.ts";
 import { redirectTarget } from "./signInCatch.ts";
 
 interface OpenedBrowser {
@@ -38,6 +38,7 @@ export const memorySignInBrowsers = () => {
         return {
           liveViewUrl: browser.liveViewUrl,
           site: new URL(loginUrl).hostname,
+          viewport: SIGN_IN_VIEWPORT,
           redirected: Deferred.await(redirect),
         };
       }),

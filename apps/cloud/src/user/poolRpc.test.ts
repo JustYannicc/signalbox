@@ -192,6 +192,7 @@ describe("cloud pool RPC", () => {
           id: started.flowId,
           url: "https://live.kernel.test/1",
           site: "login.example.test",
+          viewport: { width: 390, height: 844 },
         });
         expect(browsers.opened.map((browser) => browser.loginUrl)).toEqual([
           started.authorizationUrl,

@@ -142,7 +142,12 @@ export function AddPoolAccountScreen({ route }: Props) {
         {liveView ? (
           <>
             <View className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border-subtle bg-subtle">
-              <LiveSignInWebView url={liveView.url} site={liveView.site} account={account} />
+              <LiveSignInWebView
+                url={liveView.url}
+                site={liveView.site}
+                account={account}
+                viewport={liveView.viewport}
+              />
             </View>
             <View className="flex-row items-center justify-center gap-1.5">
               <SymbolView

@@ -30,6 +30,7 @@ export interface SignInBrowser {
   readonly liveViewUrl: string;
   /** The sign-in page's host, such as `claude.ai`. */
   readonly site: string;
+  readonly viewport: typeof SIGN_IN_VIEWPORT;
   /** The address the login redirected to once the person signed in. */
   readonly redirected: Effect.Effect<string, SignInBrowserError>;
 }
@@ -105,7 +106,12 @@ export const make = (
         return { liveViewUrl, redirected };
       }).pipe(Effect.tapError(() => countOpen("failed")));
       yield* countOpen("opened");
-      return { liveViewUrl, site: new URL(loginUrl).hostname, redirected };
+      return {
+        liveViewUrl,
+        site: new URL(loginUrl).hostname,
+        viewport: SIGN_IN_VIEWPORT,
+        redirected,
+      };
     }),
   });
 

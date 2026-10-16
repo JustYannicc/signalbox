@@ -300,6 +300,7 @@ export function HubSignIn({
           url={liveView.url}
           site={liveView.site}
           account={account}
+          viewport={liveView.viewport}
         />
       ) : null}
       {active && userCode ? (

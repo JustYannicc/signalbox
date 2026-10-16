@@ -1,6 +1,7 @@
 import { LockIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { observeResize } from "../../lib/observeResize";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 
@@ -14,20 +15,32 @@ type FrameState = "connecting" | "playing" | "failed";
  * browser's live view. The person signs in here; the cloud catches the
  * provider's redirect and adds the account, so nothing is copied or pasted.
  * Kernel's live view posts `KERNEL_PLAYING` once frames render, and a stall
- * gets one reload before it says so.
+ * gets one reload before it says so. The player crops rather than scales, so
+ * it renders at the browser's own size and is scaled to fit the frame.
  */
 export function LiveSignInFrame({
   url,
   site,
   account,
+  viewport,
 }: {
   readonly url: string;
   /** Where the person is signing in, such as `claude.ai`. */
   readonly site: string;
   /** "Claude" or "ChatGPT". */
   readonly account: string;
+  readonly viewport: { readonly width: number; readonly height: number };
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    return observeResize(box, ([entry]) => {
+      if (entry) setScale(entry.contentRect.width / viewport.width);
+    });
+  }, [viewport.width]);
   // Each load of the live view is an attempt; a reload starts the next one connecting.
   const [{ attempt, state }, setFrame] = useState<{ attempt: number; state: FrameState }>({
     attempt: 0,
@@ -63,9 +76,11 @@ export function LiveSignInFrame({
   return (
     <div className="flex flex-col items-center gap-2 px-3 pt-1 pb-3 sm:px-4">
       <div
-        className="relative aspect-390/844 h-[min(42rem,calc(100dvh-17rem))] min-h-80 overflow-hidden rounded-lg border border-border bg-muted"
+        ref={boxRef}
+        className="relative h-[min(42rem,calc(100dvh-17rem))] min-h-80 overflow-hidden rounded-lg border border-border bg-muted"
         // Safari only sends keys to an iframe focused from a person's own action.
         onPointerDown={() => frameRef.current?.focus()}
+        style={{ aspectRatio: `${viewport.width} / ${viewport.height}` }}
       >
         <iframe
           key={attempt}
@@ -75,7 +90,12 @@ export function LiveSignInFrame({
           allow="autoplay; clipboard-read; clipboard-write"
           // oxlint-disable-next-line react/iframe-missing-sandbox -- Kernel's live view player needs scripts and its own origin for its stream and input.
           sandbox="allow-scripts allow-same-origin allow-forms"
-          className="size-full border-0"
+          className="absolute top-0 left-0 origin-top-left border-0"
+          style={{
+            width: viewport.width,
+            height: viewport.height,
+            transform: `scale(${scale})`,
+          }}
         />
         {state === "playing" ? null : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-muted px-6 text-center text-sm text-muted-foreground">

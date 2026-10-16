@@ -11,7 +11,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const ProviderAuthLiveView = Schema.Struct({
   type: Schema.Literal("liveView"),
@@ -19,5 +19,10 @@ export const ProviderAuthLiveView = Schema.Struct({
   url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
   /** The provider's sign-in site, such as `claude.ai`, for the person to see where they are. */
   site: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  /**
+   * The browser's page size in CSS pixels. The live view crops rather than
+   * scales, so clients render it at this size and scale it to fit.
+   */
+  viewport: Schema.Struct({ width: PositiveInt, height: PositiveInt }),
 });
 export type ProviderAuthLiveView = typeof ProviderAuthLiveView.Type;

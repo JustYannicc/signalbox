@@ -300,7 +300,13 @@ const make = Effect.gen(function* () {
               authorizationUrl: login.url,
               expiresAt: DateTime.formatIso(DateTime.makeUnsafe(now + LOGIN_TTL_MS)),
               interaction: browser
-                ? { type: "liveView", id: flowId, url: browser.liveViewUrl, site: browser.site }
+                ? {
+                    type: "liveView",
+                    id: flowId,
+                    url: browser.liveViewUrl,
+                    site: browser.site,
+                    viewport: browser.viewport,
+                  }
                 : login.user_code
                   ? { type: "deviceCode", id: flowId, url: login.url, userCode: login.user_code }
                   : {
