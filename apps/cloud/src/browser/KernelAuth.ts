@@ -42,6 +42,7 @@ export type AuthChoice = typeof AuthChoice.Type;
 const AuthConnection = Schema.Struct({
   id: Schema.String,
   domain: Schema.String,
+  profile_name: Schema.optional(Schema.String),
   /** The last health check's verdict: `AUTHENTICATED` or `NEEDS_AUTH`. */
   status: Schema.String,
   save_credentials: Schema.Boolean,
@@ -57,6 +58,8 @@ const AuthConnection = Schema.Struct({
   error_message: Text,
   website_error: Text,
   external_action_message: Text,
+  /** The SSO provider a flow went through, which the login service never follows. */
+  sso_provider: Text,
   /** Why health checks can't verify it, e.g. `no_auth_check_url` before a first login. */
   health_check_unavailable_reason: Text,
 });
@@ -114,7 +117,12 @@ export const makeKernelAuth = (
       ),
     ).pipe(
       Effect.flatMap(decoded("listAuthConnections", Schema.Array(AuthConnection))),
-      Effect.map((connections) => connections.find((each) => each.domain === request.domain)),
+      // Only this profile's: another person's connection for the site would log them in instead.
+      Effect.map((connections) =>
+        connections.find(
+          (each) => each.domain === request.domain && each.profile_name === request.profile_name,
+        ),
+      ),
     );
 
   return {

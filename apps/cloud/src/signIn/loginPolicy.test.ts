@@ -162,6 +162,19 @@ describe("the next step of a login", () => {
     ).toEqual({ _tag: "stop", reason: "the site offers only routes agents don't take: Push" });
   });
 
+  it("stops when Kernel took the login to an SSO provider, before typing anything there", () => {
+    expect(
+      nextStep(
+        awaiting("i-1", { sso_provider: "google", fields: [field("identifier")] }),
+        emptyFlow,
+        login,
+      ),
+    ).toEqual({
+      _tag: "stop",
+      reason: "the site went to google sign-in, which agents never use",
+    });
+  });
+
   it("ends on success, and stops on Kernel's failure or an action outside the browser", () => {
     expect(nextStep(connection({ flow_status: "SUCCESS" }), emptyFlow, login)).toEqual({
       _tag: "signed-in",

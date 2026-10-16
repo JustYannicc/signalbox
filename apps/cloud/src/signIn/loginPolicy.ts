@@ -165,6 +165,13 @@ export const nextStep = (
     case "CANCELED":
       return { _tag: "stop", reason: failureOf(connection) };
   }
+  // Kernel follows common SSO providers by default; a 1Password login is for the site itself.
+  if (connection.sso_provider) {
+    return {
+      _tag: "stop",
+      reason: `the site went to ${connection.sso_provider} sign-in, which agents never use`,
+    };
+  }
   if (connection.flow_step === "AWAITING_EXTERNAL_ACTION") {
     return {
       _tag: "stop",
