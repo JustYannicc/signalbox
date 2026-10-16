@@ -138,7 +138,14 @@ const bringStuck = (
       attachmentsDir,
     }).pipe(Effect.provideService(HttpClient.HttpClient, cloud.client));
     const fiber = yield* Effect.forkChild(Effect.exit(attachments.bring("token", required)));
-    for (let minute = 0; minute < 10; minute++) yield* TestClock.adjust("1 minute");
+    // Real file I/O runs between the timed waits, so a fixed number of clock
+    // steps can all land before the download reaches its next timeout and leave
+    // it waiting forever. Keep stepping, letting that I/O finish in real time,
+    // until the download settles.
+    while (fiber.pollUnsafe() === undefined) {
+      yield* TestClock.adjust("30 seconds");
+      yield* TestClock.withLive(Effect.sleep("2 millis"));
+    }
     const exit = yield* Fiber.join(fiber);
     return { exit, cloud, attachmentsDir };
   });
