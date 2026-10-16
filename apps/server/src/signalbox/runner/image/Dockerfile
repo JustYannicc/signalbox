@@ -46,12 +46,14 @@ ENV SIGNALBOX_BROWSER_EXECUTABLE=/opt/chrome-headless-shell/chrome-headless-shel
 
 # rclone and fuse3 mount every drive the user can read at /drives (RunnerDrivesMount.ts).
 # Python, make, a C/C++ compiler and pkg-config are what node-gyp and most
-# native dependencies need to build on install. Anything a project needs
-# beyond that comes from its environment (#123).
+# native dependencies need to build on install. curl, wget, jq, unzip and
+# git-lfs are what agents and `curl … | sh` installers reach for first (#595).
+# Anything a project needs beyond that comes from its environment (#123).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates fuse3 git lsof openssh-client procps rclone ripgrep \
-    python3 make g++ pkg-config \
+    python3 make g++ pkg-config curl wget jq unzip git-lfs \
   && rm -rf /var/lib/apt/lists/* \
+  && git lfs install --system \
   && install -d -o node -g node /drives
 
 # Bump these to move every new machine to another harness release. Declared
