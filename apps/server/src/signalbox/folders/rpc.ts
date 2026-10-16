@@ -21,6 +21,7 @@ export const signalboxFoldersWsHandlers = {
   [SIGNALBOX_FOLDERS_WS_METHODS.delete]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.moveThread]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: unavailable,
+  [SIGNALBOX_FOLDERS_WS_METHODS.setPhase]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: unavailable,
 };

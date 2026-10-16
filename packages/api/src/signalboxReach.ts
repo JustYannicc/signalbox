@@ -102,6 +102,10 @@ export const SIGNALBOX_RPC_REACH = {
     summary: "File a thread in a folder.",
   }),
   "signalbox.folders.setInstructions": write(),
+  "signalbox.folders.setPhase": write({
+    summary:
+      "Move a folder to another of its phases (for example Production), edit its phases, or clear them.",
+  }),
   "signalbox.folders.setSecrets": write(),
   "signalbox.folders.setOnePassword": write(),
 

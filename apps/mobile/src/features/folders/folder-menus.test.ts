@@ -71,6 +71,31 @@ describe("a folder's menu", () => {
     ]);
   });
 
+  it("moves between its phases by position, and edits them or adds some", () => {
+    const work = {
+      ...byId("work"),
+      phase: { phases: ["Idea", "Doing/now", "Done"], current: "Idea" },
+    };
+    const phase = folderMenuActions({ snapshot, folder: work, pools }).find(
+      (action) => action.id === "folder:phase",
+    );
+    expect(phase?.subactions?.map((action) => [action.id, action.title, action.state])).toEqual([
+      ["folder:phase:0", "Idea", "on"],
+      ["folder:phase:1", "Doing/now", undefined],
+      ["folder:phase:2", "Done", undefined],
+      ["folder:phases", "Edit phases…", undefined],
+    ]);
+    const choose = (event: string) =>
+      parseFolderMenuEvent({ snapshot, folder: work, pools, event });
+    expect(choose("folder:phase:1")).toEqual({ _tag: "phase", current: "Doing/now" });
+    expect(choose("folder:phase:0")).toBeNull();
+    expect(choose("folder:phase:9")).toBeNull();
+    expect(
+      folderMenuActions({ snapshot, folder: byId("notes"), pools }).map((action) => action.id),
+    ).toContain("folder:phases");
+    expect(parse("notes", "folder:phases")).toEqual({ _tag: "phases" });
+  });
+
   it("turns choices back into changes, and nothing for no-ops", () => {
     expect(parse("work", "folder:down")).toEqual({
       _tag: "move",

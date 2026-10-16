@@ -77,7 +77,23 @@ export function folderMenuActions(input: {
       ],
     });
   }
+  // Phases by position: names can hold anything an id can't (#677).
   actions.push(
+    folder.phase === undefined
+      ? { id: "folder:phases", title: "Add phases…" }
+      : {
+          id: "folder:phase",
+          title: "Phase",
+          subtitle: folder.phase.current,
+          subactions: [
+            ...folder.phase.phases.map((phase, index) => ({
+              id: `folder:phase:${index}`,
+              title: phase,
+              state: phase === folder.phase?.current ? ("on" as const) : undefined,
+            })),
+            { id: "folder:phases", title: "Edit phases…" },
+          ],
+        },
     { id: "folder:instructions", title: "Instructions…" },
     { id: "folder:delete", title: "Delete folder", attributes: { destructive: true } },
   );
@@ -89,6 +105,8 @@ export type FolderMenuChoice =
   | { readonly _tag: "rename" }
   | { readonly _tag: "move"; readonly input: FolderMoveInput }
   | { readonly _tag: "pool"; readonly poolId: AccountPoolId | null }
+  | { readonly _tag: "phase"; readonly current: string }
+  | { readonly _tag: "phases" }
   | { readonly _tag: "instructions" }
   | { readonly _tag: "delete" };
 
@@ -103,6 +121,13 @@ export function parseFolderMenuEvent(input: {
   if (event === "folder:new-child") return { _tag: "newChild" };
   if (event === "folder:rename") return { _tag: "rename" };
   if (event === "folder:instructions") return { _tag: "instructions" };
+  if (event === "folder:phases") return { _tag: "phases" };
+  if (event.startsWith("folder:phase:")) {
+    const current = folder.phase?.phases[Number(event.slice("folder:phase:".length))];
+    return current === undefined || current === folder.phase?.current
+      ? null
+      : { _tag: "phase", current };
+  }
   if (event === "folder:delete") return { _tag: "delete" };
   if (event === "folder:up" || event === "folder:down") {
     const move = folderSiblingMove(snapshot, folder.id, event === "folder:up" ? "up" : "down");

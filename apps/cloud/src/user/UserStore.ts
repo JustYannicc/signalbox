@@ -213,6 +213,8 @@ const migrations = Migrator.fromRecord({
   "0016_local_keys": LocalKeys.createTables,
   "0017_api_keys": LocalKeys.addApiScopes,
   "0018_sign_in_grants": SignInTables.createTables,
+  // 0019 is #656's secret sends.
+  "0020_folder_phases": FolderTables.addPhases,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

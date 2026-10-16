@@ -8,6 +8,7 @@ import {
   type FolderMoveThreadInput,
   type FolderSetInstructionsInput,
   type FolderSetOnePasswordInput,
+  type FolderSetPhaseInput,
   type FolderSetSecretsInput,
   type FolderUpdateInput,
   type SignalboxFoldersSnapshot,
@@ -32,6 +33,13 @@ import { parseDriveId } from "../drive/driveAccess.ts";
 import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 import { contextOfProject, driveOfProject, projectIdForDrive } from "./contextProjects.ts";
 import { foldDrives } from "./driveFolders.ts";
+import {
+  columnsOfPhase,
+  initialPhase,
+  nextPhase,
+  phaseOfColumns,
+  samePhase,
+} from "./folderPhases.ts";
 import { toSnapshot } from "./folderSnapshot.ts";
 import {
   childIds,
@@ -118,6 +126,10 @@ export class UserFolders extends Context.Service<
     readonly setInstructions: (
       input: FolderSetInstructionsInput,
     ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
+    /** Moves a folder to another of its phases, edits the list, or takes its phase away (#677). */
+    readonly setPhase: (
+      input: FolderSetPhaseInput,
+    ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
     /** Names a level's 1Password Environment (#395), or stops loading secrets there. */
     readonly setSecrets: (
       input: FolderSetSecretsInput,
@@ -179,6 +191,7 @@ const toTreeFolder = (row: typeof FolderRow.Type): TreeFolder => ({
   driveId: row.drive_id,
   instructions: row.instructions,
   secrets: row.secrets_environment_id ?? null,
+  phase: phaseOfColumns(row.phases, row.phase),
 });
 
 /** How long a filing waits for its thread to be created before the next filing drops it. */
@@ -217,7 +230,7 @@ const make = Effect.gen(function* () {
 
   const bump = sql`UPDATE folders_state SET revision = revision + 1 WHERE id = 1`;
   const selectFolders = sql`SELECT id, owner_id, parent_id, name, position, drive_id, instructions,
-    secrets_environment_id FROM folders`;
+    secrets_environment_id, phases, phase FROM folders`;
   const selectState = sql`SELECT revision, instructions, secrets_environment_id FROM folders_state`;
 
   /** A span for one operation (`tracing.ts`): never a folder's name or instructions. */
@@ -350,7 +363,8 @@ const make = Effect.gen(function* () {
             input.parentId === null ? null : yield* requireFolder(current, input.parentId);
           const ownerId = parent?.ownerId ?? input.ownerId ?? PERSONAL_CONTEXT_ID;
           yield* annotateOwner(ownerId);
-          if (!current.contexts.some((context) => context.id === ownerId)) {
+          const owner = current.contexts.find((context) => context.id === ownerId);
+          if (owner === undefined) {
             return yield* refuse("Choose Personal or one of your organizations for the folder.");
           }
           if (parent !== null && input.ownerId !== undefined && input.ownerId !== ownerId) {
@@ -362,8 +376,12 @@ const make = Effect.gen(function* () {
             input.beforeId,
           );
           if (order === undefined) return yield* refuse("That position is not a sibling.");
-          yield* sql`INSERT INTO folders (id, owner_id, parent_id, name, position)
-            VALUES (${id}, ${ownerId}, ${input.parentId}, ${input.name.trim()}, 0)`;
+          const phase = initialPhase(owner.kind, input.phases);
+          if ("refused" in phase) return yield* refuse(phase.refused);
+          const columns = columnsOfPhase(phase.phase);
+          yield* sql`INSERT INTO folders (id, owner_id, parent_id, name, position, phases, phase)
+            VALUES (${id}, ${ownerId}, ${input.parentId}, ${input.name.trim()}, 0,
+              ${columns.phases}, ${columns.phase})`;
           yield* setOrder(input.parentId, order);
           return true;
         }),
@@ -551,6 +569,30 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const setPhase: UserFolders["Service"]["setPhase"] = (input) =>
+    mutate((current) =>
+      Effect.gen(function* () {
+        const folder = yield* requireFolder(current, input.id);
+        yield* annotateOwner(folder.ownerId);
+        const next = nextPhase(folder.phase, input);
+        if ("refused" in next) return yield* refuse(next.refused);
+        if (samePhase(folder.phase, next.phase)) return false;
+        const columns = columnsOfPhase(next.phase);
+        yield* sql`UPDATE folders SET phases = ${columns.phases}, phase = ${columns.phase}
+          WHERE id = ${folder.id}`;
+        return true;
+      }),
+    ).pipe(
+      // Never the phases' names: people name them.
+      traced("UserFolders.setPhase", {
+        "folder.id": input.id,
+        "folder.change": [
+          ...(input.phases === undefined ? [] : [input.phases === null ? "clear" : "list"]),
+          ...(input.current === undefined ? [] : ["current"]),
+        ].join(","),
+      }),
+    );
+
   const setSecrets: UserFolders["Service"]["setSecrets"] = (input) =>
     mutate((current) =>
       Effect.gen(function* () {
@@ -691,10 +733,11 @@ const make = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           for (const row of input.folders) {
-            yield* sql`INSERT INTO folders
-                (id, owner_id, parent_id, name, position, instructions, secrets_environment_id)
+            yield* sql`INSERT INTO folders (id, owner_id, parent_id, name, position, instructions,
+                secrets_environment_id, phases, phase)
               VALUES (${row.id}, ${row.owner_id}, ${row.parent_id}, ${row.name}, ${row.position},
-                ${row.instructions}, ${row.secrets_environment_id ?? null})
+                ${row.instructions}, ${row.secrets_environment_id ?? null}, ${row.phases ?? null},
+                ${row.phase ?? null})
               ON CONFLICT (id) DO NOTHING`;
           }
           // A drive's folder takes its place from these the first time it's made.
@@ -762,6 +805,7 @@ const make = Effect.gen(function* () {
     delete: remove,
     moveThread,
     setInstructions,
+    setPhase,
     setSecrets,
     setOnePassword,
     adoptOnePassword,

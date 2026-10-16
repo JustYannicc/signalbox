@@ -7,6 +7,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
+export * from "./folderPhasesModel.ts";
 export * from "./foldersModel.ts";
 
 /**
@@ -45,6 +46,10 @@ export function createSignalboxFoldersAtoms<R, E>(
     setInstructions: createEnvironmentRpcCommand(runtime, {
       label: "signalbox-folders:set-instructions",
       tag: SIGNALBOX_FOLDERS_WS_METHODS.setInstructions,
+    }),
+    setPhase: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-folders:set-phase",
+      tag: SIGNALBOX_FOLDERS_WS_METHODS.setPhase,
     }),
     setSecrets: createEnvironmentRpcCommand(runtime, {
       label: "signalbox-folders:set-secrets",

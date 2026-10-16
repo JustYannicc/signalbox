@@ -769,6 +769,7 @@ export const layerHandlers = (input: {
           folderCall(folders.moveThread(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: (request) =>
           folderCall(folders.setInstructions(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.setPhase]: (request) => folderCall(folders.setPhase(request)),
         [SIGNALBOX_THREAD_KINDS_WS_METHODS.subscribe]: () =>
           kinds.changes.pipe(
             Stream.tapError((cause) =>

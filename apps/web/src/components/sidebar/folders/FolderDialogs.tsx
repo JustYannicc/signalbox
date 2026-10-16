@@ -1,6 +1,7 @@
 /**
  * The folder dialogs: name a new folder, rename one, confirm deleting one,
- * and edit a level's instructions (its AGENTS.md) or secrets. Mounted once with the app
+ * and edit a level's instructions (its AGENTS.md), secrets or a folder's
+ * phases (`FolderPhase.tsx`). Mounted once with the app
  * shell; `folderDialogStore` says which is open.
  */
 import { FOLDER_INSTRUCTIONS_MAX_LENGTH } from "@t3tools/contracts/signalboxFolders";
@@ -19,26 +20,13 @@ import {
 import { Input } from "../../ui/input";
 import { Textarea } from "../../ui/textarea";
 import { closeFolderDialog, useFolderDialogStore, type FolderDialog } from "./folderDialogStore";
+import { FolderPhasesDialog } from "./FolderPhase";
 import { FolderSecretsDialog } from "./FolderSecretsDialog";
 import { useFolderCommands } from "./useFolderCommands";
+import { usePendingSave } from "./usePendingSave";
 
 const NAME_MAX_LENGTH = 128;
 const numberFormat = new Intl.NumberFormat();
-
-/** Runs `save` once at a time, closing the dialog when it succeeds. */
-function usePendingSave() {
-  const [pending, setPending] = useState(false);
-  const run = async (save: () => Promise<unknown>) => {
-    if (pending) return;
-    setPending(true);
-    try {
-      if ((await save()) !== null) closeFolderDialog();
-    } finally {
-      setPending(false);
-    }
-  };
-  return { pending, run };
-}
 
 function NameDialog(props: { dialog: Extract<FolderDialog, { kind: "create" | "rename" }> }) {
   const { dialog } = props;
@@ -191,6 +179,8 @@ export function FolderDialogs() {
           <DeleteDialog key={openCount} dialog={dialog} />
         ) : dialog.kind === "secrets" ? (
           <FolderSecretsDialog key={openCount} dialog={dialog} />
+        ) : dialog.kind === "phases" ? (
+          <FolderPhasesDialog key={openCount} dialog={dialog} />
         ) : (
           <InstructionsDialog key={openCount} dialog={dialog} />
         )}

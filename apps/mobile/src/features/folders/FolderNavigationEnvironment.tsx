@@ -14,11 +14,14 @@ import { folderCountsAtom, folderPoolChoicesAtom } from "./folder-atoms";
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";
 import { folderMenuActions, topLevelMenuActions } from "./folder-menus";
 import { FolderInstructionsSheet } from "./FolderInstructionsSheet";
+import { FolderPhasesSheet } from "./FolderPhasesSheet";
 import { FolderNodeRow, OwnerTopLevelRow } from "./FolderNavigationRows";
 import { useFolderActions } from "./use-folder-actions";
 
 const PERSONAL_TOP_ACTIONS = topLevelMenuActions({ personal: true });
 const ORGANIZATION_TOP_ACTIONS = topLevelMenuActions({ personal: false });
+
+const NO_OWNERS: ReadonlyArray<SignalboxContext> = [];
 
 export function FolderNavigationEnvironment(props: {
   readonly environmentId: EnvironmentId;
@@ -33,7 +36,12 @@ export function FolderNavigationEnvironment(props: {
   const owners = useFolderOwners(environmentId);
   const counts = useAtomValue(folderCountsAtom(environmentId));
   const pools = useAtomValue(folderPoolChoicesAtom(environmentId));
-  const actions = useFolderActions({ environmentId, snapshot, pools });
+  const actions = useFolderActions({
+    environmentId,
+    snapshot,
+    pools,
+    owners: owners?.contexts ?? NO_OWNERS,
+  });
   const [collapsed, setCollapsed] = useState<ReadonlySet<FolderId>>(() => new Set());
   const onToggle = useCallback((folder: Folder) => {
     setCollapsed((current) => {
@@ -144,6 +152,14 @@ export function FolderNavigationEnvironment(props: {
           editing={actions.editing}
           onSave={actions.saveInstructions}
           onClose={actions.closeEditor}
+        />
+      ) : null}
+      {actions.editingPhases ? (
+        <FolderPhasesSheet
+          key={actions.editingPhases.folder.id}
+          editing={actions.editingPhases}
+          onSave={actions.savePhases}
+          onClose={actions.closePhasesEditor}
         />
       ) : null}
     </View>

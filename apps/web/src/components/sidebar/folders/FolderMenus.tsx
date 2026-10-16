@@ -1,6 +1,6 @@
 /**
  * The ⋯ menus of the folder tree: a folder's (make, rename, move, files,
- * pool, instructions, secrets, delete) and an owner's top level.
+ * pool, phase, instructions, secrets, delete) and an owner's top level.
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -44,6 +44,7 @@ import {
   MenuTrigger,
 } from "../../ui/menu";
 import { openFolderDialog } from "./folderDialogStore";
+import { FolderPhaseMenuItems } from "./FolderPhase";
 import type { FolderOwner } from "./folderSidebarModel";
 import type { FolderCommands } from "./useFolderCommands";
 
@@ -177,6 +178,12 @@ function FolderMenuItems(props: FolderMenuProps) {
           onChange={(poolId) => void commands.setPool(environmentId, folder.id, poolId)}
         />
       ) : null}
+      <FolderPhaseMenuItems
+        environmentId={environmentId}
+        folder={folder}
+        ownerKind={owner.context.kind}
+        commands={commands}
+      />
       <MenuItem
         onClick={() =>
           openFolderDialog({

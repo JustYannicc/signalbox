@@ -41,6 +41,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import type { RenderProject } from "../sections/SectionsProjectTree";
 import { openFolderDialog } from "./folderDialogStore";
 import { FolderMenu, OwnerMenu } from "./FolderMenus";
+import { FolderPhaseLabel } from "./FolderPhase";
 import {
   folderNodeKey,
   folderOwnerKey,
@@ -224,11 +225,12 @@ const FolderRow = memo(function FolderRow(props: {
           ) : (
             <FolderClosedIcon aria-hidden className="size-3.5 shrink-0 text-icon-muted" />
           )}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-muted-foreground/85">
+          <span className="min-w-0 truncate text-sm font-medium text-sidebar-muted-foreground/85">
             {folder.name}
           </span>
+          <FolderPhaseLabel folder={folder} />
           {count > 0 ? (
-            <span className="shrink-0 pe-1 text-3xs tabular-nums text-sidebar-muted-foreground/50 group-hover/folder-row:hidden group-focus-within/folder-row:hidden group-has-data-popup-open/folder-row:hidden pointer-coarse:hidden">
+            <span className="ms-auto shrink-0 pe-1 text-3xs tabular-nums text-sidebar-muted-foreground/50 group-hover/folder-row:hidden group-focus-within/folder-row:hidden group-has-data-popup-open/folder-row:hidden pointer-coarse:hidden">
               {count}
               <span className="sr-only"> {count === 1 ? "thread" : "threads"}</span>
             </span>

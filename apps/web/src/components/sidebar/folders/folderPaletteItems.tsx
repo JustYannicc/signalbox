@@ -1,11 +1,12 @@
 /**
  * Command palette entries for folders: move the open thread (or draft) to
- * another folder of its owner, and make a new folder.
+ * another folder of its owner, move its folder to another phase, and make a
+ * new folder.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { homeOfThread, threadFolderChoices } from "@t3tools/client-runtime/state/signalboxFolders";
 import { useParams } from "@tanstack/react-router";
-import { FolderInputIcon, FolderPlusIcon } from "lucide-react";
+import { FolderInputIcon, FolderPlusIcon, MilestoneIcon } from "lucide-react";
 
 import { useComposerDraftStore } from "../../../composerDraftStore";
 import { useThreadShell } from "../../../state/entities";
@@ -76,6 +77,36 @@ export function useFolderPaletteItems(): Array<
         icon: <FolderInputIcon className={ITEM_ICON_CLASS} />,
         addonIcon: <FolderInputIcon className={ADDON_ICON_CLASS} />,
         groups: [{ value: "folders", label: owner.name, items: destinations }],
+      });
+    }
+    const folder = snapshot.folders.find((candidate) => candidate.id === home);
+    const phase = folder?.phase;
+    if (folder && phase) {
+      items.push({
+        kind: "submenu",
+        value: "action:folder-phase",
+        searchTerms: ["folder phase", "phase", "stage", folder.name],
+        title: "Move folder to phase…",
+        icon: <MilestoneIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <MilestoneIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: "phases",
+            label: folder.name,
+            items: phase.phases
+              .filter((name) => name !== phase.current)
+              .map((name): CommandPaletteActionItem => ({
+                kind: "action",
+                value: `folder-phase:${name}`,
+                searchTerms: [name],
+                title: name,
+                icon: <MilestoneIcon className={ITEM_ICON_CLASS} />,
+                run: async () => {
+                  await commands.setPhase(thread.environmentId, { id: folder.id, current: name });
+                },
+              })),
+          },
+        ],
       });
     }
   }

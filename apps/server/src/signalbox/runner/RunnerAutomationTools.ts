@@ -51,6 +51,9 @@ const FORWARDED = [
   "merge_pull_request",
 ] as const;
 
+/** Forwarded too, with no server tool to match: folders are Signalbox Cloud's (#677). */
+export const RUNNER_CLOUD_ONLY_TOOLS = ["set_folder_phase"] as const;
+
 /**
  * Upstream's pull request target (`mcp/toolkits/pullRequests/tools.ts`), which
  * the Runner can't import without the whole server; RunnerAutomationTools.test.ts
@@ -104,6 +107,7 @@ export const RUNNER_AUTOMATION_TOOLS: ReadonlyArray<string> = [
   "automation_validate",
   "automation_save",
   ...FORWARDED,
+  ...RUNNER_CLOUD_ONLY_TOOLS,
   ...Object.keys(PULL_REQUEST_WATCH_TOOLS),
 ];
 
@@ -205,7 +209,7 @@ export const layerAutomationTools = (view: DrivesView) => {
   const encodeSave = Schema.encodeEffect(tools.automation_save.parameters);
   return Layer.effectDiscard(
     Effect.all([
-      ...FORWARDED.map((name) => forward(name, tools[name])),
+      ...[...FORWARDED, ...RUNNER_CLOUD_ONLY_TOOLS].map((name) => forward(name, tools[name])),
       ...Object.entries(PULL_REQUEST_WATCH_TOOLS).map(([name, { description }]) =>
         forward(name, { description, parameters: PullRequestTargetInput, readonly: false }),
       ),

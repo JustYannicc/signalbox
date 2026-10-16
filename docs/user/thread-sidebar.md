@@ -45,6 +45,16 @@ folder work in those files. In a folder without files of its own, they work in t
 Personal or organization. Each drive you're given starts out as a folder of its own, which you can
 move, rename, or hand its files to another folder.
 
+### Phases
+
+A folder can have a phase that says where it is in its life, shown beside its name. New folders
+start with one: Proposal, Initiative, Implementation, Testing, Production in an organization, and
+Idea, Doing, Done in Personal. Folders made for files you already had start without one. Choose
+**Phase** in a folder's menu to move it to another phase, skipping any you like, or **Edit
+phases…** to rename, add, reorder, or remove them, one per line. **Move folder to phase…** in the
+command palette moves the open thread's folder. Agents and automations can move it too, for example
+to Production after the first deploy.
+
 ### Instructions
 
 Each level can have instructions for agents, its own `AGENTS.md`. Choose **Instructions…** in a
