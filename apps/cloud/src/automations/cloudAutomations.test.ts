@@ -9,6 +9,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
 } from "@t3tools/contracts";
+import { scheduledTaskSource } from "@signalbox/automations/scheduledTasks";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -144,6 +145,55 @@ export default workflow(async (w, event: { threadId: string }) => {
         projection.messages.some((message) => message.text.includes("Look at the build again.")),
       ).toBe(true);
     }),
+  );
+
+  it.effect(
+    "an agent's scheduled task posts into its thread on every cron, until deleted (#367)",
+    () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        const { cloud, rpc, thread, save, tool, engine } = yield* setup;
+        const agent = yield* thread("thread-clock", "Post the time every 5 minutes");
+        const saved = (yield* save(
+          agent,
+          scheduledTaskSource({
+            title: "Post the time",
+            prompt: "Post the current time.",
+            schedule: { type: "interval", everyMs: 300_000 },
+            timezone: "UTC",
+            threadId: agent,
+            key: null,
+          }),
+        )) as { readonly ok: boolean; readonly automation: { readonly automationId: string } };
+        expect(saved.ok).toBe(true);
+
+        const posted = () =>
+          rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId: agent }).pipe(
+            Effect.map(
+              (projection) =>
+                projection.messages.filter((message) => message.text === "Post the current time.")
+                  .length,
+            ),
+          );
+        for (const expected of [1, 2]) {
+          const due = cloud.alarmAt(userId)!;
+          vi.setSystemTime(due + 1_000);
+          yield* cloud.fireAlarm(userId);
+          yield* cloud.settle;
+          expect(yield* posted()).toBe(expected);
+        }
+        const { runs } = yield* engine((engine) => engine.get(saved.automation.automationId));
+        expect(runs.map((run) => [run.trigger, run.status])).toEqual([
+          ["cron", "succeeded"],
+          ["cron", "succeeded"],
+        ]);
+
+        yield* tool(agent, "automation_delete", { automationId: saved.automation.automationId });
+        vi.setSystemTime(Date.now() + 600_000);
+        yield* cloud.fireAlarm(userId);
+        yield* cloud.settle;
+        expect(yield* posted()).toBe(2);
+      }),
   );
 
   it.effect("a cron fires on the object's alarm", () =>
