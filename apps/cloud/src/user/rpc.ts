@@ -388,6 +388,12 @@ export const layerHandlers = (input: {
   readonly sid: string;
   /** What the connection's credential holds; new keys get no more. Defaults to an app's. */
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+  /**
+   * `client`: a person's app socket. `api`: the public API (keys, CLI, MCP),
+   * which may be an agent holding the person's credential, so it can't vouch
+   * for what it publishes. Defaults to `api`.
+   */
+  readonly via?: "client" | "api";
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -474,7 +480,10 @@ export const layerHandlers = (input: {
             config.settings.defaultModelSelection ?? poolFallbackModelSelection(config.providers),
         ),
       );
-      const automations = yield* makeAutomationHandlers({ newThreadModel });
+      const automations = yield* makeAutomationHandlers({
+        personReviews: input.via === "client",
+        newThreadModel,
+      });
       const notes = yield* makeNotesHandlers({ newThreadModel });
       const keys = yield* makeKeysHandlers({
         userId,

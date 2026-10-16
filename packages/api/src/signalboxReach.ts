@@ -50,7 +50,11 @@ export const SIGNALBOX_RPC_REACH = {
   "automations.stopAttached": write(),
   "automations.cancelRun": write({ name: "automations.runs.cancel" }),
   "automations.retryRun": write({ name: "automations.runs.retry" }),
-  "automations.publish": write(),
+  // Only the app's publish vouches for the code (`apps/cloud/src/automations/automationRpc.ts`).
+  "automations.publish": write({
+    summary:
+      "Make an automation's draft live. It doesn't vouch for the code: tools only a person-published version may use need a person to publish it in the app.",
+  }),
   "automations.discardDraft": write(),
   // A run waiting on `w.ask` is a decision gate (#335 decision 4).
   "automations.answer": write({

@@ -132,7 +132,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "SubscriptionUsage",
         displayName: "Subscription usage",
-        description: "Subscription quotas from your connected Signalbox environments.",
+        description: "How much of your AI subscriptions you have left.",
         ios: {
           configuration: {
             title: "Subscription usage",

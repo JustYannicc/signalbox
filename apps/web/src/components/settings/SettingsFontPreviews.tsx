@@ -133,9 +133,9 @@ export function CodeFontPreview() {
 }
 
 const TERMINAL_PROMPT =
-  "\x1b[1;32m→\x1b[0m \x1b[1;36mt3code\x1b[0m \x1b[1;34mgit:(\x1b[1;31mmain\x1b[1;34m)\x1b[0m \x1b[1;33m✗\x1b[0m ";
+  "\x1b[1;32m→\x1b[0m \x1b[1;36mproject\x1b[0m \x1b[1;34mgit:(\x1b[1;31mmain\x1b[1;34m)\x1b[0m \x1b[1;33m✗\x1b[0m ";
 const TERMINAL_PREVIEW_TRANSCRIPT =
-  `${TERMINAL_PROMPT}vpr dev\r\n` +
+  `${TERMINAL_PROMPT}npm run dev\r\n` +
   "\r\n" +
   "  \x1b[1;32mVITE\x1b[0m \x1b[32mv7.1.1\x1b[0m  \x1b[2mready in\x1b[0m \x1b[1m1.24s\x1b[0m\r\n" +
   "\r\n" +
