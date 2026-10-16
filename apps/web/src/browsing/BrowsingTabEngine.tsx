@@ -27,6 +27,7 @@ import {
   readerScrollTrackerScript,
 } from "./browsingEngine";
 import { dispatchBrowsingCommand, threadBrowsingStateAtom } from "./threadBrowsingSync";
+import { useTabSignIn } from "./useTabSignIn";
 
 /** How often a visible page is asked whether the reader scrolled it. */
 const CAPTURE_INTERVAL_MS = 3_000;
@@ -206,6 +207,8 @@ function SyncedTabEngine({
       void capture();
     };
   }, [visible, webviewGeneration]);
+
+  useTabSignIn({ threadRef, webviewRef, webviewGeneration, visible });
 
   return null;
 }

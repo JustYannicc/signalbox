@@ -77,6 +77,7 @@ import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LocalKeys from "./localKeys/LocalKeys.ts";
 import type { ExecutorLogins } from "./signIn/ExecutorLogins.ts";
+import * as DeviceSignIn from "./signIn/DeviceSignIn.ts";
 import * as LoginService from "./signIn/LoginService.ts";
 import * as SignInGrants from "./signIn/SignInGrants.ts";
 import * as LegacySections from "./user/legacySections.ts";
@@ -277,6 +278,7 @@ const makeUserRuntime = (
           UserPreviewSetup.layer,
           CloudAssets.layer,
           LoginService.layer(logins),
+          DeviceSignIn.layer(logins),
         ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(

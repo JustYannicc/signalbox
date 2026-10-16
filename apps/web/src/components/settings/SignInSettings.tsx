@@ -112,7 +112,7 @@ function SignInGrantsSection({ environmentId }: { readonly environmentId: Enviro
     <SettingsSection id="sign-in-grants" title="Signing in">
       <SettingsRow
         title="Sign in everywhere"
-        description="Agents sign in to any site from your 1Password without asking you first. Payments always come back to you."
+        description="Agents, and your browser tabs on each of your devices, sign in to any site from your 1Password without asking you first. Payments always come back to you."
         status={everywhere === null ? undefined : `On since ${since(everywhere.grantedAt)}`}
         control={
           <Switch

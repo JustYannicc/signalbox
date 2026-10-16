@@ -77,6 +77,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope, // signalbox: sign-in grants
   [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: AuthSettingsWriteScope, // signalbox: sign-in grants
+  [SIGNALBOX_SIGN_IN_WS_METHODS.fill]: AuthPreviewOperateScope, // signalbox: device sign-in
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

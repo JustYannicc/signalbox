@@ -15,4 +15,5 @@ export const signalboxSignInWsHandlers = {
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: () => Effect.fail(unavailable),
   [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: () => Effect.fail(unavailable),
   [SIGNALBOX_SIGN_IN_WS_METHODS.check]: () => Effect.fail(unavailable),
+  [SIGNALBOX_SIGN_IN_WS_METHODS.fill]: () => Effect.fail(unavailable),
 };

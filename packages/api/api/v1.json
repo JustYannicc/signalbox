@@ -2201,6 +2201,10 @@
       "kind": "client-local"
     },
     {
+      "rpc": "signalbox.signIn.fill",
+      "kind": "client-local"
+    },
+    {
       "rpc": "server.probe",
       "kind": "client-report"
     },

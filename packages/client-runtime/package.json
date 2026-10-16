@@ -199,6 +199,10 @@
       "types": "./src/browsing/pagePosition.ts",
       "default": "./src/browsing/pagePosition.ts"
     },
+    "./browsing/sign-in": {
+      "types": "./src/browsing/deviceSignIn.ts",
+      "default": "./src/browsing/deviceSignIn.ts"
+    },
     "./state/browsing": {
       "types": "./src/state/browsing.ts",
       "default": "./src/state/browsing.ts"

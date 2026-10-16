@@ -105,7 +105,7 @@ function SignInGrants({ environmentId }: { readonly environmentId: EnvironmentId
 
   return (
     <>
-      <SettingsSection footer="Agents sign in from your 1Password without asking you first. Payments always come back to you.">
+      <SettingsSection footer="Agents, and your browser tabs on each of your devices, sign in from your 1Password without asking you first. Payments always come back to you.">
         <ListToggleRow
           icon="globe"
           label="Sign in everywhere"

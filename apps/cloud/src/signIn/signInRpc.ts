@@ -1,5 +1,6 @@
 import {
   type SignInCheckInput,
+  type SignInFillInput,
   SignInGrantError,
   type SignInGrantInput,
   type SignInRevokeInput,
@@ -9,6 +10,7 @@ import * as Effect from "effect/Effect";
 import type { SqlError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
+import { DeviceSignIn } from "./DeviceSignIn.ts";
 import { SignInGrants } from "./SignInGrants.ts";
 
 const STORAGE_FAILED = "Couldn't reach your sign-in grants. Try again.";
@@ -25,12 +27,14 @@ const grantCall = <A>(effect: Effect.Effect<A, SqlError | SignInGrantError>) =>
   );
 
 /**
- * The sign-in grant RPCs of one connection acting for `userId`. Its check
- * answers as the login service would for a turn this person requested.
+ * The sign-in RPCs of one connection acting for `userId`. Its check answers
+ * as the login service would for a turn this person requested; its fill
+ * signs one of their own tabs in on the device that asked (#586).
  */
 export const makeSignInHandlers = (input: { readonly userId: string }) =>
   Effect.gen(function* () {
     const grants = yield* SignInGrants;
+    const devices = yield* DeviceSignIn;
     return {
       [SIGNALBOX_SIGN_IN_WS_METHODS.subscribe]: () =>
         grants.changes.pipe(
@@ -57,5 +61,7 @@ export const makeSignInHandlers = (input: { readonly userId: string }) =>
                 : Effect.succeed(answer),
           ),
         ),
+      [SIGNALBOX_SIGN_IN_WS_METHODS.fill]: (request: SignInFillInput) =>
+        grantCall(devices.step({ ...request, requester: input.userId })),
     };
   });

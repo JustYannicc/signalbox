@@ -54,6 +54,31 @@ subscriber its own identity in the snapshot. A device skips reapplying its own
 changes, which is what keeps two engines from echoing a navigation back and
 forth. Position restores only when someone else moved it.
 
+## Signing in on each device
+
+Each engine signs itself in from the person's 1Password (#586), through the
+same grant check and folder-tree credentials as agents' sign-ins (#576), in
+[`DeviceSignIn.ts`](../../apps/cloud/src/signIn/DeviceSignIn.ts). Three
+constraints shape it:
+
+- **Lazy.** An engine looks for a login form only while its tab is in front of
+  the person. A tab arriving through sync must never sign in, since every
+  sign-in on a new engine can mean a Google "is this you?" prompt.
+- **One step at a time.** The device asks for exactly the kinds the form's
+  current step shows, so a value never reaches a page that didn't ask for it.
+  The same step reappearing right after a fill is the site refusing, and the
+  tab goes quiet instead of retrying
+  ([`deviceSignIn.ts`](../../packages/client-runtime/src/browsing/deviceSignIn.ts)).
+- **Filled like an extension.** Values go in through the input's value setter
+  and DOM events from a page script, the way password manager extensions fill.
+  No debugger, synthetic input or user agent change, which is what sites'
+  automation checks catch. The desktop keeps Electron's user agent because
+  Turnstile breaks without it (see `BrowserSession.ts`).
+
+Google refuses sign-in inside app web views, so the phone opens Google hosts in
+the system browser view, where 1Password's AutoFill signs in. That view hides
+its address, so those tabs sync one way.
+
 ## Position
 
 [`pagePosition.ts`](../../packages/client-runtime/src/browsing/pagePosition.ts)

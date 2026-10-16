@@ -184,4 +184,9 @@ export const SIGNALBOX_RPC_REACH = {
     name: "signIn.check",
     summary: "Whether agents would sign in to a site without asking.",
   }),
+  // Its answer holds a login's values; only a person's own browser panel asks for one.
+  "signalbox.signIn.fill": exempt(
+    "client-local",
+    "Your device's browser panel filling a login form; values never reach an agent or the API.",
+  ),
 } as const satisfies Partial<Record<WsRpcMethod, Reach>>;

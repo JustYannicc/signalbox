@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -16,6 +17,7 @@ import {
   WS_METHODS,
   type AuthSessionState,
 } from "@t3tools/contracts";
+import { SIGNALBOX_SIGN_IN_WS_METHODS } from "@t3tools/contracts/signalboxSignIn";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -102,6 +104,30 @@ describe("command permissions", () => {
         );
         expect(registry.get(check.permissionAtom(env))).toBe(true);
         yield* check.authorize(registry, env);
+      }),
+    ),
+  );
+
+  it.effect("requires the destination preview grant to fill a login on this device", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const fill = createCommandPermissions(runtime, SIGNALBOX_SIGN_IN_WS_METHODS.fill);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(fill.permissionAtom(env))).toBe(false);
+        expect((yield* fill.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthPreviewOperateScope],
+            permissions: [AuthPreviewOperateScope],
+          }),
+        );
+        expect(registry.get(fill.permissionAtom(env))).toBe(true);
+        yield* fill.authorize(registry, env);
       }),
     ),
   );

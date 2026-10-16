@@ -30,6 +30,7 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
+import * as DeviceSignIn from "../signIn/DeviceSignIn.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
 import * as Platform from "../platform.ts";
@@ -199,6 +200,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
           LoginService.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+          // People's own devices signing their tabs in (#586), from the same Executor.
+          DeviceSignIn.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
         ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(

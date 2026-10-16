@@ -14,10 +14,11 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import {
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
-import { NonNegativeInt } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId } from "./baseSchemas.ts";
 import { FolderId } from "./signalboxFolders.ts";
 
 export const SIGNALBOX_SIGN_IN_WS_METHODS = {
@@ -25,14 +26,19 @@ export const SIGNALBOX_SIGN_IN_WS_METHODS = {
   grant: "signalbox.signIn.grant",
   revoke: "signalbox.signIn.revoke",
   check: "signalbox.signIn.check",
+  fill: "signalbox.signIn.fill",
 } as const;
 
-/** Granting and revoking change what agents may do as you, like a setting. */
+/**
+ * Granting and revoking change what agents may do as you, like a setting.
+ * Filling is your own device's browser panel signing your tab in.
+ */
 export const SIGNALBOX_SIGN_IN_REQUIRED_SCOPES = {
   [SIGNALBOX_SIGN_IN_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope,
   [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: AuthSettingsWriteScope,
   [SIGNALBOX_SIGN_IN_WS_METHODS.check]: AuthOrchestrationReadScope,
+  [SIGNALBOX_SIGN_IN_WS_METHODS.fill]: AuthPreviewOperateScope,
 } as const;
 
 /** The site of a grant that covers every site. */
@@ -94,6 +100,54 @@ export const SignInAnswer = Schema.Union([
 ]);
 export type SignInAnswer = typeof SignInAnswer.Type;
 
+/** What a login form asks for, one step at a time: a two-step site asks for each in turn. */
+export const SignInFillKind = Schema.Literals(["username", "password", "totp"]);
+export type SignInFillKind = typeof SignInFillKind.Type;
+
+/**
+ * Your own device's browser panel asking to sign one of your tabs in (#586).
+ * It asks only once the tab is in front of you there, never for a tab that
+ * just synced. The thread decides whose credentials answer, as it does for
+ * agents: its home's (#344).
+ */
+export const SignInFillInput = Schema.Struct({
+  threadId: ThreadId,
+  /** The page asking for a login; only its origin counts. */
+  origin: Schema.String.check(Schema.isMaxLength(2048)),
+  kinds: Schema.NonEmptyArray(SignInFillKind),
+  /** The login an earlier step of the same sign-in used, so a two-step site stays on one account. */
+  item: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
+});
+export type SignInFillInput = typeof SignInFillInput.Type;
+
+/** A value only the page it's for may hold: redacted wherever it's decoded, never logged. */
+const FillSecret = Schema.RedactedFromValue(Schema.String);
+
+/**
+ * A fill's answer:
+ * - `filled`: exactly the kinds asked for, from the named login.
+ * - `ask`: no grant covers the site, so nothing is filled.
+ * - `not-owner`: the credentials are someone else's.
+ * - `no-login`: there's no login to fill, and `reason` says why.
+ * - `unavailable`: 1Password couldn't be read right now; a later focus tries again.
+ */
+export const SignInFill = Schema.Union([
+  Schema.TaggedStruct("filled", {
+    item: Schema.String,
+    title: Schema.String,
+    username: Schema.optionalKey(Schema.String),
+    password: Schema.optionalKey(FillSecret),
+    totp: Schema.optionalKey(FillSecret),
+  }),
+  Schema.TaggedStruct("ask", { site: Schema.String }),
+  Schema.TaggedStruct("not-owner", {}),
+  Schema.TaggedStruct("no-login", {
+    reason: Schema.Literals(["not-linked", "no-match", "no-folder-source", "not-a-site"]),
+  }),
+  Schema.TaggedStruct("unavailable", { message: Schema.String }),
+]);
+export type SignInFill = typeof SignInFill.Type;
+
 /** A grant change or check was refused or failed; `message` says why, for the person. */
 export class SignInGrantError extends Schema.TaggedError<SignInGrantError>()("SignInGrantError", {
   message: Schema.String,
@@ -128,5 +182,18 @@ const CheckRpc = Rpc.make(SIGNALBOX_SIGN_IN_WS_METHODS.check, {
   error,
 });
 
+/** Your device's own engine signing your tab in; values reach only that engine's page. */
+const FillRpc = Rpc.make(SIGNALBOX_SIGN_IN_WS_METHODS.fill, {
+  payload: SignInFillInput,
+  success: SignInFill,
+  error,
+});
+
 /** Spread into `WsRpcGroup`, which applies its scope authorization to them. */
-export const SIGNALBOX_SIGN_IN_RPCS = [SubscribeRpc, GrantRpc, RevokeRpc, CheckRpc] as const;
+export const SIGNALBOX_SIGN_IN_RPCS = [
+  SubscribeRpc,
+  GrantRpc,
+  RevokeRpc,
+  CheckRpc,
+  FillRpc,
+] as const;

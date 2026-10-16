@@ -1,9 +1,10 @@
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { browsingTabLabel } from "@t3tools/client-runtime/browsing";
+import { browsingTabHost, browsingTabLabel } from "@t3tools/client-runtime/browsing";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { BrowsingTab } from "@t3tools/contracts/signalboxBrowsing";
 import { useCallback, useEffect, useState } from "react";
 import { AppState, View } from "react-native";
+import * as WebBrowser from "expo-web-browser";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -20,6 +21,7 @@ import {
   type PendingActivation,
 } from "./syncedBrowsing";
 import { SyncedBrowserTab } from "./SyncedBrowserTab";
+import { opensInSystemBrowser } from "./systemBrowser";
 
 type SyncedBrowserRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -151,9 +153,21 @@ function SyncedBrowserScreen(props: {
             }
           />
         </View>
+      ) : tab !== null && tab.url !== null && opensInSystemBrowser(tab.url) ? (
+        <View className="flex-1 justify-center">
+          <EmptyState
+            variant="plain"
+            title="This page opens in the browser view"
+            detail="Google only signs you in there. 1Password fills it in with one tap, once on this phone."
+            actionLabel={`Open ${browsingTabHost(tab.url) ?? "page"}`}
+            onAction={() => void WebBrowser.openBrowserAsync(tab.url ?? "")}
+          />
+        </View>
       ) : tab !== null && state !== null ? (
         <SyncedBrowserTab
           key={tab.id}
+          environmentId={environmentId}
+          threadId={threadId}
           tab={tab}
           you={state.you}
           live={focused && foreground}

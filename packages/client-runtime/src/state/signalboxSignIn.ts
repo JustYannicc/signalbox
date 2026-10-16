@@ -5,7 +5,10 @@ import {
   type SignInGrant,
   type SignInGrants,
 } from "@t3tools/contracts/signalboxSignIn";
-import type { Atom } from "effect/reactivity";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { Atom, AtomRegistry } from "effect/reactivity";
+
+import type { SignInAsk } from "../browsing/deviceSignIn.ts";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -13,6 +16,7 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
   isAtomCommandInterrupted,
+  runAtomCommand,
   squashAtomCommandFailure,
 } from "./runtime.ts";
 
@@ -24,6 +28,11 @@ import {
 export function createSignalboxSignInAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
+  /** One step of a login form in a tab in front of the person on this device (#586). */
+  const fill = createEnvironmentRpcCommand(runtime, {
+    label: "signalbox-sign-in:fill",
+    tag: SIGNALBOX_SIGN_IN_WS_METHODS.fill,
+  });
   return {
     grants: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:signalbox-sign-in:grants",
@@ -41,6 +50,30 @@ export function createSignalboxSignInAtoms<R, E>(
       label: "signalbox-sign-in:check",
       tag: SIGNALBOX_SIGN_IN_WS_METHODS.check,
     }),
+    fill,
+    /** A device engine's `ask` for its tabs in one thread: the cloud's fill, null when it failed. */
+    askFill:
+      (
+        registry: AtomRegistry.AtomRegistry,
+        target: { environmentId: EnvironmentId; threadId: ThreadId },
+      ): SignInAsk =>
+      async (form, item) => {
+        const result = await runAtomCommand(
+          registry,
+          fill,
+          {
+            environmentId: target.environmentId,
+            input: {
+              threadId: target.threadId,
+              origin: form.origin,
+              kinds: form.kinds,
+              ...(item === null ? {} : { item }),
+            },
+          },
+          { reportFailure: false },
+        );
+        return result._tag === "Success" ? result.value : null;
+      },
   };
 }
 

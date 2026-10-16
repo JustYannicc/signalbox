@@ -1,4 +1,5 @@
 import { restorePagePositionScript } from "@t3tools/client-runtime/browsing/page-position";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type {
   BrowsingMember,
   BrowsingPosition,
@@ -14,6 +15,7 @@ import {
   useState,
 } from "react";
 import { View } from "react-native";
+import * as WebBrowser from "expo-web-browser";
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 import type { WebViewNativeEvent } from "react-native-webview/lib/WebViewTypes";
 
@@ -33,6 +35,8 @@ import {
   settleReports,
   urlToFollow,
 } from "./syncedBrowsing";
+import { opensInSystemBrowser } from "./systemBrowser";
+import { useTabSignIn } from "./useTabSignIn";
 
 /** How long scrolling has to settle before the thread hears where the reader is. */
 const POSITION_REPORT_DELAY_MS = 1_500;
@@ -54,6 +58,8 @@ interface LocalNavigation {
  * fresh. Only for tabs you own (`browsingTabEngine`): an agent's never load here.
  */
 export function SyncedBrowserTab(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly tab: BrowsingTab;
   readonly you: BrowsingMember | null;
   /** Off while the panel is covered or the app is in the background. */
@@ -72,6 +78,15 @@ export function SyncedBrowserTab(props: {
   });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pageReady, setPageReady] = useState(false);
+  // Signs this tab in from 1Password while it's in front of the person (#586).
+  const signIn = useTabSignIn({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    webView,
+    url: local.url,
+    live,
+    pageReady,
+  });
 
   // Bookkeeping for the page in the WebView, not anything rendered.
   /** Navigations this device reported that the record hasn't shown back yet, oldest first. */
@@ -185,6 +200,7 @@ export function SyncedBrowserTab(props: {
     if (!event.loading && !failed.current) reportPage(event.url, event.title);
   };
   const onMessage = (event: WebViewMessageEvent) => {
+    if (signIn.onMessage(event)) return;
     const message = parsePageMessage(event.nativeEvent.data, tab.id);
     if (message === null) return;
     // The engine's URL, never the page's say-so.
@@ -249,6 +265,11 @@ export function SyncedBrowserTab(props: {
               </View>
             )}
             onShouldStartLoadWithRequest={(request) => {
+              // Google won't sign in here; its pages open in the system browser view (#586).
+              if (request.isTopFrame !== false && opensInSystemBrowser(request.url)) {
+                void WebBrowser.openBrowserAsync(request.url);
+                return false;
+              }
               if (WEB_SCHEMES.test(request.url)) return true;
               // mailto:, tel:, app links: the phone's own apps handle them.
               if (request.isTopFrame !== false) {
