@@ -275,6 +275,13 @@ const make = Effect.gen(function* () {
         yield* store.saveRun({ ...diagnostics, recoveries: diagnostics.recoveries + 1 });
       }
       const machine = `Runner ${hello.imageVersion} on ${hello.machineId}`;
+      // Whether a reconnect still runs the turn: a Stop or steer after it goes to this connection (#562).
+      const holds =
+        run === null || hello.takenRunIds === undefined || lost
+          ? ""
+          : hello.takenRunIds.includes(run.id)
+            ? " It still has this turn."
+            : " It doesn't have this turn yet.";
       yield* log({
         at: now,
         generation: hello.generation,
@@ -283,7 +290,7 @@ const make = Effect.gen(function* () {
         message:
           connection === 1
             ? `${machine} connected.`
-            : `${machine} reconnected (connection ${connection}), resending after batch ${hello.lastAckedSequence}.`,
+            : `${machine} reconnected (connection ${connection}), resending after batch ${hello.lastAckedSequence}.${holds}`,
       });
       if (lost && run !== null) {
         yield* log({
