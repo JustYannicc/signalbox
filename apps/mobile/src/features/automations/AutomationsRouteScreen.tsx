@@ -14,10 +14,10 @@ import { useMemo } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { relativeTime } from "../../lib/time";
 import { useHeaderMenu } from "../../native/HeaderMenu";
 import { formatNextScheduledTaskRun } from "../settings/scheduledTaskPresentation";

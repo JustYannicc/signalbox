@@ -4,16 +4,15 @@ import {
   ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
 import {
-  decodePullRequestCheckContextsJson,
-  decodePullRequestSummariesJson,
   type GitHubCheckContext,
-  pullRequestCheckContextsGraphQlQuery,
   pullRequestChecksFromContexts,
-  pullRequestSummaryGraphQlQuery,
+  toPullRequestCheckContextsPage,
+  toPullRequestSummary,
 } from "@t3tools/source-control-github/server/gitHubPullRequestJson";
+import { PullRequestSummary } from "@t3tools/source-control-github/server/pullRequestBatches.graphql";
+import { PullRequestCheckContexts } from "@t3tools/source-control-github/server/pullRequestReads.graphql";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { SnapshotFields } from "../thread/pullRequests/pullRequestLinks.ts";
@@ -45,6 +44,12 @@ const ownerAndName = (repository: string) => {
 };
 
 const decodeSnapshot = Schema.decodeUnknownOption(ThreadPullRequestSnapshot);
+const decodeSummaryAnswer = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ data: PullRequestSummary.result })),
+);
+const decodeCheckContextsAnswer = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ data: PullRequestCheckContexts.result })),
+);
 
 /**
  * The pull request's host state as a link keeps it, without `syncedAt`, the
@@ -58,15 +63,17 @@ export const pullRequestSnapshot = (
   number: number,
 ) =>
   Effect.gen(function* () {
-    const text = yield* api.graphql("pullRequestSummary", token, pullRequestSummaryGraphQlQuery(), {
+    const text = yield* api.graphql("pullRequestSummary", token, PullRequestSummary.document, {
       ...ownerAndName(repository),
       number,
+      stacks: false,
     });
     if (text === null) return null;
-    const decoded = decodePullRequestSummariesJson(text);
-    if (Result.isFailure(decoded)) return yield* unreadable("pullRequestSummary");
-    const summary = decoded.success.get(0);
-    if (summary === undefined) return null;
+    const decoded = decodeSummaryAnswer(text);
+    if (Option.isNone(decoded)) return yield* unreadable("pullRequestSummary");
+    const pullRequest = decoded.value.data.repository?.pullRequest;
+    if (pullRequest == null) return null;
+    const summary = toPullRequestSummary(pullRequest);
     const fields: SnapshotFields = {
       state: summary.state,
       title: summary.title,
@@ -105,14 +112,17 @@ export const pullRequestChecks = (
       const text: string | null = yield* api.graphql(
         "pullRequestChecks",
         token,
-        pullRequestCheckContextsGraphQlQuery(api.host),
-        { ...ownerAndName(repository), number, after },
+        PullRequestCheckContexts.document,
+        // An older Enterprise server may not know `isRequired`, so only github.com asks for it.
+        { ...ownerAndName(repository), number, required: api.host === "github.com", after },
       );
       if (text === null) return null;
-      const decoded = decodePullRequestCheckContextsJson(text);
-      if (Result.isFailure(decoded)) return yield* unreadable("pullRequestChecks");
-      contexts.push(...decoded.success.contexts);
-      after = decoded.success.nextCursor;
+      const decoded = decodeCheckContextsAnswer(text);
+      if (Option.isNone(decoded)) return yield* unreadable("pullRequestChecks");
+      const page = toPullRequestCheckContextsPage(decoded.value.data);
+      if (page === null) return null;
+      contexts.push(...page.contexts);
+      after = page.nextCursor;
       if (after === null) break;
     }
     return pullRequestChecksFromContexts(contexts).checks satisfies ReadonlyArray<PullRequestCheck>;

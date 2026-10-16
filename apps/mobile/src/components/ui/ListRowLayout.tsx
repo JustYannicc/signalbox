@@ -1,0 +1,81 @@
+import type { ReactNode } from "react";
+import { Platform, useWindowDimensions, View } from "react-native";
+
+import { cn } from "../../lib/cn";
+import { AppText } from "./AppText";
+import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { AttentionDot } from "../AttentionDot"; // signalbox: attention dot
+
+export interface ListRowContentProps {
+  readonly icon?: AppSymbolName;
+  readonly label: string;
+  readonly description?: string;
+  readonly detail?: string;
+  readonly disabled?: boolean;
+  readonly attention?: boolean; // signalbox: attention dot
+}
+
+export function ListRowLayout({
+  icon,
+  label,
+  description,
+  detail,
+  disabled,
+  attention,
+  accessory,
+  tone = "default",
+}: ListRowContentProps & { readonly accessory?: ReactNode; readonly tone?: "default" | "danger" }) {
+  const { fontScale } = useWindowDimensions();
+  const stackDetail = fontScale >= 1.5;
+  return (
+    <View
+      className={cn(
+        "min-h-14 flex-row items-center gap-3 px-4 py-3",
+        description && "min-h-18",
+        disabled && "opacity-45",
+      )}
+    >
+      {icon ? (
+        <View className="size-6 items-center justify-center">
+          <SymbolView
+            name={icon}
+            size={Platform.OS === "android" ? 24 : 22}
+            tintColorClassName={tone === "danger" ? "accent-danger-foreground" : "accent-icon"}
+            type="monochrome"
+            weight="regular"
+          />
+          {attention ? <AttentionDot /> : null /* signalbox: attention dot */}
+        </View>
+      ) : null}
+      <View className="min-w-0 flex-1 gap-1">
+        <AppText
+          textRole="body"
+          className={tone === "danger" ? "text-danger-foreground" : "text-foreground"}
+        >
+          {label}
+        </AppText>
+        {description ? (
+          <AppText textRole="footnote" className="text-foreground-muted">
+            {description}
+          </AppText>
+        ) : null}
+        {detail && stackDetail ? (
+          <AppText textRole="footnote" className="text-foreground-muted">
+            {detail}
+          </AppText>
+        ) : null}
+      </View>
+      {detail && !stackDetail ? (
+        <AppText
+          textRole="footnote"
+          className="max-w-[40%] shrink text-right text-foreground-muted"
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
+          {detail}
+        </AppText>
+      ) : null}
+      {accessory}
+    </View>
+  );
+}

@@ -1,7 +1,7 @@
 // signalbox: what the thread list shows while it's filtered to a folder.
 import { Platform } from "react-native";
 
-import { EmptyState } from "../../components/EmptyState";
+import { EmptyState } from "../../components/ui/EmptyState";
 
 import { withFolderFilterOption } from "./folder-filter";
 

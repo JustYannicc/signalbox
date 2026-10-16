@@ -22,7 +22,6 @@ interface ToolResult {
   readonly failed: boolean;
 }
 
-/** Reads the structured/JSON MCP result envelopes retained by the provider adapters. */
 function readResult(value: unknown, depth = 0): ToolResult {
   if (depth > 4) return { failed: false };
   if (typeof value === "string") {
@@ -81,7 +80,6 @@ function quantity(count: number, noun: string, plural = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : plural}`;
 }
 
-/** Counts successful effects separately from failed or unfinished tool calls. */
 export function summarizeT3ToolCalls(
   action: T3McpToolSummaryAction,
   calls: ReadonlyArray<T3ToolSummaryCall>,
@@ -211,7 +209,6 @@ export function summarizeT3ToolCalls(
       );
       break;
     case "schedule-delete":
-      // A successful delete can report deleted:false; it still represents a deletion request.
       label = phrase(
         "Requested deletion of",
         "delete",
@@ -362,7 +359,6 @@ export function summarizeT3ToolCalls(
       );
       break;
     case "attachment-send": {
-      // A message can contain several attachments. Count retries by message identity.
       const messages = new Map<string, (typeof selected)[number]>();
       selected.forEach((call, index) =>
         messages.set(id(call.output?.messageId) ?? `call-${index}`, call),

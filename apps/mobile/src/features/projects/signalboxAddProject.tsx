@@ -9,8 +9,8 @@ import {
 import { useMemo } from "react";
 import { View } from "react-native";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
 import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,

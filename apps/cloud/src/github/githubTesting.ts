@@ -117,7 +117,12 @@ export const makeFakeGitHub = (options: {
     closedAt: pull.state === "closed" ? "2026-10-08T00:00:00Z" : null,
     headRefName: pull.head,
     baseRefName: pull.base,
-    author: { __typename: "User", login: "octo", avatarUrl: null, name: "Octo Cat" },
+    author: {
+      __typename: "User",
+      login: "octo",
+      avatarUrl: "https://avatars.githubusercontent.com/u/1",
+      name: "Octo Cat",
+    },
     latestReviews: { nodes: [] },
     commits: {
       nodes: [
@@ -138,10 +143,12 @@ export const makeFakeGitHub = (options: {
       variables: { number?: number };
     };
     const pull = pulls.find((candidate) => candidate.number === variables.number);
-    if (query.includes("s0: repository")) {
-      return json({ data: { s0: { pullRequest: pull === undefined ? null : summaryJson(pull) } } });
+    if (query.startsWith("query PullRequestSummary(")) {
+      return json({
+        data: { repository: { pullRequest: pull === undefined ? null : summaryJson(pull) } },
+      });
     }
-    if (query.includes("statusCheckRollup { contexts(first: 100")) {
+    if (query.startsWith("query PullRequestCheckContexts(")) {
       if (pull === undefined) return json({ data: { repository: { pullRequest: null } } });
       return json({
         data: {
@@ -159,7 +166,10 @@ export const makeFakeGitHub = (options: {
                             name: check.name,
                             status: check.status,
                             conclusion: check.conclusion,
+                            startedAt: null,
+                            completedAt: null,
                             detailsUrl: `${ENDPOINTS.web}/${options.repository}/runs/${check.name}`,
+                            checkSuite: { workflowRun: null },
                           })),
                           pageInfo: { hasNextPage: false, endCursor: null },
                         },

@@ -34,7 +34,6 @@ export interface MachineLayout {
   readonly home: string;
   /** CLAUDE_CONFIG_DIR. */
   readonly claudeHome: string;
-  /** CODEX_HOME. */
   readonly codexHome: string;
   /** The current turn's model token. */
   readonly tokenFile: string;

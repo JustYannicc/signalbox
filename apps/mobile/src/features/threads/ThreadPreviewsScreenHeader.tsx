@@ -13,8 +13,8 @@ import * as WebBrowser from "expo-web-browser";
 import { useCallback, useRef } from "react";
 import { Alert, Platform } from "react-native";
 
-import { ScreenHeader } from "../../components/ScreenHeader";
-import type { ScreenHeaderProps } from "../../components/ScreenHeader.types";
+import { AppBar } from "../../components/ui/AppBar";
+import type { AppBarProps } from "../../components/ui/AppBar.types";
 import { signalboxPreviews, useThreadPreviewPorts } from "../../state/signalboxPreviews";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -62,22 +62,18 @@ export function ThreadPreviewsScreenHeader({
   environmentId,
   threadId,
   ...props
-}: ScreenHeaderProps & Partial<ThreadPreviewsTarget>) {
+}: AppBarProps & Partial<ThreadPreviewsTarget>) {
   // Without a thread (e.g. a header rendered on its own) there's nothing to preview.
-  if (environmentId === undefined || threadId === undefined) return <ScreenHeader {...props} />;
+  if (environmentId === undefined || threadId === undefined) return <AppBar {...props} />;
   return <PreviewsHeader {...props} environmentId={environmentId} threadId={threadId} />;
 }
 
-function PreviewsHeader({
-  environmentId,
-  threadId,
-  ...props
-}: ScreenHeaderProps & ThreadPreviewsTarget) {
+function PreviewsHeader({ environmentId, threadId, ...props }: AppBarProps & ThreadPreviewsTarget) {
   const ports = useThreadPreviewPorts(environmentId, threadId);
   const canOpen = useAtomValue(signalboxPreviews.open.permissionAtom(environmentId));
   const openPreview = useOpenThreadPreview(environmentId, threadId);
   const [first] = ports;
-  if (first === undefined || !canOpen) return <ScreenHeader {...props} />;
+  if (first === undefined || !canOpen) return <AppBar {...props} />;
 
   if (Platform.OS === "ios") {
     const item =
@@ -112,7 +108,7 @@ function PreviewsHeader({
           };
     const rightItems = props.options?.unstable_headerRightItems;
     return (
-      <ScreenHeader
+      <AppBar
         {...props}
         options={{
           ...props.options,
@@ -128,7 +124,7 @@ function PreviewsHeader({
   }
 
   return ports.length === 1 ? (
-    <ScreenHeader
+    <AppBar
       {...props}
       actions={[
         ...(props.actions ?? []),
@@ -140,7 +136,7 @@ function PreviewsHeader({
       ]}
     />
   ) : (
-    <ScreenHeader
+    <AppBar
       {...props}
       menus={[
         ...(props.menus ?? []),

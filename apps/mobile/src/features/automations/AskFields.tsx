@@ -3,8 +3,8 @@ import { automationOptionLabel, type AutomationAskField } from "@t3tools/contrac
 import * as Haptics from "expo-haptics";
 import { Platform, View } from "react-native";
 
-import { AppText as Text, AppTextInput } from "../../components/AppText";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { PillButton } from "./AutomationParts";
 
 function FieldLabel(props: { readonly field: AutomationAskField }) {

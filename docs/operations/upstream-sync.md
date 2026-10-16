@@ -13,9 +13,10 @@ ids, the `t3.json` format, protocol paths such as `/.well-known/t3/environment`,
   Exclusions and external contracts are listed at the top of the file.
 - App identity lives at fixed definition sites, edited by hand: app and bundle ids, data dirs,
   ports, URL schemes, Linux and GNOME names, the CLI executable and archive names
-  (`packages/shared/src/cliRelease.ts`), npm names (`scripts/build-npm-platform-packages.ts`),
-  service labels, and `apps/server/src/cli/triagePrompt.ts`. `git log` on the identity and CLI
-  commits lists them.
+  (`packages/shared/src/cliRelease.ts`), the npm launcher's package, bin, data home and archive
+  names (`scripts/build-npm-launcher.ts`, `scripts/npm-launcher/t3.mjs`, and the npm install
+  check in `apps/server/src/cli/invocation.ts`), service labels, and
+  `apps/server/src/cli/triagePrompt.ts`. `git log` on the identity and CLI commits lists them.
 
 ## Automated sync
 

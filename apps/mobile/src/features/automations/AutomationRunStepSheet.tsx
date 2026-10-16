@@ -21,7 +21,7 @@ import { useMemo } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { automationState } from "../../state/automations";

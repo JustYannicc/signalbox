@@ -1,4 +1,5 @@
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { Toolbar } from "../../components/ui/Toolbar";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { use, useCallback, useEffect, useRef } from "react";
 import { useNavigation, type ParamListBase } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -47,9 +48,6 @@ export function HomeHeader(props: HomeHeaderProps) {
     [navigation],
   );
   const iconColor = useUniwindTheme()["--color-icon"];
-  // The list uses a fixed creation order and ignores sort/group options, so
-  // the filter menu only carries the filters and the "customized" icon state
-  // keys off those alone.
   const hasCustomListOptions =
     props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
   const focusSearch = useCallback(() => {
@@ -78,8 +76,6 @@ export function HomeHeader(props: HomeHeaderProps) {
       <NativeStackScreenOptions
         optionsVersion={[filterMenu.items, props.sectionsOpen, showsCompactCompose]}
         options={{
-          // Static header config (glass, title, fonts) lives in Stack.tsx
-          // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
           headerTintColor: iconColor,
           unstable_headerRightItems: () =>
             sidebarHeader
@@ -123,7 +119,7 @@ export function HomeHeader(props: HomeHeaderProps) {
                   }),
                 ],
           // The keys below are set per-branch (not `undefined`) so a later
-          // reapply cannot clobber options owned by NativeHeaderToolbar.
+          // reapply cannot clobber options owned by Toolbar.
           ...(sidebarHeader
             ? {
                 headerSearchBarOptions: {
@@ -165,8 +161,6 @@ export function HomeHeader(props: HomeHeaderProps) {
                   ],
                 }
               : {
-                  // Pre-Liquid-Glass iOS: standard pull-down search in the nav
-                  // bar; create + sort live in the plain bottom toolbar below.
                   headerSearchBarOptions: {
                     ref: searchBarRef,
                     autoCapitalize: "none" as const,
@@ -184,8 +178,8 @@ export function HomeHeader(props: HomeHeaderProps) {
       />
 
       {sidebarHeader || usesNativeMailSearchToolbar ? null : (
-        <NativeHeaderToolbar placement="bottom">
-          <NativeHeaderToolbar.Menu
+        <Toolbar placement="bottom">
+          <Toolbar.Menu
             accessibilityLabel="Filter threads"
             icon={
               hasCustomListOptions
@@ -196,64 +190,62 @@ export function HomeHeader(props: HomeHeaderProps) {
             separateBackground
           >
             {showsEnvironments ? (
-              <NativeHeaderToolbar.Menu title="Environment">
-                <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
-                <NativeHeaderToolbar.MenuAction
+              <Toolbar.Menu title="Environment">
+                <Toolbar.Label>Environment</Toolbar.Label>
+                <Toolbar.MenuAction
                   isOn={props.selectedEnvironmentId === null}
                   onPress={() => props.onEnvironmentChange(null)}
                   subtitle="Show threads from every environment"
                 >
-                  <NativeHeaderToolbar.Label>All environments</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
+                  <Toolbar.Label>All environments</Toolbar.Label>
+                </Toolbar.MenuAction>
                 {props.environments.map((environment) => (
-                  <NativeHeaderToolbar.MenuAction
+                  <Toolbar.MenuAction
                     key={environment.environmentId}
                     isOn={props.selectedEnvironmentId === environment.environmentId}
                     onPress={() => props.onEnvironmentChange(environment.environmentId)}
                   >
-                    <NativeHeaderToolbar.Label>{environment.label}</NativeHeaderToolbar.Label>
-                  </NativeHeaderToolbar.MenuAction>
+                    <Toolbar.Label>{environment.label}</Toolbar.Label>
+                  </Toolbar.MenuAction>
                 ))}
-              </NativeHeaderToolbar.Menu>
+              </Toolbar.Menu>
             ) : null}
 
             {props.projects.length > 0 ? (
-              <NativeHeaderToolbar.Menu title={folderCopy("Project")}>
-                <NativeHeaderToolbar.Label>{folderCopy("Project")}</NativeHeaderToolbar.Label>
-                <NativeHeaderToolbar.MenuAction
+              <Toolbar.Menu title={folderCopy("Project")}>
+                <Toolbar.Label>{folderCopy("Project")}</Toolbar.Label>
+                <Toolbar.MenuAction
                   isOn={props.selectedProjectKey === null}
                   onPress={() => props.onProjectChange(null)}
                   subtitle={folderCopy("Show threads from every project")}
                 >
-                  <NativeHeaderToolbar.Label>
-                    {folderCopy("All projects")}
-                  </NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
+                  <Toolbar.Label>{folderCopy("All projects")}</Toolbar.Label>
+                </Toolbar.MenuAction>
                 {props.projects.map((project) => (
-                  <NativeHeaderToolbar.MenuAction
+                  <Toolbar.MenuAction
                     key={project.key}
                     isOn={props.selectedProjectKey === project.key}
                     onPress={() => props.onProjectChange(project.key)}
                   >
-                    <NativeHeaderToolbar.Label>{project.label}</NativeHeaderToolbar.Label>
-                  </NativeHeaderToolbar.MenuAction>
+                    <Toolbar.Label>{project.label}</Toolbar.Label>
+                  </Toolbar.MenuAction>
                 ))}
-              </NativeHeaderToolbar.Menu>
+              </Toolbar.Menu>
             ) : null}
-          </NativeHeaderToolbar.Menu>
+          </Toolbar.Menu>
           <SectionNavigationToggle
             open={props.sectionsOpen}
             onPress={props.onOpenSections}
             variant="native-toolbar"
           />
-          <NativeHeaderToolbar.Spacer flexible />
-          <NativeHeaderToolbar.Button
+          <Toolbar.Spacer flexible />
+          <Toolbar.Button
             accessibilityLabel="New task"
             icon="square.and.pencil"
             onPress={props.onStartNewTask}
             separateBackground
           />
-        </NativeHeaderToolbar>
+        </Toolbar>
       )}
     </>
   );

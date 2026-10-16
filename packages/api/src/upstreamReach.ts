@@ -17,6 +17,7 @@ export const UPSTREAM_RPC_REACH = {
   "server.removeKeybinding": write({ name: "keybindings.remove" }),
   "server.runStorageCleanup": write({ name: "storage.cleanup", destructive: true }),
   "server.getStorageCleanupReport": read({ name: "storage.report", stream: "final" }),
+  "server.getDatabaseStorage": read({ name: "storage.database" }),
   "server.getSettings": read({ name: "settings.get", summary: "Your settings." }),
   "server.updateSettings": write({
     name: "settings.update",
@@ -234,4 +235,6 @@ export const UPSTREAM_RPC_REACH = {
     summary: "Your threads and folders as the sidebar shows them.",
   }),
   "orchestration.subscribeThread": read({ name: "threads.subscribe" }),
+  // The first frame is the whole bounded tail, so a one-shot call reads the output so far.
+  "orchestration.subscribeCommandOutput": read({ name: "threads.commandOutput" }),
 } as const satisfies Partial<Record<WsRpcMethod, Reach>>;

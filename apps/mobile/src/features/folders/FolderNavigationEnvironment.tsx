@@ -8,7 +8,7 @@ import type { Folder, FolderId } from "@t3tools/contracts/signalboxFolders";
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 
-import { AppText } from "../../components/AppText";
+import { AppText } from "../../components/ui/AppText";
 import { useEnvironmentFolders, useFolderOwners } from "../../state/signalboxFolders";
 import { folderCountsAtom, folderPoolChoicesAtom } from "./folder-atoms";
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";

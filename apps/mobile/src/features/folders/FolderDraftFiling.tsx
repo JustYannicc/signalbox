@@ -1,7 +1,7 @@
 // signalbox: a new task is filed in its draft's folder before it starts.
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { AppText } from "../../components/AppText";
+import { AppText } from "../../components/ui/AppText";
 import { signalboxFolders } from "../../state/signalboxFolders";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { NewTaskFolders } from "./draft-folder";

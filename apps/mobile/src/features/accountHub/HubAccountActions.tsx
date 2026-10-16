@@ -4,8 +4,8 @@ import type { LimitAccount } from "@t3tools/shared/usageLimits";
 import { useState } from "react";
 import { Alert, Pressable } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { AppText as Text } from "../../components/ui/AppText";
+import * as Dialog from "../../components/ui/Dialog";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -45,7 +45,7 @@ export function HubAccountActions({ account }: { readonly account: LimitAccount 
       ]);
       return;
     }
-    showConfirmDialog({
+    Dialog.confirm({
       title,
       message,
       confirmText: "Remove",

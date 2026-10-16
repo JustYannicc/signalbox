@@ -32,12 +32,6 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
   );
 }
 
-/**
- * Right-side UINavigationBar items for the sidebar column: the thread list
- * filter/sort menu plus the settings button, sharing one glass capsule —
- * the Messages-style grouped header buttons. The embedded sidebar keeps these
- * beside its title; only the detail column uses the Duo's vertical bar.
- */
 export function createSidebarHeaderItems(input: {
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;

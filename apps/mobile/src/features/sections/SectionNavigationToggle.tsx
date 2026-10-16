@@ -1,8 +1,8 @@
 import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
-import { AndroidHeaderIconButton } from "../../components/AndroidScreenHeader";
-import { ControlPill } from "../../components/ControlPill";
-import type { AppSymbolName } from "../../components/AppSymbol";
+import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
+import { ControlPill } from "../../components/ui/ControlPill";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 
 function sectionToggleLabel(open: boolean): string {

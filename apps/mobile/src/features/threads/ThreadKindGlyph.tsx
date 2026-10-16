@@ -1,6 +1,6 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useThreadKind } from "../../state/signalboxThreadKinds";
 
 /** Chat or task marker for a thread row. Renders nothing where the environment doesn't serve kinds. */

@@ -35,7 +35,6 @@ interface ProviderSetupSectionProps {
   readonly onEnable: () => void;
 }
 
-/** Read the configured method from the instance config. Unknown values fall back to personal. */
 export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMethod {
   const value =
     config !== null && typeof config === "object" && "authMethod" in config
@@ -46,7 +45,6 @@ export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMetho
   );
 }
 
-/** Setup state belongs to the selected environment and is never saved in client settings. */
 export function ProviderSetupSection(props: ProviderSetupSectionProps) {
   return (
     <section

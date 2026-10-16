@@ -8,8 +8,8 @@ import type { AutomationRunSummary } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { StatusPill } from "../../components/StatusPill";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
