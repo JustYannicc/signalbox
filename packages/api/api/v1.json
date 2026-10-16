@@ -814,6 +814,13 @@
       "output": "57a203f5"
     },
     {
+      "name": "previews.browserSteps",
+      "rpc": "signalbox.previews.browserTrail",
+      "access": "read",
+      "input": "1276a316",
+      "output": "a1ab0d44"
+    },
+    {
       "name": "previews.list",
       "rpc": "signalbox.previews.subscribe",
       "access": "read",
@@ -2127,6 +2134,18 @@
     {
       "rpc": "signalbox.analytics.recordClientEvent",
       "kind": "client-report"
+    },
+    {
+      "rpc": "signalbox.previews.browserWatch",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "signalbox.previews.browserInput",
+      "kind": "client-local"
+    },
+    {
+      "rpc": "signalbox.previews.browserStep",
+      "kind": "client-local"
     },
     {
       "rpc": "signalbox.push.registerDevice",
