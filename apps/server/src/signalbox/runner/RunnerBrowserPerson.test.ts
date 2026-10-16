@@ -183,6 +183,23 @@ describe("the thread's browser with the person's", () => {
     expect(calls.ended).toEqual(["brw_1"]);
   }, 60_000);
 
+  it("leaves pages the session started with alone, such as Kernel's start page", async () => {
+    const seed = await chromium.connectOverCDP(cdpWsUrl);
+    await (await seed.contexts()[0]!.newPage()).goto(`http://site.test:${port}/start-page`);
+    await seed.close();
+    const { session } = sessions(ready);
+    const browser = makeRunnerBrowser({
+      machine: await machineTabs(),
+      person: personTabs(session),
+    });
+    try {
+      const site = await browser.navigate({ url: `http://site.test:${port}/mine` });
+      expect((await browser.status({})).tabs?.map((tab) => tab.tabId)).toEqual([site.tabId]);
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
+
   it("tells the agent why the person's browser can't open, and keeps the machine's working", async () => {
     const { session } = sessions(() => ({
       _tag: "refused",

@@ -45,8 +45,6 @@ interface Connection {
   readonly context: BrowserContext;
 }
 
-const BLANK = /^(about:blank|chrome:\/\/newtab\/?)$/;
-
 const refused = (message: string) =>
   new ServerBrowserPage.ServerBrowserOperationError("PreviewAutomationExecutionError", message);
 
@@ -150,11 +148,7 @@ export const personTabs = (
         release();
       }
     },
-    // A fresh browser's blank start page is nobody's tab.
-    openPages: () =>
-      connection === null
-        ? []
-        : connection.context.pages().filter((page) => !BLANK.test(page.url())),
+    openPages: () => (connection === null ? [] : connection.context.pages()),
     reopen: async () => {
       const release = use();
       try {

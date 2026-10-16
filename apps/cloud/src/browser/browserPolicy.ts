@@ -53,5 +53,7 @@ export const browserRequest = (input: {
   headless: true,
   timeout_seconds: BROWSER_TIMEOUT_SECONDS,
   profile: { name: input.profileName, save_changes: input.writer },
+  // A thread starts with no tabs: the profile's last ones were another thread's.
+  start_url: "about:blank",
   tags: { signalbox_thread: input.threadId },
 });

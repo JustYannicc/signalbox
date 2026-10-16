@@ -81,6 +81,7 @@ describe("Kernel's API (#574)", () => {
           headless: true,
           timeout_seconds: 600,
           profile: { name: "sb-abc", save_changes: true },
+          start_url: "about:blank",
           tags: {},
         }),
       );

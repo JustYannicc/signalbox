@@ -58,6 +58,7 @@ describe("the person's browser's decisions (#574)", () => {
       headless: true,
       timeout_seconds: 600,
       profile: { name: "sb-x", save_changes: false },
+      start_url: "about:blank",
       tags: { signalbox_thread: "thread-a" },
     });
   });

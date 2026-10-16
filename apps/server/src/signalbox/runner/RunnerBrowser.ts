@@ -95,7 +95,7 @@ const TAB_LIMIT = 8;
 export interface TabSource {
   /** A new page, connecting first when the browser isn't open; null when this cloud has none. */
   readonly newPage: () => Promise<Page | null>;
-  /** Pages open in this browser that no tab holds, such as those still open after a reconnect. */
+  /** Pages open in this browser that no tab holds; only those it had as tabs come back. */
   readonly openPages?: () => ReadonlyArray<Page>;
   /** Connects again without opening a page, so the tabs it kept come back; false without one. */
   readonly reopen?: () => Promise<boolean>;
@@ -191,12 +191,30 @@ export const makeRunnerBrowser = (sources: {
   const sourceOf = (route: BrowserRoute) =>
     route === "person" && sources.person !== null ? sources.person : sources.machine;
 
-  /** A tab for `page`, made current unless `background`. Its tab id is new unless given. */
-  const track = async (
+  /**
+   * A tab for `page`, made current unless `background`. Its tab id is new
+   * unless given or parked; with `parkedOnly`, a page that was never a tab
+   * here stays nobody's, and this answers null.
+   */
+  async function track(
     page: Page,
     route: BrowserRoute,
-    options: { readonly tabId?: string; readonly background?: boolean } = {},
-  ): Promise<Tab> => {
+    options: { readonly tabId?: string; readonly background?: boolean; readonly parkedOnly: true },
+  ): Promise<Tab | null>;
+  async function track(
+    page: Page,
+    route: BrowserRoute,
+    options?: { readonly tabId?: string; readonly background?: boolean },
+  ): Promise<Tab>;
+  async function track(
+    page: Page,
+    route: BrowserRoute,
+    options: {
+      readonly tabId?: string;
+      readonly background?: boolean;
+      readonly parkedOnly?: boolean;
+    } = {},
+  ): Promise<Tab | null> {
     const cdp = await page
       .context()
       .newCDPSession(page)
@@ -212,6 +230,10 @@ export const makeRunnerBrowser = (sources: {
             .catch(() => null)
         : null;
     const parkedId = targetId === null ? undefined : parked.get(targetId);
+    if (options.parkedOnly === true && parkedId === undefined) {
+      await cdp.detach().catch(constVoid);
+      return null;
+    }
     if (targetId !== null) parked.delete(targetId);
     const tab: Tab = {
       tabId: options.tabId ?? parkedId ?? `tab-${NodeCrypto.randomUUID().slice(0, 8)}`,
@@ -283,7 +305,7 @@ export const makeRunnerBrowser = (sources: {
       parkedCurrent = null;
     }
     return tab;
-  };
+  }
 
   /** A page in `route`'s browser, or on the machine when the cloud has no person's browser. */
   const pageOn = async (route: BrowserRoute) => {
@@ -301,20 +323,22 @@ export const makeRunnerBrowser = (sources: {
     return track(opened.page, opened.route);
   };
 
-  /** Pages the person's browser still has open after reconnecting, as tabs again. */
+  /**
+   * The person's pages that were tabs here before its browser was let go, as
+   * those tabs again. Anything else open there, such as the browser's start
+   * page, was never a tab here and stays out.
+   */
   const adopt = async () => {
+    if (parked.size === 0) return;
     const held = new Set([...tabs.values()].map((tab) => tab.page));
     const loose = (sources.person?.openPages?.() ?? []).filter(
       (page) => !held.has(page) && !page.isClosed(),
     );
-    // Within the tab limit; pages beyond it close, as opening one more tab would close the oldest.
-    const room = Math.max(0, TAB_LIMIT - tabs.size);
-    await Promise.all([
-      ...loose
-        .slice(0, room)
-        .map((page) => track(page, "person", { background: true }).catch(constVoid)),
-      ...loose.slice(room).map((page) => page.close().catch(constVoid)),
-    ]);
+    await Promise.all(
+      loose.map((page) =>
+        track(page, "person", { background: true, parkedOnly: true }).catch(constVoid),
+      ),
+    );
   };
 
   /** `tab`, or the tab that replaces it in the browser `route` names, under the same id. */

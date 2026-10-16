@@ -46,6 +46,8 @@ export interface KernelBrowserRequest {
   readonly headless: boolean;
   readonly timeout_seconds: number;
   readonly profile: { readonly name: string; readonly save_changes: boolean };
+  /** Replaces the tabs the profile would restore. */
+  readonly start_url: string;
   readonly tags: Readonly<Record<string, string>>;
 }
 
