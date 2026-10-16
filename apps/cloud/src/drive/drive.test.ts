@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import * as DriveFiles from "./DriveFiles.ts";
 import { makeDriveReader } from "./DriveReader.ts";
-import { MAIN_REF, threadRef, wipRef } from "./DriveStore.ts";
+import { MAIN_REF, machineRef, threadRef, wipRef } from "./DriveStore.ts";
 import { makeMemoryDrives, makeRepo } from "./driveTesting.ts";
 import { uploadPack } from "./DriveUploads.ts";
 import { verifyPack } from "./git/gitPack.ts";
@@ -38,10 +38,15 @@ const upload = (
   drives: ReturnType<typeof makeMemoryDrives>,
   packed: { readonly pack: Uint8Array<ArrayBuffer>; readonly idx: Uint8Array<ArrayBuffer> },
   threadId = "t1",
+  options: { readonly private?: boolean } = {},
 ) =>
-  uploadPack({ driveId: DRIVE, threadId, idx: packed.idx, pack: packed.pack }).pipe(
-    Effect.provide(drives.layer),
-  );
+  uploadPack({
+    driveId: DRIVE,
+    threadId,
+    idx: packed.idx,
+    pack: packed.pack,
+    ...(options.private === true ? { private: true } : {}),
+  }).pipe(Effect.provide(drives.layer));
 
 describe("packs", () => {
   it.effect("accepts a real pack with deltas and refuses a tampered one", () =>
@@ -113,7 +118,7 @@ describe("packs", () => {
       expect(drives.bucket.keys()).toEqual([]);
       const handle = yield* drive(drives);
       yield* handle.open(writer("t1"));
-      expect((yield* handle.missing([head])).length).toBe(1);
+      expect((yield* handle.missing([head], null)).length).toBe(1);
     }),
   );
 });
@@ -293,6 +298,90 @@ describe("reading without a machine", () => {
       const reader = yield* makeDriveReader(DRIVE).pipe(Effect.provide(drives.layer));
       const diff = yield* reader.diff(first, second, { ignoreWhitespace: false });
       expect(diff).toContain("-one more");
+    }),
+  );
+});
+
+describe("machine state (#490)", () => {
+  it.effect("hands a thread's private packs and machine ref to that thread alone", () =>
+    Effect.gen(function* () {
+      const drives = makeMemoryDrives();
+      const handle = yield* drive(drives);
+      const git = repo();
+      git.write("README.md", "# Project\n");
+      const main = git.commit("main");
+      expect((yield* upload(drives, git.pack([main])))._tag).toBe("ok");
+      yield* handle.open(writer("ta"));
+      yield* handle.open(writer("tb"));
+
+      // Thread A's machine state: a parentless commit holding its .env.
+      git.git(["checkout", "-q", "--orphan", "machine-a"]);
+      git.git(["rm", "-rq", "--cached", "."]);
+      git.write(".env", "TOKEN=only-for-ta\n");
+      git.git(["add", "-f", ".env"]);
+      const machine = git.commit("Machine state");
+      const secret = git.git(["rev-parse", `${machine}:.env`]);
+      const packed = git.pack([machine], [main]);
+      expect((yield* upload(drives, packed, "ta", { private: true }))._tag).toBe("ok");
+      const moved = yield* handle.updateRefs(writer("ta"), [
+        { name: machineRef("ta"), old: null, new: machine },
+      ]);
+      expect(moved._tag).toBe("ok");
+
+      const a = yield* handle.refs("ta");
+      const b = yield* handle.refs("tb");
+      expect(a.machine).toBe(machine);
+      expect(b.machine).toBeNull();
+      expect(a.packs.map((pack) => pack.name)).toContain(packed.name);
+      expect(b.packs.map((pack) => pack.name)).not.toContain(packed.name);
+      expect((yield* handle.refs(null)).packs.map((pack) => pack.name)).not.toContain(packed.name);
+
+      // Nobody else moves it.
+      const foreign = yield* handle.updateRefs(writer("tb"), [
+        { name: machineRef("ta"), old: machine, new: main },
+      ]);
+      expect(foreign._tag).toBe("refused");
+
+      // No public pack, and no other thread's private one, may lean on it.
+      git.git(["checkout", "-q", "work"]);
+      git.write("leak.txt", "x\n");
+      git.git(["add", "leak.txt"]);
+      const tree = git.git(["mktree"], `100644 blob ${secret}\tcopied.env\n`);
+      const leaning = git.git(["commit-tree", tree, "-p", main, "-m", "lean"]);
+      // Leaving the file out by naming its folder, as the Runner packs.
+      const leaningPack = git.pack([leaning], [main, machine, `${machine}^{tree}`]);
+      expect((yield* upload(drives, leaningPack, "tb"))._tag).toBe("refused");
+      expect((yield* upload(drives, leaningPack, "tb", { private: true }))._tag).toBe("refused");
+      // Nor may a public ref name a commit only the machine state holds.
+      const intoWip = yield* handle.updateRefs(writer("ta"), [
+        { name: wipRef("ta"), old: null, new: machine },
+      ]);
+      expect(intoWip._tag).toBe("refused");
+      // Its own thread's next machine state may.
+      expect((yield* upload(drives, leaningPack, "ta", { private: true }))._tag).toBe("ok");
+    }),
+  );
+
+  it.effect("takes the same file in two threads' machine states", () =>
+    Effect.gen(function* () {
+      const drives = makeMemoryDrives();
+      const handle = yield* drive(drives);
+      const git = repo();
+      git.write(".env", "SAME=1\n");
+      const a = git.commit("A's machine state");
+      const b = git.git(["commit-tree", `${a}^{tree}`, "-m", "B's machine state"]);
+      yield* handle.open(writer("ta"));
+      yield* handle.open(writer("tb"));
+      expect((yield* upload(drives, git.pack([a]), "ta", { private: true }))._tag).toBe("ok");
+      // B's pack holds the file too: B can't see A's.
+      expect((yield* upload(drives, git.pack([b]), "tb", { private: true }))._tag).toBe("ok");
+      git.git(["reset", "-q", "--soft", b]);
+      git.write("notes.md", "b's notes\n");
+      const later = git.commit("B's machine state, later");
+      // B's next save leans on its own copy of the file.
+      expect((yield* upload(drives, git.pack([later], [b]), "tb", { private: true }))._tag).toBe(
+        "ok",
+      );
     }),
   );
 });

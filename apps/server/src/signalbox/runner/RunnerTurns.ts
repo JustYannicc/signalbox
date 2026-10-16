@@ -6,6 +6,7 @@ import type {
   RunnerLogLevel,
   RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import {
@@ -49,7 +50,7 @@ import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
 import { DriveClientError, DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
-import type { RunnerSecrets } from "./RunnerSecrets.ts";
+import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
 import { outgrownBy } from "./RunnerMachineClass.ts";
@@ -213,6 +214,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly pinDrives?: (access: DriveAccess) => Effect.Effect<void>;
   /** The folder's secrets for the harness sessions. Absent: none load on this machine. */
   readonly secrets?: RunnerSecrets;
+  /** Registers them with the thread, with the turn's session token (`makeSecretsRegistrar`). */
+  readonly registerSecrets?: (
+    token: string,
+    secrets: ReadonlyArray<SecretValue>,
+  ) => Effect.Effect<void, SecretsRegisterError>;
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
@@ -687,14 +693,33 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
               input.emit({ kind: "drive.notice", runId: turn.runId, message }),
             );
           }
+          // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).
+          if (opened !== null) yield* opened.restoreDependencyEdits;
           const secrets =
             input.secrets === undefined
               ? 0
-              : yield* input.secrets.load(secretsAccess, {
-                  notice: (message) =>
-                    input.emit({ kind: "secrets.notice", runId: turn.runId, message }),
-                  info: (message) => input.emit(log(turn.runId, "info", message)),
-                });
+              : yield* input.secrets
+                  .load(secretsAccess, {
+                    notice: (message) =>
+                      input.emit({ kind: "secrets.notice", runId: turn.runId, message }),
+                    info: (message) => input.emit(log(turn.runId, "info", message)),
+                    register: (secrets) =>
+                      sessionAccess === null || input.registerSecrets === undefined
+                        ? Effect.fail(
+                            new SecretsRegisterError({
+                              message: "this machine can't reach the thread to register them",
+                            }),
+                          )
+                        : input.registerSecrets(sessionAccess.token, secrets),
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new RunnerTurnError({
+                          message: `This folder's secrets couldn't be registered to hide them from the model, so the turn stopped: ${error.message}. Try again.`,
+                        }),
+                    ),
+                  );
           return { drive, secrets };
         }),
       );

@@ -5,6 +5,7 @@ import {
   driveJson,
   MAX_DIRECT_PACK_BYTES,
   MAX_REMOTE_COMMITS,
+  PRIVATE_PACK_HEADER,
   REMOTE_COMMITS_HEADER,
   Oid,
   PACK_INDEX_LENGTH_HEADER,
@@ -39,9 +40,11 @@ import {
   type ThreadRefs,
   threadRef,
   wipRef,
+  machineRef,
 } from "./DriveStore.ts";
 import { isAutomationApiPath, serveAutomationRequest } from "./automationRoutes.ts";
 import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
+import { isBrowserApiPath, serveBrowserRequest } from "./browserRoutes.ts";
 import {
   type DirectUploads,
   type DirectUploadsEnv,
@@ -95,6 +98,7 @@ const toState = (driveId: string, refs: ThreadRefs): DriveState => ({
   main: refs.main,
   thread: refs.thread,
   wip: refs.wip,
+  machine: refs.machine,
   base: refs.base,
   packs: refs.packs,
   remote: refs.remote,
@@ -236,6 +240,12 @@ async function route(
     if (request.method !== "POST") return text("Method not allowed.", 405);
     return await runtime!.runPromise(serveAutomationRequest(auth, await request.text()));
   }
+  // The person's browser for the thread's agent, opened as its owner (#574).
+  const browserPath = new URL(request.url).pathname;
+  if (isBrowserApiPath(browserPath)) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    return await runtime!.runPromise(serveBrowserRequest(auth, browserPath, await request.text()));
+  }
   const packsAfter = Number(request.headers.get(PACKS_AFTER_HEADER) ?? 0);
   const writer: DriveWriter = {
     threadId: auth.threadId,
@@ -301,6 +311,7 @@ async function route(
           idx: body.subarray(0, idxLength),
           pack: body.subarray(idxLength),
           ...remote,
+          ...(request.headers.get(PRIVATE_PACK_HEADER) === "1" ? { private: true } : {}),
         }),
       );
       return result._tag === "ok"
@@ -341,6 +352,7 @@ async function route(
           threadId: auth.threadId,
           uploadId: parsed.uploadId,
           ...remote,
+          ...(parsed.private === true ? { private: true } : {}),
         }),
       );
       return result._tag === "ok"
@@ -351,7 +363,11 @@ async function route(
       const parsed = decodeBody(driveJson.refUpdate.decode, await request.text());
       if (parsed === null) return text("Unreadable request.", 400);
       const { updates } = parsed;
-      const names = { thread: threadRef(auth.threadId), wip: wipRef(auth.threadId) };
+      const names = {
+        thread: threadRef(auth.threadId),
+        wip: wipRef(auth.threadId),
+        machine: machineRef(auth.threadId),
+      };
       const written = await run(
         Effect.flatMap(drive, (handle) =>
           handle.updateRefs(

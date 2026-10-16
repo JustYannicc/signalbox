@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { automationTool } from "../automations/automationTool.ts";
+import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
@@ -51,6 +52,7 @@ export const makeUserObjectApi = (
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
+      | PersonBrowsers.PersonBrowsers
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -145,6 +147,10 @@ export const makeUserObjectApi = (
       ),
     publishBranch: (input) => run(publishBranch(input)),
     automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
+    browserSession: (input) =>
+      run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
+    endBrowser: (input) =>
+      run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.end(input))),
     automationHost: (call) => run(withAutomations((automations) => automations.host(call))),
     automationWorkerModule: (automationId, version) =>
       run(withAutomations((automations) => automations.workerModule(automationId, version))),

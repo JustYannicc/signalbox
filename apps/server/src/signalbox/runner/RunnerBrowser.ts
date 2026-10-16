@@ -31,21 +31,27 @@ import {
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { constVoid } from "effect/Function";
-import type { BrowserContext, CDPSession, Dialog, Page } from "playwright-core";
+import type { CDPSession, Dialog, Page } from "playwright-core";
 
 import { ServerBrowserContexts } from "../../preview/ServerBrowserContexts.ts";
 import * as ServerBrowserPage from "../../preview/ServerBrowserPage.ts";
+import { type BrowserRoute, browserFor } from "./RunnerBrowserRoute.ts";
 
 /**
- * The browser an agent in a cloud thread checks its own work with (#402):
- * pages on the thread's machine, so `localhost` is the thread's dev server.
- * `RunnerBrowserTools.ts` serves it to the harnesses as the same `preview_*`
- * tools agents use locally. Behind those tools, `BrowserBackend` is the seam
- * the cloud browser provider (#343) replaces for real sites.
+ * The browser agents in a cloud thread use (#402, #574), served to the
+ * harnesses as the same `preview_*` tools agents use locally
+ * (`RunnerBrowserTools.ts`). It is two browsers behind one set of tabs, and
+ * `browserFor` picks a tab's by the URL it opens, so the agent never names
+ * one:
  *
- * Every tab is the agent's own, with throwaway storage and no person's
- * cookies: nobody else drives this browser, so there is no takeover, no
- * profile and no live view.
+ * - the machine's headless Chromium, for the thread's dev servers: throwaway
+ *   storage and nobody's cookies;
+ * - the person's browser (`RunnerBrowserPerson.ts`), for real sites, signed in
+ *   with their profile.
+ *
+ * A tab whose next URL belongs to the other browser moves there under the same
+ * tab id, so a dev tab never carries the profile and a real site never runs
+ * in the cookie-less browser.
  */
 
 type TabInput = PreviewAutomationTabTargetInput;
@@ -85,10 +91,26 @@ const ACTION_TIMELINE_LIMIT = 50;
 /** Open tabs at most; opening another closes the oldest, so a long thread can't pile them up. */
 const TAB_LIMIT = 8;
 
+/** Where one route's tabs open. */
+export interface TabSource {
+  /** A new page, connecting first when the browser isn't open; null when this cloud has none. */
+  readonly newPage: () => Promise<Page | null>;
+  /** Pages open in this browser that no tab holds; only those it had as tabs come back. */
+  readonly openPages?: () => ReadonlyArray<Page>;
+  /** Connects again without opening a page, so the tabs it kept come back; false without one. */
+  readonly reopen?: () => Promise<boolean>;
+  /** Marks a tab action until the returned release, so an idle browser can let go between them. */
+  readonly use?: () => () => void;
+  readonly close: () => Promise<void>;
+}
+
 interface Tab {
   readonly tabId: string;
+  readonly route: BrowserRoute;
   readonly page: Page;
   readonly cdp: CDPSession;
+  /** The page's CDP target in the person's browser, which survives reconnecting. */
+  readonly targetId: string | null;
   readonly consoleEntries: Array<PreviewAutomationConsoleEntry>;
   readonly networkEntries: Array<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: Array<PreviewAutomationActionEvent>;
@@ -120,10 +142,10 @@ const failure = (message: string) =>
  * Headless Chromium on the thread's machine, launched on first use. Tabs
  * share one browser and one storage-less context.
  */
-export const makeHeadlessBrowser = (options: {
+export const machineTabs = (options: {
   readonly executable: string | undefined;
   readonly env?: NodeJS.ProcessEnv;
-}): BrowserBackend => {
+}): TabSource => {
   const contexts = new ServerBrowserContexts({
     // Only named profiles keep storage on disk, and this browser opens none.
     profilesDir: "",
@@ -136,16 +158,63 @@ export const makeHeadlessBrowser = (options: {
     },
     ...(options.env === undefined ? {} : { env: options.env }),
   });
+  return {
+    newPage: async () =>
+      (await contexts.contextFor(INCOGNITO_BROWSER_PROFILE_ID, "agent")).newPage(),
+    close: () => contexts.close(),
+  };
+};
+
+/** The machine's headless browser alone, where every URL opens: a development host, and tests. */
+export const makeHeadlessBrowser = (options: {
+  readonly executable: string | undefined;
+  readonly env?: NodeJS.ProcessEnv;
+}): BrowserBackend => makeRunnerBrowser({ machine: machineTabs(options), person: null });
+
+/**
+ * One set of tabs over the machine's browser and, when the thread has one,
+ * the person's. Without `person` every URL opens on the machine.
+ */
+export const makeRunnerBrowser = (sources: {
+  readonly machine: TabSource;
+  readonly person: TabSource | null;
+}): BrowserBackend => {
   const tabs = new Map<string, Tab>();
   let current: string | null = null;
+  /** Tab ids of the person's pages while its browser is let go, by CDP target, for when it's back. */
+  const parked = new Map<string, string>();
+  /** The current tab, when it is one of those. */
+  let parkedCurrent: string | null = null;
 
-  const context = (): Promise<BrowserContext> =>
-    contexts.contextFor(INCOGNITO_BROWSER_PROFILE_ID, "agent");
+  const routeOf = (url: string): BrowserRoute =>
+    sources.person === null ? "machine" : browserFor(url);
+  const sourceOf = (route: BrowserRoute) =>
+    route === "person" && sources.person !== null ? sources.person : sources.machine;
 
-  const createTab = async (): Promise<Tab> => {
-    const oldest = tabs.values().next().value;
-    if (oldest !== undefined && tabs.size >= TAB_LIMIT) await oldest.page.close().catch(constVoid);
-    const page = await (await context()).newPage();
+  /**
+   * A tab for `page`, made current unless `background`. Its tab id is new
+   * unless given or parked; with `parkedOnly`, a page that was never a tab
+   * here stays nobody's, and this answers null.
+   */
+  async function track(
+    page: Page,
+    route: BrowserRoute,
+    options: { readonly tabId?: string; readonly background?: boolean; readonly parkedOnly: true },
+  ): Promise<Tab | null>;
+  async function track(
+    page: Page,
+    route: BrowserRoute,
+    options?: { readonly tabId?: string; readonly background?: boolean },
+  ): Promise<Tab>;
+  async function track(
+    page: Page,
+    route: BrowserRoute,
+    options: {
+      readonly tabId?: string;
+      readonly background?: boolean;
+      readonly parkedOnly?: boolean;
+    } = {},
+  ): Promise<Tab | null> {
     const cdp = await page
       .context()
       .newCDPSession(page)
@@ -153,10 +222,25 @@ export const makeHeadlessBrowser = (options: {
         await page.close().catch(constVoid);
         throw cause;
       });
+    const targetId =
+      route === "person"
+        ? await cdp
+            .send("Target.getTargetInfo")
+            .then((info) => info.targetInfo.targetId)
+            .catch(() => null)
+        : null;
+    const parkedId = targetId === null ? undefined : parked.get(targetId);
+    if (options.parkedOnly === true && parkedId === undefined) {
+      await cdp.detach().catch(constVoid);
+      return null;
+    }
+    if (targetId !== null) parked.delete(targetId);
     const tab: Tab = {
-      tabId: `tab-${NodeCrypto.randomUUID().slice(0, 8)}`,
+      tabId: options.tabId ?? parkedId ?? `tab-${NodeCrypto.randomUUID().slice(0, 8)}`,
+      route,
       page,
       cdp,
+      targetId,
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
@@ -202,16 +286,84 @@ export const makeHeadlessBrowser = (options: {
       tab.dialog = dialog;
     });
     page.on("close", () => {
+      // A tab that moved to the other browser keeps its id on the new page.
+      if (tabs.get(tab.tabId) !== tab) return;
       tabs.delete(tab.tabId);
-      if (current === tab.tabId) current = null;
+      const wasCurrent = current === tab.tabId;
+      if (wasCurrent) current = null;
+      // Letting the person's browser go closes its pages here, not there.
+      if (tab.targetId !== null) {
+        if (wasCurrent) parkedCurrent = tab.tabId;
+        parked.set(tab.targetId, tab.tabId);
+        if (parked.size > TAB_LIMIT * 2) parked.delete(parked.keys().next().value!);
+      }
     });
     tabs.set(tab.tabId, tab);
-    current = tab.tabId;
+    if (options.background !== true) current = tab.tabId;
+    if (parkedCurrent === tab.tabId) {
+      current = tab.tabId;
+      parkedCurrent = null;
+    }
     return tab;
+  }
+
+  /** A page in `route`'s browser, or on the machine when the cloud has no person's browser. */
+  const pageOn = async (route: BrowserRoute) => {
+    const page = await sourceOf(route).newPage();
+    if (page !== null) return { page, route };
+    const machine = await sources.machine.newPage();
+    if (machine === null) throw failure("This machine has no browser.");
+    return { page: machine, route: "machine" as const };
+  };
+
+  const createTab = async (route: BrowserRoute): Promise<Tab> => {
+    const oldest = tabs.values().next().value;
+    if (oldest !== undefined && tabs.size >= TAB_LIMIT) await oldest.page.close().catch(constVoid);
+    const opened = await pageOn(route);
+    return track(opened.page, opened.route);
+  };
+
+  /**
+   * The person's pages that were tabs here before its browser was let go, as
+   * those tabs again. Anything else open there, such as the browser's start
+   * page, was never a tab here and stays out.
+   */
+  const adopt = async () => {
+    if (parked.size === 0) return;
+    const held = new Set([...tabs.values()].map((tab) => tab.page));
+    const loose = (sources.person?.openPages?.() ?? []).filter(
+      (page) => !held.has(page) && !page.isClosed(),
+    );
+    await Promise.all(
+      loose.map((page) =>
+        track(page, "person", { background: true, parkedOnly: true }).catch(constVoid),
+      ),
+    );
+  };
+
+  /** `tab`, or the tab that replaces it in the browser `route` names, under the same id. */
+  const onRoute = async (tab: Tab, route: BrowserRoute): Promise<Tab> => {
+    if (tab.route === route) return tab;
+    const page = await sourceOf(route).newPage();
+    // Without a person's browser, a machine tab stays where it is.
+    if (page === null && tab.route === "machine") return tab;
+    const opened = page === null ? await pageOn("machine") : { page, route };
+    const moved = await track(opened.page, opened.route, { tabId: tab.tabId });
+    await tab.page.close().catch(constVoid);
+    return moved;
   };
 
   /** The tab calls without a tabId act on, while it is open. */
   const currentTab = () => (current === null ? undefined : tabs.get(current));
+
+  /** The tab, reconnecting the person's browser when it holds the tab while let go. */
+  const findTab = async (input: TabInput): Promise<Tab> => {
+    const wanted = input.tabId ?? (current === null ? parkedCurrent : null);
+    if (wanted !== null && !tabs.has(wanted) && [...parked.values()].includes(wanted)) {
+      if (await sources.person?.reopen?.()) await adopt();
+    }
+    return requireTab(input);
+  };
 
   const requireTab = (input: TabInput): Tab => {
     const tabId = input.tabId ?? current;
@@ -230,7 +382,7 @@ export const makeHeadlessBrowser = (options: {
     action: string,
     run: (tab: Tab) => Promise<A>,
   ): Promise<A> => {
-    const tab = requireTab(input);
+    const tab = await findTab(input);
     if (tab.dialog !== null)
       throw failure("A browser dialog is pending. Read preview_status and use preview_dialog.");
     const event: {
@@ -242,6 +394,7 @@ export const makeHeadlessBrowser = (options: {
       startedAt: new Date().toISOString(),
     };
     pushBounded(tab.actionTimeline, event, ACTION_TIMELINE_LIMIT);
+    const release = sourceOf(tab.route).use?.() ?? constVoid;
     try {
       const result = await run(tab);
       event.status = "succeeded";
@@ -252,6 +405,7 @@ export const makeHeadlessBrowser = (options: {
       throw ServerBrowserPage.toOperationError(cause);
     } finally {
       event.completedAt = new Date().toISOString();
+      release();
     }
   };
 
@@ -303,30 +457,39 @@ export const makeHeadlessBrowser = (options: {
       .then(constVoid);
 
   return {
-    status: (input) => statusOf(input.tabId === undefined ? currentTab() : requireTab(input)),
+    status: async (input) => {
+      await adopt();
+      return statusOf(input.tabId === undefined ? currentTab() : await findTab(input));
+    },
     open: async (input) => {
       const reuse = input.reuseExistingTab ?? true;
+      const url = input.url === undefined ? undefined : normalizePreviewUrl(input.url);
+      const route = url === undefined ? "machine" : routeOf(url);
+      const found =
+        input.tabId !== undefined ? await findTab(input) : reuse ? currentTab() : undefined;
       const tab =
-        input.tabId !== undefined
-          ? requireTab(input)
-          : ((reuse ? currentTab() : undefined) ?? (await createTab()));
+        found === undefined
+          ? await createTab(route)
+          : url === undefined
+            ? found
+            : await onRoute(found, route);
       current = tab.tabId;
-      if (input.url !== undefined)
-        await act({ tabId: tab.tabId }, "navigate", (each) =>
-          goto(each, normalizePreviewUrl(input.url!), { url: input.url! }),
-        );
+      if (url !== undefined)
+        await act({ tabId: tab.tabId }, "navigate", (each) => goto(each, url, { url }));
+      await adopt();
       return statusOf(tab);
     },
     navigate: async (input) => {
-      const tab =
-        input.tabId === undefined ? (currentTab() ?? (await createTab())) : requireTab(input);
-      await act({ tabId: tab.tabId }, "navigate", (each) =>
-        goto(each, navigationUrl(input), input),
-      );
+      const url = navigationUrl(input);
+      const route = routeOf(url);
+      const found = input.tabId === undefined ? currentTab() : await findTab(input);
+      const tab = found === undefined ? await createTab(route) : await onRoute(found, route);
+      await act({ tabId: tab.tabId }, "navigate", (each) => goto(each, url, input));
+      await adopt();
       return statusOf(tab);
     },
     dialog: async (input) => {
-      const tab = requireTab(input);
+      const tab = await findTab(input);
       const dialog = tab.dialog;
       if (dialog === null) throw failure("No dialog is pending.");
       if (input.accept) await dialog.accept(input.promptText);
@@ -377,6 +540,8 @@ export const makeHeadlessBrowser = (options: {
       ),
     waitFor: (input) =>
       act(input, "waitFor", (tab) => ServerBrowserPage.waitFor(tab.page, input).then(constVoid)),
-    close: () => contexts.close(),
+    close: async () => {
+      await Promise.all([sources.machine.close(), sources.person?.close() ?? Promise.resolve()]);
+    },
   };
 };

@@ -6,6 +6,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -21,7 +22,7 @@ import type { MachineCaches } from "./RunnerCaches.ts";
  * A dependency root is a directory, at most two levels into the checkout and
  * outside dot directories, symlinks and other repositories (a drive's
  * shortcuts are mounted read-only as repositories of their own, #142), with a
- * lockfile this machine installs (pnpm or npm). Its key hashes the lockfile, the package manager's other
+ * lockfile this machine installs (pnpm, npm, yarn or bun). Its key hashes the lockfile, the package manager's other
  * install inputs and the machine's toolchain, and its `node_modules` records
  * the key and how its last install went:
  *
@@ -38,29 +39,51 @@ import type { MachineCaches } from "./RunnerCaches.ts";
  *   untouched, and the key is recorded.
  * - **Failed at this key:** not retried until the key changes; the turn that
  *   hit the failure reported it, and the agent can install by hand.
+ *
+ * `trees` lists every tree this rebuilds, with its recipe: the drive leaves
+ * exactly those out of the thread's machine state (`RunnerMachineState.ts`).
  */
 
-type PackageManager = "pnpm" | "npm";
+type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
 
 /** Lockfiles this machine installs, in the order each package manager prefers them. */
 const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
   ["pnpm-lock.yaml", "pnpm"],
   ["npm-shrinkwrap.json", "npm"],
   ["package-lock.json", "npm"],
+  ["yarn.lock", "yarn"],
+  ["bun.lock", "bun"],
+  ["bun.lockb", "bun"],
 ];
 
 /** Files besides the lockfile that change what an install produces. */
 const INSTALL_INPUTS: Record<PackageManager, ReadonlyArray<string>> = {
   pnpm: ["pnpm-workspace.yaml", ".npmrc", ".pnpmfile.cjs", ".pnpmfile.mjs"],
   npm: [".npmrc"],
+  yarn: [".yarnrc.yml", ".yarnrc", ".npmrc"],
+  bun: ["bunfig.toml", ".npmrc"],
 };
 
 /** The parts of package.json that change what an install produces, not its scripts. */
 const MANIFEST_INPUTS = ["packageManager", "pnpm", "overrides", "resolutions"];
 
-const INSTALL: Record<PackageManager, ReadonlyArray<string>> = {
-  pnpm: ["pnpm", "install", "--frozen-lockfile", "--config.confirm-modules-purge=false"],
-  npm: ["npm", "ci", "--no-audit", "--no-fund"],
+/** Yarn 1's lockfile says so on its first line; Yarn 2 and later write YAML with `__metadata`. */
+const YARN_CLASSIC = /^# yarn lockfile v1/m;
+
+/** How a root installs; Yarn's flags depend on which Yarn its lockfile is from. */
+const installCommand = (root: DependencyRoot, lockfile: string | null): ReadonlyArray<string> => {
+  switch (root.manager) {
+    case "pnpm":
+      return ["pnpm", "install", "--frozen-lockfile", "--config.confirm-modules-purge=false"];
+    case "npm":
+      return ["npm", "ci", "--no-audit", "--no-fund"];
+    case "yarn":
+      return lockfile !== null && YARN_CLASSIC.test(lockfile)
+        ? ["yarn", "install", "--frozen-lockfile", "--non-interactive"]
+        : ["yarn", "install", "--immutable"];
+    case "bun":
+      return ["bun", "install", "--frozen-lockfile"];
+  }
 };
 
 /**
@@ -119,6 +142,18 @@ interface DependencyRoot {
 
 type InstallReason = "new" | "lockfile" | "toolchain" | "unfinished" | "adopted";
 
+export type DependencyTreesError = PlatformError.PlatformError;
+
+/** A dependency tree this rebuilds, which a drive therefore leaves out. */
+export interface DependencyTree {
+  /** Relative to the checkout. */
+  readonly path: string;
+  /** How it is rebuilt, for the thread's details: the command, and from which lockfile. */
+  readonly recipe: string;
+  /** Its root's last finished install: the key it was at, and the record file it left. */
+  readonly installed: { readonly inputs: string; readonly record: string } | null;
+}
+
 type DependencyOutcome =
   | { readonly _tag: "reused" }
   | { readonly _tag: "skipped" }
@@ -132,6 +167,8 @@ export interface RunnerDependencies {
   ) => Effect.Effect<
     ReadonlyArray<{ readonly root: DependencyRoot; readonly outcome: DependencyOutcome }>
   >;
+  /** Every dependency tree under a root, sorted by path. */
+  readonly trees: Effect.Effect<ReadonlyArray<DependencyTree>, DependencyTreesError>;
 }
 
 const where = (root: DependencyRoot) =>
@@ -287,22 +324,32 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
       return { code: Number(code), stdout, output };
     }).pipe(Effect.scoped);
 
-  /** Every `node_modules` under `root`, outside dot directories and other roots. */
-  const treesOf = (root: DependencyRoot, others: ReadonlySet<string>) =>
-    run(root.directory, FIND_TREES).pipe(
+  /** Every `node_modules` under `root`, outside dot directories and the roots nested in it. */
+  const treesOf = (root: DependencyRoot, others: ReadonlySet<string>) => {
+    const nested = [...others].filter((other) => other.startsWith(`${root.directory}/`));
+    return run(root.directory, FIND_TREES).pipe(
       Effect.map(({ stdout }) =>
         stdout
           .split("\n")
           .filter((line) => line.length > 0)
           .map((line) => path.join(root.directory, line))
-          .filter(
-            (tree) => ![...others].some((other) => tree === other || tree.startsWith(`${other}/`)),
-          ),
+          .filter((tree) => !nested.some((other) => tree.startsWith(`${other}/`))),
       ),
     );
+  };
+
+  /** Only Yarn's command depends on its lockfile, which can run to megabytes: others never read it. */
+  const commandOf = (root: DependencyRoot) =>
+    root.manager === "yarn"
+      ? Effect.map(readOrNull(path.join(root.directory, root.lockfile)), (lockfile) =>
+          installCommand(root, lockfile),
+        )
+      : Effect.succeed(installCommand(root, null));
 
   const install = (root: DependencyRoot) =>
-    run(root.directory, INSTALL[root.manager], INSTALL_OUTPUT_TAIL).pipe(
+    Effect.flatMap(commandOf(root), (command) =>
+      run(root.directory, command, INSTALL_OUTPUT_TAIL),
+    ).pipe(
       Effect.timeoutOrElse({
         duration: INSTALL_TIMEOUT,
         orElse: () => Effect.succeed({ code: -1, output: `Timed out after ${INSTALL_TIMEOUT}.` }),
@@ -404,5 +451,26 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
       return results;
     });
 
-  return { prepare } satisfies RunnerDependencies;
+  const trees: RunnerDependencies["trees"] = Effect.gen(function* () {
+    const roots = yield* findRoots;
+    const directories = new Set(roots.map((root) => root.directory));
+    const found: Array<DependencyTree> = [];
+    for (const root of roots) {
+      const others = new Set([...directories].filter((other) => other !== root.directory));
+      const record = path.join(root.directory, "node_modules", RECORD);
+      const recorded = Option.getOrNull(decodeRecord(yield* readOrNull(record)));
+      const lockfile = path.join(root.relative, root.lockfile);
+      const recipe = `${(yield* commandOf(root)).join(" ")}, from ${lockfile}`;
+      for (const tree of yield* treesOf(root, others)) {
+        found.push({
+          path: path.relative(input.cwd, tree),
+          recipe,
+          installed: recorded?.state === "installed" ? { inputs: recorded.inputs, record } : null,
+        });
+      }
+    }
+    return found.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  });
+
+  return { prepare, trees } satisfies RunnerDependencies;
 });

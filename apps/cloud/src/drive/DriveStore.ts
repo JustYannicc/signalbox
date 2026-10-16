@@ -21,7 +21,8 @@ import type { ObjectType, Oid } from "./git/gitObjects.ts";
  * pinned base and machine generation. Packs are immutable and only added, so
  * an object, once indexed, is readable for good.
  *
- * Refs are `main`, `threads/<thread id>` and `wip/<thread id>`. Every write
+ * Refs are `main`, `threads/<thread id>`, `wip/<thread id>` and
+ * `machine/<thread id>`. Every write
  * names the thread making it, and the rules for who may move which ref live
  * here, next to the data: a thread moves only its own refs, `main` only by a
  * fast-forward to its own branch while its turn runs, and a machine from an
@@ -34,6 +35,10 @@ import type { ObjectType, Oid } from "./git/gitObjects.ts";
  * add one to a drive they can open. The drive's own commits never hold files
  * under a shortcut; its threads' machines mount the target there instead.
  *
+ * A thread's machine state (#490) is its alone: its packs are private to the
+ * thread, listed and leaned on only by that thread, and its `machine` ref is
+ * never read, merged or pushed by anything else.
+ *
  * A drive backed by a remote repository records it here. Its `main` mirrors
  * the remote's default branch instead (`mirror`), and is never reconciled:
  * the remote is where work lands.
@@ -42,6 +47,7 @@ import type { ObjectType, Oid } from "./git/gitObjects.ts";
 export const MAIN_REF = "main";
 export const threadRef = (threadId: string) => `threads/${threadId}`;
 export const wipRef = (threadId: string) => `wip/${threadId}`;
+export const machineRef = (threadId: string) => `machine/${threadId}`;
 
 /** Who is writing: a thread, on its machine of `generation`. */
 export interface DriveWriter {
@@ -59,6 +65,8 @@ export interface ThreadRefs {
   readonly main: Oid | null;
   readonly thread: Oid | null;
   readonly wip: Oid | null;
+  /** The thread's machine state (#490). */
+  readonly machine: Oid | null;
   readonly base: Oid | null;
   readonly packs: ReadonlyArray<{
     readonly seq: number;
@@ -93,6 +101,8 @@ export interface PackRegistration {
   readonly shallow?: ReadonlyArray<Oid>;
   /** Files the pack's folders name that the remote keeps for the drive (#406), and their sizes when known. */
   readonly promised?: ReadonlyArray<PromisedFile>;
+  /** The thread the pack is private to: its machine state (#490). */
+  readonly privateTo?: string;
 }
 
 /** A file a remote-backed drive leaves on its remote (#406): its id, and its size when known. */
@@ -149,8 +159,14 @@ export class DriveStore extends Context.Service<
       packsAfter?: number,
     ) => Effect.Effect<ThreadRefs, SqlError>;
     readonly ref: (name: string) => Effect.Effect<Oid | null, SqlError>;
-    /** Which of `oids` the drive does not have. */
-    readonly missing: (oids: ReadonlyArray<Oid>) => Effect.Effect<ReadonlyArray<Oid>, SqlError>;
+    /**
+     * Which of `oids` the drive does not have in packs `visibleTo` is handed:
+     * public packs for `null`, and a thread's own private ones for its id.
+     */
+    readonly missing: (
+      oids: ReadonlyArray<Oid>,
+      visibleTo: string | null,
+    ) => Effect.Effect<ReadonlyArray<Oid>, SqlError>;
     /** Which of `oids` the remote keeps for the drive (#406). */
     readonly promised: (
       oids: ReadonlyArray<Oid>,
@@ -331,6 +347,13 @@ const migrations = Migrator.fromRecord({
       size INTEGER
     )`;
   }),
+  // Packs private to one thread: its machine state (#490). Which packs hold an object
+  // decides whether a pack may lean on it, so entries are found by object too.
+  "0005_private_packs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE packs ADD COLUMN private_to TEXT`;
+    yield* sql`CREATE INDEX pack_entries_oid ON pack_entries (oid)`;
+  }),
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -338,6 +361,9 @@ const migrate = Migrations.run(migrations);
 
 const RefRow = Schema.Struct({ name: Schema.String, oid: Schema.String });
 const PackRow = Schema.Struct({ seq: Schema.Number, name: Schema.String, size: Schema.Number });
+const decodeOwnerRows = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ private_to: Schema.NullOr(Schema.String) })),
+);
 const ThreadRow = Schema.Struct({ base: Schema.NullOr(Schema.String), generation: Schema.Number });
 const RemoteRow = Schema.Struct({
   provider: DriveRemote.fields.provider,
@@ -443,7 +469,8 @@ const make = Effect.gen(function* () {
   const refs: DriveStore["Service"]["refs"] = (threadId, packsAfter = 0) =>
     Effect.gen(function* () {
       const packs = decodePackRows(
-        yield* sql`SELECT seq, name, size FROM packs WHERE seq > ${packsAfter} ORDER BY seq`,
+        yield* sql`SELECT seq, name, size FROM packs WHERE seq > ${packsAfter}
+          AND (private_to IS NULL OR private_to = ${threadId}) ORDER BY seq`,
       );
       const thread = threadId === null ? null : yield* threadRow(threadId);
       const shallow = OidRows(
@@ -453,6 +480,7 @@ const make = Effect.gen(function* () {
         main: yield* ref(MAIN_REF),
         thread: threadId === null ? null : yield* ref(threadRef(threadId)),
         wip: threadId === null ? null : yield* ref(wipRef(threadId)),
+        machine: threadId === null ? null : yield* ref(machineRef(threadId)),
         base: thread?.base ?? null,
         packs,
         remote: yield* remote,
@@ -518,16 +546,29 @@ const make = Effect.gen(function* () {
     }).pipe(sql.withTransaction);
 
   /** What the drive neither holds nor has the remote keep for it. */
-  const missing: DriveStore["Service"]["missing"] = (oids) =>
+  const missing: DriveStore["Service"]["missing"] = (oids, visibleTo) =>
     Effect.gen(function* () {
       const unique = [...new Set(oids)];
       const found = new Set<string>();
       for (const chunk of chunks(unique)) {
         // Two queries: one with both lists would bind twice the parameters SQLite allows.
+        // Where each object is read from, usually a pack the caller may lean on.
         for (const row of OidRows(
-          yield* sql`SELECT oid FROM objects WHERE oid IN ${sql.in(chunk)}`,
+          yield* sql`SELECT o.oid FROM objects o JOIN packs p ON p.seq = o.pack_seq
+            WHERE o.oid IN ${sql.in(chunk)}
+            AND (p.private_to IS NULL OR p.private_to = ${visibleTo})`,
         ))
           found.add(row.oid);
+        // Else another copy may be in one: an object first stored privately is read from there.
+        const unread = chunk.filter((oid) => !found.has(oid));
+        if (unread.length > 0) {
+          for (const row of OidRows(
+            yield* sql`SELECT DISTINCT e.oid FROM pack_entries e JOIN packs p ON p.seq = e.pack_seq
+              WHERE e.oid IN ${sql.in(unread)}
+              AND (p.private_to IS NULL OR p.private_to = ${visibleTo})`,
+          ))
+            found.add(row.oid);
+        }
         const rest = chunk.filter((oid) => !found.has(oid));
         if (rest.length === 0) continue;
         for (const row of OidRows(
@@ -553,14 +594,32 @@ const make = Effect.gen(function* () {
 
   const registerPack: DriveStore["Service"]["registerPack"] = (pack) =>
     Effect.gen(function* () {
-      const existing = yield* sql`SELECT seq FROM packs WHERE name = ${pack.name}`;
-      if (existing.length > 0) return { _tag: "ok" } as const;
+      const existing = decodeOwnerRows(
+        yield* sql`SELECT private_to FROM packs WHERE name = ${pack.name}`,
+      );
+      const privateTo = pack.privateTo ?? null;
+      if (existing.length > 0) {
+        // The same bytes again: a retry, or a copy of a pack the uploader can already lean on.
+        const owner = existing[0]!.private_to;
+        if (owner === privateTo || owner === null) return { _tag: "ok" } as const;
+        // Another thread's private pack stays its own.
+        if (privateTo !== null) return { _tag: "missing", oids: [] } as const;
+        // A public copy of a private pack, its uploader holding the bytes itself: public
+        // once everything it leans on is.
+        const absent = yield* missing(pack.external, null);
+        if (absent.length > 0) return { _tag: "missing", oids: absent } as const;
+        yield* sql`UPDATE packs SET private_to = NULL WHERE name = ${pack.name}`;
+        return { _tag: "ok" } as const;
+      }
       const promising = new Set((pack.promised ?? []).map((file) => file.oid));
-      const absent = (yield* missing(pack.external)).filter((oid) => !promising.has(oid));
+      // A public pack leans only on public packs; a private one on those and its thread's own.
+      const absent = (yield* missing(pack.external, privateTo)).filter(
+        (oid) => !promising.has(oid),
+      );
       if (absent.length > 0) return { _tag: "missing", oids: absent } as const;
       const now = yield* Clock.currentTimeMillis;
-      yield* sql`INSERT INTO packs (name, size, object_count, thread_id, created_at)
-        VALUES (${pack.name}, ${pack.size}, ${pack.objects.length}, ${pack.threadId}, ${now})`;
+      yield* sql`INSERT INTO packs (name, size, object_count, thread_id, created_at, private_to)
+        VALUES (${pack.name}, ${pack.size}, ${pack.objects.length}, ${pack.threadId}, ${now}, ${privateTo})`;
       const [row] = yield* sql<{
         readonly seq: number;
       }>`SELECT seq FROM packs WHERE name = ${pack.name}`;
@@ -602,7 +661,8 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => rows.length > 0),
     );
 
-  const ownRefs = (threadId: string) => new Set([threadRef(threadId), wipRef(threadId)]);
+  const ownRefs = (threadId: string) =>
+    new Set([threadRef(threadId), wipRef(threadId), machineRef(threadId)]);
 
   const updateRefs: DriveStore["Service"]["updateRefs"] = (writer, updates) =>
     Effect.gen(function* () {
@@ -617,7 +677,12 @@ const make = Effect.gen(function* () {
       if (!(yield* writes(writer))) return NO_ACCESS;
       if (!(yield* fence(writer))) return STALE;
       for (const update of updates) {
-        if (!(yield* isCommit(update.new))) {
+        // Only the machine ref may name a commit other threads aren't handed.
+        const visible =
+          update.name === machineRef(writer.threadId)
+            ? yield* isCommit(update.new)
+            : (yield* missing([update.new], null)).length === 0;
+        if (!visible) {
           return {
             _tag: "refused",
             reason: `The drive does not have commit ${update.new}.`,

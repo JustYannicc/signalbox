@@ -66,18 +66,24 @@ export const read = (cwd: string, file: string) =>
  */
 export const makeFakeDrive = (
   root: string,
-  options: { readonly upstream?: string; readonly id?: string } = {},
+  options: {
+    readonly upstream?: string;
+    readonly id?: string;
+    /** False: a cloud from before machine state (#490), which answers no `machine` ref. */
+    readonly machineState?: boolean;
+  } = {},
 ) => {
   const id = options.id ?? "drive-1";
   const store = NodePath.join(root, options.id === undefined ? "store" : `store-${options.id}`);
   NodeFS.mkdirSync(store, { recursive: true });
   git(store, "init", "-q", "--bare");
   const packDir = NodePath.join(store, "objects", "pack");
-  const packs: Array<{ seq: number; name: string; size: number }> = [];
+  /** `owner`: the thread a private pack (its machine state) belongs to. */
+  const packs: Array<{ seq: number; name: string; size: number; owner?: string }> = [];
   let main: string | null = null;
   const threads = new Map<
     string,
-    { thread: string | null; wip: string | null; base: string | null }
+    { thread: string | null; wip: string | null; machine: string | null; base: string | null }
   >();
   const calls = { reconcile: 0, reconcileConflicts: 0, mirror: 0 };
   /** Set to make the cloud refuse every mirror, as when GitHub has not caught up yet. */
@@ -108,21 +114,32 @@ export const makeFakeDrive = (
 
   /** Like the cloud, lists only packs after the ones the machine says it has. */
   const state = (threadId: string | null, packsAfter: number): DriveState => {
-    const refs = (threadId === null ? undefined : threads.get(threadId)) ?? {
+    const { machine, ...refs } = (threadId === null ? undefined : threads.get(threadId)) ?? {
       thread: null,
       wip: null,
+      machine: null,
       base: null,
     };
     return {
       driveId: id,
       main,
       ...refs,
-      packs: packs.filter((pack) => pack.seq > packsAfter),
+      ...(options.machineState === false ? {} : { machine }),
+      packs: packs
+        .filter((pack) => pack.seq > packsAfter)
+        .filter((pack) => pack.owner === undefined || pack.owner === threadId)
+        .map(({ seq, name, size }) => ({ seq, name, size })),
       remote,
       shallow: shallow.filter((entry) => entry.seq > packsAfter).map((entry) => entry.oid),
     };
   };
   const has = (oid: string) => gitOk(store, "cat-file", "-e", `${oid}^{commit}`);
+  /** The objects pack `name` holds. */
+  const objectsOf = (name: string) =>
+    git(store, "verify-pack", "-v", NodePath.join(packDir, `pack-${name}.idx`))
+      .split("\n")
+      .filter((line) => /^[0-9a-f]{40} /.test(line))
+      .map((line) => line.slice(0, 40));
 
   const client = (threadId: string): DriveClient => {
     let packsAfter = 0;
@@ -131,7 +148,9 @@ export const makeFakeDrive = (
         packsAfter = Math.max(packsAfter, seq);
       },
       open: Effect.sync(() => {
-        if (!threads.has(threadId)) threads.set(threadId, { thread: main, wip: null, base: main });
+        if (!threads.has(threadId)) {
+          threads.set(threadId, { thread: main, wip: null, machine: null, base: main });
+        }
         return state(threadId, packsAfter);
       }),
       state: Effect.sync(() => state(threadId, packsAfter)),
@@ -217,7 +236,15 @@ export const makeFakeDrive = (
             const lacking = missingFrom(commit).filter((oid) => !promised.has(oid));
             if (lacking.length > 0) throw new Error(`not closed: ${lacking.join(", ")}`);
           }
-          packs.push({ seq: packs.length + 1, name, size: pack.length });
+          if (upload.private === true && options.machineState === false) {
+            throw new Error("this cloud keeps no private packs");
+          }
+          packs.push({
+            seq: packs.length + 1,
+            name,
+            size: pack.length,
+            ...(upload.private === true ? { owner: threadId } : {}),
+          });
           return {
             name,
             objects: listing.split("\n").filter((line) => /^[0-9a-f]{40} /.test(line)).length,
@@ -313,6 +340,20 @@ export const makeFakeDrive = (
     calls,
     client,
     refs: (threadId: string) => ({ main, ...threads.get(threadId)! }),
+    /** Every object in the packs `threadId` is handed. */
+    objectsVisibleTo: (threadId: string) =>
+      new Set(
+        packs
+          .filter((pack) => pack.owner === undefined || pack.owner === threadId)
+          .flatMap((pack) => objectsOf(pack.name)),
+      ),
+    /** Moves a thread's ref behind its back, as a save that never landed would leave it. */
+    forceRef: (threadId: string, ref: "thread" | "wip", oid: string | null) => {
+      threads.get(threadId)![ref] = oid;
+    },
+    /** Objects in packs only `threadId` is handed. */
+    privateObjectsOf: (threadId: string) =>
+      packs.filter((pack) => pack.owner === threadId).flatMap((pack) => objectsOf(pack.name)),
     shallow: () => shallow.map((entry) => entry.oid),
     promised: () => [...promised],
     settings,

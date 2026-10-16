@@ -18,7 +18,7 @@ import {
 import * as Schema from "effect/Schema";
 
 import { jsonCodec as frameCodec } from "./jsonCodec.ts";
-import { DriveAccess, DriveFileChange, Oid } from "./DriveProtocol.ts";
+import { DriveAccess, DriveFileChange, Oid, SkippedFolder } from "./DriveProtocol.ts";
 import { SecretsAccess } from "./SecretsProtocol.ts";
 import { SessionAccess } from "./SessionProtocol.ts";
 
@@ -166,6 +166,8 @@ export const RunnerItem = Schema.Union([
     start: Schema.NullOr(Oid),
     commit: Oid,
     files: Schema.Array(DriveFileChange),
+    /** What the thread's machine state leaves out, and how each comes back (#490). */
+    skipped: Schema.optional(Schema.Array(SkippedFolder)),
   }),
   /** Something about the drive the thread's transcript should say, such as a merge conflict. */
   Schema.Struct({

@@ -66,6 +66,14 @@ everything except the CLIProxyAPI's own time to its response headers (the
 token check, the hops, the pool's access check and a cold container's start).
 The turn's diagnostics show it on each request's line.
 
+A turn whose folders have secrets (#395) never sends their values to a
+provider. The Runner registers the values with the thread before the harness
+gets them, and the cloud's side of the gateway replaces every value, in any
+common encoding, with `{{secret:NAME}}` as the request body streams to the
+pool (`scrubModelRequest.ts`). Until the machine running the turn has
+registered, the gateway refuses the turn's requests with "This machine hasn't
+registered the folder's secrets to hide them yet."
+
 Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
 deployed after the cloud Worker. Each pull request preview gets its own,
 `signalbox-model-gateway-pr-<number>` at
@@ -344,6 +352,18 @@ conflict goes back to the agent as one more step of the same turn. Clients
 browse `main` and each turn's diff through the Worker, with no machine
 running.
 
+Each save also keeps the thread's machine state on `machine/<thread>`
+(`RunnerMachineState.ts`, #490): checkout files the auto-save leaves out
+because git ignores them (`.env`, `notes/`, local databases), and the thread's
+home and harness config, minus what the Runner writes at every start and the
+session transcripts saved on their own. A new machine, on any backend, puts it
+back before the first turn. Its packs are private to the thread
+(`packs.private_to`): only that thread's machines are handed them, only that
+thread's packs may lean on their objects, and nothing merges or pushes the
+ref, so secrets never reach another thread or a Git host. A cloud from before
+this answers no `machine` ref, and the Runner then keeps none. Rolling the
+Worker back past it would hand private packs to every thread in the drive.
+
 Three invariants hold the store together, all enforced by the Worker and the
 cloud's objects rather than trusted to the Runner:
 
@@ -353,8 +373,8 @@ cloud's objects rather than trusted to the Runner:
   indexed commit, so a machine killed mid-upload leaves at most an orphaned
   file in R2.
 - **Whose refs.** The drive token (`drive/driveToken.ts`) names one thread and
-  machine generation. That thread moves only `threads/<thread>` and
-  `wip/<thread>`, and `main` only as a fast-forward to its own branch while its
+  machine generation. That thread moves only `threads/<thread>`,
+  `wip/<thread>` and `machine/<thread>`, and `main` only as a fast-forward to its own branch while its
   turn runs. An older generation writes nothing once a newer one has.
 - **Who reaches a drive.** Two authorities, asked on every request and cached
   nowhere: the drive object's members (`drive/DriveMembers.ts`) and, for a
@@ -671,16 +691,19 @@ Corepack, `XDG_CACHE_HOME`) are under `caches/<toolchain>` in the machine's
 home (`apps/server/src/signalbox/runner/RunnerCaches.ts`), one directory per
 OS, libc, architecture and Node major, and the harnesses see them through the
 environment. Before each turn, after the checkout is synced, the Runner finds
-every pnpm or npm lockfile up to two folders deep and keys it on the lockfile,
+every pnpm, npm, Yarn or Bun lockfile up to two folders deep and keys it on the lockfile,
 the package manager's other install inputs and the toolchain
 (`RunnerDependencies.ts`). An unchanged key reuses `node_modules` and the
 build caches tools keep in it. A changed key, or an install that never
 finished, discards every `node_modules` under that folder and installs fresh
 from the warm store, so nothing built against the old dependencies survives.
-An install that failed is not retried until its key changes. A drive never
-saves `node_modules`, whatever the repository's own ignore files say. The
-image enables Corepack, so a project's `packageManager` picks the pnpm or
-yarn the agent's shell runs.
+An install that failed is not retried until its key changes. A thread's
+branch never holds `node_modules`, whatever the repository's own ignore files
+say, and its machine state leaves out exactly the trees this rebuilds, keeping
+files edited after their install and putting them back once a rebuild lands on
+the same key. A `node_modules` no lockfile rebuilds is kept like any other
+folder. The image enables Corepack, so a project's `packageManager` picks the
+pnpm or yarn the agent's shell runs, and carries Bun.
 
 ## Deploying
 
@@ -740,6 +763,7 @@ which each preview derives its own session secret.
 | `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                                |
 | `TYPESAFE_API_KEY`             | secret   | Optional. Jev, which tells chats from tasks ([Chats and tasks](#chats-and-tasks))                   |
 | `OPENAI_API_KEY`               | secret   | Optional. OpenAI's Decisions API, the other chat or task classifier                                 |
+| `KERNEL_API_KEY`               | secret   | Optional. Kernel, which runs each person's browser for real sites; unset, machines browse headless  |
 
 The production deploy derives the preview-cleanup token from
 `CLOUDFLARE_API_TOKEN`. Keep the same token value in both GitHub environments
