@@ -9,8 +9,9 @@ import { jsonCodec } from "./jsonCodec.ts";
  * tools open. The machine asks with the thread's drive token
  * (`DriveProtocol.ts`), only while a turn runs, and the cloud opens the
  * session as the thread's owner. The Kernel key stays in the cloud; the
- * machine only ever holds the session's CDP endpoint, and the live view and
- * replay links go to the owner's clients, never to the machine.
+ * machine only ever holds the session's CDP endpoint. The browser runs
+ * headless, so Kernel has no live view or replays for it; the machine mirrors
+ * its pages to the owner's clients instead (`PreviewTunnel.ts`, #587).
  *
  * `session` returns the thread's open session, or opens one. `end` deletes
  * it, which is what saves the profile; a session nobody ends times out on
