@@ -2769,7 +2769,10 @@ export default function ChatView(props: ChatViewProps) {
   const disconnectDelayElapsed = useEnvironmentDisconnectDelay(
     activeEnvironmentUnavailable ? activeEnvironment.environmentId : null,
   );
+  // signalbox: disconnecting the one environment would empty the app.
+  const environmentUiShown = useShowsEnvironmentUi();
   const canDisconnectActiveEnvironment =
+    environmentUiShown &&
     disconnectDelayElapsed &&
     activeEnvironment !== null &&
     activeEnvironment.entry.target._tag !== "PrimaryConnectionTarget" &&
@@ -4140,12 +4143,19 @@ export default function ChatView(props: ChatViewProps) {
     DEFAULT_RESOLVED_KEYBINDINGS;
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const remoteOpenState = useRemoteOpenState(activeThread?.environmentId ?? environmentId);
-  const showOpenInPicker = shouldShowOpenInPicker({
-    activeProjectName: activeProject?.title,
-    activeThreadEnvironmentId: activeThread?.environmentId ?? environmentId,
-    primaryEnvironmentId,
-    remoteOpenMode: remoteOpenState.mode,
-  });
+  // signalbox: an editor can only open paths on a machine the user reaches.
+  const threadHasLocalFilesystem = useEnvironmentSupports(
+    activeThread?.environmentId ?? environmentId,
+    "localFilesystem",
+  );
+  const showOpenInPicker =
+    threadHasLocalFilesystem &&
+    shouldShowOpenInPicker({
+      activeProjectName: activeProject?.title,
+      activeThreadEnvironmentId: activeThread?.environmentId ?? environmentId,
+      primaryEnvironmentId,
+      remoteOpenMode: remoteOpenState.mode,
+    });
   useOpenFavoriteEditorShortcut({
     enabled: showOpenInPicker,
     environmentId: activeThread?.environmentId ?? environmentId,
