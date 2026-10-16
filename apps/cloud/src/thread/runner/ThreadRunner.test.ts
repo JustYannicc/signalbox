@@ -84,6 +84,40 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("says in the live turn when its pool moved the thread to another account", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started],
+        });
+
+        yield* runner.accountMoved(turn.runId, "This thread's account hit its usage limit.");
+        const notices = (yield* snapshot(engine)).projection.turnItems.filter(
+          (item) => item.type === "system_notice",
+        );
+        expect(notices).toMatchObject([
+          { title: "Account", message: "This thread's account hit its usage limit." },
+        ]);
+
+        // A move reported after the turn ended belongs to no transcript.
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 2,
+          items: [report.full, report.terminal],
+        });
+        yield* runner.accountMoved(turn.runId, "Late.");
+        const after = (yield* snapshot(engine)).projection.turnItems;
+        expect(after.filter((item) => item.type === "system_notice")).toHaveLength(1);
+      }),
+    ),
+  );
+
   it.effect("resumes the harness's own session when the next message lands on a new machine", () =>
     withObject(freshDatabase(), (engine, runner, context) =>
       Effect.gen(function* () {

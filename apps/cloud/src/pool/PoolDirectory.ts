@@ -98,6 +98,8 @@ export type ModelForwardReply =
       readonly response: Response;
       /** From handing the request to the pool's CLIProxyAPI to its response headers. */
       readonly upstreamMs: number;
+      /** What the thread should say: it had to leave its account (`threadAccounts.ts`). */
+      readonly accountMoved?: string;
     }
   /** The user may not use the pool, or it is gone. */
   | { readonly _tag: "denied"; readonly reason: string }
@@ -110,10 +112,12 @@ export type ModelForwardReply =
  * stream, not a `PoolReply`. `path` includes the query.
  */
 export interface PoolModelApi {
+  /** `thread` keeps the request on that thread's account. */
   readonly forwardModel: (
     actor: PoolActor,
     path: string,
     request: Request,
+    thread?: string,
   ) => Promise<ModelForwardReply>;
 }
 

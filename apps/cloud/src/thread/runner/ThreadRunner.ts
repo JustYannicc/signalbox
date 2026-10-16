@@ -45,6 +45,7 @@ import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
 import { freshSessionTurn } from "./freshSession.ts";
 import { recoverRunEvents } from "./runRecovery.ts";
 import {
+  accountMovedEvents,
   failRunEvents,
   harnessRun,
   runnerBatchEvents,
@@ -258,6 +259,8 @@ export class ThreadRunner extends Context.Service<
     readonly ensured: (generation: number) => Effect.Effect<void>;
     readonly work: Effect.Effect<RunnerWork>;
     readonly reconcile: Effect.Effect<MachinePlan>;
+    /** The pool moved the thread off its account during `runId` (`pool/threadAccounts.ts`). */
+    readonly accountMoved: (runId: RunId, message: string) => Effect.Effect<void>;
     /** Whether the ModelGateway may serve `token` for `provider` right now. */
     readonly authorizeModel: (
       token: string,
@@ -755,6 +758,14 @@ const make = Effect.gen(function* () {
         : deny("This token is not for the running turn.");
     });
 
+  const accountMoved: ThreadRunner["Service"]["accountMoved"] = (runId, message) =>
+    engine.apply((projection, ctx) =>
+      Effect.succeed({
+        events: projection === null ? [] : accountMovedEvents(projection, runId, message, ctx),
+        result: undefined,
+      }),
+    );
+
   // Like model requests, drive calls read committed state without the lock.
   const authorizeDrive: ThreadRunner["Service"]["authorizeDrive"] = (token) =>
     Effect.gen(function* () {
@@ -1017,6 +1028,7 @@ const make = Effect.gen(function* () {
     ensured,
     work,
     reconcile,
+    accountMoved,
     authorizeModel,
     authorizeDrive,
     authorizeSession,

@@ -327,6 +327,11 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         Effect.flatMap(Clock.currentTimeMillis, (now) => diagnostics.modelRequest(record, now)),
       ),
     );
+    const { accountMoved, runId } = record;
+    if (accountMoved === undefined || runId === null) return;
+    await this.runtime.runPromise(
+      ThreadRunner.ThreadRunner.use((runner) => runner.accountMoved(runId, accountMoved)),
+    );
   }
 
   /** The ModelGateway asking whether a harness's token is good right now (see `modelGrants.ts`). */

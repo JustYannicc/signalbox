@@ -123,7 +123,13 @@ export async function serveModel(
   const authMs = Date.now() - startedAt;
   if (authorization._tag === "denied") return { ...authorization, authMs };
   const { runId, traceId, pool } = authorization;
-  const reply = await forwardToPool(input, pool, options);
+  // The token names the thread, which keeps its account in the pool (`pool/threadAccounts.ts`).
+  const reply = await forwardToPool(
+    input,
+    pool,
+    options,
+    threadOfModelToken(input.token) ?? undefined,
+  );
   return { _tag: "granted", runId, traceId, authMs, reply };
 }
 
@@ -149,7 +155,8 @@ const forwardToPool = (
   input: Parameters<typeof serveModel>[0],
   pool: ModelPoolRoute,
   options: { readonly localWorkerd: boolean },
+  thread?: string,
 ) =>
   poolObjectStub(input.pools, pool.objectName, options)
-    .forwardModel({ userId: pool.userId }, input.path, input.request)
+    .forwardModel({ userId: pool.userId }, input.path, input.request, thread)
     .catch((): ModelForwardReply => ({ _tag: "failed", reason: "The pool could not be reached." }));
