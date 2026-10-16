@@ -45,7 +45,7 @@ import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
-import { freshSessionTurn } from "./freshSession.ts";
+import { freshSessionText, freshSessionTurn } from "./freshSession.ts";
 import { continuedRun, recoverRunEvents } from "./runRecovery.ts";
 import {
   accountMovedEvents,
@@ -317,6 +317,12 @@ export class ThreadRunner extends Context.Service<
      * the Runner then commits as `DRIVE_COMMIT_AUTHOR`.
      */
     readonly commitAuthor: Effect.Effect<CommitAuthor | null>;
+    /**
+     * `turn`'s prompt on a new harness session, for the Runner to start fresh
+     * on should its native resume fail (#653); null for a turn already on a new
+     * session. Asked only as a turn goes out: it reads the whole conversation.
+     */
+    readonly freshSessionText: (turn: Omit<RunnerTurn, "traceId">) => Effect.Effect<string | null>;
     /**
      * The owner's 1Password service account token, for a turn being handed
      * out (`ThreadSecrets`); null without one, or when their object didn't answer.
@@ -957,6 +963,13 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const freshSessionTextOf: ThreadRunner["Service"]["freshSessionText"] = (turn) =>
+    Effect.map(engine.projection, (projection) =>
+      projection === null || turn.providerThread.nativeThreadRef === null
+        ? null
+        : freshSessionText(projection, turn),
+    );
+
   // Like drive calls, session writes read committed state without the lock;
   // the session API checks the generation again as it writes.
   const authorizeSession: ThreadRunner["Service"]["authorizeSession"] = (token) =>
@@ -1180,6 +1193,7 @@ const make = Effect.gen(function* () {
     authorizeSession,
     authorizeRemote,
     commitAuthor,
+    freshSessionText: freshSessionTextOf,
     secretsToken,
   });
 });
