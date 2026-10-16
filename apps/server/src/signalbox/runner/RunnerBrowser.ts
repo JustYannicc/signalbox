@@ -182,7 +182,7 @@ const navigationUrl = (input: PreviewAutomationNavigateInput) => {
 };
 
 /** A screenshot not taken, because the page shows a card number (`RunnerBrowserTools.ts` says so). */
-export const WITHHELD_SCREENSHOT = {
+const WITHHELD_SCREENSHOT = {
   mimeType: "image/png",
   data: "",
   width: 0,
