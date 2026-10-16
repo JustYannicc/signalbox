@@ -61,6 +61,7 @@ import { useIsMobile } from "../hooks/useMediaQuery";
 import { SidebarViews } from "./sidebar/SidebarViews";
 import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons";
 import { FolderDialogs } from "./sidebar/folders/FolderDialogs"; // signalbox: folders
+import { NotesSheet } from "./notes/NotesSheet"; // signalbox: notes
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -366,6 +367,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
         <FolderDialogs />
+        <NotesSheet />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

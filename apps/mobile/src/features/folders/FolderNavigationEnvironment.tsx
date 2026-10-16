@@ -2,7 +2,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { folderTree } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { MenuAction } from "@react-native-menu/menu";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SignalboxContext } from "@t3tools/contracts/signalboxContexts";
 import type { Folder, FolderId } from "@t3tools/contracts/signalboxFolders";
 import { useCallback, useMemo, useState } from "react";
@@ -10,6 +10,9 @@ import { Pressable, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
 import { useEnvironmentFolders, useFolderOwners } from "../../state/signalboxFolders";
+import { useEnvironmentHasNotes } from "../../state/signalboxNotes";
+import { NotesSheet } from "../notes/NotesSheet";
+import { useOpenThread } from "../threads/use-open-thread";
 import { folderCountsAtom, folderPoolChoicesAtom } from "./folder-atoms";
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";
 import { folderMenuActions, topLevelMenuActions } from "./folder-menus";
@@ -18,6 +21,7 @@ import { FolderNodeRow, OwnerTopLevelRow } from "./FolderNavigationRows";
 import { useFolderActions } from "./use-folder-actions";
 
 const PERSONAL_TOP_ACTIONS = topLevelMenuActions({ personal: true });
+const PERSONAL_TOP_ACTIONS_WITH_NOTES = topLevelMenuActions({ personal: true, notes: true });
 const ORGANIZATION_TOP_ACTIONS = topLevelMenuActions({ personal: false });
 
 export function FolderNavigationEnvironment(props: {
@@ -34,6 +38,12 @@ export function FolderNavigationEnvironment(props: {
   const counts = useAtomValue(folderCountsAtom(environmentId));
   const pools = useAtomValue(folderPoolChoicesAtom(environmentId));
   const actions = useFolderActions({ environmentId, snapshot, pools });
+  const hasNotes = useEnvironmentHasNotes(environmentId);
+  const openThread = useOpenThread();
+  const openNoteThread = useCallback(
+    (threadId: ThreadId) => openThread(environmentId, threadId),
+    [environmentId, openThread],
+  );
   const [collapsed, setCollapsed] = useState<ReadonlySet<FolderId>>(() => new Set());
   const onToggle = useCallback((folder: Folder) => {
     setCollapsed((current) => {
@@ -61,10 +71,10 @@ export function FolderNavigationEnvironment(props: {
       new Map<FolderId, MenuAction[]>(
         (snapshot?.folders ?? []).map((folder) => [
           folder.id,
-          snapshot ? folderMenuActions({ snapshot, folder, pools }) : [],
+          snapshot ? folderMenuActions({ snapshot, folder, pools, notes: hasNotes }) : [],
         ]),
       ),
-    [pools, snapshot],
+    [hasNotes, pools, snapshot],
   );
   const trees = useMemo(
     () =>
@@ -111,7 +121,13 @@ export function FolderNavigationEnvironment(props: {
             <OwnerTopLevelRow
               owner={owner}
               selected={selectedHere?._tag === "top" && selectedHere.ownerId === owner.id}
-              actions={owner.kind === "personal" ? PERSONAL_TOP_ACTIONS : ORGANIZATION_TOP_ACTIONS}
+              actions={
+                owner.kind !== "personal"
+                  ? ORGANIZATION_TOP_ACTIONS
+                  : hasNotes
+                    ? PERSONAL_TOP_ACTIONS_WITH_NOTES
+                    : PERSONAL_TOP_ACTIONS
+              }
               onSelect={onSelectTop}
               onAction={actions.onTopLevelAction}
             />
@@ -144,6 +160,14 @@ export function FolderNavigationEnvironment(props: {
           editing={actions.editing}
           onSave={actions.saveInstructions}
           onClose={actions.closeEditor}
+        />
+      ) : null}
+      {actions.notes && hasNotes ? (
+        <NotesSheet
+          key={actions.notes.level._tag === "folder" ? actions.notes.level.folderId : "top"}
+          open={actions.notes}
+          onClose={actions.closeNotes}
+          onOpenThread={openNoteThread}
         />
       ) : null}
     </View>

@@ -23,12 +23,15 @@ import {
   KeyRoundIcon,
   PencilIcon,
   SquarePenIcon,
+  StickyNoteIcon,
   Trash2Icon,
 } from "lucide-react";
 
 import { usePoolViews } from "../../../state/accountPools";
 import { PoolRadioSubmenu } from "../../accountPool/PoolRadioSubmenu";
 import { environmentDrivesAtom } from "../../../state/signalboxDrives";
+import { notesEnvironmentsAtom } from "../../../state/signalboxNotes";
+import { openNotes } from "../../notes/notesSheetStore";
 import { DriveProjectShareMenuItem } from "../../drives/DriveProjectShareMenuItem";
 import { Button } from "../../ui/button";
 import {
@@ -93,6 +96,7 @@ function FolderMenuItems(props: FolderMenuProps) {
   const moveUp = folderSiblingMove(snapshot, folder.id, "up");
   const moveDown = folderSiblingMove(snapshot, folder.id, "down");
   const files = folder.files?.projectId;
+  const keepsNotes = useAtomValue(notesEnvironmentsAtom).has(environmentId);
   // Its current files stay pickable while the drive list catches up.
   const filesUnlisted = files !== undefined && !drives.some((drive) => drive.projectId === files);
 
@@ -191,6 +195,16 @@ function FolderMenuItems(props: FolderMenuProps) {
         <FileTextIcon />
         Instructions…
       </MenuItem>
+      {keepsNotes ? (
+        <MenuItem
+          onClick={() =>
+            openNotes({ environmentId, home: { _tag: "folder", folderId: folder.id } })
+          }
+        >
+          <StickyNoteIcon />
+          Scratch pad
+        </MenuItem>
+      ) : null}
       <MenuItem
         onClick={() =>
           openFolderDialog({
@@ -244,7 +258,10 @@ function FolderMenuItems(props: FolderMenuProps) {
   );
 }
 
-/** An owner's top level: a new thread there, and (for Personal) the top level's instructions and secrets. */
+/**
+ * An owner's top level: a new thread there, and (for Personal) the top
+ * level's instructions, secrets and notes.
+ */
 export function OwnerMenu(props: {
   environmentId: EnvironmentId;
   snapshot: SignalboxFoldersSnapshot;
@@ -253,8 +270,11 @@ export function OwnerMenu(props: {
   onNewThread: (() => void) | null;
 }) {
   const { environmentId, snapshot, owner } = props;
-  const editsTopLevel = props.canEdit && owner.context.id === PERSONAL_CONTEXT_ID;
-  if (props.onNewThread === null && !editsTopLevel) return null;
+  const personal = owner.context.id === PERSONAL_CONTEXT_ID;
+  const editsTopLevel = props.canEdit && personal;
+  const keepsNotes = useAtomValue(notesEnvironmentsAtom).has(environmentId);
+  const topLevelNotes = personal && keepsNotes;
+  if (props.onNewThread === null && !editsTopLevel && !topLevelNotes) return null;
   return (
     <Menu>
       <MoreTrigger label={`More for ${owner.context.name}`} />
@@ -294,6 +314,12 @@ export function OwnerMenu(props: {
           >
             <KeyRoundIcon />
             Secrets…
+          </MenuItem>
+        ) : null}
+        {topLevelNotes ? (
+          <MenuItem onClick={() => openNotes({ environmentId, home: { _tag: "top" } })}>
+            <StickyNoteIcon />
+            Scratch pad
           </MenuItem>
         ) : null}
       </MenuPopup>

@@ -51,6 +51,10 @@
       "types": "./src/signalboxFolders.ts",
       "import": "./src/signalboxFolders.ts"
     },
+    "./signalboxNotes": {
+      "types": "./src/signalboxNotes.ts",
+      "import": "./src/signalboxNotes.ts"
+    },
     "./signalboxThreadKinds": {
       "types": "./src/signalboxThreadKinds.ts",
       "import": "./src/signalboxThreadKinds.ts"
