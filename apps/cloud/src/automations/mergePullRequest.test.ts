@@ -1,3 +1,4 @@
+import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
 import { AUTOMATION_WS_METHODS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -53,6 +54,56 @@ describe("a cloud thread merges its pull request through the Merge gate", () => 
         expect(yield* messages(rpc)).toContain(
           `Merged owner/repo#1 (${URL}) at ${head!.slice(0, 7)} (ready and easy to undo). Wrap up and hand the work back.`,
         );
+      }),
+    );
+  });
+
+  it.effect("an agent's merging automation merges only once a person publishes it (#5)", () => {
+    const { cloud, github, open, tool, getRun, run } = makePullRequestThread();
+    const source = `export const meta = { name: "Merge it" } as const;
+export default workflow(async (w) => {
+  return await w.call("Merge it", "signalbox.pull_request_action", { threadId: "${threadId}", url: "${URL}", action: "merge" });
+});`;
+    const compiled = compileForCloud(source);
+    if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics));
+    return run(
+      Effect.gen(function* () {
+        const { rpc } = yield* open;
+        yield* cloud.syncPullRequests(threadId);
+        const saved = (yield* tool("automation_save", {
+          source,
+          compiled: compiled.compiled,
+          draft: true,
+        })) as { readonly automation: { readonly automationId: string } };
+        const automationId = saved.automation.automationId;
+        const runIt = Effect.gen(function* () {
+          const started = (yield* tool("automation_run", { automationId })) as {
+            readonly run: { readonly runId: string };
+          };
+          yield* cloud.settle;
+          return (yield* getRun(started.run.runId)).run;
+        });
+
+        // The agent publishing its own draft vouches for nothing.
+        yield* tool("automation_publish", { automationId });
+        expect((yield* runIt).error).toContain(
+          "Only Signalbox's own automations, or one a person published",
+        );
+        expect(github.pulls[0]).toMatchObject({ merged: false });
+
+        // The person publishes the version they looked at in the app.
+        const again = (yield* tool("automation_save", {
+          source,
+          compiled: compiled.compiled,
+          automationId,
+          draft: true,
+        })) as { readonly automation: { readonly draftVersion: number } };
+        yield* rpc[AUTOMATION_WS_METHODS.automationsPublish]({
+          automationId,
+          version: again.automation.draftVersion,
+        });
+        expect((yield* runIt).status).toBe("succeeded");
+        expect(github.pulls[0]).toMatchObject({ merged: true });
       }),
     );
   });

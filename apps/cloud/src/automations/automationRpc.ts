@@ -171,8 +171,14 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
       ),
     [METHODS.automationsRetryRun]: (input: Payload<typeof METHODS.automationsRetryRun>) =>
       flushed(engine.retryRun({ runId: input.runId, version: input.version })),
+    // People publish in the app, vouching for the version they saw; agents publish through MCP and vouch for nothing.
     [METHODS.automationsPublish]: (input: Payload<typeof METHODS.automationsPublish>) =>
-      flushed(engine.publish(input.automationId)),
+      flushed(
+        engine.publish(
+          input.automationId,
+          input.version === undefined ? undefined : { version: input.version },
+        ),
+      ),
     [METHODS.automationsDiscardDraft]: (input: Payload<typeof METHODS.automationsDiscardDraft>) =>
       flushed(engine.discardDraft(input.automationId)),
     [METHODS.automationsAnswer]: (input: Payload<typeof METHODS.automationsAnswer>) =>
