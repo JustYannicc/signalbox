@@ -176,8 +176,6 @@ export class PreviewGateway {
     this.now = host.now ?? Date.now;
   }
 
-  // --- What the lease sees -------------------------------------------------
-
   /** Whether a browser holds a preview socket open. */
   get held(): boolean {
     return this.clients().length > 0;
@@ -202,8 +200,6 @@ export class PreviewGateway {
     }
     return label;
   }
-
-  // --- The Runner's tunnel -------------------------------------------------
 
   isTunnel(socket: WebSocket) {
     return this.host.ctx.getTags(socket).includes(TUNNEL_TAG);
@@ -359,8 +355,6 @@ export class PreviewGateway {
     await this.holdMaybeChanged();
   }
 
-  // --- Browsers ------------------------------------------------------------
-
   private clientFor(stream: number): WebSocket | null {
     for (const socket of this.host.ctx.getWebSockets(CLIENT_TAG)) {
       if (attachmentOf<ClientAttachment>(socket)?.stream === stream) return socket;
@@ -403,8 +397,6 @@ export class PreviewGateway {
     this.lastActive = this.now();
     await this.holdMaybeChanged();
   }
-
-  // --- Requests ------------------------------------------------------------
 
   /**
    * Answers a request to one of the thread's preview origins; null when
@@ -666,8 +658,6 @@ export class PreviewGateway {
       tryClose(client, CLOSE.clientGone, message);
     }
   }
-
-  // --- What clients see ----------------------------------------------------
 
   /** The ports the connected machine serves. */
   ports(): ReadonlyArray<PreviewPort> {

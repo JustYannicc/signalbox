@@ -39,8 +39,6 @@ export interface Report {
   readonly verdict: "none" | "additive" | "ship-only";
 }
 
-// --- reading TypeScript, just enough ----------------------------------------
-
 interface Source {
   /** The text with comments blanked out. */
   readonly code: string;
@@ -337,8 +335,6 @@ function storesOf(tree: Tree) {
 
 const idOf = (name: string) => Number(name.slice(0, name.indexOf("_")));
 
-// --- classifying SQL ---------------------------------------------------------
-
 const IDENT = String.raw`(?:"([^"]+)"|\x60([^\x60]+)\x60|\[([^\]]+)\]|([\w$]+))`;
 const nameOf = (match: RegExpExecArray, at: number) =>
   (match[at] ?? match[at + 1] ?? match[at + 2] ?? match[at + 3])!.toLowerCase();
@@ -406,8 +402,6 @@ function shipOnlyReason(statement: string, existing: Set<string>, created: Set<s
   return `not additive: ${statement.length > 120 ? `${statement.slice(0, 117)}...` : statement}`;
 }
 
-// --- wrangler Durable Object migrations -------------------------------------
-
 /** JSON with comments and trailing commas, as wrangler reads it. */
 export function parseJsonc(text: string): unknown {
   const { code, bare } = parse(text);
@@ -432,8 +426,6 @@ function durableObjectMigrations(tree: Tree) {
   }
   return scopes;
 }
-
-// --- the check ---------------------------------------------------------------
 
 export function check(base: Tree, head: Tree): Report {
   const violations: string[] = [];
