@@ -26,12 +26,12 @@ An automation is one TypeScript file in a folder. The **signalbox-automations** 
 
 1. `automations.list`, then `automations.get` for the one you're changing.
 2. Write the file, with `meta.intent` set to the person's request in their words.
-3. `automations.validate` with `{ source }` until `ok` is true. Each diagnostic names its line and the fix.
+3. `automations.validate` with `{ source }` until `ok` is true. Each diagnostic names its line and the fix. The file compiles where you call from, so validate and save through the CLI or stdio `signalbox mcp`; the cloud's own `/mcp` can't compile and says so.
 4. `automations.save` with `{ source, projectId }` (plus `automationId` to change one, and `draft: true` when they want to review first).
 5. `automations.run`, then `automations.runs.get` until the run finishes. It's done when every step's result is what they asked for: a run that succeeds can still be wrong.
 
 ## Limits
 
 - **People only:** answering approvals and questions (`threads.respond`, `automations.answer`), secrets, making keys, and finishing a provider sign-in. Deleting needs a decision gate that doesn't exist yet. Search never shows you these; tell the person what to do in the app instead.
-- **Not in the cloud yet:** an operation can answer `not_in_cloud` with the issue that adds it, e.g. `#434` for automations. Report that issue to the person and leave the operation alone.
+- **Not in the cloud yet:** an operation can answer `not_in_cloud` with the issue that adds it. Report that issue to the person and leave the operation alone.
 - **Errors** are the operation's own: `invalid_input` names the field, and a missing scope answers 403.

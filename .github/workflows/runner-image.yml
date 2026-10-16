@@ -27,6 +27,7 @@ on:
       - apps/server/src/orchestration-v2/Adapters/**
       # The Runner compiles and forwards agents' automations.
       - apps/server/src/workflows/**
+      - packages/automation-compiler/**
       - packages/runner-protocol/**
       - packages/automations/**
       - .github/workflows/runner-image.yml

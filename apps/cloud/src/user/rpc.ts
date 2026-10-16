@@ -393,7 +393,11 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
-      const automations = yield* makeAutomationHandlers;
+      const automations = yield* makeAutomationHandlers({
+        newThreadModel: pools.configNow.pipe(
+          Effect.map((config) => config.settings.defaultModelSelection),
+        ),
+      });
       const keys = yield* makeKeysHandlers({
         userId,
         scopes: input.scopes ?? AuthStandardClientScopes,

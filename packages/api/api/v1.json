@@ -267,7 +267,8 @@
       "name": "automations.save",
       "rpc": "automations.save",
       "access": "write",
-      "input": "e2698ed3",
+      "compiles": true,
+      "input": "e4a20fc8",
       "output": "e9ad0c58"
     },
     {
@@ -295,7 +296,8 @@
       "name": "automations.validate",
       "rpc": "automations.validate",
       "access": "read",
-      "input": "9df3bde6",
+      "compiles": true,
+      "input": "b2a7717d",
       "output": "7c407bde"
     },
     {

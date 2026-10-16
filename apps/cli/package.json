@@ -12,10 +12,12 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@signalbox/api": "workspace:*",
+    "@signalbox/automation-compiler": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@t3tools/contracts": "workspace:*",
     "@types/node": "catalog:"
   }
 }
