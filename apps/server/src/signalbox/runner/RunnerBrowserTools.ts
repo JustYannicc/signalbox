@@ -65,6 +65,8 @@ export const answer = <A>(operation: () => Promise<A>) =>
 
 const SCREENSHOT_WITHHELD =
   "No screenshot: the page shows a card number. Read the page from the snapshot's text, where card numbers are masked.";
+const SAVE_WITHHELD =
+  "No screenshot saved: the page shows a card number. Call preview_snapshot without save to read the page's text, where card numbers are masked.";
 
 /**
  * A snapshot as the agent reads it. The screenshot rides along as an image
@@ -87,7 +89,7 @@ const presentSnapshot = (
       ? [
           {
             type: "text",
-            text: json({ url: page.url, savedToThread: false, screenshot: SCREENSHOT_WITHHELD }),
+            text: json({ url: page.url, savedToThread: false, screenshot: SAVE_WITHHELD }),
           },
         ]
       : [{ type: "text", text: json({ url: page.url, savedToThread: true }) }, image];
