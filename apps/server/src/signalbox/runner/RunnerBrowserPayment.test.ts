@@ -1,5 +1,8 @@
 import type { AutomationRunStatus } from "@t3tools/contracts";
 import type { AgentBrowserUpdate } from "@t3tools/contracts/signalboxPreviews";
+import { AUTOMATION_TOOLS } from "@signalbox/automations/tools/declarations";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { type Browser, type BrowserContext, chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -13,6 +16,7 @@ import {
   PAYMENT_POLL_MS,
   type PaymentAsker,
   pageKind,
+  paymentAsker,
   REACHED_PAYMENT,
 } from "./RunnerBrowserPayment.ts";
 import { manualTimers } from "./runnerBrowserTesting.ts";
@@ -27,7 +31,7 @@ import { manualTimers } from "./runnerBrowserTesting.ts";
 const CARD = `<input autocomplete="cc-number" autofocus aria-label="Card number">`;
 const SITES: Record<string, string> = {
   "https://shop.test/product": `<title>Kettle</title><a href="/checkout">Checkout</a>`,
-  "https://shop.test/checkout": `<title>Pay</title><form>${CARD}<button type="button">Pay 12 CHF</button></form>`,
+  "https://shop.test/checkout": `<title>Pay</title><form><input aria-label="Name">${CARD}<button type="button" onclick="location.href='https://acs.bank.test/challenge'">Pay 12 CHF</button></form>`,
   "https://shop.test/review": `<title>Review</title><button>Place order</button>`,
   "https://shop.test/thanks": `<title>Thanks</title><p>Order placed</p>`,
   "https://shop.test/hidden-card": `<title>Hidden</title><input autocomplete="cc-number" style="display:none">`,
@@ -171,6 +175,12 @@ describe("pageKind", () => {
       expect(await kindAt("https://shop.test/hidden-card")).toBe("other");
       // "3ds" in a shop's own address is a product, not a check.
       expect(await kindAt("https://shop.test/products/3ds-max")).toBe("other");
+
+      // After an action, only a 3-D Secure check counts: card fields may still be the agent's to fill around.
+      await page.goto("https://shop.test/checkout");
+      expect(await pageKind(page, { after: true })).toBe("other");
+      await page.goto("https://shop.test/3ds-frame", { waitUntil: "load" });
+      expect(await pageKind(page, { after: true })).toBe("payment");
     } finally {
       await context.close();
     }
@@ -178,13 +188,17 @@ describe("pageKind", () => {
 });
 
 describe("a payment handed to the person", () => {
-  it("hands a checkout over by itself, reads nothing while the person pays, and resumes after Done", async () => {
+  it("hands a checkout over before the agent pays, reads nothing while the person does, and resumes after Done", async () => {
     const { timers, asking, payments, browser } = await setup();
     const { viewer, seen, next } = watch(browser);
     try {
       await browser.navigate({ url: "https://shop.test/product" });
-      // The click lands on the checkout: the agent hears it's the person's now.
-      await expect(browser.click({ locator: "role=link[name='Checkout']" })).rejects.toThrow(
+      // Reaching the checkout and filling in the rest stays the agent's.
+      await browser.click({ locator: "role=link[name='Checkout']" });
+      await browser.type({ locator: "role=textbox[name='Name']", text: "Test Person" });
+      expect(asking.started).toEqual([]);
+      // Paying doesn't: the agent hears it's the person's now.
+      await expect(browser.click({ locator: "role=button[name='Pay 12 CHF']" })).rejects.toThrow(
         REACHED_PAYMENT,
       );
       expect(asking.started).toEqual([
@@ -211,6 +225,8 @@ describe("a payment handed to the person", () => {
       // The person types the card through the mirror; it's masked there and in the trail.
       viewer.input({ _tag: "take" });
       await next((update) => update._tag === "state" && update.control === "you");
+      // Where the person's click into the card field leaves focus.
+      await (await browser.pageOf!({})).page.focus("input[autocomplete=cc-number]");
       viewer.input({ _tag: "text", text: "4242424242424242" });
       await next(
         (update) => update._tag === "events" && update.events.includes("****************"),
@@ -310,6 +326,78 @@ describe("a payment handed to the person", () => {
       expect(await waiting).toMatchObject({ status: "failed" });
       expect(asking.cancelled).toEqual(["run-1"]);
       expect((await browser.status({})).control).toMatchObject({ owner: "agent" });
+    } finally {
+      await payments.close();
+      await browser.close();
+    }
+  }, 60_000);
+});
+
+const encodeStarted = Schema.encodeSync(AUTOMATION_TOOLS.automation_run.success);
+const encodeRead = Schema.encodeSync(AUTOMATION_TOOLS.automation_run_read.success);
+
+describe("paymentAsker", () => {
+  it("reads the cloud's answers in the automation tools' own shapes", async () => {
+    const summary = {
+      runId: "run-7",
+      status: "running",
+      trigger: "manual",
+      startedAt: "2026-10-16T10:00:00.000Z",
+      finishedAt: null,
+      error: null,
+      errorDetail: null,
+      waitingOnYou: true,
+      retryOf: null,
+    } as const;
+    const answers: Record<string, unknown> = {
+      automation_run: encodeStarted({ run: summary }),
+      automation_run_read: encodeRead({
+        run: { ...summary, status: "succeeded", finishedAt: "2026-10-16T10:01:00.000Z" },
+        automationId: "builtin:payment",
+        outline: "",
+        steps: [],
+        output: { outcome: "done", note: null },
+        logs: [],
+      }),
+    };
+    const calls: Array<{ readonly name: string; readonly input: unknown }> = [];
+    const asker = paymentAsker((name, input) => {
+      calls.push({ name, input });
+      return Effect.succeed(answers[name]);
+    }, "thread-9");
+
+    expect(await asker.start("tab-1", { site: "shop.test", note: null, ownBrowserUrl: null })).toBe(
+      "run-7",
+    );
+    expect(calls[0]).toEqual({
+      name: "automation_run",
+      input: {
+        automationId: "builtin:payment",
+        input: { threadId: "thread-9", site: "shop.test", note: null, ownBrowserUrl: null },
+        attach: { threadId: "thread-9", key: "payment:tab-1", label: "Paying on shop.test" },
+      },
+    });
+    expect(await asker.read("run-7")).toEqual({
+      status: "succeeded",
+      output: { outcome: "done", note: null },
+    });
+  });
+});
+
+describe("a 3-D Secure check", () => {
+  it("is handed over once an action landed on it", async () => {
+    const { asking, payments, browser } = await setup();
+    try {
+      await browser.navigate({ url: "https://shop.test/review" });
+      await browser.evaluate({
+        expression:
+          "document.body.innerHTML = `<a href='https://acs.bank.test/challenge'>Confirm</a>`",
+      });
+      await expect(browser.click({ locator: "role=link[name='Confirm']" })).rejects.toThrow(
+        REACHED_PAYMENT,
+      );
+      expect(asking.started).toHaveLength(1);
+      expect((await browser.status({})).control).toMatchObject({ owner: "human" });
     } finally {
       await payments.close();
       await browser.close();

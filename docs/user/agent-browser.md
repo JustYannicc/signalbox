@@ -18,7 +18,7 @@ Taking over works while the agent is working on the thread. After the turn ends,
 
 ## Payments
 
-Agents never pay for you. When one reaches a payment, whether it asks or lands on a page with card fields or a bank's 3-D Secure check, it hands the tab to you and waits. Sign-ins, codes and CAPTCHAs never come to you this way.
+Agents never pay for you. They fill in a checkout up to the point of paying, then hand the tab to you and wait: when they ask, when they're about to submit a page with card fields, or when they land on a bank's 3-D Secure check. Sign-ins, codes and CAPTCHAs never come to you this way.
 
 You get a **Finish the payment** request on your phone and in the app. **Open the browser** shows the agent's tab: take over, pay, then answer **Done** or **Failed** right there. The agent reads nothing from the tab while it's yours, and carries on once you answer. When the cart lives in your account, you can also pay in your own browser and answer the same way.
 

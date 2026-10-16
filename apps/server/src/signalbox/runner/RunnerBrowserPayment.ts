@@ -1,4 +1,5 @@
-import { AutomationRunStatus } from "@t3tools/contracts";
+import { AUTOMATION_TOOLS } from "@signalbox/automations/tools/declarations";
+import type { AutomationRunStatus } from "@t3tools/contracts";
 import type { AgentBrowserHandoff } from "@t3tools/contracts/signalboxPreviews";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,8 +19,9 @@ import { register } from "./RunnerContextTools.ts";
  * agent's browsing a person finishes: sign-ins, codes and CAPTCHAs never are.
  *
  * A tab is handed over when the agent calls `needs_you_payment`, or by
- * itself when the agent reaches a page that takes a card or runs a 3-D Secure
- * check (`pageKind`, a fixed rule in code). From then on the agent's actions
+ * itself (`pageKind`, a fixed rule in code): before the agent clicks or
+ * presses on a page that takes a card, or once an action landed on a 3-D
+ * Secure check. Filling in the rest of a checkout stays the agent's. From then on the agent's actions
  * on the tab wait, reads included, and the "Payment" automation
  * (`builtin:payment`) asks the person as a needs-you. They finish the payment
  * in the agent's browser through the live mirror (or in their own browser,
@@ -124,14 +126,15 @@ const within = <A>(promise: Promise<A>, ms: number) => {
 /**
  * Whether `page` takes a payment: visible card fields in any frame, or a
  * 3-D Secure check. Otherwise a CAPTCHA or a sign-in (a password or a
- * one-time code) is said as such, so neither is ever handed over. `settle`
- * first waits for a page an action just navigated to.
+ * one-time code) is said as such, so neither is ever handed over. `after` an
+ * action, only a 3-D Secure check counts, once the page it landed on loaded:
+ * card fields alone mean the agent may still fill in the rest.
  */
 export const pageKind = async (
   page: Page,
-  options: { readonly settle?: boolean } = {},
+  options: { readonly after?: boolean } = {},
 ): Promise<PageKind> => {
-  if (options.settle === true)
+  if (options.after === true)
     await page
       .waitForLoadState("domcontentloaded", { timeout: FRAME_TIMEOUT_MS })
       .catch(() => undefined);
@@ -147,6 +150,7 @@ export const pageKind = async (
         (!top && SECURE_FRAME.test(`${url.hostname}${url.pathname}`))),
   );
   if (secure) return "payment";
+  if (options.after === true) return "other";
   const signals = await Promise.all(
     frames.map((frame) =>
       within(
@@ -179,15 +183,14 @@ export interface PaymentAsker {
   readonly cancel: (runId: string) => Promise<void>;
 }
 
-const isRunStatus = Schema.is(AutomationRunStatus);
+const decodeStarted = Schema.decodeUnknownEffect(AUTOMATION_TOOLS.automation_run.success);
+const decodeRead = Schema.decodeUnknownEffect(AUTOMATION_TOOLS.automation_run_read.success);
 
-/** The asker on the cloud's automation engine, for `threadId`. */
-export const paymentAsker = (ask: AutomationCaller, threadId: string): PaymentAsker => {
-  const call = (name: string, input: unknown, retry: boolean) =>
-    Effect.runPromise(ask(name, input, retry));
-  return {
-    start: async (tabId, input) => {
-      const started = (await call(
+/** The asker on the cloud's automation engine, for `threadId`, in the automation tools' own shapes. */
+export const paymentAsker = (ask: AutomationCaller, threadId: string): PaymentAsker => ({
+  start: (tabId, input) =>
+    Effect.runPromise(
+      ask(
         "automation_run",
         {
           automationId: PAYMENT_AUTOMATION,
@@ -195,23 +198,22 @@ export const paymentAsker = (ask: AutomationCaller, threadId: string): PaymentAs
           attach: { threadId, key: `payment:${tabId}`, label: `Paying on ${input.site}` },
         },
         false,
-      )) as { readonly run?: { readonly id?: unknown } } | null;
-      const runId = started?.run?.id;
-      if (typeof runId !== "string") throw new Error("the cloud started no run");
-      return runId;
-    },
-    read: async (runId) => {
-      // Not retried here: the next poll reads again anyway.
-      const read = (await call("automation_run_read", { runId }, false)) as {
-        readonly run?: { readonly status?: unknown };
-        readonly output?: unknown;
-      } | null;
-      const status = read?.run?.status;
-      return { status: isRunStatus(status) ? status : "running", output: read?.output };
-    },
-    cancel: (runId) => call("automation_cancel_run", { runId }, false).then(() => undefined),
-  };
-};
+      ).pipe(
+        Effect.flatMap(decodeStarted),
+        Effect.map((started) => started.run.runId),
+      ),
+    ),
+  // Not retried here: the next poll reads again anyway.
+  read: (runId) =>
+    Effect.runPromise(
+      ask("automation_run_read", { runId }, false).pipe(
+        Effect.flatMap(decodeRead),
+        Effect.map((read) => ({ status: read.run.status, output: read.output })),
+      ),
+    ),
+  cancel: (runId) =>
+    Effect.runPromise(ask("automation_cancel_run", { runId }, false).pipe(Effect.asVoid)),
+});
 
 /** What the "Payment" built-in returns (`defaults/payment.ts`). */
 type PaymentOutcome = "done" | "failed";
@@ -292,7 +294,7 @@ type TabPayment =
 export const makePayments = (options: {
   readonly asker: PaymentAsker;
   readonly timer?: Timer;
-  readonly kind?: (page: Page, options: { readonly settle?: boolean }) => Promise<PageKind>;
+  readonly kind?: (page: Page, options: { readonly after?: boolean }) => Promise<PageKind>;
 }): Payments => {
   const timer = options.timer ?? defaultTimer;
   const kindOf = options.kind ?? pageKind;
@@ -404,7 +406,7 @@ export const makePayments = (options: {
       const current = payments.get(tabId);
       // An action that got past the hold while it began never reaches the page.
       if (current?.state === "asking") throw failure(REACHED_PAYMENT);
-      if ((await kindOf(page, { settle: after })) !== "payment") return;
+      if ((await kindOf(page, { after })) !== "payment") return;
       if (current?.state === "answered") throw failure(ALREADY_ANSWERED);
       await asked(raise(tabId, page, {}));
       throw failure(REACHED_PAYMENT);

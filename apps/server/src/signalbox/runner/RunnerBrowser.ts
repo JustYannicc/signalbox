@@ -106,16 +106,11 @@ export type PageGuard = (tab: {
   readonly after: boolean;
 }) => Promise<void>;
 
-/** Actions that act on the page, so a guard sees it first. */
-const ACTS_ON_PAGE: ReadonlySet<string> = new Set([
-  "click",
-  "type",
-  "press",
-  "select",
-  "drag",
-  "upload",
-  "evaluate",
-]);
+/**
+ * Actions that could submit the page, so a guard sees it first. Typing and
+ * choosing options never do: an agent fills a checkout's address itself.
+ */
+const ACTS_ON_PAGE: ReadonlySet<string> = new Set(["click", "press", "drag", "upload", "evaluate"]);
 /** Actions that may land on another page, so a guard sees it after. */
 const CHANGES_PAGE: ReadonlySet<string> = new Set(["navigate", "click", "press", "select"]);
 
