@@ -6,6 +6,7 @@ import {
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { CopyIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
@@ -17,6 +18,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsRow } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { LiveSignInFrame } from "./LiveSignInFrame";
 
 /** True for the address a provider's sign-in ends on: it carries the code to hand back. */
 function isCallbackAddress(text: string) {
@@ -44,10 +46,12 @@ function openPendingTab(account: string) {
  * Signs one more account into a hub instance. Every sign-in adds an account,
  * so there is no signed-in state here, only "add another".
  *
- * When the environment runs on this machine the redirect lands on it
- * directly. From another device the provider redirects to a localhost page
- * that cannot load, and the user pastes that address back here; pasting it
- * finishes the sign-in.
+ * Signalbox Cloud runs the provider's login in a cloud browser shown here
+ * (`liveView`, #205): the cloud catches the redirect, so the person only
+ * signs in. When the environment runs on this machine the redirect lands on
+ * it directly. From another device the provider redirects to a localhost
+ * page that cannot load, and the user pastes that address back here; pasting
+ * it finishes the sign-in.
  */
 export function HubSignIn({
   environmentId,
@@ -72,6 +76,10 @@ export function HubSignIn({
   const cancel = useAtomCommand(serverEnvironment.cancelProviderAuth, commands);
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const local = httpBaseUrl !== null && isLoopbackHost(new URL(httpBaseUrl).hostname);
+  // The cloud signs in inside its own browser, so no tab of ours opens.
+  const cloud =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+      .signalboxCloud === true;
   const [pasted, setPasted] = useState({ flowId: "", value: "" });
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -84,6 +92,7 @@ export function HubSignIn({
       ? auth.interaction
       : null;
   const userCode = interaction?.type === "deviceCode" ? interaction.userCode : null;
+  const liveView = auth?.interaction?.type === "liveView" ? auth.interaction : null;
   const acceptsCallback = interaction?.type === "browser" && interaction.acceptsCallback === true;
   const flowId = auth?.flowId ?? null;
   const callbackUrl = pasted.flowId === flowId ? pasted.value : "";
@@ -190,11 +199,15 @@ export function HubSignIn({
   const description = active
     ? auth?.phase === "verifying"
       ? "Checking the account…"
-      : userCode
-        ? `Open the sign-in page and enter this code to ${methodId ? "sign in to" : "add"} the ${account} account.`
-        : desktopReceive || !acceptsCallback
-          ? `Finish signing in to ${account} in your browser.`
-          : `Sign in to ${account} in the new tab. When it ends on a page that won't load, copy that page's address and paste it below.`
+      : auth?.phase === "starting"
+        ? "Starting sign-in…"
+        : liveView
+          ? `Signing in to ${account}…`
+          : userCode
+            ? `Open the sign-in page and enter this code to ${methodId ? "sign in to" : "add"} the ${account} account.`
+            : desktopReceive || !acceptsCallback
+              ? `Finish signing in to ${account} in your browser.`
+              : `Sign in to ${account} in the new tab. When it ends on a page that won't load, copy that page's address and paste it below.`
     : auth?.phase === "failed"
       ? (auth.message ?? "Sign-in failed. Try again.")
       : methodId
@@ -254,7 +267,7 @@ export function HubSignIn({
                 onClick={() => {
                   startedHere.current = true;
                   openedUrl.current = null;
-                  if (!window.desktopBridge) pendingTab.current = openPendingTab(account);
+                  if (!window.desktopBridge && !cloud) pendingTab.current = openPendingTab(account);
                   void run(() =>
                     start({
                       environmentId,
@@ -281,6 +294,14 @@ export function HubSignIn({
           </div>
         }
       />
+      {active && liveView ? (
+        <LiveSignInFrame
+          key={liveView.url}
+          url={liveView.url}
+          site={liveView.site}
+          account={account}
+        />
+      ) : null}
       {active && userCode ? (
         <div className="flex items-center gap-2 px-3 py-3 sm:px-4">
           <code className="select-all rounded-md bg-muted px-3 py-1.5 font-mono text-lg tracking-widest text-foreground">

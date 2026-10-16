@@ -22,6 +22,7 @@ import * as CloudAutomations from "./automations/CloudAutomations.ts";
 import type { KernelApi } from "./browser/KernelApi.ts";
 import type { KernelAuth } from "./browser/KernelAuth.ts";
 import * as PersonBrowsers from "./browser/PersonBrowsers.ts";
+import * as SignInBrowsers from "./browser/SignInBrowsers.ts";
 import type { AttachmentObjects } from "./attachments/attachmentObjects.ts";
 import { makeMemoryObjects } from "./attachments/attachmentTesting.ts";
 import * as CloudAttachments from "./attachments/CloudAttachments.ts";
@@ -265,6 +266,7 @@ const makeUserRuntime = (
   automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
   kernel: KernelApi | null,
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
+  signInBrowsers: SignInBrowsers.SignInBrowsers["Service"],
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
@@ -290,7 +292,9 @@ const makeUserRuntime = (
               ConnectionLinks.layer,
               LocalKeys.layer,
               SignInGrants.layer,
-              PoolSignIns.layer,
+              PoolSignIns.layer.pipe(
+                Layer.provide(Layer.succeed(SignInBrowsers.SignInBrowsers, signInBrowsers)),
+              ),
               CloudThreadService.layer,
               PersonBrowsers.layer(kernel),
             ),
@@ -358,6 +362,8 @@ export const makeMemoryCloud = (
     readonly kernel?: KernelApi;
     /** Kernel's Managed Auth and Executor for agents' sign-ins (#576); none unless given. */
     readonly kernelAuth?: KernelAuth;
+    /** Pool sign-ins in a cloud browser (#205); none by default, so logins end on a pasted address. */
+    readonly signInBrowsers?: SignInBrowsers.SignInBrowsers["Service"];
     readonly executorLogins?: ExecutorLogins;
   } = {},
 ) => {
@@ -442,6 +448,7 @@ export const makeMemoryCloud = (
       options.automations ?? Layer.empty,
       options.kernel ?? null,
       { kernel: options.kernelAuth ?? null, executor: options.executorLogins ?? null },
+      options.signInBrowsers ?? SignInBrowsers.make(null, () => Effect.die("no sign-in browser")),
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);

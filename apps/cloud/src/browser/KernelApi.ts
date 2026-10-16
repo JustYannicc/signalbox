@@ -1,12 +1,13 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import type * as Redacted from "effect/Redacted";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { type HttpClient, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 /**
  * The parts of Kernel's API (https://www.kernel.sh/docs) the person's
- * browser needs (#574): profiles and headless browsers.
+ * browser (#574) and the pool sign-in browser (#205) need: profiles and
+ * browsers.
  * Only the fields used here are decoded; Kernel adds fields freely. A call
  * that gets no answer within `TIMEOUT` fails, so nothing waits on Kernel for
  * long. A browser's CDP URL carries its own credential: never log it.
@@ -28,6 +29,8 @@ export class KernelApiError extends Schema.TaggedError<KernelApiError>()("Kernel
 const KernelBrowser = Schema.Struct({
   session_id: Schema.String,
   cdp_ws_url: Schema.String,
+  /** Only for headful browsers. Like the CDP URL, it carries its own credential. */
+  browser_live_view_url: Schema.optional(Schema.NullOr(Schema.String)),
   /** Set once Kernel deleted the browser. */
   deleted_at: Schema.optional(Schema.NullOr(Schema.String)),
 });
@@ -40,14 +43,18 @@ const decodeErrorBody = Schema.decodeUnknownOption(
   }),
 );
 
-/** `POST /browsers` as the person's browser asks for it. */
+/** `POST /browsers` as the person's browser and the sign-in browser ask for it. */
 export interface KernelBrowserRequest {
   readonly stealth: boolean;
   readonly headless: boolean;
   readonly timeout_seconds: number;
-  readonly profile: { readonly name: string; readonly save_changes: boolean };
+  readonly profile?: { readonly name: string; readonly save_changes: boolean };
   /** Replaces the tabs the profile would restore. */
-  readonly start_url: string;
+  readonly start_url?: string;
+  /** Headful only: the live view shows the page alone, without tabs or an address bar. */
+  readonly kiosk_mode?: boolean;
+  /** Headful only; one of Kernel's listed sizes. */
+  readonly viewport?: { readonly width: number; readonly height: number };
   readonly tags: Readonly<Record<string, string>>;
 }
 
@@ -177,3 +184,10 @@ export const makeKernelApi = (client: HttpClient.HttpClient, options: KernelOpti
       ),
   };
 };
+
+/** Kernel with this cloud's `KERNEL_API_KEY`, or null without one; deploys pass an unset key as empty. */
+export const kernelApiFromEnv = (env: { readonly KERNEL_API_KEY?: string }) =>
+  Effect.gen(function* () {
+    const key = env.KERNEL_API_KEY?.trim();
+    return key ? makeKernelApi(yield* HttpClient.HttpClient, { apiKey: Redacted.make(key) }) : null;
+  });

@@ -52,8 +52,8 @@ export const kernelWords = (
   return [message, suffix].filter((part) => part !== "").join(" ") || "no details";
 };
 
-export const refusalFor = (error: KernelApiError) =>
-  `Kernel couldn't open a browser: ${kernelWords(error)}.`;
+export const refusalFor = (error: KernelApiError, browser = "a browser") =>
+  `Kernel couldn't open ${browser}: ${kernelWords(error)}.`;
 
 export const browserRequest = (input: {
   readonly profileName: string;

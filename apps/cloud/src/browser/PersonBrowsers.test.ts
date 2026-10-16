@@ -51,12 +51,12 @@ describe("the person's browser (#574)", () => {
       const browsers = yield* PersonBrowsers.PersonBrowsers;
       yield* browsers.open({ threadId: "thread-a", requester: OWNER });
       yield* browsers.open({ threadId: "thread-b", requester: OWNER });
-      expect(kernel.created.map((request) => request.profile.save_changes)).toEqual([true, false]);
+      expect(kernel.created.map((request) => request.profile?.save_changes)).toEqual([true, false]);
 
       // Once the writer ends, the next session writes.
       yield* browsers.end({ threadId: "thread-a", sessionId: "browser-1" });
       yield* browsers.open({ threadId: "thread-c", requester: OWNER });
-      expect(kernel.created[2]?.profile.save_changes).toBe(true);
+      expect(kernel.created[2]?.profile?.save_changes).toBe(true);
     }).pipe(Effect.provide(signedIn(kernel.api)));
   });
 
@@ -68,7 +68,7 @@ describe("the person's browser (#574)", () => {
       kernel.browsers.delete("browser-1");
       const again = yield* browsers.open({ threadId: "thread-a", requester: OWNER });
       expect(again).toMatchObject({ _tag: "ready", sessionId: "browser-2" });
-      expect(kernel.created[1]?.profile.save_changes).toBe(true);
+      expect(kernel.created[1]?.profile?.save_changes).toBe(true);
     }).pipe(Effect.provide(signedIn(kernel.api)));
   });
 

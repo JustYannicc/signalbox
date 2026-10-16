@@ -88,8 +88,10 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
   "pools.advice": gap("#197"),
-  "provider.auth.respond": gap("#205"),
-  "provider.auth.logout": gap("#205"),
+  "provider.auth.respond": exempt(
+    "Pool sign-ins ask nothing back: the sign-in browser hands the login to the pool.",
+  ),
+  "provider.auth.logout": exempt("An account leaves its pool through Limits → Remove."),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),
   "provider.codex.authCallback.subscribe": exempt(
     "A self-hosted server's localhost sign-in callback.",

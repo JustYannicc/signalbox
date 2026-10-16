@@ -21,6 +21,7 @@ export const memoryKernel = () => {
         return Effect.succeed({
           session_id: id,
           cdp_ws_url: `wss://cdp.test/${id}`,
+          browser_live_view_url: request.headless ? null : `https://live.test/${id}`,
         });
       }),
     getBrowser: (id) =>

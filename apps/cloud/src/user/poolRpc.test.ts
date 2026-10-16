@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
+import { memorySignInBrowsers } from "../browser/memorySignInBrowsers.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import * as CloudRpc from "./rpc.ts";
 
@@ -29,9 +30,10 @@ const client = (
     AuthOrchestrationOperateScope,
     AuthProvidersManageScope,
   ],
+  options: Parameters<typeof makeMemoryCloud>[0] = {},
 ) =>
   Effect.gen(function* () {
-    const cloud = makeMemoryCloud();
+    const cloud = makeMemoryCloud(options);
     yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
     const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
       Effect.provide(
@@ -165,6 +167,96 @@ describe("cloud pool RPC", () => {
       });
     }).pipe(Effect.scoped),
   );
+
+  describe("in a cloud browser (#205)", () => {
+    const signedInUntil = (rpc: Rpc, instanceId: ProviderInstanceId) =>
+      rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+        Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+        (stream) => first(stream),
+      );
+
+    it.live("adds an account with nothing to copy or paste", () =>
+      Effect.gen(function* () {
+        const browsers = memorySignInBrowsers();
+        const { rpc } = yield* client(undefined, { signInBrowsers: browsers.service });
+        const instanceId = ProviderInstanceId.make(poolInstanceId("codex", "personal"));
+
+        const started = yield* rpc[WS_METHODS.providerAuthStart]({
+          instanceId,
+          callbackMode: "client",
+        });
+        // The login runs in a browser the cloud holds; the person signs in through its live view.
+        expect(started.phase).toBe("waiting");
+        expect(started.interaction).toEqual({
+          type: "liveView",
+          id: started.flowId,
+          url: "https://live.kernel.test/1",
+          site: "login.example.test",
+        });
+        expect(browsers.opened.map((browser) => browser.loginUrl)).toEqual([
+          started.authorizationUrl,
+        ]);
+
+        // The provider redirects that browser to localhost; the cloud hands it to the pool.
+        yield* browsers.land();
+        expect((yield* signedInUntil(rpc, instanceId)).phase).toBe("succeeded");
+        expect(browsers.opened[0]?.closed).toBe(true);
+        const { sources } = yield* config(rpc);
+        expect(sources.find((source) => source.id === poolSourceId("personal"))?.accounts).toEqual([
+          expect.objectContaining({ driver: "codex" }),
+        ]);
+      }).pipe(Effect.scoped),
+    );
+
+    it.live("closes the browser when the person cancels", () =>
+      Effect.gen(function* () {
+        const browsers = memorySignInBrowsers();
+        const { rpc } = yield* client(undefined, { signInBrowsers: browsers.service });
+        const instanceId = ProviderInstanceId.make(poolInstanceId("claude", "personal"));
+        const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+        const cancelled = yield* rpc[WS_METHODS.providerAuthCancel]({
+          instanceId,
+          flowId: started.flowId!,
+        });
+        expect(cancelled.phase).toBe("cancelled");
+        expect(browsers.opened[0]?.closed).toBe(true);
+      }).pipe(Effect.scoped),
+    );
+
+    it.live("says why when the browser closes before the sign-in ends", () =>
+      Effect.gen(function* () {
+        const browsers = memorySignInBrowsers();
+        const { rpc } = yield* client(undefined, { signInBrowsers: browsers.service });
+        const instanceId = ProviderInstanceId.make(poolInstanceId("claude", "personal"));
+        yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+        yield* browsers.goAway;
+        const ended = yield* signedInUntil(rpc, instanceId);
+        expect(ended).toMatchObject({
+          phase: "failed",
+          message: "The sign-in browser closed. Start again.",
+          interaction: null,
+        });
+        expect(browsers.opened[0]?.closed).toBe(true);
+      }).pipe(Effect.scoped),
+    );
+
+    it.live("shows Kernel's refusal plainly", () =>
+      Effect.gen(function* () {
+        const browsers = memorySignInBrowsers();
+        browsers.refuseWith(
+          "Kernel couldn't open a sign-in browser: too many browsers (org_limit_exceeded, HTTP 429).",
+        );
+        const { rpc } = yield* client(undefined, { signInBrowsers: browsers.service });
+        const instanceId = ProviderInstanceId.make(poolInstanceId("claude", "personal"));
+        const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+        expect(started).toMatchObject({
+          phase: "failed",
+          message:
+            "Kernel couldn't open a sign-in browser: too many browsers (org_limit_exceeded, HTTP 429).",
+        });
+      }).pipe(Effect.scoped),
+    );
+  });
 
   it.live("keeps the pool views live after a read fails", () =>
     Effect.gen(function* () {

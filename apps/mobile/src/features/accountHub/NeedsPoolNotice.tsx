@@ -8,10 +8,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 
-/**
- * Its one action opens the pools in Usage. Subscriptions are added on web and
- * desktop, so it says where.
- */
+/** Its one action opens the pools in Usage, where an account can be added. */
 export function NeedsPoolNotice(props: {
   readonly environmentId: EnvironmentId | null;
   readonly need: PoolNeed;
@@ -27,7 +24,7 @@ export function NeedsPoolNotice(props: {
     need._tag === "signIn" ? views?.find((view) => view.id === need.poolId)?.name : undefined;
   const message =
     need._tag === "signIn"
-      ? `Needs a pool. Sign in to ${poolName ?? "its pool"} on web or desktop.`
+      ? `Needs a pool. Add an account to ${poolName ?? "its pool"}.`
       : "Needs a pool. Nothing above this folder has one.";
   return (
     <Pressable

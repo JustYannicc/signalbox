@@ -8,6 +8,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderAuthLiveView } from "./signalboxProviderAuth.ts"; // signalbox
 
 export const ProviderSetupInput = Schema.Struct({
   instanceId: ProviderInstanceId,
@@ -72,6 +73,7 @@ export const ProviderAuthInteraction = Schema.Union([
       }),
     ).check(Schema.isMaxLength(16)),
   }),
+  ProviderAuthLiveView, // signalbox: cloud sign-in browser (#205)
 ]);
 export type ProviderAuthInteraction = typeof ProviderAuthInteraction.Type;
 

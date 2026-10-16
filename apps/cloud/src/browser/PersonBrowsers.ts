@@ -4,9 +4,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
-import * as Redacted from "effect/Redacted";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient } from "effect/http";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { hashSecret } from "../auth/hashedSecrets.ts";
@@ -21,7 +19,7 @@ import {
   writesProfile,
 } from "./browserPolicy.ts";
 import { makeBrowserSessions, type SessionRow } from "./browserSessions.ts";
-import { type KernelApi, type KernelApiError, makeKernelApi } from "./KernelApi.ts";
+import { type KernelApi, type KernelApiError, kernelApiFromEnv } from "./KernelApi.ts";
 
 /**
  * The person's browser (#574): one Kernel profile per person, signed in to
@@ -217,13 +215,4 @@ export const layer = (kernel: KernelApi | null) => Layer.effect(PersonBrowsers, 
 
 /** Kernel with this cloud's key, or no person's browser without one. */
 export const layerFromEnv = (env: PersonBrowsersEnv) =>
-  Layer.effect(
-    PersonBrowsers,
-    Effect.gen(function* () {
-      const key = env.KERNEL_API_KEY?.trim();
-      const kernel = key
-        ? makeKernelApi(yield* HttpClient.HttpClient, { apiKey: Redacted.make(key) })
-        : null;
-      return yield* make(kernel);
-    }),
-  );
+  Layer.effect(PersonBrowsers, Effect.flatMap(kernelApiFromEnv(env), make));

@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
+import * as SignInBrowsers from "../browser/SignInBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
@@ -204,7 +205,12 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
             Layer.mergeAll(
               UserShell.layer,
               CloudThreadService.layer,
-              PoolSignIns.layer,
+              // Pool sign-ins in a cloud browser that catches the provider's redirect (#205).
+              PoolSignIns.layer.pipe(
+                Layer.provide(
+                  SignInBrowsers.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+                ),
+              ),
               drives.services,
               ConnectionLinks.layer,
               LocalKeys.layer,
