@@ -25,6 +25,7 @@ import { ThreadPoolRow } from "../accountPool/ThreadPoolRow"; // signalbox
 import { ThreadKindRow } from "../threadKind/ThreadKindRow"; // signalbox: thread kinds
 import { ThreadWaitsSection } from "../automations/ThreadWaitsSection"; // signalbox
 import { ThreadSkippedFoldersRow } from "../threadMachineState/ThreadSkippedFoldersRow"; // signalbox: machine state
+import { ThreadStatusLineSection } from "../statusLine/ThreadStatusLineSection"; // signalbox: status line
 import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 
 const GitActionsControl = memo(BaseGitActionsControl);
@@ -109,6 +110,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     >
       {(density) => (
         <>
+          {!props.draftId ? ( // signalbox: status line (#670)
+            <ThreadStatusLineSection
+              environmentId={props.environmentId}
+              threadId={props.threadId}
+            />
+          ) : null}
           <ThreadDetailsSection
             headingId="thread-details-workspace-heading"
             title="Workspace"

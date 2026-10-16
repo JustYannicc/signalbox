@@ -8,6 +8,7 @@ import {
 } from "@t3tools/shared/serverSettings";
 import type {
   EnvironmentId,
+  ThreadId,
   ModelSelection,
   ProjectId,
   ProviderInstanceId,
@@ -65,6 +66,7 @@ import { rememberModelOptions } from "../../state/use-model-option-memory";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
+import { ThreadStatusSection } from "./ThreadStatusSection"; // signalbox: status line
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -240,6 +242,7 @@ type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null;
   readonly poolHome?: PoolHome | undefined; // signalbox: what its pool resolves by, with folders
+  readonly threadId?: ThreadId | undefined; // signalbox: the existing thread, for its status line
   readonly providerInstanceId?: ProviderInstanceId;
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -296,6 +299,7 @@ type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null; // signalbox
   readonly poolHome?: PoolHome | undefined; // signalbox
+  readonly threadId?: ThreadId | undefined; // signalbox
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
@@ -602,6 +606,7 @@ function ThreadSettingsSessionProvider(
       environmentId: props.environmentId,
       projectId: props.projectId, // signalbox
       poolHome: props.poolHome, // signalbox
+      threadId: props.threadId, // signalbox
       providerInstanceId: props.providerInstanceId,
       providerGroups,
       manageHidden,
@@ -663,6 +668,7 @@ function ThreadSettingsSessionProvider(
       toggleFavorite,
       props.projectId, // signalbox
       props.poolHome, // signalbox
+      props.threadId, // signalbox
     ],
   );
 
@@ -1086,6 +1092,12 @@ function ThreadSettingsMainContent(props: {
       maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
       ListHeaderComponent={
         <>
+          {session.environmentId && session.threadId ? ( // signalbox: status line
+            <ThreadStatusSection
+              environmentId={session.environmentId}
+              threadId={session.threadId}
+            />
+          ) : null}
           {Platform.OS === "android" ? (
             <View className="px-4 pb-2 pt-3">
               <View

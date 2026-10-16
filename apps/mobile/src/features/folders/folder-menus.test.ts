@@ -96,6 +96,16 @@ describe("a folder's menu", () => {
     expect(parse("notes", "folder:phases")).toEqual({ _tag: "phases" });
   });
 
+  it("opens the folder's notes only where the environment keeps them", () => {
+    const ids = (notes: boolean) =>
+      folderMenuActions({ snapshot, folder: byId("notes"), pools, notes }).map(
+        (action) => action.id,
+      );
+    expect(ids(true).slice(-3)).toEqual(["folder:notes", "folder:instructions", "folder:delete"]);
+    expect(ids(false)).not.toContain("folder:notes");
+    expect(parse("notes", "folder:notes")).toEqual({ _tag: "notes" });
+  });
+
   it("offers lending the user's GitHub on a folder with files, naming the account while lent", () => {
     const lend = (target: Parameters<typeof byId>[0] | ReturnType<typeof byId>) =>
       folderMenuActions({
@@ -151,6 +161,15 @@ describe("an owner's top level", () => {
     expect(topLevelMenuActions({ personal: false }).map((action) => action.id)).toEqual([
       "top:new-folder",
     ]);
+  });
+
+  it("has a notes pad only for Personal, where the environment keeps notes", () => {
+    expect(topLevelMenuActions({ personal: true, notes: true }).map((action) => action.id)).toEqual(
+      ["top:new-folder", "top:notes", "top:instructions"],
+    );
+    expect(
+      topLevelMenuActions({ personal: false, notes: true }).map((action) => action.id),
+    ).toEqual(["top:new-folder"]);
   });
 });
 

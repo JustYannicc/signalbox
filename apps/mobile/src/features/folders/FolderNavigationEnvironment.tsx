@@ -3,7 +3,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { folderTree, ownerLevels } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { MenuAction } from "@react-native-menu/menu";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SignalboxContext } from "@t3tools/contracts/signalboxContexts";
 import type { Folder, FolderId } from "@t3tools/contracts/signalboxFolders";
 import { useCallback, useMemo, useState } from "react";
@@ -11,7 +11,10 @@ import { Pressable, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
 import { useEnvironmentFolders, useFolderOwners } from "../../state/signalboxFolders";
-import { folderCountsAtom, folderPoolChoicesAtom } from "./folder-atoms";
+import { useEnvironmentHasNotes } from "../../state/signalboxNotes";
+import { NotesSheet } from "../notes/NotesSheet";
+import { useOpenThread } from "../threads/use-open-thread";
+import { folderCountsAtom, folderPoolChoicesAtom, folderStatusSummariesAtom } from "./folder-atoms";
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";
 import { folderMenuActions, topLevelMenuActions } from "./folder-menus";
 import { FolderInstructionsSheet } from "./FolderInstructionsSheet";
@@ -20,6 +23,7 @@ import { FolderNodeRow, OwnerTopLevelRow } from "./FolderNavigationRows";
 import { useFolderActions } from "./use-folder-actions";
 
 const PERSONAL_TOP_ACTIONS = topLevelMenuActions({ personal: true });
+const PERSONAL_TOP_ACTIONS_WITH_NOTES = topLevelMenuActions({ personal: true, notes: true });
 const ORGANIZATION_TOP_ACTIONS = topLevelMenuActions({ personal: false });
 
 const NO_OWNERS: ReadonlyArray<SignalboxContext> = [];
@@ -36,6 +40,7 @@ export function FolderNavigationEnvironment(props: {
   const snapshot = folders.data;
   const owners = useFolderOwners(environmentId);
   const counts = useAtomValue(folderCountsAtom(environmentId));
+  const summaries = useAtomValue(folderStatusSummariesAtom(environmentId));
   const pools = useAtomValue(folderPoolChoicesAtom(environmentId));
   const actions = useFolderActions({
     environmentId,
@@ -43,6 +48,12 @@ export function FolderNavigationEnvironment(props: {
     pools,
     owners: owners?.contexts ?? NO_OWNERS,
   });
+  const hasNotes = useEnvironmentHasNotes(environmentId);
+  const openThread = useOpenThread();
+  const openNoteThread = useCallback(
+    (threadId: ThreadId) => openThread(environmentId, threadId),
+    [environmentId, openThread],
+  );
   const [collapsed, setCollapsed] = useState<ReadonlySet<FolderId>>(() => new Set());
   const onToggle = useCallback((folder: Folder) => {
     setCollapsed((current) => {
@@ -70,10 +81,10 @@ export function FolderNavigationEnvironment(props: {
       new Map<FolderId, MenuAction[]>(
         (snapshot?.folders ?? []).map((folder) => [
           folder.id,
-          snapshot ? folderMenuActions({ snapshot, folder, pools }) : [],
+          snapshot ? folderMenuActions({ snapshot, folder, pools, notes: hasNotes }) : [],
         ]),
       ),
-    [pools, snapshot],
+    [hasNotes, pools, snapshot],
   );
   // Your top level first at depth 0; member levels sit inside it, one step in.
   const levels = useMemo(() => {
@@ -124,7 +135,13 @@ export function FolderNavigationEnvironment(props: {
               owner={owner}
               depth={depth}
               selected={selectedHere?._tag === "top" && selectedHere.ownerId === owner.id}
-              actions={owner.kind === "personal" ? PERSONAL_TOP_ACTIONS : ORGANIZATION_TOP_ACTIONS}
+              actions={
+                owner.kind !== "personal"
+                  ? ORGANIZATION_TOP_ACTIONS
+                  : hasNotes
+                    ? PERSONAL_TOP_ACTIONS_WITH_NOTES
+                    : PERSONAL_TOP_ACTIONS
+              }
               onSelect={onSelectTop}
               onAction={actions.onTopLevelAction}
             />
@@ -135,6 +152,7 @@ export function FolderNavigationEnvironment(props: {
                 depth={depth + 1}
                 ancestorPath=""
                 counts={counts}
+                summaries={summaries}
                 selectedFolderId={selectedHere?._tag === "folder" ? selectedHere.folderId : null}
                 collapsed={collapsed}
                 menus={menus}
@@ -168,6 +186,14 @@ export function FolderNavigationEnvironment(props: {
           editing={actions.editingPhases}
           onSave={actions.savePhases}
           onClose={actions.closePhasesEditor}
+        />
+      ) : null}
+      {actions.notes && hasNotes ? (
+        <NotesSheet
+          key={actions.notes.level._tag === "folder" ? actions.notes.level.folderId : "top"}
+          open={actions.notes}
+          onClose={actions.closeNotes}
+          onOpenThread={openNoteThread}
         />
       ) : null}
     </View>

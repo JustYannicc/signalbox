@@ -43,6 +43,7 @@ import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
 import { MCP_TOOL_TIMEOUT_SEC, type RunnerMcpServers } from "./RunnerModelAccess.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
+import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
 
 /**
  * One Runner's context server (#141), on a loopback port of its own: the
@@ -53,7 +54,8 @@ import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
  * server also publishes the thread's branch, saving it through the drive
  * `attachDrive` gives it, and serves the automation tools, which run in the
  * cloud (`RunnerAutomationTools.ts`), with upstream's scheduled-task tools as
- * automations (`RunnerScheduledTaskTools.ts`). `/browser` serves the thread's browser
+ * automations (`RunnerScheduledTaskTools.ts`), and the thread's status line
+ * (`RunnerStatusLineTools.ts`). `/browser` serves the thread's browser
  * (#402, #574) as its own MCP server, under the name agents know it by locally:
  * the machine's headless Chromium for its dev servers, and the person's
  * browser for real sites, which the turn's client opens in the cloud. It hands
@@ -154,6 +156,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
     layerScheduledTaskTools(view, input.threadId ?? null),
+    layerStatusLineTools(view),
   ).pipe(
     Layer.provideMerge(
       McpServer.layerHttp({
