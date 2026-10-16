@@ -102,20 +102,7 @@ export function FolderPhasesSheet(props: {
             />
           ))}
         </View>
-        <View className="flex-1 px-4 pb-3">
-          <AppTextInput
-            accessibilityLabel={`Phases for ${folder.name}, one per line`}
-            autoFocus
-            className="flex-1 text-base leading-6"
-            editable={!saving}
-            multiline
-            onChangeText={setText}
-            placeholder={"Proposal\nImplementation\nProduction"}
-            scrollEnabled
-            textAlignVertical="top"
-            value={text}
-          />
-        </View>
+        {/* Above the input: the keyboard covers whatever sits below it. */}
         <View className="flex-row items-center gap-3 px-5 pb-3">
           <AppText
             accessibilityLiveRegion="polite"
@@ -137,6 +124,20 @@ export function FolderPhasesSheet(props: {
               <AppText className="text-base text-danger-foreground">Remove phases</AppText>
             </Pressable>
           )}
+        </View>
+        <View className="flex-1 px-4 pb-3">
+          <AppTextInput
+            accessibilityLabel={`Phases for ${folder.name}, one per line`}
+            autoFocus
+            className="flex-1 text-base leading-6"
+            editable={!saving}
+            multiline
+            onChangeText={setText}
+            placeholder={"Proposal\nImplementation\nProduction"}
+            scrollEnabled
+            textAlignVertical="top"
+            value={text}
+          />
         </View>
       </KeyboardAvoidingView>
     </Modal>
