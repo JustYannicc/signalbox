@@ -6712,7 +6712,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const localCheckoutBranchMismatch = useMemo(
     () =>
-      isServerThread
+      isServerThread && worktreesSupported // signalbox: an own branch never moves under a thread
         ? resolveLocalCheckoutBranchMismatch({
             effectiveEnvMode: envMode,
             activeWorktreePath,
@@ -6720,7 +6720,14 @@ export default function ChatView(props: ChatViewProps) {
             currentGitBranch: gitStatusQuery.data?.refName ?? null,
           })
         : null,
-    [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
+    [
+      activeThreadBranch,
+      activeWorktreePath,
+      envMode,
+      gitStatusQuery.data?.refName,
+      isServerThread,
+      worktreesSupported,
+    ],
   );
   const publishComposerOverlayHeight = (height: number) => {
     const nextHeight = Math.ceil(height);

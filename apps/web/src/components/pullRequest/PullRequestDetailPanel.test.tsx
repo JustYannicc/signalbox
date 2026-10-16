@@ -32,6 +32,11 @@ vi.mock("~/state/session", async (original) => ({
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+let worktreesSupported = true;
+vi.mock("~/state/environmentCapabilities", () => ({
+  useEnvironmentSupports: (_environmentId: unknown, capability: string) =>
+    capability === "worktrees" ? worktreesSupported : true,
+}));
 vi.mock("~/state/entities", () => ({ useProjects: () => [], useServerConfigs: () => new Map() }));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: [] }),
@@ -326,6 +331,19 @@ describe.each([
       .findAllByType("button")
       .filter((node) => node.props["aria-label"] === "Check out");
     expect(checkout).toHaveLength(thread === stackThread ? 0 : 1);
+  });
+
+  it("has no checkout where threads get their own branch (no worktrees)", async () => {
+    worktreesSupported = false;
+    try {
+      await act(async () => render());
+      const checkout = renderer.root
+        .findAllByType("button")
+        .filter((node) => node.props["aria-label"] === "Check out");
+      expect(checkout).toHaveLength(0);
+    } finally {
+      worktreesSupported = true;
+    }
   });
 
   it.each(actions)("%s writes to the correct composer", async (action) => {

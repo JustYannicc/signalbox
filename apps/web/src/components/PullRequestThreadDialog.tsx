@@ -20,6 +20,7 @@ import { parsePullRequestReference } from "~/pullRequestReference";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useEnvironmentQuery } from "~/state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { useEnvironmentSupports } from "~/state/environmentCapabilities"; // signalbox
 import { vcsEnvironment } from "~/state/vcs";
 import { Button } from "./ui/button";
 import {
@@ -112,6 +113,7 @@ export function PullRequestThreadDialog({
   }, [parsedReference, sourceControlScope]);
   const preparePullRequestThreadAction = usePreparePullRequestThreadAction(sourceControlScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const worktreesSupported = useEnvironmentSupports(environmentId, "worktrees"); // signalbox
 
   const liveResolvedPullRequest =
     parsedReference !== null && parsedReference === parsedDebouncedReference
@@ -230,7 +232,8 @@ export function PullRequestThreadDialog({
           </DialogTitle>
           <DialogDescription>
             Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
-            the draft thread in the main repo or in a dedicated worktree.
+            the draft thread{" "}
+            {worktreesSupported ? "in the main repo or in a dedicated worktree" : "on its branch"}.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -255,7 +258,7 @@ export function PullRequestThreadDialog({
                 }
                 event.preventDefault();
                 if (!isResolving && !preparePullRequestThreadAction.isPending) {
-                  void handleConfirm("worktree");
+                  void handleConfirm(worktreesSupported ? "worktree" : "local"); // signalbox
                 }
               }}
             />
@@ -316,6 +319,7 @@ export function PullRequestThreadDialog({
             type="button"
             size="sm"
             onClick={() => handleConfirm("worktree")}
+            hidden={!worktreesSupported} // signalbox
             disabled={
               !preparePullRequestThreadAction.isAllowed ||
               !canOperateThread ||

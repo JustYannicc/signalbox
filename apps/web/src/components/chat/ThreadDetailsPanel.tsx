@@ -25,6 +25,7 @@ import { ThreadPoolRow } from "../accountPool/ThreadPoolRow"; // signalbox
 import { ThreadKindRow } from "../threadKind/ThreadKindRow"; // signalbox: thread kinds
 import { ThreadWaitsSection } from "../automations/ThreadWaitsSection"; // signalbox
 import { ThreadSkippedFoldersRow } from "../threadMachineState/ThreadSkippedFoldersRow"; // signalbox: machine state
+import { useEnvironmentSupports } from "../../state/environmentCapabilities"; // signalbox
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -73,6 +74,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  // signalbox: without worktrees a folder that isn't a repository never becomes one here
+  // (repositories are imported), so it has no version control to show.
+  const worktreesSupported = useEnvironmentSupports(props.environmentId, "worktrees");
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -166,7 +170,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             </div>
           </ThreadDetailsSection>
 
-          {props.gitCwd ? (
+          {props.gitCwd && (props.isGitRepo || worktreesSupported) ? (
             <ThreadDetailsSection
               headingId="thread-details-version-control-heading"
               title="Version Control"
