@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import {
   type MachineBackendShape,
   MachineBackendError,
+  type MachineExit,
   type MachineRequest,
   type MachineStatus,
 } from "../MachineBackend.ts";
@@ -27,8 +28,8 @@ import {
  * Containers stop on their own once their object has been idle for
  * `INACTIVITY_TIMEOUT_MS`, which is the hard TTL: an object that is gone for
  * good cannot leak one. A container that exits without being asked (out of
- * memory, a crash) while running a generation it was handed is reported
- * through `onExit`.
+ * memory, a crash, a deploy's rollout restarting it) while running a
+ * generation it was handed is reported through `onExit`.
  *
  * Tests use a fake `Container`; vitest cannot run containers.
  */
@@ -67,18 +68,28 @@ export interface CloudflareMachineSettings {
 export interface CloudflareMachineBackendInput {
   readonly container: Container;
   readonly settings: CloudflareMachineSettings;
-  /** The container running `generation` stopped without being asked to; `detail` says how. */
-  readonly onExit: (detail: string, generation: number) => void;
+  /** The container running `generation` stopped without being asked to. */
+  readonly onExit: (exit: MachineExit, generation: number) => void;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const exitDetail = (cause: unknown) => {
+/**
+ * How `monitor()` rejected. A rollout restart has no exit code, only a message
+ * ("Runtime signalled the container to exit due to a new version rollout: 130").
+ */
+const exitOf = (cause: unknown): MachineExit => {
   const code =
     typeof cause === "object" && cause !== null && "exitCode" in cause ? cause.exitCode : undefined;
-  if (code === 137) return "The machine ran out of memory (exit 137).";
-  if (code !== undefined) return `The machine exited with code ${String(code)}.`;
-  return `The machine stopped: ${cause instanceof Error ? cause.message : String(cause)}`;
+  if (code === 137)
+    return { detail: "The machine ran out of memory (exit 137).", outOfMemory: true };
+  return {
+    detail:
+      code !== undefined
+        ? `The machine exited with code ${String(code)}.`
+        : `The machine stopped: ${cause instanceof Error ? cause.message : String(cause)}`,
+    outOfMemory: false,
+  };
 };
 
 export const makeCloudflareMachineBackend = ({
@@ -102,12 +113,12 @@ export const makeCloudflareMachineBackend = ({
       generation: null,
     };
     current = watched;
-    const exited = (detail: string) => {
-      if (!watched.asked && watched.generation !== null) onExit(detail, watched.generation);
+    const exited = (exit: MachineExit) => {
+      if (!watched.asked && watched.generation !== null) onExit(exit, watched.generation);
     };
     container.monitor().then(
-      () => exited("The machine's Runner exited."),
-      (cause: unknown) => exited(exitDetail(cause)),
+      () => exited({ detail: "The machine's Runner exited.", outOfMemory: false }),
+      (cause: unknown) => exited(exitOf(cause)),
     );
   };
   // A container that outlived its object's restart has lost its timeout and its watcher.

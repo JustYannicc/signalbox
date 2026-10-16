@@ -1,6 +1,8 @@
 import {
   OrchestratorMcpFailure,
   PullRequestAction,
+  PullRequestCheckStatus,
+  PullRequestMergeability,
   PullRequestMergeMethod,
   PullRequestState,
   ThreadId,
@@ -57,7 +59,7 @@ const Target = {
 
 const PullRequestReadTool = Tool.make("pull_request_read", {
   description:
-    "Read a pull request linked to a thread: where it lives, its title, state and head commit, fresh from the host.",
+    "Read a pull request linked to a thread, fresh from the host: where it lives, its title, state and head commit, and the merge gate's evidence at that commit. Parts the host can't answer here are null: review threads, the review decision and the changed files are read only in the cloud so far.",
   parameters: Schema.Struct(Target),
   success: Schema.Struct({
     repository: Schema.String,
@@ -65,6 +67,21 @@ const PullRequestReadTool = Tool.make("pull_request_read", {
     title: Schema.String,
     state: PullRequestState,
     headSha: Schema.NullOr(Schema.String),
+    isDraft: Schema.Boolean,
+    mergeability: PullRequestMergeability,
+    reviewDecision: Schema.Null,
+    checks: Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          status: PullRequestCheckStatus,
+          url: Schema.NullOr(Schema.String),
+          required: Schema.NullOr(Schema.Boolean),
+        }),
+      ),
+    ),
+    openThreads: Schema.Null,
+    files: Schema.Null,
   }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -156,6 +173,21 @@ export const layer = McpToolAccess.toLayer(
           title: current.title,
           state: current.state,
           headSha: current.headSha ?? null,
+          isDraft: current.isDraft,
+          mergeability: current.mergeability,
+          reviewDecision: null,
+          // Checks without the commit they ran on can't be evidence about the head.
+          checks:
+            current.headSha === undefined
+              ? null
+              : current.checks.map((check) => ({
+                  name: check.name,
+                  status: check.status,
+                  url: check.url,
+                  required: check.required ?? null,
+                })),
+          openThreads: null,
+          files: null,
         };
       }),
     ),

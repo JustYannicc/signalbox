@@ -1,3 +1,4 @@
+import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as Clock from "effect/Clock";
@@ -109,6 +110,7 @@ const toPull = (body: typeof PullBody.Type): GitHubPullRequest => ({
 
 const RefBody = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
 const CommitBody = Schema.Struct({ sha: Schema.String });
+const MergeBody = Schema.Struct({ merged: Schema.Boolean });
 const TreeBody = Schema.Struct({
   tree: Schema.Array(
     Schema.Struct({
@@ -391,6 +393,27 @@ export const makeGitHubApi = (
               )
             : Effect.succeed(toPull(body)),
         ),
+      ),
+    /**
+     * Merges a pull request. With `sha`, GitHub merges only while that is its
+     * head and answers 409 otherwise. Null when the pull request isn't there.
+     */
+    mergePull: (
+      token: string,
+      repository: string,
+      number: number,
+      input: { readonly sha?: string; readonly method?: PullRequestMergeMethod },
+    ) =>
+      json(
+        "mergePull",
+        MergeBody,
+        HttpClientRequest.put(`${api}/repos/${repository}/pulls/${number}/merge`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            ...(input.sha === undefined ? {} : { sha: input.sha }),
+            ...(input.method === undefined ? {} : { merge_method: input.method }),
+          }),
+        ),
+        token,
       ),
     /** One `git-receive-pack` request (`gitPush.ts` builds it); answers the raw result. */
     receivePack: (token: string, repository: string, body: Uint8Array) =>

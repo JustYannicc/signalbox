@@ -13,8 +13,10 @@ import { threadWorktreeAt } from "../../user/contextProjects.ts";
  *
  * Light runs the harness and its subagents editing files; heavy builds, tests
  * and runs dev servers. A thread on a light machine moves up for good when a
- * command needs more (`machine.outgrown` from its Runner, or its machine dying
- * mid-turn), by resuming on a heavy one the way a lost machine does (#132).
+ * command needs more (`machine.outgrown` from its Runner, or its machine running
+ * out of memory mid-turn), by resuming on a heavy one the way a lost machine
+ * does (#132). Any other exit, such as a deploy restarting it (#555), is a lost
+ * machine, and the run goes on in its own class.
  *
  * Chat or task is only how a thread shows, so the thread's drive decides: a
  * thread created in a drive backed by a remote repo gets its own branch there
