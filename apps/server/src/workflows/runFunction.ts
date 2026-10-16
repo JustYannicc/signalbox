@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
 
 import { ServerConfig } from "../config.ts";
 import { ProcessRunner } from "../processRunner.ts";
-import { parseSync } from "./compiler/oxc.ts";
+import { parseSync } from "@signalbox/automation-compiler/oxc";
 import {
   automationError,
   errorMessage,

@@ -1,23 +1,29 @@
 import {
   AUTOMATION_WS_METHODS,
   AutomationError,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   ThreadId,
   type AutomationRpcs,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { AutomationThreads } from "@signalbox/automations/host";
+import { fail } from "@signalbox/automations/errors";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import * as Effect from "effect/Effect";
 import type * as Rpc from "effect/rpc/Rpc";
 import * as Stream from "effect/Stream";
 
 import { CloudAutomations } from "./CloudAutomations.ts";
+import { acceptCompiled, CloudCompiler, COMPILE_WHERE } from "./cloudCompiler.ts";
 
 /**
  * The automation RPCs a client calls on the user's object: the same contract
  * the self-hosted server serves (`apps/server/src/workflows/rpcHandlers.ts`),
  * each calling one engine method and then flushing, so what it started
- * here is done before the request ends. Executor connections and webhooks aren't
- * in the cloud yet and say so.
+ * here is done before the request ends. Validating and saving take what the
+ * caller compiled (`compiled`), since the cloud can't compile. Executor
+ * connections and webhooks aren't in the cloud yet and say so.
  */
 
 export const AUTOMATION_METHODS = Object.values(AUTOMATION_WS_METHODS);
@@ -41,10 +47,30 @@ const notYet = (what: string) =>
     new AutomationError({ message: `${what} aren't available in cloud automations yet.` }),
   );
 
-export const makeAutomationHandlers = Effect.gen(function* () {
+const compileWhere = fail(COMPILE_WHERE);
+
+/**
+ * `newThreadModel` is what a new thread of the person's starts on, which is
+ * what an automation they save runs with: there's no calling thread to take it from.
+ */
+export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(function* (options: {
+  readonly newThreadModel: Effect.Effect<ModelSelection | null>;
+}) {
   const engine = yield* WorkflowEngine.WorkflowEngine;
   const automations = yield* CloudAutomations;
   const threads = yield* AutomationThreads;
+  const compiler = yield* CloudCompiler;
+  const saveDefaults = options.newThreadModel.pipe(
+    Effect.flatMap((modelSelection) =>
+      modelSelection === null
+        ? fail("Add an account to a pool first: saved automations run on your pool.")
+        : Effect.succeed({
+            modelSelection,
+            runtimeMode: DEFAULT_RUNTIME_MODE,
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          }),
+    ),
+  );
   const flushed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.tap(() => automations.flush));
   /** Spans name the automation or run, never what's in them. */
@@ -98,11 +124,40 @@ export const makeAutomationHandlers = Effect.gen(function* () {
           });
         }),
       ),
-    // Compiling needs oxc, which can't run in workerd; saves come from a thread's machine.
-    [METHODS.automationsValidate]: (_input: Payload<typeof METHODS.automationsValidate>) =>
-      notYet("Checking automations from the app (an agent's automation_validate works)"),
-    [METHODS.automationsSave]: (_input: Payload<typeof METHODS.automationsSave>) =>
-      notYet("Saving automations from the app (an agent in a cloud thread saves them)"),
+    // Compiling needs oxc, which can't run in workerd; the caller compiles.
+    [METHODS.automationsValidate]: (input: Payload<typeof METHODS.automationsValidate>) =>
+      input.compiled === undefined
+        ? compileWhere
+        : acceptCompiled(input.compiled).pipe(
+            Effect.map((compiled) => ({ ok: true as const, graph: compiled.graph })),
+          ),
+    [METHODS.automationsSave]: (input: Payload<typeof METHODS.automationsSave>) =>
+      input.compiled === undefined
+        ? compileWhere
+        : about({
+            "folder.id": input.projectId,
+            ...(input.automationId ? { "automation.id": input.automationId } : {}),
+          }).pipe(
+            Effect.andThen(
+              flushed(
+                Effect.gen(function* () {
+                  const compiled = yield* acceptCompiled(input.compiled);
+                  const defaults = yield* saveDefaults;
+                  return yield* compiler.withStaged(
+                    input.source,
+                    compiled,
+                    engine.save({
+                      source: input.source,
+                      projectId: input.projectId,
+                      defaults,
+                      ...(input.automationId ? { automationId: input.automationId } : {}),
+                      ...(input.draft === true ? { draft: true } : {}),
+                    }),
+                  );
+                }),
+              ),
+            ),
+          ),
     [METHODS.automationsCustomize]: (_input: Payload<typeof METHODS.automationsCustomize>) =>
       notYet("Customizing built-ins from the app (an agent's automation_customize works)"),
     [METHODS.automationsStopAttached]: (input: Payload<typeof METHODS.automationsStopAttached>) =>

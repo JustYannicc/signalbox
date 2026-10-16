@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { scheduledTaskSource, type ScheduledTaskSpec } from "@signalbox/automations/scheduledTasks";
 
-import { compileWorkflow } from "./compiler/compileWorkflow.ts";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 
 const base: ScheduledTaskSpec = {
   title: "Post the time",

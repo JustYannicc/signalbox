@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { AUTOMATION_COMPILED_FORMAT } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Tool from "effect/ai/Tool";
@@ -111,6 +112,8 @@ describe("automation tools on a cloud thread's machine (#434)", () => {
         source: SOURCE,
         draft: true,
         compiled: {
+          // The cloud reads only its own format (#558).
+          format: AUTOMATION_COMPILED_FORMAT,
           meta: { name: "Weekly report", triggers: [{ cron: "0 9 * * 1" }] },
           graph: { nodes: [{ type: "step", verb: "notify" }] },
         },

@@ -3,7 +3,7 @@ import { workflowNodeIdForStepKey, type WorkflowNode } from "@t3tools/contracts"
 import { describe, expect, it } from "vite-plus/test";
 
 import type { CompiledWorkflow } from "@signalbox/automations/compiled";
-import { compileWorkflow } from "../compiler/compileWorkflow.ts";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import {
   replayWorkflow,
   type JournalResult,

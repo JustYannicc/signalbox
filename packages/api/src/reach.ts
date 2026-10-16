@@ -36,6 +36,12 @@ export interface DerivedReach {
   readonly destructive?: boolean;
   /** Streams only. Defaults to `snapshot` for reads and `final` for writes. */
   readonly stream?: StreamRead;
+  /**
+   * Its input's `compiled` is its `source`, compiled where the caller runs:
+   * the cloud can't compile (#558). The CLI and stdio MCP compile and fill it
+   * in before they send the call (`apps/cli/src/localCompile.ts`).
+   */
+  readonly compiles?: boolean;
 }
 
 export type ExemptKind =

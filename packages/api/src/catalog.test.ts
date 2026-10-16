@@ -85,6 +85,7 @@ describe("API parity", () => {
         ...(operation.stream === undefined ? {} : { stream: operation.stream }),
         ...(operation.humanOnly ? { humanOnly: true } : {}),
         ...(operation.destructive ? { destructive: true } : {}),
+        ...(operation.compiles ? { compiles: true } : {}),
         input: fingerprint(jsonSchemaOf(operation.input)),
         output: fingerprint(jsonSchemaOf(operation.output)),
       })),

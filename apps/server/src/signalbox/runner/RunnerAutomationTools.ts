@@ -6,7 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/ai/Tool";
 
-import { compileWorkflow } from "../../workflows/compiler/compileWorkflow.ts";
+import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { skillReference, unknownTopic } from "../../workflows/skill/files.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { badArguments, fail, register, ToolError } from "./RunnerContextTools.ts";
@@ -173,9 +174,9 @@ export const saveCompiled = (
   ask: AutomationCaller,
   input: { readonly source: string } & Readonly<Record<string, unknown>>,
 ) => {
-  const compiled = compileWorkflow(input.source);
+  const compiled = compileForCloud(input.source);
   return compiled.ok
-    ? ask("automation_save", { ...input, compiled: compiled.workflow }, false)
+    ? ask("automation_save", { ...input, compiled: compiled.compiled }, false)
     : Effect.succeed({ ok: false, diagnostics: compiled.diagnostics });
 };
 
