@@ -87,7 +87,7 @@ export function harnessEnvironment(
 }
 
 /** Longer than the login service's 4-minute budget for one sign-in. */
-const MCP_TOOL_TIMEOUT_SEC = 300;
+export const MCP_TOOL_TIMEOUT_SEC = 300;
 
 /** The Runner's loopback MCP servers, by the name the harnesses know each as. */
 export type RunnerMcpServers = Readonly<Record<string, string>>;
