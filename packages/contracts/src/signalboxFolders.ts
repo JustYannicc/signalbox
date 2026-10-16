@@ -37,6 +37,7 @@ export const SIGNALBOX_FOLDERS_WS_METHODS = {
   setInstructions: "signalbox.folders.setInstructions",
   setSecrets: "signalbox.folders.setSecrets",
   setOnePassword: "signalbox.folders.setOnePassword",
+  revokeSecretSend: "signalbox.folders.revokeSecretSend",
 } as const;
 
 /** Reading the tree is reading the sidebar; the rest changes what threads run on. */
@@ -50,6 +51,7 @@ export const SIGNALBOX_FOLDERS_REQUIRED_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.setInstructions]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend]: AuthOrchestrationOperateScope,
 } as const;
 
 export const FolderId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(
@@ -77,6 +79,20 @@ export type OnePasswordEnvironmentId = typeof OnePasswordEnvironmentId.Type;
 /** Where a level's secrets come from: one 1Password Environment. */
 export const FolderSecrets = Schema.Struct({ environmentId: OnePasswordEnvironmentId });
 export type FolderSecrets = typeof FolderSecrets.Type;
+
+/**
+ * A host the person always lets agents send one of an Environment's secrets
+ * to (#592). The first time an agent sends a secret to a new host, the thread
+ * asks them; "Always" keeps one of these, and revoking it makes the next send
+ * ask again. A host is a URL's host, with its port when it isn't the default.
+ */
+export const SecretSend = Schema.Struct({
+  environmentId: OnePasswordEnvironmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  host: TrimmedNonEmptyString.check(Schema.isMaxLength(260)),
+  grantedAt: NonNegativeInt,
+});
+export type SecretSend = typeof SecretSend.Type;
 
 /** A level of the tree: the top level, or a folder. */
 export const FolderLevel = Schema.Union([
@@ -142,6 +158,8 @@ export const SignalboxFoldersSnapshot = Schema.Struct({
    * secrets load. Its token never leaves the cloud but for the thread's machine.
    */
   onePassword: Schema.optionalKey(Schema.Struct({ connectedAt: NonNegativeInt })),
+  /** The hosts agents may always send each secret to. Absent from a cloud older than this field. */
+  secretSends: Schema.optionalKey(Schema.Array(SecretSend)),
   folders: Schema.Array(Folder),
   threadHomes: Schema.Array(FolderThreadHome),
   projectHomes: Schema.Array(FolderProjectHome),
@@ -229,6 +247,12 @@ export const FolderSetOnePasswordInput = Schema.Struct({
 });
 export type FolderSetOnePasswordInput = typeof FolderSetOnePasswordInput.Type;
 
+/** Stops agents always sending one secret to one host: the next send asks again. */
+export const FolderRevokeSecretSendInput = SecretSend.mapFields(
+  ({ environmentId, name, host }) => ({ environmentId, name, host }),
+);
+export type FolderRevokeSecretSendInput = typeof FolderRevokeSecretSendInput.Type;
+
 export class SignalboxFoldersUnavailableError extends Schema.TaggedError<SignalboxFoldersUnavailableError>()(
   "SignalboxFoldersUnavailableError",
   {},
@@ -272,4 +296,5 @@ export const SIGNALBOX_FOLDERS_RPCS = [
   change(SIGNALBOX_FOLDERS_WS_METHODS.setInstructions, FolderSetInstructionsInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setSecrets, FolderSetSecretsInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword, FolderSetOnePasswordInput),
+  change(SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend, FolderRevokeSecretSendInput),
 ] as const;

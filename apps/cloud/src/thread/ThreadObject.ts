@@ -54,6 +54,8 @@ import { deliverPendingEvents } from "./eventOutbox.ts";
 import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadBrowsing from "./browsing/ThreadBrowsing.ts";
+import type { ThreadEgressExports } from "./egress/ThreadEgress.ts";
+import * as ThreadSends from "./egress/ThreadSends.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
 import { type BrowserReply, wire } from "./threadWire.ts";
@@ -193,6 +195,8 @@ const makeRuntime = (
       ),
       // The thread's browser tabs (#585), beside its conversation.
       Layer.provideMerge(ThreadBrowsing.layer),
+      // Where its machine may send its secrets (#592).
+      Layer.provideMerge(ThreadSends.layer),
       Layer.provideMerge(ThreadEngine.layer),
       Layer.provideMerge(
         TurnModels.layer({ scripted: scriptedProviderEnabled(env) }).pipe(
@@ -265,6 +269,10 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       this.gateway,
       {
         container: ctx.container,
+        egress: () =>
+          (ctx as unknown as { readonly exports: ThreadEgressExports }).exports.ThreadEgress({
+            props: { threadId: this.threadId() },
+          }),
         onExit: (detail, generation) =>
           void this.machineExited(detail, generation).catch((cause: unknown) =>
             this.runtime.runPromise(Effect.logError("machine exit failed", String(cause))),
@@ -279,7 +287,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     };
     this.api = makeThreadObjectApi(
       (effect) => this.runtime.runPromise(effect),
-      async () => this.armAlarm(await pushRunnerWork(this.runnerHost)),
+      async () => {
+        // An answer the egress check waits on, or an "Always" to keep (`egress/ThreadSends.ts`).
+        await this.runtime.runPromise(
+          ThreadSends.ThreadSends.use((sends) => sends.settle).pipe(
+            // It's tried again after the next change; the thread's own work goes on.
+            Effect.catchCause((cause) =>
+              Effect.logError("settling secret sends failed", Cause.pretty(cause)),
+            ),
+          ),
+        );
+        await this.armAlarm(await pushRunnerWork(this.runnerHost));
+      },
     );
     // Runner heartbeats are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(
@@ -366,6 +385,16 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     return this.runtime.runPromise(
       ThreadRunner.ThreadRunner.use((runner) => runner.authorizeModel(token, provider)),
     );
+  }
+
+  /** The machine's egress check: the values its requests are read for (`egress/egress.ts`). */
+  egressSecrets() {
+    return this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.secrets));
+  }
+
+  /** The machine's egress check: whether a request may take its secrets to its host. */
+  authorizeSend(input: ThreadSends.SendRequest) {
+    return this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.authorize(input)));
   }
 
   /** The drive API asking whether a Runner's drive token is good, and for what (see `drive/driveRoutes.ts`). */

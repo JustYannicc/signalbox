@@ -55,6 +55,7 @@ import * as DrivePeople from "./DrivePeople.ts";
 import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
+import * as SecretSends from "./SecretSends.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
 import * as ThreadContexts from "./threadContexts.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -239,6 +240,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,
+              SecretSends.layer,
             ),
           ),
           Layer.provideMerge(drives.store),
@@ -457,6 +459,14 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   onePasswordToken() {
     return this.api.onePasswordToken();
+  }
+
+  secretSendsAllowed(input: Parameters<UserObjectApi["secretSendsAllowed"]>[0]) {
+    return this.api.secretSendsAllowed(input);
+  }
+
+  keepSecretSends(grants: Parameters<UserObjectApi["keepSecretSends"]>[0]) {
+    return this.api.keepSecretSends(grants);
   }
 
   contextIds() {

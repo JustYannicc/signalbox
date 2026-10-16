@@ -1,5 +1,10 @@
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
-import { type SecretsAccess, secretsJson } from "@signalbox/runner-protocol/SecretsProtocol";
+import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import {
+  type SecretsAccess,
+  type SecretsRegistration,
+  secretsJson,
+} from "@signalbox/runner-protocol/SecretsProtocol";
 import { SESSION_PATHS } from "@signalbox/runner-protocol/SessionProtocol";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -33,6 +38,9 @@ import type { SecretMask } from "./secretMask.ts";
  * set, the masked values are registered with the thread, which the
  * ModelGateway scrubs every model request with. A registration that fails
  * stops the turn, since the gateway serves none of its requests until then.
+ *
+ * The same values fill the agent's `{{secret:NAME}}` placeholders (#592,
+ * `RunnerSecretFill.ts`), only on a machine whose sends the thread checks.
  */
 
 export class SecretsRegisterError extends Schema.TaggedError<SecretsRegisterError>()(
@@ -45,9 +53,9 @@ export interface SecretsReport {
   readonly notice: (message: string) => Effect.Effect<void>;
   /** A line for the turn's diagnostics. */
   readonly info: (message: string) => Effect.Effect<void>;
-  /** Hands the thread every value to hide from the model (`SecretsProtocol.ts`). */
+  /** Hands the thread every value to hide from the model, and where each came from (`SecretsProtocol.ts`). */
   readonly register: (
-    secrets: ReadonlyArray<SecretValue>,
+    registration: SecretsRegistration,
   ) => Effect.Effect<void, SecretsRegisterError>;
 }
 
@@ -68,6 +76,16 @@ export interface RunnerSecrets {
   readonly environment: () => Readonly<Record<string, string>>;
   /** `text` with every secret masked, for text that is cut short before it's sent. */
   readonly mask: (text: string) => string;
+  /**
+   * What the agent's placeholders fill with: the hidden values by name, and
+   * whether this machine's sends are checked (`SecretsAccess.guarded`).
+   */
+  readonly fillable: () => SecretFillable;
+}
+
+export interface SecretFillable {
+  readonly values: ReadonlyMap<string, string>;
+  readonly guarded: boolean;
 }
 
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -98,6 +116,7 @@ export const makeRunnerSecrets = (input: {
 }): RunnerSecrets => {
   let variables: Readonly<Record<string, string>> = {};
   let version = 0;
+  let fillable: SecretFillable = { values: new Map(), guarded: false };
   /** What was last read in full; null after a read that fell short, or none. */
   let read: { readonly token: string; readonly environments: ReadonlyArray<string> } | null = null;
 
@@ -110,20 +129,24 @@ export const makeRunnerSecrets = (input: {
   const load: RunnerSecrets["load"] = (access, report) =>
     Effect.gen(function* () {
       const environments = access?.environments ?? [];
+      const guarded = access?.guarded === true;
+      fillable = { ...fillable, guarded };
       if (environments.length === 0) {
         read = null;
         use({});
+        fillable = { values: new Map(), guarded };
         return version;
       }
       const token = access?.token ?? null;
       if (token === null) {
         read = null;
         use({});
+        fillable = { values: new Map(), guarded };
         yield* report.notice(
           "This folder's secrets come from 1Password, but no 1Password service account is connected, so none loaded. Connect one in the folder's Secrets.",
         );
         // None to hide, which the gateway waits to hear before it serves the turn.
-        yield* report.register([]);
+        yield* report.register({ secrets: [], sources: [] });
         return version;
       }
       if (read !== null && read.token === token && sameStrings(read.environments, environments)) {
@@ -151,10 +174,11 @@ export const makeRunnerSecrets = (input: {
               environments,
               (environmentId) =>
                 client.variables(environmentId).pipe(
+                  Effect.map((variables) => ({ environmentId, variables })),
                   Effect.catchTags({
                     OnePasswordError: (error) => {
                       failures.push(`Environment ${environmentId}: ${error.message}`);
-                      return Effect.succeed([]);
+                      return Effect.succeed({ environmentId, variables: [] });
                     },
                   }),
                 ),
@@ -162,7 +186,10 @@ export const makeRunnerSecrets = (input: {
               { concurrency: "unbounded" },
             );
       // Top level first: a nearer folder's variable replaces one from above.
-      for (const variables of found) {
+      const sources = new Map<string, OnePasswordEnvironmentId>();
+      /** Each name's nearest value: what placeholders fill with. */
+      const current = new Map<string, string>();
+      for (const { environmentId, variables } of found) {
         for (const variable of variables) {
           if (!VARIABLE_NAME.test(variable.name)) continue;
           if (reserved.has(variable.name)) {
@@ -174,21 +201,34 @@ export const makeRunnerSecrets = (input: {
             continue;
           }
           next[variable.name] = variable.value;
+          sources.set(variable.name, environmentId);
+          current.set(variable.name, variable.value);
           if (variable.masked) hidden.push({ name: variable.name, value: variable.value });
         }
       }
       input.mask.add(hidden);
       // The model must never see them, so the harness gets none the gateway doesn't know.
-      yield* report.register(hidden).pipe(
-        Effect.tapError(() =>
-          Effect.sync(() => {
-            read = null;
-            use({});
+      yield* report
+        .register({
+          secrets: hidden,
+          // Only the hidden ones are asked about before they leave: the others aren't secret.
+          sources: [...new Set(hidden.map(({ name }) => name))].flatMap((name) => {
+            const environment = sources.get(name);
+            return environment === undefined ? [] : [{ name, environment }];
           }),
-        ),
-      );
+        })
+        .pipe(
+          Effect.tapError(() =>
+            Effect.sync(() => {
+              read = null;
+              use({});
+              fillable = { values: new Map(), guarded };
+            }),
+          ),
+        );
       read = failures.length === 0 ? { token, environments } : null;
       use(next);
+      fillable = { values: current, guarded };
       const count = Object.keys(next).length;
       yield* report.info(
         `loaded ${plural(count, "secret", "secrets")} from ${plural(environments.length, "1Password Environment", "1Password Environments")}`,
@@ -213,7 +253,12 @@ export const makeRunnerSecrets = (input: {
       return version;
     });
 
-  return { load, environment: () => variables, mask: input.mask.text };
+  return {
+    load,
+    environment: () => variables,
+    mask: input.mask.text,
+    fillable: () => fillable,
+  };
 };
 
 /**
@@ -224,7 +269,7 @@ export const makeRunnerSecrets = (input: {
 export const makeSecretsRegistrar = Effect.fn("makeSecretsRegistrar")(function* (cloudUrl: string) {
   const http = yield* HttpClient.HttpClient;
   const url = `${cloudUrl.replace(/\/+$/, "")}${SESSION_PATHS.secrets}`;
-  return (token: string, secrets: ReadonlyArray<SecretValue>) =>
+  return (token: string, registration: SecretsRegistration) =>
     Effect.gen(function* () {
       // An HTTP error names the method and URL, never the body.
       const notSent = (error: { readonly message: string }) =>
@@ -234,7 +279,7 @@ export const makeSecretsRegistrar = Effect.fn("makeSecretsRegistrar")(function* 
           HttpClientRequest.post(url).pipe(
             HttpClientRequest.bearerToken(token),
             HttpClientRequest.bodyText(
-              secretsJson.registration.encode({ secrets }),
+              secretsJson.registration.encode(registration),
               "application/json",
             ),
           ),

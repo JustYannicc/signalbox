@@ -5,7 +5,10 @@ import {
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import { type SecretValue, secretPlaceholder } from "@signalbox/runner-protocol/SecretScrubber";
-import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
+import type {
+  SecretsAccess,
+  SecretsRegistration,
+} from "@signalbox/runner-protocol/SecretsProtocol";
 import {
   MessageId,
   NodeId,
@@ -83,15 +86,19 @@ const reporter = (refuse?: string) => {
   const notices: Array<string> = [];
   const lines: Array<string> = [];
   const registered: Array<ReadonlyArray<SecretValue>> = [];
+  const sources: Array<SecretsRegistration["sources"]> = [];
   const report: SecretsReport = {
     notice: (message) => Effect.sync(() => void notices.push(message)),
     info: (message) => Effect.sync(() => void lines.push(message)),
-    register: (secrets) =>
+    register: (registration) =>
       refuse === undefined
-        ? Effect.sync(() => void registered.push(secrets))
+        ? Effect.sync(() => {
+            registered.push(registration.secrets);
+            sources.push(registration.sources);
+          })
         : Effect.fail(new SecretsRegisterError({ message: refuse })),
   };
-  return { report, notices, lines, registered };
+  return { report, notices, lines, registered, sources };
 };
 
 /** The turn's session token, which registers its secrets with the thread. */
@@ -127,6 +134,45 @@ describe("RunnerSecrets", () => {
       expect(notices).toEqual([]);
       expect(lines).toEqual(["loaded 3 secrets from 2 1Password Environments"]);
     }),
+  );
+
+  it.effect(
+    "fills placeholders with each name's nearest hidden value, only on a guarded machine",
+    () =>
+      Effect.gen(function* () {
+        const account = fakeOnePassword({
+          [top]: [variable("SHARED", "top-shared-value"), variable("PLAIN", "not-hidden", false)],
+          [folder]: [
+            variable("SHARED", "folder-shared-value"),
+            variable("API_KEY", "folder-api-key"),
+          ],
+        });
+        const secrets = makeRunnerSecrets({
+          onePassword: account.onePassword,
+          mask: makeSecretMask(),
+          reserved: () => new Set(),
+        });
+        const { report, sources } = reporter();
+
+        yield* secrets.load({ ...access([top, folder]), guarded: true }, report);
+
+        expect([...secrets.fillable().values]).toEqual([
+          ["SHARED", "folder-shared-value"],
+          ["PLAIN", "not-hidden"],
+          ["API_KEY", "folder-api-key"],
+        ]);
+        expect(secrets.fillable().guarded).toBe(true);
+        expect(sources).toEqual([
+          [
+            { name: "SHARED", environment: folder },
+            { name: "API_KEY", environment: folder },
+          ],
+        ]);
+        // Nothing to read again; only whether the machine is guarded changed.
+        yield* secrets.load(access([top, folder]), report);
+        expect(secrets.fillable().guarded).toBe(false);
+        expect(secrets.fillable().values.size).toBe(3);
+      }),
   );
 
   it.effect(

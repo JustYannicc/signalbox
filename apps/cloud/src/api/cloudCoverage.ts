@@ -34,8 +34,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "keybindings.*": gap("#440"),
   "analytics.*": gap("#284"),
 
-  // Waiting on you: approvals, questions and secret requests.
-  "threads.respond": gap("#410"),
+  // Waiting on you: questions and secret requests. Approvals the thread raises are served.
   "threads.dismissQuestion": gap("#410"),
   "secrets.answer": gap("#410"),
 

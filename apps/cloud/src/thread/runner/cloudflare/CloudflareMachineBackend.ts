@@ -1,5 +1,9 @@
 // @effect-diagnostics globalTimers:off globalDate:off - readiness polling runs on the Durable Object's own clock.
-import { MACHINE_HOME, machineEnsureJson } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  EGRESS_CA,
+  MACHINE_HOME,
+  machineEnsureJson,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -29,6 +33,12 @@ import {
  * good cannot leak one. A container that exits without being asked (out of
  * memory, a crash) while running a generation it was handed is reported
  * through `onExit`.
+ *
+ * Every HTTP and HTTPS request the container makes goes through the thread's
+ * egress check (#592, `egress/ThreadEgress.ts`), outside the container, set
+ * before each start: Cloudflare then gives the container the CA its HTTPS is
+ * re-signed with (`EGRESS_CA`), which the Runner trusts for itself and the
+ * harnesses (`RunnerEgressTrust.ts`). Other ports go out as they are.
  *
  * Tests use a fake `Container`; vitest cannot run containers.
  */
@@ -67,6 +77,8 @@ export interface CloudflareMachineSettings {
 export interface CloudflareMachineBackendInput {
   readonly container: Container;
   readonly settings: CloudflareMachineSettings;
+  /** The thread's egress check for the container's requests; null leaves them unchecked. */
+  readonly egress: (() => Fetcher) | null;
   /** The container running `generation` stopped without being asked to; `detail` says how. */
   readonly onExit: (detail: string, generation: number) => void;
 }
@@ -84,6 +96,7 @@ const exitDetail = (cause: unknown) => {
 export const makeCloudflareMachineBackend = ({
   container,
   settings,
+  egress,
   onExit,
 }: CloudflareMachineBackendInput): MachineBackendShape => {
   /** A stop under way. */
@@ -128,6 +141,12 @@ export const makeCloudflareMachineBackend = ({
   };
 
   const start = async (request: MachineRequest) => {
+    // Before the start, so the container gets its CA. Intercepts last until it stops.
+    if (egress !== null) {
+      const check = egress();
+      await container.interceptOutboundHttps("*", check);
+      await container.interceptAllOutboundHttp(check);
+    }
     container.start({
       entrypoint: [
         "node",
@@ -144,6 +163,8 @@ export const makeCloudflareMachineBackend = ({
         `cloudflare:${request.threadId}`,
       ],
       enableInternet: true,
+      // Read once, as Node starts; children inherit it. Missing without an egress check, which Node shrugs off.
+      ...(egress === null ? {} : { env: { NODE_EXTRA_CA_CERTS: EGRESS_CA } }),
     });
     watch();
     await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
@@ -221,6 +242,7 @@ export const makeCloudflareMachineBackend = ({
     image: null,
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
     idleTailMs: IDLE_TAIL_MS,
+    guardsSends: egress !== null,
     ensure: (request) =>
       attempt("ensure", async () => {
         if (stopping !== null) await stopping;

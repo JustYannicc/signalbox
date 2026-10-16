@@ -16,6 +16,7 @@ import type {
   FolderId,
   FolderLevel,
   FolderMoveInput,
+  FolderRevokeSecretSendInput,
   OnePasswordEnvironmentId,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
@@ -70,6 +71,9 @@ export function useFolderCommands() {
   });
   const setSecrets = useAtomCommand(signalboxFolders.setSecrets, { reportFailure: false });
   const setOnePassword = useAtomCommand(signalboxFolders.setOnePassword, {
+    reportFailure: false,
+  });
+  const revokeSecretSend = useAtomCommand(signalboxFolders.revokeSecretSend, {
     reportFailure: false,
   });
 
@@ -132,8 +136,23 @@ export function useFolderCommands() {
       /** The user's service account token, for every level; null disconnects it. */
       setOnePassword: (environmentId: EnvironmentId, token: string | null): Attempt =>
         attempted(setOnePassword({ environmentId, input: { token } })),
+      /** Stops agents always sending a secret to a host: the next send asks again. */
+      revokeSecretSend: (
+        environmentId: EnvironmentId,
+        input: FolderRevokeSecretSendInput,
+      ): Attempt => attempted(revokeSecretSend({ environmentId, input })),
     }),
-    [create, move, moveThread, remove, setInstructions, setOnePassword, setSecrets, update],
+    [
+      create,
+      move,
+      moveThread,
+      remove,
+      revokeSecretSend,
+      setInstructions,
+      setOnePassword,
+      setSecrets,
+      update,
+    ],
   );
 }
 

@@ -131,7 +131,13 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
         // The owner's 1Password token rides only in this frame; never log it.
         ...(work.secrets.length === 0
           ? {}
-          : { secrets: { token: secretsToken, environments: work.secrets } }),
+          : {
+              secrets: {
+                token: secretsToken,
+                environments: work.secrets,
+                ...(work.guarded ? { guarded: true } : {}),
+              },
+            }),
       });
       sentRunId = work.turn.runId;
     }

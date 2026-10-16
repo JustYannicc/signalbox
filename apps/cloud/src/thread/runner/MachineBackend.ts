@@ -91,6 +91,11 @@ export interface MachineBackendShape {
   /** How long an idle machine stays up for the next message. */
   readonly idleTailMs: number;
   /**
+   * Whether every HTTP and HTTPS request its machines make passes the thread's
+   * egress check (#592, `egress/`), so placeholders may be filled on them.
+   */
+  readonly guardsSends: boolean;
+  /**
    * Brings the machine up with a Runner at `generation`, as `machineClass`.
    * Done when `actual` is `running`; until then, ask again.
    */
@@ -117,6 +122,8 @@ export interface MachineBackendShape {
  */
 export interface MachineHost {
   readonly container?: Container | undefined;
+  /** Where the container's requests go for the egress check (`egress/ThreadEgress.ts`). */
+  readonly egress?: (() => Fetcher) | undefined;
   readonly onExit?: (detail: string, generation: number) => void;
 }
 

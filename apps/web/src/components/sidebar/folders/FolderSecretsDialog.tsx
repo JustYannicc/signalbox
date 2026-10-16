@@ -3,8 +3,13 @@
  * they start, and the user's service account token that reads it. The token
  * is one per user, so connecting, replacing or disconnecting it here applies
  * to every folder. Neither the token nor any value ever comes back to show.
+ *
+ * It also lists where agents may always send this Environment's secrets
+ * (#592): the "Always" answers to the thread asking the first time one went
+ * somewhere new. Stopping one makes the next send ask again.
  */
 import { useAtomValue } from "@effect/atom-react";
+import type { SecretSend } from "@t3tools/contracts/signalboxFolders";
 import { useId, useState, type FormEvent } from "react";
 
 import { environmentFoldersAtom } from "../../../state/signalboxFolders";
@@ -29,7 +34,7 @@ import {
 import { useFolderCommands, type Attempt } from "./useFolderCommands";
 
 type TokenMode = "connected" | "replace" | "disconnect";
-type Action = "save" | "remove" | "disconnect";
+type Action = "save" | "remove" | "disconnect" | "stop-send";
 
 export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kind: "secrets" }> }) {
   const { dialog } = props;
@@ -39,6 +44,7 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
   const current = snapshot ? levelSecrets(snapshot, dialog.level) : null;
   const above = snapshot ? secretSourcesAbove(snapshot, dialog.level) : [];
   const connectedAt = snapshot?.onePassword?.connectedAt ?? null;
+  const sends = (snapshot?.secretSends ?? []).filter((send) => send.environmentId === current);
 
   const [environmentId, setEnvironmentId] = useState<string>(current ?? "");
   const [token, setToken] = useState("");
@@ -106,6 +112,19 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
       return false;
     });
 
+  // Stays open: the list is what changed.
+  const stopSend = (send: SecretSend) =>
+    void run("stop-send", async (step) => {
+      await step(
+        commands.revokeSecretSend(dialog.environmentId, {
+          environmentId: send.environmentId,
+          name: send.name,
+          host: send.host,
+        }),
+      );
+      return false;
+    });
+
   const named = environmentId.trim().length > 0;
 
   return (
@@ -118,7 +137,8 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
           {dialog.name === null
             ? "Every thread gets this 1Password Environment's variables when it starts."
             : "Threads in this folder and below get this 1Password Environment's variables when they start."}{" "}
-          Values never show in Signalbox.
+          Values never show in Signalbox: agents write <code>{"{{secret:NAME}}"}</code>, and the
+          first time one goes somewhere new, the thread asks you.
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -229,6 +249,36 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
               >
                 Disconnect
               </Button>
+            </div>
+          )}
+
+          {sends.length === 0 ? null : (
+            <div className="grid gap-1.5">
+              <Label>Agents always send</Label>
+              <ul className="grid divide-y rounded-lg border">
+                {sends.map((send) => (
+                  <li
+                    key={`${send.name} ${send.host}`}
+                    className="flex items-center gap-2 px-3 py-1.5"
+                  >
+                    <p className="min-w-0 flex-1 truncate text-sm">
+                      <span className="font-mono">{send.name}</span>
+                      <span className="text-muted-foreground"> to {send.host}</span>
+                    </p>
+                    <Button
+                      size="xs"
+                      variant="ghost-destructive"
+                      disabled={pending}
+                      onClick={() => stopSend(send)}
+                    >
+                      Stop
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">
+                Stopping one makes the next send there ask you again.
+              </p>
             </div>
           )}
 

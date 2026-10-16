@@ -16,6 +16,7 @@ import { type ThreadObjectNamespace, threadObjectStub } from "../ThreadDirectory
 import { ThreadStore } from "../ThreadStore.ts";
 import { SessionRows } from "./SessionRows.ts";
 import { threadOfSessionToken } from "./sessionToken.ts";
+import { saveSecretSources } from "../egress/secretSendTables.ts";
 
 /**
  * The session API a thread's Runner calls (`SessionProtocol.ts`). The Worker
@@ -124,6 +125,8 @@ export const serveSessionRequest = (input: SessionRequest) =>
         const lease = yield* store.machine;
         if (lease.status === "none" || lease.generation !== verdict.generation) return false;
         yield* store.registerSecretValues(verdict.generation, registration.secrets);
+        // A Runner from before #592 says nothing of where they came from.
+        if (registration.sources !== undefined) yield* saveSecretSources(registration.sources);
         return true;
       }).pipe(
         sql.withTransaction,

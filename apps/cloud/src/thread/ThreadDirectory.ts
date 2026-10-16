@@ -50,6 +50,8 @@ import {
   type ThreadObjectReply,
   wire,
 } from "./threadWire.ts";
+import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+import type { SendAnswer, SendRequest } from "./egress/ThreadSends.ts";
 
 /**
  * How the Worker and user objects reach thread objects. Every thread has
@@ -443,6 +445,9 @@ export interface ThreadObjectNamespace {
     readonly recordModelRequest: (record: ModelGatewayRecord) => Promise<void>;
     readonly authorizeDrive: (token: string) => Promise<DriveAuthorization>;
     readonly authorizeRemote: (token: string) => Promise<RemoteAuthorization>;
+    /** The machine's egress check (#592, `egress/`): the values to look for, and the decision. */
+    readonly egressSecrets: () => Promise<ReadonlyArray<SecretValue>>;
+    readonly authorizeSend: (input: SendRequest) => Promise<SendAnswer>;
   };
 }
 

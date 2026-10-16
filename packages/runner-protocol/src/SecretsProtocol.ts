@@ -26,6 +26,12 @@ export const SecretsAccess = Schema.Struct({
   token: Schema.NullOr(Schema.String),
   /** Top level first; a nearer folder's variable replaces one of the same name from above. */
   environments: Schema.Array(OnePasswordEnvironmentId),
+  /**
+   * The machine's sends pass the thread's egress check (#592), which asks the
+   * person before a secret goes to a new host: only then does the Runner fill
+   * placeholders in what the agent writes or runs. Absent: it doesn't.
+   */
+  guarded: Schema.optionalKey(Schema.Boolean),
 });
 export type SecretsAccess = typeof SecretsAccess.Type;
 
@@ -34,7 +40,17 @@ export type SecretsAccess = typeof SecretsAccess.Type;
  * still says the machine has none. Values only join; the thread keeps every
  * one it was given, since an old value may still sit in the conversation.
  */
-export const SecretsRegistration = Schema.Struct({ secrets: Schema.Array(SecretValue) });
+export const SecretsRegistration = Schema.Struct({
+  secrets: Schema.Array(SecretValue),
+  /**
+   * The Environment each secret came from right now, nearest folder winning:
+   * what the person's "always send" answers are kept against (#592). Absent
+   * from a Runner older than this field.
+   */
+  sources: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ name: Schema.String, environment: OnePasswordEnvironmentId })),
+  ),
+});
 export type SecretsRegistration = typeof SecretsRegistration.Type;
 
 export const secretsJson = { registration: jsonCodec(SecretsRegistration) };

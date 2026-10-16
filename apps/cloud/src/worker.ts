@@ -30,6 +30,7 @@ export { PoolObject, PoolStoreGateway } from "./pool/PoolObject.ts";
 export { PreviewLinkRegistry } from "./pool/PreviewLinkRegistryDO.ts";
 export { DriveObject } from "./drive/DriveObject.ts";
 export { ThreadObject } from "./thread/ThreadObject.ts";
+export { ThreadEgress } from "./thread/egress/ThreadEgress.ts";
 export { UserObject } from "./user/UserObject.ts";
 export { AutomationHost, AutomationWorkflow } from "./automations/automationWorkflow.ts";
 

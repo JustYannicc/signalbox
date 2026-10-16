@@ -28,6 +28,7 @@ import * as ResourceBindings from "./ResourceBindings.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
+import * as UserFolders from "./UserFolders.ts";
 
 /**
  * A user object's answers, given a way to run its effects. The Durable Object
@@ -55,6 +56,7 @@ export const makeUserObjectApi = (
       | OnePasswordAccount.OnePasswordAccount
       | PersonBrowsers.PersonBrowsers
       | SignInGrants.SignInGrants
+      | UserFolders.UserFolders
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -136,6 +138,11 @@ export const makeUserObjectApi = (
     githubCommitAuthor: () => github((service) => service.commitAuthor),
     onePasswordToken: () =>
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
+    secretSendsAllowed: async ({ host, sends }) => [
+      ...(await run(UserFolders.UserFolders.use((folders) => folders.allowedSends(host, sends)))),
+    ],
+    keepSecretSends: (grants) =>
+      run(UserFolders.UserFolders.use((folders) => folders.keepSends(grants))),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),

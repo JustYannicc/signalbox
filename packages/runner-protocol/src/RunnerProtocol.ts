@@ -364,6 +364,13 @@ export type MachineEnsureRequest = typeof MachineEnsureRequest.Type;
 export const MACHINE_HOME = "/home/user/signalbox";
 
 /**
+ * Where Cloudflare puts the CA a light machine's intercepted HTTPS is re-signed
+ * with when its container starts (#592): the backend points Node at it, the
+ * Runner trusts it for everything else.
+ */
+export const EGRESS_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
+
+/**
  * What a VM's Runner runs: the file a machine backend writes onto a thread's
  * machine (`runner machine` reads it). A new generation in it replaces the
  * Runner; a different `image` restarts the machine's Runner on that image.

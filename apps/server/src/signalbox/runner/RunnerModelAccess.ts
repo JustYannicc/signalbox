@@ -12,6 +12,7 @@ import {
   tomlString,
 } from "./RunnerGatewayPins.ts";
 import { INSTRUCTIONS_MAX_BYTES, ROOT_MARKER } from "./RunnerInstructions.ts";
+import { EGRESS_TRUST_VARIABLES } from "./RunnerEgressTrust.ts";
 
 /**
  * How a machine's harnesses reach their models with no provider key on the
@@ -67,8 +68,10 @@ const INHERITED = [
   "USER",
   "LOGNAME",
   "SHELL",
-  // A gateway behind a private CA (local development) must still be trusted.
+  // A gateway behind a private CA (local development) must still be trusted, and
+  // so must a light machine's egress check (`RunnerEgressTrust.ts`).
   "NODE_EXTRA_CA_CERTS",
+  ...EGRESS_TRUST_VARIABLES,
 ];
 
 export function harnessEnvironment(

@@ -104,6 +104,7 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.folders.setInstructions": write(),
   "signalbox.folders.setSecrets": write(),
   "signalbox.folders.setOnePassword": write(),
+  "signalbox.folders.revokeSecretSend": write(),
 
   "signalbox.threadKinds.subscribe": read({
     name: "threadKinds.list",

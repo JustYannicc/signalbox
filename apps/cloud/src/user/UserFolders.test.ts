@@ -213,6 +213,42 @@ describe("UserFolders", () => {
       }).pipe(Effect.provide(layerMemoryStore)),
   );
 
+  it.effect("keeps where agents may always send a secret, shows it, and stops it on revoke", () =>
+    Effect.gen(function* () {
+      const { folders, store } = yield* services;
+      yield* store.recordSignIn({ id: USER, email: "a@b.c" });
+      const environmentId = OnePasswordEnvironmentId.make("env-work");
+      const grant = { environmentId, name: "STRIPE_KEY", host: "api.stripe.com" };
+
+      yield* folders.keepSends([grant]);
+      // Keeping it again changes nothing.
+      yield* folders.keepSends([grant]);
+      expect(
+        (yield* folders.snapshot).secretSends?.map(({ environmentId, name, host }) => ({
+          environmentId,
+          name,
+          host,
+        })),
+      ).toEqual([grant]);
+      expect([
+        ...(yield* folders.allowedSends("api.stripe.com", [{ environmentId, name: "STRIPE_KEY" }])),
+      ]).toEqual(["STRIPE_KEY"]);
+      // Another Environment's variable of the same name is another secret.
+      expect(
+        (yield* folders.allowedSends("api.stripe.com", [
+          { environmentId: OnePasswordEnvironmentId.make("env-other"), name: "STRIPE_KEY" },
+        ])).size,
+      ).toBe(0);
+
+      const revoked = yield* folders.revokeSecretSend(grant);
+      expect(revoked.secretSends).toBeUndefined();
+      expect(
+        (yield* folders.allowedSends("api.stripe.com", [{ environmentId, name: "STRIPE_KEY" }]))
+          .size,
+      ).toBe(0);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
   it.effect(
     "gives a thread its chain's 1Password Environments top first, and shows only when 1Password was connected",
     () =>

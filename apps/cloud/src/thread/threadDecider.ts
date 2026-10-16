@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import { isHarnessInstance } from "./providerCatalog.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
 import { activeRun, resumeQueueEvents, startRunEvents } from "./runLifecycle.ts";
+import { answerRequestEvents } from "./runtimeRequests.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
@@ -69,6 +70,7 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request-link.sync",
   "thread.archive",
   "thread.unarchive",
+  "runtime-request.respond",
 ] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
@@ -322,6 +324,11 @@ export function decide(
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
       return accept(pullRequestLinkEvents(projection, command, ctx));
+    // What the thread asked its person (`runtimeRequests.ts`).
+    case "runtime-request.respond": {
+      const answered = answerRequestEvents(projection, command.requestId, command.decision, ctx);
+      return typeof answered === "string" ? reject(answered) : accept(answered);
+    }
     default:
       return command satisfies never;
   }

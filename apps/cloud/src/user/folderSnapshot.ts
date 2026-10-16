@@ -30,6 +30,7 @@ export const toSnapshot = (current: FolderState): SignalboxFoldersSnapshot => {
     ...(current.onePasswordConnectedAt === null
       ? {}
       : { onePassword: { connectedAt: current.onePasswordConnectedAt } }),
+    ...(current.secretSends.length === 0 ? {} : { secretSends: current.secretSends }),
     folders: byPosition(tree.folders).map((folder): Folder => {
       const files = filesProjectOf(folder, given);
       const poolId = placed.get(folder.id);

@@ -7,7 +7,9 @@ import {
   OnePasswordEnvironmentId,
   type FolderMoveThreadInput,
   type FolderSetInstructionsInput,
+  type FolderRevokeSecretSendInput,
   type FolderSetOnePasswordInput,
+  type SecretSend,
   type FolderSetSecretsInput,
   type FolderUpdateInput,
   type SignalboxFoldersSnapshot,
@@ -58,6 +60,7 @@ import {
   type SectionRows,
 } from "./folderRows.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
+import * as SecretSends from "./SecretSends.ts";
 import { makeProfileId } from "./profileId.ts";
 import { makeTraced } from "./tracing.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
@@ -97,6 +100,8 @@ export interface FolderState {
   readonly revision: number;
   /** When the user's 1Password service account was connected; null when none is. */
   readonly onePasswordConnectedAt: number | null;
+  /** The hosts agents may always send each secret to (#592, `SecretSends.ts`). */
+  readonly secretSends: ReadonlyArray<SecretSend>;
 }
 
 export class UserFolders extends Context.Service<
@@ -128,6 +133,19 @@ export class UserFolders extends Context.Service<
     ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
     /** Connects `token` only when no account is: a preview taking production's (`previewSetup/`). */
     readonly adoptOnePassword: (token: string) => Effect.Effect<void, SqlError>;
+    /** Which of a thread's secrets the person always lets agents send to `host` (#592). */
+    readonly allowedSends: (
+      host: string,
+      sends: ReadonlyArray<Omit<SecretSends.SecretSendKey, "host">>,
+    ) => Effect.Effect<ReadonlySet<string>, SqlError>;
+    /** A thread's "Always" answers, kept for every thread from now on. */
+    readonly keepSends: (
+      grants: ReadonlyArray<SecretSends.SecretSendKey>,
+    ) => Effect.Effect<void, SqlError>;
+    /** Stops agents always sending a secret to a host: the next send asks again. */
+    readonly revokeSecretSend: (
+      input: FolderRevokeSecretSendInput,
+    ) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
     /** Takes a deleted pool off every level, so they inherit from above again. */
     readonly forgetPool: (poolId: string) => Effect.Effect<void, SqlError>;
     /**
@@ -207,6 +225,7 @@ const make = Effect.gen(function* () {
     );
   const bindings = yield* ResourceBindings.ResourceBindings;
   const onePassword = yield* OnePasswordAccount.OnePasswordAccount;
+  const secretSends = yield* SecretSends.SecretSends;
   // Own changes and owner or drive changes share one signal, so a subscriber
   // that subscribes before its first read misses neither.
   const changed = yield* PubSub.sliding<void>(1);
@@ -266,6 +285,7 @@ const make = Effect.gen(function* () {
         tree,
         revision: state?.revision ?? 0,
         onePasswordConnectedAt: yield* onePassword.connectedAt,
+        secretSends: yield* secretSends.inForce,
       } satisfies FolderState;
     });
 
@@ -602,6 +622,23 @@ const make = Effect.gen(function* () {
   const adoptOnePassword: UserFolders["Service"]["adoptOnePassword"] = (token) =>
     changedWith(onePassword.adopt(token));
 
+  // Spans carry names' counts and the decision, never a host or a secret's name (#285).
+  const allowedSends: UserFolders["Service"]["allowedSends"] = (host, sends) =>
+    secretSends.allowed(host, sends);
+
+  const keepSends: UserFolders["Service"]["keepSends"] = (grants) =>
+    Effect.gen(function* () {
+      const by = yield* userId;
+      if (by === null) return;
+      yield* changedWith(secretSends.keep(grants, by));
+    }).pipe(traced("UserFolders.keepSends", { "secret_sends.count": grants.length }));
+
+  const revokeSecretSend: UserFolders["Service"]["revokeSecretSend"] = (input) =>
+    changedWith(secretSends.revoke(input)).pipe(
+      Effect.andThen(snapshot),
+      traced("UserFolders.revokeSecretSend", {}),
+    );
+
   const forgetPool: UserFolders["Service"]["forgetPool"] = (poolId) =>
     changedWith(bindings.forgetPool(poolId));
 
@@ -765,6 +802,9 @@ const make = Effect.gen(function* () {
     setSecrets,
     setOnePassword,
     adoptOnePassword,
+    allowedSends,
+    keepSends,
+    revokeSecretSend,
     forgetPool,
     turn,
     rows,

@@ -54,5 +54,9 @@ export function createSignalboxFoldersAtoms<R, E>(
       label: "signalbox-folders:set-one-password",
       tag: SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword,
     }),
+    revokeSecretSend: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-folders:revoke-secret-send",
+      tag: SIGNALBOX_FOLDERS_WS_METHODS.revokeSecretSend,
+    }),
   };
 }

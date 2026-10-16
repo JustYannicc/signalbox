@@ -74,6 +74,20 @@ pool (`scrubModelRequest.ts`). Until the machine running the turn has
 registered, the gateway refuses the turn's requests with "This machine hasn't
 registered the folder's secrets to hide them yet."
 
+Placeholders are filled at two boundaries, never by the model (#592). The
+Runner fills `{{secret:NAME}}` in Claude Code's file and shell tools before
+they run (`RunnerSecretFill.ts`, a `PreToolUse` hook). A light machine's HTTP
+and HTTPS requests all go through the thread's egress check outside the
+container (`interceptOutboundHttps("*")`, `thread/egress/`), which fills the
+placeholders a program sends and asks the person before any secret, by
+placeholder or recognizable value, goes to a host they haven't allowed. The
+container trusts the CA Cloudflare re-signs its HTTPS with: the backend sets
+`NODE_EXTRA_CA_CERTS`, and the Runner adds the CA to the system bundle and the
+browser's NSS database as it starts (`RunnerEgressTrust.ts`). A client with
+its own baked-in roots refuses intercepted HTTPS. Boat machines have no egress
+check yet, so the Runner refuses to fill there. Other ports leave the
+container unchecked.
+
 Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
 deployed after the cloud Worker. Each pull request preview gets its own,
 `signalbox-model-gateway-pr-<number>` at

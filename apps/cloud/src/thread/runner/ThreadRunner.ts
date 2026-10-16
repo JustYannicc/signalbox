@@ -251,6 +251,8 @@ export interface RunnerWork {
    * without a turn. The owner's token to read them is `secretsToken`.
    */
   readonly secrets: ReadonlyArray<OnePasswordEnvironmentId>;
+  /** Whether the machine's requests pass the thread's egress check (#592), so placeholders fill. */
+  readonly guarded: boolean;
   readonly activeRunId: RunId | null;
 }
 
@@ -786,6 +788,7 @@ const make = Effect.gen(function* () {
             ? null
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
         secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
+        guarded: backends[classOf(lease)].guardsSends,
         activeRunId: run?.id ?? null,
       });
     }),
