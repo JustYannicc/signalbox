@@ -287,7 +287,7 @@ function AgentBrowserScreen({
       : frame.kind === "step" && recording.error !== null
         ? recording.error
         : pageUrl === null
-          ? "Reconnect to the environment to see the agent's browser."
+          ? "Reconnect to see the agent's browser."
           : null;
 
   return (

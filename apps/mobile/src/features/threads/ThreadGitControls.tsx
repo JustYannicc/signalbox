@@ -376,7 +376,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               type: "action",
             },
             {
-              description: "Turn diffs and worktree changes",
+              description: "Turn diffs and uncommitted changes",
               disabled: !model.isRepo,
               icon: { name: "text.bubble", type: "sfSymbol" },
               label: "Review changes",
@@ -605,7 +605,7 @@ function threadGitMenuDefinition(
         title: "Review changes",
         icon: "text.bubble",
         disabled: !model.isRepo,
-        subtitle: "Turn diffs and worktree changes",
+        subtitle: "Turn diffs and uncommitted changes",
         onPress: model.openReview,
       },
       {
