@@ -117,8 +117,11 @@ function SyncedBrowserScreen(props: {
                   title: "Tabs",
                   icon: "square.on.square",
                   items: [
-                    ...(tabItems.length > 0 ? [{ id: "tabs", inline: true, items: tabItems }] : []),
-                    { id: "tab-actions", inline: true, items: tabActions },
+                    // An inline group needs a title; without one it shows its items' text run together.
+                    ...(tabItems.length > 0
+                      ? [{ id: "tabs", title: "Open tabs", inline: true, items: tabItems }]
+                      : []),
+                    ...tabActions,
                   ],
                 },
               ]
