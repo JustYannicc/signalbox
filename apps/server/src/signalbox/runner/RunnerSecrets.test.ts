@@ -1,8 +1,10 @@
+// @effect-diagnostics cryptoRandomUUID:off cryptoRandomUUIDInEffect:off - fake secrets are generated per run, so no test ever holds a real one.
 import {
   type RunnerItem,
   type RunnerMessage,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import { type SecretValue, secretPlaceholder } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
 import {
   MessageId,
@@ -35,7 +37,7 @@ import {
   type OnePassword,
   OnePasswordError,
 } from "./RunnerOnePassword.ts";
-import { makeRunnerSecrets, type SecretsReport } from "./RunnerSecrets.ts";
+import { makeRunnerSecrets, SecretsRegisterError, type SecretsReport } from "./RunnerSecrets.ts";
 import type { RunnerTransport } from "./RunnerSession.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
 import { maskingTransport } from "./runnerSocket.ts";
@@ -76,15 +78,24 @@ const fakeOnePassword = (
   return { onePassword, calls };
 };
 
-const reporter = () => {
+/** What a load reports; `refuse` makes the thread turn its registration down. */
+const reporter = (refuse?: string) => {
   const notices: Array<string> = [];
   const lines: Array<string> = [];
+  const registered: Array<ReadonlyArray<SecretValue>> = [];
   const report: SecretsReport = {
     notice: (message) => Effect.sync(() => void notices.push(message)),
     info: (message) => Effect.sync(() => void lines.push(message)),
+    register: (secrets) =>
+      refuse === undefined
+        ? Effect.sync(() => void registered.push(secrets))
+        : Effect.fail(new SecretsRegisterError({ message: refuse })),
   };
-  return { report, notices, lines };
+  return { report, notices, lines, registered };
 };
+
+/** The turn's session token, which registers its secrets with the thread. */
+const sessions = { token: "session-token" };
 
 const access = (
   environments: ReadonlyArray<OnePasswordEnvironmentId>,
@@ -209,6 +220,45 @@ describe("RunnerSecrets", () => {
     }),
   );
 
+  it.effect(
+    "registers what it hides with the thread before the harness gets any, and fails without",
+    () =>
+      Effect.gen(function* () {
+        // Generated per run: no test holds a real secret.
+        const hidden = `sk-fake-${crypto.randomUUID()}`;
+        const account = fakeOnePassword({
+          [top]: [variable("API_KEY", hidden), variable("PUBLIC_URL", "https://app.test", false)],
+        });
+        const make = () =>
+          makeRunnerSecrets({
+            onePassword: account.onePassword,
+            mask: makeSecretMask(),
+            reserved: () => new Set(),
+          });
+        const accepted = reporter();
+        const secrets = make();
+
+        yield* secrets.load(access([top]), accepted.report);
+
+        // Only what 1Password hides; the gateway can't serve the turn before this.
+        expect(accepted.registered).toEqual([[{ name: "API_KEY", value: hidden }]]);
+        expect(secrets.environment()).toEqual({ API_KEY: hidden, PUBLIC_URL: "https://app.test" });
+
+        const refused = reporter("the cloud answered HTTP 403: A newer machine replaced this one.");
+        const unregistered = make();
+        const failed = yield* Effect.flip(unregistered.load(access([top]), refused.report));
+        expect(failed._tag).toBe("SecretsRegisterError");
+        expect(unregistered.environment()).toEqual({});
+        // Tried again with the next turn.
+        expect(yield* unregistered.load(access([top]), accepted.report)).toBe(1);
+
+        // No service account: none to hide, which the gateway waits to hear too.
+        const none = reporter();
+        yield* make().load(access([top], null), none.report);
+        expect(none.registered).toEqual([[]]);
+      }),
+  );
+
   it.effect("masks the token and every hidden value, but not what 1Password shows", () =>
     Effect.gen(function* () {
       const mask = makeSecretMask();
@@ -229,11 +279,12 @@ describe("RunnerSecrets", () => {
       // A token 1Password turns down is masked in what the turn says about it.
       yield* secrets.load(access([top], "ops_a-revoked-token"), report);
 
+      const token = secretPlaceholder("OP_SERVICE_ACCOUNT_TOKEN");
       expect(mask.text(`${TOKEN} hidden-api-key https://relay.example`)).toBe(
-        "*** *** https://relay.example",
+        `${token} ${secretPlaceholder("API_KEY")} https://relay.example`,
       );
       expect(notices).toEqual([
-        "Some of this folder's secrets didn't load from 1Password, so this turn runs without them: signing in to 1Password failed: invalid token ***.",
+        `Some of this folder's secrets didn't load from 1Password, so this turn runs without them: signing in to 1Password failed: invalid token ${token}.`,
       ]);
     }),
   );
@@ -373,15 +424,31 @@ describe("a thread's secrets on its machine", () => {
             }),
             emit: () => Effect.void,
             secrets,
+            registerSecrets: () => Effect.void,
           });
 
-          yield* turns.start({ turn: turnFor(1), modelToken: "t", secrets: access([top]) });
+          yield* turns.start({
+            turn: turnFor(1),
+            modelToken: "t",
+            sessions,
+            secrets: access([top]),
+          });
           yield* settle;
-          yield* turns.start({ turn: turnFor(2), modelToken: "t", secrets: access([top]) });
+          yield* turns.start({
+            turn: turnFor(2),
+            modelToken: "t",
+            sessions,
+            secrets: access([top]),
+          });
           yield* settle;
           // Moved to a folder with its own Environment, which sets the same name.
           environments[folder] = [variable("API_KEY", "folder-api-key")];
-          yield* turns.start({ turn: turnFor(3), modelToken: "t", secrets: access([top, folder]) });
+          yield* turns.start({
+            turn: turnFor(3),
+            modelToken: "t",
+            sessions,
+            secrets: access([top, folder]),
+          });
           yield* settle;
 
           expect(harness.calls).toEqual([
@@ -426,8 +493,14 @@ describe("a thread's secrets on its machine", () => {
           }),
           emit: (item) => Effect.sync(() => void items.push(item)),
           secrets,
+          registerSecrets: () => Effect.void,
         });
-        yield* turns.start({ turn: turnFor(1), modelToken: "t", secrets: access([top, folder]) });
+        yield* turns.start({
+          turn: turnFor(1),
+          modelToken: "t",
+          sessions,
+          secrets: access([top, folder]),
+        });
         yield* settle;
         // The agent did print it: the harness's own output carries the value.
         expect(JSON.stringify(items)).toContain("leakable-api-key");
@@ -449,7 +522,7 @@ describe("a thread's secrets on its machine", () => {
         const sent = frames.join("\n");
         expect(sent).not.toContain("leakable-api-key");
         expect(sent).not.toContain(TOKEN);
-        expect(sent).toContain("Authorization: ***");
+        expect(sent).toContain(`Authorization: ${secretPlaceholder("API_KEY")}`);
         expect(sent).toContain("secrets.notice");
       }),
     ),

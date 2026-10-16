@@ -1,4 +1,6 @@
+// @effect-diagnostics cryptoRandomUUID:off cryptoRandomUUIDInEffect:off - fake secrets are generated per run, so no test ever holds a real one.
 import type { MachineUsage, RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import { SESSION_PATHS } from "@signalbox/runner-protocol/SessionProtocol";
 import { ProjectId, type RunId } from "@t3tools/contracts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
@@ -14,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import { makeMemoryCloud } from "../../testing.ts";
+import { serveSessionRequest } from "../session/sessionRoutes.ts";
 import * as ThreadContexts from "../../user/threadContexts.ts";
 import * as UserFolders from "../../user/UserFolders.ts";
 import * as CloudAnalytics from "../diagnostics/CloudAnalytics.ts";
@@ -251,6 +254,67 @@ describe("folder secrets", () => {
         expect(watch.spans.some((span) => span.name === "UserFolders.setOnePassword")).toBe(true);
         expect(watch.text()).not.toContain(TOKEN);
       }).pipe(Effect.provide(watch.layer));
+    },
+  );
+
+  it.effect(
+    "serve a turn's model requests only once its machine registered the values, kept nowhere else",
+    () => {
+      const watch = observed();
+      const environments = [OnePasswordEnvironmentId.make("env-top")];
+      // Generated per run: no test holds a real secret.
+      const value = `sk-fake-${crypto.randomUUID()}`;
+      return withObject(freshDatabase(), (engine, runner, context) =>
+        Effect.gen(function* () {
+          const register = (token: string, body: string) =>
+            serveSessionRequest({
+              method: "POST",
+              url: `http://cloud.test${SESSION_PATHS.secrets}`,
+              token,
+              body,
+            }).pipe(Effect.provide(context));
+          yield* launch(engine, "launch-1", {
+            ...personal,
+            secrets: { top: environments, projects: {} },
+          });
+          yield* connect(runner);
+          const work = yield* runner.work;
+          const modelToken = work.modelToken ?? "";
+          const sessionToken = work.sessions?.token ?? "";
+          expect(work.secrets).toEqual(environments);
+
+          // Before the machine says what to hide, the provider gets nothing.
+          expect(yield* runner.authorizeModel(modelToken, "anthropic")).toMatchObject({
+            _tag: "unregistered",
+            reason: "This machine hasn't registered the folder's secrets to hide them yet.",
+          });
+          // Only the machine holding the lease may register, and only readable lists.
+          const body = JSON.stringify({ secrets: [{ name: "FAKE_SECRET", value }] });
+          expect((yield* register(`${sessionToken}x`, body)).status).toBe(403);
+          const unreadable = JSON.stringify({ secrets: [{ name: "not a name", value }] });
+          expect((yield* register(sessionToken, unreadable)).status).toBe(400);
+          expect((yield* register(sessionToken, body)).status).toBe(200);
+
+          expect(yield* runner.authorizeModel(modelToken, "anthropic")).toMatchObject({
+            _tag: "granted",
+            secrets: [{ name: "FAKE_SECRET", value }],
+          });
+          // Values only join: a later load without it still hides it.
+          expect((yield* register(sessionToken, JSON.stringify({ secrets: [] }))).status).toBe(200);
+          expect(yield* runner.authorizeModel(modelToken, "anthropic")).toMatchObject({
+            secrets: [{ name: "FAKE_SECRET", value }],
+          });
+
+          const { projection } = yield* snapshot(engine);
+          for (const stored of [
+            yield* dump(Context.get(context, SqlClient.SqlClient), ["secret_values"]),
+            text_(projection),
+            watch.text(),
+          ]) {
+            expect(stored).not.toContain(value);
+          }
+        }),
+      ).pipe(Effect.provide(watch.layer));
     },
   );
 });

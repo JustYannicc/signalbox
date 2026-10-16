@@ -37,7 +37,7 @@ import type { OutsideFolder } from "./RunnerMachineState.ts";
 import { makeDiscoveredPorts } from "./RunnerPreviewPorts.ts";
 import { previewTunnelTransport, runPreviewTunnel } from "./RunnerPreviewTunnel.ts";
 import { onePasswordSdk, type OnePassword } from "./RunnerOnePassword.ts";
-import { makeRunnerSecrets } from "./RunnerSecrets.ts";
+import { makeRunnerSecrets, makeSecretsRegistrar } from "./RunnerSecrets.ts";
 import { makeRunnerSession, type RunnerSession } from "./RunnerSession.ts";
 import { makeRunnerSessions } from "./RunnerSessions.ts";
 import {
@@ -103,6 +103,8 @@ export type EnsureOutcome = "started" | "running" | "superseded";
  * (#490): its home, and its harnesses' config, without what the Runner
  * writes there at every start (the harness settings pointing at this
  * machine's gateway) or saves another way (session transcripts, #132).
+ * Nor the shell snapshots each harness session writes again, which export
+ * its whole environment and so the folder's secrets, or Codex's logs.
  */
 const outsideFolders = (layout: MachineLayout): ReadonlyArray<OutsideFolder> => [
   { name: "home", label: "~", dir: layout.home, exclude: [], caches: [".cache"] },
@@ -110,14 +112,14 @@ const outsideFolders = (layout: MachineLayout): ReadonlyArray<OutsideFolder> => 
     name: "claude",
     label: "~/.claude",
     dir: layout.claudeHome,
-    exclude: ["settings.json", "projects"],
+    exclude: ["settings.json", "projects", "shell-snapshots"],
     caches: [],
   },
   {
     name: "codex",
     label: "~/.codex",
     dir: layout.codexHome,
-    exclude: ["config.toml", "sessions"],
+    exclude: ["config.toml", "sessions", "shell_snapshots", "log"],
     caches: [],
   },
 ];
@@ -186,6 +188,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             mcpServers: context.mcpServers,
             caches: caches.environment,
             sessionEnvironment: secrets.environment,
+            mask: mask.text,
           });
           const { adapters, layout, stderr, environment, attachmentsDir } = made;
           harnessVariables = made.harnessVariables;
@@ -195,6 +198,9 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             Effect.provide(driveServices),
           );
           const usage = yield* makeRunnerUsage(config.home);
+          const registerSecrets = yield* makeSecretsRegistrar(cloudUrl).pipe(
+            Effect.provide(FetchHttpClient.layer),
+          );
           const session = yield* makeRunnerSession({
             threadId: request.threadId,
             generation: request.generation,
@@ -220,6 +226,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 emit,
                 dependencies,
                 secrets,
+                registerSecrets,
                 openDrive: (access) =>
                   Effect.flatMap(makeDriveClient({ cloudUrl, access }), (client) =>
                     makeRunnerDrive({

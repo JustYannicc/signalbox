@@ -1,3 +1,4 @@
+// @effect-diagnostics cryptoRandomUUID:off cryptoRandomUUIDInEffect:off - fake secrets are generated per run, so no test ever holds a real one.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,6 +7,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 
 import { makeHarnessStderr } from "./harnessStderr.ts";
+import { makeSecretMask } from "./secretMask.ts";
 
 /** A spawner whose every process writes `chunks` to stderr and exits 1. */
 const layerFakeSpawner = (chunks: ReadonlyArray<string>) =>
@@ -59,6 +61,24 @@ describe("harnessStderr", () => {
         "[codex] Error: failed to initialize sqlite\n[codex] retry\n[codex] bye",
       );
       expect(stderr.since(stderr.mark())).toBe("");
+    }),
+  );
+
+  it.effect("masks a secret before a long line is cut, so no piece of it is kept", () =>
+    Effect.gen(function* () {
+      const value = `sk-fake-${crypto.randomUUID()}`;
+      const mask = makeSecretMask();
+      mask.add([{ name: "API_KEY", value }]);
+      const stderr = makeHarnessStderr(mask.text);
+      // The value straddles the 500th character, where the line is cut.
+      const line = `${"x".repeat(480)}${value} trailing`;
+      yield* spawnAndDrain("codex").pipe(
+        Effect.provide(stderr.layerSpawner.pipe(Layer.provide(layerFakeSpawner([`${line}\n`])))),
+      );
+
+      const kept = stderr.since(0);
+      expect(kept).toContain("{{secret:API_KEY}}");
+      expect(kept).not.toContain(value.slice(0, 10));
     }),
   );
 });

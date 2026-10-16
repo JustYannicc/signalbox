@@ -308,6 +308,7 @@ describe("ThreadRunner", () => {
             runId: turn.runId,
             traceId: turn.traceId,
             pool: { objectName: `${owner.userId}:personal`, userId: owner.userId },
+            secrets: [],
           });
           // Claude's turn, so not Codex's API; and nothing but the exact token.
           expect((yield* runner.authorizeModel(token, "openai"))._tag).toBe("denied");

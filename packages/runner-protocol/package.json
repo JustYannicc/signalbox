@@ -42,6 +42,10 @@
     "./BrowserProtocol": {
       "types": "./src/BrowserProtocol.ts",
       "import": "./src/BrowserProtocol.ts"
+    },
+    "./SecretScrubber": {
+      "types": "./src/SecretScrubber.ts",
+      "import": "./src/SecretScrubber.ts"
     }
   },
   "scripts": {
