@@ -118,6 +118,15 @@ export interface UserObjectApi {
     readonly threadId: string;
     readonly events: unknown;
   }) => Promise<void>;
+  /**
+   * A drive object's event outbox delivery (`drive/driveEventOutbox.ts`): the
+   * drive's next ref moves (`DriveRefEvent`s) in order, for the user's
+   * automations. Returns once they're taken; a throw has the drive send them again.
+   */
+  readonly driveEvents: (input: {
+    readonly driveId: string;
+    readonly events: ReadonlyArray<unknown>;
+  }) => Promise<void>;
   /** Drops the thread index and rebuilds it from the user's thread objects. */
   readonly rebuildThreadIndex: () => Promise<number>;
   /** Starts connecting GitHub (`github/GitHubConnection.ts`); WorkOS comes back to `returnTo`. */
@@ -283,6 +292,7 @@ const METHODS = Object.keys({
   shellSnapshot: true,
   recordThreadSummary: true,
   threadEvents: true,
+  driveEvents: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,

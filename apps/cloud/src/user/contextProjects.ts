@@ -68,6 +68,14 @@ export const driveOfProject = (projectId: ProjectId, userId: string): string | n
   return null;
 };
 
+/** The project `driveId` is for `userId` (`driveOfProject`'s inverse), or null when it names none of theirs. */
+export const projectOfDrive = (driveId: string, userId: string): ProjectId | null => {
+  const parsed = parseDriveId(driveId);
+  if (parsed === null) return null;
+  if (parsed.kind !== "my") return projectIdForDrive(driveId);
+  return parsed.owner === userId ? projectIdForContext(parsed.contextId) : null;
+};
+
 /** The drive a project's workspace root names for `userId`, or null when it names none. */
 export const driveOfRoot = (cwd: string, userId: string): string | null => {
   if (cwd.startsWith(DRIVE_ROOT_PREFIX)) {

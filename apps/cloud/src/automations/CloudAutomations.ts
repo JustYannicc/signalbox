@@ -7,6 +7,8 @@ import type {
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
+import type { DriveRefEvent } from "../drive/DriveEvents.ts";
+
 /** One `AutomationRunHost` method and its arguments, as a run's instance calls it. */
 export type AutomationHostRequest = {
   [M in keyof AutomationRunHost]: {
@@ -62,6 +64,16 @@ export interface CloudAutomationsShape {
       readonly sequence: number;
       readonly event: OrchestrationV2DomainEvent;
     }>;
+  }) => Effect.Effect<void, AutomationError>;
+  /**
+   * Ref moves of a drive the user is in (`drive/DriveEvents.ts`), in order
+   * and at least once, as `drive.changed` and `drive.branch-saved` events in
+   * the drive's project. Moves at or before a sequence already taken from
+   * that drive are dropped.
+   */
+  readonly driveEvents: (input: {
+    readonly driveId: string;
+    readonly events: ReadonlyArray<DriveRefEvent>;
   }) => Effect.Effect<void, AutomationError>;
   /** An automation tool an agent calls from its thread's machine (`automation_save`, `wait_for`, …). */
   readonly tool: (
