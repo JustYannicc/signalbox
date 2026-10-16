@@ -394,6 +394,7 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
+import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 import {
   ensureInlineContextReferences,
   removeInlineContextReference,
@@ -2756,7 +2757,7 @@ export default function ChatView(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not reconnect environment",
+          title: environmentCopy("Could not reconnect environment"),
           description: error instanceof Error ? error.message : "Failed to reconnect.",
         }),
       );
@@ -3139,7 +3140,9 @@ export default function ChatView(props: ChatViewProps) {
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        title: environmentCopy(
+          `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+        ),
         actions: (
           <>
             {!environmentReconnecting ? (
@@ -3735,7 +3738,10 @@ export default function ChatView(props: ChatViewProps) {
   const downloadFileAttachment = async (attachment: ChatFileAttachment) => {
     const connection = readPreparedConnection(environmentId);
     if (!connection) {
-      toastManager.add({ type: "error", title: "The environment is not connected." });
+      toastManager.add({
+        type: "error",
+        title: environmentCopy("The environment is not connected."),
+      });
       return;
     }
 
@@ -8147,7 +8153,7 @@ export default function ChatView(props: ChatViewProps) {
         throw new Error("Wait for attachments to finish preparing before rewinding.");
       }
       const connection = readPreparedConnection(environmentId);
-      if (!connection) throw new Error("The environment is not connected.");
+      if (!connection) throw new Error(environmentCopy("The environment is not connected."));
       const files = await prepareRevertedMessageAttachments({
         message,
         environmentId,
@@ -8467,7 +8473,9 @@ export default function ChatView(props: ChatViewProps) {
         ...stackedThreadToast({
           type: "warning",
           title: "Not connected: message not sent",
-          description: "Reconnecting to the environment. Try again once it is connected.",
+          description: environmentCopy(
+            "Reconnecting to the environment. Try again once it is connected.",
+          ),
         }),
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });

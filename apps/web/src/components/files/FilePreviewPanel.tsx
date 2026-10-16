@@ -116,6 +116,7 @@ import {
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -1033,6 +1034,7 @@ export default function FilePreviewPanel({
   selectedFilePending,
   workspaceMutationId,
 }: FilePreviewPanelProps) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
@@ -1250,7 +1252,9 @@ export default function FilePreviewPanel({
     }
     return (
       <div className="p-4 text-sm text-muted-foreground">
-        {fileAccess.error ?? "This connection cannot read host files."}
+        {fileAccess.error
+          ? environmentCopy(fileAccess.error)
+          : "This connection cannot read host files."}
       </div>
     );
   }
