@@ -30,6 +30,7 @@
     "@cloudflare/workers-types": "^4.20260604.1",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@signalbox/automation-compiler": "workspace:*",
     "@types/node": "catalog:",
     "alchemy": "2.0.0-beta.80",
     "typescript": "catalog:",

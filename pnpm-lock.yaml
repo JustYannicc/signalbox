@@ -208,6 +208,9 @@ importers:
       '@signalbox/api':
         specifier: workspace:*
         version: link:../../packages/api
+      '@signalbox/automation-compiler':
+        specifier: workspace:*
+        version: link:../../packages/automation-compiler
       effect:
         specifier: 4.0.5
         version: 4.0.5
@@ -215,6 +218,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.5
         version: 4.0.5(patch_hash=2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02)(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -279,6 +285,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.5
         version: 4.0.5(patch_hash=2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02)(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@signalbox/automation-compiler':
+        specifier: workspace:*
+        version: link:../../packages/automation-compiler
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -832,6 +841,9 @@ importers:
       '@signalbox/account':
         specifier: workspace:*
         version: link:../../packages/account
+      '@signalbox/automation-compiler':
+        specifier: workspace:*
+        version: link:../../packages/automation-compiler
       '@signalbox/automations':
         specifier: workspace:*
         version: link:../../packages/automations
@@ -1239,6 +1251,31 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
+
+  packages/automation-compiler:
+    dependencies:
+      '@signalbox/automations':
+        specifier: workspace:*
+        version: link:../automations
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
+      oxc-parser:
+        specifier: 0.148.0
+        version: 0.148.0
+      oxc-transform:
+        specifier: 0.148.0
+        version: 0.148.0
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      vite-plus:
+        specifier: 1.0.0
+        version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
   packages/automations:
     dependencies:

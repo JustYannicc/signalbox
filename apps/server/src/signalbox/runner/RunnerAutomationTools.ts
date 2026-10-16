@@ -6,7 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/ai/Tool";
 
-import { compileWorkflow } from "../../workflows/compiler/compileWorkflow.ts";
+import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { skillReference, unknownTopic } from "../../workflows/skill/files.ts";
 import type { ContextClient } from "./RunnerContextClient.ts";
 import { badArguments, fail, register, ToolError } from "./RunnerContextTools.ts";
@@ -209,13 +210,13 @@ export const layerAutomationTools = (view: DrivesView) => {
         ...mcp("automation_save", tools.automation_save),
         handle: (input) =>
           Effect.gen(function* () {
-            const compiled = compileWorkflow(input.source);
+            const compiled = compileForCloud(input.source);
             // What the server's save answers for a file that doesn't compile.
             if (!compiled.ok) return answer({ ok: false, diagnostics: compiled.diagnostics });
             const encoded = yield* encodeSave(input).pipe(Effect.mapError(badArguments));
             return yield* call(
               "automation_save",
-              { ...encoded, compiled: compiled.workflow },
+              { ...encoded, compiled: compiled.compiled },
               false,
             );
           }),

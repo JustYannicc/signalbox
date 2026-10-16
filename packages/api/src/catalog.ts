@@ -49,6 +49,8 @@ export interface Operation {
   readonly stream: StreamRead | undefined;
   readonly humanOnly: boolean;
   readonly destructive: boolean;
+  /** The caller compiles its `source` into `compiled` before sending (`DerivedReach.compiles`). */
+  readonly compiles: boolean;
   readonly summary: string | undefined;
   readonly input: WireSchema;
   /** A stream's item schema, not the stream's. */
@@ -115,6 +117,7 @@ const operationOf = (
   access: reach.access,
   humanOnly: reach.humanOnly === true,
   destructive: reach.destructive === true,
+  compiles: reach.compiles === true,
   summary: reach.summary,
 });
 

@@ -59,14 +59,18 @@ const fieldsOf = (operation: Operation): ReadonlyArray<Field> => {
   const { schema } = jsonSchemaOf(operation.input);
   const properties = (schema.properties ?? {}) as Record<string, JsonSchemaNode>;
   const required = new Set(Array.isArray(schema.required) ? (schema.required as string[]) : []);
-  return Object.entries(properties)
-    .map(([property, node]) => ({
-      property,
-      flag: Str.camelToSnake(property).replaceAll("_", "-"),
-      kind: kindOf(node),
-      required: required.has(property),
-    }))
-    .filter((field) => !RESERVED.has(field.flag));
+  return (
+    Object.entries(properties)
+      .map(([property, node]) => ({
+        property,
+        flag: Str.camelToSnake(property).replaceAll("_", "-"),
+        kind: kindOf(node),
+        required: required.has(property),
+      }))
+      .filter((field) => !RESERVED.has(field.flag))
+      // The CLI compiles `source` into `compiled` itself (`localCompile.ts`).
+      .filter((field) => !(operation.compiles && field.property === "compiled"))
+  );
 };
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));

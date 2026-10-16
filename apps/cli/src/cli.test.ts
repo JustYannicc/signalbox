@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { operations } from "@signalbox/api/catalog";
+import { AUTOMATION_COMPILED_FORMAT } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -160,6 +161,46 @@ describe("signalbox CLI", () => {
       const exit = yield* Effect.exit(run(["folders", "list"], signalbox));
       expect(exit._tag).toBe("Failure");
       expect(signalbox.sent).toEqual([]);
+    }),
+  );
+
+  // #558: the cloud can't compile, so the CLI compiles automation files here.
+  const AUTOMATION = `export const meta = { name: "From the CLI" } as const;
+export default workflow(async (w) => "hi");`;
+  const key = { SIGNALBOX_URL: "https://cloud.test", SIGNALBOX_KEY: "sbk_test" };
+
+  it.effect("compiles an automation here and sends it with its source", () =>
+    Effect.gen(function* () {
+      const signalbox = fakeSignalbox(() => Response.json({ ok: true, graph: { nodes: [] } }));
+      yield* run(["automations", "validate", "--source", AUTOMATION], signalbox, key);
+      expect(signalbox.sent).toHaveLength(1);
+      expect(signalbox.sent[0]?.url).toBe("https://cloud.test/api/v1/automations.validate");
+      expect(signalbox.sent[0]?.body).toMatchObject({
+        source: AUTOMATION,
+        compiled: {
+          format: AUTOMATION_COMPILED_FORMAT,
+          meta: { name: "From the CLI" },
+          workerModule: expect.stringContaining("export function load(workflow)"),
+        },
+      });
+    }),
+  );
+
+  it.effect("answers what to fix without calling Signalbox when a file doesn't compile", () =>
+    Effect.gen(function* () {
+      const signalbox = fakeSignalbox(() => Response.json({}));
+      yield* run(
+        ["automations", "save", "--source", "export default 1;", "--project-id", "p1"],
+        signalbox,
+        key,
+      );
+      expect(signalbox.sent).toEqual([]);
+      const printed = JSON.parse((yield* TestConsole.logLines).join("\n")) as {
+        ok: boolean;
+        diagnostics: ReadonlyArray<unknown>;
+      };
+      expect(printed.ok).toBe(false);
+      expect(printed.diagnostics.length).toBeGreaterThan(0);
     }),
   );
 });
