@@ -23,6 +23,9 @@ export interface CompiledWorkflow {
   readonly workerModule?: string;
 }
 
+/** How every `workerModule` starts; the cloud checks for it before saving one it didn't compile. */
+export const WORKER_MODULE_START = "export function load(workflow) {";
+
 export type WorkflowCompileResult =
   | { readonly ok: true; readonly workflow: CompiledWorkflow }
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<WorkflowDiagnostic> };

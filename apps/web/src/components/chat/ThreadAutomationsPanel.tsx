@@ -38,13 +38,6 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   failed: "bg-destructive",
 };
 
-/**
- * Thread details panel section listing the automations (scheduled tasks) bound
- * to this thread. Fed by the live scheduled-task subscription, so run status
- * and next-run times update as the scheduler works — no manual refresh.
- * Renders nothing when the thread has no bound automations, or its environment
- * doesn't run scheduled tasks.
- */
 export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -70,9 +63,6 @@ export function ThreadAutomationsPanel(props: {
   const boundTasks = (tasksQuery.data?.tasks ?? []).filter(
     (task) => task.threadId === props.threadId,
   );
-  // A load error must not look like "no automations" — this thread may have
-  // tasks whose controls would silently vanish. Only hide the section when we
-  // positively know there is nothing bound to it.
   if (!supported || (tasksQuery.error === null && boundTasks.length === 0)) return null;
 
   const reportFailure = (title: string, error: unknown) => {

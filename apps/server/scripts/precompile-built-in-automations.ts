@@ -11,7 +11,7 @@ import * as NodePath from "node:path";
 
 import { BUILT_IN_AUTOMATIONS } from "@signalbox/automations/defaults/registry";
 
-import { compileWorkflow } from "../src/workflows/compiler/compileWorkflow.ts";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 
 const target = NodePath.join(
   import.meta.dirname,

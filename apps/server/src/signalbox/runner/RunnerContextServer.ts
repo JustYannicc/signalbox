@@ -38,6 +38,7 @@ import { DAV_PATH, serveDav } from "./RunnerDrivesDav.ts";
 import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
 import type { RunnerMcpServers } from "./RunnerModelAccess.ts";
+import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 
 /**
  * One Runner's context server (#141), on a loopback port of its own: the
@@ -47,7 +48,8 @@ import type { RunnerMcpServers } from "./RunnerModelAccess.ts";
  * replaces at every turn start along with the view of the drives. The MCP
  * server also publishes the thread's branch, saving it through the drive
  * `attachDrive` gives it, and serves the automation tools, which run in the
- * cloud (`RunnerAutomationTools.ts`). `/browser` serves the thread's headless browser
+ * cloud (`RunnerAutomationTools.ts`), with upstream's scheduled-task tools as
+ * automations (`RunnerScheduledTaskTools.ts`). `/browser` serves the thread's headless browser
  * (#402) as its own MCP server, under the name agents know it by locally.
  */
 
@@ -68,6 +70,8 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   readonly mountPoint: string | null;
   /** The browser behind the `preview_*` tools; the machine's headless Chromium by default. */
   readonly browser?: BrowserBackend;
+  /** The thread this machine runs, which scheduled tasks wake. */
+  readonly threadId?: string;
 }) {
   const view = makeDrivesView();
   let drive: BranchDrive | null = null;
@@ -102,6 +106,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerContextTools(view),
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
+    layerScheduledTaskTools(view, input.threadId ?? null),
   ).pipe(
     Layer.provideMerge(
       McpServer.layerHttp({

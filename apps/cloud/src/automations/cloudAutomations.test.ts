@@ -9,20 +9,24 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
 } from "@t3tools/contracts";
+import { scheduledTaskSource } from "@signalbox/automations/scheduledTasks";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// The machine compiles saves (oxc can't run in workerd); tests compile the same way it does.
-import { compileWorkflow } from "../../../server/src/workflows/compiler/compileWorkflow.ts";
+// Machines and the CLI compile saves (oxc can't run in workerd); tests compile the same way.
+import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import * as Environment from "../environment.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import * as CloudRpc from "../user/rpc.ts";
 import { CloudAutomations } from "./CloudAutomations.ts";
+import { CloudCompiler } from "./cloudCompiler.ts";
 
 /**
  * #434: a user's automations run with no client connected, each run a
@@ -35,8 +39,20 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
+// Scripted, so a person's saves have a model to run on without a pool.
+const identity = {
+  environmentId: EnvironmentId.make("cloud-test"),
+  label: "Cloud",
+  scripted: true,
+};
 const userId = "user_1";
+
+/** `source` as a machine or the CLI sends it. */
+const compiledOf = (source: string) => {
+  const result = compileForCloud(source);
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
+  return result.compiled;
+};
 
 const setup = Effect.gen(function* () {
   const cloud = makeMemoryCloud();
@@ -72,11 +88,8 @@ const setup = Effect.gen(function* () {
       CloudAutomations.use((automations) => automations.tool({ threadId }, name, input)),
     );
   /** Saves `source` from `threadId`, compiled where the thread's machine compiles it. */
-  const save = (threadId: string, source: string) => {
-    const compiled = compileWorkflow(source);
-    if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics));
-    return tool(threadId, "automation_save", { source, compiled: compiled.workflow });
-  };
+  const save = (threadId: string, source: string) =>
+    tool(threadId, "automation_save", { source, compiled: compiledOf(source) });
   const engine = <A, E>(use: (engine: WorkflowEngine.WorkflowEngineShape) => Effect.Effect<A, E>) =>
     cloud.inUser(userId, WorkflowEngine.WorkflowEngine.use(use));
   /** Starts the automation called `name` from `threadId`, and lets its run go until it blocks. */
@@ -144,6 +157,55 @@ export default workflow(async (w, event: { threadId: string }) => {
         projection.messages.some((message) => message.text.includes("Look at the build again.")),
       ).toBe(true);
     }),
+  );
+
+  it.effect(
+    "an agent's scheduled task posts into its thread on every cron, until deleted (#367)",
+    () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        const { cloud, rpc, thread, save, tool, engine } = yield* setup;
+        const agent = yield* thread("thread-clock", "Post the time every 5 minutes");
+        const saved = (yield* save(
+          agent,
+          scheduledTaskSource({
+            title: "Post the time",
+            prompt: "Post the current time.",
+            schedule: { type: "interval", everyMs: 300_000 },
+            timezone: "UTC",
+            threadId: agent,
+            key: null,
+          }),
+        )) as { readonly ok: boolean; readonly automation: { readonly automationId: string } };
+        expect(saved.ok).toBe(true);
+
+        const posted = () =>
+          rpc[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({ threadId: agent }).pipe(
+            Effect.map(
+              (projection) =>
+                projection.messages.filter((message) => message.text === "Post the current time.")
+                  .length,
+            ),
+          );
+        for (const expected of [1, 2]) {
+          const due = cloud.alarmAt(userId)!;
+          vi.setSystemTime(due + 1_000);
+          yield* cloud.fireAlarm(userId);
+          yield* cloud.settle;
+          expect(yield* posted()).toBe(expected);
+        }
+        const { runs } = yield* engine((engine) => engine.get(saved.automation.automationId));
+        expect(runs.map((run) => [run.trigger, run.status])).toEqual([
+          ["cron", "succeeded"],
+          ["cron", "succeeded"],
+        ]);
+
+        yield* tool(agent, "automation_delete", { automationId: saved.automation.automationId });
+        vi.setSystemTime(Date.now() + 600_000);
+        yield* cloud.fireAlarm(userId);
+        yield* cloud.settle;
+        expect(yield* posted()).toBe(2);
+      }),
   );
 
   it.effect("a cron fires on the object's alarm", () =>
@@ -234,14 +296,34 @@ export default workflow(async (w) => {
 
   it.effect("a version saved without cloud code fails its run with what to do", () =>
     Effect.gen(function* () {
-      const { thread, tool, engine } = yield* setup;
+      const { cloud, thread, tool, engine } = yield* setup;
       const writer = yield* thread("thread-old", "An old save");
       const source = `export const meta = { name: "Old save" } as const;
 export default workflow(async (w) => "done");`;
       const compiled = compileWorkflow(source);
       if (!compiled.ok) return expect.unreachable();
       const { workerModule: _dropped, ...withoutModule } = compiled.workflow;
-      yield* tool(writer, "automation_save", { source, compiled: withoutModule });
+      // Saves are checked now, so the old version goes in under the check.
+      yield* cloud.inUser(
+        userId,
+        Effect.gen(function* () {
+          const compiler = yield* CloudCompiler;
+          const engine = yield* WorkflowEngine.WorkflowEngine;
+          yield* compiler.withStaged(
+            source,
+            withoutModule,
+            engine.save({
+              source,
+              projectId: Environment.SCRATCH_PROJECT_ID,
+              defaults: {
+                modelSelection: scriptedModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+              },
+            }),
+          );
+        }),
+      );
       const automation = (yield* engine((engine) => engine.list())).find(
         (entry) => entry.name === "Old save",
       );
@@ -322,6 +404,95 @@ export default workflow(async (w) => w.ask("Go on?", { options: ["yes", "no"] })
       yield* cloud.settle;
       const done = yield* engine((engine) => engine.getRun(runId));
       expect([done.run.status, done.output]).toEqual(["succeeded", "yes"]);
+    }),
+  );
+});
+
+/**
+ * #558: the `signalbox` CLI and stdio `signalbox mcp` compile on the person's
+ * computer and send `compiled`; the cloud checks it before saving. Remote
+ * `/mcp` and the app can't compile, so they're told where saving works.
+ */
+describe("saving automations compiled outside the cloud", () => {
+  const source = `export const meta = { name: "From my laptop" } as const;
+export default workflow(async (w) => "hello");`;
+  const failureOf = <A, E extends { readonly message: string }>(effect: Effect.Effect<A, E>) =>
+    Effect.flip(effect).pipe(Effect.map((error) => error.message));
+
+  it.effect("saves what the caller compiled, and it runs", () =>
+    Effect.gen(function* () {
+      const { cloud, rpc, engine } = yield* setup;
+      const saved = yield* rpc[AUTOMATION_WS_METHODS.automationsSave]({
+        source,
+        projectId: Environment.SCRATCH_PROJECT_ID,
+        compiled: compiledOf(source),
+      });
+      if (!saved.ok) return expect.unreachable();
+      const run = yield* rpc[AUTOMATION_WS_METHODS.automationsRunNow]({
+        automationId: saved.automation.id,
+      });
+      yield* cloud.settle;
+      const { runs } = yield* engine((engine) => engine.get(saved.automation.id));
+      expect(runs.map((entry) => [entry.id, entry.status])).toEqual([[run.id, "succeeded"]]);
+      expect((yield* engine((engine) => engine.getRun(run.id))).output).toBe("hello");
+    }),
+  );
+
+  it.effect("validates what the caller compiled", () =>
+    Effect.gen(function* () {
+      const { rpc } = yield* setup;
+      const compiled = compiledOf(source);
+      const checked = yield* rpc[AUTOMATION_WS_METHODS.automationsValidate]({ source, compiled });
+      expect(checked).toEqual({ ok: true, graph: compiled.graph });
+    }),
+  );
+
+  it.effect("says where saving works when nothing was compiled", () =>
+    Effect.gen(function* () {
+      const { rpc } = yield* setup;
+      const saving = yield* failureOf(
+        rpc[AUTOMATION_WS_METHODS.automationsSave]({
+          source,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+        }),
+      );
+      const checking = yield* failureOf(rpc[AUTOMATION_WS_METHODS.automationsValidate]({ source }));
+      for (const message of [saving, checking]) {
+        expect(message).toContain("signalbox mcp");
+        expect(message).toContain("signalbox automations");
+      }
+    }),
+  );
+
+  it.effect("refuses compiled code of another format or shape", () =>
+    Effect.gen(function* () {
+      const { rpc, thread, tool, engine } = yield* setup;
+      const compiled = compiledOf(source);
+      const save = (candidate: typeof compiled) =>
+        failureOf(
+          rpc[AUTOMATION_WS_METHODS.automationsSave]({
+            source,
+            projectId: Environment.SCRATCH_PROJECT_ID,
+            compiled: candidate,
+          }),
+        );
+      expect(yield* save({ ...compiled, format: compiled.format + 1 })).toContain(
+        "Update signalbox",
+      );
+      expect(yield* save({ ...compiled, workerModule: "export default {}" })).toContain(
+        "isn't a compiled automation",
+      );
+      // A thread's machine gets the same check.
+      const writer = yield* thread("thread-forged", "Forge it");
+      // The test object turns failures into defects; the message is what matters.
+      const refusal = (candidate: unknown) =>
+        tool(writer, "automation_save", { source, compiled: candidate }).pipe(
+          Effect.exit,
+          Effect.map((exit) => (exit._tag === "Failure" ? Cause.pretty(exit.cause) : "saved")),
+        );
+      expect(yield* refusal({ ...compiled, format: 99 })).toContain("Update signalbox");
+      expect(yield* refusal({ script: 1 })).toContain("isn't a compiled automation");
+      expect(yield* engine((engine) => engine.list())).toEqual([]);
     }),
   );
 });

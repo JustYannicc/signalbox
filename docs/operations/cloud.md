@@ -214,7 +214,15 @@ agents check their own dev servers with (the server's pinned Chrome for
 Testing headless shell, plus Playwright). It publishes
 `ghcr.io/justyannicc/signalbox-runner` as `nightly` (and
 `nightly-<date>-<sha>`) every night from `main`, and as `X.Y.Z` and `stable`
-for every `vX.Y.Z` tag. Run it by hand to publish one now. A pull request that
+for every `vX.Y.Z` tag. A push to `main` that changes the Runner since the
+commit `nightly` was built from also publishes `nightly`, once
+`deploy-cloud.yml` has deployed production: the cloud goes first, so a failed
+deploy never leaves machines on a Runner the cloud doesn't speak yet. The
+publish pulls `nightly` back and checks it runs the pushed commit, and a failed
+deploy or build opens a "Production machines don't run main's Runner" issue
+that the next publish closes. Run it by hand to publish one now. To see what a
+branch would do, dispatch `deploy-cloud.yml` on it with `dry_run`: it decides
+against `main` (or the ref in `base`) and builds without deploying or publishing. A pull request that
 changes the Runner publishes `pr-<number>` before its preview deploys, and the
 preview's `RUNNER_IMAGE` points at it, so boat machines there run the pull
 request's Runner. Each push deletes the version it replaces, closing the pull

@@ -14,7 +14,7 @@ import {
   AutomationRunSummary,
 } from "./automation.ts";
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { WorkflowDiagnostic, WorkflowGraph } from "./workflow.ts";
+import { WorkflowDiagnostic, WorkflowGraph, WorkflowMeta } from "./workflow.ts";
 
 /**
  * WebSocket methods for automations. Spread into `WS_METHODS` and `WsRpcGroup`
@@ -252,9 +252,44 @@ export const AutomationValidateResult = Schema.Union([
 ]);
 export type AutomationValidateResult = typeof AutomationValidateResult.Type;
 
-/** Compiles a file without saving it. */
+/**
+ * The format of `AutomationCompiled`. The compiler stamps it and a host reads
+ * only its own, so a `signalbox` older or newer than the cloud is told to
+ * update instead of saving code the cloud can't load.
+ */
+export const AUTOMATION_COMPILED_FORMAT = 1;
+
+/**
+ * An automation file compiled where the caller runs: the cloud can't compile
+ * (its compiler, oxc, doesn't run in workerd). The `signalbox` CLI and stdio
+ * `signalbox mcp` compile `source` on your computer and fill it in, as a cloud
+ * thread's machine does for `automation_save`. The cloud checks its shape and
+ * format; the code still runs only in its own isolate, as you.
+ */
+export const AutomationCompiled = Schema.Struct({
+  format: Schema.Number,
+  meta: WorkflowMeta,
+  graph: WorkflowGraph,
+  script: Schema.String,
+  runModule: Schema.NullOr(Schema.String),
+  workerModule: Schema.String,
+});
+export type AutomationCompiled = typeof AutomationCompiled.Type;
+
+/**
+ * An `AutomationCompiled`, loose on the wire: nobody writes one by hand, and
+ * its schema would fill every agent's search for saving. The cloud decodes it.
+ */
+const compiledField = Schema.optional(
+  Schema.Unknown.annotate({
+    description:
+      "`source`, compiled. The signalbox CLI and `signalbox mcp` fill this in; leave it out.",
+  }),
+);
+
+/** Compiles a file without saving it; in the cloud, checks what the caller compiled. */
 const ValidateRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsValidate, {
-  payload: Schema.Struct({ source: Schema.String }),
+  payload: Schema.Struct({ source: Schema.String, compiled: compiledField }),
   success: AutomationValidateResult,
   error,
 });
@@ -262,7 +297,8 @@ const ValidateRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsValidate, {
 /**
  * Saves a file in a project, live unless `draft`: new without `automationId`,
  * a new version of that automation with it. A file that doesn't compile is
- * not saved; the result says what to fix.
+ * not saved; the result says what to fix. The cloud saves only what the
+ * caller compiled (`compiled`).
  */
 const SaveRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSave, {
   payload: Schema.Struct({
@@ -270,6 +306,7 @@ const SaveRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSave, {
     projectId: ProjectId,
     automationId: Schema.optional(AutomationId),
     draft: Schema.optional(Schema.Boolean),
+    compiled: compiledField,
   }),
   success: AutomationSaveResult,
   error,

@@ -18,7 +18,7 @@ import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 import { Alert, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { automationState } from "../../state/automations";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AskField } from "./AskFields";

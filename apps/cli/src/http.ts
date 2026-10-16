@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
+import { prepareCall } from "./localCompile.ts";
 import type { Target } from "./target.ts";
 
 /** The public API over HTTP (`apps/cloud/src/api/apiRoutes.ts`). */
@@ -76,13 +77,22 @@ const keyOf = (target: Target) =>
     onSome: Effect.succeed,
   });
 
-/** Calls an operation as the signed-in person, or as an agent working for them. */
+/**
+ * Calls an operation as the signed-in person, or as an agent working for them,
+ * compiling what the cloud can't first (`localCompile.ts`).
+ */
 export const callOperation = (
   target: Target,
   name: string,
   input: unknown,
   options: { readonly asAgent?: boolean } = {},
-) => Effect.flatMap(keyOf(target), (key) => postJson(target, name, input, key, options));
+) =>
+  Effect.flatMap(keyOf(target), (key) => {
+    const prepared = prepareCall(name, input);
+    return prepared._tag === "answer"
+      ? Effect.succeed(prepared.value)
+      : postJson(target, name, prepared.input, key, options);
+  });
 
 const Listing = Schema.Struct({
   operations: Schema.Array(

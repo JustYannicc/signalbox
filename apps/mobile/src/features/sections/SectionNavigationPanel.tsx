@@ -4,9 +4,9 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 
-import { AppText } from "../../components/AppText";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText } from "../../components/ui/AppText";
+import { IconButton } from "../../components/ui/IconButton";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -60,7 +60,7 @@ export function SectionNavigationPanel(props: {
           >
             <AppText className="text-sm text-primary">All threads</AppText>
           </Pressable>
-          <MaterialIconButton
+          <IconButton
             accessibilityLabel={copy.hide}
             icon="chevron.up"
             onPress={props.onClose}

@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { memo, useState } from "react";
 import { View } from "react-native";
 
-import { SymbolView, type AppSymbolViewProps } from "../../components/AppSymbol";
+import { SymbolView, type AppSymbolViewProps } from "../../components/ui/AppSymbol";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SignalboxMark } from "../../components/SignalboxMark";
 

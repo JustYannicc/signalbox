@@ -4,9 +4,9 @@ import type { Section, SectionId, SectionsSnapshot } from "@t3tools/contracts/se
 import { useCallback, useMemo } from "react";
 import { Pressable, View } from "react-native";
 
-import { AppText } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText } from "../../components/ui/AppText";
+import { Menu } from "../../components/ui/Menu";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { sectionProjectFilterKey } from "./section-project-filter";
 import { projectMoveMenuActions, sectionMenuActions } from "./section-navigation-model";
 
@@ -79,7 +79,7 @@ export function SectionNodeRow(
           </AppText>
         </Pressable>
         {sectionActions.length > 0 ? (
-          <ControlPillMenu
+          <Menu
             actions={sectionActions}
             onPressAction={handleSectionMenuAction}
             title={sectionPath}
@@ -91,7 +91,7 @@ export function SectionNodeRow(
             >
               <SymbolView name="ellipsis" size={16} tintColorClassName="accent-icon-muted" />
             </Pressable>
-          </ControlPillMenu>
+          </Menu>
         ) : null}
       </View>
       {collapsed ? null : (
@@ -190,7 +190,7 @@ export function ProjectRow(props: {
         ) : null}
       </Pressable>
       {actions.length > 0 ? (
-        <ControlPillMenu
+        <Menu
           actions={actions}
           onPressAction={handleMenuAction}
           title={`${props.sectionPath ? `${props.sectionPath} / ` : ""}${props.project.title}`}
@@ -202,7 +202,7 @@ export function ProjectRow(props: {
           >
             <SymbolView name="ellipsis" size={16} tintColorClassName="accent-icon-muted" />
           </Pressable>
-        </ControlPillMenu>
+        </Menu>
       ) : null}
     </View>
   );

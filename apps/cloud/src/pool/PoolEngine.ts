@@ -439,10 +439,12 @@ const make = Effect.gen(function* () {
    * Where the pool's CLIProxyAPI answers. `passive` reads reach a managed
    * pool's container only while it is up anyway, and never keep it up.
    * `onSend` runs as a request goes to the CLIProxyAPI, after any cold start.
+   * `models`: a model request on a pool with accounts, which a cold start
+   * holds until CLIProxyAPI serves their models (`PoolContainer.SendOptions`).
    */
   const endpointOf = (
     row: PoolRow,
-    options?: { readonly passive?: true; readonly onSend?: () => void },
+    options?: { readonly passive?: true; readonly onSend?: () => void; readonly models?: true },
   ): CliProxyApi.PoolEndpoint =>
     row.backing === "external" &&
     row.external_url !== null &&
@@ -462,11 +464,11 @@ const make = Effect.gen(function* () {
           fetch: (request) =>
             options?.passive
               ? container.peek(request)
-              : container.fetch(
-                  request,
-                  { accessKey: row.store_access_key, secretKey: row.store_secret_key },
-                  options?.onSend,
-                ),
+              : container.fetch(request, {
+                  store: { accessKey: row.store_access_key, secretKey: row.store_secret_key },
+                  ...(options?.onSend === undefined ? {} : { onSend: options.onSend }),
+                  ...(options?.models ? { models: { clientKey: row.client_key } } : {}),
+                }),
           baseUrl: PoolContainer.CONTAINER_ORIGIN,
           managementKey: row.management_key,
           clientKey: row.client_key,
@@ -1034,10 +1036,14 @@ const make = Effect.gen(function* () {
       });
       const clock = yield* Clock.Clock;
       const sent = { at: clock.currentTimeMillisUnsafe() };
+      // Accounts that serve models: a pool without any has nothing to wait for on a cold start.
+      const serving =
+        yield* sql`SELECT 1 FROM accounts WHERE disabled = 0 AND signed_out = 0 LIMIT 1`;
       const endpoint = endpointOf(row, {
         onSend: () => {
           sent.at = clock.currentTimeMillisUnsafe();
         },
+        ...(serving.length > 0 ? { models: true } : {}),
       });
       yield* ensureManagedConfig(endpoint);
       // An admin's own CLIProxyAPI keeps its accounts as its config says.

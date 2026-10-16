@@ -28,7 +28,7 @@ import {
 import { Scheduler } from "../scheduling/Scheduler.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import { makeCallbacks } from "./callbacks.ts";
-import { compileWorkflow } from "./compiler/compileWorkflow.ts";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { automationError, fail } from "@signalbox/automations/errors";
 import * as ExecutorSettings from "./executorSettings.ts";
 import {

@@ -2,7 +2,7 @@ import type { AccountProvider } from "@t3tools/contracts/account";
 import Svg, { Path } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
-import { SourceControlIcon } from "../../components/SourceControlIcon";
+import { SourceControlIcon } from "../projects/SourceControlIcon";
 
 const ThemedSvg = withUniwind(Svg);
 

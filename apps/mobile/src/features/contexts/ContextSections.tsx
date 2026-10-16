@@ -10,8 +10,8 @@ import type { SignalboxContextsSnapshot } from "@t3tools/contracts/signalboxCont
 import { useMemo, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText } from "../../components/ui/AppText";
 
 export function ContextSections<Project extends { readonly id: ProjectId }>(props: {
   readonly contexts: SignalboxContextsSnapshot | null;

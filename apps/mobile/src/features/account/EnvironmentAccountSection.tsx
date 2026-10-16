@@ -7,7 +7,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useEffect, useState } from "react";
 import { Alert, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { environmentCatalog } from "../../connection/catalog";
 import { usePreparedConnection } from "../../state/session";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";

@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import { runtimeModeWithin } from "@signalbox/automations/access";
 import type { AuthorizeAutomation } from "@signalbox/automations/catalog";
-import type { CompiledWorkflow } from "@signalbox/automations/compiled";
 import type { AutomationThreadsShape } from "@signalbox/automations/host";
 import { builtInById } from "@signalbox/automations/defaults/registry";
 import { builtInReadResult } from "@signalbox/automations/tools/builtIns";
@@ -25,7 +24,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 
-import type { CloudCompiler } from "./cloudCompiler.ts";
+import { acceptCompiled, type CloudCompiler } from "./cloudCompiler.ts";
 
 /**
  * Automation tools an agent calls from its cloud thread's machine, answered
@@ -138,17 +137,21 @@ export const makeCloudTools = (deps: {
           return yield* refuse(
             "Save from a cloud thread's machine, which compiles the file first.",
           );
-        yield* deps.compiler.stage(source, input.compiled as CompiledWorkflow);
+        const compiled = yield* acceptCompiled(input.compiled);
         const automationId = text(input, "automationId");
-        const saved = yield* engine.save(
-          {
-            source,
-            projectId: ProjectId.make(text(input, "projectId") ?? caller.projectId),
-            defaults: defaultsOf(caller),
-            ...(automationId ? { automationId } : {}),
-            ...(input.draft === true ? { draft: true } : {}),
-          },
-          withinCaller(caller),
+        const saved = yield* deps.compiler.withStaged(
+          source,
+          compiled,
+          engine.save(
+            {
+              source,
+              projectId: ProjectId.make(text(input, "projectId") ?? caller.projectId),
+              defaults: defaultsOf(caller),
+              ...(automationId ? { automationId } : {}),
+              ...(input.draft === true ? { draft: true } : {}),
+            },
+            withinCaller(caller),
+          ),
         );
         return saveResult(saved);
       }),

@@ -53,8 +53,6 @@ function accountRequestInit(): AccountRequestInit {
     : { credentials: "omit" };
 }
 
-// --- session state ----------------------------------------------------------
-
 let resolvedSession: AccountSessionState | null = null;
 let unsupported = false;
 let inflight: Promise<AccountSessionState | null> | null = null;
@@ -132,8 +130,6 @@ export async function resolveAccountRedirect(location: {
   }
 }
 
-// --- sign in ----------------------------------------------------------------
-
 export interface StartAccountSignInInput {
   readonly provider: AccountProvider;
   readonly loginHint?: string;
@@ -155,8 +151,6 @@ export function startAccountSignIn(input: StartAccountSignInInput): void {
     }),
   );
 }
-
-// --- sign out ---------------------------------------------------------------
 
 /** Ends the account session and reopens sign-in with the provider's account picker. */
 export async function signOutAccount(): Promise<void> {

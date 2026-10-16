@@ -3,7 +3,7 @@ import { createNativeStackScreen } from "@react-navigation/native-stack";
 import { useLayoutEffect } from "react";
 import { Platform, Pressable } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useNeedsAccountSignIn } from "./accountGate";
 import { AccountSignInScreen } from "./AccountSignInScreen";
 

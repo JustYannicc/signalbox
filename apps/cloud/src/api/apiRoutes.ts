@@ -47,6 +47,8 @@ const summaryOf = (operation: Operation) => ({
   ...(operation.stream === undefined ? {} : { stream: operation.stream }),
   ...(operation.humanOnly ? { humanOnly: true } : {}),
   ...(operation.destructive ? { destructive: true } : {}),
+  // Scripts calling the API directly compile `source` themselves, as the CLI does.
+  ...(operation.compiles ? { compiles: true } : {}),
   cloud: coverage(operation),
 });
 

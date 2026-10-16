@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compileWorkflow } from "../compiler/compileWorkflow.ts";
+import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { EXAMPLES } from "./content/examples.ts";
 import { skillFiles, skillReference, SKILL_TOPICS } from "./files.ts";
 import { skillsAddArgs } from "./installSkill.ts";

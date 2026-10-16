@@ -168,6 +168,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
           // Every drive the user can read, for the harnesses (#141).
           const context = yield* startContextServer({
             mountPoint: config.drivesMountPoint ?? null,
+            threadId: request.threadId,
           });
           // What the harness environment sets itself; known once the adapters are made.
           let harnessVariables: ReadonlySet<string> = new Set();

@@ -2,8 +2,8 @@ import { useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useAutomationLists, waitingAutomations } from "./automation-data";
 import { StatusDot } from "./AutomationParts";
 

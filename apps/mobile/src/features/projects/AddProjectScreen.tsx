@@ -1,8 +1,9 @@
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { MaterialListRow } from "../../components/MaterialListRow";
+import * as Dialog from "../../components/ui/Dialog";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { NavigationRow } from "../../components/ui/NavigationRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { MaterialButton } from "../../components/MaterialButton";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { Button } from "../../components/ui/Button";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -54,9 +55,9 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Platform, Alert, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
@@ -72,12 +73,12 @@ import { useEnvironmentPresentation } from "../../state/presentation";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useRepositoriesToPick } from "../../state/signalboxRepositories"; // signalbox: repositories
 import { matchRepositories } from "@t3tools/client-runtime/state/signalboxRepositories"; // signalbox: repositories
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
-import { ErrorBanner } from "../../components/ErrorBanner";
-import { SourceControlIcon } from "../../components/SourceControlIcon";
+import { ErrorBanner } from "../../components/ui/ErrorBanner";
+import { SourceControlIcon } from "./SourceControlIcon";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -110,12 +111,10 @@ interface EnvironmentOption extends AddProjectSourceSupport {
   readonly platform: string;
   readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
-  /** Folder for projects started from just a name; null on servers without it. */
   readonly newProjectsRoot: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
-  /** Server runs clones in the background and streams progress; older servers block. */
   readonly supportsCloneTracking: boolean;
 }
 
@@ -214,7 +213,7 @@ function ListRow(props: {
 }) {
   if (Platform.OS === "android") {
     return (
-      <MaterialListRow
+      <NavigationRow
         className="bg-grouped-card"
         title={props.title}
         subtitle={props.subtitle}
@@ -276,7 +275,7 @@ function PrimaryActionButton(props: {
   readonly loading?: boolean;
   readonly onPress: () => void;
 }) {
-  if (Platform.OS === "android") return <MaterialButton {...props} tone="primary" fullWidth />;
+  if (Platform.OS === "android") return <Button {...props} tone="primary" fullWidth />;
   return (
     <Pressable
       disabled={props.disabled}
@@ -311,9 +310,6 @@ function ProjectPathInput(props: {
   );
 }
 
-// `pinnedDirectoryName` is the repository folder the clone destination keeps
-// appended to whatever folder the user browses to. The plain add-project flow
-// passes nothing, so it keeps proposing the browsed folder itself.
 function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirectoryName = "") {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
@@ -720,7 +716,6 @@ function openNewTaskDraft(
   );
 }
 
-/** A new task draft in the project, holding a prompt link's prompt. */
 async function draftWithPrompt(
   environmentId: EnvironmentId,
   projectId: ProjectId,
@@ -744,7 +739,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         !canCreateProjectInEnvironment(environment.connectionState) ||
         !readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope)
       ) {
-        Alert.alert(
+        Dialog.alert(
           "Project not added",
           `This connection cannot add projects right now. Any existing files remain at ${workspaceRoot}.`,
         );
@@ -757,7 +752,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         path: workspaceRoot,
       });
       if (existing) {
-        Alert.alert("Project already exists", existing.title);
+        Dialog.alert("Project already exists", existing.title);
         navigation.dispatch(
           CommonActions.reset({
             index: 0,
@@ -986,8 +981,6 @@ function FolderBrowser(props: {
           input: browseInput,
         }),
   );
-  // A pinned repository folder does not exist yet, so filtering the listing by
-  // it would empty the folder picker. Anything the user typed still filters.
   const pinnedDirectoryName = props.pinnedDirectoryName ?? "";
   const pinnedDirectoryMatches = isWindowsPlatform(props.environment.platform)
     ? browsePath.filterQuery.toLowerCase() === pinnedDirectoryName.toLowerCase()
@@ -1060,13 +1053,8 @@ function FolderBrowser(props: {
   );
 }
 
-/**
- * New project: a name, then the server makes the folder, README, icon, and
- * first commit. Optionally publishes it to GitHub as a private repository.
- */
 export function AddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
   const navigation = useNavigation();
-  // Starts on the machine picked in Add project; the rows below switch it.
   const environmentOptions = useEnvironmentOptions().filter(
     (option) => option.newProjectsRoot !== null,
   );
@@ -1089,7 +1077,6 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   const publishTargets = getNewProjectPublishTargets(discoveryState.data);
   const [name, setName] = useState("");
   const [publishes, setPublishes] = useState(false);
-  // Null takes the first ready host, GitHub when it is ready.
   const [publishKind, setPublishKind] = useState<SourceControlProviderKind | null>(null);
   const publishTarget = getNewProjectPublishTarget(publishTargets, publishKind);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1100,8 +1087,6 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       ? getNewProjectPathPreview(environment.newProjectsRoot, trimmedName)
       : null;
 
-  // Shown when there is a choice, or when the selected machine went away and
-  // another one can take over.
   const showsEnvironments = useShowsEnvironmentUi(); // signalbox: no choice of machine
   const showMachines =
     (showsEnvironments && environmentOptions.length > 1) ||
@@ -1122,7 +1107,6 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
               />
             }
             selected={selected}
-            // The create in flight keeps the machine it started on.
             disabled={isSubmitting}
             isFirst={index === 0}
             right={
@@ -1160,7 +1144,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       }
       const { projectId, workspaceRoot, commitError } = result.value;
       if (commitError !== undefined) {
-        Alert.alert("Created without a first commit", commitError);
+        Dialog.alert("Created without a first commit", commitError);
       }
       if (publishes && publishTarget !== null) {
         void publishRepository({
@@ -1173,7 +1157,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           },
         }).then((publishResult) => {
           if (AsyncResult.isFailure(publishResult)) {
-            Alert.alert(
+            Dialog.alert(
               `Could not create the ${publishTarget.definition.label} repository`,
               errorMessage(Cause.squash(publishResult.cause)),
             );
@@ -1187,7 +1171,6 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
         15_000,
       );
       if (project === null) {
-        // The project exists, so clearing the name keeps Create from making a `-2` copy.
         setName("");
         setError(
           "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
@@ -1307,8 +1290,6 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                 />
               }
               isFirst
-              // New project opens from Add project, so going back shows the
-              // other sources. A deep link has nothing behind it.
               onPress={() =>
                 navigation.canGoBack()
                   ? navigation.goBack()
@@ -1416,10 +1397,6 @@ export function AddProjectDestinationScreen(props: {
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
-  // A lookup derives this from "owner/repo", a pasted clone URL from its own
-  // last segment. Older links without the param keep the browsed folder.
-  // Trim once here: the path input and the folder-list filter must compare the
-  // same value, or a deep link with a padded param empties the folder picker.
   const repositoryName = stringParam(props.repositoryName)?.trim() ?? "";
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
     environment,
@@ -1452,8 +1429,6 @@ export function AddProjectDestinationScreen(props: {
 
     setIsSubmitting(true);
     if (environment.supportsCloneTracking) {
-      // The server creates the project and clones in the background; the
-      // draft screen shows progress and holds Start until the files land.
       const projectId = ProjectId.make(uuidv4());
       const title = inferProjectTitleFromPath(resolved.path);
       const startResult = await startProjectClone({
@@ -1470,9 +1445,8 @@ export function AddProjectDestinationScreen(props: {
         setError(errorMessage(Cause.squash(startResult.cause)));
       } else {
         // The draft screen resolves its project from the client store, so it
-        // must not open before the create event has arrived (it would fall
-        // back to the project picker and lose the clone controls). Stay in
-        // the submitting state until then; the clone keeps running either way.
+        // must not open before the create event has arrived (it would fall back
+        // to the project picker and lose the clone controls).
         // signalbox: the server may name the project itself (Signalbox Cloud makes it a drive).
         const createdProjectId = startResult.value.projectId;
         const project = await waitForProject(
@@ -1490,8 +1464,7 @@ export function AddProjectDestinationScreen(props: {
             title,
             cloning: "1",
             ...(prompt
-              ? // Without its prompt the draft still opens on the cloned project.
-                await draftWithPrompt(environment.environmentId, projectId, prompt).then(
+              ? await draftWithPrompt(environment.environmentId, projectId, prompt).then(
                   (draftId) => ({ draftId }),
                   () => ({}),
                 )

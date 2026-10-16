@@ -301,12 +301,6 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   };
 }
 
-/**
- * Length of the leading part of `pasted` that continues an `@` path query
- * typed at the end of `lineBefore`, the line's plain text up to the caret. A
- * chip must read there as one non-space character, so it never passes for a
- * typed `@path`.
- */
 export function pastedPathQueryLength(
   lineBefore: string,
   pasted: string,
@@ -317,7 +311,6 @@ export function pastedPathQueryLength(
   return /^\S*/.exec(pasted)![0].length;
 }
 
-/** Caret and trigger after replacing composer text and continuing at the end. */
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,

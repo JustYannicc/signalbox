@@ -9,7 +9,7 @@ import {
 import { windowResetCredits } from "@t3tools/shared/usageLimitWindows";
 import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { StatusPill } from "../../components/StatusPill";
 import { HubAccountActions } from "../accountHub/HubAccountActions";
 import { AccountLimits } from "./UsageLimitsSection";

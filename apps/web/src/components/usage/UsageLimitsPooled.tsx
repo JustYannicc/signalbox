@@ -26,11 +26,6 @@ import { barColor } from "./UsageLimits";
 import { LimitSegment } from "./UsageLimitsSegment";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
 
-/**
- * One pooled window as equal-width segments, one per account, each filled by
- * the share of that account's quota still open. Equal widths are honest: every
- * account contributes the same share of the pool, whatever its plan.
- */
 function PoolBar({
   pool,
   color,
@@ -269,7 +264,6 @@ export function UsageLimitsPooled({
   );
 }
 
-/** Sources and providers that could not be read, so a missing bar is not mistaken for a full one. */
 function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
