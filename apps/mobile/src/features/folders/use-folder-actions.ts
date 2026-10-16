@@ -16,7 +16,7 @@ import type {
 import { useCallback, useState } from "react";
 import { Alert } from "react-native";
 
-import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
+import * as Dialog from "../../components/ui/Dialog";
 import { signalboxFolders } from "../../state/signalboxFolders";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { parseFolderMenuEvent, type PoolChoice } from "./folder-menus";
@@ -65,7 +65,7 @@ export function useFolderActions(input: {
 
   const requestCreateFolder = useCallback(
     (parentId: FolderId | null, ownerId: SignalboxContextId) => {
-      showTextInputDialog({
+      Dialog.prompt({
         title: "New folder",
         initialValue: "",
         confirmText: "Create",
@@ -93,7 +93,7 @@ export function useFolderActions(input: {
           requestCreateFolder(folder.id, folder.ownerId);
           return;
         case "rename":
-          showTextInputDialog({
+          Dialog.prompt({
             title: "Rename folder",
             initialValue: folder.name,
             confirmText: "Save",
@@ -123,7 +123,7 @@ export function useFolderActions(input: {
           });
           return;
         case "delete":
-          showConfirmDialog({
+          Dialog.confirm({
             title: `Delete ${folder.name}?`,
             message: folderDeleteMessage(snapshot, folder),
             confirmText: "Delete",

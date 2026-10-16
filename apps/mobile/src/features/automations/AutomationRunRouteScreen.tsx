@@ -10,8 +10,8 @@ import type { StaticScreenProps } from "@react-navigation/native";
 import { useMemo, useState } from "react";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SegmentedControl } from "../../components/SegmentedControl";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { useHeaderMenu, type HeaderMenuAction } from "../../native/HeaderMenu";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { automationState } from "../../state/automations";

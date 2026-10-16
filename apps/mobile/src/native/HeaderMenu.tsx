@@ -3,8 +3,8 @@ import { useNavigation } from "@react-navigation/native";
 import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Platform, Pressable, View } from "react-native";
 
-import { SymbolView, type SFSymbol } from "../components/AppSymbol";
-import { ControlPillMenu } from "../components/ControlPill";
+import { SymbolView, type SFSymbol } from "../components/ui/AppSymbol";
+import { Menu } from "../components/ui/Menu";
 
 export interface HeaderMenuAction {
   readonly id: string;
@@ -114,7 +114,7 @@ function HeaderControls(props: {
           <SymbolView name={button.icon} size={22} tintColorClassName="accent-icon" />
         </Pressable>
       ))}
-      <ControlPillMenu
+      <Menu
         accessible
         accessibilityRole="button"
         accessibilityLabel={shape.title}
@@ -130,7 +130,7 @@ function HeaderControls(props: {
         >
           <SymbolView name={shape.icon} size={22} tintColorClassName="accent-icon" />
         </Pressable>
-      </ControlPillMenu>
+      </Menu>
     </View>
   );
 }

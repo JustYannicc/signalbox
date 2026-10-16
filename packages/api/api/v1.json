@@ -1432,7 +1432,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "52c2d3b1"
+      "output": "bb7af725"
     },
     {
       "name": "server.refreshProviders",
@@ -1469,7 +1469,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "e9a1a308"
+      "output": "4ad97d04"
     },
     {
       "name": "settings.get",
@@ -1520,6 +1520,14 @@
       "destructive": true,
       "input": "03c2b661",
       "output": "13f90f73"
+    },
+    {
+      "name": "storage.database",
+      "rpc": "server.getDatabaseStorage",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "55dacd26"
     },
     {
       "name": "storage.report",
@@ -1633,6 +1641,14 @@
       "access": "write",
       "input": "dc0204b5",
       "output": "aebf4e45"
+    },
+    {
+      "name": "threads.commandOutput",
+      "rpc": "orchestration.subscribeCommandOutput",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "0d4296e3",
+      "output": "1c4ef6b6"
     },
     {
       "name": "threads.create",
@@ -2007,7 +2023,7 @@
       "rpc": "orchestration.dispatchCommand",
       "command": "thread.metadata.update",
       "access": "write",
-      "input": "45c27603",
+      "input": "7068e784",
       "output": "aebf4e45"
     },
     {

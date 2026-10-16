@@ -8,8 +8,8 @@ import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 import { Alert, ScrollView, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SegmentedControl } from "../../components/SegmentedControl";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { automationState } from "../../state/automations";

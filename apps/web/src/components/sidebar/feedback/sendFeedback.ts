@@ -16,6 +16,7 @@ export const FEEDBACK_DSN = import.meta.env.VITE_T3CODE_FEEDBACK_DSN?.trim() || 
 
 const CHANNEL_BY_STAGE: Record<typeof APP_STAGE_LABEL, "stable" | "nightly" | "dev"> = {
   Alpha: "stable",
+  Beta: "stable",
   Latest: "stable",
   Nightly: "nightly",
   Dev: "dev",

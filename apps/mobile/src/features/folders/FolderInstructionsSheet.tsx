@@ -4,7 +4,7 @@ import { useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText, AppTextInput } from "../../components/AppText";
+import { AppText, AppTextInput } from "../../components/ui/AppText";
 import type { InstructionsEditing } from "./use-folder-actions";
 
 export function FolderInstructionsSheet(props: {

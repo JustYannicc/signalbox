@@ -21,8 +21,8 @@ import { Pressable, View } from "react-native";
 import { Path, Svg } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
-import { SymbolView, type AppSymbolViewProps } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView, type AppSymbolViewProps } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { StatusDot } from "./AutomationParts";
 import { ServiceLogo } from "./ServiceLogo";

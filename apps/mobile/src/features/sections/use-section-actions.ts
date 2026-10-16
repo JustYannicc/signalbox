@@ -11,7 +11,7 @@ import { Alert } from "react-native";
 import { projectsInContextOf } from "@t3tools/client-runtime/state/signalboxContexts"; // signalbox: contexts
 import type { SignalboxContextsSnapshot } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
 
-import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
+import * as Dialog from "../../components/ui/Dialog";
 import { environmentSections } from "../../state/sections";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectSiblingMoveInput, sectionSiblingMoveInput } from "./section-navigation-model";
@@ -59,7 +59,7 @@ export function useSectionActions(input: {
 
   const requestCreateSection = useCallback(
     (parentId: SectionId | null, contextId?: string) => {
-      showTextInputDialog({
+      Dialog.prompt({
         title: parentId === null ? "New section" : "New nested section",
         initialValue: "",
         confirmText: "Create",
@@ -127,7 +127,7 @@ export function useSectionActions(input: {
         return;
       }
       if (event === "section:rename") {
-        showTextInputDialog({
+        Dialog.prompt({
           title: "Rename section",
           initialValue: section.name,
           confirmText: "Save",
@@ -155,7 +155,7 @@ export function useSectionActions(input: {
         return;
       }
       if (event === "section:delete") {
-        showConfirmDialog({
+        Dialog.confirm({
           title: "Delete section?",
           message:
             "Child sections and projects move up to this section's parent. Threads and files stay in place.",

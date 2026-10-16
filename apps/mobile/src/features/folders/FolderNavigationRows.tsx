@@ -6,9 +6,9 @@ import type { Folder, FolderId } from "@t3tools/contracts/signalboxFolders";
 import { memo, useCallback, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText } from "../../components/ui/AppText";
+import { Menu } from "../../components/ui/Menu";
 
 const MAX_VISUAL_DEPTH = 5;
 const NO_ACTIONS: MenuAction[] = [];
@@ -23,11 +23,7 @@ function RowMenu(props: {
 }) {
   if (props.actions.length === 0) return null;
   return (
-    <ControlPillMenu
-      actions={props.actions}
-      onPressAction={props.onPressAction}
-      title={props.label}
-    >
+    <Menu actions={props.actions} onPressAction={props.onPressAction} title={props.label}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Actions for ${props.label}`}
@@ -35,7 +31,7 @@ function RowMenu(props: {
       >
         <SymbolView name="ellipsis" size={16} tintColorClassName="accent-icon-muted" />
       </Pressable>
-    </ControlPillMenu>
+    </Menu>
   );
 }
 

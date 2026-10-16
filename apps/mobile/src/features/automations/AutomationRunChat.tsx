@@ -14,8 +14,8 @@ import { useMemo, type ReactNode } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView, type AppSymbolViewProps } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView, type AppSymbolViewProps } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useMinuteClock } from "./automation-hooks";
