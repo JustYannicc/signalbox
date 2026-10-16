@@ -16,9 +16,11 @@ on:
 permissions:
   contents: read
 
+# A PR and main each keep only their newest run: main takes a merge every few
+# minutes, and a full run per merge commit queued every PR behind it.
 concurrency:
-  group: signalbox-ci-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: signalbox-ci-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
   lint:
