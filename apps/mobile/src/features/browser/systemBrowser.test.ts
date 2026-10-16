@@ -10,7 +10,7 @@ describe("opensInSystemBrowser", () => {
     expect(opensInSystemBrowser("https://notgoogle.com/")).toBe(false);
     expect(opensInSystemBrowser("https://google.com.evil.test/")).toBe(false);
     expect(opensInSystemBrowser("https://booking.com/")).toBe(false);
-    expect(opensInSystemBrowser("mailto:me@google.com")).toBe(false);
+    expect(opensInSystemBrowser("mailto:docs.google.com")).toBe(false);
     expect(opensInSystemBrowser(null)).toBe(false);
   });
 });
