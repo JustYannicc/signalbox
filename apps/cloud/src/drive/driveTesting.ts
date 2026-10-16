@@ -11,6 +11,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { deliverAccess } from "./driveAccessOutbox.ts";
+import type * as DriveEvents from "./DriveEvents.ts";
+import { deliverDriveEvents } from "./driveEventOutbox.ts";
 import * as DriveDirectory from "./DriveDirectory.ts";
 import { makeDriveObjectApi } from "./driveObjectApi.ts";
 import * as DrivePacks from "./DrivePacks.ts";
@@ -20,8 +22,9 @@ import type { Bytes } from "./git/gitObjects.ts";
 
 /**
  * Test wiring for drives: drive objects on in-memory SQLite, packs in memory,
- * real git to make packs. With `users`, membership changes reach people's
- * objects right away, as the drive object's alarm would deliver them.
+ * real git to make packs. With `users`, membership changes and ref moves
+ * reach people's objects right away, as the drive object's alarm would
+ * deliver them.
  */
 export const makeMemoryDrives = (
   options: { readonly users?: () => UserDirectory.UserDirectory["Service"] } = {},
@@ -38,7 +41,11 @@ export const makeMemoryDrives = (
     );
     let ready: Promise<void> | undefined;
     const run = async <A, E>(
-      effect: Effect.Effect<A, E, DriveStore.DriveStore | DriveMembers.DriveMembers>,
+      effect: Effect.Effect<
+        A,
+        E,
+        DriveStore.DriveStore | DriveMembers.DriveMembers | DriveEvents.DriveEvents
+      >,
     ) => {
       ready ??= runtime.runPromise(DriveStore.DriveStore.use((store) => store.initialize));
       await ready;
@@ -48,7 +55,9 @@ export const makeMemoryDrives = (
       const users = options.users;
       if (users === undefined) return;
       await run(
-        deliverAccess(driveId).pipe(Effect.provideService(UserDirectory.UserDirectory, users())),
+        Effect.all([deliverAccess(driveId), deliverDriveEvents(driveId)]).pipe(
+          Effect.provideService(UserDirectory.UserDirectory, users()),
+        ),
       );
     });
     objects.set(driveId, api);
