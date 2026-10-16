@@ -168,7 +168,8 @@ export function restorePagePositionScript(position: BrowsingPosition): string {
       let element = node.parentElement;
       for (let climb = 0; element && element !== document.body && climb < ${MAX_CLIMB}; climb++) {
         const text = normalize((element.textContent || "").slice(0, passage.length * 4 + 200));
-        if (text.includes(passage)) return element;
+        // Only a passage on screen counts: collapsed sections (mobile Wikipedia) hide theirs.
+        if (text.includes(passage) && element.getClientRects().length > 0) return element;
         element = element.parentElement;
       }
     }
@@ -182,7 +183,7 @@ export function restorePagePositionScript(position: BrowsingPosition): string {
     const target = findPassage();
     if (target) {
       target.scrollIntoView({ block: "start" });
-      return true;
+      if (window.scrollY > 0 || ratio === 0) return true;
     }
     const root = document.scrollingElement || document.documentElement;
     const max = root.scrollHeight - window.innerHeight;
