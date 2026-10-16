@@ -22,8 +22,13 @@ import { jsonCodec } from "./jsonCodec.ts";
  *   to, or `inline` when this cloud has none to give. `POST packs/direct/commit`
  *   then has the cloud read the upload back, check it the same way (streamed,
  *   so its size never meets a request's or an isolate's limit) and store it.
- * - `refs` moves the thread's own `thread` and `wip` refs, each a CAS from an
- *   old value, to commits the drive already has.
+ * - `refs` moves the thread's own `thread`, `wip` and `machine` refs, each a
+ *   CAS from an old value, to commits the drive already has.
+ * - `machine` is the thread's machine state (#490): what a save leaves out of
+ *   `wip` because git ignores it (`.env`, `notes/`, local data) and the
+ *   thread's home outside the checkout. It's the thread's alone: its packs
+ *   upload with `PRIVATE_PACK_HEADER`, only that thread's machines download
+ *   them, and nothing it holds is ever merged or pushed to a remote.
  * - `reconcile` fast-forwards `main` to the thread's branch. Only while the
  *   thread's turn runs, and only from the `main` the thread merged.
  *
@@ -101,6 +106,13 @@ export const REMOTE_HEAD_HEADER = "x-signalbox-remote-head";
 export const REMOTE_COMMITS_HEADER = "x-signalbox-remote-commits";
 export const MAX_REMOTE_COMMITS = 16;
 
+/**
+ * Header on a pack upload, `1` when the pack is the uploading thread's own
+ * (its machine state): only that thread is ever handed it. It may build on
+ * everything else in the drive; nothing else may build on it.
+ */
+export const PRIVATE_PACK_HEADER = "x-signalbox-private";
+
 /** A thread's own branch on its drive's remote, where pushing and its pull request go. */
 export const threadRemoteBranch = (threadId: string) =>
   `signalbox/${threadId
@@ -175,6 +187,8 @@ export const DriveState = Schema.Struct({
   thread: Schema.NullOr(Oid),
   /** The thread's latest auto-save, `wip/<thread id>`. */
   wip: Schema.NullOr(Oid),
+  /** The thread's machine state, `machine/<thread id>`; absent from a cloud that keeps none. */
+  machine: Schema.optional(Schema.NullOr(Oid)),
   /** Where the thread's branch started: `main` when the thread first opened the drive. */
   base: Schema.NullOr(Oid),
   /** The drive's packs after the caller's `PACKS_AFTER_HEADER`, oldest first. */
@@ -191,8 +205,19 @@ export type DriveState = typeof DriveState.Type;
 
 export const PackUploadResult = Schema.Struct({ name: PackName, objects: NonNegativeInt });
 
+/**
+ * A folder a save leaves out of the thread's machine state (#490), and how it
+ * comes back: shown in the thread's details.
+ */
+export const SkippedFolder = Schema.Struct({
+  /** Relative to the checkout, or `~/…` outside it. */
+  path: Schema.String,
+  recipe: Schema.String,
+});
+export type SkippedFolder = typeof SkippedFolder.Type;
+
 /** The thread's own refs, the only ones `refs` can move. */
-export const ThreadRefName = Schema.Literals(["thread", "wip"]);
+export const ThreadRefName = Schema.Literals(["thread", "wip", "machine"]);
 export type ThreadRefName = typeof ThreadRefName.Type;
 
 export const RefUpdate = Schema.Struct({
@@ -310,6 +335,8 @@ export const DirectCommitRequest = Schema.Struct({
   remoteHead: Schema.optional(Oid),
   /** As `REMOTE_COMMITS_HEADER` says them. */
   remoteCommits: Schema.optional(Schema.Array(Oid)),
+  /** As `PRIVATE_PACK_HEADER` says it. */
+  private: Schema.optional(Schema.Boolean),
 });
 
 export const driveJson = {

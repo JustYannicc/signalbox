@@ -60,8 +60,18 @@ export const acceptPack = Effect.fn("DriveUploads.acceptPack")(function* <
   readonly remoteCommits?: ReadonlyArray<Oid>;
   /** The sizes of the remote head's files as the remote lists them, asked only when it promises any. */
   readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R2>;
+  /** The pack is the thread's own machine state (#490): only that thread is handed it. */
+  readonly private?: boolean;
 }) {
   const { pack } = input;
+  // Machine state is the thread's own work, never the remote's.
+  if (
+    input.private === true &&
+    (input.remoteHead !== undefined || (input.remoteCommits ?? []).length > 0)
+  ) {
+    return refused("A thread's machine state holds no remote commits.");
+  }
+  const privateTo = input.private === true ? input.threadId : null;
   const remoteCommits = [
     ...(input.remoteHead === undefined ? [] : [input.remoteHead]),
     ...(input.remoteCommits ?? []),
@@ -79,7 +89,8 @@ export const acceptPack = Effect.fn("DriveUploads.acceptPack")(function* <
   // One lookup: remote commits' parents the drive lacks stay on the remote; anything else is refused.
   // A parent in this same pack isn't lacking: it comes along.
   const parents = new Set([...parentsOf.values()].flat().filter((oid) => !pack.structure.has(oid)));
-  const lacking = yield* drive.missing([...pack.external, ...parents]);
+  // A public pack leans only on public packs; a private one on those and its thread's own.
+  const lacking = yield* drive.missing([...pack.external, ...parents], privateTo);
   const onRemote = new Set(lacking.filter((oid) => parents.has(oid)));
   // A checked commit's folders name files the remote keeps: those it lacks, the drive is promised.
   // Only the folders it reaches: another tree in the pack could name anything as a file.
@@ -125,6 +136,7 @@ export const acceptPack = Effect.fn("DriveUploads.acceptPack")(function* <
     objects: pack.objects,
     commits,
     external,
+    ...(privateTo === null ? {} : { privateTo }),
     shallow: [...parentsOf]
       .filter(([, commitParents]) => commitParents.some((parent) => onRemote.has(parent)))
       .map(([oid]) => oid),
@@ -154,6 +166,7 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
   readonly remoteHead?: Oid;
   readonly remoteCommits?: ReadonlyArray<Oid>;
   readonly promisedSizes?: Effect.Effect<ReadonlyMap<Oid, number>, never, R>;
+  readonly private?: boolean;
 }) {
   if (input.pack.length > MAX_PACK_BYTES) {
     return refused(`Packs over ${MAX_PACK_BYTES} bytes are not stored yet.`);
@@ -181,5 +194,6 @@ export const uploadPack = Effect.fn("DriveUploads.uploadPack")(function* <R = ne
     ...(input.remoteHead === undefined ? {} : { remoteHead: input.remoteHead }),
     ...(input.remoteCommits === undefined ? {} : { remoteCommits: input.remoteCommits }),
     ...(input.promisedSizes === undefined ? {} : { promisedSizes: input.promisedSizes }),
+    ...(input.private === true ? { private: true } : {}),
   });
 });

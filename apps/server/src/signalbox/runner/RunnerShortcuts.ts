@@ -9,6 +9,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { DriveClient } from "./RunnerDriveClient.ts";
 import { storePacks } from "./RunnerDriveMirror.ts";
 import { makeRunnerGit, remoteCredentialFile, type RunnerGit } from "./RunnerGit.ts";
+import { escapeGitignore, makeExcludes, SHORTCUTS_BLOCK } from "./RunnerExcludes.ts";
 
 /**
  * A drive's shortcuts on its thread's machine (#142). Each shortcut shows
@@ -53,8 +54,6 @@ const TARGET_FILE = "signalbox-target";
 /** In a mount's `.git`: the highest pack sequence of the target it holds. */
 const PACKS_FILE = "signalbox-packs-seq";
 const REMOTE_REF = "refs/shortcut/remote";
-const EXCLUDE_BEGIN = "# signalbox: shortcuts, mounted from other drives";
-const EXCLUDE_END = "# signalbox: end of shortcuts";
 /** `STATE_FILE`: each mounted path, and the drive it shows. */
 const MountState = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const decodeState = Schema.decodeEffect(MountState);
@@ -75,7 +74,7 @@ const isSafePath = (path: string) =>
     );
 
 /** A gitignore pattern matching exactly the folder at `path`. */
-const excludePattern = (path: string) => `/${path.replace(/[\\*?[\]!#]/g, (c) => `\\${c}`)}/`;
+const excludePattern = (path: string) => `/${escapeGitignore(path)}/`;
 
 const parentsOf = (file: string) => {
   const parents: Array<string> = [];
@@ -219,24 +218,7 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
 
   /** Keeps every shortcut out of the drive's own repository. */
   const exclude = (paths: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      const file = path.join(gitDir, "info", "exclude");
-      const current = (yield* fs.exists(file)) ? yield* fs.readFileString(file) : "";
-      const begin = current.indexOf(EXCLUDE_BEGIN);
-      const end = current.indexOf(EXCLUDE_END);
-      const kept =
-        begin === -1 || end === -1
-          ? current
-          : current.slice(0, begin) + current.slice(end + EXCLUDE_END.length).replace(/^\n/, "");
-      const block =
-        paths.length === 0
-          ? ""
-          : [EXCLUDE_BEGIN, ...paths.map(excludePattern), EXCLUDE_END, ""].join("\n");
-      const next = kept.length > 0 && !kept.endsWith("\n") ? `${kept}\n${block}` : kept + block;
-      if (next === current) return;
-      yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-      yield* fs.writeFileString(file, next);
-    });
+    makeExcludes(fs, path, gitDir).replaceBlock(SHORTCUTS_BLOCK, paths.map(excludePattern));
 
   /** Stops the drive's index tracking anything under `paths`; answers the paths that had files. */
   const untrack = (paths: ReadonlyArray<string>) =>

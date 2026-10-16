@@ -101,6 +101,8 @@ export function checkpointEvents(
     status: "ready",
     files: item.files,
     capturedAt: ctx.now,
+    // What the thread's machine state left out, for its details (#490).
+    ...(item.skipped === undefined ? {} : { skipped: item.skipped }),
   };
   return [...scopeEvents, { ...base, type: "checkpoint.captured", payload: checkpoint }];
 }
