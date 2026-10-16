@@ -16,11 +16,14 @@ import {
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { SIGNALBOX_FOLDERS_WS_METHODS } from "@t3tools/contracts/signalboxFolders";
 import { compileForCloud } from "@signalbox/automation-compiler/compileForCloud";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import { makeRepo } from "../drive/driveTesting.ts";
@@ -140,6 +143,25 @@ const setup = Effect.gen(function* () {
   });
   yield* cloud.settle;
 
+  /** Lends the user's GitHub to the repo's folder for its CI steps (#641), or stops. */
+  const lend = (lent: boolean) =>
+    Effect.gen(function* () {
+      const snapshot = yield* rpc[SIGNALBOX_FOLDERS_WS_METHODS.subscribe]({}).pipe(
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      const folder = snapshot.folders.find(
+        (entry) => entry.files?.projectId === imported.projectId,
+      );
+      if (!folder) return expect.unreachable("the repo has no folder");
+      const changed = yield* rpc[SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]({
+        id: folder.id,
+        lent,
+      });
+      return changed.folders.find((entry) => entry.id === folder.id);
+    });
+  yield* lend(true);
+
   const tool = (name: string, input: unknown) =>
     cloud.inUser(
       userId,
@@ -178,6 +200,7 @@ const setup = Effect.gen(function* () {
     cloud,
     github,
     actions,
+    lend,
     runSource,
     tool,
     engine,
@@ -222,7 +245,12 @@ describe("w.run on GitHub Actions", () => {
         let detail = yield* step(runId);
         expect(detail.steps[0]).toMatchObject({
           status: "waiting",
-          external: { system: "github-actions", scope: "owner/repo", status: "queued" },
+          external: {
+            system: "github-actions",
+            scope: "owner/repo",
+            status: "queued",
+            actingAs: "octo",
+          },
         });
 
         // The runner picks it up: the object's alarm reads its jobs and steps.
@@ -308,6 +336,27 @@ describe("w.run on GitHub Actions", () => {
         const detail = yield* step(runId);
         expect(detail.steps[0]?.error).toContain("don't fit a step on GitHub Actions");
         expect(actions.runs).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("runs only while the user lends their GitHub to the folder, which they can stop", () =>
+    provided(({ actions, lend, run, step }) =>
+      Effect.gen(function* () {
+        const stopped = yield* lend(false);
+        expect(stopped?.githubLend).toBeUndefined();
+        const refused = yield* step(yield* run);
+        expect(refused.steps[0]).toMatchObject({
+          status: "failed",
+          error: "No GitHub is lent to this folder's CI steps.",
+          errorDetail: { fix: expect.stringContaining("Lend my GitHub to CI steps") },
+        });
+        expect(actions.runs).toHaveLength(0);
+
+        const lent = yield* lend(true);
+        expect(lent?.githubLend).toEqual({ login: "octo", lentAt: expect.any(Number) });
+        expect((yield* step(yield* run)).steps[0]?.status).toBe("waiting");
+        expect(actions.runs).toHaveLength(1);
       }),
     ),
   );

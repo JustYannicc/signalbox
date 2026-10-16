@@ -84,7 +84,10 @@ export function ExternalRunView(props: { run: ExternalRun }) {
       <div className="flex min-w-0 items-center gap-1.5 text-xs">
         <GitHubIcon aria-hidden className="size-3.5 shrink-0" />
         <span className="font-medium">{EXTERNAL_RUN_SYSTEM_NAMES[run.system]}</span>
-        <span className="truncate text-muted-foreground">{run.scope}</span>
+        <span className="truncate text-muted-foreground">
+          {run.scope}
+          {run.actingAs ? ` · as @${run.actingAs}` : ""}
+        </span>
         {run.url ? (
           <a
             href={run.url}

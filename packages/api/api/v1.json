@@ -254,7 +254,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "5b9c822a",
-      "output": "4be3b3d7"
+      "output": "022797fa"
     },
     {
       "name": "automations.runs.retry",
@@ -543,7 +543,7 @@
       "rpc": "signalbox.folders.create",
       "access": "write",
       "input": "f9c41d1b",
-      "output": "46235ce0"
+      "output": "2a103d2a"
     },
     {
       "name": "folders.delete",
@@ -551,7 +551,7 @@
       "access": "write",
       "destructive": true,
       "input": "a3ac90c6",
-      "output": "46235ce0"
+      "output": "2a103d2a"
     },
     {
       "name": "folders.list",
@@ -559,42 +559,49 @@
       "access": "read",
       "stream": "snapshot",
       "input": "03c2b661",
-      "output": "46235ce0"
+      "output": "2a103d2a"
     },
     {
       "name": "folders.move",
       "rpc": "signalbox.folders.move",
       "access": "write",
       "input": "e8e9d1d8",
-      "output": "46235ce0"
+      "output": "2a103d2a"
+    },
+    {
+      "name": "folders.setGitHubLend",
+      "rpc": "signalbox.folders.setGitHubLend",
+      "access": "write",
+      "input": "6c500f30",
+      "output": "2a103d2a"
     },
     {
       "name": "folders.setInstructions",
       "rpc": "signalbox.folders.setInstructions",
       "access": "write",
       "input": "50051613",
-      "output": "46235ce0"
+      "output": "2a103d2a"
     },
     {
       "name": "folders.setOnePassword",
       "rpc": "signalbox.folders.setOnePassword",
       "access": "write",
       "input": "55e4b414",
-      "output": "46235ce0"
+      "output": "2a103d2a"
     },
     {
       "name": "folders.setSecrets",
       "rpc": "signalbox.folders.setSecrets",
       "access": "write",
       "input": "8c1300cc",
-      "output": "46235ce0"
+      "output": "2a103d2a"
     },
     {
       "name": "folders.update",
       "rpc": "signalbox.folders.update",
       "access": "write",
       "input": "83f5ef8c",
-      "output": "46235ce0"
+      "output": "2a103d2a"
     },
     {
       "name": "git.preparePullRequestThread",
@@ -1840,7 +1847,7 @@
       "rpc": "signalbox.folders.moveThread",
       "access": "write",
       "input": "218150d1",
-      "output": "46235ce0"
+      "output": "2a103d2a"
     },
     {
       "name": "threads.pin",

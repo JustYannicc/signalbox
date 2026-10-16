@@ -21,7 +21,7 @@ export function ExternalRunCard({ run }: { readonly run: ExternalRun }) {
         <Text className="text-sm font-t3-medium text-foreground">
           {EXTERNAL_RUN_SYSTEM_NAMES[run.system]}
         </Text>
-        {`  ${run.scope}`}
+        {`  ${run.scope}${run.actingAs ? ` · as @${run.actingAs}` : ""}`}
       </Text>
       {run.jobs.length === 0 ? (
         <Text className="text-sm text-foreground-muted">

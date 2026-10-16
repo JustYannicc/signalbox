@@ -132,7 +132,7 @@ const make = Effect.gen(function* () {
   const changedFiles = yield* makeChangedFiles;
   yield* engine.registerBuiltinTools(makeCloudBuiltinTools({ threads, service, owner, merges }));
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
-  yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner(owner));
+  yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);
   const tools = makeCloudTools({ engine, compiler, threads });
 
   // Notices queue up while the engine works and go out before the request ends.

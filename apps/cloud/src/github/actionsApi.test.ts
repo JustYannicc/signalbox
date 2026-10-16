@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { actionsStatus, logTail } from "./GitHubActions.ts";
+import { actionsStatus, logTail } from "./actionsApi.ts";
 
 const ESC = String.fromCharCode(27);
 

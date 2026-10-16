@@ -63,5 +63,7 @@ export const ExternalRun = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   status: ExternalRunStatus,
   jobs: Schema.Array(ExternalRunJob),
+  /** Whose account it runs as there, e.g. the GitHub login lent to the folder. */
+  actingAs: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type ExternalRun = typeof ExternalRun.Type;
