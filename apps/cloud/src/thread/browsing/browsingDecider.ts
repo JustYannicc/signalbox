@@ -7,7 +7,8 @@ import {
   type BrowsingRecord,
   type BrowsingTab,
 } from "@t3tools/contracts/signalboxBrowsing";
-import { isOwnedBy, ownerOf } from "@t3tools/client-runtime/browsing";
+import { isOwnedBy, isSharedAt, ownerOf } from "@t3tools/client-runtime/browsing";
+import * as DateTime from "effect/DateTime";
 import { generateKeyBetween } from "fractional-indexing";
 
 /**
@@ -29,6 +30,18 @@ export type BrowsingDecision =
 
 const NOTHING: BrowsingDecision = { _tag: "Events", events: [] };
 const NOT_OWNER = "Only the tab's owner can change it.";
+/** Which commands only a tab's owner may send; a new command has to choose. */
+const OWNER_ONLY: Record<BrowsingCommand["_tag"], boolean> = {
+  Open: false,
+  Navigate: true,
+  Move: false,
+  Activate: false,
+  Close: true,
+  CloseAll: false,
+  Position: true,
+  Share: true,
+  Unshare: true,
+};
 
 /** An event before the thread numbers it. */
 type EventDraft = BrowsingEvent extends infer E
@@ -60,12 +73,8 @@ const drafts = (
   }
   const index = record.tabs.findIndex((tab) => tab.id === command.tabId);
   const tab = record.tabs[index];
-  // Only the owner drives a tab (#343); switching to it and reordering are the thread's.
-  if (
-    tab !== undefined &&
-    (command._tag === "Navigate" || command._tag === "Position" || command._tag === "Close") &&
-    !isOwnedBy(tab, by)
-  ) {
+  // Only the owner drives a tab or shares it (#343, #597); switching to it and reordering are the thread's.
+  if (tab !== undefined && OWNER_ONLY[command._tag] && !isOwnedBy(tab, by)) {
     return NOT_OWNER;
   }
   switch (command._tag) {
@@ -134,8 +143,57 @@ const drafts = (
     case "Position":
       if (tab === undefined || samePosition(tab.position, command.position)) return [];
       return [{ _tag: "TabPositioned", by, at, tabId: tab.id, position: command.position }];
+    case "Share": {
+      if (tab === undefined) return [];
+      const until =
+        command.days === null
+          ? null
+          : DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(at), { days: command.days }));
+      const current = tab.sharing;
+      if (current?.audience === command.audience && current.until === until) return [];
+      // A share whose end passed (not recorded yet) is over: sharing again starts anew.
+      const still = isSharedAt(tab, DateTime.toEpochMillis(DateTime.makeUnsafe(at)));
+      const since = still && current?.audience === command.audience ? current.since : at;
+      return [
+        {
+          _tag: "TabShared",
+          by,
+          at,
+          tabId: tab.id,
+          sharing: { audience: command.audience, until, since, by },
+        },
+      ];
+    }
+    case "Unshare":
+      if (tab?.sharing === undefined) return [];
+      return [{ _tag: "TabUnshared", by, at, tabId: tab.id, reason: "Stopped" }];
   }
 };
+
+const numbered = (
+  drafts: ReadonlyArray<EventDraft>,
+  sequence: number,
+): ReadonlyArray<BrowsingEvent> =>
+  drafts.map((draft, offset): BrowsingEvent => ({ ...draft, sequence: sequence + offset + 1 }));
+
+/**
+ * Ends every share whose time is up at `at`. Each ending names whoever shared
+ * the tab, since nobody acted. Empty when nothing is due.
+ */
+export function expireBrowsingSharing(
+  record: BrowsingRecord,
+  { at, sequence }: Omit<BrowsingDecisionContext, "by">,
+): ReadonlyArray<BrowsingEvent> {
+  const now = DateTime.toEpochMillis(DateTime.makeUnsafe(at));
+  return numbered(
+    record.tabs.flatMap((tab): ReadonlyArray<EventDraft> => {
+      if (tab.sharing === undefined || isSharedAt(tab, now)) return [];
+      const sharing = tab.sharing;
+      return [{ _tag: "TabUnshared", by: sharing.by, at, tabId: tab.id, reason: "Expired" }];
+    }),
+    sequence,
+  );
+}
 
 export function decideBrowsing(
   record: BrowsingRecord,
@@ -145,11 +203,5 @@ export function decideBrowsing(
   const result = drafts(record, command, context);
   if (typeof result === "string") return { _tag: "Rejected", reason: result };
   if (result.length === 0) return NOTHING;
-  return {
-    _tag: "Events",
-    events: result.map((draft, offset): BrowsingEvent => ({
-      ...draft,
-      sequence: context.sequence + offset + 1,
-    })),
-  };
+  return { _tag: "Events", events: numbered(result, context.sequence) };
 }

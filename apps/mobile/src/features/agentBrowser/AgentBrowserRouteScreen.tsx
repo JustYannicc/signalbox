@@ -27,6 +27,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Notice } from "../../components/ui/Notice";
 import { Toolbar } from "../../components/ui/Toolbar";
+import { uuidv4 } from "../../lib/uuid";
+import { useBrowsingDispatch, useThreadBrowsingSupported } from "../../state/browsing";
 import { useEnvironmentQuery } from "../../state/query";
 import { usePreparedConnection } from "../../state/session";
 import { signalboxAgentBrowser, useAgentBrowserTrail } from "../../state/signalboxAgentBrowser";
@@ -49,6 +51,14 @@ type AgentBrowserRouteScreenProps = StaticScreenProps<{
 export function AgentBrowserRouteScreen({ route }: AgentBrowserRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
+  // Your own copy opens in this thread's tabs, in the phone's own WebView.
+  const onShowCopy = useCallback(() => {
+    navigation.goBack();
+    navigation.navigate("ThreadBrowsing", {
+      environmentId: route.params.environmentId,
+      threadId: route.params.threadId,
+    });
+  }, [navigation, route.params.environmentId, route.params.threadId]);
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <AgentBrowserStack.Navigator
@@ -66,6 +76,7 @@ export function AgentBrowserRouteScreen({ route }: AgentBrowserRouteScreenProps)
               environmentId={EnvironmentId.make(route.params.environmentId)}
               threadId={ThreadId.make(route.params.threadId)}
               onClose={onClose}
+              onShowCopy={onShowCopy}
             />
           )}
         </AgentBrowserStack.Screen>
@@ -85,10 +96,12 @@ function AgentBrowserScreen({
   environmentId,
   threadId,
   onClose,
+  onShowCopy,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly onClose: () => void;
+  readonly onShowCopy: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const { themeVariables } = useAppearancePreferences();
@@ -99,6 +112,18 @@ function AgentBrowserScreen({
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const canDrive = useAtomValue(signalboxAgentBrowser.input.permissionAtom(environmentId));
   const sendInput = useAtomCommand(signalboxAgentBrowser.input, { reportFailure: false });
+  const browse = useBrowsingDispatch(environmentId, threadId, "action");
+  const browsingSupported = useThreadBrowsingSupported(environmentId);
+  // Following, a tapped link opens as your own tab, signed in as you; the agent's tab stays put.
+  const openCopy = useCallback(
+    (url: string) =>
+      void browse({ _tag: "Open", tabId: `tab_${uuidv4()}`, url, activate: true }).then(
+        (result) => {
+          if (result._tag === "Success") onShowCopy();
+        },
+      ),
+    [browse, onShowCopy],
+  );
   const connection = usePreparedConnection(environmentId);
   const pageUrl = agentBrowserMirrorPageUrl(
     Option.isSome(connection) ? connection.value.httpBaseUrl : null,
@@ -310,6 +335,7 @@ function AgentBrowserScreen({
             background={themeVariables["--color-subtle"]}
             onInput={onInput}
             onActivity={onActivity}
+            {...(browsingSupported ? { onCopy: openCopy } : {})}
           />
         ) : null}
         {blankReason !== null ? (

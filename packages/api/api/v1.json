@@ -312,7 +312,7 @@
       "name": "browsing.change",
       "rpc": "signalbox.browsing.dispatch",
       "access": "write",
-      "input": "d37528cd",
+      "input": "699a260e",
       "output": "aebf4e45"
     },
     {
@@ -321,7 +321,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "1276a316",
-      "output": "80883628"
+      "output": "083fa849"
     },
     {
       "name": "contexts.list",

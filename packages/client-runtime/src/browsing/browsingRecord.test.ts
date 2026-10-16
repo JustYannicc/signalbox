@@ -7,10 +7,13 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 
 import { ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import {
   activeBrowsingTab,
   applyBrowsingEvent,
+  browsingShareMenu,
+  browsingSharingNote,
   browsingTabHost,
   browsingTabLabel,
   browsingTabSnapshot,
@@ -219,5 +222,69 @@ describe("ownership", () => {
     );
     expect(isOwnedBy({ owner: person }, { _tag: "Agent", agentId: "k" })).toBe(false);
     expect(isOwnedBy({ owner: person }, null)).toBe(false);
+  });
+});
+
+describe("browsingSharingNote", () => {
+  const until = "2026-10-19T10:00:00.000Z";
+  const sharing = (end: string | null) => ({
+    sharing: {
+      audience: "Thread" as const,
+      until: end,
+      since: "2026-10-16T10:00:00.000Z",
+      by: { _tag: "Device" as const, userId: "u1", deviceId: "d" },
+    },
+  });
+  const now = Date.parse("2026-10-17T10:00:00.000Z");
+  const day = (at: number) => DateTime.formatIso(DateTime.makeUnsafe(at)).slice(0, 10);
+
+  it("says who can see the tab and until when", () => {
+    expect(browsingSharingNote({}, now)).toBe("Private: only you can see this tab.");
+    expect(browsingSharingNote(sharing(until), now, day)).toBe(
+      "Anyone in this thread can see it until 2026-10-19.",
+    );
+    expect(browsingSharingNote(sharing(null), now)).toBe(
+      "Anyone in this thread can see it until you stop sharing.",
+    );
+  });
+
+  it("reads a share whose end passed as private", () => {
+    expect(browsingSharingNote(sharing(until), Date.parse(until))).toBe(
+      "Private: only you can see this tab.",
+    );
+  });
+});
+
+describe("browsingShareMenu", () => {
+  it("offers sharing a private tab, and keeping or stopping a shared one", () => {
+    const now = Date.parse("2026-10-17T10:00:00.000Z");
+    const closed = browsingShareMenu({ id: "a" }, now);
+    expect(closed).toMatchObject({ shared: false, label: "Share with this thread", stop: null });
+    expect(closed.choices.map((choice) => choice.title)).toEqual([
+      "Share until I stop",
+      "Share for a day",
+      "Share for 3 days",
+      "Share for a week",
+    ]);
+    expect(closed.choices[2]?.command).toEqual({
+      _tag: "Share",
+      tabId: "a",
+      audience: "Thread",
+      days: 3,
+    });
+    const open = browsingShareMenu(
+      {
+        id: "a",
+        sharing: {
+          audience: "Thread",
+          until: null,
+          since: "2026-10-16T10:00:00.000Z",
+          by: { _tag: "Device", userId: "u1", deviceId: "d" },
+        },
+      },
+      now,
+    );
+    expect(open.choices[0]?.title).toBe("Keep sharing until I stop");
+    expect(open.stop).toEqual({ _tag: "Unshare", tabId: "a" });
   });
 });

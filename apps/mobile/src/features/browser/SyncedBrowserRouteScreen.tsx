@@ -1,5 +1,10 @@
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { browsingTabLabel } from "@t3tools/client-runtime/browsing";
+import {
+  browsingShareMenu,
+  browsingTabLabel,
+  formatSharingEnd,
+  isSharedAt,
+} from "@t3tools/client-runtime/browsing";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { BrowsingTab } from "@t3tools/contracts/signalboxBrowsing";
 import { useCallback, useEffect, useState } from "react";
@@ -28,7 +33,8 @@ type SyncedBrowserRouteScreenProps = StaticScreenProps<{
 
 /**
  * A thread's synced tabs (#585), loaded in this device's own WebView. Pushed
- * like the terminal, so its header is the workspace stack's own.
+ * like the terminal, so its header is the workspace stack's own. Your own tab
+ * can be shared with the thread; anyone else's opens as your own copy (#597).
  */
 export function SyncedBrowserRouteScreen({ route }: SyncedBrowserRouteScreenProps) {
   const navigation = useNavigation();
@@ -62,6 +68,8 @@ function SyncedBrowserScreen(props: {
   const act = useBrowsingDispatch(environmentId, threadId, "action");
   const report = useBrowsingDispatch(environmentId, threadId, "report");
   const [pending, setPending] = useState<PendingActivation | null>(null);
+  // When the screen opened is close enough: the thread ends a share itself, and that lands live.
+  const [now] = useState(Date.now);
   const state = browsing.data;
   const record = state?.record ?? null;
   const tab = record === null ? null : shownBrowsingTab(record, pending);
@@ -91,6 +99,45 @@ function SyncedBrowserScreen(props: {
   };
   const closeTab = (closing: BrowsingTab) =>
     void run({ _tag: "Close", tabId: closing.id }, "Could not close this tab");
+  /** Your own tab at the same address, signed in as you; theirs never moves. */
+  const copyTab = (original: BrowsingTab) => {
+    if (original.url === null) return openTab();
+    const tabId = `tab_${uuidv4()}`;
+    setPending({ tabId, sinceActiveTabId: record?.activeTabId ?? null });
+    void run(
+      { _tag: "Open", tabId, url: original.url, activate: true, afterTabId: original.id },
+      "Could not open your own copy",
+    );
+  };
+  const share = tab && engine === "here" ? browsingShareMenu(tab, now) : null;
+  const shareItems: AppBarMenuItem[] =
+    share === null
+      ? []
+      : [
+          {
+            id: "share",
+            title: share.label,
+            icon: "person.2",
+            items: [
+              { id: "share-note", title: share.note, disabled: true, onPress: () => undefined },
+              ...share.choices.map((choice) => ({
+                id: `share-${choice.key}`,
+                title: choice.title,
+                onPress: () => void run(choice.command, "Could not share this tab"),
+              })),
+              ...(share.stop === null
+                ? []
+                : [
+                    {
+                      id: "unshare",
+                      title: "Stop sharing",
+                      icon: "xmark",
+                      onPress: () => void run(share.stop!, "Could not stop sharing"),
+                    },
+                  ]),
+            ],
+          },
+        ];
 
   const tabs = record?.tabs ?? [];
   const tabItems: AppBarMenuItem[] = tabs.map((entry) => {
@@ -109,12 +156,21 @@ function SyncedBrowserScreen(props: {
     ...(tab && engine === "here"
       ? [{ id: "close-tab", title: "Close this tab", icon: "xmark", onPress: () => closeTab(tab) }]
       : []),
+    ...shareItems,
   ];
 
   return (
     <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
       <AppBar
         title={tab ? browsingTabLabel(tab) : "Browser"}
+        {...(tab !== null && isSharedAt(tab, now)
+          ? {
+              subtitle:
+                tab.sharing.until === null
+                  ? "Shared with this thread"
+                  : `Shared until ${formatSharingEnd(Date.parse(tab.sharing.until))}`,
+            }
+          : {})}
         sidebar={false}
         onBack={onClose}
         menus={
@@ -146,9 +202,11 @@ function SyncedBrowserScreen(props: {
             }
             detail={
               engine === "agent"
-                ? "The agent drives it from the cloud. Your own tabs open here."
-                : "Only the person who opened it can use it. Your own tabs open here."
+                ? "The agent drives it from the cloud. Open your own copy to use the page here, signed in as you."
+                : "Only the person who opened it can use it. Open your own copy to use the page here, signed in as you."
             }
+            actionLabel="Open my own copy"
+            onAction={() => copyTab(tab)}
           />
         </View>
       ) : tab !== null && state !== null ? (
