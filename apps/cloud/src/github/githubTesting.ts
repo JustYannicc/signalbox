@@ -71,6 +71,8 @@ export const makeFakeGitHub = (options: {
     openThreads?: number;
     /** The head commit when it merged, as GitHub keeps it after the branch moves or goes. */
     headOid?: string;
+    /** The head branch's repository when it isn't this one: a fork. */
+    headRepository?: string;
   }> = [];
   const calls: Array<string> = [];
   /** Changes made through `update`, so each moves `updatedAt` a minute on. */
@@ -168,7 +170,8 @@ export const makeFakeGitHub = (options: {
               reviewDecision: null,
               headRefOid: head(pull.head) ?? "0".repeat(40),
               headRefName: pull.head,
-              headRepository: { nameWithOwner: options.repository },
+              baseRefName: pull.base,
+              headRepository: { nameWithOwner: pull.headRepository ?? options.repository },
               reviewThreads: {
                 nodes: Array.from({ length: pull.openThreads ?? 0 }, () => ({ isResolved: false })),
                 pageInfo: { hasNextPage: false },
