@@ -4,6 +4,7 @@ import type {
   MachineUsage,
   RunnerItem,
   RunnerLogLevel,
+  RunnerMessageInput,
   RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type {
@@ -29,6 +30,7 @@ import * as Exit from "effect/Exit";
 import type * as PlatformError from "effect/PlatformError";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
@@ -119,6 +121,11 @@ export interface RunnerTurns {
   }) => Effect.Effect<void>;
   /** Stops `runId`, wherever it is: loading, or running on the harness. */
   readonly interrupt: (runId: RunId) => Effect.Effect<void>;
+  /**
+   * Hands `message` to `runId`'s turn on the harness (#562), once the harness
+   * has named it. Each message is taken once, so the thread can repeat itself.
+   */
+  readonly steer: (runId: RunId, message: RunnerMessageInput) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
   /**
@@ -153,6 +160,13 @@ interface Turn {
   session: ProviderAdapterV2SessionRuntime | null;
   providerThread: OrchestrationV2ProviderThread | null;
   providerTurnId: ProviderTurnId | null;
+  /** Done once the run is off this machine: its turn ended, or it never reached the harness. */
+  readonly ended: Deferred.Deferred<void>;
+  /** The turn's session token, to bring a steer's attachments. */
+  readonly sessionToken: string | null;
+  /** Messages steered in, by id, and the ones waiting for the harness to name its turn. */
+  readonly steered: Set<string>;
+  readonly steers: Array<RunnerMessageInput>;
 }
 
 const encodeAdapterEvent = Schema.encodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
@@ -186,6 +200,12 @@ const drivePrepareError = (error: RunnerDriveError) =>
   });
 
 const USAGE_INTERVAL = "30 seconds";
+/**
+ * How long a stopped turn has to end before the next one starts without it:
+ * past Claude's own 10 s wait for an interrupted query to close. A harness
+ * still running then has its session restarted, which ends the turn with it.
+ */
+const WIND_DOWN = "15 seconds";
 /** How often the drive looks for changes to stream in (#493): about what a lost machine loses. */
 const WATCH_INTERVAL = "2 seconds";
 /** While no turn runs, every this many intervals (5 min): each report wakes the thread's object. */
@@ -239,6 +259,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const turns = new Map<RunId, Turn>();
   /** Runs this machine already took, so a repeated `turn.start` starts nothing. */
   const taken = new Set<RunId>();
+  /** `turn` is off this machine: whatever waits for it to wind down goes on. */
+  const forget = (runId: RunId, turn: Turn) => {
+    if (turns.get(runId) === turn) turns.delete(runId);
+    Deferred.doneUnsafe(turn.ended, Exit.void);
+  };
   /** The run adapter events belong to: the latest one started. */
   let latestRunId: RunId | null = null;
   let latestTraceId: string | null = null;
@@ -369,12 +394,65 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
             withTrace(turn.turn.traceId),
           );
 
+  /** Steers go to the harness one at a time, in the order they came. */
+  const steering = yield* Semaphore.make(1);
+
+  /** Hands `message` to `turn`'s harness turn, its files first; a refusal is logged, not fatal. */
+  const steerNow = (turn: Turn, message: RunnerMessageInput) =>
+    Effect.gen(function* () {
+      const { session, providerThread, providerTurnId } = turn;
+      if (session === null || providerThread === null || providerTurnId === null) return;
+      if (
+        input.attachments !== undefined &&
+        turn.sessionToken !== null &&
+        message.attachments.length > 0
+      ) {
+        yield* input.attachments.bring(turn.sessionToken, message.attachments);
+      }
+      yield* session.steerTurn({
+        threadId: input.threadId,
+        runId: turn.turn.runId,
+        providerThread,
+        providerTurnId,
+        message,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("the harness didn't take a steer", Cause.pretty(cause)).pipe(
+          Effect.andThen(
+            input.emit(
+              log(
+                turn.turn.runId,
+                "warning",
+                `the harness didn't take a message sent mid-turn: ${causeText(cause)}`,
+              ),
+            ),
+          ),
+        ),
+      ),
+      steering.withPermits(1),
+      withTrace(turn.turn.traceId),
+    );
+
+  /** Hands the harness the steers that waited for it to name its turn, without holding up the caller. */
+  const deliverSteers = (turn: Turn) =>
+    turn.status !== "running" || turn.providerTurnId === null || turn.steers.length === 0
+      ? Effect.void
+      : Effect.asVoid(
+          Effect.forkIn(
+            Effect.forEach(turn.steers.splice(0), (message) => steerNow(turn, message), {
+              discard: true,
+            }),
+            scope,
+          ),
+        );
+
   /** Learns each turn's native id, stops one asked to stop before then, and forgets ended ones. */
   const track = (event: ProviderAdapterV2Event) =>
     Effect.gen(function* () {
       if (event.type === "turn.terminal") {
         for (const [runId, turn] of turns) {
-          if (turn.providerTurnId === event.providerTurnId) turns.delete(runId);
+          if (turn.providerTurnId === event.providerTurnId) forget(runId, turn);
         }
         return;
       }
@@ -384,7 +462,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           continue;
         }
         turn.providerTurnId = event.providerTurn.id;
-        if (turn.status === "stopped") yield* interruptNow(turn);
+        yield* turn.status === "stopped" ? interruptNow(turn) : deliverSteers(turn);
       }
     });
 
@@ -410,7 +488,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       const turn = state.turn;
       // Its own attempt: adapters name the provider turn, and Claude its prompt, after the attempt.
       const attemptId = RunAttemptId.make(`${turn.attemptId}:merge:${attempt}`);
-      const continuation: Turn = { ...state, attemptId, status: "running", providerTurnId: null };
+      // Its own end: the next turn waits for this agent turn, not the one it follows.
+      const continuation: Turn = {
+        ...state,
+        attemptId,
+        status: "running",
+        providerTurnId: null,
+        ended: Deferred.makeUnsafe<void>(),
+      };
       held.waiting = ended;
       mergeAttempts.add(attemptId);
       turns.set(runId, continuation);
@@ -443,7 +528,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           Effect.onError(() =>
             Effect.sync(() => {
               held.waiting = null;
-              if (turns.get(runId) === continuation) turns.delete(runId);
+              forget(runId, continuation);
             }),
           ),
         );
@@ -492,7 +577,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         if (held !== undefined) held.waiting = null;
         const continuation = turns.get(runId);
         if (continuation !== undefined && mergeAttempts.has(continuation.attemptId)) {
-          turns.delete(runId);
+          forget(runId, continuation);
         }
         if (waiting !== null) yield* Deferred.succeed(waiting, event.status === "completed");
         return true;
@@ -582,10 +667,14 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           withTrace(latestTraceId),
         ),
       ),
-      // A session whose events ended is dead; the next turn opens a new one.
+      // A session whose events ended is dead; the next turn opens a new one,
+      // and a stopped turn on it has nothing left to wind down.
       Effect.ensuring(
         Effect.sync(() => {
           if (sessions.get(instanceId)?.runtime === runtime) sessions.delete(instanceId);
+          for (const [runId, turn] of turns) {
+            if (turn.session === runtime && turn.status === "stopped") forget(runId, turn);
+          }
         }),
       ),
     );
@@ -637,6 +726,36 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       // The session outlives the turn that opened it, so its fibers don't carry that turn's trace.
       Effect.provideService(References.CurrentLogAnnotations, logAnnotations),
     );
+
+  /**
+   * Waits for every turn but `runId` still on `instanceId`'s session to end,
+   * so the harness never gets a turn while it runs another. One that hasn't
+   * ended by `WIND_DOWN` ends with its session, and the next turn resumes on
+   * a new one.
+   */
+  const windDown = (instanceId: ProviderInstanceId, runId: RunId) =>
+    Effect.gen(function* () {
+      const open = sessions.get(instanceId);
+      if (open === undefined) return;
+      const winding = [...turns.entries()].filter(
+        ([other, turn]) => other !== runId && turn.session === open.runtime,
+      );
+      if (winding.length === 0) return;
+      const ended = yield* Effect.forEach(winding, ([, turn]) => Deferred.await(turn.ended), {
+        discard: true,
+      }).pipe(Effect.timeoutOption(WIND_DOWN));
+      if (Option.isSome(ended)) return;
+      yield* input.emit(
+        log(
+          runId,
+          "warning",
+          `a stopped turn was still running after ${WIND_DOWN}; restarting the agent's session`,
+        ),
+      );
+      if (sessions.get(instanceId) === open) sessions.delete(instanceId);
+      for (const [other, turn] of winding) forget(other, turn);
+      yield* Scope.close(open.scope, Exit.void);
+    });
 
   /** The provider thread the harness will run on, keeping the thread's own identity for it. */
   const loadProviderThread = (
@@ -794,6 +913,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
                 // Its message says why, naming the turn's own files when they're the reason.
                 .pipe(Effect.mapError((error) => new RunnerTurnError({ message: error.message }))),
             );
+      // A turn already stopped never waits on, or restarts, the session the next one runs on.
+      if (state.status !== "stopped") yield* windDown(adapter.instanceId, turn.runId);
       const session = yield* sessionFor(adapter, turn, runtimePolicy, {
         instructions: prepared.drive?.instructions ?? "",
         secrets: prepared.secrets,
@@ -805,7 +926,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         Effect.gen(function* () {
           // Stopped while the session loaded: the thread already ended the run.
           if (state.status === "stopped") {
-            turns.delete(turn.runId);
+            forget(turn.runId, state);
             return false;
           }
           state.status = "running";
@@ -848,7 +969,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         ordered.withPermits(1)(
           Effect.gen(function* () {
             yield* Effect.logError("turn failed to start", Cause.pretty(cause));
-            turns.delete(turn.runId);
+            forget(turn.runId, state);
             if (runningRunId === turn.runId) runningRunId = null;
             yield* input.emit(
               log(turn.runId, "error", failureLine("turn failed to start", cause, stderrMark)),
@@ -882,12 +1003,21 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         session: null,
         providerThread: null,
         providerTurnId: null,
+        ended: Deferred.makeUnsafe<void>(),
+        sessionToken: sessionAccess?.token ?? null,
+        steered: new Set(),
+        steers: [],
       };
-      turns.set(turn.runId, state);
-      return Effect.asVoid(
-        run(turn, modelToken, access, sessionAccess, secretsAccess, state).pipe(
-          Effect.forkIn(scope),
+      // The thread hands out one run at a time, so any other this machine
+      // still runs is one it stopped, even when that `interrupt` never came.
+      return keepOnly(turn.runId).pipe(
+        Effect.andThen(Effect.sync(() => turns.set(turn.runId, state))),
+        Effect.andThen(
+          run(turn, modelToken, access, sessionAccess, secretsAccess, state).pipe(
+            Effect.forkIn(scope),
+          ),
         ),
+        Effect.asVoid,
       );
     });
 
@@ -900,8 +1030,24 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       if (turn === undefined || turn.status === "stopped") return Effect.void;
       const wasRunning = turn.status === "running";
       turn.status = "stopped";
-      // Before the harness names its turn, `track` interrupts once it does.
-      return wasRunning ? interruptNow(turn) : Effect.void;
+      // Before the harness names its turn, `track` interrupts once it does. The
+      // harness may take seconds to stop; the socket meanwhile reads on.
+      return wasRunning ? Effect.asVoid(Effect.forkIn(interruptNow(turn), scope)) : Effect.void;
+    });
+
+  const steer: RunnerTurns["steer"] = (runId, message) =>
+    Effect.suspend(() => {
+      const turn = turns.get(runId);
+      if (turn === undefined || turn.status === "stopped") {
+        // The turn ended here as the message came: the thread hears why it went unanswered.
+        return input.emit(
+          log(runId, "warning", "a message sent mid-turn arrived after the turn ended here"),
+        );
+      }
+      if (turn.steered.has(message.messageId)) return Effect.void;
+      turn.steered.add(message.messageId);
+      turn.steers.push(message);
+      return deliverSteers(turn);
     });
 
   const keepOnly: RunnerTurns["keepOnly"] = (runId) =>
@@ -953,6 +1099,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   return {
     start,
     interrupt,
+    steer,
     keepOnly,
     drain,
     taken: Effect.sync(() => [...taken]),

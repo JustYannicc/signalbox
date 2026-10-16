@@ -33,7 +33,7 @@ import { SessionAccess } from "./SessionProtocol.ts";
  * 2. The thread answers `welcome` with the last batch it committed and the
  *    run it considers live. The Runner drops everything up to that batch,
  *    resends the rest in order, and stops any turn the thread no longer wants.
- * 3. The thread sends `turn.start` and `interrupt`; the Runner streams
+ * 3. The thread sends `turn.start`, `steer` and `interrupt`; the Runner streams
  *    sequenced `batch`es of what happened and the thread `ack`s each once its
  *    events are committed. A batch at or below the acknowledged sequence is a
  *    resend and changes nothing. Batches also carry the machine's usage and
@@ -76,6 +76,16 @@ export const RUNNER_HEARTBEAT_PONG = "pong";
 /** Where a Runner dials in, with `?threadId=`. The token travels in `hello`, never the URL. */
 export const RUNNER_CONNECT_PATH = "/api/runner/connect";
 
+/** A user message as the harness gets it: a turn's request, or a steer into a running turn. */
+export const RunnerMessageInput = Schema.Struct({
+  messageId: MessageId,
+  text: Schema.String,
+  attachments: Schema.Array(ChatAttachment),
+  createdBy: OrchestrationV2ConversationMessage.fields.createdBy,
+  creationSource: OrchestrationV2ConversationMessage.fields.creationSource,
+});
+export type RunnerMessageInput = typeof RunnerMessageInput.Type;
+
 /** One turn the thread hands to the Runner. Everything the adapter's `startTurn` needs. */
 export const RunnerTurn = Schema.Struct({
   threadId: ThreadId,
@@ -89,13 +99,7 @@ export const RunnerTurn = Schema.Struct({
   appThread: OrchestrationV2AppThread,
   /** The run's provider thread. A null native ref means the harness has no session yet. */
   providerThread: OrchestrationV2ProviderThread,
-  message: Schema.Struct({
-    messageId: MessageId,
-    text: Schema.String,
-    attachments: Schema.Array(ChatAttachment),
-    createdBy: OrchestrationV2ConversationMessage.fields.createdBy,
-    creationSource: OrchestrationV2ConversationMessage.fields.creationSource,
-  }),
+  message: RunnerMessageInput,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -262,6 +266,8 @@ export const RunnerHello = Schema.Struct({
    * Absent from Runners built before it: the thread can't tell.
    */
   takenRunIds: Schema.optional(Schema.Array(RunId)),
+  /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
+  steers: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
@@ -315,6 +321,12 @@ export const ThreadMessage = Schema.Union([
     secrets: Schema.optionalKey(SecretsAccess),
   }),
   Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
+  /**
+   * A message the person sent into `runId` while it runs (#562). Sent again on
+   * each reconnect while the run is live; the Runner takes each message once.
+   * Only to a Runner whose `hello` said it `steers`.
+   */
+  Schema.Struct({ type: Schema.Literal("steer"), runId: RunId, message: RunnerMessageInput }),
   /**
    * The thread is about to let the machine go (#493): save everything it
    * wrote, then answer `machine.drained` with this `id`. Its tokens hold until

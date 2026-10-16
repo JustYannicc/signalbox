@@ -248,6 +248,27 @@ export function finishRunEvents(
   ];
 }
 
+/** Takes queued `run` out of the queue for good; the ones behind it move up. */
+export function cancelQueuedEvents(
+  projection: Projection,
+  run: Run,
+  ctx: DecisionContext,
+): ReadonlyArray<OrchestrationV2DomainEvent> {
+  return [
+    runEvent(ctx, "run.updated", {
+      ...run,
+      status: "cancelled",
+      queuePosition: null,
+      completedAt: ctx.now,
+    }),
+    ...queuedRuns(projection)
+      .filter((candidate) => candidate.id !== run.id)
+      .map((candidate, index) =>
+        runEvent(ctx, "run.updated", { ...candidate, queuePosition: index + 1 }),
+      ),
+  ];
+}
+
 /** Releases a held queue: clears the hold and starts the first queued run if nothing is live. */
 export function resumeQueueEvents(
   projection: Projection,

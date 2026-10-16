@@ -2,6 +2,7 @@ import {
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadLaunchInput,
@@ -12,9 +13,15 @@ import * as DateTime from "effect/DateTime";
 
 import { isHarnessInstance } from "./providerCatalog.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
-import { activeRun, resumeQueueEvents, startRunEvents } from "./runLifecycle.ts";
+import {
+  activeRun,
+  cancelQueuedEvents,
+  resumeQueueEvents,
+  startRunEvents,
+} from "./runLifecycle.ts";
 import { answerRequestEvents } from "./runtimeRequests.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
+import { canSteer, steerEvents, steerTarget } from "./steering.ts";
 import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
@@ -60,6 +67,8 @@ const CLOUD_COMMAND_TYPES = [
   "message.dispatch",
   "run.interrupt",
   "queue.resume",
+  "queued-run.cancel",
+  "queued-message.promote-to-steer",
   "thread.visit",
   "thread.metadata.update",
   "thread.model-selection.set",
@@ -163,28 +172,7 @@ function dispatchMessage(
   const ordinal = projection.runs.length + 1;
   const runId = ids.run(thread.id, ordinal);
   const live = activeRun(projection);
-  const queuePosition = projection.runs.filter((run) => run.status === "queued").length + 1;
-  const run: OrchestrationV2Run = {
-    id: runId,
-    threadId: thread.id,
-    ordinal,
-    providerInstanceId: current.providerInstanceId,
-    modelSelection: current.modelSelection,
-    providerThreadId: null,
-    userMessageId: command.messageId,
-    rootNodeId: null,
-    activeAttemptId: null,
-    // Cloud runs cannot steer or restart a live turn yet, so any message
-    // that arrives while one runs waits its turn.
-    status: live === undefined ? "starting" : "queued",
-    queuePosition: live === undefined ? null : queuePosition,
-    requestedAt: ctx.now,
-    startedAt: null,
-    completedAt: null,
-    checkpointId: null,
-    contextHandoffId: null,
-  };
-  const message = messageEvent(ctx, {
+  const message: OrchestrationV2ConversationMessage = {
     createdBy: command.createdBy,
     creationSource: command.creationSource,
     ...(command.scheduledTaskId === undefined ? {} : { scheduledTaskId: command.scheduledTaskId }),
@@ -200,12 +188,37 @@ function dispatchMessage(
     streaming: false,
     createdAt: ctx.now,
     updatedAt: ctx.now,
-  });
-  if (live !== undefined) {
-    return accept([...updates, runEvent(ctx, "run.created", run), message]);
+  };
+  const steered = steerTarget(projection, command);
+  if (steered !== undefined) {
+    return accept([...updates, ...steerEvents(projection, steered, message, "steer", ctx)]);
   }
-  const withMessage = applyEvents(projection, [...updates, message]) ?? projection;
-  return accept([...updates, message, ...startRunEvents(withMessage, run, "turn_start", ctx)]);
+  const queuePosition = projection.runs.filter((run) => run.status === "queued").length + 1;
+  const run: OrchestrationV2Run = {
+    id: runId,
+    threadId: thread.id,
+    ordinal,
+    providerInstanceId: current.providerInstanceId,
+    modelSelection: current.modelSelection,
+    providerThreadId: null,
+    userMessageId: command.messageId,
+    rootNodeId: null,
+    activeAttemptId: null,
+    // A message that doesn't steer the live turn waits its turn.
+    status: live === undefined ? "starting" : "queued",
+    queuePosition: live === undefined ? null : queuePosition,
+    requestedAt: ctx.now,
+    startedAt: null,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  const recorded = messageEvent(ctx, message);
+  if (live !== undefined) {
+    return accept([...updates, runEvent(ctx, "run.created", run), recorded]);
+  }
+  const withMessage = applyEvents(projection, [...updates, recorded]) ?? projection;
+  return accept([...updates, recorded, ...startRunEvents(withMessage, run, "turn_start", ctx)]);
 }
 
 function updateThread(
@@ -243,6 +256,34 @@ export function decide(
         return reject("That run is not running.");
       }
       return accept(interruptRunEvents(projection, run, ctx, command.holdQueue === true));
+    }
+    case "queued-run.cancel": {
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run?.status !== "queued") return reject("That message is no longer queued.");
+      return accept(cancelQueuedEvents(projection, run, ctx));
+    }
+    case "queued-message.promote-to-steer": {
+      const queued = projection.runs.find((candidate) => candidate.id === command.queuedRunId);
+      const message = projection.messages.find(
+        (candidate) => candidate.id === queued?.userMessageId,
+      );
+      if (queued?.status !== "queued" || message === undefined) {
+        return reject("That message is no longer queued.");
+      }
+      const target = activeRun(projection);
+      if (
+        target === undefined ||
+        target.id !== command.targetRunId ||
+        !canSteer(projection, target, queued.modelSelection)
+      ) {
+        return reject("The running turn can't take a message right now; it stays queued.");
+      }
+      const cancelled = cancelQueuedEvents(projection, queued, ctx);
+      const withoutQueued = applyEvents(projection, cancelled) ?? projection;
+      return accept([
+        ...cancelled,
+        ...steerEvents(withoutQueued, target, message, "promoted_queued_to_steer", ctx),
+      ]);
     }
     case "queue.resume": {
       const events = resumeQueueEvents(projection, ctx);

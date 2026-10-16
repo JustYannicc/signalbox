@@ -44,6 +44,8 @@ export const ids = {
   attempt: (runId: RunId) => RunAttemptId.make(`attempt:${runId}:1`),
   rootNode: (runId: RunId) => NodeId.make(`node:${runId}:root`),
   userItem: (runId: RunId) => TurnItemId.make(`turn-item:${runId}:user`),
+  steerItem: (runId: RunId, messageId: MessageId) =>
+    TurnItemId.make(`turn-item:${runId}:steer:${messageId}`),
   assistantItem: (runId: RunId) => TurnItemId.make(`turn-item:${runId}:assistant`),
   assistantMessage: (runId: RunId) => MessageId.make(`message:${runId}:assistant`),
   providerThread: (threadId: ThreadId) => ProviderThreadId.make(`provider-thread:${threadId}`),
