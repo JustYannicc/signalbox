@@ -35,6 +35,7 @@ import {
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { useWorkspaceState } from "../../state/workspace";
 import { useNewTaskFlow } from "../threads/new-task-flow-provider";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 import { applyLinkedPromptToThreadDraft, showPromptLinkNotice } from "./prompt-link-actions";
 import {
   clearedPromptLinkParams,
@@ -59,6 +60,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
   const threads = useThreadShells();
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
   const loadPullRequest = useAtomQueryRunner(composerPullRequests.detail, {
     reportFailure: false,
@@ -163,7 +165,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     if (environmentId === null) {
       Dialog.alert(
         "Could not start without a project",
-        "No connected environment offers threads without a project.",
+        environmentCopy("No connected environment offers threads without a project."),
       );
       return;
     }
@@ -187,7 +189,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     const environmentId =
       flow.selectedEnvironmentId ?? connectedEnvironments[0]?.environmentId ?? null;
     if (environmentId === null) {
-      Dialog.alert("Could not clone", "Connect an environment first.");
+      Dialog.alert("Could not clone", environmentCopy("Connect an environment first."));
       return;
     }
     const prompt =
