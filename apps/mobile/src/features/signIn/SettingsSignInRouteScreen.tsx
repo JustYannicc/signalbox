@@ -41,6 +41,9 @@ export function SettingsSignInRouteScreen() {
       <ScreenScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
@@ -84,6 +87,11 @@ function SignInGrants({ environmentId }: { readonly environmentId: EnvironmentId
     run(granted.id, async () =>
       signInFailureMessage(await revoke({ environmentId, input: { id: granted.id } })),
     );
+
+  const addSite = () => {
+    if (busy || site.trim() === "") return;
+    void allow("add", site).then((done) => done && setSite(""));
+  };
 
   if (query.data === null) {
     return (
@@ -148,8 +156,10 @@ function SignInGrants({ environmentId }: { readonly environmentId: EnvironmentId
             autoCorrect={false}
             keyboardType="url"
             editable={!busy}
+            returnKeyType="done"
             value={site}
             onChangeText={setSite}
+            onSubmitEditing={addSite}
           />
           {error === null ? null : <Text className="text-sm text-danger-foreground">{error}</Text>}
         </View>
@@ -158,7 +168,7 @@ function SignInGrants({ environmentId }: { readonly environmentId: EnvironmentId
           label={pending === "add" ? "Allowing…" : "Allow site"}
           loading={pending === "add"}
           disabled={busy || site.trim() === ""}
-          onPress={() => void allow("add", site).then((done) => done && setSite(""))}
+          onPress={addSite}
         />
       </SettingsSection>
 
@@ -177,6 +187,7 @@ function TrySite({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const [checking, setChecking] = useState(false);
   const submit = async () => {
     const origin = site.trim();
+    if (checking || origin === "") return;
     setChecking(true);
     try {
       const result = await check({ environmentId, input: { source: PERSON, origin } });
@@ -197,6 +208,8 @@ function TrySite({ environmentId }: { readonly environmentId: EnvironmentId }) {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
+          returnKeyType="go"
+          onSubmitEditing={() => void submit()}
           value={site}
           onChangeText={(text) => {
             setSite(text);
