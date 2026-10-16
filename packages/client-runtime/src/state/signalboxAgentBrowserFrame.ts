@@ -178,7 +178,7 @@ export function agentBrowserStepTime(endedAt: string): string {
 }
 
 /** Who drives the tab, said the same way on every client. */
-export function agentBrowserControlLabel(control: AgentBrowserControl): string {
+function agentBrowserControlLabel(control: AgentBrowserControl): string {
   switch (control) {
     case "agent":
       return "The agent is driving";
