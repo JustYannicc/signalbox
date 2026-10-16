@@ -17,7 +17,6 @@ import { useEnvironmentUiState } from "../state/environmentCapabilities";
 
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
-/** Onboarding overlays the workspace. Visiting /welcome reopens setup. */
 export const Route = createFileRoute("/welcome")({
   beforeLoad: ({ context }) => {
     const { authGateState } = context;
@@ -41,10 +40,6 @@ function WelcomeRouteView() {
   const [dismissed, setDismissed] = useState(false);
   const openNewThread = useNewThreadHandler();
   const environmentUi = useEnvironmentUiState();
-  // An authenticated gate means a primary server is serving this app —
-  // desktop, `npx t3`, or a dev server — and that server is "this machine"
-  // no matter what hostname the browser used. Only hosted-static has no
-  // local server to offer.
   const localAvailable = authGateState.status === "authenticated";
   // signalbox: setup connects computers; the cloud is the only environment.
   if (environmentUi === "unknown") return null;

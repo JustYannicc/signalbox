@@ -1,7 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts"; // signalbox: previews
 import { useMemo } from "react";
-import { ScreenHeaderButton } from "../../components/ScreenHeaderButton";
-import type { ScreenHeaderAction } from "../../components/ScreenHeader.types";
+import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
+import type { AppBarAction } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
@@ -25,8 +25,8 @@ export function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
-  const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
-    const actions: ScreenHeaderAction[] = [];
+  const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
+    const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
