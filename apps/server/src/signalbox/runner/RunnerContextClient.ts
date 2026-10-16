@@ -11,6 +11,12 @@ import {
   type PublishResult,
 } from "@signalbox/runner-protocol/BranchProtocol";
 import {
+  BROWSER_PATHS,
+  type BrowserEndRequest,
+  type BrowserSessionAnswer,
+  browserJson,
+} from "@signalbox/runner-protocol/BrowserProtocol";
+import {
   CONTEXT_PATHS,
   type ContextView,
   contextJson,
@@ -21,6 +27,7 @@ import {
 } from "@signalbox/runner-protocol/ContextProtocol";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
+import { constVoid } from "effect/Function";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -41,6 +48,11 @@ import { HttpClient, HttpClientRequest } from "effect/http";
  * `automationTool` forwards an automation tool call (`AutomationProtocol.ts`).
  * Only a read is retried: a write the cloud may have done already would
  * happen twice.
+ *
+ * `browserSession` gets the thread's session in the person's browser
+ * (`BrowserProtocol.ts`), and `endBrowser` deletes it. Both are safe to
+ * retry: the cloud reuses the thread's open session and ending one twice
+ * does nothing.
  */
 
 export class ContextClientError extends Schema.TaggedError<ContextClientError>()(
@@ -81,6 +93,8 @@ export interface ContextClient {
     request: ToolRequest,
     options: { readonly retry: boolean },
   ) => Effect.Effect<ToolResult, ContextClientError>;
+  readonly browserSession: Effect.Effect<BrowserSessionAnswer, ContextClientError>;
+  readonly endBrowser: (request: BrowserEndRequest) => Effect.Effect<void, ContextClientError>;
 }
 
 class Retryable extends Schema.TaggedError<Retryable>()("Retryable", { message: Schema.String }) {}
@@ -187,5 +201,7 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
       branchJson.publish.decode,
     ),
     automationTool: (request, { retry }) => (retry ? automationRead : automationWrite)(request),
+    browserSession: json(BROWSER_PATHS.session, () => "{}", browserJson.session.decode)(undefined),
+    endBrowser: json(BROWSER_PATHS.end, browserJson.endRequest.encode, constVoid),
   } satisfies ContextClient;
 });

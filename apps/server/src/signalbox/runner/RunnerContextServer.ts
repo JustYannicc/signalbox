@@ -21,14 +21,16 @@ import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import {
   BROWSER_EXECUTABLE_ENV,
   type BrowserBackend,
-  makeHeadlessBrowser,
+  machineTabs,
+  makeRunnerBrowser,
 } from "./RunnerBrowser.ts";
+import { type PersonSession, personTabs } from "./RunnerBrowserPerson.ts";
 import {
   BROWSER_INSTRUCTIONS,
   BROWSER_SERVER_NAME,
   layerBrowserTools,
 } from "./RunnerBrowserTools.ts";
-import type { ContextClient } from "./RunnerContextClient.ts";
+import { type ContextClient, ContextClientError } from "./RunnerContextClient.ts";
 import {
   CONTEXT_INSTRUCTIONS,
   CONTEXT_SERVER_NAME,
@@ -49,12 +51,33 @@ import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
  * server also publishes the thread's branch, saving it through the drive
  * `attachDrive` gives it, and serves the automation tools, which run in the
  * cloud (`RunnerAutomationTools.ts`), with upstream's scheduled-task tools as
- * automations (`RunnerScheduledTaskTools.ts`). `/browser` serves the thread's headless browser
- * (#402) as its own MCP server, under the name agents know it by locally.
+ * automations (`RunnerScheduledTaskTools.ts`). `/browser` serves the thread's browser
+ * (#402, #574) as its own MCP server, under the name agents know it by locally:
+ * the machine's headless Chromium for its dev servers, and the person's
+ * browser for real sites, which the turn's client opens in the cloud.
  */
 
 const MCP_PATH = "/mcp";
 const BROWSER_PATH = "/browser";
+
+/** The person's browser session through the current turn's client, which holds the drive token. */
+const personSession = (view: ReturnType<typeof makeDrivesView>): PersonSession => {
+  const call = <A>(use: (client: ContextClient) => Effect.Effect<A, ContextClientError>) => {
+    const client = view.client();
+    // A rejection carries the client's error, whose message is for the agent.
+    return client === null
+      ? Promise.reject(
+          new ContextClientError({
+            message: "The browser opens real sites once the thread's first turn starts.",
+          }),
+        )
+      : Effect.runPromise(use(client));
+  };
+  return {
+    open: () => call((client) => client.browserSession),
+    end: (sessionId) => call((client) => client.endBrowser({ sessionId })),
+  };
+};
 
 export interface ContextServer {
   /** The MCP endpoints the harnesses are configured with, by server name. */
@@ -68,7 +91,7 @@ export interface ContextServer {
 export const startContextServer = Effect.fn("startContextServer")(function* (input: {
   /** Where to mount `/drives`; null serves the tools only (a development host). */
   readonly mountPoint: string | null;
-  /** The browser behind the `preview_*` tools; the machine's headless Chromium by default. */
+  /** The browser behind the `preview_*` tools; the machine's and the person's by default. */
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
   readonly threadId?: string;
@@ -78,7 +101,11 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   // Chromium starts with the first browser call and stops with the thread.
   const env = yield* HostProcess.Environment;
   const browser =
-    input.browser ?? makeHeadlessBrowser({ executable: env[BROWSER_EXECUTABLE_ENV], env });
+    input.browser ??
+    makeRunnerBrowser({
+      machine: machineTabs({ executable: env[BROWSER_EXECUTABLE_ENV], env }),
+      person: personTabs(personSession(view)),
+    });
   yield* Effect.addFinalizer(() => Effect.tryPromise(() => browser.close()).pipe(Effect.ignore));
 
   const dav = HttpRouter.add("*", `${DAV_PATH}/*`, (request) =>

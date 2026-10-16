@@ -740,6 +740,7 @@ which each preview derives its own session secret.
 | `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                                |
 | `TYPESAFE_API_KEY`             | secret   | Optional. Jev, which tells chats from tasks ([Chats and tasks](#chats-and-tasks))                   |
 | `OPENAI_API_KEY`               | secret   | Optional. OpenAI's Decisions API, the other chat or task classifier                                 |
+| `KERNEL_API_KEY`               | secret   | Optional. Kernel, which runs each person's browser for real sites; unset, machines browse headless  |
 
 The production deploy derives the preview-cleanup token from
 `CLOUDFLARE_API_TOKEN`. Keep the same token value in both GitHub environments

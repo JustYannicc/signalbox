@@ -38,6 +38,10 @@
     "./SecretsProtocol": {
       "types": "./src/SecretsProtocol.ts",
       "import": "./src/SecretsProtocol.ts"
+    },
+    "./BrowserProtocol": {
+      "types": "./src/BrowserProtocol.ts",
+      "import": "./src/BrowserProtocol.ts"
     }
   },
   "scripts": {

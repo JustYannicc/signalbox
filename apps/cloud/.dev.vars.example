@@ -27,3 +27,6 @@ T3CODE_WORKOS_API_KEY=
 # THREAD_KIND_CLASSIFIER=openai.
 # TYPESAFE_API_KEY=
 # OPENAI_API_KEY=
+# Optional: the person's browser for real sites, on Kernel (docs/operations/cloud.md).
+# Unset, a thread's machine opens them in its own headless browser.
+# KERNEL_API_KEY=

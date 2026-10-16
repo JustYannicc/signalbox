@@ -127,6 +127,8 @@ function workerEnv(target: CloudStage) {
       // Optional: chat or task classifiers (`src/threadKinds/`); unset, threads stay tasks.
       TYPESAFE_API_KEY: yield* optionalSecret("TYPESAFE_API_KEY"),
       OPENAI_API_KEY: yield* optionalSecret("OPENAI_API_KEY"),
+      // Optional: the person's browser on Kernel (`src/browser/`); unset, machines browse headless.
+      KERNEL_API_KEY: yield* optionalSecret("KERNEL_API_KEY"),
       // Optional: pushes to phones (`src/push/`).
       APNS_TEAM_ID: yield* optionalSecret("APNS_TEAM_ID"),
       APNS_KEY_ID: yield* optionalSecret("APNS_KEY_ID"),

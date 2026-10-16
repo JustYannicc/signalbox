@@ -6,6 +6,7 @@ import {
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
+import type { BrowserSessionAnswer } from "@signalbox/runner-protocol/BrowserProtocol";
 import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
@@ -193,6 +194,19 @@ export interface UserObjectApi {
    */
   readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
   /**
+   * The person's browser for a thread's running turn (`drive/browserRoutes.ts`,
+   * `browser/PersonBrowsers.ts`): its session, or a refusal in words.
+   */
+  readonly browserSession: (input: {
+    readonly threadId: string;
+    readonly requester: string;
+  }) => Promise<BrowserSessionAnswer>;
+  /** Ends the thread's session in the person's browser, which saves its profile. */
+  readonly endBrowser: (input: {
+    readonly threadId: string;
+    readonly sessionId: string;
+  }) => Promise<void>;
+  /**
    * A run's Workflow instance calling back (`automations/automationWorkflow.ts`).
    * Rejects for the instance to retry when the step can't start yet.
    */
@@ -283,6 +297,8 @@ const METHODS = Object.keys({
   readableDrives: true,
   publishBranch: true,
   automationTool: true,
+  browserSession: true,
+  endBrowser: true,
   automationHost: true,
   automationWorkerModule: true,
   sweepThreadKinds: true,

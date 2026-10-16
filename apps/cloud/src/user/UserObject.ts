@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
+import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
@@ -78,7 +79,12 @@ import * as ChatArchive from "./chatArchive.ts";
  */
 
 export interface UserObjectEnv
-  extends MachineBackendEnv, PreviewEnv, GitHub.GitHubEnv, KindClassifier.KindClassifierEnv {
+  extends
+    MachineBackendEnv,
+    PreviewEnv,
+    GitHub.GitHubEnv,
+    KindClassifier.KindClassifierEnv,
+    PersonBrowsers.PersonBrowsersEnv {
   /**
    * Drives' objects and packs: clients browse and share them through this
    * object (`drive/DriveFiles.ts`, `DriveSharing.ts`).
@@ -195,6 +201,8 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               ThreadContexts.layer,
               UserPools.layer,
               UserThreadKinds.layerTurns,
+              // The person's browser for real sites (#574), on Kernel.
+              PersonBrowsers.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
               // Pasted screenshots and files, signed with the same keys as asset URLs.
               CloudAttachments.layer(attachmentStorage(env)),
             ),
@@ -475,6 +483,14 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   automationTool(threadId: string, name: string, input: unknown) {
     return this.api.automationTool(threadId, name, input);
+  }
+
+  browserSession(input: Parameters<UserObjectApi["browserSession"]>[0]) {
+    return this.api.browserSession(input);
+  }
+
+  endBrowser(input: Parameters<UserObjectApi["endBrowser"]>[0]) {
+    return this.api.endBrowser(input);
   }
 
   automationHost(call: Parameters<UserObjectApi["automationHost"]>[0]) {
