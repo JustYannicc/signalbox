@@ -467,6 +467,80 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  it.effect("continues a started run that a new Runner on the same machine never had (#613)", () =>
+    withObject(freshDatabase(), (engine, runner, context) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started],
+        });
+        yield* saveSession(context, "claude-session-1");
+        // The VM resumed from disk moves node: the socket drops and a new
+        // Runner process on the same disk says hello before the reconnect
+        // window closes, holding no turn.
+        yield* runner.disconnected({
+          generation: machine.generation,
+          connection: 1,
+          detail: "1006",
+        });
+        const welcome = yield* runner.hello({
+          ...hello(machine.generation, machine.token),
+          machineId: "vm:another-node",
+          takenRunIds: [],
+        });
+
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runs.map((run) => run.status)).toEqual(["interrupted", "starting"]);
+        const [cut, continuation] = projection.runs;
+        expect(continuation?.restartContinuationOfRunId).toBe(cut?.id);
+        // The cut turn says why it stopped instead of thinking forever.
+        const notices = projection.turnItems.filter(
+          (item) => item.runId === cut?.id && item.type === "system_notice",
+        );
+        expect(notices).toHaveLength(1);
+        expect(welcome).toMatchObject({ _tag: "welcome", activeRunId: continuation?.id });
+        // The same machine takes the continuation, resuming the harness's own session.
+        const work = yield* runner.work;
+        expect(work.generation).toBe(machine.generation);
+        expect(work.turn).toMatchObject({
+          runId: continuation?.id,
+          restartContinuationOfRunId: cut?.id,
+          message: { text: CONTINUE_PROMPT },
+          providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
+        });
+      }),
+    ),
+  );
+
+  it.effect("leaves a started run alone when the Runner that reconnects still has it", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started],
+        });
+        // Its own reconnect, and one from a Runner too old to say what it holds.
+        yield* runner.hello({
+          ...hello(machine.generation, machine.token),
+          takenRunIds: [turn.runId],
+        });
+        yield* runner.hello(hello(machine.generation, machine.token));
+        const { projection } = yield* snapshot(engine);
+        expect(projection.runs.map((run) => run.status)).toEqual(["running"]);
+      }),
+    ),
+  );
+
   it.effect("continues a run whose machine is lost on a new machine, from the same session", () =>
     withObject(freshDatabase(), (engine, runner, context) =>
       Effect.gen(function* () {

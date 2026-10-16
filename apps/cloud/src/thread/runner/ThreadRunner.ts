@@ -48,6 +48,7 @@ import { recoverRunEvents } from "./runRecovery.ts";
 import {
   accountMovedEvents,
   failRunEvents,
+  awaitsHandoff,
   harnessRun,
   runnerBatchEvents,
   runnerTurnFor,
@@ -435,7 +436,7 @@ const make = Effect.gen(function* () {
   const keep = <A>(result: A): ThreadEngine.EngineDecision<A> => ({ events: [], result });
 
   const hello: ThreadRunner["Service"]["hello"] = (hello) =>
-    withLease(({ projection, lease, now }) => {
+    withLease(({ projection, lease, now }, ctx) => {
       if (projection === null || projection.thread.id !== hello.threadId) {
         return Effect.succeed(
           keep<HelloResult>({
@@ -470,8 +471,18 @@ const make = Effect.gen(function* () {
       }
       if (hello.token !== lease.token) return refuse("bad_token", "Wrong machine token.");
       const connection = (lease.connection ?? 0) + 1;
-      return Effect.as(diagnostics.runnerConnected({ hello, connection, run, now }), {
-        events: [],
+      // A started run is never handed out again, so one this Runner never took
+      // went with an earlier process on this machine, which resumed from disk
+      // on another node (#613). It continues here like one on a lost machine.
+      const lost =
+        run !== null &&
+        !awaitsHandoff(run) &&
+        hello.takenRunIds !== undefined &&
+        !hello.takenRunIds.includes(run.id);
+      const events = lost ? recoverRunEvents(projection, run, ctx) : [];
+      const active = lost ? harnessRun(applyEvents(projection, events) ?? projection) : run;
+      return Effect.as(diagnostics.runnerConnected({ hello, connection, run, lost, now }), {
+        events,
         machine: {
           ...lease,
           status: "connected",
@@ -484,7 +495,7 @@ const make = Effect.gen(function* () {
           generation: lease.generation,
           connection,
           ackedSequence: lease.ackedSequence,
-          activeRunId: run?.id ?? null,
+          activeRunId: active?.id ?? null,
         },
       } satisfies ThreadEngine.EngineDecision<HelloResult>);
     });

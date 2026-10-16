@@ -118,6 +118,8 @@ export interface RunnerTurns {
   readonly interrupt: (runId: RunId) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
+  /** Every run this process was handed, ended or not. */
+  readonly taken: Effect.Effect<ReadonlyArray<RunId>>;
 }
 
 /** An adapter session, and the shortcut instructions and secrets it was started with. */
@@ -895,5 +897,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     ),
   ).pipe(Effect.forkIn(scope));
 
-  return { start, interrupt, keepOnly } satisfies RunnerTurns;
+  return {
+    start,
+    interrupt,
+    keepOnly,
+    taken: Effect.sync(() => [...taken]),
+  } satisfies RunnerTurns;
 });

@@ -49,13 +49,16 @@ export const harnessRun = (projection: Projection): Run | undefined => {
   return run !== undefined && isHarnessInstance(run.providerInstanceId) ? run : undefined;
 };
 
+/** Whether `run` waits for a Runner to take it; once one reports it started, none is handed it again. */
+export const awaitsHandoff = (run: Run) => run.status === "starting" || run.status === "preparing";
+
 /**
  * The turn to hand the Runner: the live harness run, until the Runner reports
  * it started. The caller adds its trace id.
  */
 export function runnerTurnFor(projection: Projection): Omit<RunnerTurn, "traceId"> | null {
   const run = harnessRun(projection);
-  if (run === undefined || (run.status !== "starting" && run.status !== "preparing")) return null;
+  if (run === undefined || !awaitsHandoff(run)) return null;
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
   const providerThread = projection.providerThreads.find(
     (candidate) => candidate.id === run.providerThreadId,
@@ -150,7 +153,7 @@ function startedEvents(
   item: Extract<RunnerItem, { readonly kind: "turn.started" }>,
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
-  if (run.status !== "starting" && run.status !== "preparing") return [];
+  if (!awaitsHandoff(run)) return [];
   const threadId = projection.thread.id;
   const current = providerThreadFor(projection, run, "active", ctx);
   // The harness's native state, under the thread's own identity for the record.
