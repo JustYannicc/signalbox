@@ -126,7 +126,7 @@ const fakeDrive = (calls: Calls): BranchDrive => ({
   published: (head) => Effect.sync(() => void calls.log.push(`published: ${head}`)),
   saveBranch: (message) =>
     Effect.sync(() => {
-      calls.log.push(`save: ${message}`);
+      calls.log.push(`save: ${message ?? "(summary)"}`);
       return message === "unsavable"
         ? { _tag: "not_saved", reason: "A merge is in progress here." }
         : { _tag: "saved", head: C1, lease: message === "Rebased" ? C1 : null };
@@ -374,7 +374,8 @@ describe("context server (#141)", () => {
       });
       expect(opened.isError).toBeUndefined();
       // GitHub's copy of the branch is the pushed head now: the next push's lease.
-      expect(calls.log).toEqual(["save: Add dark mode", "publish: create_pr", `published: ${C1}`]);
+      // No commit message: the drive describes the change, never the pull request's title.
+      expect(calls.log).toEqual(["save: (summary)", "publish: create_pr", `published: ${C1}`]);
       expect(calls.published).toEqual([
         { action: "create_pr", title: "Add dark mode", body: "Adds a dark theme.", draft: true },
       ]);
