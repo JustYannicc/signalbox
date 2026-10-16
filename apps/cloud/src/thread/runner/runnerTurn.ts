@@ -1,5 +1,10 @@
-import type { RunnerItem, RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
+import type {
+  RunnerItem,
+  RunnerMessageInput,
+  RunnerTurn,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import {
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   OrchestrationV2ProviderFailure,
   type OrchestrationV2Run,
@@ -52,6 +57,17 @@ export const harnessRun = (projection: Projection): Run | undefined => {
 /** Whether `run` waits for a Runner to take it; once one reports it started, none is handed it again. */
 export const awaitsHandoff = (run: Run) => run.status === "starting" || run.status === "preparing";
 
+/** A user message as the Runner hands it to the harness. */
+export const runnerMessageOf = (
+  message: OrchestrationV2ConversationMessage,
+): RunnerMessageInput => ({
+  messageId: message.id,
+  text: message.text,
+  attachments: message.attachments,
+  createdBy: message.createdBy,
+  creationSource: message.creationSource,
+});
+
 /**
  * The turn to hand the Runner: the live harness run, until the Runner reports
  * it started. The caller adds its trace id.
@@ -92,13 +108,7 @@ export function runnerTurnFor(projection: Projection): Omit<RunnerTurn, "traceId
     rootNodeId: run.rootNodeId,
     appThread: projection.thread,
     providerThread: { ...providerThread, providerInstanceId: instanceId },
-    message: {
-      messageId: message.id,
-      text: message.text,
-      attachments: message.attachments,
-      createdBy: message.createdBy,
-      creationSource: message.creationSource,
-    },
+    message: runnerMessageOf(message),
     modelSelection: { ...run.modelSelection, instanceId },
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
@@ -307,15 +317,38 @@ export function accountMovedEvents(
 }
 
 /**
+ * The harness's session as this machine can drive it: one whose Runner can't
+ * take `steer` (#562) reads as a session that can't steer, so messages sent
+ * mid-turn queue instead of waiting on a machine that never hands them over.
+ */
+const asDriven = (event: OrchestrationV2DomainEvent, steers: boolean) =>
+  steers ||
+  event.type !== "provider-session.updated" ||
+  !event.payload.capabilities.turns.supportsActiveSteering
+    ? event
+    : {
+        ...event,
+        payload: {
+          ...event.payload,
+          capabilities: {
+            ...event.payload.capabilities,
+            turns: { ...event.payload.capabilities.turns, supportsActiveSteering: false },
+          },
+        },
+      };
+
+/**
  * A batch's events, each item decided against the projection the earlier ones
  * left, and the adapter event types it could not read. A `machine.outgrown`
  * for the live run ends the batch: the caller moves the run to a heavy
  * machine (`outgrown` is why), and nothing the light one said after that counts.
+ * `steers`: whether the machine's Runner takes `steer`.
  */
 export function runnerBatchEvents(
   projection: Projection,
   items: ReadonlyArray<RunnerItem>,
   ctx: DecisionContext,
+  steers = false,
 ): {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly undecodable: ReadonlyArray<string>;
@@ -338,8 +371,9 @@ export function runnerBatchEvents(
       continue;
     }
     if (next.length === 0) continue;
-    events.push(...next);
-    current = applyEvents(current, next) ?? current;
+    const driven = steers ? next : next.map((event) => asDriven(event, steers));
+    events.push(...driven);
+    current = applyEvents(current, driven) ?? current;
   }
   return { events, undecodable, outgrown: null, drained };
 }

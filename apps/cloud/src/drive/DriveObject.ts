@@ -7,6 +7,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { deliverAccess } from "./driveAccessOutbox.ts";
+import { deliverDriveEvents } from "./driveEventOutbox.ts";
 import { DRIVE_OBJECT_JURISDICTION, type DriveObjectApi } from "./DriveDirectory.ts";
 import { makeDriveObjectApi } from "./driveObjectApi.ts";
 import * as DriveStore from "./DriveStore.ts";
@@ -18,8 +19,9 @@ import * as DriveStore from "./DriveStore.ts";
  * a short SQLite transaction, so the object serializes ref moves without any
  * lock of its own.
  *
- * Membership changes reach each person's index from the object's alarm,
- * which retries until they land.
+ * Membership changes reach each person's index, and ref moves each person's
+ * automations (`DriveEvents`), from the object's alarm, which retries until
+ * they land.
  */
 
 export interface DriveObjectEnv {
@@ -41,6 +43,8 @@ const makeRuntime = (storage: DurableObjectStorage, driveId: string, env: DriveO
       Layer.provideMerge(SqliteClient.layer({ storage })),
     ),
   );
+
+type OutboxServices = ManagedRuntime.ManagedRuntime.Services<ReturnType<typeof makeRuntime>>;
 
 export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveObjectApi {
   private readonly api: DriveObjectApi;
@@ -67,19 +71,31 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
   }
 
   private async armAlarm() {
-    const now = await this.runtime.runPromise(Clock.currentTimeMillis);
     const current = await this.ctx.storage.getAlarm();
+    // While deliveries fail, the backoff stands: every save would otherwise retry at once.
+    if (current !== null && this.deliveryFailures > 0) return;
+    const now = await this.runtime.runPromise(Clock.currentTimeMillis);
     if (current === null || current > now) await this.ctx.storage.setAlarm(now);
   }
 
   override async alarm() {
-    const delivered = await this.runtime.runPromise(
-      deliverAccess(this.driveId).pipe(
+    const outbox = (name: string, deliver: Effect.Effect<boolean, never, OutboxServices>) =>
+      deliver.pipe(
         Effect.catchCause((cause) =>
-          Effect.logError("drive access delivery failed", cause).pipe(Effect.as(false)),
+          Effect.logError(`drive ${name} delivery failed`, cause).pipe(Effect.as(false)),
         ),
+      );
+    // One failing doesn't hold up the other.
+    const [access, events] = await this.runtime.runPromise(
+      Effect.all(
+        [
+          outbox("access", deliverAccess(this.driveId)),
+          outbox("event", deliverDriveEvents(this.driveId)),
+        ],
+        { concurrency: "unbounded" },
       ),
     );
+    const delivered = access && events;
     this.deliveryFailures = delivered ? 0 : this.deliveryFailures + 1;
     if (!delivered) {
       const now = await this.runtime.runPromise(Clock.currentTimeMillis);

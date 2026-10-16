@@ -173,13 +173,18 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.description=Signalbox Runner: drives claude and codex on a thread's machine
 
-      # The Runner starts and waits for its machine config; the CLIs, pnpm and the browser answer.
+      # The Runner starts and waits for its machine config; the CLIs, pnpm, the
+      # browser and the everyday tools agents reach for answer, and HTTPS trusts
+      # public certificates (#595).
       - name: Smoke test
         env:
           TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           image="${TAGS%%,*}"
-          docker run --rm --entrypoint sh --env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 "$image" -c 'git --version && claude --version && codex --version && pnpm --version && "$SIGNALBOX_BROWSER_EXECUTABLE" --version'
+          docker run --rm --entrypoint sh --env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 "$image" -c '
+            git --version && claude --version && codex --version && pnpm --version && "$SIGNALBOX_BROWSER_EXECUTABLE" --version &&
+            wget --version >/dev/null && jq --version && unzip -v >/dev/null && git lfs version &&
+            git config --system filter.lfs.process && curl -fsS -o /dev/null https://example.com'
           # Playwright and 1Password's SDK load from beside the Runner.
           docker run --rm --entrypoint node --workdir /opt/signalbox "$image" -e 'require("playwright-core"); require("@1password/sdk")'
           status=0

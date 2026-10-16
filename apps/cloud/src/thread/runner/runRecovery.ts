@@ -51,6 +51,23 @@ const continuationDepth = (projection: Projection, run: Run) => {
   return depth;
 };
 
+/**
+ * The run `run` carries on: itself, or for a continuation, the run its chain
+ * of continuations started from. A continuation keeps that run's folder
+ * instructions (#620), which the store keeps only for the run a turn started.
+ */
+export const continuedRun = (projection: Projection, run: Run): Run => {
+  let current = run;
+  for (let depth = 0; depth <= MAX_CONTINUATIONS; depth += 1) {
+    const previous = projection.runs.find(
+      (candidate) => candidate.id === current.restartContinuationOfRunId,
+    );
+    if (previous === undefined) break;
+    current = previous;
+  }
+  return current;
+};
+
 /** The run's rows still streaming or running, settled as interrupted. */
 function abortedEvents(
   projection: Projection,

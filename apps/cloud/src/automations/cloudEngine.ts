@@ -21,6 +21,7 @@ import * as PullRequestMergesModule from "../github/PullRequestMerges.ts";
 import * as PullRequestReadsModule from "../github/PullRequestReads.ts";
 import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import { projectOfDrive } from "../user/contextProjects.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserStore from "../user/UserStore.ts";
 import {
@@ -30,6 +31,7 @@ import {
   type AutomationHostRequest,
 } from "./CloudAutomations.ts";
 import { makeCloudBuiltinTools } from "./cloudBuiltinTools.ts";
+import { driveEvent, makeChangedFiles } from "./driveChanges.ts";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
 import * as CloudThreads from "./cloudThreads.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
@@ -85,14 +87,22 @@ const layerUnhosted = Layer.mergeAll(
   Layer.succeed(AutomationRunLogSink, AutomationRunLogSink.of({ drain: null, pretty: false })),
 );
 
-/** The last event sequence taken from each thread, so redelivered events are dropped. */
-const ensureCursors = SqlClient.SqlClient.use(
-  (sql) => sql`
-    CREATE TABLE IF NOT EXISTS signalbox_automation_thread_cursors (
-      thread_id TEXT PRIMARY KEY,
-      sequence INTEGER NOT NULL
-    )
-  `,
+/** The last event sequence taken from each thread and drive, so redelivered events are dropped. */
+const CURSORS = {
+  thread: { table: "signalbox_automation_thread_cursors", key: "thread_id" },
+  drive: { table: "signalbox_automation_drive_cursors", key: "drive_id" },
+} as const;
+
+const ensureCursors = SqlClient.SqlClient.use((sql) =>
+  Effect.forEach(
+    Object.values(CURSORS),
+    ({ table, key }) => sql`
+      CREATE TABLE IF NOT EXISTS ${sql(table)} (
+        ${sql(key)} TEXT PRIMARY KEY,
+        sequence INTEGER NOT NULL
+      )
+    `,
+  ),
 );
 
 const make = Effect.gen(function* () {
@@ -112,6 +122,7 @@ const make = Effect.gen(function* () {
 
   yield* ensureCursors.pipe(Effect.orDie);
   const merges = yield* PullRequestMergesModule.PullRequestMerges;
+  const changedFiles = yield* makeChangedFiles;
   yield* engine.registerBuiltinTools(makeCloudBuiltinTools({ threads, service, owner, merges }));
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
   const tools = makeCloudTools({ engine, compiler, threads });
@@ -150,6 +161,27 @@ const make = Effect.gen(function* () {
     Effect.ignore,
   );
 
+  /** What of `events` is new since the last one taken from `id`, and marking it taken. */
+  const freshSince = <A extends { readonly sequence: number }>(
+    source: keyof typeof CURSORS,
+    id: string,
+    events: ReadonlyArray<A>,
+  ) =>
+    Effect.gen(function* () {
+      const { table, key } = CURSORS[source];
+      const rows = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence FROM ${sql(table)} WHERE ${sql(key)} = ${id}
+      `;
+      const taken = rows[0]?.sequence ?? 0;
+      const fresh = events.filter((entry) => entry.sequence > taken);
+      const last = fresh.at(-1)?.sequence ?? taken;
+      const take = sql`
+        INSERT INTO ${sql(table)} (${sql(key)}, sequence) VALUES (${id}, ${last})
+        ON CONFLICT (${sql(key)}) DO UPDATE SET sequence = excluded.sequence
+      `.pipe(Effect.asVoid);
+      return { fresh, take };
+    });
+
   const storageError = (cause: unknown) =>
     new AutomationError({ message: "Automation storage failed.", cause });
 
@@ -175,18 +207,9 @@ const make = Effect.gen(function* () {
   return CloudAutomations.of({
     threadEvents: ({ threadId, events }) =>
       Effect.gen(function* () {
-        const rows = yield* sql<{ readonly sequence: number }>`
-          SELECT sequence FROM signalbox_automation_thread_cursors WHERE thread_id = ${threadId}
-        `;
-        const taken = rows[0]?.sequence ?? 0;
-        const fresh = events.filter((entry) => entry.sequence > taken);
-        const last = fresh.at(-1);
-        if (last === undefined) return;
-        yield* sql`
-          INSERT INTO signalbox_automation_thread_cursors (thread_id, sequence)
-          VALUES (${threadId}, ${last.sequence})
-          ON CONFLICT (thread_id) DO UPDATE SET sequence = excluded.sequence
-        `;
+        const { fresh, take } = yield* freshSince("thread", threadId, events);
+        if (fresh.length === 0) return;
+        yield* take;
         yield* annotateOwner;
         yield* feed.publish(fresh.map((entry) => entry.event));
         yield* flush;
@@ -194,6 +217,26 @@ const make = Effect.gen(function* () {
         Effect.mapError(storageError),
         Effect.withSpan("CloudAutomations.threadEvents", {
           attributes: { "thread.id": threadId, "events.count": events.length },
+        }),
+      ),
+    driveEvents: ({ driveId, events }) =>
+      Effect.gen(function* () {
+        const { fresh, take } = yield* freshSince("drive", driveId, events);
+        if (fresh.length === 0) return;
+        yield* annotateOwner;
+        const projectId = projectOfDrive(driveId, (yield* owner).userId);
+        if (projectId !== null) {
+          for (const move of fresh) {
+            yield* engine.deliverEvent(driveEvent(driveId, projectId, move, changedFiles));
+          }
+          yield* flush;
+        }
+        // Taken only once handled: a request cut off before here gets them again.
+        yield* take;
+      }).pipe(
+        Effect.catchTags({ SqlError: (cause) => Effect.fail(storageError(cause)) }),
+        Effect.withSpan("CloudAutomations.driveEvents", {
+          attributes: { "drive.id": driveId, "events.count": events.length },
         }),
       ),
     tool: (caller, name, input) =>

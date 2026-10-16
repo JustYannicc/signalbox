@@ -3,6 +3,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import { CONFIG_PATH } from "../boat/BoatMachineBackend.ts";
 import type { MachineRequest } from "../MachineBackend.ts";
 import { makeCloudflareMachineBackend, RUNNER_PORT } from "./CloudflareMachineBackend.ts";
 
@@ -80,7 +81,7 @@ describe("CloudflareMachineBackend", () => {
           machineId: `cloudflare:${threadId}`,
         });
         expect(fake.log).toEqual([
-          `start node /opt/signalbox/runner.mjs --cloud https://app.signalbox.run --port ${RUNNER_PORT} --listen 0.0.0.0 --home /home/node/signalbox --machine-id cloudflare:${threadId}`,
+          `start node /opt/signalbox/runner.mjs --cloud https://app.signalbox.run --port ${RUNNER_PORT} --listen 0.0.0.0 --home /home/user/signalbox --machine-id cloudflare:${threadId}`,
           "timeout 600000",
         ]);
         // A later generation goes to the same container.
@@ -108,6 +109,18 @@ describe("CloudflareMachineBackend", () => {
         ]);
         expect(fake.log).toHaveLength(2);
       }),
+  );
+
+  // A thread moves between classes mid-run; its working directory, home and
+  // folder instructions must sit at the same paths on both (#620).
+  it.effect("runs its Runner in the same home as a boat machine's", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeContainer();
+      const backend = makeCloudflareMachineBackend({ ...fake, settings, onExit: () => {} });
+      yield* backend.ensure(request(1));
+      const boatHome = CONFIG_PATH.slice(0, CONFIG_PATH.lastIndexOf("/"));
+      expect(fake.log[0]).toContain(` --home ${boatHome} `);
+    }),
   );
 
   it.effect("hands the same container another class's generation, and stops cheaply", () =>

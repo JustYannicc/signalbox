@@ -1,4 +1,4 @@
-import { machineConfigJson } from "@signalbox/runner-protocol/RunnerProtocol";
+import { MACHINE_HOME, machineConfigJson } from "@signalbox/runner-protocol/RunnerProtocol";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
@@ -28,8 +28,7 @@ import type { BoatApi, BoatApiError, BoatSandbox } from "./BoatApi.ts";
  * lost its machine's socket never needs a second VM.
  */
 
-/** On the VM. Mounted into the Runner's container at the same path. */
-const MACHINE_HOME = "/home/user/signalbox";
+/** On the VM's disk, mounted into the Runner's container at the same path. */
 export const CONFIG_PATH = `${MACHINE_HOME}/machine.json`;
 
 /** Create, boot, setup and the first image pull. A resume takes seconds. */
