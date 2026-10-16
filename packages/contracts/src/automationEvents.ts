@@ -51,6 +51,18 @@ const SOURCE = {
   key: "the item's key",
   item: "the item as the operation returns it",
 } as const;
+/** A cloud drive's ref move; `threadId` in the envelope is the thread that moved it, if one did. */
+const DRIVE = {
+  driveId: "the drive's id",
+  before: "the commit it moved from, or null for the first",
+  after: "the commit it moved to",
+  commits:
+    "[{ oid, author, message (up to 4k chars), parents }] new since before, newest first, up to 20",
+  commitsTruncated: "true when there were more",
+  files:
+    "[{ path, kind: added | modified | deleted }] between before and after, up to 200; null when they couldn't be read",
+  filesTruncated: "true when there were more",
+} as const;
 const AUTOMATION = {
   automationId: "the automation's id",
   automationName: "its meta.name",
@@ -371,6 +383,19 @@ export const AUTOMATION_EVENTS = [
     when: "When a checkpoint is restored",
     description: "Someone asked to roll a thread back to a checkpoint.",
     fields: { ...THREAD, checkpointId: "" },
+  },
+  {
+    name: "drive.changed",
+    when: "When files in a drive change",
+    description: "Work landed in a cloud drive: its main moved, so the folder's files changed.",
+    fields: { ...DRIVE, ref: "main" },
+  },
+  {
+    name: "drive.branch-saved",
+    when: "When a thread saves its work",
+    description:
+      "A thread saved its work to its branch in a cloud drive, before it lands: a new revision to check.",
+    fields: { ...DRIVE, ref: "threads/<thread id>" },
   },
   {
     name: "hook.called",

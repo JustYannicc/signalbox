@@ -71,6 +71,7 @@ const makeOwner = () => {
         : Effect.sync(() => {
             received.push(input);
           }),
+    driveEvents: () => Effect.void,
     tool: () => Effect.die("not in these tests"),
     wake: Effect.void,
     flush: Effect.void,

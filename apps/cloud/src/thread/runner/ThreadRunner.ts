@@ -8,6 +8,7 @@ import {
   RUNNER_PROTOCOL_VERSION,
   type RunnerHello,
   type RunnerItem,
+  type RunnerMessageInput,
   type RunnerRefusal,
   type RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
@@ -33,6 +34,7 @@ import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
+import { steersOf } from "../steering.ts";
 import { SessionRows } from "../session/SessionRows.ts";
 import { sessionToken } from "../session/sessionToken.ts";
 import * as ThreadEngine from "../ThreadEngine.ts";
@@ -51,6 +53,7 @@ import {
   awaitsHandoff,
   harnessRun,
   runnerBatchEvents,
+  runnerMessageOf,
   runnerTurnFor,
   unknownFailure,
 } from "./runnerTurn.ts";
@@ -96,6 +99,11 @@ export type HelloResult =
       readonly connection: number;
       readonly ackedSequence: number;
       readonly activeRunId: RunId | null;
+      /**
+       * The live run this Runner already holds, so a Stop or steer that comes
+       * while it runs reaches it on this connection too (#562).
+       */
+      readonly heldRunId: RunId | null;
     }
   | { readonly _tag: "refused"; readonly reason: RunnerRefusal; readonly message: string };
 
@@ -252,6 +260,8 @@ export interface RunnerWork {
    */
   readonly secrets: ReadonlyArray<OnePasswordEnvironmentId>;
   readonly activeRunId: RunId | null;
+  /** The messages steered into the live run while its harness runs it, oldest first (#562). */
+  readonly steers: ReadonlyArray<RunnerMessageInput>;
 }
 
 export class ThreadRunner extends Context.Service<
@@ -496,6 +506,14 @@ const make = Effect.gen(function* () {
         !hello.takenRunIds.includes(run.id);
       const events = lost ? recoverRunEvents(projection, run, ctx) : [];
       const active = lost ? harnessRun(applyEvents(projection, events) ?? projection) : run;
+      // A Runner too old to say what it holds is taken to hold a run it reported started.
+      const heldRunId =
+        active != null &&
+        (hello.takenRunIds === undefined
+          ? !awaitsHandoff(active)
+          : hello.takenRunIds.includes(active.id))
+          ? active.id
+          : null;
       return Effect.as(diagnostics.runnerConnected({ hello, connection, run, lost, now }), {
         events,
         machine: {
@@ -505,6 +523,7 @@ const make = Effect.gen(function* () {
           ensuredAt: lease.ensuredAt ?? now,
           disconnectedAt: null,
           drains: hello.drains === true,
+          steers: hello.steers === true,
         },
         result: {
           _tag: "welcome",
@@ -512,6 +531,7 @@ const make = Effect.gen(function* () {
           connection,
           ackedSequence: lease.ackedSequence,
           activeRunId: active?.id ?? null,
+          heldRunId,
         },
       } satisfies ThreadEngine.EngineDecision<HelloResult>);
     });
@@ -537,6 +557,7 @@ const make = Effect.gen(function* () {
         projection,
         input.items,
         ctx,
+        lease.steers === true,
       );
       const recorded = Effect.andThen(
         diagnostics.batch({
@@ -787,6 +808,11 @@ const make = Effect.gen(function* () {
             : { token: yield* sessionTokenOf(lease.token, projection.thread.id, lease.generation) },
         secrets: turn === null ? [] : yield* Effect.orDie(store.secrets),
         activeRunId: run?.id ?? null,
+        // Only a Runner that takes steers is handed them.
+        steers:
+          projection === null || run?.status !== "running" || lease.steers !== true
+            ? []
+            : steersOf(projection, run).map(runnerMessageOf),
       });
     }),
   );
