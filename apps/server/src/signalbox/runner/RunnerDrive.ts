@@ -23,6 +23,7 @@ import {
 } from "./RunnerDriveClient.ts";
 import { type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
 import { EMPTY_TREE, makeRunnerGit, remoteCredentialFile, RunnerGitError } from "./RunnerGit.ts";
+import { CACHES_LINE, makeExcludes } from "./RunnerExcludes.ts";
 import { makeRunnerInstructions, type RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { DependencyTree, DependencyTreesError } from "./RunnerDependencies.ts";
 import { makeMachineState, type OutsideFolder } from "./RunnerMachineState.ts";
@@ -161,11 +162,6 @@ const configFor = (author: CommitAuthor) =>
     ["gc.auto", "0"],
     ["core.quotepath", "false"],
   ] as const;
-/**
- * Never saved to a drive, whatever its own ignore files say: dependency trees
- * are the machine's cache (`RunnerDependencies.ts`), rebuilt from lockfiles.
- */
-const EXCLUDE = "node_modules/";
 const RECONCILE_ATTEMPTS = 5;
 const CONFLICT_MARKER = /^(<<<<<<<|>>>>>>>) /m;
 
@@ -392,15 +388,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     return yield* land;
   });
 
-  /** Adds `EXCLUDE` to the repository's own excludes, keeping whatever else is there. */
-  const excludeCaches = Effect.gen(function* () {
-    const file = path.join(gitDir, "info", "exclude");
-    const current = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
-    if (current.split("\n").includes(EXCLUDE)) return;
-    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-    const separator = current === "" || current.endsWith("\n") ? "" : "\n";
-    yield* fs.writeFileString(file, `${current}${separator}${EXCLUDE}\n`);
-  });
+  /** Keeps dependency trees off the branch, whatever the repository's own ignore files say. */
+  const excludeCaches = makeExcludes(fs, path, gitDir).appendLines([CACHES_LINE]);
 
   const exclusive = <A, E>(effect: Effect.Effect<A, E>) =>
     flush.pipe(Effect.andThen(lock.withPermits(1)(effect)));

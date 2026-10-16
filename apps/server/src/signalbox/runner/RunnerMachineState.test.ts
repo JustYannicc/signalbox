@@ -324,6 +324,71 @@ describe("RunnerMachineState", () => {
     ),
   );
 
+  it.effect("keeps what the thread's own excludes ignore out of the branch on a new machine", () =>
+    run((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const first = yield* threadMachine(drive, root, "vm-1", "t1");
+        yield* first.runner.prepare("remote-token");
+        write(first.cwd, "src/app.ts", "export {};\n");
+        // Ignored by the repository's own excludes, not by a .gitignore.
+        NodeFS.appendFileSync(NodePath.join(first.cwd, ".git", "info", "exclude"), ".env\n");
+        write(first.cwd, ".env", "SECRET=leak\n");
+        yield* first.runner.finishTurn({ message: "one" });
+        expect(filesOf(drive.store, drive.refs("t1").main!)).toEqual(["src/app.ts"]);
+
+        const second = yield* threadMachine(drive, root, "vm-2", "t1");
+        yield* second.runner.prepare("remote-token");
+        expect(read(second.cwd, ".env")).toBe("SECRET=leak\n");
+        expect(git(second.cwd, "status", "--porcelain")).toBe("");
+        write(second.cwd, "src/app.ts", "export const x = 1;\n");
+        yield* second.runner.autosave;
+        yield* second.runner.flush;
+        expect(filesOf(drive.store, drive.refs("t1").wip!)).toEqual(["src/app.ts"]);
+        yield* second.runner.finishTurn({ message: "two" });
+        expect(filesOf(drive.store, drive.refs("t1").main!)).toEqual(["src/app.ts"]);
+        expect(drive.objectsVisibleTo("t9").has(git(second.cwd, "hash-object", ".env"))).toBe(
+          false,
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "never saves a restored file nothing ignores anymore, unless someone un-ignores it",
+    () =>
+      run((root) =>
+        Effect.gen(function* () {
+          const drive = makeFakeDrive(root);
+          const first = yield* threadMachine(drive, root, "vm-1", "t1");
+          yield* first.runner.prepare("remote-token");
+          write(first.cwd, ".gitignore", ".env\n");
+          write(first.cwd, ".env", "SECRET=leak\n");
+          yield* first.runner.autosave;
+          yield* first.runner.flush;
+          // The auto-save that held the .gitignore never landed; the machine state did.
+          drive.forceRef("t1", "wip", null);
+
+          const second = yield* threadMachine(drive, root, "vm-2", "t1");
+          yield* second.runner.prepare("remote-token");
+          expect(read(second.cwd, ".env")).toBe("SECRET=leak\n");
+          expect(exists(second.cwd, ".gitignore")).toBe(false);
+          write(second.cwd, "src/app.ts", "export {};\n");
+          yield* second.runner.finishTurn({ message: "two" });
+          expect(filesOf(drive.store, drive.refs("t1").main!)).toEqual(["src/app.ts"]);
+
+          // Un-ignored on purpose, it's the thread's to commit.
+          write(second.cwd, ".gitignore", "!.env\n");
+          yield* second.runner.finishTurn({ message: "three" });
+          expect(filesOf(drive.store, drive.refs("t1").main!)).toEqual([
+            ".env",
+            ".gitignore",
+            "src/app.ts",
+          ]);
+        }),
+      ),
+  );
+
   it.effect(
     "keeps no machine state on a cloud from before it, so nothing private goes public",
     () =>

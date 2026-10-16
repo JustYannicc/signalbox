@@ -347,6 +347,10 @@ export const makeFakeDrive = (
           .filter((pack) => pack.owner === undefined || pack.owner === threadId)
           .flatMap((pack) => objectsOf(pack.name)),
       ),
+    /** Moves a thread's ref behind its back, as a save that never landed would leave it. */
+    forceRef: (threadId: string, ref: "thread" | "wip", oid: string | null) => {
+      threads.get(threadId)![ref] = oid;
+    },
     /** Objects in packs only `threadId` is handed. */
     privateObjectsOf: (threadId: string) =>
       packs.filter((pack) => pack.owner === threadId).flatMap((pack) => objectsOf(pack.name)),

@@ -9,6 +9,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { DependencyTree, DependencyTreesError } from "./RunnerDependencies.ts";
+import { escapeGitignore, makeExcludes, RESTORED_BLOCK, threadExcludes } from "./RunnerExcludes.ts";
 import { EMPTY_TREE, type RunnerGit } from "./RunnerGit.ts";
 
 /**
@@ -24,6 +25,14 @@ import { EMPTY_TREE, type RunnerGit } from "./RunnerGit.ts";
  *   or saves another way (session mirrors).
  * - `dependencies.json`: the dependency trees left out, with the install key
  *   each was at.
+ * - `excludes`: the thread's own lines in `.git/info/exclude`, which ignore
+ *   files the way a `.gitignore` does.
+ *
+ * Nothing a restore puts back may reach a save unless someone un-ignores it
+ * on purpose (a secret would go to `main` and every git export): the
+ * thread's excludes come back first, then every file about to be restored
+ * that nothing ignores is ignored in a block of the Runner's own, and only
+ * then do the files land.
  *
  * Left out, and listed for the thread's details with how they come back:
  * dependency trees `RunnerDependencies.ts` rebuilds (files edited after
@@ -56,6 +65,11 @@ export interface CapturedMachine {
 const CHECKOUT = "checkout";
 const OUTSIDE = "outside";
 const MANIFEST = "dependencies.json";
+const EXCLUDES = "excludes";
+/** A gitignore pattern matching exactly the file at `path`. */
+const exactPattern = (path: string) => `/${escapeGitignore(path)}`;
+/** No ignore pattern can match a path with a line break: such a file is never restored. */
+const unmatchable = (path: string) => /[\n\r]/.test(path);
 /** Caches tools keep inside a dependency tree: never an edit worth keeping. */
 const TREE_CACHES = [".cache", ".vite", ".vite-temp"];
 /** Build output a project's own tool makes again, beside the file that says so. */
@@ -120,6 +134,9 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
     readonly trees: Manifest;
     readonly files: ReadonlyArray<string>;
   } | null = null;
+  const excludesFile = makeExcludes(fs, path, gitDir);
+  /** The thread's excludes as last saved, and their blob. */
+  let excludesSaved: { readonly text: string; readonly blob: string | null } | null = null;
   /** Edits inside dependency trees as last looked for. */
   let edited: ReadonlyArray<string> = [];
 
@@ -351,6 +368,20 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
       if (checkout === null && outside.length === 0 && trees.length === 0) {
         return { tree: null, skipped } satisfies CapturedMachine;
       }
+      // What ignores the checkout's files only matters with checkout files to ignore.
+      const excludes = checkout === null ? "" : threadExcludes(yield* excludesFile.read).join("\n");
+      if (excludes !== excludesSaved?.text) {
+        excludesSaved = {
+          text: excludes,
+          blob:
+            excludes === ""
+              ? null
+              : (yield* git.run(["hash-object", "-w", "--stdin"], {
+                  stdin: `${excludes}\n`,
+                })).trim(),
+        };
+      }
+      const excludesBlob = excludesSaved.blob;
       const manifest = encodeManifest(
         trees.map((tree) => ({
           path: tree.path,
@@ -365,8 +396,40 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
         ...(checkout === null ? [] : [["040000", checkout, CHECKOUT] as const]),
         ...(outside.length === 0 ? [] : [["040000", yield* mktree(outside), OUTSIDE] as const]),
         ["100644", manifestBlob, MANIFEST],
+        ...(excludesBlob === null ? [] : [["100644", excludesBlob, EXCLUDES] as const]),
       ]);
       return { tree: root, skipped } satisfies CapturedMachine;
+    });
+
+  /** Adds the thread's saved excludes to this repository's, keeping the lines already there. */
+  const restoreExcludes = (commit: string) =>
+    Effect.gen(function* () {
+      const saved = yield* git.exec(["show", `${commit}:${EXCLUDES}`]);
+      if (saved.code === 0) yield* excludesFile.appendLines(threadExcludes(saved.stdout));
+    });
+
+  /**
+   * Ignores each of `files` that nothing here ignores, in the Runner's own
+   * block, before they're written: a `.gitignore` that held one may not have
+   * come back with it. A `.gitignore` negating one (`!.env`) still wins,
+   * which is how a thread un-ignores it on purpose.
+   */
+  const ignoreRestored = (files: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      // Paths need not exist to be checked; a failed check ignores them all.
+      const ignored = new Set(
+        files.length === 0
+          ? []
+          : (yield* git.exec(["check-ignore", "--no-index", "-z", "--stdin"], {
+              stdin: nul(files),
+            })).stdout
+              .split("\0")
+              .filter((file) => file.length > 0),
+      );
+      yield* excludesFile.replaceBlock(
+        RESTORED_BLOCK,
+        files.filter((file) => !ignored.has(file)).map(exactPattern),
+      );
     });
 
   /** Whether `rev` names an object here. */
@@ -419,11 +482,11 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
             .filter((file) => file.length > 0)
         : [];
       const inTree = (file: string) => trees.some((tree) => within(file, tree.path));
-      yield* writeFiles(
-        input.cwd,
-        checkout,
-        files.filter((file) => !inTree(file)),
-      );
+      // What ignored these files comes back before they do, so none is ever unignored here.
+      yield* restoreExcludes(commit);
+      const restored = files.filter((file) => !inTree(file) && !unmatchable(file));
+      yield* ignoreRestored(restored);
+      yield* writeFiles(input.cwd, checkout, restored);
       const edits = files.filter(inTree);
       held = edits.length > 0 ? { commit, trees, files: edits } : null;
       for (const folder of input.outside) {
