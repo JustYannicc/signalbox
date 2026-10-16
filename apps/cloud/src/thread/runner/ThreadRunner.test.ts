@@ -1004,6 +1004,44 @@ describe("ThreadRunner", () => {
     ),
   );
 
+  // A continuation is a new run the thread starts itself; its agent still
+  // follows the folders' instructions its turn was started with (#620).
+  it.effect("keeps the folder instructions when a run continues on a new machine", () =>
+    withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          const levels = [{ label: "Top level", text: "The passphrase is PELICAN." }];
+          yield* launch(engine, "launch-1", {
+            ...personal,
+            instructions: { top: [], projects: {}, thread: levels },
+          });
+          const machine = yield* connect(runner);
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started],
+          });
+          yield* runner.disconnected({
+            generation: machine.generation,
+            connection: 1,
+            detail: "1006",
+          });
+          yield* TestClock.adjust(60_000);
+          yield* runner.reconcile;
+
+          yield* connect(runner);
+          const work = yield* runner.work;
+          // The continuation: a run of its own.
+          expect(work.turn?.runId).not.toBe(turn.runId);
+          expect(work.drive?.instructions).toEqual(levels);
+        }),
+      { drives: true },
+    ),
+  );
+
   it.effect(
     "hands the turn its folders' 1Password Environments with the owner's current token",
     () => {

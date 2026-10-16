@@ -44,7 +44,7 @@ import { MachineBackend } from "./MachineBackend.ts";
 import { machineClassFor } from "./machineClass.ts";
 import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
 import { freshSessionTurn } from "./freshSession.ts";
-import { recoverRunEvents } from "./runRecovery.ts";
+import { continuedRun, recoverRunEvents } from "./runRecovery.ts";
 import {
   accountMovedEvents,
   failRunEvents,
@@ -775,8 +775,11 @@ const make = Effect.gen(function* () {
                 token: yield* driveToken(lease.token, projection.thread.id, lease.generation),
                 // Any drive may have a remote to fetch, or a shortcut to one (#142).
                 remoteToken: yield* remoteToken(lease.token, projection.thread.id, run.id),
-                // Its folders' `AGENTS.md`, as the turn was started with (#227).
-                instructions: yield* Effect.orDie(store.instructions(run.id)),
+                // Its folders' `AGENTS.md`, as the turn was started with (#227), also
+                // when this run continues it on another machine (#620).
+                instructions: yield* Effect.orDie(
+                  store.instructions(continuedRun(projection, run).id),
+                ),
               },
         sessions:
           turn === null || lease.token === null || projection === null
