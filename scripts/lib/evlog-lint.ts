@@ -5,6 +5,9 @@
  * evlog through the logger layer; the Effect language service already flags
  * `console` inside Effect.
  */
+import type { ViteUserConfig } from "vite-plus";
+
+type LintOverride = NonNullable<NonNullable<ViteUserConfig["lint"]>["overrides"]>[number];
 
 /** Signalbox-owned code that emits wide events. Grows as each surface moves to evlog. */
 const COVERED = ["apps/cloud/src/**", "apps/cloud/evlog.config.ts"];
@@ -29,7 +32,9 @@ const OTHER_LOGGERS = [
 }));
 
 /** `restrictedImports`: the paths the base config restricts, which an override replaces. */
-export const evlogLintOverrides = (restrictedImports: ReadonlyArray<unknown>) => [
+export const evlogLintOverrides = (
+  restrictedImports: ReadonlyArray<unknown>,
+): Array<LintOverride> => [
   {
     files: COVERED,
     excludeFiles: [...CONSOLE_INTERFACES, "**/*.test.ts"],
