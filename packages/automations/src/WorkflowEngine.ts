@@ -28,6 +28,7 @@ import * as Stream from "effect/Stream";
 
 import { makeAttachments } from "./attachments.ts";
 import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
+import { makeExternalRuns, type ExternalRuns } from "./external.ts";
 import { makeCatalog, type AuthorizeAutomation, type CatalogShape } from "./catalog.ts";
 import { automationDefaults, runLogLines, stepAsk } from "./columns.ts";
 import { makeConnections } from "./connections.ts";
@@ -116,6 +117,10 @@ export interface WorkflowEngineShape extends CatalogShape {
   readonly registerBuiltinTools: (handler: BuiltinToolHandler) => Effect.Effect<void>;
   /** The server registers pull request reads once its pull request service exists. */
   readonly registerPullRequestReads: (reads: PullRequestReads) => Effect.Effect<void>;
+  /** A host that reaches another system's runners lets `w.run(…, { on })` send functions there. */
+  readonly registerExternalRunner: ExternalRuns["register"];
+  /** When `tick` next has an external run to read (epoch ms), for a host that sleeps until then. */
+  readonly nextExternalPollAt: ExternalRuns["nextPollAt"];
   /** Sets or clears (null) the webhook signing secret; it is never read back. */
   readonly setWebhookSecret: <E = never>(input: {
     readonly automationId: string;
@@ -374,10 +379,13 @@ export const makeEngine = <R>(
         return true;
       });
 
+    const external = makeExternalRuns({ store, complete, runChanged, automationOfRun });
+
     const startStep = makeStartStep({
       store,
       services,
       functions,
+      external,
       connections,
       builtinTools,
       callback: (runId) => ingress.createCallback(runId),
@@ -425,9 +433,9 @@ export const makeEngine = <R>(
         yield* attachments.refresh(run.run_id);
         const automation = yield* store.getAutomation(run.automation_id);
         for (const step of steps) {
-          if (step.thread_id === null || (step.status !== "running" && step.status !== "waiting"))
-            continue;
-          if (!automation) continue;
+          if (!automation || (step.status !== "running" && step.status !== "waiting")) continue;
+          if (step.external_json) yield* external.cancel(automation.project_id, step);
+          if (step.thread_id === null) continue;
           yield* threads
             .interrupt({
               projectId: ProjectId.make(automation.project_id),
@@ -722,6 +730,7 @@ export const makeEngine = <R>(
       threads,
       services,
       functions,
+      external,
       runLogs,
       runWaits,
       attachments,
@@ -803,6 +812,8 @@ export const makeEngine = <R>(
         Effect.sync(() => {
           pullRequestReads = reads;
         }),
+      registerExternalRunner: external.register,
+      nextExternalPollAt: external.nextPollAt,
       setWebhookSecret,
       cancelRun,
       retryRun,
@@ -818,7 +829,7 @@ export const makeEngine = <R>(
       subscribeRun: (runId) => feed.watch(`run:${runId}`, catalog.getRun(runId), runShows(runId)),
       subscribeNotices: PubSub.subscribe(notices).pipe(Effect.map(Stream.fromSubscription)),
       // One failing doesn't hold up the other.
-      tick: built.tick.pipe(Effect.ensuring(sources.tick)),
+      tick: built.tick.pipe(Effect.ensuring(sources.tick), Effect.ensuring(external.poll)),
       drain: built.drain,
     } satisfies WorkflowEngineShape;
   });
