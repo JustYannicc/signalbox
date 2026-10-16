@@ -3,7 +3,9 @@
 # ghcr.io/justyannicc/signalbox-runner. Its own file so upstream merges never
 # touch it. See docs/operations/cloud.md.
 #
-# - nightly: every night from main, as `nightly` and `nightly-<date>-<sha>`.
+# - nightly: every night from main, as `nightly` and `nightly-<date>-<sha>`,
+#   and after every production deploy of a push that changes the Runner
+#   (deploy-cloud.yml calls this once the cloud is live).
 # - stable: every `vX.Y.Z` tag, as `X.Y.Z` and `stable`.
 # - pr-<number>: a pull request's preview (deploy-cloud.yml calls this before it
 #   deploys), so its boat machines run the pull request's Runner. Deleted with
@@ -23,7 +25,7 @@ on:
     # Also in deploy-cloud.yml: its paths, and `runner_changes`' pattern.
     paths:
       - apps/server/src/signalbox/runner/**
-      - apps/server/src/preview/ServerBrowser*.ts
+      - apps/server/src/preview/**
       - apps/server/src/orchestration-v2/Adapters/**
       # The Runner compiles and forwards agents' automations.
       - apps/server/src/workflows/**
@@ -34,8 +36,19 @@ on:
     inputs:
       pr_number:
         description: "Publish as pr-<number>, for that pull request's preview"
-        required: true
+        required: false
+        default: ""
         type: string
+      channel:
+        description: "Publish to this channel instead (nightly)"
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Build and smoke test without publishing"
+        required: false
+        default: false
+        type: boolean
     outputs:
       image:
         description: The published image
@@ -68,7 +81,8 @@ jobs:
       github.event.pull_request.head.repo.full_name != github.repository
     # Per job: a called run and the pull request's own run must not cancel each other.
     concurrency:
-      group: runner-image-${{ inputs.pr_number != '' && format('pr-{0}', inputs.pr_number) || github.ref }}
+      # A dry run gets its own group, so it never replaces a publish waiting to start.
+      group: runner-image-${{ inputs.pr_number != '' && format('pr-{0}', inputs.pr_number) || github.ref }}${{ inputs.dry_run && '-dry' || '' }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -105,7 +119,9 @@ jobs:
           EVENT: ${{ github.event_name }}
           CHANNEL: ${{ inputs.channel }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          DRY_RUN: ${{ inputs.dry_run }}
           REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           short_sha="${GITHUB_SHA::12}"
           push=true
@@ -114,12 +130,13 @@ jobs:
           elif [ "$EVENT" = "pull_request" ]; then
             push=false
             tags="$IMAGE:pr-${{ github.event.pull_request.number }}"
-          elif [ "$EVENT" = "push" ] || [ "$CHANNEL" = "stable" ]; then
-            if [ "$EVENT" = "push" ]; then version="${REF_NAME#v}"; else version="$(jq -r .version apps/server/package.json)"; fi
+          elif [ "$CHANNEL" = "stable" ] || { [ -z "$CHANNEL" ] && [ "$REF_TYPE" = "tag" ]; }; then
+            if [ "$REF_TYPE" = "tag" ]; then version="${REF_NAME#v}"; else version="$(jq -r .version apps/server/package.json)"; fi
             tags="$IMAGE:$version,$IMAGE:stable"
           else
             tags="$IMAGE:nightly,$IMAGE:nightly-$(date -u +%Y%m%d)-$short_sha"
           fi
+          if [ "$DRY_RUN" = "true" ]; then push=false; fi
           {
             echo "push=$push"
             echo "tags=$tags"
@@ -190,6 +207,21 @@ jobs:
           TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           for tag in ${TAGS//,/ }; do docker push "$tag"; done
+
+      # What a fresh machine gets: it pulls the channel's tag when its Runner
+      # starts (BoatMachineBackend.ts), and must find this commit in it.
+      - name: Check the published revision
+        if: steps.tags.outputs.push == 'true'
+        env:
+          IMAGE_TAG: ${{ steps.tags.outputs.first }}
+        run: |
+          revision="$(docker buildx imagetools inspect "$IMAGE_TAG" \
+            --format '{{ index .Image.Config.Labels "org.opencontainers.image.revision" }}')"
+          if [ "$revision" != "$GITHUB_SHA" ]; then
+            echo "::error::$IMAGE_TAG runs ${revision:-no revision}, not $GITHUB_SHA."
+            exit 1
+          fi
+          echo "$IMAGE_TAG runs $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Delete the image this replaced
         if: steps.previous.outputs.ids != ''
