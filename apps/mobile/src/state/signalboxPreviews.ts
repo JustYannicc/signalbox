@@ -12,12 +12,23 @@ import { useEnvironmentQuery } from "./query";
 
 export const signalboxPreviews = createSignalboxPreviewsAtoms(connectionAtomRuntime);
 
-/** The thread's previews to offer; none outside Signalbox Cloud or while no machine runs. */
-export function useThreadPreviewPorts(environmentId: EnvironmentId, threadId: ThreadId) {
-  const supported =
-    useEnvironmentServerConfig(environmentId)?.environment.capabilities.signalboxPreviews === true;
+/** Whether the environment opens threads' dev servers through the PreviewGateway. */
+export function useEnvironmentSupportsSignalboxPreviews(environmentId: EnvironmentId | null) {
+  return (
+    useEnvironmentServerConfig(environmentId)?.environment.capabilities.signalboxPreviews === true
+  );
+}
+
+/**
+ * The thread's previews to offer, and whether the agent has browsed there:
+ * none and false outside Signalbox Cloud. Ports show only while a machine
+ * runs; `browsed` stays once the trail has a step.
+ */
+export function useThreadPreviews(environmentId: EnvironmentId, threadId: ThreadId) {
+  const supported = useEnvironmentSupportsSignalboxPreviews(environmentId);
   const previews = useEnvironmentQuery(
     supported ? signalboxPreviews.thread({ environmentId, input: { threadId } }) : null,
   ).data;
-  return useMemo(() => previewPortsToOffer(previews), [previews]);
+  const ports = useMemo(() => previewPortsToOffer(previews), [previews]);
+  return { ports, browsed: previews?.browsed === true };
 }

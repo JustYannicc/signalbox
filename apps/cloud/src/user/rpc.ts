@@ -39,6 +39,7 @@ import {
   SignalboxFolderError,
 } from "@t3tools/contracts/signalboxFolders";
 import {
+  SIGNALBOX_AGENT_BROWSER_WS_METHODS,
   SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   SIGNALBOX_PREVIEWS_WS_METHODS,
   SignalboxPreviewError,
@@ -78,6 +79,7 @@ import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
+import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { AUTOMATION_METHODS, makeAutomationHandlers } from "../automations/automationRpc.ts";
@@ -154,6 +156,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
+  ...Object.values(SIGNALBOX_AGENT_BROWSER_WS_METHODS),
   ...Object.values(SIGNALBOX_PUSH_WS_METHODS),
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...Object.values(SIGNALBOX_THREAD_KINDS_WS_METHODS),
@@ -390,6 +393,22 @@ export const layerHandlers = (input: {
           service._tag === "None"
             ? Effect.fail(new SignalboxDrivesUnavailableError())
             : call(service.value);
+      /** A call about the agent's browser, on a cloud that runs previews; its refusals in the previews' error. */
+      const browserCall = <A>(
+        call: (actor: Actor) => Effect.Effect<BrowserReply<A>, CloudThreadService.CloudThreadError>,
+      ): Effect.Effect<A, SignalboxPreviewError | SignalboxPreviewsUnavailableError> =>
+        identity.previews !== true
+          ? Effect.fail(new SignalboxPreviewsUnavailableError())
+          : threadCall(
+              Effect.flatMap(actorNow, call),
+              (message) => new SignalboxPreviewError({ message }),
+            ).pipe(
+              Effect.flatMap((reply) =>
+                reply._tag === "ok"
+                  ? Effect.succeed(reply.value)
+                  : Effect.fail(new SignalboxPreviewError({ message: reply.message })),
+              ),
+            );
       const sharingCall = withDrives(sharing);
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
@@ -628,7 +647,11 @@ export const layerHandlers = (input: {
             : Stream.unwrap(
                 Effect.map(actorNow, (actor) => threads.previews(actor, threadId)),
               ).pipe(
-                Stream.map((ports) => ({ threadId, ports })),
+                Stream.map(({ ports, browsed }) => ({
+                  threadId,
+                  ports,
+                  ...(browsed ? { browsed } : {}),
+                })),
                 Stream.tapError(logUnavailable),
                 Stream.mapError(
                   (error) => new SignalboxPreviewError({ message: failureMessage(error) }),
@@ -647,6 +670,39 @@ export const layerHandlers = (input: {
                     : Effect.fail(new SignalboxPreviewError({ message: link.message })),
                 ),
               ),
+        [SIGNALBOX_AGENT_BROWSER_WS_METHODS.watch]: ({ threadId, tabId }) =>
+          identity.previews !== true
+            ? Stream.fail(new SignalboxPreviewsUnavailableError())
+            : Stream.unwrap(
+                Effect.map(actorNow, (actor) => threads.browserWatch(actor, threadId, tabId)),
+              ).pipe(
+                Stream.tapError((error) =>
+                  error._tag === "BrowserWatchBehindError" ? Effect.void : logUnavailable(error),
+                ),
+                Stream.mapError(
+                  (error) =>
+                    new SignalboxPreviewError({
+                      message:
+                        error._tag === "BrowserWatchBehindError"
+                          ? error.message
+                          : failureMessage(error),
+                    }),
+                ),
+              ),
+        [SIGNALBOX_AGENT_BROWSER_WS_METHODS.input]: ({ threadId, viewerId, input: viewerInput }) =>
+          Effect.asVoid(
+            browserCall((actor) => threads.browserInput(actor, threadId, viewerId, viewerInput)),
+          ),
+        [SIGNALBOX_AGENT_BROWSER_WS_METHODS.trail]: ({ threadId }) =>
+          Effect.map(
+            browserCall((actor) => threads.browserTrail(actor, threadId)),
+            (steps) => ({ steps }),
+          ),
+        [SIGNALBOX_AGENT_BROWSER_WS_METHODS.step]: ({ threadId, stepId }) =>
+          Effect.map(
+            browserCall((actor) => threads.browserStep(actor, threadId, stepId)),
+            (events) => ({ events }),
+          ),
         [SIGNALBOX_FOLDERS_WS_METHODS.subscribe]: () =>
           folders.changes.pipe(
             Stream.tapError((cause) => Effect.logError("cloud folders stream failed", { cause })),

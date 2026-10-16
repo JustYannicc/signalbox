@@ -13,6 +13,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import type { SqlError } from "effect/sql/SqlError";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { canWrite, myDriveId } from "../drive/driveAccess.ts";
@@ -27,6 +28,7 @@ import * as GitHub from "../github/GitHub.ts";
 import type { PackBucket } from "../drive/DrivePacks.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
+import * as BrowserTrail from "./preview/BrowserTrail.ts";
 import { PreviewGateway } from "./preview/PreviewGateway.ts";
 import { type PreviewEnv, previewSettings } from "./preview/previewHost.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
@@ -53,6 +55,7 @@ import { deliverPendingSummary } from "./summaryOutbox.ts";
 import { THREAD_OBJECT_JURISDICTION, type ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { makeThreadObjectApi } from "./threadObjectApi.ts";
+import { type BrowserReply, wire } from "./threadWire.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import { scriptedProviderEnabled } from "./scriptedProvider.ts";
@@ -74,7 +77,8 @@ import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
  *
  * It is also the PreviewGateway's brain (`preview/PreviewGateway.ts`): the
  * Runner's tunnel lands here, and so does every request to the thread's
- * preview origins.
+ * preview origins. The agent's browser rides that tunnel too
+ * (`preview/BrowserMirror.ts`); its trail is `preview/BrowserTrail.ts`.
  */
 
 export interface ThreadObjectEnv
@@ -171,6 +175,7 @@ const makeRuntime = (
   env: ThreadObjectEnv,
   previews: PreviewGateway,
   machine: MachineBackend.MachineHost,
+  threadId: () => ThreadId,
 ) =>
   ManagedRuntime.make(
     ThreadRunner.layer.pipe(
@@ -200,7 +205,13 @@ const makeRuntime = (
       Layer.provideMerge(layerMachineBackend(env, machine)),
       Layer.provideMerge(DiagnosticsStore.layer),
       Layer.provideMerge(ThreadStore.layerMachineRecords),
-      Layer.provideMerge(Layer.mergeAll(ThreadStore.layer, SessionRows.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          ThreadStore.layer,
+          SessionRows.layer,
+          BrowserTrail.layer(attachmentStorage(env), threadId),
+        ),
+      ),
       Layer.provideMerge(
         UserDirectory.layerDurableObjects(env.USERS, { localWorkerd: env.LOCAL_WORKERD === "1" }),
       ),
@@ -234,29 +245,30 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
         this.runtime.runPromise(
           ThreadRunner.ThreadRunner.use((runner) => runner.leaseToken(generation, token)),
         ),
-      // Within the user's contexts now: leaving an organization closes its previews too.
-      // Personal threads need no lookup, since Personal never goes away.
-      canSee: (userId) =>
-        this.runtime.runPromise(
-          Effect.gen(function* () {
-            const engine = yield* ThreadEngine.ThreadEngine;
-            if (yield* engine.canSee({ userId, contextIds: [PERSONAL_CONTEXT_ID] })) return true;
-            const contextIds = yield* (yield* UserDirectory.UserDirectory)
-              .forUser(userId)
-              .contextIds()
-              .pipe(Effect.orElseSucceed(() => []));
-            return yield* engine.canSee({ userId, contextIds });
-          }),
-        ),
+      canSee: (userId) => this.canSee(userId),
       holdChanged: () => this.armAlarm(),
-    });
-    this.runtime = makeRuntime(ctx.storage, env, this.gateway, {
-      container: ctx.container,
-      onExit: (detail, generation) =>
-        void this.machineExited(detail, generation).catch((cause: unknown) =>
-          this.runtime.runPromise(Effect.logError("machine exit failed", String(cause))),
+      browsed: () =>
+        this.runtime.runPromise(BrowserTrail.BrowserTrail.use((trail) => trail.browsed)),
+      storeStep: (step, recording) =>
+        this.runtime.runPromise(
+          BrowserTrail.BrowserTrail.use((trail) => trail.store(step, recording)),
         ),
+      logError: (message, cause) =>
+        void this.runtime.runPromise(Effect.logError(message, cause)).catch(() => undefined),
     });
+    this.runtime = makeRuntime(
+      ctx.storage,
+      env,
+      this.gateway,
+      {
+        container: ctx.container,
+        onExit: (detail, generation) =>
+          void this.machineExited(detail, generation).catch((cause: unknown) =>
+            this.runtime.runPromise(Effect.logError("machine exit failed", String(cause))),
+          ),
+      },
+      () => this.threadId(),
+    );
     this.runnerHost = {
       ctx,
       run: (effect) => this.runtime.runPromise(effect),
@@ -361,6 +373,74 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
 
   previewLink(...[actor, port]: Parameters<ThreadObjectApi["previewLink"]>) {
     return this.gateway.link(actor.userId, port);
+  }
+
+  browserWatch(...[actor, tabId]: Parameters<ThreadObjectApi["browserWatch"]>) {
+    return this.gateway.mirror.watch(actor.userId, tabId);
+  }
+
+  async browserInput(
+    ...[actor, viewerId, input]: Parameters<ThreadObjectApi["browserInput"]>
+  ): Promise<BrowserReply<null>> {
+    return this.gateway.mirror.input(actor.userId, viewerId, wire.browserInput.decode(input));
+  }
+
+  browserTrail(...[actor]: Parameters<ThreadObjectApi["browserTrail"]>) {
+    return this.readTrail(actor.userId, (trail) =>
+      Effect.map(trail.steps, (steps) => wire.browserSteps.encode(steps)),
+    );
+  }
+
+  async browserStep(
+    ...[actor, stepId]: Parameters<ThreadObjectApi["browserStep"]>
+  ): Promise<BrowserReply<string>> {
+    const reply = await this.readTrail(actor.userId, (trail) => trail.recording(stepId));
+    if (reply._tag !== "ok") return reply;
+    return reply.value === null
+      ? { _tag: "unavailable", message: "That step is no longer in the trail." }
+      : { _tag: "ok", value: reply.value };
+  }
+
+  /** Reads the browser trail for `userId`, who must see the thread. */
+  private async readTrail<A>(
+    userId: string,
+    read: (
+      trail: BrowserTrail.BrowserTrail["Service"],
+    ) => Effect.Effect<A, BrowserTrail.BrowserTrailError | SqlError>,
+  ): Promise<BrowserReply<A>> {
+    if (!(await this.canSee(userId))) return { _tag: "unavailable", message: "Thread not found." };
+    return this.runtime.runPromise(
+      BrowserTrail.BrowserTrail.use(read).pipe(
+        Effect.map((value): BrowserReply<A> => ({ _tag: "ok", value })),
+        Effect.catchCause((cause) =>
+          Effect.logError("browser trail read failed", Cause.pretty(cause)).pipe(
+            Effect.as({
+              _tag: "unavailable",
+              message: "The browser trail is unavailable right now. Try again.",
+            } as const),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /**
+   * Whether `userId` can see the thread, within their contexts now: leaving an
+   * organization closes its previews and browser too. Personal threads need
+   * no lookup, since Personal never goes away.
+   */
+  private canSee(userId: string) {
+    return this.runtime.runPromise(
+      Effect.gen(function* () {
+        const engine = yield* ThreadEngine.ThreadEngine;
+        if (yield* engine.canSee({ userId, contextIds: [PERSONAL_CONTEXT_ID] })) return true;
+        const contextIds = yield* (yield* UserDirectory.UserDirectory)
+          .forUser(userId)
+          .contextIds()
+          .pipe(Effect.orElseSucceed(() => []));
+        return yield* engine.canSee({ userId, contextIds });
+      }),
+    );
   }
 
   /**

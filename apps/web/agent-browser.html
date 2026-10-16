@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Agent's browser</title>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="surface"></div>
+    <textarea
+      id="keyboard"
+      aria-label="Agent's browser page"
+      aria-description="Press Shift+Escape to leave the page."
+      autocapitalize="off"
+      autocomplete="off"
+      autocorrect="off"
+      spellcheck="false"
+      disabled
+    ></textarea>
+    <script type="module" src="/src/agentBrowser/mirror/main.ts"></script>
+  </body>
+</html>

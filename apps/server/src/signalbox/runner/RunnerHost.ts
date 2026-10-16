@@ -61,7 +61,7 @@ import { makeRunnerUsage } from "./RunnerUsage.ts";
  * working directory (`workspaces/<thread>/drive`).
  *
  * Each Runner also runs the PreviewGateway's tunnel for its thread, which
- * starts and stops with that generation.
+ * starts and stops with that generation and mirrors the agent's browser.
  *
  * A thread's secrets (`RunnerSecrets.ts`) reach only its own harness
  * sessions, and the host's one mask (`secretMask.ts`) covers everything its
@@ -253,6 +253,8 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               threadSocketUrl(cloudUrl, PREVIEW_TUNNEL_PATH, request.threadId),
             ),
             ports: previewPorts,
+            // Viewers watch the same browser the agent's `preview_*` tools drive.
+            ...(context.mirror === null ? {} : { mirror: context.mirror }),
           });
           return session;
         }).pipe(

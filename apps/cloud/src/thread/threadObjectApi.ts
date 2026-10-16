@@ -20,7 +20,10 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 export const makeThreadObjectApi = (
   run: <A, E>(effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports>) => Promise<A>,
   afterChange: () => Promise<void>,
-): Omit<ThreadObjectApi, "previews" | "previewLink"> => {
+): Omit<
+  ThreadObjectApi,
+  "previews" | "previewLink" | "browserWatch" | "browserInput" | "browserTrail" | "browserStep"
+> => {
   const reply = <A>(
     effect: Effect.Effect<
       A,

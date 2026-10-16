@@ -11,7 +11,13 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import { SignalboxPreviewPort } from "@t3tools/contracts/signalboxPreviews";
+import {
+  AgentBrowserInput,
+  AgentBrowserStep,
+  AgentBrowserUpdate,
+  SignalboxPreviewPort,
+  SignalboxThreadPreviews,
+} from "@t3tools/contracts/signalboxPreviews";
 import * as Schema from "effect/Schema";
 
 /**
@@ -76,8 +82,17 @@ export const wire = {
   snapshot: jsonCodec(ThreadSnapshotWire),
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
   batch: jsonCodec(Schema.Array(OrchestrationV2ThreadStreamItem)),
-  previews: jsonCodec(Schema.Struct({ ports: Schema.Array(SignalboxPreviewPort) })),
+  /** `SignalboxThreadPreviews` without its thread id, which the stream's caller knows. */
+  previews: jsonCodec(
+    Schema.Struct({
+      ports: SignalboxThreadPreviews.fields.ports,
+      browsed: SignalboxThreadPreviews.fields.browsed,
+    }),
+  ),
   monitors: jsonCodec(Schema.Array(ThreadMonitorWire)),
+  browserUpdate: jsonCodec(AgentBrowserUpdate),
+  browserInput: jsonCodec(AgentBrowserInput),
+  browserSteps: jsonCodec(Schema.Array(AgentBrowserStep)),
   /** A thread's domain events with their sequence, on their way to its owner's automations. */
   events: jsonCodec(
     Schema.Array(
@@ -98,8 +113,24 @@ export type ThreadObjectReply<A> =
     };
 
 /** The thread's previews travel as newline-delimited JSON too, one snapshot per line. */
-export const previewsLine = (ports: ReadonlyArray<SignalboxPreviewPort>) =>
-  JSON.stringify(wire.previews.encode({ ports }));
+export const previewsLine = (ports: ReadonlyArray<SignalboxPreviewPort>, browsed: boolean) =>
+  JSON.stringify(wire.previews.encode(browsed ? { ports, browsed } : { ports }));
+
+/** The agent's browser travels as newline-delimited JSON too, one update per line. */
+export const browserUpdateLine = (update: AgentBrowserUpdate) =>
+  JSON.stringify(wire.browserUpdate.encode(update));
+
+/**
+ * The last line of a watch stream whose viewer fell behind the browser: the
+ * stream ends for good, and the client opens a new one when its person is back.
+ */
+export const BrowserWatchBehind = Schema.TaggedStruct("behind", {});
+export const browserBehindLine = JSON.stringify({ _tag: "behind" });
+
+/** A thread object's answer about the agent's browser, or why it has none. */
+export type BrowserReply<A> =
+  | { readonly _tag: "ok"; readonly value: A }
+  | { readonly _tag: "unavailable"; readonly message: string };
 
 /** Stream batches travel as newline-delimited JSON, one commit per line. */
 export const encodeBatchLine = (() => {

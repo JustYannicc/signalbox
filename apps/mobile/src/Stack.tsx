@@ -63,6 +63,7 @@ import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
+import { AgentBrowserRouteScreen } from "./features/agentBrowser/AgentBrowserRouteScreen"; // signalbox: agent browser
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -564,6 +565,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ThreadReviewComment",
   "ThreadDevicePreview",
   "ThreadBrowserPreview",
+  "ThreadAgentBrowser", // signalbox: agent browser
   "ThreadSettingsSheet",
 ]);
 
@@ -793,6 +795,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
         headerShown: false,
         gestureEnabled: false,
       },
+    }),
+    // signalbox: agent browser
+    ThreadAgentBrowser: createNativeStackScreen({
+      screen: AgentBrowserRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/agent-browser`,
+      options: { presentation: "fullScreenModal", headerShown: false, gestureEnabled: false },
     }),
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,

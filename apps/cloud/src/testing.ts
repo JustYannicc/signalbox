@@ -51,7 +51,7 @@ import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as KindClassifier from "./threadKinds/KindClassifier.ts";
 import { makeThreadObjectApi } from "./thread/threadObjectApi.ts";
-import { previewsLine } from "./thread/threadWire.ts";
+import { browserUpdateLine, previewsLine } from "./thread/threadWire.ts";
 import * as MachineBackends from "./thread/runner/machineBackends.ts";
 import type * as MachineBackend from "./thread/runner/MachineBackend.ts";
 import * as ThreadRunner from "./thread/runner/ThreadRunner.ts";
@@ -467,9 +467,17 @@ export const makeMemoryCloud = (
       ...makeThreadObjectApi(run, async () => {}),
       previews: async () =>
         new ReadableStream({
-          start: (c) => c.enqueue(new TextEncoder().encode(`${previewsLine([])}\n`)),
+          start: (c) => c.enqueue(new TextEncoder().encode(`${previewsLine([], false)}\n`)),
         }),
       previewLink: async () => ({ _tag: "unavailable", message: "No machine runs in tests." }),
+      browserWatch: async () =>
+        new ReadableStream({
+          start: (c) =>
+            c.enqueue(new TextEncoder().encode(`${browserUpdateLine({ _tag: "offline" })}\n`)),
+        }),
+      browserInput: async () => ({ _tag: "unavailable", message: "No machine runs in tests." }),
+      browserTrail: async () => ({ _tag: "ok", value: [] }),
+      browserStep: async () => ({ _tag: "unavailable", message: "No steps in tests." }),
     };
     const object = { api, run };
     threads.set(threadId, object);

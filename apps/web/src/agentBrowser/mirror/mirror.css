@@ -1,0 +1,59 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+#stage,
+#surface {
+  position: absolute;
+  inset: 0;
+}
+
+#stage {
+  overflow: hidden;
+}
+
+#stage > .replayer-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  background: #fff;
+}
+
+#stage iframe {
+  border: 0;
+}
+
+/* Nothing to drive until the host hands over control. */
+#surface {
+  pointer-events: none;
+  touch-action: none;
+}
+
+body.interactive #surface {
+  pointer-events: auto;
+}
+
+/* The person's own pointer is the cursor while driving. */
+body.interactive .replayer-mouse {
+  display: none;
+}
+
+/* Focus target for key presses. 16px keeps iOS from zooming on focus. */
+#keyboard {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  resize: none;
+  pointer-events: none;
+}

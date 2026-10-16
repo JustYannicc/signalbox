@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - Owns a Playwright connection outside the Effect runtime.
+// @effect-diagnostics nodeBuiltinImport:off - Owns a Playwright connection outside the Effect runtime.
 import * as NodeModule from "node:module";
 
 import type { BrowserSessionAnswer } from "@signalbox/runner-protocol/BrowserProtocol";
@@ -7,6 +7,7 @@ import type { Browser, BrowserContext } from "playwright-core";
 
 import * as ServerBrowserPage from "../../preview/ServerBrowserPage.ts";
 import type { TabSource } from "./RunnerBrowser.ts";
+import { defaultTimer } from "./RunnerBrowserControl.ts";
 
 /**
  * The person's browser (#574): a headless Kernel browser built from their
@@ -61,11 +62,7 @@ export const personTabs = (
   const connect = options.connect ?? connectOverCdp;
   const onIdle =
     options.onIdle ??
-    ((drop: () => Promise<void>, ms: number) => {
-      const timer = setTimeout(() => void drop(), ms);
-      timer.unref?.();
-      return () => clearTimeout(timer);
-    });
+    ((drop: () => Promise<void>, ms: number) => defaultTimer(() => void drop(), ms));
 
   let connection: Connection | null = null;
   let connecting: Promise<Connection | null> | null = null;
@@ -73,6 +70,8 @@ export const personTabs = (
   let sessionId: string | null = null;
   /** The cloud has no person's browser; it won't grow one while this machine runs. */
   let unconfigured = false;
+  /** The cloud's last refusal, which the mirror shows until a browser opens. */
+  let problem: string | null = null;
   let closed = false;
   let inFlight = 0;
   let cancelIdle: () => void = constVoid;
@@ -115,7 +114,11 @@ export const personTabs = (
         unconfigured = true;
         return null;
       }
-      if (answer._tag === "refused") throw refused(answer.message);
+      if (answer._tag === "refused") {
+        problem = answer.message;
+        throw refused(answer.message);
+      }
+      problem = null;
       sessionId = answer.sessionId;
       const browser = await connect(answer.cdpWsUrl);
       if (closed) {
@@ -158,6 +161,7 @@ export const personTabs = (
       }
     },
     use,
+    problem: () => problem,
     close: async () => {
       closed = true;
       await connecting?.catch(constVoid);

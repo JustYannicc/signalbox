@@ -57,6 +57,8 @@ export type SignalboxPreviewPort = typeof SignalboxPreviewPort.Type;
 export const SignalboxThreadPreviews = Schema.Struct({
   threadId: ThreadId,
   ports: Schema.Array(SignalboxPreviewPort),
+  /** The agent has browsed in this thread: its trail has steps (#587). */
+  browsed: Schema.optionalKey(Schema.Boolean),
 });
 export type SignalboxThreadPreviews = typeof SignalboxThreadPreviews.Type;
 
@@ -135,11 +137,30 @@ export type AgentBrowserTab = typeof AgentBrowserTab.Type;
 export const AgentBrowserControl = Schema.Literals(["agent", "you", "someone-else"]);
 export type AgentBrowserControl = typeof AgentBrowserControl.Type;
 
+/**
+ * The actions that end a trail step: the agent's `preview_*` actions that
+ * change the page, and `person` for a stretch someone drove. Hovers and
+ * scrolls ride along with the next step.
+ */
+export const AGENT_BROWSER_STEP_ACTIONS = [
+  "navigate",
+  "open",
+  "click",
+  "type",
+  "press",
+  "select",
+  "drag",
+  "upload",
+  "dialog",
+  "person",
+] as const;
+export type AgentBrowserStepAction = (typeof AGENT_BROWSER_STEP_ACTIONS)[number];
+
 /** One finished step of the agent's browsing, or a stretch the person drove. */
 export const AgentBrowserStep = Schema.Struct({
   stepId: Schema.String,
   tabId: Schema.String,
-  /** The `preview_*` action (`navigate`, `click`, `type`…), or `person` for a take-over. */
+  /** An `AgentBrowserStepAction`; a string so a newer machine's actions still decode. */
   action: Schema.String,
   url: Schema.String,
   title: Schema.String,
@@ -180,10 +201,8 @@ export type AgentBrowserUpdate = typeof AgentBrowserUpdate.Type;
 const Modifiers = Schema.Number;
 const MouseButton = Schema.Literals(["none", "left", "middle", "right"]);
 
-/** A viewer's input to the tab it watches. Coordinates are the page's CSS pixels. */
-export const AgentBrowserInput = Schema.Union([
-  Schema.TaggedStruct("take", {}),
-  Schema.TaggedStruct("release", {}),
+/** Input that drives the page, while the viewer holds the tab. Coordinates are the page's CSS pixels. */
+export const AgentBrowserDrivingInput = Schema.Union([
   Schema.TaggedStruct("mouse", {
     action: Schema.Literals(["move", "down", "up"]),
     x: Schema.Number,
@@ -212,6 +231,14 @@ export const AgentBrowserInput = Schema.Union([
     modifiers: Modifiers,
   }),
   Schema.TaggedStruct("text", { text: Schema.String }),
+]);
+export type AgentBrowserDrivingInput = typeof AgentBrowserDrivingInput.Type;
+
+/** A viewer's input to the tab it watches: take it over, drive it, hand it back. */
+export const AgentBrowserInput = Schema.Union([
+  Schema.TaggedStruct("take", {}),
+  Schema.TaggedStruct("release", {}),
+  ...AgentBrowserDrivingInput.members,
 ]);
 export type AgentBrowserInput = typeof AgentBrowserInput.Type;
 
