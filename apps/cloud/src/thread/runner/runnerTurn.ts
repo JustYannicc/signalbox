@@ -235,8 +235,8 @@ function itemEvents(
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
   const run = harnessRun(projection);
-  // Usage and log lines are for the turn's diagnostics, not its events.
-  if (item.kind === "usage" || item.kind === "log") return [];
+  // Usage and log lines are for the turn's diagnostics, not its events; a drain is the lease's.
+  if (item.kind === "usage" || item.kind === "log" || item.kind === "machine.drained") return [];
   if (item.kind === "provider") {
     return stringField(item.event, "type") === "turn.terminal"
       ? terminalEvents(projection, item.event, ctx)
@@ -317,14 +317,18 @@ export function runnerBatchEvents(
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly undecodable: ReadonlyArray<string>;
   readonly outgrown: string | null;
+  /** A `machine.drained` in the batch: which drain it answers, and what couldn't be saved. */
+  readonly drained: { readonly id: number; readonly unsaved: ReadonlyArray<string> } | null;
 } {
   const events: Array<OrchestrationV2DomainEvent> = [];
   const undecodable: Array<string> = [];
+  let drained: { readonly id: number; readonly unsaved: ReadonlyArray<string> } | null = null;
   let current = projection;
   for (const item of items) {
     if (item.kind === "machine.outgrown" && harnessRun(current)?.id === item.runId) {
-      return { events, undecodable, outgrown: item.reason };
+      return { events, undecodable, outgrown: item.reason, drained };
     }
+    if (item.kind === "machine.drained") drained = { id: item.id, unsaved: item.unsaved };
     const next = itemEvents(current, item, ctx);
     if (next === "undecodable") {
       undecodable.push(item.kind === "provider" ? String(item.event.type) : item.kind);
@@ -334,5 +338,5 @@ export function runnerBatchEvents(
     events.push(...next);
     current = applyEvents(current, next) ?? current;
   }
-  return { events, undecodable, outgrown: null };
+  return { events, undecodable, outgrown: null, drained };
 }

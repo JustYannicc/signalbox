@@ -200,6 +200,11 @@ export interface MachinePlan {
   readonly machineClass: MachineClass;
   /** End any Runner of this generation: its lease is gone. */
   readonly release: number | null;
+  /**
+   * Ask this generation's Runner to save everything it wrote, with this drain
+   * id: its machine is about to go (#493).
+   */
+  readonly drain: { readonly generation: number; readonly id: number } | null;
   /** No lease stands: the machine should be stopped. */
   readonly stop: boolean;
   /** A connected machine is running a turn: keep its TTL pushed out. */
@@ -216,6 +221,8 @@ export interface RunnerWork {
   readonly generation: number;
   /** Whether `reconcile` has something to do now: ask, retry, time out or start the idle tail. */
   readonly needsUpkeep: boolean;
+  /** A drain asked for and not answered yet (#493): asked again of each connection. */
+  readonly drain: number | null;
   /** The turn to start, while its run waits for the Runner. */
   readonly turn: RunnerTurn | null;
   /** `turn`'s credential at the ModelGateway. */
@@ -292,6 +299,12 @@ export class ThreadRunner extends Context.Service<
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
+/**
+ * How long an idle machine gets to save everything it wrote before it goes
+ * anyway (#493): a save that big is still going, or the machine is wedged.
+ */
+export const DRAIN_TIMEOUT_MS = 2 * 60_000;
+
 /** How long a turn start waits for its owner's commit author before going without. */
 const COMMIT_AUTHOR_TIMEOUT = "5 seconds";
 /** How long handing out a turn waits for its owner's 1Password token before going without. */
@@ -301,6 +314,7 @@ const IDLE: MachinePlan = {
   ensure: null,
   machineClass: "heavy",
   release: null,
+  drain: null,
   stop: false,
   busy: false,
   wakeAt: null,
@@ -349,6 +363,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
     case "connected":
       return (
         lease.disconnectedAt !== null ||
+        lease.drain?._tag === "answered" ||
         (held ? lease.idleSince !== null : lease.idleSince === null)
       );
   }
@@ -464,6 +479,7 @@ const make = Effect.gen(function* () {
           connection,
           ensuredAt: lease.ensuredAt ?? now,
           disconnectedAt: null,
+          drains: hello.drains === true,
         },
         result: {
           _tag: "welcome",
@@ -492,7 +508,11 @@ const make = Effect.gen(function* () {
           keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence }),
         );
       }
-      const { events, undecodable, outgrown } = runnerBatchEvents(projection, input.items, ctx);
+      const { events, undecodable, outgrown, drained } = runnerBatchEvents(
+        projection,
+        input.items,
+        ctx,
+      );
       const recorded = Effect.andThen(
         diagnostics.batch({
           ...input,
@@ -518,7 +538,14 @@ const make = Effect.gen(function* () {
       }
       return Effect.as(recorded, {
         events,
-        machine: { ...lease, ackedSequence: input.sequence },
+        machine: {
+          ...lease,
+          ackedSequence: input.sequence,
+          // Only an answer to a drain still asked for lets the machine go.
+          ...(drained !== null && lease.drain?._tag === "asked" && lease.drain.id === drained.id
+            ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
+            : {}),
+        },
         result: acked,
       });
     });
@@ -709,6 +736,7 @@ const make = Effect.gen(function* () {
       return keep<RunnerWork>({
         generation: lease.generation,
         needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
+        drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
         modelToken:
           turn === null || grant === undefined || lease.token === null
@@ -977,23 +1005,61 @@ const make = Effect.gen(function* () {
         }
         if (run !== undefined || (yield* previews.held)) {
           const busy = { ...BUSY, runId };
-          return lease.idleSince === null
+          // Needed again: a drain under way no longer leads anywhere.
+          return lease.idleSince === null && lease.drain === undefined
             ? keep(busy)
-            : { events: [], machine: { ...lease, idleSince: null }, result: busy };
+            : {
+                events: [],
+                machine: { ...lease, idleSince: null, drain: undefined },
+                result: busy,
+              };
         }
         const idleSince = lease.idleSince ?? now;
         // An open preview pushes the tail out to its last traffic.
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
         if (now - tailFrom >= backend.idleTailMs) {
+          const idle = `Idle for ${formatDuration(now - tailFrom)}.`;
+          // The machine saves everything it wrote before its tokens go (#493);
+          // a Runner from before drains is let go as it always was.
+          if (lease.drains !== true) {
+            return yield* release({ reason: "idle", detail: idle, idleSince: tailFrom });
+          }
+          if (lease.drain?._tag === "answered") {
+            const unsaved = lease.drain.unsaved;
+            return yield* release({
+              reason: "idle",
+              detail:
+                unsaved.length === 0
+                  ? idle
+                  : `${idle} Not everything it wrote was saved: ${unsaved.map((reason) => `- ${reason}`).join("\n")}`,
+              idleSince: tailFrom,
+            });
+          }
+          if (lease.drain === undefined) {
+            return {
+              events: [],
+              machine: { ...lease, idleSince, drain: { _tag: "asked", id: now } as const },
+              result: {
+                ...IDLE,
+                drain: { generation: lease.generation, id: now },
+                wakeAt: now + DRAIN_TIMEOUT_MS,
+              },
+            };
+          }
+          const deadline = lease.drain.id + DRAIN_TIMEOUT_MS;
+          if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
           return yield* release({
             reason: "idle",
-            detail: `Idle for ${formatDuration(now - tailFrom)}.`,
+            detail: `${idle} It didn't confirm its last saves within ${DRAIN_TIMEOUT_MS / 1000} s, so anything it wrote after its last save may be lost.`,
             idleSince: tailFrom,
           });
         }
+        // Preview traffic pushed the tail out: a drain asked for before is over.
         return {
           events: [],
-          ...(lease.idleSince === null ? { machine: { ...lease, idleSince } } : {}),
+          ...(lease.idleSince === null || lease.drain !== undefined
+            ? { machine: { ...lease, idleSince, drain: undefined } }
+            : {}),
           result: { ...IDLE, wakeAt: tailFrom + backend.idleTailMs },
         };
       }).pipe(

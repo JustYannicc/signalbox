@@ -27,6 +27,7 @@ import * as CloudAnalytics from "./CloudAnalytics.ts";
 import { TurnDiagnostics } from "./TurnDiagnostics.ts";
 import { FINALIZE_GRACE_MS, TurnReports } from "./TurnReports.ts";
 import { IDLE_TAIL_MS } from "../runner/MachineBackend.ts";
+import { DRAIN_TIMEOUT_MS } from "../runner/ThreadRunner.ts";
 
 const usage = (runId: RunId | null, cpuSeconds: number, memoryBytes: number): RunnerItem => ({
   kind: "usage",
@@ -214,6 +215,9 @@ describe("TurnDiagnostics", () => {
 
           // The idle tail ends the machine's session.
           yield* TestClock.adjust(IDLE_TAIL_MS);
+          // It never answers the drain: it goes once the drain's wait is over.
+          expect((yield* runner.reconcile).drain?.generation).toBe(machine.generation);
+          yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
           expect((yield* runner.reconcile).release).toBe(machine.generation);
           yield* reports.finalize(yield* projectionOf(engine), yield* nowMs);
           expect(yield* analytics.deliver).toBe(true);
@@ -249,7 +253,8 @@ describe("TurnDiagnostics", () => {
             $process_person_profile: false,
             $geoip_disable: true,
           });
-          const tailSeconds = (FINALIZE_GRACE_MS + IDLE_TAIL_MS) / 1000;
+          // The machine stays awake through the drain it never answered.
+          const tailSeconds = (FINALIZE_GRACE_MS + IDLE_TAIL_MS + DRAIN_TIMEOUT_MS) / 1000;
           expect(session?.event).toBe("cloud.machine.session");
           expect(session?.properties).toMatchObject({
             backend: "none",

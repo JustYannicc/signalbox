@@ -324,6 +324,45 @@ describe("RunnerMachineState", () => {
     ),
   );
 
+  it.effect("knows when anything it keeps changed since the last save, and nothing else", () =>
+    run((root) =>
+      Effect.gen(function* () {
+        const drive = makeFakeDrive(root);
+        const first = yield* threadMachine(drive, root, "vm-1", "t1");
+        yield* first.runner.prepare("remote-token");
+        write(first.cwd, ".gitignore", "notes/\n");
+        yield* first.runner.saveNow;
+        expect(yield* first.runner.changed).toBe(false);
+
+        // Written after the turn, by a dev server say: not saved yet.
+        write(first.cwd, "notes/log.md", "started\n");
+        expect(yield* first.runner.changed).toBe(true);
+        yield* first.runner.saveNow;
+        expect(yield* first.runner.changed).toBe(false);
+        expect(filesOf(drive.store, drive.refs("t1").machine!)).toContain("checkout/notes/log.md");
+
+        // A removed file is a change too.
+        NodeFS.rmSync(NodePath.join(first.cwd, "notes/log.md"));
+        expect(yield* first.runner.changed).toBe(true);
+        // Folders tools write their caches into, there before the save.
+        write(first.cwd, "node_modules/.vite/deps/a.js", "");
+        NodeFS.mkdirSync(NodePath.join(first.claude, "projects"));
+        NodeFS.mkdirSync(NodePath.join(first.home, ".cache"));
+        yield* first.runner.saveNow;
+
+        // Caches, dependency trees and what the Runner saves another way are no change.
+        write(first.cwd, "node_modules/.vite/deps/a.js", "optimized");
+        write(first.claude, "projects/session.jsonl", "{}\n");
+        write(first.home, ".cache/tool/blob", "cached");
+        expect(yield* first.runner.changed).toBe(false);
+
+        // The thread's home is.
+        write(first.home, ".config/tool/config.toml", "answer = 42\n");
+        expect(yield* first.runner.changed).toBe(true);
+      }),
+    ),
+  );
+
   it.effect("keeps what the thread's own excludes ignore out of the branch on a new machine", () =>
     run((root) =>
       Effect.gen(function* () {

@@ -29,6 +29,13 @@ import type { RunnerTurns } from "./RunnerTurns.ts";
  * anything it already has, so nothing arrives twice. A new process on the
  * same generation numbers its batches after what the thread already has. A
  * connection that took more than one try leaves a line saying so in the outbox.
+ *
+ * Nothing the machine wrote is lost when it goes (#493). The thread asks with
+ * `drain` before it lets an idle machine go: the Runner saves everything and
+ * answers `machine.drained`, its tokens still good. When the machine goes on
+ * its own side first (SIGTERM, a newer generation, a new image), closing the
+ * session saves everything the same way, within `STOP_DRAIN_WITHIN`, unless
+ * the thread already let it go and took its tokens.
  */
 
 export class RunnerConnectionError extends Schema.TaggedError<RunnerConnectionError>()(
@@ -65,6 +72,11 @@ export interface RunnerSessionInput {
 export interface RunnerSession {
   /** Why the session ended: the thread said `end`, refused it, or stayed unreachable. */
   readonly ended: Effect.Effect<string>;
+  /**
+   * Ends the session without saving on the way out: a newer generation
+   * replaced it, so the thread already took its tokens.
+   */
+  readonly replaced: Effect.Effect<void>;
   /** Closes the current socket, as a network drop would. The session reconnects. */
   readonly dropConnection: Effect.Effect<void>;
 }
@@ -80,6 +92,8 @@ const MAX_BATCH_ITEMS = 256;
 export const reconnectDelay = (failures: number) => Math.min(250 * 2 ** failures, 5_000);
 /** A thread unreachable for this long has no use for this machine. */
 const GIVE_UP_AFTER_MS = 5 * 60_000;
+/** How long a stopping machine spends saving: inside a container's usual stop grace. */
+const STOP_DRAIN_WITHIN = "25 seconds";
 
 export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
   input: RunnerSessionInput,
@@ -104,9 +118,26 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
     cause: null,
   });
 
+  const scope = yield* Effect.scope;
   // Closing the session's scope (a newer generation replaced it) ends it too.
   yield* Effect.addFinalizer(() => Deferred.succeed(ended, "stopped"));
   const turns = yield* input.makeTurns((item) => Effect.asVoid(Queue.offer(items, item)));
+  // Runs before the turns' own resources close, so the drive is still there to save to.
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      // Let go by the thread, or replaced by a newer generation: its tokens are gone.
+      if (yield* Deferred.isDone(ended)) return;
+      const unsaved = yield* turns.drain.pipe(
+        Effect.timeoutOrElse({
+          duration: STOP_DRAIN_WITHIN,
+          orElse: () => Effect.succeed([`Saving took longer than ${STOP_DRAIN_WITHIN}.`]),
+        }),
+      );
+      if (unsaved.length > 0) {
+        yield* Effect.logWarning("stopping before everything was saved", { unsaved });
+      }
+    }),
+  );
 
   const sendNow = (connection: RunnerConnection, batch: Batch) =>
     connection
@@ -165,6 +196,15 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return turns.start(message);
       case "interrupt":
         return turns.interrupt(message.runId);
+      case "drain":
+        // Outlives this connection: the answer goes out on whichever one is open by then.
+        return turns.drain.pipe(
+          Effect.flatMap((unsaved) =>
+            Queue.offer(items, { kind: "machine.drained", id: message.id, unsaved }),
+          ),
+          Effect.forkIn(scope),
+          Effect.asVoid,
+        );
       case "end":
         return Deferred.succeed(ended, message.reason).pipe(Effect.andThen(connection.close));
       default:
@@ -187,6 +227,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         token: input.token,
         lastAckedSequence: acked,
         build: input.build,
+        drains: true,
       });
       const answer = yield* connection.receive;
       if (answer.type === "refused") {
@@ -262,6 +303,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
 
   return {
     ended: Deferred.await(ended),
+    replaced: Deferred.succeed(ended, "replaced").pipe(Effect.asVoid),
     dropConnection: Effect.flatMap(Ref.get(current), (connection) =>
       connection === null ? Effect.void : connection.close,
     ),

@@ -110,14 +110,15 @@ const outsideFolders = (layout: MachineLayout): ReadonlyArray<OutsideFolder> => 
     name: "claude",
     label: "~/.claude",
     dir: layout.claudeHome,
-    exclude: ["settings.json", "projects"],
+    // Its own settings, transcripts saved on their own, and logs it rewrites all through a turn.
+    exclude: ["settings.json", "projects", "debug", "statsig", "shell-snapshots"],
     caches: [],
   },
   {
     name: "codex",
     label: "~/.codex",
     dir: layout.codexHome,
-    exclude: ["config.toml", "sessions"],
+    exclude: ["config.toml", "sessions", "log"],
     caches: [],
   },
 ];
@@ -151,7 +152,11 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
         if (existing !== undefined && existing.generation > request.generation) {
           return "superseded";
         }
-        if (existing !== undefined) yield* stop(request.threadId, existing);
+        if (existing !== undefined) {
+          // The thread asked for a newer machine only after it let this one go.
+          yield* existing.session.replaced;
+          yield* stop(request.threadId, existing);
+        }
         // The checkout sits one folder down: the folder above holds the instructions
         // its shortcuts bring, outside the drive (`RunnerInstructions.ts`).
         const cwd = path.join(config.home, "workspaces", request.threadId, "drive");

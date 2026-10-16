@@ -24,6 +24,7 @@ import {
   withObject,
 } from "./runnerTestKit.ts";
 import { remoteThreadWorktree } from "../../user/contextProjects.ts";
+import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 
 /** A backend that does nothing, with its class's idle tail. */
 const fakeBackend = (kind: "cloudflare" | "boat", idleTailMs: number): MachineBackendShape => {
@@ -100,6 +101,10 @@ describe("machine classes", () => {
           });
           expect((yield* runner.reconcile).wakeAt).toBe(LIGHT_TAIL_MS);
           yield* TestClock.adjust(LIGHT_TAIL_MS);
+          expect(yield* runner.reconcile).toMatchObject({
+            drain: { generation: machine.generation },
+          });
+          yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
           expect(yield* runner.reconcile).toMatchObject({
             release: machine.generation,
             stop: true,

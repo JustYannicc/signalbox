@@ -356,6 +356,21 @@ ref, so secrets never reach another thread or a Git host. A cloud from before
 this answers no `machine` ref, and the Runner then keeps none. Rolling the
 Worker back past it would hand private packs to every thread in the drive.
 
+Changes stream in as they happen (#493), not only after tool calls and at
+turn end: every 2 s the Runner asks whether anything it keeps is newer than
+its last successful save (`RunnerDriveWatch.ts`, a `find` that stops at the
+first hit) and saves if so, so a machine lost without warning loses about
+that much. A save that keeps failing tells the thread once, and again when it
+works. Before the cloud lets an idle machine go, it sends `drain`: the
+Runner saves the drive and the session rows with its tokens still good and
+answers `machine.drained` with the drain's id, and only then is the lease
+released; a reconnecting Runner is asked again. A machine that doesn't answer
+within 2 minutes goes anyway, and the session's stop detail says its last
+saves weren't confirmed. Only Runners whose `hello` says they drain are
+asked; an older one is let go as before. A machine stopping on its own
+side (SIGTERM, a newer generation, a new image) saves the same way as its
+session closes, within 25 s.
+
 Three invariants hold the store together, all enforced by the Worker and the
 cloud's objects rather than trusted to the Runner:
 
