@@ -1,4 +1,5 @@
 import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import {
@@ -189,6 +190,19 @@ export type ModelAuthorization =
       readonly traceId: string;
       /** Where the request goes: the turn's pool, for its requester. */
       readonly pool: ModelPoolRoute;
+      /** What the gateway scrubs from the request (#591). Never log them. */
+      readonly secrets: ReadonlyArray<SecretValue>;
+    }
+  /**
+   * The token is the turn's, but its secrets aren't registered yet (#591): the
+   * request is refused for the turn, not as a bad key, which would send a
+   * harness to sign in again.
+   */
+  | {
+      readonly _tag: "unregistered";
+      readonly runId: RunId;
+      readonly traceId: string;
+      readonly reason: string;
     }
   | { readonly _tag: "denied"; readonly reason: string };
 
@@ -743,19 +757,37 @@ const make = Effect.gen(function* () {
       const projection = yield* engine.projection;
       // A thread that does not exist yet has no tables to read a lease or owner from.
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
-      const leaseToken = grant === undefined ? null : (yield* lease).token;
-      if (grant === undefined || leaseToken === null) {
+      // One read: the token and the registration are checked against the same machine.
+      const current = grant === undefined ? null : yield* lease;
+      if (grant === undefined || current === null || current.token === null) {
         return deny("No turn is running on this thread.");
       }
       if (grant.provider !== provider) return deny(`The running turn does not use ${provider}.`);
-      return (yield* isModelToken(token, leaseToken, grant))
-        ? ({
-            _tag: "granted",
-            runId: grant.runId,
-            traceId: yield* withCrypto(traceIdOf(grant.runId)),
-            pool: { objectName: grant.pool, userId: grant.requester },
-          } satisfies ModelAuthorization)
-        : deny("This token is not for the running turn.");
+      if (!(yield* isModelToken(token, current.token, grant))) {
+        return deny("This token is not for the running turn.");
+      }
+      const traceId = yield* withCrypto(traceIdOf(grant.runId));
+      // The model never sees a secret (#591): a turn whose folders name some is
+      // served only once the machine running it registered their values.
+      const secrets = yield* Effect.orDie(store.secretValues);
+      if (
+        (yield* Effect.orDie(store.secrets)).length > 0 &&
+        secrets.registered !== current.generation
+      ) {
+        return {
+          _tag: "unregistered",
+          runId: grant.runId,
+          traceId,
+          reason: "This machine hasn't registered the folder's secrets to hide them yet.",
+        } satisfies ModelAuthorization;
+      }
+      return {
+        _tag: "granted",
+        runId: grant.runId,
+        traceId,
+        pool: { objectName: grant.pool, userId: grant.requester },
+        secrets: secrets.values,
+      } satisfies ModelAuthorization;
     });
 
   const accountMoved: ThreadRunner["Service"]["accountMoved"] = (runId, message) =>

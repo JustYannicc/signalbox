@@ -73,8 +73,10 @@ secrets loading everywhere.
   set the same name, the nearer folder wins.
 - Variables the agent needs for its own model access (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
   `CLAUDE_CODE_OAUTH_TOKEN`) and ones Signalbox sets itself, such as `HOME` or `PATH`, are skipped.
-- Values show as `***` in transcripts, unless the variable is set to show its value by default in
-  1Password. Values of 6 characters or fewer aren't hidden.
+- The agent's model never sees a value. Wherever a value would show, in a transcript or in what
+  the model reads, base64, URL-encoded and other common forms included, it reads
+  `{{secret:NAME}}` instead. Variables set to show their value by default in 1Password, and values
+  of 6 characters or fewer, aren't hidden.
 
 ### Sections on your own server
 
