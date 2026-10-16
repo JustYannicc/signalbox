@@ -45,6 +45,9 @@ const ONE_ENVIRONMENT_COPY: Readonly<Record<string, string>> = {
     "Offline cache records will appear here once you use Signalbox on this device.",
   "Clearing caches never removes environment connections, credentials, account data, or appearance preferences.":
     "Clearing caches never removes your account, your threads in Signalbox, or appearance preferences.",
+  // Model picker: the cloud's provider accounts live in pools.
+  "Set up this provider on web or desktop, or select another model.":
+    "Add an account for this provider in Usage → Limits, or pick another model.",
   // Filters.
   "Try another search or environment.": "Try another search.",
   "Filter settings environments and projects": "Filter settings projects",

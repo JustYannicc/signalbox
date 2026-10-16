@@ -45,6 +45,7 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
+import { useEnvironmentSupports } from "../../../state/environmentCapabilities"; // signalbox
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -77,6 +78,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
   const { selectedThread, selectedEnvironmentRuntime } = useThreadSelection();
+  const supportsWorktrees = useEnvironmentSupports(environmentId, "worktrees"); // signalbox
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const supportsLinkedPrSnapshots =
     selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests === true;
@@ -335,11 +337,15 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          title="Branches & worktrees"
+          title={supportsWorktrees ? "Branches & worktrees" : "Branches"} // signalbox
           subtitle={
-            canChangeThreadBranch
-              ? "Switch branch, create branch, or move to a worktree"
-              : "View branches and worktrees"
+            supportsWorktrees
+              ? canChangeThreadBranch
+                ? "Switch branch, create branch, or move to a worktree"
+                : "View branches and worktrees"
+              : canChangeThreadBranch
+                ? "Switch or create a branch"
+                : "View branches"
           }
           disabled={busy || !isRepo}
           onPress={() =>
