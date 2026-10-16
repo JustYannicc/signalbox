@@ -66,7 +66,7 @@ We are building Photoshop, not Canva. Canva feels restrictive. Photoshop trusts 
 
 AI is a force multiplier. It amplifies whatever you give it, a well-designed system to the extreme, and a mess just as much. So every system has to be well designed, at every level, technical or not. When a system is designed well, it fades away. You stop noticing the complexity you're working with.
 
-I move fast. Signalbox should lay the rail tracks hastily in front of me, and once I'm through, clean up behind me and finish the hasty version into something good and usable. Speed first, then the finishing pass, never polish that makes me wait.
+AI has helped me more than any ADHD medication. Before AI, a typical person had ten ideas and one was good; someone with ADHD had a hundred and ten were good. Both still had to pick one and focus on it to get anything done. That limit is gone: AI lets you pursue all of them. I'm great at blazing the trail and proving that something works. I'm not good at what comes after, turning it into something solid and usable that others can walk too. That's Signalbox's job. I move ahead as the trailblazer, and behind me it paves the road, with me rather than without me. The same goes outside software: goals alone don't work for me, systems do. Signalbox builds the system around a goal so it actually gets met, and when something keeps getting put off, it finds out what's in the way and clears it.
 
 Most of this has been figured out somewhere. Before designing anything, look at how others solved it, take the best parts, and combine them. The quick capture is Todoist's, and that's fine. The combination is what makes Signalbox good.
 
