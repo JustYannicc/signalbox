@@ -79,8 +79,9 @@ const readWith =
       const call = requestFor(family, model, request);
       const started = yield* Clock.currentTimeMillis;
       const reply = yield* Effect.tryPromise({
-        // A read that's replaced or times out cancels its request where the route passes the signal on.
-        try: (signal) =>
+        // No AbortSignal on the request: workerd can't send one over DO RPC (DataCloneError),
+        // so a replaced or timed-out read stops waiting and the pool's request runs out.
+        try: () =>
           modelsOf(pool.objectName).forwardModel(
             { userId: pool.userId },
             call.path,
@@ -88,7 +89,6 @@ const readWith =
               method: "POST",
               headers: { "content-type": "application/json", ...call.headers },
               body: encodeJson(call.body),
-              signal,
             }),
           ),
         catch: () => "failed" as const,
