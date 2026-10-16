@@ -115,3 +115,6 @@ USER node
 
 ENTRYPOINT ["node", "/opt/signalbox/runner.mjs"]
 CMD ["machine"]
+
+# Temporary: forces a container rollout to prove #555 live; reverted next commit.
+LABEL signalbox.rollout-test="555"
