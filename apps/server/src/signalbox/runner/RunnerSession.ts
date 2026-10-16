@@ -228,6 +228,8 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         lastAckedSequence: acked,
         build: input.build,
         drains: true,
+        // A started run missing here went with an earlier process on this machine.
+        takenRunIds: yield* turns.taken,
       });
       const answer = yield* connection.receive;
       if (answer.type === "refused") {

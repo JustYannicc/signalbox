@@ -60,6 +60,8 @@ export class TurnDiagnostics extends Context.Service<
       readonly hello: RunnerHello;
       readonly connection: number;
       readonly run: Run | null;
+      /** `run` started on an earlier Runner process this one never heard of. */
+      readonly lost: boolean;
       readonly now: number;
     }) => Effect.Effect<void>;
     readonly runnerClosed: (input: {
@@ -253,6 +255,7 @@ const make = Effect.gen(function* () {
     hello,
     connection,
     run,
+    lost,
     now,
   }) =>
     Effect.gen(function* () {
@@ -282,6 +285,16 @@ const make = Effect.gen(function* () {
             ? `${machine} connected.`
             : `${machine} reconnected (connection ${connection}), resending after batch ${hello.lastAckedSequence}.`,
       });
+      if (lost && run !== null) {
+        yield* log({
+          at: now,
+          generation: hello.generation,
+          runId: run.id,
+          source: "thread",
+          level: "warning",
+          message: `${machine} is a new Runner process that never had this turn: it was lost with the one before, so it continues as a new run on this machine.`,
+        });
+      }
     });
 
   const runnerClosed: TurnDiagnostics["Service"]["runnerClosed"] = (input) =>

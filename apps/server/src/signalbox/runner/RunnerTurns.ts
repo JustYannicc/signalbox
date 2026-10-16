@@ -125,6 +125,8 @@ export interface RunnerTurns {
    * in the thread's terms.
    */
   readonly drain: Effect.Effect<ReadonlyArray<string>>;
+  /** Every run this process was handed, ended or not. */
+  readonly taken: Effect.Effect<ReadonlyArray<RunId>>;
 }
 
 /** An adapter session, and the shortcut instructions and secrets it was started with. */
@@ -946,5 +948,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     ),
   ).pipe(Effect.forkIn(scope));
 
-  return { start, interrupt, keepOnly, drain } satisfies RunnerTurns;
+  return {
+    start,
+    interrupt,
+    keepOnly,
+    drain,
+    taken: Effect.sync(() => [...taken]),
+  } satisfies RunnerTurns;
 });

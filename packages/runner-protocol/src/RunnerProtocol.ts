@@ -256,6 +256,12 @@ export const RunnerHello = Schema.Struct({
   build: Schema.optional(RunnerBuild),
   /** The Runner answers `drain` (#493). Absent: an older one, let go without asking. */
   drains: Schema.optional(Schema.Boolean),
+  /**
+   * Every run this Runner process was handed. A run the thread saw start that
+   * is missing went with an earlier process on the same machine (#613).
+   * Absent from Runners built before it: the thread can't tell.
+   */
+  takenRunIds: Schema.optional(Schema.Array(RunId)),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
