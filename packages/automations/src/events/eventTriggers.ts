@@ -56,6 +56,21 @@ export type Envelope = Readonly<Record<string, unknown>> & {
   readonly projectId: string;
 };
 
+/** An event from outside the engine's threads, as `WorkflowEngine.deliverEvent` takes it. */
+export interface ExternalEvent {
+  /** A catalog name (`drive.changed`). */
+  readonly event: AutomationEventName;
+  /** Stable per occurrence: the same id never starts an automation twice. */
+  readonly id: string;
+  /** When it happened (ISO). */
+  readonly at: string;
+  readonly projectId: string;
+  /** The thread that caused it, when one did. */
+  readonly threadId?: string | null | undefined;
+  /** Its own fields, read only when someone wants it; null drops it. */
+  readonly fields: Effect.Effect<Readonly<Record<string, unknown>> | null>;
+}
+
 interface DeliveryContext {
   readonly actor?: Actor | undefined;
   /** Whether automations caused it, read only when a trigger cares. */
@@ -227,16 +242,66 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
     const watchingTriggers = currentIndex.pipe(Effect.map((current) => current.watches));
 
     /** A turn or thread automations started: the thread's first message, or this turn's, was theirs. */
-    const automationCaused = (event: OrchestrationV2DomainEvent, reads: EventReads) =>
+    const automationCaused = (
+      threadId: ThreadId,
+      runId: string | undefined,
+      shell: EventReads["shell"],
+    ) =>
       Effect.gen(function* () {
-        const shell = yield* reads.shell;
-        if (shell?.createdBy !== "system" && event.runId === undefined) return false;
-        const { runs } = yield* threads.getThreadRecords(event.threadId, ["runs"]);
+        const found = yield* shell;
+        if (found?.createdBy !== "system" && runId === undefined) return false;
+        const { runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
         const first = runs.toSorted((left, right) => left.ordinal - right.ordinal)[0];
-        if (shell?.createdBy === "system" && isAutomationId(first?.userMessageId)) return true;
-        const run = runs.find((candidate) => candidate.id === event.runId);
+        if (found?.createdBy === "system" && isAutomationId(first?.userMessageId)) return true;
+        const run = runs.find((candidate) => candidate.id === runId);
         return isAutomationId(run?.userMessageId);
       });
+
+    const shellOf = (threadId: ThreadId) =>
+      threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+
+    /**
+     * An event from outside the engine's threads (a cloud drive's change).
+     * Reads `fields` only when an automation or a waiting run in its project
+     * wants it. A thread that caused it counts like a domain event's, so
+     * threads automations started don't trigger by default.
+     */
+    const externalEvent = (input: ExternalEvent) =>
+      Effect.gen(function* () {
+        const here = (projectId: string) => projectId === input.projectId;
+        const current = yield* currentIndex;
+        const subs = (current.empty ? [] : current.lookup(input.event)).filter(
+          (sub) =>
+            (sub.trigger.scope ?? "project") !== "project" || here(sub.automation.project_id),
+        );
+        const waiting = (yield* deps.runWaits.lookup(input.event)).filter((listener) =>
+          here(listener.projectId),
+        );
+        if (subs.length === 0 && waiting.length === 0) return;
+        const fields = yield* input.fields;
+        if (fields === null) return;
+        const threadId = input.threadId == null ? null : ThreadId.make(input.threadId);
+        // Read once however many triggers ask.
+        const fromAutomation =
+          threadId === null
+            ? Effect.succeed(false)
+            : yield* Effect.cached(automationCaused(threadId, undefined, shellOf(threadId)));
+        const envelope: Envelope = {
+          event: input.event,
+          id: input.id,
+          at: input.at,
+          projectId: input.projectId,
+          threadId,
+          ...fields,
+        };
+        yield* enqueue({
+          type: "ready",
+          envelope,
+          subs,
+          waiting,
+          context: { fromAutomation, depth: 0 },
+        });
+      }).pipe(logged("publishing"));
 
     const passes = (sub: Subscription, envelope: Envelope, context: DeliveryContext) =>
       Effect.gen(function* () {
@@ -332,15 +397,13 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.gen(function* () {
         const { event } = item;
         const reads: EventReads = {
-          shell: yield* Effect.cached(
-            threads
-              .getThreadShell(ThreadId.make(event.threadId))
-              .pipe(Effect.orElseSucceed(() => null)),
-          ),
+          shell: yield* Effect.cached(shellOf(event.threadId)),
           threads,
           pullRequests: deps.pullRequestReads(),
         };
-        const caused = yield* Effect.cached(automationCaused(event, reads));
+        const caused = yield* Effect.cached(
+          automationCaused(event.threadId, event.runId, reads.shell),
+        );
         for (const { candidate, subs, waiting } of item.hits) {
           yield* Effect.gen(function* () {
             const fields = yield* candidate.build(reads);
@@ -380,7 +443,15 @@ export const makeEventTriggers = (deps: EventTriggerDependencies) =>
       Effect.forever,
     );
 
-    return { offer, automationEvent, sourceEvent, watchingTriggers, invalidate, worker };
+    return {
+      offer,
+      automationEvent,
+      sourceEvent,
+      externalEvent,
+      watchingTriggers,
+      invalidate,
+      worker,
+    };
   });
 
 export type EventTriggers = Effect.Success<ReturnType<typeof makeEventTriggers>>;

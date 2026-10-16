@@ -44,7 +44,7 @@ import { automationError, fail, logFailure } from "./errors.ts";
 import { makeBuiltIns, type BuiltInPlace } from "./defaults/builtIns.ts";
 import * as HostStore from "./defaults/hostStore.ts";
 import { BUILT_IN_AUTOMATIONS, builtInSummary } from "./defaults/registry.ts";
-import { makeEventTriggers } from "./events/eventTriggers.ts";
+import { type ExternalEvent, makeEventTriggers } from "./events/eventTriggers.ts";
 import { makePullRequestTracker } from "./events/pullRequestFacts.ts";
 import type { PullRequestReads } from "./events/pullRequestDetails.ts";
 import { makeRunWaits, stepWatch } from "./events/runWaits.ts";
@@ -78,7 +78,7 @@ import * as WorkflowStore from "./WorkflowStore.ts";
 
 type Store = WorkflowStore.WorkflowStore;
 
-export type { AuthorizeAutomation };
+export type { AuthorizeAutomation, ExternalEvent };
 
 export interface WorkflowEngineShape extends CatalogShape {
   /** Stops its running runs, then deletes it with everything it stored and installed. */
@@ -143,6 +143,12 @@ export interface WorkflowEngineShape extends CatalogShape {
     readonly event: string;
     readonly payload?: unknown;
   }) => Effect.Effect<number, AutomationError>;
+  /**
+   * An event from outside the engine's threads (a cloud drive's change):
+   * starts the automations it triggers and wakes runs waiting on it, as a
+   * domain event would.
+   */
+  readonly deliverEvent: (event: ExternalEvent) => Effect.Effect<void>;
   /** Every automation, now and after each batch of changes. */
   readonly subscribeList: () => Stream.Stream<ReadonlyArray<Automation>, AutomationError>;
   /** One automation with its recent runs, now and after each batch of changes to it. */
@@ -819,6 +825,7 @@ export const makeEngine = <R>(
       retryRun,
       answer,
       emit,
+      deliverEvent: events.externalEvent,
       subscribeList: () => feed.watch("list", catalog.list(), listShows, { keepOnFailure: true }),
       subscribeAutomation: (automationId) =>
         feed.watch(

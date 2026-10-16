@@ -2,8 +2,11 @@ import {
   CommandId,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   ProjectId,
+  ProviderInstanceId,
+  RunId,
   ThreadId,
   type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
@@ -231,5 +234,43 @@ describe("pullRequestSchedule", () => {
       ],
     ]);
     expect(dueAt(withSnapshot(snapshot(), now), otherPaused)).toEqual([now + 90_000]);
+  });
+
+  it("reads first when a turn waits to start, so its machine knows whether it merged (#495)", () => {
+    const quiet = withSnapshot(
+      snapshot({ updatedAt: "2026-10-15T09:00:00Z" }),
+      now - RECENT_MS - 1,
+    );
+    const askedAt = now - 5_000;
+    const withRun = (status: OrchestrationV2Run["status"]) => ({
+      ...quiet,
+      runs: [
+        {
+          id: RunId.make("run-1"),
+          ordinal: 1,
+          status,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          requestedAt: DateTime.makeUnsafe(askedAt),
+          completedAt: null,
+        } as unknown as OrchestrationV2Run,
+      ],
+    });
+    // Last read before the turn was asked for: now.
+    expect(dueAt(withRun("starting"), polled(askedAt - 1_000))).toEqual([now]);
+    // Read since: its usual pace.
+    expect(dueAt(withRun("starting"), polled(askedAt + 1_000))).toEqual([
+      askedAt + 1_000 + FAST_POLL_MS,
+    ]);
+    // Once the turn runs, its machine has had what it needed.
+    expect(dueAt(withRun("running"), polled(askedAt - 1_000))).toEqual([
+      askedAt - 1_000 + FAST_POLL_MS,
+    ]);
+    // A merged one stays unread.
+    expect(
+      dueAt(
+        { ...withRun("starting"), thread: withSnapshot(snapshot({ state: "merged" }), now).thread },
+        polled(askedAt - 1_000),
+      ),
+    ).toEqual([null]);
   });
 });

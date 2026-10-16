@@ -196,6 +196,8 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return turns.start(message);
       case "interrupt":
         return turns.interrupt(message.runId);
+      case "steer":
+        return turns.steer(message.runId, message.message);
       case "drain":
         // Outlives this connection: the answer goes out on whichever one is open by then.
         return turns.drain.pipe(
@@ -228,6 +230,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         lastAckedSequence: acked,
         build: input.build,
         drains: true,
+        steers: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
       });

@@ -275,11 +275,14 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     this.runnerHost = {
       ctx,
       run: (effect) => this.runtime.runPromise(effect),
+      holdsTurn: () =>
+        this.runtime.runPromise(PullRequestSync.PullRequestSync.use((sync) => sync.holdsTurn)),
       afterChange: (work) => this.armAlarm(work),
     };
     this.api = makeThreadObjectApi(
       (effect) => this.runtime.runPromise(effect),
       async () => this.armAlarm(await pushRunnerWork(this.runnerHost)),
+      (at) => this.setAlarmNoLaterThan(at),
     );
     // Runner heartbeats are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(
@@ -506,6 +509,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
   private nextEventsAt = 0;
   private machineFailures = 0;
   private analyticsFailures = 0;
+  private sharingFailures = 0;
   private nextAnalyticsAt = 0;
 
   private now() {
@@ -552,11 +556,15 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       }),
     );
     if (hasWork) return this.setAlarmNoLaterThan(await this.now());
-    // An alarm that fires now sets the next pull request read itself.
+    // An alarm that fires now sets the next pull request read and share end itself.
     const pullRequestsAt = await this.runtime.runPromise(
       PullRequestSync.PullRequestSync.use((sync) => sync.dueAt),
     );
     if (pullRequestsAt !== null) await this.setAlarmNoLaterThan(pullRequestsAt);
+    const sharingEndsAt = await this.runtime.runPromise(
+      ThreadBrowsing.ThreadBrowsing.use((browsing) => browsing.sharingEndsAt),
+    );
+    if (sharingEndsAt !== null) await this.setAlarmNoLaterThan(sharingEndsAt);
   }
 
   /**
@@ -812,6 +820,18 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       return now + retryDelay(1);
     });
     const diagnosticsWakeAt = await this.tendDiagnostics(now);
+    const sharing = await this.runtime.runPromise(
+      ThreadBrowsing.ThreadBrowsing.use((browsing) => browsing.expire).pipe(
+        Effect.map((at) => ({ ok: true, at })),
+        Effect.catchCause((cause) =>
+          Effect.logError("ending shared tabs failed", Cause.pretty(cause)).pipe(
+            Effect.as({ ok: false, at: null }),
+          ),
+        ),
+      ),
+    );
+    this.sharingFailures = sharing.ok ? 0 : this.sharingFailures + 1;
+    const sharingWakeAt = sharing.ok ? sharing.at : now + retryDelay(this.sharingFailures);
     // Machine upkeep may have committed events since; they go out on the next firing.
     const eventsAt =
       this.nextEventsAt > 0
@@ -828,6 +848,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       machineWakeAt,
       diagnosticsWakeAt,
       pullRequestsWakeAt,
+      sharingWakeAt,
     ].filter((at) => at !== null);
     if (due.length > 0) await this.setAlarmNoLaterThan(Math.min(...due));
   }

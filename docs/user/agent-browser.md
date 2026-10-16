@@ -6,7 +6,7 @@ In a Signalbox Cloud thread, agents browse in the cloud: real sites open in your
 
 Open **Previews → Agent's browser** in the thread header. On mobile it's in the header's globe menu. The panel shows a live copy of the page the agent is on, and switches tabs with the agent. Pick a tab to keep watching that one instead.
 
-The copy is rebuilt from the page itself rather than streamed as video, so it stays sharp and scrolls like the real site. Pages that draw on a canvas, like maps and games, update about once a second.
+The copy is rebuilt from the page itself rather than streamed as video, so it stays sharp and scrolls like the real site. Pages that draw on a canvas, like maps and games, update about once a second. Click a link in the copy to open it in a tab of your own, signed in as you; the agent's tab stays where it is.
 
 Watching costs nothing. When the agent pauses for a minute, your cloud browser rests and the panel shows the last state. The panel also stops watching while it's hidden, while you're in another tab or app, and after five minutes with no activity from you. It picks up again when you come back.
 

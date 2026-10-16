@@ -25,7 +25,7 @@ To see every automation, open **Automations** from the command palette (`mod+alt
 
 ## In Signalbox Cloud
 
-Automations in your cloud folders run in Signalbox Cloud, so they fire on schedules, thread events
+Automations in your cloud folders run in Signalbox Cloud, so they fire on schedules, thread events, file changes
 and pull request news with every app closed, and their questions reach your phone. Ask an agent in
 a cloud thread to write one. When an agent there schedules recurring work for itself ("every 5
 minutes, post the time"), that's an automation in the thread's folder too: pause or delete it like
@@ -69,6 +69,10 @@ by its name in Executor.
   threads in the automation's project, and never to threads automations started themselves. If
   events start more than 30 runs in a minute, its event triggers pause and you're notified; save
   it, or switch it off and on, to resume.
+- **When files in a cloud folder change**: work lands in the folder, or a thread saves its work
+  before landing it, for a check before anything merges. Ask for it in your own words ("when a new
+  file lands in this folder, summarize it"). The run gets which files were added, changed or
+  removed, and the commits that changed them.
 - **When something changes in a connected service**: a new GitHub Actions run, an invoice paid, a
   row added to a sheet. Ask for it in your own words ("when a new issue is filed in Linear, triage
   it"). Signalbox checks the service every few minutes, once for every automation and agent watching

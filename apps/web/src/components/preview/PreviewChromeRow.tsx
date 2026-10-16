@@ -46,6 +46,7 @@ interface Props {
   pickDisabledReason?: string | undefined;
   trailingActions?: ReactNode;
   leadingActions?: ReactNode;
+  shareAction?: ReactNode; // signalbox: sharing a synced tab (#597)
 }
 
 const NOOP = () => {};
@@ -75,6 +76,7 @@ export function PreviewChromeRow({
   pickDisabledReason,
   trailingActions,
   leadingActions,
+  shareAction, // signalbox
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(url);
@@ -291,6 +293,7 @@ export function PreviewChromeRow({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {shareAction /* signalbox */}
         {trailingActions}
       </form>
       <div

@@ -6,7 +6,10 @@ import {
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
-import type { BrowserSessionAnswer } from "@signalbox/runner-protocol/BrowserProtocol";
+import type {
+  BrowserSessionAnswer,
+  BrowserSignInAnswer,
+} from "@signalbox/runner-protocol/BrowserProtocol";
 import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
@@ -118,6 +121,15 @@ export interface UserObjectApi {
     readonly threadId: string;
     readonly events: unknown;
   }) => Promise<void>;
+  /**
+   * A drive object's event outbox delivery (`drive/driveEventOutbox.ts`): the
+   * drive's next ref moves (`DriveRefEvent`s) in order, for the user's
+   * automations. Returns once they're taken; a throw has the drive send them again.
+   */
+  readonly driveEvents: (input: {
+    readonly driveId: string;
+    readonly events: ReadonlyArray<unknown>;
+  }) => Promise<void>;
   /** Drops the thread index and rebuilds it from the user's thread objects. */
   readonly rebuildThreadIndex: () => Promise<number>;
   /** Starts connecting GitHub (`github/GitHubConnection.ts`); WorkOS comes back to `returnTo`. */
@@ -204,6 +216,16 @@ export interface UserObjectApi {
     readonly requester: string;
   }) => Promise<BrowserSessionAnswer>;
   /**
+   * The thread's agent signing in to `site` (#576, `signIn/LoginService.ts`):
+   * the person's profile signed in from 1Password under a grant, answered as
+   * a status only.
+   */
+  readonly browserSignIn: (input: {
+    readonly threadId: string;
+    readonly requester: string;
+    readonly site: string;
+  }) => Promise<BrowserSignInAnswer>;
+  /**
    * The login service's check before signing a turn in (#575, #576): whether
    * a standing grant of this person's covers `origin` for `source`. Their
    * own 1Password answers only turns they requested; a folder's grants
@@ -283,6 +305,7 @@ const METHODS = Object.keys({
   shellSnapshot: true,
   recordThreadSummary: true,
   threadEvents: true,
+  driveEvents: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,
@@ -311,6 +334,7 @@ const METHODS = Object.keys({
   publishBranch: true,
   automationTool: true,
   browserSession: true,
+  browserSignIn: true,
   checkSignIn: true,
   endBrowser: true,
   automationHost: true,

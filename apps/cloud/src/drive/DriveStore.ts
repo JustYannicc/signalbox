@@ -11,6 +11,7 @@ import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
+import * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
@@ -38,6 +39,9 @@ import type { ObjectType, Oid } from "./git/gitObjects.ts";
  * A thread's machine state (#490) is its alone: its packs are private to the
  * thread, listed and leaned on only by that thread, and its `machine` ref is
  * never read, merged or pushed by anything else.
+ *
+ * Every move of `main` or a thread's branch is also recorded for the drive's
+ * people's automations (`DriveEvents`), in the same transaction.
  *
  * A drive backed by a remote repository records it here. Its `main` mirrors
  * the remote's default branch instead (`mirror`), and is never reconciled:
@@ -213,6 +217,12 @@ export class DriveStore extends Context.Service<
     readonly commits: (
       oids: ReadonlyArray<Oid>,
     ) => Effect.Effect<ReadonlyArray<StoredCommit>, SqlError>;
+    /** Commits `to` reaches and `from` (null: nothing) doesn't, newest first. */
+    readonly commitsBetween: (
+      from: Oid | null,
+      to: Oid,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<StoredCommit>, SqlError>;
     /** Commits reachable from `from`, newest first. */
     readonly log: (
       from: Oid,
@@ -354,6 +364,8 @@ const migrations = Migrator.fromRecord({
     yield* sql`ALTER TABLE packs ADD COLUMN private_to TEXT`;
     yield* sql`CREATE INDEX pack_entries_oid ON pack_entries (oid)`;
   }),
+  // Moves of `main` and threads' branches, for automations (#471).
+  "0006_ref_events": DriveEvents.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -433,6 +445,7 @@ const chunks = <A>(items: ReadonlyArray<A>) =>
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const members = yield* DriveMembers.DriveMembers;
+  const events = yield* DriveEvents.DriveEvents;
 
   const ref: DriveStore["Service"]["ref"] = (name) =>
     sql`SELECT name, oid FROM refs WHERE name = ${name}`.pipe(
@@ -499,6 +512,21 @@ const make = Effect.gen(function* () {
           ON CONFLICT (name) DO UPDATE SET oid = excluded.oid, updated_by = excluded.updated_by,
           updated_at = excluded.updated_at`,
     );
+
+  /** Moves `main` or a thread's branch from `before` for a thread or a person, recording it when it changed. */
+  const land = (
+    name: string,
+    before: Oid | null,
+    after: Oid,
+    by: { readonly threadId: string } | { readonly userId: string },
+  ) => {
+    const threadId = "threadId" in by ? by.threadId : null;
+    return setRef(name, after, "threadId" in by ? by.threadId : by.userId).pipe(
+      Effect.andThen(
+        before === after ? Effect.void : events.record({ ref: name, before, after, threadId }),
+      ),
+    );
+  };
 
   /**
    * Records the writer's generation, refusing an older one: once a thread's
@@ -689,6 +717,7 @@ const make = Effect.gen(function* () {
           } as const;
         }
       }
+      const currents = new Map<string, Oid | null>();
       for (const update of updates) {
         const current = yield* ref(update.name);
         // Already where the writer wants it: a retry of a write that landed.
@@ -698,8 +727,14 @@ const make = Effect.gen(function* () {
             refs: yield* refs(writer.threadId, writer.packsAfter),
           } as const;
         }
+        currents.set(update.name, current);
       }
-      for (const update of updates) yield* setRef(update.name, update.new, writer.threadId);
+      const branch = threadRef(writer.threadId);
+      for (const update of updates) {
+        yield* update.name === branch
+          ? land(branch, currents.get(branch) ?? null, update.new, writer)
+          : setRef(update.name, update.new, writer.threadId);
+      }
       return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
     }).pipe(sql.withTransaction);
 
@@ -728,7 +763,7 @@ const make = Effect.gen(function* () {
       if (current !== null && !(yield* isAncestor(current, request.newMain))) {
         return { _tag: "refused", reason: "main only moves forward: merge it first." } as const;
       }
-      yield* setRef(MAIN_REF, request.newMain, writer.threadId);
+      yield* land(MAIN_REF, current, request.newMain, writer);
       return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
     }).pipe(sql.withTransaction);
 
@@ -760,7 +795,7 @@ const make = Effect.gen(function* () {
             refs: yield* refs(writer.threadId, writer.packsAfter),
           } as const;
         }
-        yield* setRef(MAIN_REF, request.newMain, writer.threadId);
+        yield* land(MAIN_REF, current, request.newMain, writer);
       }
       return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
     }).pipe(sql.withTransaction);
@@ -801,6 +836,24 @@ const make = Effect.gen(function* () {
       return out;
     });
 
+  const commitsBetween: DriveStore["Service"]["commitsBetween"] = (from, to, limit) =>
+    sql`WITH RECURSIVE old(oid) AS (
+        SELECT ${from} WHERE ${from} IS NOT NULL
+        UNION
+        SELECT p.parent FROM commit_parents p JOIN old o ON p.oid = o.oid
+      ),
+      new(oid) AS (
+        SELECT ${to}
+        UNION
+        SELECT p.parent FROM commit_parents p JOIN new n ON p.oid = n.oid
+        WHERE n.oid NOT IN (SELECT oid FROM old)
+      )
+      SELECT ${COMMIT_COLUMNS} FROM commits c JOIN new n ON n.oid = c.oid
+      WHERE c.oid NOT IN (SELECT oid FROM old)
+      ORDER BY c.time DESC, c.oid LIMIT ${limit}`.pipe(
+      Effect.map((rows) => decodeCommitRows(rows).map(toCommit)),
+    );
+
   const log: DriveStore["Service"]["log"] = (from, limit) =>
     sql`WITH RECURSIVE reach(oid) AS (
         SELECT ${from}
@@ -831,7 +884,7 @@ const make = Effect.gen(function* () {
         if (current !== null && !(yield* isAncestor(current, request.newMain))) {
           return { _tag: "refused", reason: "main only moves forward." } as const;
         }
-        yield* setRef(MAIN_REF, request.newMain, userId);
+        yield* land(MAIN_REF, current, request.newMain, { userId });
       }
       if (request.shortcut !== undefined) {
         const now = yield* Clock.currentTimeMillis;
@@ -940,6 +993,7 @@ const make = Effect.gen(function* () {
     locate,
     locateAt,
     commits,
+    commitsBetween,
     log,
     replaceMain,
     shortcuts,
@@ -949,6 +1003,9 @@ const make = Effect.gen(function* () {
   });
 });
 
-/** The store and the members of the drive named `driveId`, on the object's SQLite. */
+/** The store, its events and the members of the drive named `driveId`, on the object's SQLite. */
 export const layer = (driveId: string) =>
-  Layer.effect(DriveStore, make).pipe(Layer.provideMerge(DriveMembers.layer(driveId)));
+  Layer.effect(DriveStore, make).pipe(
+    Layer.provideMerge(DriveEvents.layer(driveId)),
+    Layer.provideMerge(DriveMembers.layer(driveId)),
+  );

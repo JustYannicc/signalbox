@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DRIVE_COMMIT_AUTHOR, threadRemoteBranch } from "@signalbox/runner-protocol/DriveProtocol";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -653,6 +654,190 @@ describe("RunnerDrive", () => {
           }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
         ),
       );
+
+      describe("after the thread's pull request merged (#495)", () => {
+        /** The thread's pull request #7 from its own branch, as GitHub last said. */
+        const pullRequest = (threadId: string, state: "open" | "merged") =>
+          ({
+            host: "github.com",
+            repository: "owner/repo",
+            number: 7,
+            url: "https://github.com/owner/repo/pull/7",
+            source: "created",
+            linkedAt: "2026-10-16T10:00:00.000Z",
+            snapshot: {
+              state,
+              title: "Feature",
+              headBranch: threadRemoteBranch(threadId),
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: null,
+              syncedAt: "2026-10-16T10:00:00.000Z",
+            },
+            stack: null,
+          }) as ThreadPullRequestLink;
+        const prepareWith = (
+          runner: Effect.Success<ReturnType<typeof machine>>["runner"],
+          state: "open" | "merged",
+          threadId = "t1",
+        ) => runner.prepare("remote-token", undefined, [], [pullRequest(threadId, state)]);
+
+        it.effect(
+          "takes in main before the next turn, so the next pull request carries only new work",
+          () =>
+            scopedTest((root) =>
+              Effect.gen(function* () {
+                const upstream = makeUpstream(root);
+                const drive = makeFakeDrive(root, { upstream: upstream.dir });
+                const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+                yield* runner.prepare("remote-token");
+                write(cwd, "feature.ts", "export const f = 1;\n");
+                yield* runner.finishTurn({ message: "Feature" });
+                const published = git(cwd, "rev-parse", "HEAD");
+
+                // While its pull request is open, the branch stays as the agent left it.
+                upstream.commit("other.ts", "export const o = 1;\n", "Other");
+                expect((yield* prepareWith(runner, "open")).notices).toEqual([]);
+                expect(git(cwd, "rev-parse", "HEAD")).toBe(published);
+
+                // GitHub squash-merges it: main gets the same change as one new commit.
+                const main = upstream.commit("feature.ts", "export const f = 1;\n", "Feature (#7)");
+                const prepared = yield* prepareWith(runner, "merged");
+                expect(prepared.notices).toEqual([
+                  "Pull request #7 merged, so this thread took in the latest main first.",
+                ]);
+                expect(prepared.mainConflict).toBeUndefined();
+                const merged = git(cwd, "rev-parse", "HEAD");
+                expect(git(cwd, "rev-parse", "HEAD^1", "HEAD^2")).toBe(`${published}\n${main}`);
+                expect(git(cwd, "log", "-1", "--format=%s")).toBe("Merge main after #7 merged");
+                expect(drive.refs("t1").thread).toBe(merged);
+                expect(git(cwd, "diff", "--name-only", main, "HEAD")).toBe("");
+                expect(status(cwd)).toEqual([]);
+
+                write(cwd, "next.ts", "export const n = 1;\n");
+                const turn = yield* runner.finishTurn({ message: "Next" });
+                expect(turn.checkpoint?.start).toBe(merged);
+                expect(turn.checkpoint?.files.map((file) => file.path)).toEqual(["next.ts"]);
+                // What its next pull request shows, compared the way GitHub does.
+                expect(git(cwd, "diff", "--name-only", `${main}...HEAD`)).toBe("next.ts");
+
+                // Main is in: the next turn start merges nothing more.
+                const head = git(cwd, "rev-parse", "HEAD");
+                expect((yield* prepareWith(runner, "merged")).notices).toEqual([]);
+                expect(git(cwd, "rev-parse", "HEAD")).toBe(head);
+
+                // A new machine starts from the merged branch.
+                const vm2 = yield* machine(drive, root, "vm-2", "t1");
+                yield* prepareWith(vm2.runner, "merged");
+                expect(git(vm2.cwd, "rev-parse", "HEAD")).toBe(head);
+                expect(read(vm2.cwd, "other.ts")).toBe("export const o = 1;\n");
+              }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+            ),
+        );
+
+        it.effect("commits work a stopped turn left before taking main in", () =>
+          scopedTest((root) =>
+            Effect.gen(function* () {
+              const upstream = makeUpstream(root);
+              const drive = makeFakeDrive(root, { upstream: upstream.dir });
+              const { runner, cwd } = yield* machine(drive, root, "vm-1", "t1");
+              yield* runner.prepare("remote-token");
+              write(cwd, "feature.ts", "export const f = 1;\n");
+              yield* runner.finishTurn({ message: "Feature" });
+              write(cwd, "draft.md", "unsaved\n");
+
+              upstream.commit("feature.ts", "export const f = 1;\n", "Feature (#7)");
+              yield* prepareWith(runner, "merged");
+              expect(read(cwd, "draft.md")).toBe("unsaved\n");
+              expect(status(cwd)).toEqual([]);
+              expect(git(cwd, "log", "-2", "--format=%s")).toBe(
+                "Merge main after #7 merged\nWork in progress",
+              );
+            }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+          ),
+        );
+
+        /**
+         * A thread whose pull request #7 merged, after which it changed the
+         * same line as someone else did on main: taking main in conflicts.
+         */
+        const conflicting = (root: string) =>
+          Effect.gen(function* () {
+            const upstream = makeUpstream(root);
+            const drive = makeFakeDrive(root, { upstream: upstream.dir });
+            const vm = yield* machine(drive, root, "vm-1", "t1");
+            yield* vm.runner.prepare("remote-token");
+            write(vm.cwd, "src/app.ts", "export const a = 1;\n");
+            yield* vm.runner.finishTurn({ message: "Feature" });
+            write(vm.cwd, "src/app.ts", "export const a = 2;\n");
+            yield* vm.runner.finishTurn({ message: "More" });
+            const before = git(vm.cwd, "rev-parse", "HEAD");
+            upstream.commit("src/app.ts", "export const a = 1;\n", "Feature (#7)");
+            const main = upstream.commit("src/app.ts", "export const a = 3;\n", "Theirs");
+            return { drive, ...vm, before, main };
+          });
+
+        it.effect("leaves a conflict with main to the agent and saves what it resolved", () =>
+          scopedTest((root) =>
+            Effect.gen(function* () {
+              const { drive, runner, cwd, before, main } = yield* conflicting(root);
+              const prepared = yield* prepareWith(runner, "merged");
+              expect(prepared.mainConflict).toEqual({
+                pullRequest: 7,
+                branch: "main",
+                files: ["src/app.ts"],
+              });
+              // Nothing is left half-merged until the agent is there to resolve it.
+              expect(git(cwd, "rev-parse", "HEAD")).toBe(before);
+              expect(status(cwd)).toEqual([]);
+              expect(gitOk(cwd, "rev-parse", "--verify", "-q", "MERGE_HEAD")).toBe(false);
+
+              expect(yield* runner.takeInMain).toEqual({ _tag: "conflict", files: ["src/app.ts"] });
+              expect(read(cwd, "src/app.ts")).toContain("<<<<<<< ");
+              expect(drive.refs("t1").thread).toBe(before);
+
+              expect(yield* runner.continueAfterResolution).toEqual({
+                _tag: "conflict",
+                files: ["src/app.ts"],
+              });
+              write(cwd, "src/app.ts", "export const a = 2 + 3;\n");
+              const outcome = yield* runner.continueAfterResolution;
+              const merged = git(cwd, "rev-parse", "HEAD");
+              expect(outcome).toEqual({ _tag: "saved", head: merged });
+              expect(git(cwd, "rev-parse", "HEAD^1", "HEAD^2")).toBe(`${before}\n${main}`);
+              expect(drive.refs("t1").thread).toBe(merged);
+              expect(status(cwd)).toEqual([]);
+
+              // The turn's own work starts after the merge.
+              write(cwd, "next.ts", "export const n = 1;\n");
+              const turn = yield* runner.finishTurn({ message: "Next" });
+              expect(turn.checkpoint?.start).toBe(merged);
+              expect(turn.checkpoint?.files.map((file) => file.path)).toEqual(["next.ts"]);
+            }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+          ),
+        );
+
+        it.effect(
+          "drops an unresolved merge with main, keeping the branch, and tries again next turn",
+          () =>
+            scopedTest((root) =>
+              Effect.gen(function* () {
+                const { drive, runner, cwd, before } = yield* conflicting(root);
+                expect((yield* prepareWith(runner, "merged")).mainConflict).toBeDefined();
+                expect((yield* runner.takeInMain)._tag).toBe("conflict");
+                expect((yield* runner.abandonMerge)._tag).toBe("not_landed");
+                expect(git(cwd, "rev-parse", "HEAD")).toBe(before);
+                expect(read(cwd, "src/app.ts")).toBe("export const a = 2;\n");
+                expect(status(cwd)).toEqual([]);
+                expect(drive.refs("t1").thread).toBe(before);
+
+                expect((yield* prepareWith(runner, "merged")).mainConflict?.files).toEqual([
+                  "src/app.ts",
+                ]);
+              }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+            ),
+        );
+      });
     });
 
     it.effect("fails a thread's first turn with why its first save was rejected, in one line", () =>

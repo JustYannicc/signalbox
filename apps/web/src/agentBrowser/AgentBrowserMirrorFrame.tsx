@@ -22,6 +22,8 @@ export function AgentBrowserMirrorFrame(props: {
   readonly interactive: boolean;
   readonly onInput: (input: AgentBrowserDrivingInput) => void;
   readonly onActivity: () => void;
+  /** Clicking a link while following opens your own copy of it (#597). */
+  readonly onCopy?: (url: string) => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const readyRef = useRef(false);
@@ -46,10 +48,12 @@ export function AgentBrowserMirrorFrame(props: {
         case "ready":
           readyRef.current = true;
           deliveredRef.current = AGENT_BROWSER_MIRROR_NOTHING_DELIVERED;
-          frameRef.current?.contentWindow?.postMessage(
+          for (const ready of [
             { type: "interactive", on: latestRef.current.interactive },
-            HOST_ORIGIN,
-          );
+            { type: "copyLinks", on: latestRef.current.onCopy !== undefined },
+          ] satisfies ReadonlyArray<AgentBrowserMirrorHostMessage>) {
+            frameRef.current?.contentWindow?.postMessage(ready, HOST_ORIGIN);
+          }
           deliverRef.current();
           return;
         case "input":
@@ -57,6 +61,9 @@ export function AgentBrowserMirrorFrame(props: {
           return;
         case "activity":
           latestRef.current.onActivity();
+          return;
+        case "copy":
+          latestRef.current.onCopy?.(message.url);
           return;
         case "viewport":
           return;
@@ -77,6 +84,13 @@ export function AgentBrowserMirrorFrame(props: {
     const message: AgentBrowserMirrorHostMessage = { type: "interactive", on: props.interactive };
     frameRef.current?.contentWindow?.postMessage(message, HOST_ORIGIN);
   }, [props.interactive]);
+
+  const copyLinks = props.onCopy !== undefined;
+  useEffect(() => {
+    if (!readyRef.current) return;
+    const message: AgentBrowserMirrorHostMessage = { type: "copyLinks", on: copyLinks };
+    frameRef.current?.contentWindow?.postMessage(message, HOST_ORIGIN);
+  }, [copyLinks]);
 
   return (
     // oxlint-disable-next-line react/iframe-missing-sandbox -- the mirror page is ours and needs scripts and its origin (module scripts load without CORS); the mirrored page runs in rrweb's script-free frame inside it.

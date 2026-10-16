@@ -28,12 +28,15 @@ export function AgentBrowserMirrorWebView(props: {
   readonly background: string | undefined;
   readonly onInput: (input: AgentBrowserDrivingInput) => void;
   readonly onActivity: () => void;
+  /** Tapping a link while following opens your own copy of it (#597). */
+  readonly onCopy?: (url: string) => void;
 }) {
   const webViewRef = useRef<WebView<object>>(null);
   const readyRef = useRef(false);
   const deliveredRef = useRef(AGENT_BROWSER_MIRROR_NOTHING_DELIVERED);
   const latestRef = useRef(props);
   const sentInteractiveRef = useRef<boolean | null>(null);
+  const sentCopyLinksRef = useRef<boolean | null>(null);
   const [generation, setGeneration] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -59,6 +62,11 @@ export function AgentBrowserMirrorWebView(props: {
     if (readyRef.current && sentInteractiveRef.current !== props.interactive) {
       sentInteractiveRef.current = props.interactive;
       inject([{ type: "interactive", on: props.interactive }]);
+    }
+    const copyLinks = props.onCopy !== undefined;
+    if (readyRef.current && sentCopyLinksRef.current !== copyLinks) {
+      sentCopyLinksRef.current = copyLinks;
+      inject([{ type: "copyLinks", on: copyLinks }]);
     }
     deliver();
   });
@@ -117,7 +125,11 @@ export function AgentBrowserMirrorWebView(props: {
             readyRef.current = true;
             deliveredRef.current = AGENT_BROWSER_MIRROR_NOTHING_DELIVERED;
             sentInteractiveRef.current = latestRef.current.interactive;
-            inject([{ type: "interactive", on: latestRef.current.interactive }]);
+            sentCopyLinksRef.current = latestRef.current.onCopy !== undefined;
+            inject([
+              { type: "interactive", on: latestRef.current.interactive },
+              { type: "copyLinks", on: latestRef.current.onCopy !== undefined },
+            ]);
             deliver();
             return;
           case "input":
@@ -125,6 +137,9 @@ export function AgentBrowserMirrorWebView(props: {
             return;
           case "activity":
             latestRef.current.onActivity();
+            return;
+          case "copy":
+            latestRef.current.onCopy?.(message.url);
             return;
           case "viewport":
             return;
