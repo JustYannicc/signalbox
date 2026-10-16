@@ -244,6 +244,12 @@ export const RunnerHello = Schema.Struct({
   lastAckedSequence: NonNegativeInt,
   /** Absent from Runners built before diagnostics. */
   build: Schema.optional(RunnerBuild),
+  /**
+   * Every run this Runner process was handed. A run the thread saw start that
+   * is missing went with an earlier process on the same machine (#613).
+   * Absent from Runners built before it: the thread can't tell.
+   */
+  takenRunIds: Schema.optional(Schema.Array(RunId)),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
