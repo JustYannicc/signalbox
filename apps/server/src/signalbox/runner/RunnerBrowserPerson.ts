@@ -31,7 +31,7 @@ export interface PersonSession {
 }
 
 /** Long enough to span an agent thinking between steps, short enough not to bill a pause. */
-export const PERSON_BROWSER_IDLE_MS = 60_000;
+const PERSON_BROWSER_IDLE_MS = 60_000;
 
 // Playwright needs its files on disk; createRequire also resolves it from a Node SEA executable.
 const requirePlaywright = NodeModule.createRequire(import.meta.url);
