@@ -17,7 +17,7 @@ const write = (root: string, file: string, text: string) => {
 const exists = (root: string, file: string) => NodeFS.existsSync(NodePath.join(root, file));
 
 /**
- * A machine with fake `pnpm` and `npm` on PATH. Each install logs where it ran
+ * A machine with fake `pnpm`, `npm`, `yarn` and `bun` on PATH. Each install logs where it ran
  * and with which store, then lays down a tree; `FAIL` in the lockfile fails it.
  */
 const makeMachine = () => {
@@ -35,10 +35,10 @@ if grep -q FAIL pnpm-lock.yaml package-lock.json 2>/dev/null; then
 fi
 mkdir -p node_modules/.pnpm && echo installed > node_modules/.pnpm/lock.yaml
 `;
-  write(bin, "pnpm", fake);
-  write(bin, "npm", fake);
-  NodeFS.chmodSync(NodePath.join(bin, "pnpm"), 0o755);
-  NodeFS.chmodSync(NodePath.join(bin, "npm"), 0o755);
+  for (const manager of ["pnpm", "npm", "yarn", "bun"]) {
+    write(bin, manager, fake);
+    NodeFS.chmodSync(NodePath.join(bin, manager), 0o755);
+  }
   const cwd = NodePath.join(root, "threads", "thread-1");
   NodeFS.mkdirSync(cwd, { recursive: true });
   const installs = () =>
@@ -48,7 +48,7 @@ mkdir -p node_modules/.pnpm && echo installed > node_modules/.pnpm/lock.yaml
   return { home: root, bin, cwd, installs };
 };
 
-const prepare = (
+const dependenciesOf = (
   machine: ReturnType<typeof makeMachine>,
   options: { readonly toolchain?: string } = {},
 ) =>
@@ -59,6 +59,15 @@ const prepare = (
       caches,
       environment: { PATH: `${machine.bin}:/usr/bin:/bin`, ...caches.environment },
     });
+    return { dependencies, caches };
+  });
+
+const prepare = (
+  machine: ReturnType<typeof makeMachine>,
+  options: { readonly toolchain?: string } = {},
+) =>
+  Effect.gen(function* () {
+    const { dependencies, caches } = yield* dependenciesOf(machine, options);
     const notices: Array<string> = [];
     const results = yield* dependencies.prepare((message) =>
       Effect.sync(() => {
@@ -271,6 +280,95 @@ describe("RunnerDependencies", () => {
         const prepared = yield* prepare(machine);
         expect(prepared.results).toEqual([]);
         expect(machine.installs()).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("installs yarn and bun projects too, each with its own lockfile's command", () =>
+    run(
+      Effect.gen(function* () {
+        const machine = makeMachine();
+        write(machine.cwd, "classic/yarn.lock", "# yarn lockfile v1\n");
+        write(machine.cwd, "berry/yarn.lock", "__metadata:\n  version: 8\n");
+        write(machine.cwd, "fast/bun.lock", "{}\n");
+        write(machine.cwd, "binary/bun.lockb", "bun");
+
+        const prepared = yield* prepare(machine);
+        expect(
+          prepared.results.map((result) => [
+            result.root.relative,
+            result.root.manager,
+            result.outcome._tag,
+          ]),
+        ).toEqual([
+          ["berry", "yarn", "installed"],
+          ["binary", "bun", "installed"],
+          ["classic", "yarn", "installed"],
+          ["fast", "bun", "installed"],
+        ]);
+        expect(machine.installs().map((line) => line.split(" ")[0])).toEqual([
+          "yarn",
+          "bun",
+          "yarn",
+          "bun",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("lists every dependency tree it rebuilds, with its recipe and install record", () =>
+    run(
+      Effect.gen(function* () {
+        const machine = makeMachine();
+        write(machine.cwd, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+        write(machine.cwd, "classic/yarn.lock", "# yarn lockfile v1\n");
+        write(machine.cwd, "berry/yarn.lock", "__metadata:\n  version: 8\n");
+        yield* prepare(machine);
+        // A workspace package's tree belongs to the root that installs it.
+        write(machine.cwd, "packages/ui/node_modules/react/index.js", "");
+        // No lockfile above it: nothing rebuilds it, so it is no dependency tree.
+        write(machine.cwd, ".repos/vendored/node_modules/pkg/index.js", "");
+
+        const trees = yield* Effect.flatMap(
+          dependenciesOf(machine),
+          ({ dependencies }) => dependencies.trees,
+        ).pipe(Effect.scoped);
+        expect(
+          trees.map((tree) => ({
+            path: tree.path,
+            recipe: tree.recipe,
+            installed: tree.installed !== null,
+          })),
+        ).toEqual([
+          {
+            path: "berry/node_modules",
+            recipe: "yarn install --immutable, from berry/yarn.lock",
+            installed: true,
+          },
+          {
+            path: "classic/node_modules",
+            recipe: "yarn install --frozen-lockfile --non-interactive, from classic/yarn.lock",
+            installed: true,
+          },
+          {
+            path: "node_modules",
+            recipe:
+              "pnpm install --frozen-lockfile --config.confirm-modules-purge=false, from pnpm-lock.yaml",
+            installed: true,
+          },
+          {
+            path: "packages/ui/node_modules",
+            recipe:
+              "pnpm install --frozen-lockfile --config.confirm-modules-purge=false, from pnpm-lock.yaml",
+            installed: true,
+          },
+        ]);
+        // The record a tree's install left, which later edits inside it are newer than.
+        const root = trees.find((tree) => tree.path === "node_modules")!;
+        expect(root.installed!.record).toBe(
+          NodePath.join(machine.cwd, "node_modules", ".signalbox-dependencies.json"),
+        );
+        expect(root.installed!.inputs).toMatch(/^[0-9a-f]{64}$/);
       }),
     ),
   );

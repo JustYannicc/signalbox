@@ -687,6 +687,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
               input.emit({ kind: "drive.notice", runId: turn.runId, message }),
             );
           }
+          // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).
+          if (opened !== null) yield* opened.restoreDependencyEdits;
           const secrets =
             input.secrets === undefined
               ? 0

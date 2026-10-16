@@ -207,7 +207,12 @@ export const splitFolder = Effect.fn("DriveSplit.splitFolder")(function* (input:
   const store = (driveId: string, objects: ReadonlyArray<WrittenObject>) =>
     Effect.gen(function* () {
       const drive = directory.forDrive(driveId);
-      const absent = new Set(yield* drive.missing(objects.map((object) => object.oid)));
+      const absent = new Set(
+        yield* drive.missing(
+          objects.map((object) => object.oid),
+          null,
+        ),
+      );
       const needed = objects.filter((object) => absent.has(object.oid));
       if (needed.length === 0) return;
       const packed = yield* Effect.promise(() => writePack(needed));

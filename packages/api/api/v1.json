@@ -1657,7 +1657,7 @@
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "49ccbbaa",
-      "output": "870bd27d"
+      "output": "1f509429"
     },
     {
       "name": "threads.delete",
@@ -1690,7 +1690,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "c7cbdb47"
+      "output": "493e2671"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -1970,7 +1970,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "e88b7a7a"
+      "output": "b7ddde4c"
     },
     {
       "name": "threads.subscribeArchived",

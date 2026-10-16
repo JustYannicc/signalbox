@@ -79,6 +79,8 @@ export const makeMachineCaches = Effect.fn("makeMachineCaches")(function* (
     npm_config_cache: path.join(directory, "npm"),
     pnpm_config_store_dir: path.join(directory, "pnpm-store"),
     COREPACK_HOME: path.join(directory, "corepack"),
+    // Yarn 2+'s package cache, which would otherwise land in each thread's home and be kept with it.
+    YARN_GLOBAL_FOLDER: path.join(directory, "yarn-berry"),
     // Corepack asks before fetching the project's pnpm or yarn, and nobody is there to answer.
     COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
   };
