@@ -1,6 +1,7 @@
-// signalbox: a Signalbox Cloud environment's folders, one tree per owner, in the navigation panel.
+// signalbox: a Signalbox Cloud environment's level tree (#225) in the navigation panel: your top
+// level and its folders, then each organization you're a member of as a level inside it.
 import { useAtomValue } from "@effect/atom-react";
-import { folderTree } from "@t3tools/client-runtime/state/signalboxFolders";
+import { folderTree, ownerLevels } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { MenuAction } from "@react-native-menu/menu";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { SignalboxContext } from "@t3tools/contracts/signalboxContexts";
@@ -66,13 +67,16 @@ export function FolderNavigationEnvironment(props: {
       ),
     [pools, snapshot],
   );
-  const trees = useMemo(
-    () =>
-      snapshot && owners
-        ? owners.contexts.map((owner) => ({ owner, tree: folderTree(snapshot, owner.id) }))
-        : null,
-    [owners, snapshot],
-  );
+  // Your top level first at depth 0; member levels sit inside it, one step in.
+  const levels = useMemo(() => {
+    if (!snapshot || !owners) return null;
+    const { top, members } = ownerLevels(owners.contexts, (owner) => owner);
+    const memberDepth = top ? 1 : 0;
+    return [
+      ...(top ? [{ owner: top, depth: 0 }] : []),
+      ...members.map((owner) => ({ owner, depth: memberDepth })),
+    ].map((level) => ({ ...level, tree: folderTree(snapshot, level.owner.id) }));
+  }, [owners, snapshot]);
 
   return (
     <View className="border-b border-border pb-1 last:border-b-0">
@@ -101,15 +105,16 @@ export function FolderNavigationEnvironment(props: {
           </Pressable>
         </View>
       ) : null}
-      {trees === null ? (
+      {levels === null ? (
         folders.error === null ? (
           <AppText className="px-4 py-3 text-xs text-foreground-muted">Loading folders…</AppText>
         ) : null
       ) : (
-        trees.map(({ owner, tree }) => (
+        levels.map(({ owner, depth, tree }) => (
           <View key={owner.id} className="pt-1">
             <OwnerTopLevelRow
               owner={owner}
+              depth={depth}
               selected={selectedHere?._tag === "top" && selectedHere.ownerId === owner.id}
               actions={owner.kind === "personal" ? PERSONAL_TOP_ACTIONS : ORGANIZATION_TOP_ACTIONS}
               onSelect={onSelectTop}
@@ -119,7 +124,7 @@ export function FolderNavigationEnvironment(props: {
               <FolderNodeRow
                 key={node.folder.id}
                 node={node}
-                depth={1}
+                depth={depth + 1}
                 ancestorPath=""
                 counts={counts}
                 selectedFolderId={selectedHere?._tag === "folder" ? selectedHere.folderId : null}
@@ -131,7 +136,10 @@ export function FolderNavigationEnvironment(props: {
               />
             ))}
             {tree.length === 0 ? (
-              <AppText className="pr-4 pb-2 pl-[62px] text-xs text-foreground-muted">
+              <AppText
+                className="pr-4 pb-2 text-xs text-foreground-muted"
+                style={{ paddingLeft: 62 + depth * 18 }}
+              >
                 No folders yet. New folder is in the ⋯ menu.
               </AppText>
             ) : null}

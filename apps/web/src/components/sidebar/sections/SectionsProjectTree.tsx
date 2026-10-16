@@ -3,14 +3,14 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { ChevronRightIcon, FolderClosedIcon } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 
-import { SidebarMenuItem } from "../../ui/sidebar";
+import { SidebarMenu, SidebarMenuItem } from "../../ui/sidebar";
 import {
   sectionSidebarSectionKey,
   type SectionSidebarEnvironment,
   type SectionSidebarProject,
 } from "./sectionProjectTree";
 import { ProjectPlacementMenu, SectionMoveMenu } from "./SectionPlacementMenus";
-import { ContextSectionGroups } from "../contexts/ContextSectionGroups"; // signalbox: contexts
+import { DriveShareDialogHost } from "../../drives/DriveProjectShareMenuItem"; // signalbox: drives
 import { FoldersSidebarTree } from "../folders/FoldersSidebarTree"; // signalbox: folders
 import type { FoldersSidebar } from "../folders/useFoldersSidebar"; // signalbox: folders
 
@@ -147,13 +147,9 @@ export function SectionsProjectTree(props: {
                 {environment.label}
               </h3>
             ) : null}
-            {/* signalbox: a cloud environment groups its sections by context */}
-            <ContextSectionGroups
-              environment={environment}
-              collapsedSections={props.collapsedSections}
-              onToggleSection={props.onToggleSection}
-              rootRows={rootRows}
-              renderSection={(node) => (
+            <SidebarMenu>
+              <DriveShareDialogHost environmentId={environment.environmentId} />
+              {environment.tree.roots.map((node) => (
                 <SectionNode
                   key={`${environment.environmentId}:${node.section.id}`}
                   environment={environment}
@@ -162,16 +158,14 @@ export function SectionsProjectTree(props: {
                   onToggleSection={props.onToggleSection}
                   renderProject={props.renderProject}
                 />
-              )}
-              renderProjects={(rows) => (
-                <ProjectRows
-                  environment={environment}
-                  rows={rows}
-                  sectionId={null}
-                  renderProject={props.renderProject}
-                />
-              )}
-            />
+              ))}
+              <ProjectRows
+                environment={environment}
+                rows={rootRows}
+                sectionId={null}
+                renderProject={props.renderProject}
+              />
+            </SidebarMenu>
           </section>
         );
       })}

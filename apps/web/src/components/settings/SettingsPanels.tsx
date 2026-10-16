@@ -3043,7 +3043,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection id="confirmations" title="Confirmations">
         <SettingsRow
           {...searchableSetting("unpin-confirmation")}
-          description="Ask before unpinning a thread from the pinned section."
+          description="Ask before unpinning a thread." // signalbox: no "section" in the UI (#686)
           resetAction={
             settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin ? (
               <SettingResetButton

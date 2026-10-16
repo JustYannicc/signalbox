@@ -1,5 +1,8 @@
 // signalbox: what the folder menus do: dialogs, confirmations, and the folder commands.
-import { folderDeleteMessage } from "@t3tools/client-runtime/state/signalboxFolders";
+import {
+  folderDeleteMessage,
+  ownerLevelName,
+} from "@t3tools/client-runtime/state/signalboxFolders";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -163,7 +166,7 @@ export function useFolderActions(input: {
       if (event === "top:instructions" && snapshot !== null) {
         setEditing({
           level: { _tag: "top" },
-          name: owner.name,
+          name: ownerLevelName(owner),
           instructions: snapshot.top.instructions ?? "",
         });
       }
