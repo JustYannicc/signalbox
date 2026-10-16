@@ -1,40 +1,40 @@
 {
-  "version": "8.0.29",
+  "version": "8.0.31",
   "platforms": {
     "darwin-arm64": {
-      "name": "CLIProxyAPI_8.0.29_darwin_aarch64.tar.gz",
-      "bytes": 21556957,
-      "sha256": "70fcb92a7e045dcbcb52cc63854ef723c1cb77c720923faa45d6081eeece21d0"
+      "name": "CLIProxyAPI_8.0.31_darwin_aarch64.tar.gz",
+      "bytes": 21574062,
+      "sha256": "36e193a737c4821aa122cf35c293c13f2b16c10d56d4ac4b19ced197fab19a79"
     },
     "darwin-x64": {
-      "name": "CLIProxyAPI_8.0.29_darwin_amd64.tar.gz",
-      "bytes": 23356884,
-      "sha256": "ad42747bc1cf247da2a23f1804f2760d1d416db014b5590f32c2d7df3f4f54ba"
+      "name": "CLIProxyAPI_8.0.31_darwin_amd64.tar.gz",
+      "bytes": 23377720,
+      "sha256": "4a3b17a82856260c67ef2c246538075e41e553591b21a7681314d309ceed8922"
     },
     "linux-arm64": {
-      "name": "CLIProxyAPI_8.0.29_linux_aarch64.tar.gz",
-      "bytes": 21088087,
-      "sha256": "1ae4455dac49316b96c06fc60c78c39fb28f8224fc65d94f1abcfe6d697d3d78"
+      "name": "CLIProxyAPI_8.0.31_linux_aarch64.tar.gz",
+      "bytes": 21099824,
+      "sha256": "3a535ddb2000e5cdc7b25e0765f1538d68708faec4272cf98327c11d2af2ad14"
     },
     "linux-x64": {
-      "name": "CLIProxyAPI_8.0.29_linux_amd64.tar.gz",
-      "bytes": 23399651,
-      "sha256": "78a277a5e74495103147a138d530c33d72c17b213d2538e474b1860eb3c4bc34"
+      "name": "CLIProxyAPI_8.0.31_linux_amd64.tar.gz",
+      "bytes": 23421904,
+      "sha256": "c00a2df9a75513ea23feec4e4b0c4d3ee76a15cd14e80b896e000586914b69b9"
     },
     "win32-arm64": {
-      "name": "CLIProxyAPI_8.0.29_windows_aarch64.zip",
-      "bytes": 21122813,
-      "sha256": "3a957f4cdb23c0fce9d36e9960d88d36c3526583550444929a15acbd5248358d"
+      "name": "CLIProxyAPI_8.0.31_windows_aarch64.zip",
+      "bytes": 21133355,
+      "sha256": "51a0b8d0ca2452340a73a18ad7c7eda7a349ea7a608a525f2f62148373b5ec57"
     },
     "win32-x64": {
-      "name": "CLIProxyAPI_8.0.29_windows_amd64.zip",
-      "bytes": 23677794,
-      "sha256": "f8f8de202bbe767354057baf5923b1b6959a283997ed8d695581e19e7dbf35ad"
+      "name": "CLIProxyAPI_8.0.31_windows_amd64.zip",
+      "bytes": 23699580,
+      "sha256": "28bde34eb33a1b03884bac1e8c1a402a25ae4eadd3c60df7ae0df53f8b281318"
     }
   },
   "container": {
-    "name": "CLIProxyAPI_8.0.29_linux_amd64_no-plugin.tar.gz",
-    "bytes": 23286268,
-    "sha256": "b34fa6c6da289936cc6515a985d733ecd943b91e287d501dc98ebc592200fd5f"
+    "name": "CLIProxyAPI_8.0.31_linux_amd64_no-plugin.tar.gz",
+    "bytes": 23302090,
+    "sha256": "9cd89e3283b308a10f071dae791fdc47b3977ccb9517d24137a9c0ac425f1834"
   }
 }
