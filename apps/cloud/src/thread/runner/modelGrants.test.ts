@@ -24,6 +24,7 @@ describe("serveModel", () => {
         runId: RunId.make("run-1"),
         traceId: "trace",
         pool: { objectName: "user_1:personal", userId: "user_1" },
+        secrets: [],
       }),
     })) as unknown as ThreadObjectNamespace;
     const pools = byName((objectName) => ({

@@ -39,11 +39,15 @@ const nameOf = (
 ) =>
   command._tag === "StandardCommand" ? (command.command.split("/").at(-1) ?? "process") : "process";
 
-export const makeHarnessStderr = (): HarnessStderr => {
+/** `mask` hides the folder's secrets (`secretMask.ts`) before a line is cut, so no piece of one is kept. */
+export const makeHarnessStderr = (
+  mask: (text: string) => string = (text) => text,
+): HarnessStderr => {
   const lines: Array<{ readonly index: number; readonly text: string }> = [];
   let next = 0;
 
-  const keep = (name: string, text: string) => {
+  const keep = (name: string, written: string) => {
+    const text = mask(written);
     const line = text.length > MAX_LINE_CHARS ? `${text.slice(0, MAX_LINE_CHARS)}…` : text;
     lines.push({ index: next, text: `[${name}] ${line}` });
     next += 1;

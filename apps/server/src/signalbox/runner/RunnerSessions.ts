@@ -32,7 +32,7 @@ import type { SecretMask } from "./secretMask.ts";
  * - `failures`: saving stalled. The Runner stops the turn; rows keep going.
  *
  * Rows leave with the folder's secrets masked (`secretMask.ts`): a harness
- * resumed from the store reads `***` where a value was.
+ * resumed from the store reads `{{secret:NAME}}` where a value was.
  */
 
 export class RunnerSessionError extends Schema.TaggedError<RunnerSessionError>()(

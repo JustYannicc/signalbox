@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
+import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,12 @@ import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
+import {
+  migrateSecretValues,
+  readSecretValues,
+  registerSecretValues,
+  type SecretValues,
+} from "./runner/secretValues.ts";
 import { type ThreadMonitor, ThreadMonitorWire } from "./threadWire.ts";
 
 /**
@@ -189,6 +196,13 @@ export class ThreadStore extends Context.Service<
      * keeps its thread's. Empty when none.
      */
     readonly secrets: Effect.Effect<ReadonlyArray<OnePasswordEnvironmentId>, SqlError>;
+    /** Their values, as the machine registered them (`runner/secretValues.ts`). Never log them. */
+    readonly secretValues: Effect.Effect<SecretValues, SqlError>;
+    /** Run it in the transaction that checks `generation` still holds the lease. */
+    readonly registerSecretValues: (
+      generation: number,
+      secrets: ReadonlyArray<SecretValue>,
+    ) => Effect.Effect<void, SqlError>;
   }
 >()("@signalbox/cloud/thread/ThreadStore") {}
 
@@ -275,6 +289,8 @@ const migrations = Migrator.fromRecord({
       monitors TEXT NOT NULL
     )`;
   }),
+  // The values of the thread's secrets, for the ModelGateway to scrub (#591).
+  "0010_secret_values": migrateSecretValues,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -541,6 +557,11 @@ const make = Effect.gen(function* () {
     machineRecord,
     instructions,
     secrets,
+    secretValues: readSecretValues.pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+    registerSecretValues: (generation, values) =>
+      registerSecretValues(generation, values).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      ),
     saveMachineRecord,
   });
 });

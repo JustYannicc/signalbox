@@ -66,6 +66,14 @@ everything except the CLIProxyAPI's own time to its response headers (the
 token check, the hops, the pool's access check and a cold container's start).
 The turn's diagnostics show it on each request's line.
 
+A turn whose folders have secrets (#395) never sends their values to a
+provider. The Runner registers the values with the thread before the harness
+gets them, and the cloud's side of the gateway replaces every value, in any
+common encoding, with `{{secret:NAME}}` as the request body streams to the
+pool (`scrubModelRequest.ts`). Until the machine running the turn has
+registered, the gateway refuses the turn's requests with "This machine hasn't
+registered the folder's secrets to hide them yet."
+
 Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
 deployed after the cloud Worker. Each pull request preview gets its own,
 `signalbox-model-gateway-pr-<number>` at

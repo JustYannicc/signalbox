@@ -1,5 +1,9 @@
-import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
+import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+import { type SecretsAccess, secretsJson } from "@signalbox/runner-protocol/SecretsProtocol";
+import { SESSION_PATHS } from "@signalbox/runner-protocol/SessionProtocol";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import type { OnePassword } from "./RunnerOnePassword.ts";
 import type { SecretMask } from "./secretMask.ts";
@@ -21,18 +25,42 @@ import type { SecretMask } from "./secretMask.ts";
  * Every value 1Password hides by default joins the machine's mask, and so does
  * the token. A variable Signalbox sets for the harness itself (its home, its
  * model access) is never replaced: the turn says which ones it skipped.
+ *
+ * The model must not see them either (#591): before the harness gets a new
+ * set, the masked values are registered with the thread, which the
+ * ModelGateway scrubs every model request with. A registration that fails
+ * stops the turn, since the gateway serves none of its requests until then.
  */
+
+export class SecretsRegisterError extends Schema.TaggedError<SecretsRegisterError>()(
+  "SecretsRegisterError",
+  { message: Schema.String },
+) {}
 
 export interface SecretsReport {
   /** Something the thread's transcript should say: what didn't load. */
   readonly notice: (message: string) => Effect.Effect<void>;
   /** A line for the turn's diagnostics. */
   readonly info: (message: string) => Effect.Effect<void>;
+  /** Hands the thread every value to hide from the model (`SecretsProtocol.ts`). */
+  readonly register: (
+    secrets: ReadonlyArray<SecretValue>,
+  ) => Effect.Effect<void, SecretsRegisterError>;
 }
 
+/** The name the 1Password service account token is masked under: 1Password's own variable. */
+const TOKEN_NAME = "OP_SERVICE_ACCOUNT_TOKEN";
+
 export interface RunnerSecrets {
-  /** Brings the variables in line with `access`; answers their version. */
-  readonly load: (access: SecretsAccess | null, report: SecretsReport) => Effect.Effect<number>;
+  /**
+   * Brings the variables in line with `access`; answers their version. Fails
+   * when they couldn't be registered: the gateway then serves none of the
+   * turn's model requests, and the harness has none of them.
+   */
+  readonly load: (
+    access: SecretsAccess | null,
+    report: SecretsReport,
+  ) => Effect.Effect<number, SecretsRegisterError>;
   /** The variables, for a harness session as it opens. */
   readonly environment: () => Readonly<Record<string, string>>;
   /** `text` with every secret masked, for text that is cut short before it's sent. */
@@ -102,14 +130,17 @@ export const makeRunnerSecrets = (input: {
         yield* report.notice(
           "This folder's secrets come from 1Password, but no 1Password service account is connected, so none loaded. Connect one in the folder's Secrets.",
         );
+        // None to hide, which the gateway waits to hear before it serves the turn.
+        yield* report.register([]);
         return version;
       }
       if (read !== null && read.token === token && sameStrings(read.environments, environments)) {
         return version;
       }
-      input.mask.add([token]);
+      input.mask.add([{ name: TOKEN_NAME, value: token }]);
       const failures: Array<string> = [];
       const next: Record<string, string> = {};
+      const hidden: Array<SecretValue> = [];
       const skipped = new Set<string>();
       const reserved = input.reserved();
       const client = yield* input.onePassword(token).pipe(
@@ -146,9 +177,19 @@ export const makeRunnerSecrets = (input: {
             continue;
           }
           next[variable.name] = variable.value;
-          if (variable.masked) input.mask.add([variable.value]);
+          if (variable.masked) hidden.push({ name: variable.name, value: variable.value });
         }
       }
+      input.mask.add(hidden);
+      // The model must never see them, so the harness gets none the gateway doesn't know.
+      yield* report.register(hidden).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            read = null;
+            use({});
+          }),
+        ),
+      );
       read = failures.length === 0 ? { token, environments } : null;
       use(next);
       const count = Object.keys(next).length;
@@ -172,3 +213,35 @@ export const makeRunnerSecrets = (input: {
 
   return { load, environment: () => variables, mask: input.mask.text };
 };
+
+/**
+ * Registers a machine's secrets with its thread (`SESSION_PATHS.secrets`)
+ * with the turn's session token. Needs an `HttpClient`. Errors never quote
+ * the request.
+ */
+export const makeSecretsRegistrar = Effect.fn("makeSecretsRegistrar")(function* (cloudUrl: string) {
+  const http = yield* HttpClient.HttpClient;
+  const url = `${cloudUrl.replace(/\/+$/, "")}${SESSION_PATHS.secrets}`;
+  return (token: string, secrets: ReadonlyArray<SecretValue>) =>
+    Effect.gen(function* () {
+      // An HTTP error names the method and URL, never the body.
+      const notSent = (error: { readonly message: string }) =>
+        new SecretsRegisterError({ message: error.message });
+      const response = yield* http
+        .execute(
+          HttpClientRequest.post(url).pipe(
+            HttpClientRequest.bearerToken(token),
+            HttpClientRequest.bodyText(
+              secretsJson.registration.encode({ secrets }),
+              "application/json",
+            ),
+          ),
+        )
+        .pipe(Effect.mapError(notSent));
+      if (response.status === 200) return;
+      const answer = yield* response.text.pipe(Effect.mapError(notSent));
+      return yield* new SecretsRegisterError({
+        message: `the cloud answered HTTP ${response.status}: ${answer.slice(0, 200)}`,
+      });
+    });
+});
