@@ -97,7 +97,7 @@ export const BrowsingPosition = Schema.Struct({
 });
 export type BrowsingPosition = typeof BrowsingPosition.Type;
 
-export const BROWSING_SHARE_MAX_DAYS = 30;
+const BROWSING_SHARE_MAX_DAYS = 30;
 
 /**
  * Who besides its owner may see a shared tab: everyone who can see the

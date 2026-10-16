@@ -280,7 +280,7 @@ export function browsingTabSnapshot(threadId: ThreadId, tab: BrowsingTab): Previ
  * How long the clients offer to share a tab for, as the end of "Share …" or
  * "Keep sharing …". Null days: until the owner stops.
  */
-export const BROWSING_SHARE_CHOICES = [
+const BROWSING_SHARE_CHOICES = [
   { days: null, label: "until I stop" },
   { days: 1, label: "for a day" },
   { days: 3, label: "for 3 days" },
