@@ -70,7 +70,8 @@ export class PullRequestMerges extends Context.Service<
     /**
      * Deletes a merged or closed pull request's head branch the way upstream's
      * delete-branch does: never a default or base branch, and only while it is
-     * still at the pull request's head. False when it was gone already.
+     * still at the pull request's head. Also never one another open pull
+     * request builds on or comes from. False when it was gone already.
      */
     readonly deleteBranch: (target: PullRequestTarget) => Effect.Effect<boolean, GitHubError>;
   }
@@ -94,6 +95,18 @@ const FILES_QUERY = `query PullRequestMergeFiles($owner: String!, $name: String!
       files(first: 100, after: $after) { nodes { path } pageInfo { hasNextPage endCursor } }
     }
   }
+}`;
+/**
+ * Open pull requests that build on `branch` or come from it, in the pull
+ * request's repository and in the one the branch lives in (a fork's own).
+ */
+const BRANCH_USERS_QUERY = `query PullRequestBranchUsers($owner: String!, $name: String!, $repositoryId: ID!, $branch: String!) {
+  repository(owner: $owner, name: $name) { ...BranchUsers }
+  node(id: $repositoryId) { ... on Repository { ...BranchUsers } }
+}
+fragment BranchUsers on Repository {
+  asBase: pullRequests(states: OPEN, baseRefName: $branch, first: 1) { totalCount }
+  asHead: pullRequests(states: OPEN, headRefName: $branch, first: 1) { totalCount }
 }`;
 const DELETE_BRANCH_MUTATION = `mutation DeletePullRequestBranch($input: UpdateRefsInput!) {
   updateRefs(input: $input) { clientMutationId }
@@ -142,6 +155,13 @@ const decodeBranch = Schema.decodeUnknownOption(
 );
 const decodeSource = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ data: PullRequestSourceBranch.result })),
+);
+const Count = Schema.Struct({ totalCount: Schema.Number });
+const BranchUsers = Schema.NullOr(Schema.Struct({ asBase: Count, asHead: Count }));
+const decodeBranchUsers = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ data: Schema.Struct({ repository: BranchUsers, node: BranchUsers }) }),
+  ),
 );
 const decodeDeleted = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -340,12 +360,24 @@ const make = Effect.gen(function* () {
     if (branch.headRefName === branch.baseRefName)
       return yield* refused("Its branch is also its base.");
     const ref = `refs/heads/${branch.headRefName}`;
-    const source = yield* query(
-      operation,
-      token,
-      PullRequestSourceBranch.document,
-      { repositoryId, ref },
-      decodeSource,
+    const [source, users] = yield* Effect.all(
+      [
+        query(
+          operation,
+          token,
+          PullRequestSourceBranch.document,
+          { repositoryId, ref },
+          decodeSource,
+        ),
+        query(
+          operation,
+          token,
+          BRANCH_USERS_QUERY,
+          { ...ownerAndName(target.repository), repositoryId, branch: branch.headRefName },
+          decodeBranchUsers,
+        ),
+      ],
+      { concurrency: 2 },
     );
     const repository = source.data.node;
     if (repository?.__typename !== "Repository")
@@ -359,6 +391,13 @@ const make = Effect.gen(function* () {
       return yield* refused("Its branch is the repository's default branch.");
     if (repository.ref.target?.oid !== branch.headRefOid)
       return yield* refused("Its branch has commits the pull request doesn't, so it stays.");
+    // Deleting a branch another open pull request builds on closes that one, and one
+    // that comes from it loses its commits. A namesake elsewhere counts too; it stays.
+    const { repository: here, node: there } = users.data;
+    if (here === null || there === null)
+      return yield* refused("Its repository's other pull requests can't be read, so it stays.");
+    if ([here, there].some((users) => users.asBase.totalCount + users.asHead.totalCount > 0))
+      return yield* refused("Another open pull request uses its branch, so it stays.");
     const deleted = yield* query(
       operation,
       token,

@@ -18,18 +18,25 @@ const ASK_EVERY_TIME = false;
 
 /**
  * Changes a person approves before they merge, because merging them is hard
- * to take back. A changed path matching \`paths\` makes the gate ask. Add this
- * folder's own, e.g. infrastructure or billing.
+ * to take back. A changed path matching \`paths\` makes the gate ask. Most match
+ * a word anywhere in the path on purpose: a needless question costs a tap, a
+ * missed one merges a migration nobody saw. Add this folder's own, e.g.
+ * infrastructure or billing.
  */
 const HARD_TO_UNDO = [
-  { why: "a database migration", paths: /(^|\\/)(migrations?|migrate)\\/|\\.sql$/i },
+  {
+    why: "a database migration",
+    paths: /migrat|\\.sql$|(^|\\/)schema\\.(prisma|rb)$/i,
+  },
+  // Cloudflare's config also holds Durable Object migrations, which can delete their data.
+  { why: "the Workers config (wrangler)", paths: /(^|\\/)wrangler\\.(jsonc?|toml)$/i },
   {
     why: "sign-in or access control",
-    paths: /(^|\\/)(o?auth(?!or)|log-?in|sign-?in|sessions?|permissions?|access-?control)[a-z0-9]*([._-][^/]*)?(\\/|$)/i,
+    paths: /auth(?!ors?([^a-z]|$))|log[-_]?in(?!g|put|dex)|sign[-_]?in(?!g|put|dex)|permission|access[-_]?control|rbac|credential|secret|(^|[\\/._-])(sessions?|acl|roles?|scopes?|grants?)([\\/._-]|$)/i,
   },
   {
     why: "deleting or rewriting stored data",
-    paths: /(^|\\/)(backfills?|data-?migrations?|purge)[a-z0-9]*([._-][^/]*)?(\\/|$)/i,
+    paths: /backfill|purge|retention|(^|[^s])wipe/i,
   },
 ];
 

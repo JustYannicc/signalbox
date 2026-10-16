@@ -34,6 +34,29 @@ describe("a cloud thread merges its pull request through the Merge gate", () => 
     );
   });
 
+  it.effect("a branch another open pull request builds on stays after the merge", () => {
+    const { cloud, github, open, tool, messages, run } = makePullRequestThread();
+    return run(
+      Effect.gen(function* () {
+        const { rpc } = yield* open;
+        github.update(1, { checks: [...PASSED], files: ["app.ts"] });
+        yield* cloud.syncPullRequests(threadId);
+        const branch = github.pulls[0]!.head;
+        const head = github.head(branch);
+        github.pulls.push({ ...github.pulls[0]!, number: 2, head: "stacked", base: branch });
+
+        yield* tool("merge_pull_request", { url: URL });
+        yield* cloud.settle;
+
+        expect(github.pulls[0]).toMatchObject({ merged: true });
+        expect(github.head(branch)).toBe(head);
+        expect(yield* messages(rpc)).toContain(
+          `Merged owner/repo#1 (${URL}) at ${head!.slice(0, 7)} (ready and easy to undo). Wrap up and hand the work back.`,
+        );
+      }),
+    );
+  });
+
   it.effect("an unready one goes back to the agent, and nothing merges", () => {
     const { cloud, github, open, tool, messages, run } = makePullRequestThread();
     return run(

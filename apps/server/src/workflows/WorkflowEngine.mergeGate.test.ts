@@ -470,6 +470,22 @@ it.effect("the agent's reason or missing evidence makes it ask", () => {
       askBecause: "Which plan gets this is undecided.",
       says: "the agent asks: Which plan gets this is undecided.",
     },
+    {
+      read: { ...READY, files: ["packages/contracts/src/clientRpcPermissions.ts"] },
+      says: "it changes sign-in or access control (packages/contracts/src/clientRpcPermissions.ts)",
+    },
+    {
+      read: { ...READY, files: ["apps/cloud/src/storage/migrations.ts"] },
+      says: "it changes a database migration (apps/cloud/src/storage/migrations.ts)",
+    },
+    {
+      read: { ...READY, files: ["apps/web/src/CloudAuthProvider.tsx"] },
+      says: "it changes sign-in or access control",
+    },
+    {
+      read: { ...READY, files: ["apps/server/src/threadRetention.ts"] },
+      says: "it changes deleting or rewriting stored data",
+    },
     { read: BASICS, says: "the checks at the head couldn't be read" },
     { read: { ...READY, checks: [] }, says: "no checks ran at the head" },
   ];

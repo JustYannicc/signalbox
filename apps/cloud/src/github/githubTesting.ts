@@ -213,6 +213,15 @@ export const makeFakeGitHub = (options: {
         },
       });
     }
+    if (query.startsWith("query PullRequestBranchUsers(")) {
+      const { branch } = JSON.parse(text).variables as { branch: string };
+      const open = pulls.filter((candidate) => candidate.state === "open");
+      const count = (side: "base" | "head") => ({
+        totalCount: open.filter((candidate) => candidate[side] === branch).length,
+      });
+      const users = { asBase: count("base"), asHead: count("head") };
+      return json({ data: { repository: users, node: users } });
+    }
     if (query.startsWith("mutation DeletePullRequestBranch(")) {
       const { input } = JSON.parse(text).variables as {
         input: { refUpdates: Array<{ name: string; beforeOid: string }> };
