@@ -800,11 +800,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadBrowsing: createNativeStackScreen({
       screen: SyncedBrowserRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/browsing`,
-      options: {
-        presentation: "fullScreenModal",
-        headerShown: false,
-        gestureEnabled: false,
-      },
+      options: SOLID_HEADER_OPTIONS,
     }),
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,

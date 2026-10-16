@@ -1,56 +1,39 @@
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { browsingTabHost, browsingTabLabel } from "@t3tools/client-runtime/browsing";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { BrowsingTab } from "@t3tools/contracts/signalboxBrowsing";
 import { useCallback, useEffect, useState } from "react";
-import { AppState, Platform, View } from "react-native";
+import { AppState, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar, type AppBarMenuItem } from "../../components/ui/AppBar";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { Toolbar } from "../../components/ui/Toolbar";
 import { useBrowsingDispatch, useThreadBrowsing } from "../../state/browsing";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { uuidv4 } from "../../lib/uuid";
 import { shownBrowsingTab, type PendingActivation } from "./syncedBrowsing";
 import { SyncedBrowserTab } from "./SyncedBrowserTab";
 
-const SyncedBrowserStack = createNativeStackNavigator<{ SyncedBrowser: undefined }>();
-
 type SyncedBrowserRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
 }>;
 
-/** A thread's synced tabs (#585), loaded in this device's own WebView. */
+/**
+ * A thread's synced tabs (#585), loaded in this device's own WebView. Pushed
+ * like the terminal, so its header is the workspace stack's own.
+ */
 export function SyncedBrowserRouteScreen({ route }: SyncedBrowserRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <SyncedBrowserStack.Navigator
-        screenOptions={{
-          headerShown: Platform.OS === "ios",
-          headerBackVisible: false,
-          headerShadowVisible: false,
-          headerTransparent: false,
-          headerTitleStyle: { fontSize: 17, fontWeight: "600" },
-        }}
-      >
-        <SyncedBrowserStack.Screen name="SyncedBrowser">
-          {() => (
-            <SyncedBrowserScreen
-              environmentId={EnvironmentId.make(route.params.environmentId)}
-              threadId={ThreadId.make(route.params.threadId)}
-              onClose={onClose}
-            />
-          )}
-        </SyncedBrowserStack.Screen>
-      </SyncedBrowserStack.Navigator>
-    </View>
+    <SyncedBrowserScreen
+      environmentId={EnvironmentId.make(route.params.environmentId)}
+      threadId={ThreadId.make(route.params.threadId)}
+      onClose={onClose}
+    />
   );
 }
 
@@ -126,7 +109,6 @@ function SyncedBrowserScreen(props: {
         title={tab ? browsingTabLabel(tab) : "Browser"}
         sidebar={false}
         onBack={onClose}
-        options={{ headerBackVisible: false }}
         menus={
           record === null
             ? []
@@ -142,16 +124,6 @@ function SyncedBrowserScreen(props: {
               ]
         }
       />
-      {Platform.OS === "ios" ? (
-        <Toolbar placement="left">
-          <Toolbar.Button
-            icon="xmark"
-            accessibilityLabel="Close browser"
-            onPress={onClose}
-            separateBackground
-          />
-        </Toolbar>
-      ) : null}
       {tab !== null && state !== null ? (
         <SyncedBrowserTab
           key={tab.id}
