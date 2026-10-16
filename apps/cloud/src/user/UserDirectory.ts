@@ -11,6 +11,7 @@ import type { CommitAuthor } from "@signalbox/runner-protocol/DriveProtocol";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import type { SignalboxDrive, SignalboxDriveRole } from "@t3tools/contracts/signalboxDrives";
+import type { SignInSource } from "@t3tools/contracts/signalboxSignIn";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -29,6 +30,7 @@ import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
 import type { LocalKeysView, LocalModelAuthorization } from "../localKeys/localModelAccess.ts";
 import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
+import type { SignInCheck } from "../signIn/SignInGrants.ts";
 import type {
   PreviewSetupApplied,
   PreviewSetupRedemption,
@@ -201,6 +203,17 @@ export interface UserObjectApi {
     readonly threadId: string;
     readonly requester: string;
   }) => Promise<BrowserSessionAnswer>;
+  /**
+   * The login service's check before signing a turn in (#575, #576): whether
+   * a standing grant of this person's covers `origin` for `source`. Their
+   * own 1Password answers only turns they requested; a folder's grants
+   * decide for its turns whoever is talking.
+   */
+  readonly checkSignIn: (input: {
+    readonly requester: string;
+    readonly source: SignInSource;
+    readonly origin: string;
+  }) => Promise<SignInCheck>;
   /** Ends the thread's session in the person's browser, which saves its profile. */
   readonly endBrowser: (input: {
     readonly threadId: string;
@@ -298,6 +311,7 @@ const METHODS = Object.keys({
   publishBranch: true,
   automationTool: true,
   browserSession: true,
+  checkSignIn: true,
   endBrowser: true,
   automationHost: true,
   automationWorkerModule: true,

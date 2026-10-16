@@ -75,6 +75,7 @@ import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LocalKeys from "./localKeys/LocalKeys.ts";
+import * as SignInGrants from "./signIn/SignInGrants.ts";
 import * as LegacySections from "./user/legacySections.ts";
 import * as CloudEngine from "./automations/cloudEngine.ts";
 import type { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
@@ -277,6 +278,7 @@ const makeUserRuntime = (
               GitHubConnection.layer,
               ConnectionLinks.layer,
               LocalKeys.layer,
+              SignInGrants.layer,
               PoolSignIns.layer,
               CloudThreadService.layer,
               PersonBrowsers.layer(kernel),

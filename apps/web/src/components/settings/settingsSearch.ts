@@ -27,6 +27,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/pools" // signalbox
+  | "/settings/sign-in" // signalbox: sign-in grants
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
@@ -90,6 +91,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/pools": "Pools", // signalbox
+  "/settings/sign-in": "Sign-in", // signalbox: sign-in grants
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
@@ -140,6 +142,15 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
 );
 
 export const SETTINGS_SEARCH_ITEMS = [
+  // signalbox: sign-in grants
+  {
+    id: "sign-in-grants",
+    title: "Sign in everywhere",
+    to: "/settings/sign-in",
+    targetId: "sign-in-grants",
+    searchTerms: ["1password agents log in login sites allow revoke grants passwords browser"],
+    cloudOnly: true,
+  },
   {
     id: "storage-worktree-keep-when",
     capability: "serverSettingsWrite",
@@ -1053,6 +1064,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/pools": null, // signalbox
+  "/settings/sign-in": null, // signalbox: sign-in grants
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",

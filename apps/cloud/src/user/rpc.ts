@@ -58,6 +58,10 @@ import {
   SIGNALBOX_KEYS_WS_METHODS,
 } from "@t3tools/contracts/signalboxKeys";
 import {
+  SIGNALBOX_SIGN_IN_REQUIRED_SCOPES,
+  SIGNALBOX_SIGN_IN_WS_METHODS,
+} from "@t3tools/contracts/signalboxSignIn";
+import {
   SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   SIGNALBOX_REPOSITORIES_WS_METHODS,
 } from "@t3tools/contracts/signalboxRepositories";
@@ -91,6 +95,7 @@ import { poolFallbackModelSelection } from "../pool/poolViews.ts";
 import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
+import { makeSignInHandlers } from "../signIn/signInRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -182,6 +187,7 @@ const SERVED = [
   ...Object.values(SIGNALBOX_REPOSITORIES_WS_METHODS),
   ...Object.values(SIGNALBOX_THREAD_KINDS_WS_METHODS),
   ...Object.values(SIGNALBOX_KEYS_WS_METHODS),
+  ...Object.values(SIGNALBOX_SIGN_IN_WS_METHODS),
   ...SECTION_METHODS,
   ...POOL_METHODS,
   // The user's automations (`automations/`), run on this object.
@@ -256,6 +262,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES,
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES,
   ...SIGNALBOX_KEYS_REQUIRED_SCOPES,
+  ...SIGNALBOX_SIGN_IN_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires (`apps/server/src/sections/rpcScopes.ts`).
   [WS_METHODS.sectionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.sectionsCreate]: AuthOrchestrationOperateScope,
@@ -447,11 +454,13 @@ export const layerHandlers = (input: {
         userId,
         scopes: input.scopes ?? AuthStandardClientScopes,
       });
+      const signIn = yield* makeSignInHandlers({ userId });
       return {
         ...pools.handlers,
         ...pushes,
         ...automations,
         ...keys,
+        ...signIn,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
         [WS_METHODS.serverGetConfig]: () => pools.configNow,
         [WS_METHODS.serverProbe]: () => Effect.succeed({}),

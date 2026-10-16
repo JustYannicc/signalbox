@@ -25,7 +25,8 @@
     "diff": "8.0.3",
     "effect": "catalog:",
     "fractional-indexing": "4.0.0",
-    "jose": "catalog:"
+    "jose": "catalog:",
+    "tldts": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",

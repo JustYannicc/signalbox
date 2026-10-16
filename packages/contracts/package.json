@@ -71,6 +71,10 @@
       "types": "./src/signalboxKeys.ts",
       "import": "./src/signalboxKeys.ts"
     },
+    "./signalboxSignIn": {
+      "types": "./src/signalboxSignIn.ts",
+      "import": "./src/signalboxSignIn.ts"
+    },
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"

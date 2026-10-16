@@ -21,6 +21,7 @@ import {
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { targetsSupporting } from "./signalboxSettingsTargets"; // signalbox
 import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
+import { SignInSettingsRow } from "../signIn/SignInSettingsRow"; // signalbox: sign-in grants
 import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 
@@ -183,6 +184,7 @@ function SettingsIndexSections() {
       <SettingsSection title="Automations">
         {/* signalbox: automations */}
         <AutomationsSettingsRows />
+        <SignInSettingsRow /> {/* signalbox: sign-in grants */}
         {/* signalbox: hidden where no selected environment runs them. */}
         {!noServerTargets &&
         targetsSupporting(selectedTargets, "scheduledTasks").length === 0 ? null : (

@@ -30,6 +30,7 @@ import * as ResourceBindings from "./ResourceBindings.ts";
 import * as FolderTables from "./folderTables.ts";
 import * as ThreadKindTables from "./threadKindTables.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
+import * as SignInTables from "../signIn/signInTables.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserSections from "./UserSections.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
@@ -211,6 +212,7 @@ const migrations = Migrator.fromRecord({
   "0015_folder_secrets": Effect.andThen(FolderTables.addSecrets, OnePasswordAccount.createTables),
   "0016_local_keys": LocalKeys.createTables,
   "0017_api_keys": LocalKeys.addApiScopes,
+  "0018_sign_in_grants": SignInTables.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
