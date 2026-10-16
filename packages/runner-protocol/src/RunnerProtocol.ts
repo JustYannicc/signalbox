@@ -109,8 +109,30 @@ export const RunnerTurn = Schema.Struct({
    * as a new request where the adapter can (Codex continues natively).
    */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /**
+   * `message`'s text for a new harness session: the conversation so far, then
+   * the message. Set on a turn that resumes a session natively, so a Runner
+   * whose resume fails starts fresh on it (`onFreshSession`) rather than with
+   * no conversation (#653).
+   */
+  freshSessionText: Schema.optional(Schema.String),
 });
 export type RunnerTurn = typeof RunnerTurn.Type;
+
+/**
+ * `turn` on a new harness session whose prompt is `text`: it counts from 1,
+ * resumes nothing, and has nothing to continue, so the harness takes the
+ * prompt as the request.
+ */
+export const onFreshSession = <T extends Omit<RunnerTurn, "traceId">>(turn: T, text: string) => {
+  const { restartContinuationOfRunId: _continued, freshSessionText: _fresh, ...rest } = turn;
+  return {
+    ...rest,
+    providerTurnOrdinal: 1,
+    providerThread: { ...turn.providerThread, nativeThreadRef: null },
+    message: { ...turn.message, text },
+  };
+};
 
 /**
  * What the machine used since this Runner session began, measured from the

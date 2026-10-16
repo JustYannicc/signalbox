@@ -111,8 +111,16 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
     starting && work.secrets.length > 0
       ? await host.run(runner.use((service) => service.secretsToken))
       : null;
+  // Asked the same way, and only for a turn that resumes its harness session.
+  const handed = work.turn;
+  const freshSessionText =
+    starting && handed !== null && handed.providerThread.nativeThreadRef !== null
+      ? await host.run(runner.use((service) => service.freshSessionText(handed)))
+      : null;
   const drive: DriveAccess | null =
     work.drive === null || author === null ? work.drive : { ...work.drive, author };
+  const turn =
+    handed === null || freshSessionText === null ? handed : { ...handed, freshSessionText };
   for (const socket of host.ctx.getWebSockets(RUNNER_TAG)) {
     const attachment = attachmentOf(socket);
     if (attachment === null || attachment.generation !== work.generation) continue;
@@ -124,14 +132,14 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentSteers = 0;
     }
     if (
-      work.turn !== null &&
+      turn !== null &&
       work.modelToken !== null &&
       work.sessions !== null &&
-      sentRunId !== work.turn.runId
+      sentRunId !== turn.runId
     ) {
       send(socket, {
         type: "turn.start",
-        turn: work.turn,
+        turn,
         modelToken: work.modelToken,
         drive,
         sessions: work.sessions,
@@ -140,7 +148,7 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
           ? {}
           : { secrets: { token: secretsToken, environments: work.secrets } }),
       });
-      sentRunId = work.turn.runId;
+      sentRunId = turn.runId;
       sentSteers = 0;
     }
     // Steers count from the oldest, so the ones not handed out yet are the tail.

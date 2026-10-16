@@ -16,6 +16,7 @@ import {
   liveTurn,
   owner,
   personal,
+  saveSession,
   send,
   snapshot,
   threadId,
@@ -380,6 +381,56 @@ describe("runnerSockets", () => {
             message.type === "steer" ? [message.message.messageId] : [],
           ),
         ).toEqual(["message-3", "message-2"]);
+      }),
+    ),
+  );
+
+  // #653: a resume that fails on the machine must not start a session with no conversation.
+  it.effect("hands a turn that resumes its session the conversation for a new one", () =>
+    withObject(freshDatabase(), (engine, runner, context) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const first = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: first.generation,
+          sequence: 1,
+          items: [report.started, report.full, report.terminal],
+        });
+        yield* saveSession(context, "claude-session-1");
+        yield* runner.ended(first.generation, "test");
+        yield* send(engine, 2, "Again");
+
+        const plan = yield* runner.reconcile;
+        if (plan.ensure === null) throw new Error("expected a machine request");
+        yield* runner.ensured(plan.ensure.generation);
+        const sockets: Array<WebSocket> = [];
+        const host = yield* hostFor(runner, sockets);
+        const socket = fakeSocket();
+        sockets.push(socket.socket);
+        yield* say(host, socket, {
+          ...hello(plan.ensure.generation, plan.ensure.token),
+          takenRunIds: [],
+        });
+        const start = socket.sent.find((message) => message.type === "turn.start");
+        if (start?.type !== "turn.start") throw new Error("expected the turn");
+        expect(start.turn).toMatchObject({
+          providerTurnOrdinal: 2,
+          message: { text: "Again" },
+          providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
+        });
+        expect(start.turn.freshSessionText).toContain("User:\nHi\n\nAssistant:\nHello!\n\n");
+        expect(start.turn.freshSessionText?.endsWith("User message:\nAgain")).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("hands a turn on a new session no second copy of the conversation", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { turn } = yield* runningTurn(engine, runner, false);
+        expect(turn.freshSessionText).toBeUndefined();
       }),
     ),
   );
