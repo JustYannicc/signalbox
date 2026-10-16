@@ -40,7 +40,7 @@ export const BROWSER_SERVER_NAME = "t3-code";
 
 export const BROWSER_INSTRUCTIONS = [
   "The preview_* tools open each URL in the right browser for it. Your own work (localhost, this machine's ports and network) opens in a headless browser here, with no logins or cookies: start the dev server in the background, then open it at http://localhost:<port> (or preview_navigate with target {kind:'environment-port',port}).",
-  "Real sites open in the person's own cloud browser, signed in as them with the logins they have saved there. Act there as they would, and stop to ask before anything they'd want to decide: paying, sending, deleting, accepting terms. If a site asks you to sign in, call sign_in: it signs the person's browser in with their saved 1Password login, which you never see, and their tabs reload signed in. Never type a password or code yourself. When sign_in can't, do what its message says, and never retry a failed one. A tab moves between the two browsers when its URL does, so dev tabs never carry the person's cookies.",
+  "Real sites open in the person's own cloud browser, signed in as them with the logins they have saved there. Act there as they would, and stop to ask before anything they'd want to decide: sending, deleting, accepting terms. Payments go to the person to finish: call needs_you_payment right before paying, and keep calling it until they answer. If a site asks you to sign in, call sign_in: it signs the person's browser in with their saved 1Password login, which you never see, and their tabs reload signed in. Never type a password or code yourself. When sign_in can't, do what its message says, and never retry a failed one. A tab moves between the two browsers when its URL does, so dev tabs never carry the person's cookies.",
   "preview_snapshot returns the page's text, accessibility tree, console and network entries. To show the user a screenshot, call preview_snapshot with save=true: it appears in this thread with the tool call. Files on this machine can't be embedded in your reply.",
 ].join("\n");
 
@@ -59,8 +59,14 @@ const run = <A>(operation: () => Promise<A>) =>
       new ToolError({ message: cause instanceof Error ? cause.message : String(cause) }),
   });
 
-const answer = <A>(operation: () => Promise<A>) =>
+/** The tool's answer: the operation's result as JSON, or its error for the agent. */
+export const answer = <A>(operation: () => Promise<A>) =>
   Effect.map(run(operation), (result) => json(result ?? { ok: true }));
+
+const SCREENSHOT_WITHHELD =
+  "No screenshot: the page shows a card number. Read the page from the snapshot's text, where card numbers are masked.";
+const SAVE_WITHHELD =
+  "No screenshot saved: the page shows a card number. Call preview_snapshot without save to read the page's text, where card numbers are masked.";
 
 /**
  * A snapshot as the agent reads it. The screenshot rides along as an image
@@ -71,13 +77,22 @@ const presentSnapshot = (
   options: { readonly includeImage: boolean; readonly save: boolean },
 ): ReadonlyArray<McpSchema.ContentBlock> => {
   const { screenshot, ...page } = snapshot;
+  // Withheld (`WITHHELD_SCREENSHOT`): the page shows a card number.
+  const withheld = screenshot.data === "";
   const image: McpSchema.ContentBlock = {
     type: "image",
     data: Buffer.from(screenshot.data, "base64"),
     mimeType: screenshot.mimeType,
   };
   if (options.save && !options.includeImage)
-    return [{ type: "text", text: json({ url: page.url, savedToThread: true }) }, image];
+    return withheld
+      ? [
+          {
+            type: "text",
+            text: json({ url: page.url, savedToThread: false, screenshot: SAVE_WITHHELD }),
+          },
+        ]
+      : [{ type: "text", text: json({ url: page.url, savedToThread: true }) }, image];
   const metadata = {
     ...page,
     visibleText: cut(page.visibleText, SNAPSHOT_TEXT_LIMITS.visibleText),
@@ -91,15 +106,13 @@ const presentSnapshot = (
     networkEntries: page.networkEntries
       .slice(-SNAPSHOT_ENTRY_LIMIT)
       .map((entry) => ({ ...entry, url: cut(entry.url, SNAPSHOT_TEXT_LIMITS.entry) })),
-    screenshot: {
-      mimeType: screenshot.mimeType,
-      width: screenshot.width,
-      height: screenshot.height,
-    },
+    screenshot: withheld
+      ? SCREENSHOT_WITHHELD
+      : { mimeType: screenshot.mimeType, width: screenshot.width, height: screenshot.height },
   };
   return [
     { type: "text", text: json(metadata) },
-    ...(options.includeImage || options.save ? [image] : []),
+    ...((options.includeImage || options.save) && !withheld ? [image] : []),
   ];
 };
 

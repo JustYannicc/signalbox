@@ -14,6 +14,10 @@ import { type LocateNode, makeInputDriver } from "./RunnerBrowserInput.ts";
  * hand-back, failing after `AGENT_WAIT_MS`. The tab returns to the agent on
  * `handBack`: the viewer let go or left, the tab closed, or two minutes
  * passed without input.
+ *
+ * A tab can also be handed to the person outright (`hold`, #579): the agent
+ * waits on it while nobody drives too, any of the person's viewers may take
+ * it, and handing it back leaves it with the person until the hold ends.
  */
 
 /** Codex fails an MCP call after 60 seconds; the agent hears why before that. */
@@ -22,6 +26,8 @@ export const DRIVER_IDLE_MS = 2 * 60_000;
 
 export const PERSON_DRIVING = "The person is driving this tab. Call it again to keep waiting.";
 export const IDLE_HAND_BACK = "Handed back after 2 minutes without input.";
+export const PAYMENT_WAITING =
+  "The person is finishing a payment in this tab. Call needs_you_payment to wait for them.";
 
 /** Runs `run` after `ms`; returns how to cancel it. */
 export type Timer = (run: () => void, ms: number) => () => void;
@@ -52,6 +58,10 @@ export interface TabControl<V> {
   readonly handBack: (notice: string | null) => void;
   /** Waits for the agent's turn, then marks its action until the returned `done`. */
   readonly agentTurn: () => Promise<() => void>;
+  /** The agent waits on the tab: a person drives it, holds it, or is handing it back. */
+  readonly personal: () => boolean;
+  /** Hands the tab to the person until called with false, which gives it back; false when nothing changed. */
+  readonly hold: (on: boolean) => boolean;
 }
 
 interface Driving<V> {
@@ -80,6 +90,10 @@ export const makeTabControl = <V>(options: {
   let driving: Driving<V> | null = null;
   /** The agent waits while a person drives and until the hand-back settled. */
   let blocked = false;
+  /** Handed to the person (`hold`): handing back keeps the agent waiting. */
+  let held = false;
+  /** Hand-backs whose input hasn't settled yet. */
+  let settling = 0;
   let generation = 0;
   let agents = 0;
   const turns = new Set<() => void>();
@@ -98,11 +112,18 @@ export const makeTabControl = <V>(options: {
     }, DRIVER_IDLE_MS);
   };
 
+  const unblock = () => {
+    blocked = false;
+    for (const wake of turns) wake();
+    turns.clear();
+  };
+
   function handBack(notice: string | null) {
     const current = driving;
     if (current === null) return;
     driving = null;
     generation += 1;
+    settling += 1;
     current.cancelIdle();
     void current.tail
       .then(async () => {
@@ -114,10 +135,8 @@ export const makeTabControl = <V>(options: {
       })
       .catch(constVoid)
       .finally(() => {
-        if (driving !== null) return;
-        blocked = false;
-        for (const wake of turns) wake();
-        turns.clear();
+        settling -= 1;
+        if (driving === null && !held && settling === 0) unblock();
       });
     options.changed({ viewer: current.viewer, notice });
   }
@@ -177,7 +196,7 @@ export const makeTabControl = <V>(options: {
             reject(
               new ServerBrowserPage.ServerBrowserOperationError(
                 "PreviewAutomationExecutionError",
-                PERSON_DRIVING,
+                held ? PAYMENT_WAITING : PERSON_DRIVING,
               ),
             );
           }, AGENT_WAIT_MS);
@@ -193,6 +212,21 @@ export const makeTabControl = <V>(options: {
         for (const resolve of drains) resolve();
         drains.clear();
       };
+    },
+    personal: () => blocked,
+    hold: (on) => {
+      if (on === held) return false;
+      held = on;
+      // Whoever drives lets go, and the tab is the agent's once their input settled.
+      if (!on && driving !== null) {
+        handBack(null);
+        return true;
+      }
+      generation += 1;
+      if (on) blocked = true;
+      else if (settling === 0) unblock();
+      options.changed(null);
+      return true;
     },
   };
 };
