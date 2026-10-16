@@ -63,6 +63,7 @@ import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
+import { SyncedBrowserRouteScreen } from "./features/browser/SyncedBrowserRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -564,6 +565,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ThreadReviewComment",
   "ThreadDevicePreview",
   "ThreadBrowserPreview",
+  "ThreadBrowsing", // signalbox: synced tabs (#585)
   "ThreadSettingsSheet",
 ]);
 
@@ -788,6 +790,16 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadBrowserPreview: createNativeStackScreen({
       screen: BrowserPreviewRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/browser`,
+      options: {
+        presentation: "fullScreenModal",
+        headerShown: false,
+        gestureEnabled: false,
+      },
+    }),
+    // signalbox: a thread's synced tabs in this device's own WebView (#585).
+    ThreadBrowsing: createNativeStackScreen({
+      screen: SyncedBrowserRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/browsing`,
       options: {
         presentation: "fullScreenModal",
         headerShown: false,

@@ -45,6 +45,7 @@ import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
+import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as KindClassifier from "./threadKinds/KindClassifier.ts";
@@ -209,6 +210,7 @@ export const layerThreadObject = (
         token: options.secretsToken ?? (() => Effect.succeed(null)),
       }),
     ),
+    Layer.provideMerge(ThreadBrowsing.layer),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
@@ -355,6 +357,7 @@ export const makeMemoryCloud = (
           | ThreadEngine.ThreadEngine
           | ThreadStore.ThreadStore
           | UserDirectory.UserDirectory
+          | ThreadBrowsing.ThreadBrowsing
           | PullRequestSync.PullRequestSync
           | PullRequestPolls.PullRequestPolls
         >,
@@ -451,6 +454,7 @@ export const makeMemoryCloud = (
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
+        | ThreadBrowsing.ThreadBrowsing
         | PullRequestSync.PullRequestSync
         | PullRequestPolls.PullRequestPolls
       >,

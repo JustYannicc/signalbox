@@ -55,6 +55,10 @@
       "types": "./src/signalboxThreadKinds.ts",
       "import": "./src/signalboxThreadKinds.ts"
     },
+    "./signalboxBrowsing": {
+      "types": "./src/signalboxBrowsing.ts",
+      "import": "./src/signalboxBrowsing.ts"
+    },
     "./signalboxPreviews": {
       "types": "./src/signalboxPreviews.ts",
       "import": "./src/signalboxPreviews.ts"

@@ -18,6 +18,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
 import { migrateDiagnostics } from "./diagnostics/DiagnosticsStore.ts";
+import { migrateBrowsing } from "./browsing/browsingTables.ts";
 import { migratePullRequestPolls } from "./pullRequests/PullRequestPolls.ts";
 import { type MachineRecord, MachineRecords, NO_MACHINE_RECORD } from "./runner/MachineBackend.ts";
 import { type ThreadMonitor, ThreadMonitorWire } from "./threadWire.ts";
@@ -264,6 +265,8 @@ const migrations = Migrator.fromRecord({
       monitors TEXT NOT NULL
     )`;
   }),
+  // The thread's browser tabs and their recent changes (#585, `browsing/browsingTables.ts`).
+  "0010_browsing": migrateBrowsing,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

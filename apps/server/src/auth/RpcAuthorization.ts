@@ -41,6 +41,7 @@ import { SIGNALBOX_DRIVES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxDr
 import { SIGNALBOX_FOLDERS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxFolders"; // signalbox: folders
 import { SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxThreadKinds"; // signalbox: thread kinds
 import { SIGNALBOX_PREVIEWS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
+import { SIGNALBOX_BROWSING_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxBrowsing"; // signalbox: browsing
 import { SIGNALBOX_PUSH_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPush"; // signalbox: push devices
 import { SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxRepositories"; // signalbox: repositories
 import { SIGNALBOX_KEYS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxKeys"; // signalbox: personal keys
@@ -58,6 +59,7 @@ export const RPC_REQUIRED_SCOPES = {
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES, // signalbox: folders
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES, // signalbox: thread kinds
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES, // signalbox: previews
+  ...SIGNALBOX_BROWSING_REQUIRED_SCOPES, // signalbox: browsing
   ...SIGNALBOX_PUSH_REQUIRED_SCOPES, // signalbox: push devices
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES, // signalbox: repositories
   ...SIGNALBOX_KEYS_REQUIRED_SCOPES, // signalbox: personal keys

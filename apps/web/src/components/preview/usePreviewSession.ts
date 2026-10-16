@@ -11,6 +11,8 @@ import {
   readThreadPreviewState,
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
+import { threadBrowsingSyncAtom } from "~/browsing/threadBrowsingSync"; // signalbox: synced tabs (#585)
+import { useEnvironmentSupportsThreadBrowsing } from "~/state/browsing"; // signalbox: synced tabs (#585)
 import { previewEnvironment } from "~/state/preview";
 
 class PreviewSessionThreadKeyParseError extends Schema.TaggedError<PreviewSessionThreadKeyParseError>()(
@@ -88,5 +90,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 });
 
 export function usePreviewSession(threadRef: ScopedThreadRef): void {
-  useAtomValue(previewSessionSyncAtom(scopedThreadKey(threadRef)));
+  // signalbox: Signalbox Cloud keeps a thread's tabs in its synced record (#585).
+  const synced = useEnvironmentSupportsThreadBrowsing(threadRef.environmentId);
+  const threadKey = scopedThreadKey(threadRef);
+  useAtomValue(synced ? threadBrowsingSyncAtom(threadKey) : previewSessionSyncAtom(threadKey));
 }

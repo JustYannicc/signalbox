@@ -18,10 +18,10 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
+import { GetSignalboxButton, OpenInAppButton } from "./OpenInAppButtons";
 
 const OPENER_STORAGE_KEY = "t3code:prompt-link-opener";
 const Opener = Schema.NullOr(Schema.Literals(["app", "browser"]));
-const DOWNLOAD_URL = "https://github.com/JustYannicc/signalbox/releases/latest";
 
 interface LinkSummary {
   readonly prompt: LinkedPrompt | null;
@@ -105,7 +105,6 @@ function HostedPromptLinkLanding({
   const summary = useMemo(() => summarize(appPath), [appPath]);
   const [remember, setRemember] = useState(false);
   const deepLink = promptLinkDeepLink(appPath);
-  const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);
   const autoOpenedRef = useRef(false);
 
   useEffect(() => {
@@ -150,17 +149,13 @@ function HostedPromptLinkLanding({
       ) : null}
       <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
       <div className="mt-6 flex flex-wrap gap-2">
-        <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
-          {onPhone ? "Open in app" : "Open in desktop app"}
-        </Button>
+        <OpenInAppButton deepLink={deepLink} onClick={() => onChoose("app", remember)} />
         {canContinue ? (
           <Button variant="outline" onClick={() => onChoose("browser", remember)}>
             Continue here
           </Button>
         ) : null}
-        <Button variant="ghost" render={<a href={DOWNLOAD_URL} />}>
-          Get Signalbox
-        </Button>
+        <GetSignalboxButton />
       </div>
       <label className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
         <Checkbox checked={remember} onCheckedChange={(checked) => setRemember(checked === true)} />

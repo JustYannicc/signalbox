@@ -11,6 +11,12 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
+import type {
+  BrowsingCommand,
+  BrowsingMember,
+  BrowsingRecord,
+  BrowsingStreamItem,
+} from "@t3tools/contracts/signalboxBrowsing";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -23,6 +29,7 @@ import * as Stream from "effect/Stream";
 import { CloudAttachments } from "../attachments/CloudAttachments.ts";
 import { remoteThreadWorktree } from "../user/contextProjects.ts";
 import { ThreadContexts, type ThreadPlace, type ThreadTurn } from "../user/threadContexts.ts";
+import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import { commandThreadId, unsupported } from "./threadDecider.ts";
 import * as ThreadDirectory from "./ThreadDirectory.ts";
@@ -153,6 +160,34 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
     ) => Stream.Stream<
       ReadonlyArray<PreviewPort>,
+      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
+    >;
+    /**
+     * The thread's browser tabs (#585): the record, then every change, with
+     * `you` naming the subscriber in the snapshot. Survives its thread object
+     * by starting over from a fresh snapshot.
+     */
+    readonly browsing: (
+      actor: Actor,
+      threadId: ThreadId,
+      you: BrowsingMember,
+    ) => Stream.Stream<
+      ReadonlyArray<BrowsingStreamItem>,
+      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
+    >;
+    /** Applies a browsing command as `by`; the record's sequence after it. */
+    readonly browse: (
+      actor: Actor,
+      threadId: ThreadId,
+      by: BrowsingMember,
+      command: BrowsingCommand,
+    ) => Effect.Effect<BrowsingDispatched, CloudThreadError>;
+    /** The thread's browser tabs as of now. */
+    readonly browsingRecord: (
+      actor: Actor,
+      threadId: ThreadId,
+    ) => Effect.Effect<
+      { readonly sequence: number; readonly record: BrowsingRecord },
       ThreadNotFoundError | ThreadDirectory.ThreadObjectError
     >;
     /** Whether `actor` can see `threadId` right now. */
@@ -420,6 +455,16 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const browsing: CloudThreadService["Service"]["browsing"] = (actor, threadId, you) =>
+    Stream.unwrap(
+      resuming({
+        operation: "browsing",
+        threadId,
+        open: directory.forThread(threadId).browsing(actor, you),
+        delivered: () => Effect.void,
+      }),
+    );
+
   const openPreview: CloudThreadService["Service"]["openPreview"] = (actor, threadId, port) =>
     directory.forThread(threadId).previewLink(actor, port);
 
@@ -435,6 +480,10 @@ const make = Effect.gen(function* () {
   return CloudThreadService.of({
     canSee,
     previews,
+    browsing,
+    browse: (actor, threadId, by, command) =>
+      directory.forThread(threadId).browse(actor, by, command),
+    browsingRecord: (actor, threadId) => directory.forThread(threadId).browsingRecord(actor),
     openPreview,
     dispatchCommand,
     launchThread,
