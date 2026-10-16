@@ -1,7 +1,10 @@
 /**
  * The row every level of the Home tree shares, folders and member levels
- * alike, and the small pieces that sit on it. Per-folder markers (a status
- * rollup, a phase, a scratchpad) go in `trailing`; hover actions in `actions`.
+ * alike, and the small pieces that sit on it. Per-folder elements plug into
+ * its slots: `name` takes a node (e.g. the name wrapped in a status tooltip),
+ * `afterName` sits right after it (a phase), `trailing` at the end while at
+ * rest (a thread count or status rollup), and `actions` replace `trailing` on
+ * hover or focus.
  */
 import { ChevronRightIcon, SquarePenIcon } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
@@ -20,7 +23,8 @@ export function LevelRow(props: {
   expanded: boolean;
   onToggle: () => void;
   icon: ReactNode;
-  name: string;
+  name: ReactNode;
+  afterName?: ReactNode;
   trailing?: ReactNode;
   actions?: ReactNode;
   /** Drops the indent past a depth, so deep trees keep their names readable. */
@@ -53,11 +57,12 @@ export function LevelRow(props: {
             )}
           />
           {props.icon}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-muted-foreground/85">
+          <span className="min-w-0 truncate text-sm font-medium text-sidebar-muted-foreground/85">
             {props.name}
           </span>
+          {props.afterName}
           {props.trailing ? (
-            <span className="flex shrink-0 items-center gap-1 pe-1 group-hover/folder-row:hidden group-focus-within/folder-row:hidden group-has-data-popup-open/folder-row:hidden pointer-coarse:hidden">
+            <span className="ms-auto flex shrink-0 items-center gap-1 pe-1 group-hover/folder-row:hidden group-focus-within/folder-row:hidden group-has-data-popup-open/folder-row:hidden pointer-coarse:hidden">
               {props.trailing}
             </span>
           ) : null}
