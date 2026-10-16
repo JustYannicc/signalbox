@@ -27,10 +27,11 @@ import { stackedThreadToast, toastManager } from "../../ui/toast";
 
 type Change = Promise<SignalboxFoldersSnapshot | null>;
 
-async function reported<E>(
+/** The command's value, or null after toasting why it failed (`title` says what didn't happen). */
+export async function reported<A, E>(
   title: string,
-  command: Promise<AtomCommandResult<SignalboxFoldersSnapshot, E>>,
-): Change {
+  command: Promise<AtomCommandResult<A, E>>,
+): Promise<A | null> {
   const result = await command;
   if (result._tag === "Success") return result.value;
   if (!isAtomCommandInterrupted(result)) {

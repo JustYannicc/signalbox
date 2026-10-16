@@ -100,6 +100,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Folders live in each user's object (`user/UserFolders.ts`); older clients read them as sections.
     sections: true,
     folders: true,
+    // Notes on each level's pad, read by its assistant or agent (`notes/UserNotes.ts`).
+    notes: true,
     // Standing sign-in grants, in each user's object (`signIn/SignInGrants.ts`).
     signInGrants: true,
     // Chats and tasks, and idle chats archiving themselves (`user/UserThreadKinds.ts`).

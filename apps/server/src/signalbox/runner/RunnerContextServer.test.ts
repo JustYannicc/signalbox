@@ -8,7 +8,7 @@ import type {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { RUNNER_AUTOMATION_TOOLS } from "./RunnerAutomationTools.ts";
+import { RUNNER_AUTOMATION_TOOLS, RUNNER_NOTE_TOOLS } from "./RunnerAutomationTools.ts";
 import { RUNNER_SCHEDULED_TASK_TOOLS } from "./RunnerScheduledTaskTools.ts";
 import { RUNNER_STATUS_LINE_TOOLS } from "./RunnerStatusLineTools.ts";
 import type { BranchDrive } from "./RunnerBranchTools.ts";
@@ -16,11 +16,12 @@ import type { ContextClient } from "./RunnerContextClient.ts";
 import { startContextServer } from "./RunnerContextServer.ts";
 import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
 
-/** Tools that answer from the cloud's automation engine or status lines, tested apart. */
+/** Tools the cloud answers (automations, status lines, notes), tested in their own files. */
 const AUTOMATION_SIDE = new Set<string>([
   ...RUNNER_AUTOMATION_TOOLS,
   ...RUNNER_SCHEDULED_TASK_TOOLS,
   ...RUNNER_STATUS_LINE_TOOLS,
+  ...Object.keys(RUNNER_NOTE_TOOLS),
 ]);
 
 /**

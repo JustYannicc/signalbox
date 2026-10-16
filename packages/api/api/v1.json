@@ -662,6 +662,57 @@
       "output": "2e0ff267"
     },
     {
+      "name": "notes.accept",
+      "rpc": "signalbox.notes.accept",
+      "access": "write",
+      "input": "b86ab6f1",
+      "output": "1276a316"
+    },
+    {
+      "name": "notes.create",
+      "rpc": "signalbox.notes.create",
+      "access": "write",
+      "input": "bd0d5ba3",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.delete",
+      "rpc": "signalbox.notes.delete",
+      "access": "write",
+      "destructive": true,
+      "input": "a3ac90c6",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.dismissReading",
+      "rpc": "signalbox.notes.dismissReading",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.list",
+      "rpc": "signalbox.notes.subscribe",
+      "access": "read",
+      "stream": "snapshot",
+      "input": "03c2b661",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.readAgain",
+      "rpc": "signalbox.notes.readAgain",
+      "access": "write",
+      "input": "a3ac90c6",
+      "output": "aae409c1"
+    },
+    {
+      "name": "notes.update",
+      "rpc": "signalbox.notes.update",
+      "access": "write",
+      "input": "73e0bcf6",
+      "output": "aae409c1"
+    },
+    {
       "name": "pools.addApiKey",
       "rpc": "accountPool.addApiKey",
       "access": "write",
@@ -1463,7 +1514,7 @@
       "rpc": "server.getConfig",
       "access": "read",
       "input": "03c2b661",
-      "output": "38bfc11a"
+      "output": "16378cfb"
     },
     {
       "name": "server.refreshProviders",
@@ -1500,7 +1551,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "240ec835",
-      "output": "8f08e8db"
+      "output": "7fbc36f2"
     },
     {
       "name": "settings.get",

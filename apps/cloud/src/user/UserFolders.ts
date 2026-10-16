@@ -29,6 +29,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { parseDriveId } from "../drive/driveAccess.ts";
+import { moveNotesUp } from "../notes/noteTables.ts";
 import type { TurnInstructions, TurnPools, TurnSecrets } from "../thread/turnPool.ts";
 import { contextOfProject, driveOfProject, projectIdForDrive } from "./contextProjects.ts";
 import { foldDrives } from "./driveFolders.ts";
@@ -108,6 +109,10 @@ export class UserFolders extends Context.Service<
     /** The state now, then again after every change, owners' and drives' included. */
     readonly states: Stream.Stream<FolderState, SqlError>;
     readonly snapshot: Effect.Effect<SignalboxFoldersSnapshot, SqlError>;
+    /** Where a thread lives now (`homeOf`), with the state that says so. */
+    readonly threadHome: (
+      threadId: ThreadId,
+    ) => Effect.Effect<{ readonly state: FolderState; readonly home: FolderId | null }, SqlError>;
     /** `states` as snapshots. */
     readonly changes: Stream.Stream<SignalboxFoldersSnapshot, SqlError>;
     readonly create: (input: FolderCreateInput) => Effect.Effect<SignalboxFoldersSnapshot, Failure>;
@@ -310,6 +315,18 @@ const make = Effect.gen(function* () {
 
   const snapshot: UserFolders["Service"]["snapshot"] = Effect.map(state, toSnapshot);
 
+  const threadHome: UserFolders["Service"]["threadHome"] = (threadId) =>
+    Effect.gen(function* () {
+      const current = yield* state;
+      const indexed = yield* indexedThread(threadId);
+      const home = homeOf(current.tree, {
+        threadId,
+        projectId: indexed?.projectId ?? null,
+        ownerId: indexed?.contextId ?? null,
+      });
+      return { state: current, home };
+    });
+
   const states: UserFolders["Service"]["states"] = Stream.unwrap(
     Effect.map(PubSub.subscribe(changed), (subscription) =>
       Stream.fromSubscription(subscription).pipe(
@@ -501,6 +518,9 @@ const make = Effect.gen(function* () {
         }
         yield* sql`UPDATE thread_homes SET folder_id = ${parentId}, filed_at = ${now}
           WHERE folder_id = ${input.id}`;
+        yield* moveNotesUp(input.id, parentId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
         yield* sql`DELETE FROM folders WHERE id = ${input.id}`;
         yield* bindings.setPool(levelOf(input.id), null);
         yield* bindings.setGitHubLend(input.id, null);
@@ -785,6 +805,7 @@ const make = Effect.gen(function* () {
     adoptLegacy,
     state,
     snapshot,
+    threadHome,
     changes,
     create,
     update,

@@ -55,6 +55,10 @@
       "types": "./src/signalboxStatusLine.ts",
       "import": "./src/signalboxStatusLine.ts"
     },
+    "./signalboxNotes": {
+      "types": "./src/signalboxNotes.ts",
+      "import": "./src/signalboxNotes.ts"
+    },
     "./signalboxThreadKinds": {
       "types": "./src/signalboxThreadKinds.ts",
       "import": "./src/signalboxThreadKinds.ts"

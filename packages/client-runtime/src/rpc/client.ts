@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { SIGNALBOX_CONTEXTS_WS_METHODS } from "@t3tools/contracts/signalboxContexts"; // signalbox: contexts
 import { SIGNALBOX_FOLDERS_WS_METHODS } from "@t3tools/contracts/signalboxFolders"; // signalbox: folders
+import { SIGNALBOX_NOTES_WS_METHODS } from "@t3tools/contracts/signalboxNotes"; // signalbox: notes
 import { SIGNALBOX_DRIVES_WS_METHODS } from "@t3tools/contracts/signalboxDrives"; // signalbox: drives
 import { SIGNALBOX_SIGN_IN_WS_METHODS } from "@t3tools/contracts/signalboxSignIn"; // signalbox: sign-in grants
 import { SIGNALBOX_BROWSING_WS_METHODS } from "@t3tools/contracts/signalboxBrowsing"; // signalbox: browsing
@@ -93,6 +94,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof SIGNALBOX_CONTEXTS_WS_METHODS.subscribe // signalbox: contexts
   | typeof SIGNALBOX_DRIVES_WS_METHODS.subscribe // signalbox: drives
   | typeof SIGNALBOX_FOLDERS_WS_METHODS.subscribe // signalbox: folders
+  | typeof SIGNALBOX_NOTES_WS_METHODS.subscribe // signalbox: notes
   | typeof SIGNALBOX_PREVIEWS_WS_METHODS.subscribe // signalbox: previews
   | typeof SIGNALBOX_SIGN_IN_WS_METHODS.subscribe // signalbox: sign-in grants
   | typeof SIGNALBOX_BROWSING_WS_METHODS.subscribe // signalbox: browsing

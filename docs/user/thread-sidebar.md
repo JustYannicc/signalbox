@@ -75,6 +75,22 @@ secrets loading everywhere.
   `{{secret:NAME}}` instead. Variables set to show their value by default in 1Password, and values
   of 6 characters or fewer, aren't hidden.
 
+### Scratch pad
+
+Every folder has a scratch pad for thoughts that aren't ready to act on, such as "after #456 merges,
+also do X". Choose **Scratch pad** in a folder's menu, or in the menu beside Personal for notes that
+belong nowhere in particular. The command palette has **Scratch pad** too. Type a note and press Enter.
+Half-formed is fine, and nothing asks you about it later.
+
+Your words stay exactly as you wrote them. A moment later, whoever reads the note writes what it
+thinks you meant underneath, with what it would do. Choose **OK, do it** and the note becomes a task
+in that folder that starts with your words, and it leaves the scratch pad. Choose **Not this**, or just
+ignore it, and it stays a plain note. **Read again** in the note's menu asks for a fresh reading.
+
+Notes are private by default: only you and your assistant read them. In an organization's folders,
+switch to **Team** to write notes the folder's agent can read too. Agents working in a folder can
+look up its team notes when they need them. They never see your private notes.
+
 ### Sections on your own server
 
 On a server you run yourself, Home organizes projects into sections instead. On web and desktop,

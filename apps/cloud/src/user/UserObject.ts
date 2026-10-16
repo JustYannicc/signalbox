@@ -32,6 +32,8 @@ import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObje
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
+import * as NoteReader from "../notes/NoteReader.ts";
+import * as UserNotes from "../notes/UserNotes.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
@@ -202,6 +204,16 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
           LoginService.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+          // Notes (#318), read on each level's pool.
+          UserNotes.layer.pipe(
+            Layer.provide(
+              NoteReader.layer((objectName) =>
+                PoolDirectory.poolObjectStub(env.POOLS, objectName, {
+                  localWorkerd: env.LOCAL_WORKERD === "1",
+                }),
+              ),
+            ),
+          ),
         ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
