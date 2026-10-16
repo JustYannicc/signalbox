@@ -3,6 +3,7 @@ import { listedNames } from "@signalbox/runner-protocol/SecretPlaceholders";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 
 import { readEgressRequest } from "./egressRequest.ts";
+import { bridgeWebSocket, isWebSocketUpgrade } from "./webSocketBridge.ts";
 import type { SendAnswer, SendRequest } from "./ThreadSends.ts";
 
 /**
@@ -45,7 +46,10 @@ export async function serveEgress(
     readonly send?: (request: Request) => Promise<Response>;
   },
 ): Promise<Response> {
-  const send = input.send ?? ((outgoing: Request) => fetch(outgoing));
+  const send =
+    input.send ??
+    ((outgoing: Request) =>
+      isWebSocketUpgrade(outgoing) ? bridgeWebSocket(outgoing) : fetch(outgoing));
   if (input.ownHosts.has(new URL(request.url).host)) return send(request);
   const secrets = await input.thread.secrets();
   if (secrets.length === 0) return send(request);
