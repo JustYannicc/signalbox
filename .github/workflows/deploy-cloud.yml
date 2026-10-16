@@ -319,7 +319,7 @@ jobs:
       needs.runner_changes.result == 'success' &&
       (needs.runner_image.result == 'success' || needs.runner_image.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     concurrency:
       group: cloud-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -393,6 +393,15 @@ jobs:
 
       - *plan
       - *deploy
+
+      # Until a new preview's hosts serve their own certificates, opening one
+      # breaks app.signalbox.run and the other previews in that browser (#618,
+      # see the script). The hosts are infra/stage.ts's cloud and gateway domains.
+      - name: Wait for the preview's own certificates
+        timeout-minutes: 35
+        run: >-
+          node .github/scripts/wait-own-certificate.cjs
+          "preview-$PR_NUMBER.signalbox.run" "gateway-preview-$PR_NUMBER.signalbox.run"
 
       # Production runs main as it is now, which can be ahead of this checkout:
       # merge it in, and rebuild when it brought anything.

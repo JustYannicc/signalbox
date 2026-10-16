@@ -157,6 +157,9 @@ jobs:
       - name: Test nightly release checks
         run: node --test .github/scripts/check-nightly-release.test.cjs
 
+      - name: Test preview certificate wait
+        run: node --test .github/scripts/wait-own-certificate.test.cjs
+
       - name: Test
         run: vp run --parallel --concurrency-limit 2 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
 
