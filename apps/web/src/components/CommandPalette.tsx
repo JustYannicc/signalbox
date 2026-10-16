@@ -130,7 +130,7 @@ import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
-import { useShowsEnvironmentUi } from "../state/environmentCapabilities";
+import { readEnvironmentSupports, useShowsEnvironmentUi } from "../state/environmentCapabilities";
 import { readProjectSettingsLabel } from "./sidebar/folders/useFolderCopy"; // signalbox: folder words
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
@@ -261,6 +261,12 @@ import { readPullRequestListPreferences } from "~/components/pullRequest/pullReq
 import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
+
+/** signalbox: a project's path, or nothing where its environment's paths mean nothing to people. */
+function projectPathDescription(project: CommandPaletteProject): ReactNode {
+  if (!readEnvironmentSupports(project.environmentId, "localFilesystem")) return "";
+  return <span className="truncate">{project.workspaceRoot}</span>;
+}
 
 function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
   if (os === "windows") {
@@ -1229,8 +1235,9 @@ function OpenCommandPaletteDialog(props: {
           }).searchTerms;
         },
         renderDescription: (project) => {
-          // signalbox: one environment, so a project is just its path.
-          if (!showsEnvironmentUi) return <span className="truncate">{project.workspaceRoot}</span>;
+          // signalbox: one environment, so a project is just its path, and nothing where the path
+          // is internal to the server (the cloud's /scratch, /drives/…).
+          if (!showsEnvironmentUi) return projectPathDescription(project);
           const members = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`)
             ?.memberProjects ?? [project];
           const metadata = buildCommandPaletteProjectMetadata({
@@ -1280,7 +1287,7 @@ function OpenCommandPaletteDialog(props: {
           ];
         },
         renderDescription: (project) => {
-          if (!showsEnvironmentUi) return <span className="truncate">{project.workspaceRoot}</span>;
+          if (!showsEnvironmentUi) return projectPathDescription(project); // signalbox
           const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
             kind: "remote",
             label: "Remote",
@@ -1380,7 +1387,9 @@ function OpenCommandPaletteDialog(props: {
               project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
               projectTitle={projectTitle ?? null}
               environmentLabel={
-                projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote"
+                showsEnvironmentUi // signalbox: one environment, nothing to name
+                  ? (projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote")
+                  : null
               }
               branch={thread.branch}
               worktreePath={thread.worktreePath}
@@ -1425,6 +1434,7 @@ function OpenCommandPaletteDialog(props: {
       projectEnvironmentLocationById,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
+      showsEnvironmentUi,
       threadContentMatchByKey,
       threadSearch.query,
       threadSearchQuery,
