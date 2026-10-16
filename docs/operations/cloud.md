@@ -665,8 +665,37 @@ tokens, CPU and memory, and the harness's session refs.
   `GET /api/cloud/threads/<thread id>/diagnostics` lists recent turns with
   their trace ids and failures, and `.../diagnostics/<trace, run or command id>` returns
   one record.
-- In Workers Logs, search for the trace id. When a turn ends, its object logs
-  the whole record as `cloud turn diagnostic`.
+- Search the wide events (below) for the trace id: the turn's own event
+  (`action: turn`) carries it as `turn.traceId`, and so does each of its model
+  requests' events from the ModelGateway.
+
+### Wide events
+
+Both Workers log through [evlog](https://www.evlog.dev) (#285), configured in
+`apps/cloud/evlog.config.ts`: one wide event per request, per Durable Object
+alarm, per turn, per model request through the ModelGateway, and per Executor
+call. `Effect.log*` inside one of these lands on its event instead of a line
+of its own. Every event names its unit (`action`) and its person, thread,
+turn, provider, model or pool by id, with `environment` set to the stage and
+`version` to the deployed commit. They never carry text anyone wrote: the
+config redacts every string under a content-shaped key before any drain
+sees it, and `src/observability/wideEvents.test.ts` fails if a turn's prompt or
+reply reaches one. Lint fails on `console.*` or another logger in
+`apps/cloud/src`.
+
+Where they go depends on the deploy environment's secrets (`cloud-preview`
+and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
+
+- `SENTRY_DSN`: every event as a Sentry log, every error event as a Sentry
+  issue, and both Workers' own traces through a Cloudflare observability
+  destination to Sentry's OTLP endpoint (all of a preview's requests, a tenth
+  of production's).
+- `POSTHOG_API_KEY` (and the `POSTHOG_HOST` variable for a non-US project):
+  every event as a PostHog log, filed under its `person.id`.
+
+After each deploy, CI sends one `release` event naming the stage and commit
+(`apps/cloud/infra/release-event.ts`). Without either key the events still go
+to Workers Logs.
 
 ### Usage analytics
 

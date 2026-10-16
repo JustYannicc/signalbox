@@ -41,6 +41,7 @@ import { NO_STORE_HEADERS, requestCredentials, traceId } from "./http/credential
 import * as DiagnosticsRoutes from "./http/diagnosticsRoutes.ts";
 import * as ThreadKindRoutes from "./http/threadKindRoutes.ts";
 import * as EnvironmentApi from "./http/environmentApi.ts";
+import * as Evlog from "./observability/Evlog.ts";
 import * as Platform from "./platform.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PreviewSetupRoutes from "./previewSetup/previewSetupRoutes.ts";
@@ -116,6 +117,7 @@ export const layerServices = (input: {
       Layer.mergeAll(FetchHttpClient.layer, Platform.layerCrypto, Platform.layerHttp),
     ),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.vars }))),
+    Layer.provideMerge(Evlog.layer),
   );
 
 type Services = Layer.Success<ReturnType<typeof layerServices>>;
@@ -190,15 +192,18 @@ const openSocket = (request: Request) =>
     }),
   );
 
+/** The request's wide event (`observability/Evlog.ts`), which the handler's `Effect.log*` lands on. */
+type RequestLog = Evlog.UnitLog;
+
 export interface CloudApp {
-  readonly http: (request: Request) => Promise<Response>;
-  readonly webSocket: (request: Request) => Promise<Response>;
+  readonly http: (request: Request, log?: RequestLog) => Promise<Response>;
+  readonly webSocket: (request: Request, log?: RequestLog) => Promise<Response>;
   /** The ModelGateway's check of a local key's signature (`ModelGrants` in `worker.ts`). */
   readonly verifyLocalKey: LocalKeyVerifier;
   /** `/api/v1/`: the public API (`api/apiRoutes.ts`), streams and all. */
-  readonly api: (request: Request) => Promise<Response>;
+  readonly api: (request: Request, log?: RequestLog) => Promise<Response>;
   /** `/mcp` and its protected-resource metadata (`api/mcpRoutes.ts`). */
-  readonly mcp: (request: Request) => Promise<Response>;
+  readonly mcp: (request: Request, log?: RequestLog) => Promise<Response>;
 }
 
 export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp => {
@@ -228,15 +233,21 @@ export const makeCloudApp = <E>(services: Layer.Layer<Services, E>): CloudApp =>
       throw cause;
     });
   return {
-    http: (request) => http.then((handler) => handler(request)),
-    webSocket: (request) => runtime.runPromise(openSocket(request)),
+    http: (request, log) =>
+      http.then((handler) =>
+        handler(request, log === undefined ? undefined : Evlog.loggerContext(log)),
+      ),
+    webSocket: (request, log) => runtime.runPromise(Evlog.provideLogger(openSocket(request), log)),
     verifyLocalKey: (token) => runtime.runPromise(verifyLocalKey(token)),
-    api: (request) => runtime.runPromise(handleApiRequest(request)),
-    mcp: (request) =>
+    api: (request, log) => runtime.runPromise(Evlog.provideLogger(handleApiRequest(request), log)),
+    mcp: (request, log) =>
       runtime.runPromise(
-        PROTECTED_RESOURCE_PATHS.has(new URL(request.url).pathname)
-          ? protectedResourceMetadata(request)
-          : handleMcpRequest(request),
+        Evlog.provideLogger(
+          PROTECTED_RESOURCE_PATHS.has(new URL(request.url).pathname)
+            ? protectedResourceMetadata(request)
+            : handleMcpRequest(request),
+          log,
+        ),
       ),
   };
 };

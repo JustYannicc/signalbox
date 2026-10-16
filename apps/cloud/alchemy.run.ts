@@ -45,7 +45,8 @@ const compatibility = {
   flags: ["nodejs_compat", "legacy_module_registry"],
 };
 
-const workerObservability = { enabled: true, logs: { enabled: true, invocationLogs: true } };
+// Each request's wide event (`evlog.config.ts`) is its log line, so Cloudflare's own would repeat it.
+const workerObservability = { enabled: true, logs: { enabled: true, invocationLogs: false } };
 
 /** A Durable Object class's container, placed as wrangler placed it: tiers 1 and 2, EU only. */
 const euContainer = <Shape>(
@@ -100,7 +101,8 @@ export default Alchemy.Stack(
     const { stage } = yield* Alchemy.Stack;
     const target = cloudStage(stage);
     const env = yield* workerEnv(target);
-    return yield* deploy(target, env).pipe(
+    const telemetry = yield* telemetryEnv(stage);
+    return yield* deploy(target, env, telemetry).pipe(
       // Production and open previews were made by wrangler. Names come only
       // from the stage, so a preview can never claim production's.
       Alchemy.AdoptPolicy.adopt(true),
@@ -109,6 +111,44 @@ export default Alchemy.Stack(
     );
   }),
 );
+
+/**
+ * Where both Workers' wide events go (`evlog.config.ts`, #285), and which
+ * release and stage they belong to. All optional: without a key, that drain is off.
+ */
+function telemetryEnv(stage: string) {
+  return Effect.gen(function* () {
+    return {
+      SIGNALBOX_STAGE: stage,
+      // The deployed commit, which evlog reports as the release.
+      APP_VERSION: yield* optional("APP_VERSION"),
+      SENTRY_DSN: yield* optionalSecret("SENTRY_DSN"),
+      POSTHOG_API_KEY: yield* optionalSecret("POSTHOG_API_KEY"),
+      POSTHOG_HOST: yield* optional("POSTHOG_HOST"),
+    };
+  });
+}
+
+/**
+ * Sentry's OTLP traces endpoint for the project a DSN names, where Workers
+ * export their own traces (https://docs.sentry.io/product/drains/cloudflare/).
+ * Null without a DSN.
+ */
+const sentryTraces = (dsn: Redacted.Redacted<string>) => {
+  const value = Redacted.value(dsn).trim();
+  if (value === "") return null;
+  const url = new URL(value);
+  // `/<project>`, or `/<path>/<project>` for a Sentry served under a path.
+  const segments = url.pathname.split("/").filter((segment) => segment !== "");
+  const project = segments.pop();
+  if (project === undefined || url.username === "") throw new Error("SENTRY_DSN isn't a DSN.");
+  const base = segments.map((segment) => `/${segment}`).join("");
+  return {
+    url: `${url.protocol}//${url.host}${base}/api/${project}/integration/otlp/v1/traces`,
+    // The DSN's public key, which only lets one send to the project.
+    headers: { "x-sentry-auth": `sentry sentry_key=${url.username}` },
+  };
+};
 
 /** Vars and secrets from CI's environment, next to the stage's own vars. */
 function workerEnv(target: CloudStage) {
@@ -160,8 +200,35 @@ function workerEnv(target: CloudStage) {
 function deploy(
   target: CloudStage,
   env: Readonly<Record<string, string | Redacted.Redacted<string>>>,
+  telemetry: Effect.Success<ReturnType<typeof telemetryEnv>>,
 ) {
   return Effect.gen(function* () {
+    // Both Workers' own traces, exported to Sentry. One destination for
+    // production and one shared by every preview (each from its environment's
+    // DSN), kept like the preview wildcard: every stage declares it, none deletes it.
+    const traces = sentryTraces(telemetry.SENTRY_DSN);
+    const tracesDestination =
+      traces === null
+        ? null
+        : yield* Cloudflare.Workers.ObservabilityDestination("SentryTraces", {
+            name: target.production ? "signalbox-sentry-traces" : "signalbox-preview-sentry-traces",
+            ...traces,
+            logpushDataset: "opentelemetry-traces",
+            // Sentry may answer an empty probe with an error; real exports work regardless.
+            skipPreflightCheck: true,
+          }).pipe(Alchemy.RemovalPolicy.retain());
+    const observability = {
+      ...workerObservability,
+      ...(tracesDestination !== null && {
+        traces: {
+          enabled: true,
+          destinations: [tracesDestination.name],
+          // Every preview request; a tenth of production's.
+          headSamplingRate: target.production ? 0.1 : 1,
+        },
+      }),
+    };
+
     // The web app, built by CI before the deploy. Same origin as the API.
     const assets = {
       directory: here("../web/dist"),
@@ -198,11 +265,12 @@ function deploy(
       // Threads' dev servers (`PREVIEW_DOMAIN`), on this stage's preview hosts only.
       routes: [{ pattern: `${target.previewHost}/*`, zoneId: PREVIEW_ZONE.id }],
       assets,
-      observability: workerObservability,
+      observability,
       // Checking a directly uploaded drive pack streams through all of it (#406): up to 5 GiB.
       limits: { cpuMs: 300_000 },
       env: {
         ...env,
+        ...telemetry,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
@@ -249,8 +317,9 @@ function deploy(
       compatibility,
       workersDev: false,
       domain: { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID },
-      observability: workerObservability,
+      observability,
       env: {
+        ...telemetry,
         GRANTS: Cloudflare.WorkerEntrypoint<ModelGrants>(cloud, "ModelGrants"),
       },
     });

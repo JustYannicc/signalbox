@@ -115,6 +115,11 @@ jobs:
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
       APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
       FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+      # Optional: where wide events and Worker traces go (apps/cloud/evlog.config.ts), tagged with this commit.
+      APP_VERSION: ${{ github.sha }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
     steps:
       - &checkout
         name: Checkout
@@ -170,6 +175,12 @@ jobs:
         name: Deploy
         working-directory: apps/cloud
         run: ./node_modules/.bin/alchemy deploy --stage "$STAGE" --yes --no-input
+
+      # One wide event saying the stage now runs this commit, through the Workers' drains.
+      - &release_event
+        name: Send the release event
+        working-directory: apps/cloud
+        run: SIGNALBOX_STAGE="$STAGE" node infra/release-event.ts
 
   # Whether the pull request or push changes what boat machines run (the
   # paths runner-image.yml builds on). Then a preview runs its own Runner
@@ -357,6 +368,11 @@ jobs:
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
       APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
       FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+      # Optional: where wide events and Worker traces go (apps/cloud/evlog.config.ts), tagged with the PR's head.
+      APP_VERSION: ${{ github.event.pull_request.head.sha }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
     steps:
       - *checkout
       - *setup
@@ -399,6 +415,7 @@ jobs:
 
       - *plan
       - *deploy
+      - *release_event
 
       # Until a new preview's hosts serve their own certificates, opening one
       # breaks app.signalbox.run and the other previews in that browser (#618,

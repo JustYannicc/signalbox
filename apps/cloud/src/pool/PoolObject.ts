@@ -1,10 +1,12 @@
-// @effect-diagnostics globalConsole:off globalDate:off - container logs go straight to Workers logs; alarms are wall-clock.
+// @effect-diagnostics globalDate:off - alarms are wall-clock.
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { log } from "evlog";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
+import * as Evlog from "../observability/Evlog.ts";
 import * as Platform from "../platform.ts";
 import {
   POOL_OBJECT_JURISDICTION,
@@ -47,9 +49,6 @@ interface StoreGatewayProps {
   readonly objectId: string;
 }
 
-const log = (event: string, fields: Record<string, unknown>) =>
-  console.log(JSON.stringify({ event, ...fields }));
-
 /**
  * The alarm only ever puts the container to sleep, so it is always exactly
  * when the container may next sleep (see `PoolContainer.sleepIfIdle`).
@@ -71,7 +70,9 @@ const makeRuntime = (ctx: DurableObjectState) =>
                 ctx as unknown as { readonly exports: PoolExports }
               ).exports.PoolStoreGateway({ props: { objectId: ctx.id.toString() } }),
               wakeAt: (at) => ctx.waitUntil(ctx.storage.setAlarm(at)),
-              log,
+              // Each container milestone is a wide event of its own.
+              log: (action, fields) =>
+                log.info({ ...fields, action, pool: { id: ctx.id.toString() } }),
             })
           : PoolContainer.layerUnavailable,
       ),
@@ -79,6 +80,7 @@ const makeRuntime = (ctx: DurableObjectState) =>
       Layer.provideMerge(
         Layer.mergeAll(SqliteClient.layer({ storage: ctx.storage }), Platform.layerCrypto),
       ),
+      Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil(ctx))),
     ),
   );
 
@@ -217,7 +219,9 @@ export class PoolObject
   /** Puts an idle container to sleep (see `PoolContainer.sleepIfIdle`). */
   override async alarm() {
     const next = await this.runtime.runPromise(
-      PoolContainer.PoolContainer.use((container) => container.sleepIfIdle(Date.now())),
+      PoolContainer.PoolContainer.use((container) => container.sleepIfIdle(Date.now())).pipe(
+        Evlog.withUnit("pool.alarm", { pool: { id: this.ctx.id.toString() } }),
+      ),
     );
     if (next !== null) await this.ctx.storage.setAlarm(next);
   }
