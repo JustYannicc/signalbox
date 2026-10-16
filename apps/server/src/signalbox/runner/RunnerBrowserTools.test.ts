@@ -54,6 +54,7 @@ const fakeBrowser: BrowserBackend = {
   scroll: unused,
   evaluate: unused,
   waitFor: unused,
+  signIn: unused,
   close: () => Promise.resolve(),
 };
 
@@ -110,8 +111,9 @@ describe("thread machine browser (#402)", () => {
       const local = Object.values(PreviewToolkit.tools).filter(
         (tool) => !tool.name.startsWith("preview_recording_"),
       );
+      // Plus Signalbox's own sign_in (#576).
       expect(listed.map((tool) => tool.name).toSorted()).toEqual(
-        local.map((tool) => tool.name).toSorted(),
+        [...local.map((tool) => tool.name), "sign_in"].toSorted(),
       );
       for (const tool of local) {
         const served = listed.find((each) => each.name === tool.name)!;
@@ -140,6 +142,43 @@ describe("thread machine browser (#402)", () => {
         { type: "text", text: expect.stringContaining('"savedToThread": true') },
         { type: "image", data: PNG, mimeType: "image/png" },
       ]);
+    }),
+  );
+
+  it.effect("answers a sign-in with how it went and the login's name, never more (#576)", () =>
+    Effect.gen(function* () {
+      const asked: Array<string | undefined> = [];
+      const { call } = yield* connect({
+        ...fakeBrowser,
+        signIn: async ({ site }) => {
+          asked.push(site);
+          return site === undefined
+            ? {
+                _tag: "signed_in",
+                site: "example.com",
+                item: "Example",
+                username: "me@example.com",
+              }
+            : { _tag: "not_allowed", site: "booking.com", message: "Ask the person." };
+        },
+      });
+      const signedIn = yield* call("sign_in", {});
+      expect(signedIn.isError).toBeFalsy();
+      expect(JSON.parse(signedIn.content[0]!.text!)).toEqual({
+        status: "signed_in",
+        site: "example.com",
+        login: "Example",
+        username: "me@example.com",
+        message:
+          "Signed in to example.com as me@example.com from 1Password: Example. The person's tabs reloaded signed in.",
+      });
+      const refused = yield* call("sign_in", { site: "booking.com" });
+      expect(JSON.parse(refused.content[0]!.text!)).toEqual({
+        status: "not_allowed",
+        site: "booking.com",
+        message: "Ask the person.",
+      });
+      expect(asked).toEqual([undefined, "booking.com"]);
     }),
   );
 

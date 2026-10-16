@@ -35,14 +35,25 @@ export const mayAttachProfile = (requester: string, profileOwner: string) =>
 export const writesProfile = (openSessions: ReadonlyArray<{ readonly writer: boolean }>) =>
   !openSessions.some((session) => session.writer);
 
-/** Kernel's own words, with its code and status, so a plan's limit shows plainly. */
-export const refusalFor = (error: KernelApiError) => {
+/**
+ * Kernel's own words with its code and status, so a plan's limit shows
+ * plainly. `codeOnly` leaves out the words, for errors that may repeat what
+ * was sent.
+ */
+export const kernelWords = (
+  error: KernelApiError,
+  options: { readonly codeOnly?: boolean } = {},
+) => {
   const details = [error.code, error.status > 0 ? `HTTP ${error.status}` : null].filter(
     (detail) => detail !== null,
   );
-  const message = error.message.trim().replace(/\.$/, "");
-  return `Kernel couldn't open a browser: ${message}${details.length > 0 ? ` (${details.join(", ")})` : ""}.`;
+  const message = options.codeOnly === true ? "" : error.message.trim().replace(/\.$/, "");
+  const suffix = details.length > 0 ? `(${details.join(", ")})` : "";
+  return [message, suffix].filter((part) => part !== "").join(" ") || "no details";
 };
+
+export const refusalFor = (error: KernelApiError) =>
+  `Kernel couldn't open a browser: ${kernelWords(error)}.`;
 
 export const browserRequest = (input: {
   readonly profileName: string;

@@ -275,6 +275,19 @@ export const makeCloudTools = (deps: {
       ),
     watch_pull_request: watch(true),
     unwatch_pull_request: watch(false),
+    merge_pull_request: (caller, input) =>
+      Effect.gen(function* () {
+        const url = yield* required(input, "url");
+        return yield* engine.requestMerge(
+          {
+            threadId: caller.id,
+            url,
+            note: text(input, "note"),
+            askBecause: text(input, "askBecause"),
+          },
+          { authorize: withinCaller(caller), builtInDefaults: defaultsOf(caller) },
+        );
+      }),
   };
 };
 

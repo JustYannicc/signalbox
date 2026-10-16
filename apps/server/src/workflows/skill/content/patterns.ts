@@ -23,7 +23,7 @@ An agent that needs to wait for one thing (CI, another thread, a reply, a paymen
 
 ## Merge through the folder's gate
 
-An agent doesn't merge its own pull request. It calls \`merge_pull_request({ url, note })\` and ends its turn; that runs the built-in "Merge gate" (\`examples/merge-gate.ts\`) attached to the thread. By default it asks the person about the pull request's current head commit, merges only that commit, deletes the branch and wakes the agent with the outcome. Only Signalbox's own automations and ones a person published in the app can merge, so to change who decides in a project (merge on green, a reviewer agent first), \`automation_customize\` the gate, save the change with \`draft: true\`, and ask the user to publish it.
+An agent doesn't merge its own pull request. It calls \`merge_pull_request({ url, note })\` and ends its turn; that runs the built-in "Merge gate" (\`examples/merge-gate.ts\`) attached to the thread. By default it reads the evidence at the head commit: an unready pull request (failed or running checks, open review threads, requested changes, a draft, a conflict) goes back to the agent; a ready one merges by itself unless it's hard to undo (a changed path in its \`HARD_TO_UNDO\` list, or the agent passed \`askBecause\`), and then it asks the person first. It merges only that commit, deletes the branch and wakes the agent with the outcome. Only Signalbox's own automations and ones a person published in the app can merge, so to change who decides in a project (ask every time, more hard-to-undo paths, a reviewer agent first), \`automation_customize\` the gate, save the change with \`draft: true\`, and ask the user to publish it.
 
 ## Supervise a thread or pull request
 

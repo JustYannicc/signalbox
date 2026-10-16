@@ -16,10 +16,10 @@ const HOSTNAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z
 const parseHost = (host: string) => parse(host, { allowPrivateDomains: true });
 
 /**
- * The host of a page or site, or null for anything that isn't an http(s)
- * address of a real host. A bare `example.com` reads as `https://example.com`.
+ * A page or site address as a URL, or null for anything that isn't http(s).
+ * A bare `example.com` reads as `https://example.com`.
  */
-export const hostOf = (input: string): string | null => {
+export const urlOf = (input: string): URL | null => {
   const trimmed = input.trim();
   if (trimmed.length === 0) return null;
   let url: URL;
@@ -28,7 +28,13 @@ export const hostOf = (input: string): string | null => {
   } catch {
     return null;
   }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+};
+
+/** The host of a page or site, or null for anything that isn't an http(s) address of a real host. */
+export const hostOf = (input: string): string | null => {
+  const url = urlOf(input);
+  if (url === null) return null;
   const host = normalizeHostname(url.hostname);
   if (parseHost(host).isIp) return host;
   return HOSTNAME.test(host) ? host : null;
