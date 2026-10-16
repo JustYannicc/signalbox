@@ -20,15 +20,15 @@ Agent tools today are built on Office assumptions. The unit is a machine: a VM, 
 
 ### 3. Push, not pull
 
-Today people pull work and hand it to an agent. Signalbox moves to push: agents do the work and tell you when they need you. Attention is the scarce resource, so every notification, badge, and status has to earn it. Git's workflow predates agents; what still matters is who has the authority to decide what goes into production. A pull request is that decision. By the time one reaches a person, the work is done, working, and reviewed, and the only question left is whether to merge it and use it.
+Today people pull work and hand it to an agent. Signalbox moves to push: agents do the work and tell you when they need you. Attention is the scarce resource, so every notification, badge, and status has to earn it. Only real calls reach a person: work that can't continue without them, or work that's ready for their go. Agents ask upward first, and everything else stays traceable but silent. When someone has worked through what needs them, every piece of work is either done or moving. Git's workflow predates agents; what still matters is who has the authority to decide what goes into production. A pull request is that decision. By the time one reaches a person, the work is done, working, and reviewed, and the only question left is whether to merge it and use it.
 
 ### 4. Nobody has to understand it, anyone can dig in
 
-If the user has to understand the complexity, we failed. The average user never looks under the hood. When something goes wrong, the power user wants to, so every action stays observable and traceable down to the exact message one agent sent another. The assistant coordinates and never executes, which keeps that trail readable.
+If the user has to understand the complexity, we failed. The average user never looks under the hood. When something goes wrong, the power user wants to, so every action stays observable and traceable down to the exact message one agent sent another. A thread shows exactly what its agent saw; anything else lives one level down, in the trace. The assistant coordinates and never executes, which keeps that trail readable.
 
 ### 5. Every agent represents someone
 
-Most of AI never settled who an agent works for, which is why everyone runs their own agents on their own machine. In Signalbox it is explicit. Your assistant represents you. An agent building a feature represents its project. A workflow's supervisor represents you for a personal workflow and the company for a company one. When you design anything agents touch, decide whose interests the agent serves and how that shapes its design.
+Most of AI never settled who an agent works for, which is why everyone runs their own agents on their own machine. In Signalbox it is explicit. Your assistant represents you. An agent building a feature represents its folder, and acts the same no matter who is talking to it. When it needs something that belongs to a person, it asks that person's assistant. A workflow's supervisor represents you for a personal workflow and the company for a company one. When you design anything agents touch, decide whose interests the agent serves and how that shapes its design.
 
 ### 6. Works with everything until you need nothing else
 
@@ -126,6 +126,7 @@ The most common defect in this repo is a change that works on the path you teste
 - **Agents and the public API.** Every RPC needs an entry in the reach map (`packages/api/src/*Reach.ts`). The API, the `signalbox` CLI and the MCP tools are all generated from it, so a new RPC is a type error until you choose its entry. The cloud then has to serve it or list it in `apps/cloud/src/api/cloudCoverage.ts`. That only works when the capability is a service method behind the RPC, not handler code.
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
+- **People.** Private means invisible to everyone else. Shared things follow the folder's roles (#225), each person acts with their own access, and agents act the same whoever is talking.
 - **Devices.** One cloud environment, many clients at once: the same person on web, desktop and phone, and teammates in the same folder. Device-only reach goes through the desktop gateway.
 - **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
 
@@ -190,15 +191,19 @@ Most code changes do not need an internal documentation change. Agents can read 
 
 Clients send typed WebSocket requests. The server turns them into _commands_. The _orchestrator_ (`apps/server/src/orchestration-v2/Orchestrator.ts`) serializes commands and decides _events_ without doing any I/O. The _event sink_ commits those events, the _projections_ the UI reads, the _command receipt_, and _outbox_ effects in one transaction. The _effect worker_ then runs the effects, such as starting a provider turn or capturing a checkpoint, and feeds results back as commands. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
 
+In the cloud (`apps/cloud`), the same contracts run on Cloudflare Workers. Each user, thread, drive and pool is a Durable Object (`UserObject`, `ThreadObject`, `DriveObject`, `PoolObject`). Provider CLIs run unmodified on runner machines (Cloudflare containers for light work, boat VMs for heavy) driven over `packages/runner-protocol`, and a thread's files live in the drive store, not on the machine. Agents always run in the cloud; a device only adds reach through the desktop gateway.
+
 Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/internals/glossary.md`
 
 ## Where code lives
 
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
+- `apps/cloud` - the hosted product on Cloudflare: Workers, Durable Objects, the model gateway, drives, pools and automations. Deploys through Alchemy.
 - `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
 - `packages/client-runtime` - client code shared by web and mobile.
+- `packages/runner-protocol` - what the cloud and a runner machine say to each other. The Runner itself lives in `apps/server/src/signalbox/runner`.
 - `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
 
 ## Taste
