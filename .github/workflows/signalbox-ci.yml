@@ -277,11 +277,14 @@ jobs:
 
   # Fails when a PR adds conflicts with upstream T3 Code: files that conflict for
   # the PR head but not for its base, so a sync conflict pending on main doesn't
-  # block every PR. On main it only reports.
+  # block every PR. On main it only reports. A PR that merges upstream also
+  # fails when it drops a `signalbox:` hook line.
   upstream_merge:
     name: Upstream Merge
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      sync: ${{ steps.hooks.outputs.sync }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -314,6 +317,28 @@ jobs:
             *) set -- --base origin/main ;;
           esac
           node scripts/upstream-sync/check-merge.ts "$@"
+
+      - name: Check hooks survive an upstream merge
+        id: hooks
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/upstream-sync/check-hooks.ts --base "$BASE_SHA" --head "$HEAD_SHA"
+
+  # Passes only on a PR that merges upstream T3 Code with its Upstream Merge
+  # job green, hooks included. The signalbox folder's Merge gate trusts it to
+  # merge sync PRs on its own (#5). Skipped on every other PR, so it stays out
+  # of Check's `needs`.
+  upstream_sync:
+    name: Upstream Sync
+    needs: upstream_merge
+    if: needs.upstream_merge.outputs.sync == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mark an upstream merge with every hook intact
+        run: echo "This pull request merges upstream T3 Code and keeps every signalbox hook line."
 
   # Fails when a PR edits or removes a cloud Durable Object migration that
   # already merged. Reports, never fails, whether its new migrations are
