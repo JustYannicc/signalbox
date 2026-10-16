@@ -101,7 +101,7 @@ import {
   type UsagePagePreferences,
 } from "./usagePagePreferences";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
-import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
@@ -114,6 +114,7 @@ function isUsageWindowDays(value: number): value is UsagePagePreferences["window
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[provider].label;
 
 export function UsagePage() {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   useEscapeToGoBack();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

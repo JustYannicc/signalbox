@@ -18,10 +18,6 @@ const ONE_ENVIRONMENT_COPY: Readonly<Record<string, string>> = {
   "This environment is not connected.": "Signalbox isn't connected. Try again in a moment.",
   "Environment unavailable": "Can't reach Signalbox",
   "The selected environment is not connected.": "Signalbox isn't connected. Try again in a moment.",
-  "Connect an environment to change keybindings.":
-    "Reconnecting to Signalbox. You can change keybindings once it's back.",
-  "This connection can view keybindings but cannot change them.":
-    "You can view keybindings but can't change them.",
   "Connect an environment to set up its providers.": "Reconnecting to Signalbox…",
   "Loading devices": "Loading providers",
   "Reading connected execution environments.": "Getting your providers ready.",

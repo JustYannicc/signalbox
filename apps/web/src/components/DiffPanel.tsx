@@ -91,7 +91,7 @@ import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
-import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -197,6 +197,7 @@ export default function DiffPanel({
   composerDraftTarget,
   workspaceMutationId,
 }: DiffPanelProps) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const diffLayout = settings.diffLayout;

@@ -3,9 +3,10 @@ import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
 import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPanel";
 import { useSettingsScope } from "../components/settings/SettingsScopeContext";
-import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function SettingsProvidersRoute() {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const target = Route.useSearch();
   const { environment, scope } = useSettingsScope();
   if (!environment) {

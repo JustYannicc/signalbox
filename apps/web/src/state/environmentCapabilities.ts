@@ -69,7 +69,9 @@ export function resolveEnvironmentUiState(input: {
 let cachedServedByAnEnvironment: boolean | undefined;
 function servedByAnEnvironment(): boolean {
   cachedServedByAnEnvironment ??=
-    !isLocalEnvironmentDisabled() && !isHostedStaticApp(new URL(window.location.href));
+    typeof window !== "undefined" &&
+    !isLocalEnvironmentDisabled() &&
+    !isHostedStaticApp(new URL(window.location.href));
   return cachedServedByAnEnvironment;
 }
 

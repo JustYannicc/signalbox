@@ -77,7 +77,6 @@ import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
-import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 function KeybindingPill({ value }: { value: string }) {
   // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
@@ -1493,11 +1492,9 @@ export function KeybindingsSettingsPanel() {
 
       {!canWriteSettings ? (
         <p className="text-xs text-muted-foreground">
-          {environmentCopy(
-            connectedEnvironments.length === 0
-              ? "Connect an environment to change keybindings."
-              : "This connection can view keybindings but cannot change them.",
-          )}
+          {connectedEnvironments.length === 0
+            ? "Connect an environment to change keybindings."
+            : "This connection can view keybindings but cannot change them."}
         </p>
       ) : null}
       <div inert={!canWriteSettings} className="flex flex-col gap-8">

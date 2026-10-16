@@ -18,7 +18,7 @@ import {
   alternateComposerDispatchAction,
   resolveComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
-import { environmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox
 
 interface PendingActionState {
   questionIndex: number;
@@ -113,6 +113,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   keepFullHistory = false,
   onToggleKeepFullHistory,
 }: ComposerPrimaryActionsProps) {
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
