@@ -355,6 +355,15 @@ export type ModelGatewayProvider = keyof typeof MODEL_GATEWAY_PATHS;
 export type MachineEnsureRequest = typeof MachineEnsureRequest.Type;
 
 /**
+ * Where the Runner keeps threads' working directories and machine state
+ * (`workspaces/<thread>/drive`, `machines/<thread>/home`) on every machine
+ * class. A thread moves between classes mid-run, and its agent must find its
+ * checkout, home and folder instructions at the paths it already knows
+ * (#620). The Runner image creates it; a boat VM mounts its disk there.
+ */
+export const MACHINE_HOME = "/home/user/signalbox";
+
+/**
  * What a VM's Runner runs: the file a machine backend writes onto a thread's
  * machine (`runner machine` reads it). A new generation in it replaces the
  * Runner; a different `image` restarts the machine's Runner on that image.

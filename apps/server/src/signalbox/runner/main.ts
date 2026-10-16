@@ -31,7 +31,7 @@ import * as NodeUtil from "node:util";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { RunnerBuild } from "@signalbox/runner-protocol/RunnerProtocol";
+import { MACHINE_HOME, type RunnerBuild } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -50,7 +50,7 @@ const { values, positionals } = NodeUtil.parseArgs({
     cloud: { type: "string", default: "http://localhost:8787" },
     port: { type: "string", default: "8790" },
     home: { type: "string" },
-    config: { type: "string", default: "/home/user/signalbox/machine.json" },
+    config: { type: "string", default: `${MACHINE_HOME}/machine.json` },
     listen: { type: "string", default: "127.0.0.1" },
     "machine-id": { type: "string" },
     // Host mode only: mount /drives here for every thread (one at a time); the Runner image in Docker.

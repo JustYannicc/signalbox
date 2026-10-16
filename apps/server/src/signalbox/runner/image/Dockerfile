@@ -98,6 +98,10 @@ RUN install -d /opt/signalbox \
   && npm cache clean --force \
   && cd /opt/signalbox && node -e 'require("playwright-core"); require("@rrweb/record"); require("@1password/sdk"); require("oxc-parser"); require("oxc-transform")'
 
+# Every machine class keeps threads' workspaces at the same path (`MACHINE_HOME`
+# in RunnerProtocol.ts, #620); a boat VM mounts its disk over it.
+RUN install -d -o node -g node /home/user/signalbox
+
 COPY main.mjs /opt/signalbox/runner.mjs
 
 # The commit the Runner was built from, for each turn's diagnostics. Declared
