@@ -88,6 +88,7 @@ export const openConnection = (input: {
             userId: input.userId,
             sid: input.sid,
             scopes: input.scopes,
+            via: "client",
           }),
           CloudRpc.layerScopeAuthorization(input.scopes),
         ),
