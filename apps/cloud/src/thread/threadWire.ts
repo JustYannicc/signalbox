@@ -132,9 +132,13 @@ export type BrowserReply<A> =
   | { readonly _tag: "ok"; readonly value: A }
   | { readonly _tag: "unavailable"; readonly message: string };
 
+const lineEncoder = new TextEncoder();
+
+/** One value of a newline-delimited JSON stream, encoded with `codec`. */
+export const jsonLine =
+  <A>(codec: { readonly encode: (value: A) => unknown }) =>
+  (value: A) =>
+    lineEncoder.encode(`${JSON.stringify(codec.encode(value))}\n`);
+
 /** Stream batches travel as newline-delimited JSON, one commit per line. */
-export const encodeBatchLine = (() => {
-  const encoder = new TextEncoder();
-  return (batch: ReadonlyArray<OrchestrationV2ThreadStreamItem>) =>
-    encoder.encode(`${JSON.stringify(wire.batch.encode(batch))}\n`);
-})();
+export const encodeBatchLine = jsonLine<ReadonlyArray<OrchestrationV2ThreadStreamItem>>(wire.batch);

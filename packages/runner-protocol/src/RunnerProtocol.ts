@@ -202,6 +202,16 @@ export const RunnerItem = Schema.Union([
     reason: Schema.String,
   }),
   /**
+   * The answer to `drain` `id` (#493): the Runner saved everything the
+   * machine wrote, as far as it could. `unsaved` says why anything wasn't, in
+   * the thread's terms. Once the thread has it, the machine can go.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("machine.drained"),
+    id: NonNegativeInt,
+    unsaved: Schema.Array(Schema.String),
+  }),
+  /**
    * One event from the provider adapter (upstream's `ProviderAdapterV2Event`),
    * in its JSON encoding. Left opaque here so an adapter event this protocol
    * has never heard of still arrives; the thread decides what it means.
@@ -244,6 +254,14 @@ export const RunnerHello = Schema.Struct({
   lastAckedSequence: NonNegativeInt,
   /** Absent from Runners built before diagnostics. */
   build: Schema.optional(RunnerBuild),
+  /** The Runner answers `drain` (#493). Absent: an older one, let go without asking. */
+  drains: Schema.optional(Schema.Boolean),
+  /**
+   * Every run this Runner process was handed. A run the thread saw start that
+   * is missing went with an earlier process on the same machine (#613).
+   * Absent from Runners built before it: the thread can't tell.
+   */
+  takenRunIds: Schema.optional(Schema.Array(RunId)),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
@@ -297,6 +315,13 @@ export const ThreadMessage = Schema.Union([
     secrets: Schema.optionalKey(SecretsAccess),
   }),
   Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
+  /**
+   * The thread is about to let the machine go (#493): save everything it
+   * wrote, then answer `machine.drained` with this `id`. Its tokens hold until
+   * then. Sent again on each reconnect until answered; only to a Runner whose
+   * `hello` said it `drains`.
+   */
+  Schema.Struct({ type: Schema.Literal("drain"), id: NonNegativeInt }),
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
 export type ThreadMessage = typeof ThreadMessage.Type;

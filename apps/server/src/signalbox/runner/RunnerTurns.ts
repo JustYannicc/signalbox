@@ -6,6 +6,7 @@ import type {
   RunnerLogLevel,
   RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SecretsAccess } from "@signalbox/runner-protocol/SecretsProtocol";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import {
@@ -49,11 +50,12 @@ import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
 import { DriveClientError, DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
-import type { RunnerSecrets } from "./RunnerSecrets.ts";
+import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
 import { outgrownBy } from "./RunnerMachineClass.ts";
-import { FILE_CHANGING_ITEMS, finishDriveTurn } from "./RunnerTurnDrive.ts";
+import { FILE_CHANGING_ITEMS, finishDriveTurn, saveFailureReason } from "./RunnerTurnDrive.ts";
+import { SAVED_AGAIN_NOTICE, watchChanges } from "./RunnerDriveWatch.ts";
 import { isUnmeasured } from "./RunnerUsage.ts";
 
 /**
@@ -117,6 +119,14 @@ export interface RunnerTurns {
   readonly interrupt: (runId: RunId) => Effect.Effect<void>;
   /** Stops every turn but `runId`, the one the thread still considers live. */
   readonly keepOnly: (runId: RunId | null) => Effect.Effect<void>;
+  /**
+   * Saves everything the machine wrote, for a machine about to go (#493): the
+   * drive, then each harness's session rows. Answers what couldn't be saved,
+   * in the thread's terms.
+   */
+  readonly drain: Effect.Effect<ReadonlyArray<string>>;
+  /** Every run this process was handed, ended or not. */
+  readonly taken: Effect.Effect<ReadonlyArray<RunId>>;
 }
 
 /** An adapter session, and the shortcut instructions and secrets it was started with. */
@@ -174,6 +184,8 @@ const drivePrepareError = (error: RunnerDriveError) =>
   });
 
 const USAGE_INTERVAL = "30 seconds";
+/** How often the drive looks for changes to stream in (#493): about what a lost machine loses. */
+const WATCH_INTERVAL = "2 seconds";
 /** While no turn runs, every this many intervals (5 min): each report wakes the thread's object. */
 const IDLE_USAGE_EVERY = 10;
 /** Room a failure line gives the CLI's stderr, from its end: the last lines say why it died. */
@@ -213,6 +225,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   readonly pinDrives?: (access: DriveAccess) => Effect.Effect<void>;
   /** The folder's secrets for the harness sessions. Absent: none load on this machine. */
   readonly secrets?: RunnerSecrets;
+  /** Registers them with the thread, with the turn's session token (`makeSecretsRegistrar`). */
+  readonly registerSecrets?: (
+    token: string,
+    secrets: ReadonlyArray<SecretValue>,
+  ) => Effect.Effect<void, SecretsRegisterError>;
 }) {
   const scope = yield* Effect.scope;
   const logAnnotations = yield* References.CurrentLogAnnotations;
@@ -252,6 +269,8 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     );
   /** The drive, opened by the first turn that names it; one per machine generation. */
   let drive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
+  /** The drive whose changes stream in. */
+  let watching: RunnerDrive | null = null;
   /** Runs whose end is held until their files land, and the agent turn awaited for a conflict. */
   const finishing = new Map<RunId, { waiting: Deferred.Deferred<boolean> | null }>();
   /** Agent turns run to resolve a merge, by attempt, and their provider turns once named. */
@@ -274,21 +293,50 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   };
 
   /**
+   * What the drive's watcher says (#493). The thread only takes notices for a
+   * live run, so between turns they wait for the next one; a save that works
+   * again before then leaves nothing to say.
+   */
+  let heldNotices: ReadonlyArray<string> = [];
+  const driveNotice = (message: string) =>
+    Effect.suspend(() => {
+      const runId = runningRunId;
+      if (runId !== null) {
+        return ordered.withPermits(1)(input.emit({ kind: "drive.notice", runId, message }));
+      }
+      heldNotices = message === SAVED_AGAIN_NOTICE ? [] : [...heldNotices, message];
+      return Effect.logWarning(message);
+    });
+
+  const drain: RunnerTurns["drain"] = Effect.gen(function* () {
+    const unsaved: Array<string> = [];
+    if (drive !== null) {
+      const saved = yield* Effect.result(drive.drive.saveNow);
+      if (saved._tag === "Failure") {
+        unsaved.push(`Saving this thread's files failed: ${saveFailureReason(saved.failure)}`);
+      }
+    }
+    if (input.sessions !== undefined) {
+      for (const driver of new Set([...input.adapters.values()].map((adapter) => adapter.driver))) {
+        const reason = yield* input.sessions.flush(driver);
+        if (reason !== null) unsaved.push(`Saving the agent's session failed: ${reason}`);
+      }
+    }
+    return unsaved;
+  });
+
+  /**
    * Hands `runId` to a heavy machine (#134), on the same path as a lost
    * machine (#132) but with nothing in flight: its files and session rows are
    * saved as of now, then the thread hears it outgrew this machine and
    * continues it on a heavy one. What the harness does after that is dropped;
    * this machine is stopped once the thread asks for the next one.
    */
-  const moveUp = (runId: RunId, driver: ProviderAdapterV2["Service"]["driver"], reason: string) =>
+  const moveUp = (runId: RunId, reason: string) =>
     Effect.gen(function* () {
       outgrown.add(runId);
       yield* Effect.logInfo("the turn outgrew this machine", { runId, reason });
-      if (drive !== null) {
-        yield* drive.drive.autosave;
-        yield* drive.drive.flush;
-      }
-      if (input.sessions !== undefined) yield* input.sessions.flush(driver);
+      yield* drain;
       yield* input.emit({ kind: "machine.outgrown", runId, reason });
     });
   /** One turn readies the working directory at a time, even after a stop left one installing. */
@@ -514,7 +562,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           yield* deliver(event);
           const reason = input.machineClass === "light" ? outgrownByOnce(event) : null;
           if (reason !== null && latestRunId !== null) {
-            yield* moveUp(latestRunId, adapter.driver, reason);
+            yield* moveUp(latestRunId, reason);
           }
         }),
       ),
@@ -689,14 +737,41 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           }
           // Edits the thread made inside dependency trees, once the trees are rebuilt (#490).
           if (opened !== null) yield* opened.restoreDependencyEdits;
+          // From the first turn on, changes stream into the drive as they happen (#493).
+          if (opened !== null && watching !== opened) {
+            watching = opened;
+            yield* watchChanges({
+              interval: WATCH_INTERVAL,
+              changed: opened.changed,
+              save: opened.saveNow.pipe(Effect.mapError(saveFailureReason)),
+              notice: driveNotice,
+            }).pipe(Effect.forkIn(scope));
+          }
           const secrets =
             input.secrets === undefined
               ? 0
-              : yield* input.secrets.load(secretsAccess, {
-                  notice: (message) =>
-                    input.emit({ kind: "secrets.notice", runId: turn.runId, message }),
-                  info: (message) => input.emit(log(turn.runId, "info", message)),
-                });
+              : yield* input.secrets
+                  .load(secretsAccess, {
+                    notice: (message) =>
+                      input.emit({ kind: "secrets.notice", runId: turn.runId, message }),
+                    info: (message) => input.emit(log(turn.runId, "info", message)),
+                    register: (secrets) =>
+                      sessionAccess === null || input.registerSecrets === undefined
+                        ? Effect.fail(
+                            new SecretsRegisterError({
+                              message: "this machine can't reach the thread to register them",
+                            }),
+                          )
+                        : input.registerSecrets(sessionAccess.token, secrets),
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new RunnerTurnError({
+                          message: `This folder's secrets couldn't be registered to hide them from the model, so the turn stopped: ${error.message}. Try again.`,
+                        }),
+                    ),
+                  );
           return { drive, secrets };
         }),
       );
@@ -742,9 +817,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
             providerSession: session.providerSession,
             providerThread,
           });
-          for (const message of prepared.drive?.notices ?? []) {
+          for (const message of [...(prepared.drive?.notices ?? []), ...heldNotices]) {
             yield* input.emit({ kind: "drive.notice", runId: turn.runId, message });
           }
+          heldNotices = [];
           return true;
         }),
       );
@@ -872,5 +948,11 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     ),
   ).pipe(Effect.forkIn(scope));
 
-  return { start, interrupt, keepOnly } satisfies RunnerTurns;
+  return {
+    start,
+    interrupt,
+    keepOnly,
+    drain,
+    taken: Effect.sync(() => [...taken]),
+  } satisfies RunnerTurns;
 });

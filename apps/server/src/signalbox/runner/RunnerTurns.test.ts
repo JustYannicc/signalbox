@@ -92,6 +92,8 @@ const label = (item: RunnerItem) => {
       return `provider ${item.runId} ${String(item.event.type)}`;
     case "log":
       return `log ${item.runId} ${item.level}`;
+    case "machine.drained":
+      return `${item.kind} ${item.id}`;
     default:
       return `${item.kind} ${item.runId}`;
   }
@@ -263,6 +265,8 @@ describe("RunnerTurns", () => {
             autosave: Effect.sync(() => void driveCalls.push("autosave")),
             flush: Effect.void,
             restoreDependencyEdits: Effect.void,
+            saveNow: Effect.void,
+            changed: Effect.succeed(false),
             finishTurn: () =>
               Effect.sync(() => {
                 driveCalls.push("finish");
@@ -426,6 +430,8 @@ describe("RunnerTurns", () => {
           autosave: Effect.sync(() => void driveCalls.push("autosave")),
           flush: Effect.void,
           restoreDependencyEdits: Effect.void,
+          saveNow: Effect.void,
+          changed: Effect.succeed(false),
           finishTurn: () =>
             Effect.sync(() => {
               driveCalls.push("finish");
@@ -698,6 +704,8 @@ describe("RunnerTurns", () => {
         autosave: Effect.void,
         flush: Effect.void,
         restoreDependencyEdits: Effect.void,
+        saveNow: Effect.void,
+        changed: Effect.succeed(false),
         finishTurn: () =>
           Effect.succeed({
             checkpoint: null,
@@ -943,7 +951,11 @@ describe("RunnerTurns", () => {
           settle: (_kind, event) => Effect.sync(() => void log.push(`settle ${event.type}`)),
           failures,
           claude: undefined as never,
-          flush: (kind) => Effect.sync(() => void log.push(`flush ${kind}`)),
+          flush: (kind) =>
+            Effect.sync(() => {
+              log.push(`flush ${kind}`);
+              return null;
+            }),
         } satisfies RunnerSessions,
       }));
 
@@ -1149,6 +1161,8 @@ describe("RunnerTurns", () => {
             autosave: Effect.sync(() => void log.push("autosave")),
             flush: Effect.sync(() => void log.push("drive flush")),
             restoreDependencyEdits: Effect.void,
+            saveNow: Effect.sync(() => void log.push("drive save")),
+            changed: Effect.succeed(false),
           } as unknown as RunnerDrive;
           const turns = yield* makeRunnerTurns({
             threadId,
@@ -1195,8 +1209,8 @@ describe("RunnerTurns", () => {
               "settle turn_item.updated",
               // The build shows as started, so the thread can report it interrupted.
               "emit turn_item.updated",
-              "autosave",
-              "drive flush",
+              // Everything saved, as for any machine about to go (#493).
+              "drive save",
               "flush codex",
               "machine.outgrown",
             ]);

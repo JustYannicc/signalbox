@@ -100,6 +100,8 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Folders live in each user's object (`user/UserFolders.ts`); older clients read them as sections.
     sections: true,
     folders: true,
+    // Standing sign-in grants, in each user's object (`signIn/SignInGrants.ts`).
+    signInGrants: true,
     // Chats and tasks, and idle chats archiving themselves (`user/UserThreadKinds.ts`).
     threadKinds: true,
     // The thread object picks start or queue itself, so clients skip reading the projection first.
@@ -109,6 +111,7 @@ export const descriptor = (identity: CloudEnvironmentIdentity): ExecutionEnviron
     // Pools only sign in Claude and ChatGPT accounts, for now: no API keys, imports or OpenCode.
     poolFeatures: CLOUD_POOL_KINDS,
     signalboxPreviews: identity.previews === true,
+    threadBrowsing: true,
     // Uploaded to R2 and claimed into the thread on send (`attachments/CloudAttachments.ts`).
     ...(identity.attachments === true
       ? {

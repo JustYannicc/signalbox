@@ -154,7 +154,10 @@ function SettingsRouteLayout() {
     <SettingsScopeProvider
       search={rawSearch}
       singleEnvironment={
-        !showsEnvironmentUi || pathname === "/settings/providers" || pathname === "/settings/pools" // signalbox: pools
+        !showsEnvironmentUi ||
+        pathname === "/settings/providers" ||
+        pathname === "/settings/pools" || // signalbox: pools
+        pathname === "/settings/sign-in" // signalbox: sign-in grants
       }
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target

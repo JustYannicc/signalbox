@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { matchThread, threadTurns } from "../context/threadContext.ts";
+import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
+import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -18,7 +20,9 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  * (a turn to drive, a summary to deliver).
  */
 export const makeThreadObjectApi = (
-  run: <A, E>(effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports>) => Promise<A>,
+  run: <A, E>(
+    effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing>,
+  ) => Promise<A>,
   afterChange: () => Promise<void>,
 ): Omit<
   ThreadObjectApi,
@@ -28,7 +32,7 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<
       A,
       ThreadEngine.ThreadNotFoundError | ThreadEngine.ThreadCommandRejectedError,
-      ThreadEngine.ThreadEngine
+      ThreadEngine.ThreadEngine | ThreadBrowsing
     >,
   ): Promise<ThreadObjectReply<A>> =>
     run(
@@ -122,6 +126,43 @@ export const makeThreadObjectApi = (
       await afterChange();
       return result;
     },
+    browsing: (actor, you) =>
+      run(
+        ThreadBrowsing.use((browsing) =>
+          browsing.subscribe(actor, browsingWire.member.decode(you)).pipe(
+            Effect.map((stream) =>
+              stream.pipe(Stream.map(encodeBrowsingLine), Stream.toReadableStream()),
+            ),
+            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          ),
+        ),
+      ),
+    browse: (actor, by, command) => {
+      const decoded = browsingWire.command.decode(command);
+      return reply(
+        ThreadBrowsing.use((browsing) =>
+          browsing.dispatch(actor, browsingWire.member.decode(by), decoded),
+        ).pipe(
+          Effect.map(browsingWire.dispatched.encode),
+          // The browsing log has no command ids; the reason is what the client shows.
+          Effect.catchTags({
+            BrowsingRejectedError: (error) =>
+              Effect.fail(
+                ThreadEngine.ThreadCommandRejectedError.forCommand(
+                  { id: "", type: decoded._tag },
+                  error.reason,
+                ),
+              ),
+          }),
+        ),
+      );
+    },
+    browsingRecord: (actor) =>
+      reply(
+        ThreadBrowsing.use((browsing) =>
+          Effect.map(browsing.record(actor), browsingWire.head.encode),
+        ),
+      ),
     summary: (actor) =>
       run(
         engine.use((service) =>

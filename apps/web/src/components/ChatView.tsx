@@ -471,6 +471,7 @@ import {
   holdLockedComposerSend,
   toggleComposerSendLockFromShortcut,
 } from "./chat/sendLock/composerSendLock"; // signalbox: send lock
+import { useThreadBrowserAvailability } from "../browsing/useThreadBrowserAvailability"; // signalbox: synced tabs (#585)
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -2315,6 +2316,10 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
   );
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
+  const threadBrowser = useThreadBrowserAvailability(
+    activeThreadRef,
+    activeEnvironmentServerBrowser,
+  ); // signalbox: synced tabs (#585)
   const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
     container: workspaceLayoutElement,
     widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
@@ -2378,7 +2383,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
-  const previewSessionsReady = !activeEnvironmentServerBrowser || activePreviewState.listLoaded;
+  const previewSessionsReady = !threadBrowser.listed || activePreviewState.listLoaded;
   const resolvePreviewRuntimeTabId = useMemo(
     () =>
       activeThreadRef
@@ -2410,7 +2415,7 @@ export default function ChatView(props: ChatViewProps) {
         ? undefined
         : randomUUID(),
     );
-  const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
+  const previewPanelOpen = activeRightPanelKind === "preview" && threadBrowser.viewable;
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -5676,7 +5681,7 @@ export default function ChatView(props: ChatViewProps) {
   };
   const closePreviewPanelStable = useStableCallback(closePreviewPanel);
   const togglePreviewPanel = () => {
-    if (!activeThreadRef || !browserAvailable) return;
+    if (!activeThreadRef || !threadBrowser.viewable) return;
     if (previewPanelOpen) {
       closePreviewPanel();
       return;
@@ -5685,7 +5690,7 @@ export default function ChatView(props: ChatViewProps) {
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
-    } else {
+    } else if (!threadBrowser.openWithoutEngine()) {
       createBrowserSurface();
     }
   };
@@ -11466,7 +11471,7 @@ export default function ChatView(props: ChatViewProps) {
               </div>
             </div>
 
-            {canOperatePreview && activeThreadRef && activeEnvironmentServerBrowser ? (
+            {canOperatePreview && activeThreadRef && threadBrowser.listed ? (
               <PreviewSessionSync threadRef={activeThreadRef} />
             ) : null}
             {activeThreadRef &&

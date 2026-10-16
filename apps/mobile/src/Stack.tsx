@@ -63,6 +63,7 @@ import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
+import { SyncedBrowserRouteScreen } from "./features/browser/SyncedBrowserRouteScreen";
 import { AgentBrowserRouteScreen } from "./features/agentBrowser/AgentBrowserRouteScreen"; // signalbox: agent browser
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
@@ -81,6 +82,7 @@ import {
   automationSettingsScreens,
   automationStackScreens,
 } from "./features/automations/routes"; // signalbox: automations
+import { signInSettingsScreens } from "./features/signIn/routes"; // signalbox: sign-in grants
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectNewRoute } from "./features/projects/AddProjectNewRoute";
@@ -348,6 +350,7 @@ const SettingsContentStack = createV5SheetStackNavigator({
       },
     }),
     ...automationSettingsScreens(), // signalbox: automations
+    ...signInSettingsScreens(), // signalbox: sign-in grants
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
       linking: "scheduled-tasks/new",
@@ -565,6 +568,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ThreadReviewComment",
   "ThreadDevicePreview",
   "ThreadBrowserPreview",
+  "ThreadBrowsing", // signalbox: synced tabs (#585)
   "ThreadAgentBrowser", // signalbox: agent browser
   "ThreadSettingsSheet",
 ]);
@@ -795,6 +799,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
         headerShown: false,
         gestureEnabled: false,
       },
+    }),
+    // signalbox: a thread's synced tabs in this device's own WebView (#585).
+    ThreadBrowsing: createNativeStackScreen({
+      screen: SyncedBrowserRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/browsing`,
+      options: SOLID_HEADER_OPTIONS,
     }),
     // signalbox: agent browser
     ThreadAgentBrowser: createNativeStackScreen({

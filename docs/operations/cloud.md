@@ -66,6 +66,14 @@ everything except the CLIProxyAPI's own time to its response headers (the
 token check, the hops, the pool's access check and a cold container's start).
 The turn's diagnostics show it on each request's line.
 
+A turn whose folders have secrets (#395) never sends their values to a
+provider. The Runner registers the values with the thread before the harness
+gets them, and the cloud's side of the gateway replaces every value, in any
+common encoding, with `{{secret:NAME}}` as the request body streams to the
+pool (`scrubModelRequest.ts`). Until the machine running the turn has
+registered, the gateway refuses the turn's requests with "This machine hasn't
+registered the folder's secrets to hide them yet."
+
 Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
 deployed after the cloud Worker. Each pull request preview gets its own,
 `signalbox-model-gateway-pr-<number>` at
@@ -356,6 +364,21 @@ ref, so secrets never reach another thread or a Git host. A cloud from before
 this answers no `machine` ref, and the Runner then keeps none. Rolling the
 Worker back past it would hand private packs to every thread in the drive.
 
+Changes stream in as they happen (#493), not only after tool calls and at
+turn end: every 2 s the Runner asks whether anything it keeps is newer than
+its last successful save (`RunnerDriveWatch.ts`, a `find` that stops at the
+first hit) and saves if so, so a machine lost without warning loses about
+that much. A save that keeps failing tells the thread once, and again when it
+works. Before the cloud lets an idle machine go, it sends `drain`: the
+Runner saves the drive and the session rows with its tokens still good and
+answers `machine.drained` with the drain's id, and only then is the lease
+released; a reconnecting Runner is asked again. A machine that doesn't answer
+within 2 minutes goes anyway, and the session's stop detail says its last
+saves weren't confirmed. Only Runners whose `hello` says they drain are
+asked; an older one is let go as before. A machine stopping on its own
+side (SIGTERM, a newer generation, a new image) saves the same way as its
+session closes, within 25 s.
+
 Three invariants hold the store together, all enforced by the Worker and the
 cloud's objects rather than trusted to the Runner:
 
@@ -613,7 +636,11 @@ harness wrote, and only the machine holding the lease can write.
 - When the machine running a turn is lost (its socket stays gone for 60 s, or
   it says `end`), the run ends interrupted, with anything still streaming
   shown aborted, and a continuation run (`restartContinuationOfRunId`) starts
-  on the next machine. That machine restores the session at its latest
+  on the next machine. A new Runner process on the same machine counts as
+  well: boat can bring a resumed disk up on another node, and that Runner
+  dials in with the same generation before the 60 s are up. Its `hello` lists
+  the runs it was handed, so a started run missing from it continues on that
+  machine. That machine restores the session at its latest
   durable row and the worktree at its latest auto-save, then resumes natively.
   A tool that was running is reported to the model as unfinished by the
   harness itself and never rerun. After three lost machines in a row, or when

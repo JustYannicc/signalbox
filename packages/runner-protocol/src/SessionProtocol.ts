@@ -38,6 +38,8 @@ export const SESSION_PATHS = {
   streams: `${SESSION_API_PREFIX}/streams`,
   rows: `${SESSION_API_PREFIX}/rows`,
   attachments: `${SESSION_API_PREFIX}/attachments`,
+  /** Registers the thread's secret values for the ModelGateway to scrub (`SecretsProtocol.ts`). */
+  secrets: `${SESSION_API_PREFIX}/secrets`,
 } as const;
 
 /** Claude Code's streams: `claude/<session id>`, and `claude/<session id>/<subpath>` for sidecars. */

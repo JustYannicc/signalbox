@@ -260,7 +260,8 @@ export const makeRunnerDependencies = Effect.fn("makeRunnerDependencies")(functi
           (entry) => isDirectory(path.join(directory, entry)),
           { concurrency: 16 },
         );
-        for (const entry of children) {
+        // A concurrent filter answers in the order its checks finish: roots install in name order.
+        for (const entry of children.toSorted()) {
           yield* visit(relative === "" ? entry : path.join(relative, entry), depth + 1);
         }
       });

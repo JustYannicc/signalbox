@@ -8,6 +8,8 @@ import {
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
+import { ThreadBrowsingWebView } from "~/browsing/ThreadBrowsingWebView"; // signalbox: synced tabs (#585)
+import { useEnvironmentSupportsThreadBrowsing } from "~/state/browsing"; // signalbox: synced tabs (#585)
 import { useEnvironmentScope } from "~/state/session";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
@@ -35,6 +37,14 @@ export function PreviewPanel({
 }: Props) {
   const available = usePreviewAvailable(threadRef.environmentId);
   const canOperatePreview = useEnvironmentScope(threadRef.environmentId, AuthPreviewOperateScope);
+  const synced = useEnvironmentSupportsThreadBrowsing(threadRef.environmentId); // signalbox
+  if (canOperatePreview && !available && synced) {
+    return (
+      <PreviewPanelShell mode={mode}>
+        <ThreadBrowsingWebView threadRef={threadRef} />
+      </PreviewPanelShell>
+    );
+  }
   if (!canOperatePreview || !available) {
     return (
       <PreviewPanelShell mode={mode}>

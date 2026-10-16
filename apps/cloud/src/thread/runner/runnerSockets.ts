@@ -27,6 +27,8 @@ interface Attachment {
   readonly connection: number;
   /** The run this socket's Runner was handed, until it ends or is stopped. */
   readonly sentRunId: RunId | null;
+  /** The drain this socket's Runner was asked for (#493); absent: none. */
+  readonly sentDrainId?: number | undefined;
 }
 
 export interface RunnerSocketHost {
@@ -133,8 +135,14 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       });
       sentRunId = work.turn.runId;
     }
-    if (sentRunId !== attachment.sentRunId) {
-      socket.serializeAttachment({ ...attachment, sentRunId } satisfies Attachment);
+    // A drain asked for and not answered yet, once per connection (#493).
+    let sentDrainId = attachment.sentDrainId;
+    if (work.drain !== null && sentDrainId !== work.drain) {
+      send(socket, { type: "drain", id: work.drain });
+      sentDrainId = work.drain;
+    }
+    if (sentRunId !== attachment.sentRunId || sentDrainId !== attachment.sentDrainId) {
+      socket.serializeAttachment({ ...attachment, sentRunId, sentDrainId } satisfies Attachment);
     }
   }
   return work;

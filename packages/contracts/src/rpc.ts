@@ -52,10 +52,12 @@ import { SIGNALBOX_CONTEXTS_RPCS } from "./signalboxContexts.ts"; // signalbox: 
 import { SIGNALBOX_DRIVES_RPCS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_RPCS } from "./signalboxFolders.ts"; // signalbox: folders
 import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: previews
+import { SIGNALBOX_BROWSING_RPCS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import { SIGNALBOX_PUSH_RPCS } from "./signalboxPush.ts"; // signalbox: push devices
 import { SIGNALBOX_REPOSITORIES_RPCS } from "./signalboxRepositories.ts"; // signalbox: repositories
 import { SIGNALBOX_THREAD_KINDS_RPCS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
 import { SIGNALBOX_KEYS_RPCS } from "./signalboxKeys.ts"; // signalbox: personal keys
+import { SIGNALBOX_SIGN_IN_RPCS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -2019,10 +2021,12 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_DRIVES_RPCS,
   ...SIGNALBOX_FOLDERS_RPCS,
   ...SIGNALBOX_PREVIEWS_RPCS,
+  ...SIGNALBOX_BROWSING_RPCS,
   ...SIGNALBOX_PUSH_RPCS,
   ...SIGNALBOX_REPOSITORIES_RPCS,
   ...SIGNALBOX_THREAD_KINDS_RPCS,
   ...SIGNALBOX_KEYS_RPCS,
+  ...SIGNALBOX_SIGN_IN_RPCS,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(

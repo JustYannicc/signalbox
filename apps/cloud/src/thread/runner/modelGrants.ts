@@ -7,6 +7,7 @@ import { type RunId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { isLocalKey } from "../../localKeys/LocalKeys.ts";
+import { scrubModelRequest } from "../../modelGateway/scrubModelRequest.ts";
 import type { ModelGatewayRecord } from "../../modelGateway/modelGatewayRecord.ts";
 import {
   type ModelForwardReply,
@@ -31,6 +32,9 @@ import type { ModelAuthorization } from "./ThreadRunner.ts";
  * A local key (`localKeys/LocalKeys.ts`) takes the same path with the user's
  * object in the thread's place: it names the pool the user's top level runs
  * on, and the pool checks the user as it checks a turn's requester.
+ *
+ * A turn's request is scrubbed of its folder's secrets on the way
+ * (`scrubModelRequest.ts`): the values stay in the cloud, never the gateway.
  */
 
 /**
@@ -122,10 +126,26 @@ export async function serveModel(
   const authorization = await authorizeModel(input.threads, input.token, input.provider, options);
   const authMs = Date.now() - startedAt;
   if (authorization._tag === "denied") return { ...authorization, authMs };
+  if (authorization._tag === "unregistered") {
+    const { runId, traceId, reason } = authorization;
+    return { _tag: "granted", runId, traceId, authMs, reply: { _tag: "denied", reason } };
+  }
   const { runId, traceId, pool } = authorization;
+  // The model never sees the turn's secrets, in any form (#591).
+  const scrubbed = scrubModelRequest(input.request, authorization.secrets);
+  if (scrubbed._tag === "refused") {
+    return {
+      _tag: "granted",
+      runId,
+      traceId,
+      authMs,
+      reply: { _tag: "denied", reason: scrubbed.reason },
+    };
+  }
+  const { request } = scrubbed;
   // The token names the thread, which keeps its account in the pool (`pool/threadAccounts.ts`).
   const reply = await forwardToPool(
-    input,
+    { ...input, request },
     pool,
     options,
     threadOfModelToken(input.token) ?? undefined,

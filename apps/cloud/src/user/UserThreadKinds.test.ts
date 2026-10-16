@@ -75,6 +75,9 @@ const setup = (
         contextMatch: async () => null,
         contextTurns: async () => null,
         setMonitors: async () => ({ _tag: "ok", value: undefined }),
+        browsing: async () => null,
+        browse: async () => ({ _tag: "not_found" }),
+        browsingRecord: async () => ({ _tag: "not_found" }),
       }),
   });
   const recordedAlarm = Layer.succeed(

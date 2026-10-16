@@ -24,7 +24,9 @@
     "aws4fetch": "1.0.20",
     "diff": "8.0.3",
     "effect": "catalog:",
-    "jose": "catalog:"
+    "fractional-indexing": "4.0.0",
+    "jose": "catalog:",
+    "tldts": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",

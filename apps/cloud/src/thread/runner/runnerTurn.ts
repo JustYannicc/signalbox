@@ -49,13 +49,16 @@ export const harnessRun = (projection: Projection): Run | undefined => {
   return run !== undefined && isHarnessInstance(run.providerInstanceId) ? run : undefined;
 };
 
+/** Whether `run` waits for a Runner to take it; once one reports it started, none is handed it again. */
+export const awaitsHandoff = (run: Run) => run.status === "starting" || run.status === "preparing";
+
 /**
  * The turn to hand the Runner: the live harness run, until the Runner reports
  * it started. The caller adds its trace id.
  */
 export function runnerTurnFor(projection: Projection): Omit<RunnerTurn, "traceId"> | null {
   const run = harnessRun(projection);
-  if (run === undefined || (run.status !== "starting" && run.status !== "preparing")) return null;
+  if (run === undefined || !awaitsHandoff(run)) return null;
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
   const providerThread = projection.providerThreads.find(
     (candidate) => candidate.id === run.providerThreadId,
@@ -150,7 +153,7 @@ function startedEvents(
   item: Extract<RunnerItem, { readonly kind: "turn.started" }>,
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
-  if (run.status !== "starting" && run.status !== "preparing") return [];
+  if (!awaitsHandoff(run)) return [];
   const threadId = projection.thread.id;
   const current = providerThreadFor(projection, run, "active", ctx);
   // The harness's native state, under the thread's own identity for the record.
@@ -235,8 +238,8 @@ function itemEvents(
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
   const run = harnessRun(projection);
-  // Usage and log lines are for the turn's diagnostics, not its events.
-  if (item.kind === "usage" || item.kind === "log") return [];
+  // Usage and log lines are for the turn's diagnostics, not its events; a drain is the lease's.
+  if (item.kind === "usage" || item.kind === "log" || item.kind === "machine.drained") return [];
   if (item.kind === "provider") {
     return stringField(item.event, "type") === "turn.terminal"
       ? terminalEvents(projection, item.event, ctx)
@@ -317,14 +320,18 @@ export function runnerBatchEvents(
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly undecodable: ReadonlyArray<string>;
   readonly outgrown: string | null;
+  /** A `machine.drained` in the batch: which drain it answers, and what couldn't be saved. */
+  readonly drained: { readonly id: number; readonly unsaved: ReadonlyArray<string> } | null;
 } {
   const events: Array<OrchestrationV2DomainEvent> = [];
   const undecodable: Array<string> = [];
+  let drained: { readonly id: number; readonly unsaved: ReadonlyArray<string> } | null = null;
   let current = projection;
   for (const item of items) {
     if (item.kind === "machine.outgrown" && harnessRun(current)?.id === item.runId) {
-      return { events, undecodable, outgrown: item.reason };
+      return { events, undecodable, outgrown: item.reason, drained };
     }
+    if (item.kind === "machine.drained") drained = { id: item.id, unsaved: item.unsaved };
     const next = itemEvents(current, item, ctx);
     if (next === "undecodable") {
       undecodable.push(item.kind === "provider" ? String(item.event.type) : item.kind);
@@ -334,5 +341,5 @@ export function runnerBatchEvents(
     events.push(...next);
     current = applyEvents(current, next) ?? current;
   }
-  return { events, undecodable, outgrown: null };
+  return { events, undecodable, outgrown: null, drained };
 }

@@ -55,6 +55,10 @@
       "types": "./src/signalboxThreadKinds.ts",
       "import": "./src/signalboxThreadKinds.ts"
     },
+    "./signalboxBrowsing": {
+      "types": "./src/signalboxBrowsing.ts",
+      "import": "./src/signalboxBrowsing.ts"
+    },
     "./signalboxPreviews": {
       "types": "./src/signalboxPreviews.ts",
       "import": "./src/signalboxPreviews.ts"
@@ -66,6 +70,10 @@
     "./signalboxKeys": {
       "types": "./src/signalboxKeys.ts",
       "import": "./src/signalboxKeys.ts"
+    },
+    "./signalboxSignIn": {
+      "types": "./src/signalboxSignIn.ts",
+      "import": "./src/signalboxSignIn.ts"
     },
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",

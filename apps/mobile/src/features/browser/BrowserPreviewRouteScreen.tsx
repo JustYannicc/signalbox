@@ -9,16 +9,15 @@ import {
   ThreadId,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
-import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Platform, TextInput, View } from "react-native";
+import { AppState, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ControlPill } from "../../components/ui/ControlPill";
 import { AppBar } from "../../components/ui/AppBar";
 
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { AddressBar } from "./AddressBar";
 import { BrowserTabMenu } from "./BrowserTabMenu";
 import { browserTabTitle, browserTabUrl, latestBrowserTab } from "./browserTabs";
 import {
@@ -216,54 +215,18 @@ function BrowserAddressBar({
   readonly streaming: boolean;
   readonly onCommand: PreviewStreamRef["command"];
 }) {
-  const url = browserTabUrl(tab);
-  const [draft, setDraft] = useState<string | null>(null);
-  const submit = () => {
-    const value = draft ?? url;
-    setDraft(null);
-    try {
-      onCommand({ type: "navigate", url: normalizePreviewUrl(value) });
-    } catch {
-      Dialog.alert("Could not open this address", "Enter an http or https URL.");
-    }
-  };
   return (
-    <View className="flex-row items-center gap-1 px-2 pb-2">
-      <ControlPill
-        icon="chevron.left"
-        accessibilityLabel="Back"
-        disabled={!ready || !tab.canGoBack}
-        onPress={() => onCommand({ type: "history", delta: -1 })}
-      />
-      <ControlPill
-        icon="chevron.right"
-        accessibilityLabel="Forward"
-        disabled={!ready || !tab.canGoForward}
-        onPress={() => onCommand({ type: "history", delta: 1 })}
-      />
-      <TextInput
-        accessibilityLabel="Address"
-        editable={ready}
-        value={draft ?? url}
-        onChangeText={setDraft}
-        onBlur={() => setDraft(null)}
-        onSubmitEditing={submit}
-        placeholder="Enter a URL"
-        placeholderTextColorClassName="accent-placeholder"
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="url"
-        returnKeyType="go"
-        selectTextOnFocus
-        className="h-10 min-w-0 flex-1 rounded-full border border-input-border bg-input px-4 font-sans text-sm text-foreground"
-      />
-      <ControlPill
-        icon="arrow.clockwise"
-        accessibilityLabel="Reload page"
-        disabled={!ready}
-        onPress={() => onCommand({ type: "reload" })}
-      />
-      <BrowserTabMenu environmentId={environmentId} tab={tab} disabled={!streaming} />
-    </View>
+    <AddressBar
+      url={browserTabUrl(tab)}
+      canGoBack={ready && tab.canGoBack}
+      canGoForward={ready && tab.canGoForward}
+      canReload={ready}
+      editable={ready}
+      onBack={() => onCommand({ type: "history", delta: -1 })}
+      onForward={() => onCommand({ type: "history", delta: 1 })}
+      onReload={() => onCommand({ type: "reload" })}
+      onNavigate={(url) => onCommand({ type: "navigate", url })}
+      trailing={<BrowserTabMenu environmentId={environmentId} tab={tab} disabled={!streaming} />}
+    />
   );
 }

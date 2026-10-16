@@ -25,6 +25,7 @@ import {
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { readEnvironmentSupportsThreadBrowsing } from "~/state/browsing"; // signalbox: synced tabs
 
 import {
   browserDefaultOpenProfileId,
@@ -83,6 +84,10 @@ export async function openUrlInPreview<E>(input: {
       viewport: browserDefaultOpenViewport(defaults),
       profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
       ...(runtime === undefined ? {} : { runtime }),
+      // signalbox: a background tab doesn't switch the thread's other devices (#585).
+      ...(input.background && readEnvironmentSupportsThreadBrowsing(input.threadRef.environmentId)
+        ? { reveal: false }
+        : {}),
     },
   });
   return mapAtomCommandResult(result, (snapshot) => {

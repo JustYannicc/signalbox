@@ -11,6 +11,10 @@ import { DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 /** Why a save failed, when it says so in the thread's person's terms: the drive refused it, and why. */
 const isUserFacing = Schema.is(Schema.Union([DriveTooLargeError, DriveRefusedError]));
 
+/** What the thread hears about a save that failed: the drive's own reason, or no internals. */
+export const saveFailureReason = (error: unknown) =>
+  isUserFacing(error) ? error.message : "Signalbox couldn't reach this thread's storage.";
+
 /**
  * How a turn that works in a drive ends (#131): its files are committed and
  * reported as the turn's checkpoint, `main` is merged in, and the branch lands

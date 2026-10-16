@@ -37,6 +37,8 @@ const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  /** The runs each `hello` said its process holds. */
+  const helloRuns = yield* Ref.make<ReadonlyArray<ReadonlyArray<RunId> | undefined>>([]);
   const dropAfterCommit = yield* Ref.make(false);
   const toRunner = yield* Ref.make<Queue.Queue<ThreadMessage, RunnerConnectionError> | null>(null);
   const closed = new RunnerConnectionError({ message: "closed" });
@@ -57,6 +59,7 @@ const makeFakeThread = Effect.gen(function* () {
           switch (message.type) {
             case "hello":
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
+              yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
                 type: "welcome",
                 generation: message.generation,
@@ -88,22 +91,27 @@ const makeFakeThread = Effect.gen(function* () {
       inbox === null ? Effect.void : Effect.asVoid(Queue.offer(inbox, message)),
     );
 
-  return { transport, committed, acked, hellos, dropAfterCommit, toCurrent };
+  return { transport, committed, acked, hellos, helloRuns, dropAfterCommit, toCurrent };
 });
 
 /** A harness whose reports the test writes by hand. */
 const makeFakeTurns = Effect.gen(function* () {
   const emitRef = yield* Deferred.make<(item: RunnerItem) => Effect.Effect<void>>();
   const startedTurns = yield* Ref.make<ReadonlyArray<RunId>>([]);
+  /** How often everything was saved for a drain, and what each drain says it couldn't save. */
+  const drains = yield* Ref.make(0);
+  const unsaved = yield* Ref.make<ReadonlyArray<string>>([]);
   const make = (emit: (item: RunnerItem) => Effect.Effect<void>) =>
     Effect.as(Deferred.succeed(emitRef, emit), {
       start: (next) => Ref.update(startedTurns, (all) => [...all, next.turn.runId]),
       interrupt: () => Effect.void,
       keepOnly: () => Effect.void,
+      drain: Ref.update(drains, (count) => count + 1).pipe(Effect.andThen(Ref.get(unsaved))),
+      taken: Ref.get(startedTurns),
     } satisfies RunnerTurns);
   const emit = (reported: RunnerItem) =>
     Effect.flatMap(Deferred.await(emitRef), (send) => send(reported));
-  return { make, emit, startedTurns };
+  return { make, emit, startedTurns, drains, unsaved };
 });
 
 /** Lets the session's fibers run until `done` holds, advancing the test clock past reconnect waits. */
@@ -117,7 +125,93 @@ const settle = (done: Effect.Effect<boolean>, label = "") =>
     throw new Error(`the session never settled: ${label}`);
   });
 
+const sessionOf = (
+  thread: Effect.Success<typeof makeFakeThread>,
+  turns: Effect.Success<typeof makeFakeTurns>,
+) =>
+  makeRunnerSession({
+    threadId,
+    generation: 1,
+    token: "token",
+    machineId: "machine",
+    imageVersion: "test",
+    build,
+    transport: thread.transport,
+    makeTurns: turns.make,
+  });
+
 describe("RunnerSession", () => {
+  it.effect("answers a drain once it saved everything, saying what it couldn't", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeFakeThread;
+        const turns = yield* makeFakeTurns;
+        yield* sessionOf(thread, turns);
+        yield* settle(
+          Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
+          "hello",
+        );
+        yield* Ref.set(turns.unsaved, ["Saving the drive failed: unreachable"]);
+        yield* thread.toCurrent({ type: "drain", id: 7 });
+        yield* settle(
+          Effect.map(Ref.get(thread.committed), (all) => all.length === 1),
+          "drained",
+        );
+        expect(yield* Ref.get(turns.drains)).toBe(1);
+        expect(yield* Ref.get(thread.committed)).toEqual([
+          { kind: "machine.drained", id: 7, unsaved: ["Saving the drive failed: unreachable"] },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("saves everything before it goes, unless the thread already let it go", () =>
+    Effect.gen(function* () {
+      const thread = yield* makeFakeThread;
+      // Stopped from the machine's side: SIGTERM, a new generation, a new image.
+      const stopped = yield* makeFakeTurns;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* sessionOf(thread, stopped);
+          yield* settle(
+            Effect.map(Ref.get(thread.hellos), (all) => all.length === 1),
+            "hello",
+          );
+        }),
+      );
+      expect(yield* Ref.get(stopped.drains)).toBe(1);
+
+      // Replaced by a newer generation: the thread let it go first.
+      const replaced = yield* makeFakeTurns;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const session = yield* sessionOf(thread, replaced);
+          yield* settle(
+            Effect.map(Ref.get(thread.hellos), (all) => all.length === 2),
+            "hello",
+          );
+          yield* session.replaced;
+        }),
+      );
+      expect(yield* Ref.get(replaced.drains)).toBe(0);
+
+      // Let go by the thread: its tokens are gone, there's nothing left to save with.
+      const released = yield* makeFakeTurns;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const session = yield* sessionOf(thread, released);
+          yield* settle(
+            Effect.map(Ref.get(thread.hellos), (all) => all.length === 3),
+            "hello",
+          );
+          yield* thread.toCurrent({ type: "end", reason: "This machine is no longer needed." });
+          yield* session.ended;
+        }),
+      );
+      expect(yield* Ref.get(released.drains)).toBe(0);
+    }),
+  );
+
   it.effect("resends after a dropped socket without delivering anything twice", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -177,6 +271,8 @@ describe("RunnerSession", () => {
         expect(labels).toEqual(["a", "b", "c", "log"]);
         // The reconnect said hello with what the Runner last saw acknowledged.
         expect(yield* Ref.get(thread.hellos)).toEqual([0, 1]);
+        // And with the turn it holds, so the thread knows it is still running here.
+        expect(yield* Ref.get(thread.helloRuns)).toEqual([[], [runId]]);
       }),
     ),
   );
@@ -246,6 +342,8 @@ describe("RunnerSession", () => {
 
       expect((yield* Ref.get(thread.committed)).map(label)).toEqual(["a", "b", "x", "y"]);
       expect(yield* Ref.get(thread.hellos)).toEqual([0, 0]);
+      // #613: the new process holds no turn, so the thread continues the one the first had.
+      expect((yield* Ref.get(thread.helloRuns))[1]).toEqual([]);
     }).pipe(Effect.scoped),
   );
 

@@ -20,6 +20,14 @@ import * as Stream from "effect/Stream";
 
 import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
 import type { ThreadContextTurns, ThreadMatch } from "../context/threadContext.ts";
+import type {
+  BrowsingCommand,
+  BrowsingMember,
+  BrowsingRecord,
+  BrowsingStreamItem,
+} from "@t3tools/contracts/signalboxBrowsing";
+import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
+import { browsingWire } from "./browsing/browsingWire.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type {
   DriveAuthorization,
@@ -138,6 +146,20 @@ export interface ThreadObjectApi {
    * empty list clears them. `not_found` unless `actor` owns the thread.
    */
   readonly setMonitors: (actor: Actor, monitors: unknown) => Promise<ThreadObjectReply<void>>;
+  /**
+   * The thread's browsing (`browsing/ThreadBrowsing.ts`) as newline-delimited
+   * batches of stream items, with `you` in the snapshot. Null when the actor
+   * cannot see the thread.
+   */
+  readonly browsing: (actor: Actor, you: unknown) => Promise<ReadableStream<Uint8Array> | null>;
+  /** Applies a browsing command as `by`. `rejected` carries why. */
+  readonly browse: (
+    actor: Actor,
+    by: unknown,
+    command: unknown,
+  ) => Promise<ThreadObjectReply<unknown>>;
+  /** The browsing record now, in its JSON encoding. */
+  readonly browsingRecord: (actor: Actor) => Promise<ThreadObjectReply<unknown>>;
 }
 
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
@@ -217,6 +239,25 @@ export interface ThreadHandle {
     actor: Actor,
     monitors: ReadonlyArray<ThreadMonitor>,
   ) => Effect.Effect<void, ThreadObjectError>;
+  /** One browsing subscription. Ends when the object goes away; resuming is the caller's job. */
+  readonly browsing: (
+    actor: Actor,
+    you: BrowsingMember,
+  ) => Stream.Stream<ReadonlyArray<BrowsingStreamItem>, ThreadNotFoundError | ThreadObjectError>;
+  readonly browse: (
+    actor: Actor,
+    by: BrowsingMember,
+    command: BrowsingCommand,
+  ) => Effect.Effect<
+    BrowsingDispatched,
+    ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError
+  >;
+  readonly browsingRecord: (
+    actor: Actor,
+  ) => Effect.Effect<
+    { readonly sequence: number; readonly record: BrowsingRecord },
+    ThreadNotFoundError | ThreadObjectError
+  >;
 }
 
 export class ThreadDirectory extends Context.Service<
@@ -352,6 +393,28 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
           // Monitors decide no command, so a rejection here is a protocol bug.
           ThreadCommandRejectedError: (error) => Effect.die(error),
         }),
+      ),
+    browsing: (actor, you) =>
+      lines(
+        "browsing",
+        () => api.browsing(actor, browsingWire.member.encode(you)),
+        (line) => browsingWire.batch.decode(line),
+      ),
+    browse: (actor, by, command) =>
+      call("browse", () =>
+        api.browse(actor, browsingWire.member.encode(by), browsingWire.command.encode(command)),
+      ).pipe(
+        Effect.flatMap(fromReply),
+        Effect.flatMap((value) => decodeIn("browse", () => browsingWire.dispatched.decode(value))),
+      ),
+    browsingRecord: (actor) =>
+      call("browsingRecord", () => api.browsingRecord(actor)).pipe(
+        Effect.flatMap(fromReply),
+        // Reads decide no command, so a rejection here is a protocol bug.
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+        Effect.flatMap((value) =>
+          decodeIn("browsingRecord", () => browsingWire.head.decode(value)),
+        ),
       ),
     summary: (actor) =>
       call("summary", () => api.summary(actor)).pipe(

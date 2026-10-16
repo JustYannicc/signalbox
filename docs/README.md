@@ -14,6 +14,7 @@
 - [SnapShots](./user/snap-shot.md)
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
+- [Browser tabs that follow the thread](./user/browser-tabs.md)
 - [Watch the agent's browser](./user/agent-browser.md)
 - [Use Signalbox as your default browser](./user/default-browser.md)
 - [Devices](./user/devices.md)
@@ -54,6 +55,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Devices](./internals/devices.md)
+- [Synced browser tabs](./internals/browsing.md)
 - [Voice input](./internals/voice-input.md)
 
 ### Runbooks

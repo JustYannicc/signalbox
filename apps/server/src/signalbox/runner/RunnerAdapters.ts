@@ -139,9 +139,11 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
   readonly caches?: Readonly<Record<string, string>>;
   /** Variables each harness session gets as it opens, under the machine's own. */
   readonly sessionEnvironment?: SessionEnvironment;
+  /** Hides the folder's secrets in what the harnesses write to stderr (`secretMask.ts`). */
+  readonly mask?: (text: string) => string;
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
-  const stderr = makeHarnessStderr();
+  const stderr = makeHarnessStderr(machine.mask);
   yield* prepareMachine(layout, machine.gatewayUrl, machine.mcpServers);
   const environment = harnessEnvironment(
     yield* HostProcess.Environment,

@@ -125,6 +125,13 @@ export interface RunnerDrive {
   readonly autosave: Effect.Effect<void>;
   /** Waits for running and queued auto-saves. */
   readonly flush: Effect.Effect<void>;
+  /** Saves now, after any running auto-save, and fails as the save does. */
+  readonly saveNow: Effect.Effect<void, RunnerDriveError>;
+  /**
+   * Whether anything the drive keeps changed since its last successful save
+   * (#493). False before the drive was first prepared here.
+   */
+  readonly changed: Effect.Effect<boolean, RunnerDriveError>;
   /**
    * After the turn start's dependency installs: puts back files the thread
    * edited inside dependency trees, where the rebuild landed on the key they
@@ -195,6 +202,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   let conflicted: ReadonlyArray<string> = [];
   /** The remote the drive is backed by, once read; a drive's remote never changes. */
   let remote: DriveRemote | null | undefined = undefined;
+  /** Whether a turn start opened the drive here: only then is there anything to save. */
+  let prepared = false;
   /** Where the last turn mounted the drive's shortcuts. */
   let mounted: ReadonlySet<string> = new Set();
   const machineState =
@@ -268,7 +277,20 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       return captured.skipped;
     });
 
-  const saveWip = saveTracked.pipe(Effect.andThen(saveMachine(false)));
+  /**
+   * Written as the last successful save started, by the filesystem's own
+   * clock: anything newer is unsaved. A save writes `saving` first and moves
+   * it there once it succeeded, so a failed one leaves its changes unsaved.
+   */
+  const savedStamp = path.join(gitDir, "signalbox-saved");
+  const savingStamp = path.join(gitDir, "signalbox-saving");
+
+  const saveWip = Effect.gen(function* () {
+    yield* fs.writeFileString(savingStamp, "");
+    yield* saveTracked;
+    yield* saveMachine(false);
+    yield* fs.rename(savingStamp, savedStamp);
+  });
 
   let saving: Deferred.Deferred<void> | null = null;
   let dirty = false;
@@ -559,6 +581,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           );
         }
         turnStart = yield* git.resolve("HEAD");
+        prepared = true;
         const mounts = yield* shortcuts.mount(remoteToken);
         mounted = new Set(mounts.mounted.map((mount) => mount.path));
         return {
@@ -576,16 +599,21 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     >,
   ) =>
     Effect.gen(function* () {
+      yield* fs.writeFileString(savingStamp, "");
       const result = yield* finished;
       // The turn's files are saved whatever happens here.
       const skipped = yield* saveMachine(true).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("saving the machine state failed", Cause.pretty(cause)).pipe(
-            Effect.as(null),
+            Effect.as(undefined),
           ),
         ),
       );
-      return result.checkpoint === null || skipped === null
+      // Everything as of the turn's end is saved: the next change is what's new.
+      if (skipped !== undefined && result.outcome._tag !== "held") {
+        yield* fs.rename(savingStamp, savedStamp);
+      }
+      return result.checkpoint === null || skipped === null || skipped === undefined
         ? result
         : { ...result, checkpoint: { ...result.checkpoint, skipped } };
     });
@@ -707,6 +735,13 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     prepare,
     autosave,
     flush,
+    // Nothing to save before a turn start opened the drive here.
+    saveNow: Effect.suspend(() => (prepared ? exclusive(saveWip) : Effect.void)),
+    changed: Effect.suspend(() =>
+      prepared && machineState !== null
+        ? machineState.changedSince(savedStamp)
+        : Effect.succeed(false),
+    ),
     restoreDependencyEdits:
       machineState === null
         ? Effect.void

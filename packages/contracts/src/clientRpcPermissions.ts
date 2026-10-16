@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
@@ -10,6 +11,8 @@ import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 import { SIGNALBOX_DRIVES_WS_METHODS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_WS_METHODS } from "./signalboxFolders.ts"; // signalbox: folders
+import { SIGNALBOX_SIGN_IN_WS_METHODS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
+import { SIGNALBOX_BROWSING_WS_METHODS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import {
   SIGNALBOX_AGENT_BROWSER_WS_METHODS,
   SIGNALBOX_PREVIEWS_WS_METHODS,
@@ -60,6 +63,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_DRIVES_WS_METHODS.addShortcut]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]: AuthOrchestrationOperateScope, // signalbox: drives
   [SIGNALBOX_PREVIEWS_WS_METHODS.open]: AuthOrchestrationOperateScope, // signalbox: previews
+  [SIGNALBOX_BROWSING_WS_METHODS.dispatch]: AuthPreviewOperateScope, // signalbox: browsing
   [SIGNALBOX_AGENT_BROWSER_WS_METHODS.input]: AuthOrchestrationOperateScope, // signalbox: agent browser
   [SIGNALBOX_FOLDERS_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.update]: AuthOrchestrationOperateScope, // signalbox: folders
@@ -71,6 +75,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: AuthSettingsWriteScope, // signalbox: thread kinds
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope, // signalbox: sign-in grants
+  [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: AuthSettingsWriteScope, // signalbox: sign-in grants
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

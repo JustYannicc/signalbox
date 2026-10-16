@@ -47,6 +47,7 @@ import * as TurnReports from "./thread/diagnostics/TurnReports.ts";
 import { deliverPendingEvents } from "./thread/eventOutbox.ts";
 import { deliverPendingSummary } from "./thread/summaryOutbox.ts";
 import * as ThreadDirectory from "./thread/ThreadDirectory.ts";
+import * as ThreadBrowsing from "./thread/browsing/ThreadBrowsing.ts";
 import * as ThreadEngine from "./thread/ThreadEngine.ts";
 import * as ThreadKindTurns from "./thread/ThreadKindTurns.ts";
 import * as KindClassifier from "./threadKinds/KindClassifier.ts";
@@ -74,6 +75,7 @@ import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
 import * as LocalKeys from "./localKeys/LocalKeys.ts";
+import * as SignInGrants from "./signIn/SignInGrants.ts";
 import * as LegacySections from "./user/legacySections.ts";
 import * as CloudEngine from "./automations/cloudEngine.ts";
 import type { AutomationRunner } from "@signalbox/automations/runner/AutomationRunner";
@@ -211,6 +213,7 @@ export const layerThreadObject = (
         token: options.secretsToken ?? (() => Effect.succeed(null)),
       }),
     ),
+    Layer.provideMerge(ThreadBrowsing.layer),
     Layer.provideMerge(ThreadEngine.layer),
     Layer.provideMerge(options.models ?? TurnModels.layerUnchecked),
     Layer.provideMerge(Layer.mergeAll(TurnDiagnostics.layer, TurnReports.layer)),
@@ -275,6 +278,7 @@ const makeUserRuntime = (
               GitHubConnection.layer,
               ConnectionLinks.layer,
               LocalKeys.layer,
+              SignInGrants.layer,
               PoolSignIns.layer,
               CloudThreadService.layer,
               PersonBrowsers.layer(kernel),
@@ -361,6 +365,7 @@ export const makeMemoryCloud = (
           | ThreadEngine.ThreadEngine
           | ThreadStore.ThreadStore
           | UserDirectory.UserDirectory
+          | ThreadBrowsing.ThreadBrowsing
           | PullRequestSync.PullRequestSync
           | PullRequestPolls.PullRequestPolls
         >,
@@ -458,6 +463,7 @@ export const makeMemoryCloud = (
         | ThreadStore.ThreadStore
         | UserDirectory.UserDirectory
         | TurnReports.TurnReports
+        | ThreadBrowsing.ThreadBrowsing
         | PullRequestSync.PullRequestSync
         | PullRequestPolls.PullRequestPolls
       >,

@@ -26,7 +26,6 @@ const replacedByAutomations = exempt("Scheduled tasks are going away; automation
 const ownBranch = exempt("Each cloud thread works on its own branch.");
 const githubImports = exempt("Repositories import from GitHub (`github/GitHubImport.ts`).");
 const selfDeploying = exempt("The cloud deploys itself; nobody updates it from a client.");
-const cloudPreviews = exempt("Cloud dev servers open through previews.* (`thread/preview/`).");
 const poolHarnesses = exempt("Pools run each harness; nothing installs per user.");
 
 /** Keys are operation names, or `prefix.*` for every operation under a prefix. */
@@ -109,8 +108,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "diagnostics.*": noHost,
   "discoveredLocalServers.subscribe": noHost,
   "filesystem.*": noHost,
-  "preview.*": cloudPreviews,
-  "previewEvents.subscribe": cloudPreviews,
   "relay.*": exempt("The relay connects self-hosted servers to the cloud."),
   "resourceTelemetry.subscribe": noHost,
   "scheduledTasks.*": replacedByAutomations,

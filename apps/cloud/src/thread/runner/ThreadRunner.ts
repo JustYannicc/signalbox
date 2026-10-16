@@ -1,4 +1,5 @@
 import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import {
@@ -47,6 +48,7 @@ import { recoverRunEvents } from "./runRecovery.ts";
 import {
   accountMovedEvents,
   failRunEvents,
+  awaitsHandoff,
   harnessRun,
   runnerBatchEvents,
   runnerTurnFor,
@@ -189,6 +191,19 @@ export type ModelAuthorization =
       readonly traceId: string;
       /** Where the request goes: the turn's pool, for its requester. */
       readonly pool: ModelPoolRoute;
+      /** What the gateway scrubs from the request (#591). Never log them. */
+      readonly secrets: ReadonlyArray<SecretValue>;
+    }
+  /**
+   * The token is the turn's, but its secrets aren't registered yet (#591): the
+   * request is refused for the turn, not as a bad key, which would send a
+   * harness to sign in again.
+   */
+  | {
+      readonly _tag: "unregistered";
+      readonly runId: RunId;
+      readonly traceId: string;
+      readonly reason: string;
     }
   | { readonly _tag: "denied"; readonly reason: string };
 
@@ -200,6 +215,11 @@ export interface MachinePlan {
   readonly machineClass: MachineClass;
   /** End any Runner of this generation: its lease is gone. */
   readonly release: number | null;
+  /**
+   * Ask this generation's Runner to save everything it wrote, with this drain
+   * id: its machine is about to go (#493).
+   */
+  readonly drain: { readonly generation: number; readonly id: number } | null;
   /** No lease stands: the machine should be stopped. */
   readonly stop: boolean;
   /** A connected machine is running a turn: keep its TTL pushed out. */
@@ -216,6 +236,8 @@ export interface RunnerWork {
   readonly generation: number;
   /** Whether `reconcile` has something to do now: ask, retry, time out or start the idle tail. */
   readonly needsUpkeep: boolean;
+  /** A drain asked for and not answered yet (#493): asked again of each connection. */
+  readonly drain: number | null;
   /** The turn to start, while its run waits for the Runner. */
   readonly turn: RunnerTurn | null;
   /** `turn`'s credential at the ModelGateway. */
@@ -292,6 +314,12 @@ export class ThreadRunner extends Context.Service<
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner") {}
 
+/**
+ * How long an idle machine gets to save everything it wrote before it goes
+ * anyway (#493): a save that big is still going, or the machine is wedged.
+ */
+export const DRAIN_TIMEOUT_MS = 2 * 60_000;
+
 /** How long a turn start waits for its owner's commit author before going without. */
 const COMMIT_AUTHOR_TIMEOUT = "5 seconds";
 /** How long handing out a turn waits for its owner's 1Password token before going without. */
@@ -301,6 +329,7 @@ const IDLE: MachinePlan = {
   ensure: null,
   machineClass: "heavy",
   release: null,
+  drain: null,
   stop: false,
   busy: false,
   wakeAt: null,
@@ -349,6 +378,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
     case "connected":
       return (
         lease.disconnectedAt !== null ||
+        lease.drain?._tag === "answered" ||
         (held ? lease.idleSince !== null : lease.idleSince === null)
       );
   }
@@ -421,7 +451,7 @@ const make = Effect.gen(function* () {
   const keep = <A>(result: A): ThreadEngine.EngineDecision<A> => ({ events: [], result });
 
   const hello: ThreadRunner["Service"]["hello"] = (hello) =>
-    withLease(({ projection, lease, now }) => {
+    withLease(({ projection, lease, now }, ctx) => {
       if (projection === null || projection.thread.id !== hello.threadId) {
         return Effect.succeed(
           keep<HelloResult>({
@@ -456,21 +486,32 @@ const make = Effect.gen(function* () {
       }
       if (hello.token !== lease.token) return refuse("bad_token", "Wrong machine token.");
       const connection = (lease.connection ?? 0) + 1;
-      return Effect.as(diagnostics.runnerConnected({ hello, connection, run, now }), {
-        events: [],
+      // A started run is never handed out again, so one this Runner never took
+      // went with an earlier process on this machine, which resumed from disk
+      // on another node (#613). It continues here like one on a lost machine.
+      const lost =
+        run !== null &&
+        !awaitsHandoff(run) &&
+        hello.takenRunIds !== undefined &&
+        !hello.takenRunIds.includes(run.id);
+      const events = lost ? recoverRunEvents(projection, run, ctx) : [];
+      const active = lost ? harnessRun(applyEvents(projection, events) ?? projection) : run;
+      return Effect.as(diagnostics.runnerConnected({ hello, connection, run, lost, now }), {
+        events,
         machine: {
           ...lease,
           status: "connected",
           connection,
           ensuredAt: lease.ensuredAt ?? now,
           disconnectedAt: null,
+          drains: hello.drains === true,
         },
         result: {
           _tag: "welcome",
           generation: lease.generation,
           connection,
           ackedSequence: lease.ackedSequence,
-          activeRunId: run?.id ?? null,
+          activeRunId: active?.id ?? null,
         },
       } satisfies ThreadEngine.EngineDecision<HelloResult>);
     });
@@ -492,7 +533,11 @@ const make = Effect.gen(function* () {
           keep<BatchResult>({ _tag: "out_of_order", ackedSequence: lease.ackedSequence }),
         );
       }
-      const { events, undecodable, outgrown } = runnerBatchEvents(projection, input.items, ctx);
+      const { events, undecodable, outgrown, drained } = runnerBatchEvents(
+        projection,
+        input.items,
+        ctx,
+      );
       const recorded = Effect.andThen(
         diagnostics.batch({
           ...input,
@@ -518,7 +563,14 @@ const make = Effect.gen(function* () {
       }
       return Effect.as(recorded, {
         events,
-        machine: { ...lease, ackedSequence: input.sequence },
+        machine: {
+          ...lease,
+          ackedSequence: input.sequence,
+          // Only an answer to a drain still asked for lets the machine go.
+          ...(drained !== null && lease.drain?._tag === "asked" && lease.drain.id === drained.id
+            ? { drain: { _tag: "answered", id: drained.id, unsaved: drained.unsaved } as const }
+            : {}),
+        },
         result: acked,
       });
     });
@@ -709,6 +761,7 @@ const make = Effect.gen(function* () {
       return keep<RunnerWork>({
         generation: lease.generation,
         needsUpkeep: needsUpkeep(lease, run !== undefined, yield* previews.held),
+        drain: lease.drain?._tag === "asked" ? lease.drain.id : null,
         turn,
         modelToken:
           turn === null || grant === undefined || lease.token === null
@@ -743,19 +796,37 @@ const make = Effect.gen(function* () {
       const projection = yield* engine.projection;
       // A thread that does not exist yet has no tables to read a lease or owner from.
       const grant = projection === null ? undefined : modelGrantFor(projection, yield* ownerId);
-      const leaseToken = grant === undefined ? null : (yield* lease).token;
-      if (grant === undefined || leaseToken === null) {
+      // One read: the token and the registration are checked against the same machine.
+      const current = grant === undefined ? null : yield* lease;
+      if (grant === undefined || current === null || current.token === null) {
         return deny("No turn is running on this thread.");
       }
       if (grant.provider !== provider) return deny(`The running turn does not use ${provider}.`);
-      return (yield* isModelToken(token, leaseToken, grant))
-        ? ({
-            _tag: "granted",
-            runId: grant.runId,
-            traceId: yield* withCrypto(traceIdOf(grant.runId)),
-            pool: { objectName: grant.pool, userId: grant.requester },
-          } satisfies ModelAuthorization)
-        : deny("This token is not for the running turn.");
+      if (!(yield* isModelToken(token, current.token, grant))) {
+        return deny("This token is not for the running turn.");
+      }
+      const traceId = yield* withCrypto(traceIdOf(grant.runId));
+      // The model never sees a secret (#591): a turn whose folders name some is
+      // served only once the machine running it registered their values.
+      const secrets = yield* Effect.orDie(store.secretValues);
+      if (
+        (yield* Effect.orDie(store.secrets)).length > 0 &&
+        secrets.registered !== current.generation
+      ) {
+        return {
+          _tag: "unregistered",
+          runId: grant.runId,
+          traceId,
+          reason: "This machine hasn't registered the folder's secrets to hide them yet.",
+        } satisfies ModelAuthorization;
+      }
+      return {
+        _tag: "granted",
+        runId: grant.runId,
+        traceId,
+        pool: { objectName: grant.pool, userId: grant.requester },
+        secrets: secrets.values,
+      } satisfies ModelAuthorization;
     });
 
   const accountMoved: ThreadRunner["Service"]["accountMoved"] = (runId, message) =>
@@ -977,23 +1048,61 @@ const make = Effect.gen(function* () {
         }
         if (run !== undefined || (yield* previews.held)) {
           const busy = { ...BUSY, runId };
-          return lease.idleSince === null
+          // Needed again: a drain under way no longer leads anywhere.
+          return lease.idleSince === null && lease.drain === undefined
             ? keep(busy)
-            : { events: [], machine: { ...lease, idleSince: null }, result: busy };
+            : {
+                events: [],
+                machine: { ...lease, idleSince: null, drain: undefined },
+                result: busy,
+              };
         }
         const idleSince = lease.idleSince ?? now;
         // An open preview pushes the tail out to its last traffic.
         const tailFrom = Math.max(idleSince, (yield* previews.lastActiveAt) ?? 0);
         if (now - tailFrom >= backend.idleTailMs) {
+          const idle = `Idle for ${formatDuration(now - tailFrom)}.`;
+          // The machine saves everything it wrote before its tokens go (#493);
+          // a Runner from before drains is let go as it always was.
+          if (lease.drains !== true) {
+            return yield* release({ reason: "idle", detail: idle, idleSince: tailFrom });
+          }
+          if (lease.drain?._tag === "answered") {
+            const unsaved = lease.drain.unsaved;
+            return yield* release({
+              reason: "idle",
+              detail:
+                unsaved.length === 0
+                  ? idle
+                  : `${idle} Not everything it wrote was saved: ${unsaved.map((reason) => `- ${reason}`).join("\n")}`,
+              idleSince: tailFrom,
+            });
+          }
+          if (lease.drain === undefined) {
+            return {
+              events: [],
+              machine: { ...lease, idleSince, drain: { _tag: "asked", id: now } as const },
+              result: {
+                ...IDLE,
+                drain: { generation: lease.generation, id: now },
+                wakeAt: now + DRAIN_TIMEOUT_MS,
+              },
+            };
+          }
+          const deadline = lease.drain.id + DRAIN_TIMEOUT_MS;
+          if (now < deadline) return keep({ ...IDLE, wakeAt: deadline });
           return yield* release({
             reason: "idle",
-            detail: `Idle for ${formatDuration(now - tailFrom)}.`,
+            detail: `${idle} It didn't confirm its last saves within ${DRAIN_TIMEOUT_MS / 1000} s, so anything it wrote after its last save may be lost.`,
             idleSince: tailFrom,
           });
         }
+        // Preview traffic pushed the tail out: a drain asked for before is over.
         return {
           events: [],
-          ...(lease.idleSince === null ? { machine: { ...lease, idleSince } } : {}),
+          ...(lease.idleSince === null || lease.drain !== undefined
+            ? { machine: { ...lease, idleSince, drain: undefined } }
+            : {}),
           result: { ...IDLE, wakeAt: tailFrom + backend.idleTailMs },
         };
       }).pipe(
