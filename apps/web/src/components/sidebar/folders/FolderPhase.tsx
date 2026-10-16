@@ -41,8 +41,9 @@ import { usePendingSave } from "./usePendingSave";
 export function FolderPhaseLabel(props: { folder: Folder }) {
   const phase = props.folder.phase;
   if (phase === undefined) return null;
+  // Doesn't shrink below its width (up to the cap): next to a status roll-up the name truncates first.
   return (
-    <span className="min-w-0 max-w-[45%] shrink truncate text-2xs text-sidebar-muted-foreground/55">
+    <span className="max-w-[45%] shrink-0 truncate text-2xs text-sidebar-muted-foreground/55">
       <span className="sr-only">, phase </span>
       {phase.current}
     </span>
