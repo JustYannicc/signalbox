@@ -136,7 +136,7 @@ ${indent(RUNNER, 10)}
           node "$RUNNER_TEMP/signalbox/run.mjs"
       - name: Keep the result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${GITHUB_ACTIONS_RESULT_ARTIFACT}
           path: \${{ runner.temp }}/signalbox/result.json

@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { SnapshotFields } from "../thread/pullRequests/pullRequestLinks.ts";
-import { type GitHubApi, GitHubError, unreadable } from "./GitHubApi.ts";
+import { type GitHubApi, unreadable } from "./GitHubApi.ts";
 
 /**
  * A pull request as the cloud reads it from GitHub, with the user's token:

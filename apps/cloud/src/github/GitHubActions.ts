@@ -105,13 +105,27 @@ const LOG_TAIL_CHARS = 4_000;
 /** Step outcomes go to the run's instance as an event, which Cloudflare caps at 1 MiB. */
 const RESULT_LIMIT_BYTES = 900_000;
 
-/** The end of a job's log without GitHub's per-line timestamps. */
-export const logTail = (text: string) =>
-  text
-    .slice(-LOG_TAIL_CHARS * 2)
-    .replaceAll(/^\uFEFF?\d{4}-\d\d-\d\dT[\d:.]+Z ?/gm, "")
-    .slice(-LOG_TAIL_CHARS)
-    .trimEnd();
+const TIMESTAMP = /^\uFEFF?\d{4}-\d\d-\d\dT[\d:.]+Z ?/;
+const COLORS = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
+/**
+ * The end of what a job's steps printed: GitHub's per-line timestamps and
+ * colours, its collapsed step headers (the scripts and inputs each step ran
+ * with), git's `[command]` echoes and the post-job cleanup are left out.
+ */
+export const logTail = (text: string) => {
+  const lines: Array<string> = [];
+  let grouped = false;
+  for (const raw of text.slice(-200_000).split("\n")) {
+    const line = raw.replace(TIMESTAMP, "").replaceAll(COLORS, "").trimEnd();
+    if (line.startsWith("##[group]")) grouped = true;
+    else if (line.startsWith("##[endgroup]")) grouped = false;
+    else if (line === "Post job cleanup.") break;
+    else if (!grouped && !line.startsWith("[command]"))
+      lines.push(line.replace(/^##\[(error|warning|notice)\]/, "$1: "));
+  }
+  return lines.join("\n").slice(-LOG_TAIL_CHARS).trim();
+};
 
 const runOf = (
   repository: string,
