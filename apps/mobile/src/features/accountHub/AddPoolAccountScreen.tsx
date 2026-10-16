@@ -12,7 +12,7 @@ import {
   poolInstanceId,
 } from "@t3tools/contracts/accountHub";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { Linking, TextInput, View } from "react-native";
+import { Linking, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -39,6 +39,7 @@ type Props = StaticScreenProps<{
 export function AddPoolAccountScreen({ route }: Props) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const windowSize = useWindowDimensions();
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const { kind, poolId } = route.params;
   const account = POOL_INSTANCE_KINDS[kind].displayName;
@@ -132,16 +133,26 @@ export function AddPoolAccountScreen({ route }: Props) {
 
   return (
     <SettingsScreen title={`Add ${account} account`}>
-      <View
-        className="flex-1 gap-3 px-4 pt-3"
-        style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerClassName="gap-3 px-4 pt-3"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 12) }}
       >
         <Text accessibilityLiveRegion="polite" className="text-sm text-foreground-muted">
           {status}
         </Text>
         {liveView ? (
           <>
-            <View className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border-subtle bg-subtle">
+            <View
+              className="overflow-hidden rounded-xl border border-border-subtle bg-subtle"
+              // The whole page at the phone's width, leaving room for the status and Cancel.
+              style={{
+                height: Math.min(
+                  ((windowSize.width - 32) * liveView.viewport.height) / liveView.viewport.width,
+                  windowSize.height - 340,
+                ),
+              }}
+            >
               <LiveSignInWebView
                 url={liveView.url}
                 site={liveView.site}
@@ -201,15 +212,13 @@ export function AddPoolAccountScreen({ route }: Props) {
               </>
             ) : null}
           </View>
-        ) : (
-          <View className="flex-1" />
-        )}
+        ) : null}
         {ended || (error && !active) ? (
           <Button label="Try again" tone="primary" fullWidth onPress={() => void begin()} />
         ) : (
           <Button label="Cancel" tone="text" fullWidth onPress={() => navigation.goBack()} />
         )}
-      </View>
+      </ScrollView>
     </SettingsScreen>
   );
 }

@@ -11,16 +11,31 @@ import { Button } from "../../components/ui/Button";
 const WATCHDOG_MS = 15_000;
 
 /**
- * Kernel's live view tells the page embedding it when frames render. Loaded
- * on its own here, it posts to itself, so this passes its events on.
+ * Kernel's live view tells only a parent frame when frames render, and here
+ * it has none, so this reports its stream's video starting to play, and
+ * passes on the failures it posts.
  */
 const FORWARD_EVENTS = `(function () {
-  var forwarded = ["KERNEL_PLAYING", "KERNEL_CONNECTION_FAILED", "KERNEL_CONNECTION_TIMEOUT"];
+  function post(type) {
+    if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(type);
+  }
+  document.addEventListener("playing", function () { post("KERNEL_PLAYING"); }, true);
+  // The player takes keys through its overlay textarea, but its touch handling
+  // keeps a tap from focusing it, so no keyboard opens. Focus it after each tap.
+  document.addEventListener("touchend", function () {
+    var keys = document.querySelector("textarea.overlay");
+    if (!keys) return;
+    keys.setAttribute("autocapitalize", "off");
+    keys.setAttribute("autocorrect", "off");
+    keys.setAttribute("spellcheck", "false");
+    // Under 16px, iOS zooms the page to the field.
+    keys.style.fontSize = "16px";
+    keys.focus();
+  }, true);
+  var failed = ["KERNEL_CONNECTION_FAILED", "KERNEL_CONNECTION_TIMEOUT"];
   window.addEventListener("message", function (event) {
     var type = event.data && event.data.type;
-    if (forwarded.indexOf(type) >= 0 && window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(type);
-    }
+    if (type === "KERNEL_PLAYING" || failed.indexOf(type) >= 0) post(type);
   });
 })();
 true;`;
@@ -118,10 +133,12 @@ export function LiveSignInWebView(props: {
               <Text className="text-center text-sm text-foreground-muted">
                 The sign-in browser didn't load.
               </Text>
-              <Button
-                label="Reload"
-                onPress={() => setFrame({ attempt: attempt + 1, state: "connecting" })}
-              />
+              <View className="items-center">
+                <Button
+                  label="Reload"
+                  onPress={() => setFrame({ attempt: attempt + 1, state: "connecting" })}
+                />
+              </View>
             </>
           )}
         </View>
