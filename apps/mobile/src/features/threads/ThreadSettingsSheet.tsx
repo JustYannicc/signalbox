@@ -71,6 +71,7 @@ import { environmentServerConfigsAtom, serverEnvironment } from "../../state/ser
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { useOneEnvironmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import {
   createProviderCatalogRefreshRunner,
@@ -541,12 +542,13 @@ function ThreadSettingsSessionProvider(
     () => props.providerGroups.some((group) => group.models.some((model) => model.isLegacy)),
     [props.providerGroups],
   );
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
   const commitPendingModel = useCallback(() => {
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
         Dialog.alert(
           "Model unavailable",
-          "Set up this provider on web or desktop, or select another model.",
+          environmentCopy("Set up this provider on web or desktop, or select another model."),
         );
         return false;
       }
@@ -554,7 +556,7 @@ function ThreadSettingsSessionProvider(
       props.onSelectModel(pendingModel);
     }
     return true;
-  }, [pendingModel, props.onSelectModel, props.providerGroups]);
+  }, [environmentCopy, pendingModel, props.onSelectModel, props.providerGroups]);
 
   const applyOptionChange = useCallback(
     (id: string, value: string | boolean) => {

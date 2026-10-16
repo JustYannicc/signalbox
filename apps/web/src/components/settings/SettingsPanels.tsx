@@ -174,6 +174,7 @@ import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities";
+import { useUnsupportedSettingsCapabilities } from "./useAvailableSettingsSearchItems"; // signalbox
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -1729,12 +1730,13 @@ function WordWrapRow() {
 }
 
 function FontSettingsGroup() {
+  const hasTerminal = !useUnsupportedSettingsCapabilities().has("terminal"); // signalbox
   return (
     <>
       <InterfaceFontRow />
       <PromptFontRow />
       <CodeFontRow />
-      <TerminalFontRow />
+      {hasTerminal ? <TerminalFontRow /> : null}
       <FontSmoothingRow />
     </>
   );
@@ -1742,27 +1744,34 @@ function FontSettingsGroup() {
 
 function SimpleFontRows() {
   const settings = useScopedSettings();
+  const hasTerminal = !useUnsupportedSettingsCapabilities().has("terminal"); // signalbox
   return (
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
       <CodeFontRow
         title="Monospace font"
-        description="Code blocks, diffs, file previews, and the terminal."
+        description={
+          hasTerminal
+            ? "Code blocks, diffs, file previews, and the terminal."
+            : "Code blocks, diffs, and file previews."
+        }
         preview={
           <>
             <CodeFontPreview />
-            <TerminalFontPreview
-              family={resolveTerminalFontPreference({
-                advanced: false,
-                code: settings.fontFamilyCode,
-                terminal: settings.fontFamilyTerminal,
-              })}
-              size={resolveTerminalFontSizePreference({
-                advanced: false,
-                code: settings.fontSizeCode,
-                terminal: settings.fontSizeTerminal,
-              })}
-            />
+            {hasTerminal ? (
+              <TerminalFontPreview
+                family={resolveTerminalFontPreference({
+                  advanced: false,
+                  code: settings.fontFamilyCode,
+                  terminal: settings.fontFamilyTerminal,
+                })}
+                size={resolveTerminalFontSizePreference({
+                  advanced: false,
+                  code: settings.fontSizeCode,
+                  terminal: settings.fontSizeTerminal,
+                })}
+              />
+            ) : null}
           </>
         }
       />

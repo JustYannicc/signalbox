@@ -392,6 +392,12 @@ export const layerHandlers = (input: {
   readonly sid: string;
   /** What the connection's credential holds; new keys get no more. Defaults to an app's. */
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+  /**
+   * `client`: a person's app socket. `api`: the public API (keys, CLI, MCP),
+   * which may be an agent holding the person's credential, so it can't vouch
+   * for what it publishes. Defaults to `api`.
+   */
+  readonly via?: "client" | "api";
 }) =>
   CloudRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -474,6 +480,7 @@ export const layerHandlers = (input: {
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
       const automations = yield* makeAutomationHandlers({
+        personReviews: input.via === "client",
         newThreadModel: pools.configNow.pipe(
           Effect.map(
             (config) =>
