@@ -272,7 +272,9 @@ export function OwnerMenu(props: {
   if (props.onNewThread === null && !editsTopLevel) return null;
   return (
     <Menu>
-      <MoreTrigger label={`More for ${owner.context.name}`} />
+      <MoreTrigger
+        label={`More for ${owner.context.kind === "personal" ? "the top level" : owner.context.name}`}
+      />
       <MenuPopup align="end" side="right">
         {props.onNewThread ? (
           <MenuItem onClick={props.onNewThread}>

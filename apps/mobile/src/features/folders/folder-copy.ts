@@ -4,8 +4,12 @@
  * falls back to upstream's copy rather than breaking.
  */
 import type { MenuAction } from "@react-native-menu/menu";
+import { inOwnerLevel, ownerLevelName } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { SignalboxContextsSnapshot } from "@t3tools/contracts/signalboxContexts";
+import type {
+  SignalboxContext,
+  SignalboxContextsSnapshot,
+} from "@t3tools/contracts/signalboxContexts";
 
 import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 
@@ -84,31 +88,32 @@ const NO_PROJECT: ScratchCopy = {
  * Nothing in Signalbox Cloud is without a home: starting "without a project" starts at the
  * top of the owner's tree, which the folder tree names after the owner. Null keeps upstream's.
  */
-export function scratchCopy(levelName: string | null): ScratchCopy {
-  if (levelName === null) return NO_PROJECT;
+export function scratchCopy(level: SignalboxContext | null): ScratchCopy {
+  if (level === null) return NO_PROJECT;
+  const where = inOwnerLevel(level);
   return {
-    title: levelName,
-    subtitle: `Start a task in ${levelName}`,
-    start: `Start in ${levelName}`,
-    failed: `Could not start in ${levelName}`,
+    title: ownerLevelName(level),
+    subtitle: `Start a task ${where}`,
+    start: `Start ${where}`,
+    failed: `Could not start ${where}`,
   };
 }
 
 /**
  * The owner whose top level a thread without a project starts at: the one that owns the
- * environment's scratch project, else Personal, where the cloud makes it. Null without owners.
+ * environment's scratch project, else your own, where the cloud makes it. Null without owners.
  */
-export function scratchLevelName(
+export function scratchLevel(
   owners: SignalboxContextsSnapshot | null | undefined,
   scratchProjectId: ProjectId | null,
-): string | null {
+): SignalboxContext | null {
   if (!owners) return null;
   const owner =
     (scratchProjectId === null
       ? undefined
       : owners.contexts.find((context) => context.projectIds.includes(scratchProjectId))) ??
     owners.contexts.find((context) => context.kind === "personal");
-  return owner?.name ?? null;
+  return owner ?? null;
 }
 
 /**
@@ -132,13 +137,13 @@ export function withScratchScopeTitles<
   let changed = false;
   const renamed = scopes.map((scope) => {
     if (scope.representative.isScratch !== true || scope.title !== NO_PROJECT.title) return scope;
-    const name = scratchLevelName(
+    const level = scratchLevel(
       ownersFor(scope.representative.environmentId),
       scope.representative.id,
     );
-    if (name === null) return scope;
+    if (level === null) return scope;
     changed = true;
-    return { ...scope, title: name };
+    return { ...scope, title: ownerLevelName(level) };
   });
   return changed ? renamed : scopes;
 }

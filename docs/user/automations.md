@@ -146,7 +146,7 @@ jumps to its line.
 
 When an automation needs a decision, it waits and notifies you. Answer from either place:
 
-- **Automations waiting on you** at the top of **Pipeline**.
+- **Automations waiting on you** at the top of **Home**.
 - The **Automations** page, which lists every question waiting on you and every automation whose
   last run failed.
 - The waiting step in the run, or on the diagram.

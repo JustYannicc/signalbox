@@ -147,6 +147,32 @@ export function poolOfTarget(
   return poolOfHome(snapshot, home);
 }
 
+/**
+ * An owner tree as levels (#225): your personal top level holds everything,
+ * and each organization you're a member of sits inside it as a level of its
+ * own. Without a personal owner (a work-only account) every owner is a member level.
+ */
+export function ownerLevels<Owner>(
+  owners: ReadonlyArray<Owner>,
+  contextOf: (owner: Owner) => SignalboxContext,
+): { readonly top: Owner | null; readonly members: ReadonlyArray<Owner> } {
+  const top = owners.find((owner) => contextOf(owner).kind === "personal") ?? null;
+  return { top, members: owners.filter((owner) => owner !== top) };
+}
+
+/** What your own top level is called wherever it needs a name. */
+export const TOP_LEVEL_NAME = "Top level";
+
+/** What a level's top is called: yours is the top level, an organization's goes by its name. */
+export function ownerLevelName(context: SignalboxContext): string {
+  return context.kind === "personal" ? TOP_LEVEL_NAME : context.name;
+}
+
+/** A level's top inside a sentence: "start at the top level", "start in Acme". */
+export function inOwnerLevel(context: SignalboxContext): string {
+  return context.kind === "personal" ? "at the top level" : `in ${context.name}`;
+}
+
 /** Where a pool is placed, as "Runs on X · from Y" names it: null when that folder is gone. */
 export function folderLevelName(
   snapshot: SignalboxFoldersSnapshot,

@@ -1,16 +1,13 @@
 /**
  * The always-visible icon column of the sidebar. The top group switches the
  * panel beside it; the bottom group opens Usage, Feedback and Settings.
- * Pipeline carries the count of automations waiting on the user, since their
- * waiting group sits on top of it. Plugins stays visible but disabled, with a
- * "coming soon" tooltip, until its view runs on real data (#320).
+ * Plugins stays visible but disabled, with a "coming soon" tooltip, until its
+ * view runs on real data (#320).
  */
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { BellIcon, BlocksIcon, HouseIcon, SettingsIcon, type LucideIcon } from "lucide-react";
+import { BlocksIcon, HouseIcon, SettingsIcon, type LucideIcon } from "lucide-react";
 import { memo, type ReactNode } from "react";
 
-import { useWaitingAutomationCount } from "../automations/useAutomations";
-import { Badge } from "../ui/badge";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarFeedbackButton } from "./feedback/SidebarFeedbackButton";
@@ -23,7 +20,6 @@ type RailEntry =
 
 const VIEW_ENTRIES: ReadonlyArray<RailEntry> = [
   { kind: "view", view: "home", label: "Home", icon: HouseIcon },
-  { kind: "view", view: "pipeline", label: "Pipeline", icon: BellIcon },
   { kind: "soon", label: "Plugins", icon: BlocksIcon },
 ];
 
@@ -31,18 +27,15 @@ function RailButton(props: {
   label: string;
   active: boolean;
   onClick: () => void;
-  /** Things waiting on the user behind this entry; shown as a count on the icon. */
-  badge?: number;
   children: ReactNode;
 }) {
-  const badge = props.badge ?? 0;
   return (
     <SidebarMenuItem>
       <Tooltip>
         <TooltipTrigger
           render={
             <SidebarMenuButton
-              aria-label={badge > 0 ? `${props.label}, ${badge} waiting on you` : props.label}
+              aria-label={props.label}
               aria-current={props.active ? "page" : undefined}
               isActive={props.active}
               size="icon"
@@ -51,15 +44,8 @@ function RailButton(props: {
           }
         >
           {props.children}
-          {badge > 0 ? (
-            <Badge aria-hidden size="sm" className="absolute -top-0.5 -right-0.5">
-              {badge > 9 ? "9+" : badge}
-            </Badge>
-          ) : null}
         </TooltipTrigger>
-        <TooltipPopup side="right">
-          {badge > 0 ? `${props.label} · ${badge} waiting on you` : props.label}
-        </TooltipPopup>
+        <TooltipPopup side="right">{props.label}</TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>
   );
@@ -93,7 +79,6 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { isMobile, setOpenMobile } = useSidebar();
-  const waitingAutomations = useWaitingAutomationCount();
   const leaveSidebar = () => {
     if (isMobile) setOpenMobile(false);
   };
@@ -111,7 +96,6 @@ export const SidebarViewRail = memo(function SidebarViewRail(props: {
               label={entry.label}
               active={props.view === entry.view}
               onClick={() => props.onViewChange(entry.view)}
-              badge={entry.view === "pipeline" ? waitingAutomations : 0}
             >
               <entry.icon />
             </RailButton>

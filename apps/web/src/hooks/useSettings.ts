@@ -382,16 +382,9 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
   });
 }
 
-/**
- * Held at the default sidebar until client settings hydrate: the pre-hydration snapshot is just
- * the schema defaults, so resolving against it could mount one sidebar and then swap it out
- * once persisted settings land — remounting the whole tree for everyone instead of only for
- * legacy opt-ins.
- */
+/** signalbox: the view rail is the only sidebar, so upstream's toggle stays off (#683). */
 export function useLegacySidebarEnabled(): boolean {
-  const settingsHydrated = useClientSettingsHydrated();
-  const legacySidebarEnabled = useClientSettingsValue().legacySidebarEnabled;
-  return settingsHydrated && legacySidebarEnabled;
+  return false;
 }
 
 export async function prepareModelPreferencesPatch(

@@ -9,7 +9,6 @@ import {
 } from "../../../connection/desktopLocal";
 import { environmentServerConfigsAtom } from "../../../state/server";
 import { environmentSectionTreesAtom } from "../../../state/sections";
-import { environmentContextsAtom } from "../../../state/signalboxContexts"; // signalbox: contexts
 import type { EnvironmentPresentation } from "../../../state/environments";
 import type { Project } from "../../../types";
 import { useFoldersSidebar } from "../folders/useFoldersSidebar"; // signalbox: folders
@@ -30,7 +29,6 @@ export function useSectionsSidebar(input: {
 }) {
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const serverViews = useAtomValue(environmentSectionTreesAtom);
-  const contextsByEnvironment = useAtomValue(environmentContextsAtom); // signalbox: contexts
   const folders = useFoldersSidebar(input); // signalbox: folders
   const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<string>>(() => new Set());
   const toggleSection = useCallback((environmentId: EnvironmentId, sectionId: string) => {
@@ -68,25 +66,20 @@ export function useSectionsSidebar(input: {
         return [];
       }
       return [
-        {
-          ...buildSectionSidebarEnvironment({
-            environmentId: environment.environmentId,
-            label: environment.label,
-            primaryEnvironmentId: input.primaryEnvironmentId,
-            isDesktopLocalEnvironment: isDesktopLocalConnectionTarget(environment.entry.target),
-            isWslEnvironment: isWslConnectionTarget(environment.entry.target),
-            projects,
-            projectGroups: input.projectGroups,
-            serverView,
-          }),
-          contexts: contextsByEnvironment.get(environment.environmentId) ?? null, // signalbox
-        },
+        buildSectionSidebarEnvironment({
+          environmentId: environment.environmentId,
+          label: environment.label,
+          primaryEnvironmentId: input.primaryEnvironmentId,
+          isDesktopLocalEnvironment: isDesktopLocalConnectionTarget(environment.entry.target),
+          isWslEnvironment: isWslConnectionTarget(environment.entry.target),
+          projects,
+          projectGroups: input.projectGroups,
+          serverView,
+        }),
       ];
     });
     const hasSavedSectionState =
       hasAnySavedSectionSidebarState(environments) ||
-      // signalbox: Signalbox Cloud always shows its contexts, sections or not.
-      environments.some((environment) => environment.contexts) ||
       // signalbox: with folders beside it, the rest keeps its tree rather than a flat list.
       input.environments.some((environment) => servesFolders(environment.environmentId));
     const visibleProjectRows = visibleSectionProjectRows(environments, collapsedSections);
@@ -126,7 +119,6 @@ export function useSectionsSidebar(input: {
     collapsedSections,
     serverConfigs,
     serverViews,
-    contextsByEnvironment,
     toggleSection,
   ]);
   // signalbox: folders change with their threads, so they join outside the section trees' memo;

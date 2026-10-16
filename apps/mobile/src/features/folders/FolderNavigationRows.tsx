@@ -1,5 +1,5 @@
-// signalbox: one row per level of an owner's tree: its top level, then its folders, nested.
-import type { FolderNode } from "@t3tools/client-runtime/state/signalboxFolders";
+// signalbox: one row per level of the tree: your top level, its folders, and member levels, nested.
+import { ownerLevelName, type FolderNode } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { MenuAction } from "@react-native-menu/menu";
 import type { SignalboxContext } from "@t3tools/contracts/signalboxContexts";
 import type { Folder, FolderId } from "@t3tools/contracts/signalboxFolders";
@@ -38,7 +38,7 @@ function RowMenu(props: {
 /** A selectable level: its name, how many threads are in it or below, and a menu. */
 function LevelRow(props: {
   readonly depth: number;
-  readonly icon: "folder" | "folder.fill";
+  readonly icon: "folder" | "folder.fill" | "building.2";
   readonly name: string;
   readonly accessibilityLabel: string;
   readonly count: number;
@@ -84,9 +84,13 @@ function LevelRow(props: {
   );
 }
 
-/** An owner's top level: the threads that aren't in any of its folders. */
+/**
+ * A level's own row: your top level (depth 0), or an organization you're a
+ * member of inside it. Selecting it shows the threads in none of its folders.
+ */
 export const OwnerTopLevelRow = memo(function OwnerTopLevelRow(props: {
   readonly owner: SignalboxContext;
+  readonly depth: number;
   readonly selected: boolean;
   readonly actions: MenuAction[];
   readonly onSelect: (owner: SignalboxContext) => void;
@@ -98,16 +102,20 @@ export const OwnerTopLevelRow = memo(function OwnerTopLevelRow(props: {
     [onAction, owner],
   );
   const handleSelect = useCallback(() => onSelect(owner), [onSelect, owner]);
+  const name = ownerLevelName(owner);
+  const personal = owner.kind === "personal";
   return (
     <LevelRow
-      depth={0}
-      icon="folder.fill"
-      name={owner.name}
-      accessibilityLabel={`Threads at the top level of ${owner.name}`}
+      depth={props.depth}
+      icon={personal ? "folder.fill" : "building.2"}
+      name={name}
+      accessibilityLabel={
+        personal ? "Threads at the top level" : `Threads at the top of ${owner.name}`
+      }
       count={0}
       selected={props.selected}
       onSelect={handleSelect}
-      menu={<RowMenu label={owner.name} actions={props.actions} onPressAction={handleMenu} />}
+      menu={<RowMenu label={name} actions={props.actions} onPressAction={handleMenu} />}
     />
   );
 });
