@@ -88,7 +88,18 @@ export interface MachineLease {
   readonly machineClass?: MachineClass | undefined;
   /** The thread outgrew the light class, so every machine from now on is heavy. Kept across leases. */
   readonly movedUp?: boolean | undefined;
+  /** This generation's Runner answers `drain` (#493), as its `hello` said. */
+  readonly drains?: boolean | undefined;
+  /**
+   * The idle machine was asked to save everything before it goes (#493), at
+   * `id` (when it was asked), and whether it answered and what it couldn't save.
+   */
+  readonly drain?: MachineDrain | undefined;
 }
+
+export type MachineDrain =
+  | { readonly _tag: "asked"; readonly id: number }
+  | { readonly _tag: "answered"; readonly id: number; readonly unsaved: ReadonlyArray<string> };
 
 export const NO_MACHINE: MachineLease = {
   generation: 0,
@@ -348,6 +359,17 @@ const MachineLeaseJson = Schema.fromJsonString(
     ackedSequence: Schema.Number,
     machineClass: Schema.optional(MachineClass),
     movedUp: Schema.optional(Schema.Boolean),
+    drains: Schema.optional(Schema.Boolean),
+    drain: Schema.optional(
+      Schema.Union([
+        Schema.Struct({ _tag: Schema.Literal("asked"), id: Schema.Number }),
+        Schema.Struct({
+          _tag: Schema.Literal("answered"),
+          id: Schema.Number,
+          unsaved: Schema.Array(Schema.String),
+        }),
+      ]),
+    ),
   }),
 );
 const encodeMachine = Schema.encodeSync(MachineLeaseJson);

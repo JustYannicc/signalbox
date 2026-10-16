@@ -34,6 +34,7 @@ import {
   turnReport,
   withObject,
 } from "./runnerTestKit.ts";
+import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 
 /**
  * The cloud half of #395's promise: the owner's 1Password token goes to the
@@ -207,6 +208,8 @@ describe("folder secrets", () => {
               yield* TestClock.adjust(FINALIZE_GRACE_MS);
               yield* reports.finalize((yield* snapshot(engine)).projection, yield* nowMs);
               yield* TestClock.adjust(IDLE_TAIL_MS);
+              expect((yield* runner.reconcile).drain?.generation).toBe(machine.generation);
+              yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
               expect((yield* runner.reconcile).release).toBe(machine.generation);
               yield* reports.finalize((yield* snapshot(engine)).projection, yield* nowMs);
               expect(yield* analytics.deliver).toBe(true);

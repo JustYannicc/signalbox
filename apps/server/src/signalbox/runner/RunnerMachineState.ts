@@ -109,8 +109,10 @@ const encodeManifest = Schema.encodeSync(Manifest);
 const literal = (file: string) => `:(literal)${file}`;
 const excluded = (file: string) => `:(exclude,literal)${file}`;
 const within = (file: string, dir: string) => file === dir || file.startsWith(`${dir}/`);
-/** A path as `find -path` matches it literally. */
-const findPath = (file: string) => `./${file.replace(/[*?[\]\\]/g, (c) => `\\${c}`)}`;
+/** `path` as `find -path` matches it literally. */
+const literalFindPath = (path: string) => path.replace(/[*?[\]\\]/g, (c) => `\\${c}`);
+/** A path relative to where `find` runs, as `find -path` matches it literally. */
+const findPath = (file: string) => `./${literalFindPath(file)}`;
 const nul = (paths: ReadonlyArray<string>) => paths.map((file) => `${file}\0`).join("");
 
 export const makeMachineState = Effect.fn("makeMachineState")(function* (input: {
@@ -139,16 +141,30 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
   let excludesSaved: { readonly text: string; readonly blob: string | null } | null = null;
   /** Edits inside dependency trees as last looked for. */
   let edited: ReadonlyArray<string> = [];
+  /**
+   * What the last capture left out, as absolute paths: the change check
+   * skips the same, so a write there never makes a save that keeps nothing.
+   */
+  let leftOut: ReadonlyArray<string> = input.outside.flatMap((folder) =>
+    [...folder.exclude, ...folder.caches].map((file) => path.join(folder.dir, file)),
+  );
 
   /** Git run on `dir` as its work tree, with its own index. */
   const inFolder = (dir: string, args: ReadonlyArray<string>) =>
     dir === input.cwd ? args : ["-C", dir, "--git-dir", gitDir, "--work-tree", dir, ...args];
 
   /** Runs `find` in `dir`; answers its output, NUL-separated entries. */
-  const find = (dir: string, args: ReadonlyArray<string>) =>
+  const find = (dir: string, args: ReadonlyArray<string>) => findFrom(["."], args, dir);
+
+  /** Runs `find` from `starts`; a start that doesn't exist is skipped. */
+  const findFrom = (starts: ReadonlyArray<string>, args: ReadonlyArray<string>, cwd?: string) =>
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
-        ChildProcess.make("find", [".", ...args], { cwd: dir, stdin: "ignore", stderr: "ignore" }),
+        ChildProcess.make("find", [...starts, ...args], {
+          ...(cwd === undefined ? {} : { cwd }),
+          stdin: "ignore",
+          stderr: "ignore",
+        }),
       );
       const [out] = yield* Effect.all(
         [Stream.mkString(Stream.decodeText(child.stdout)), child.exitCode],
@@ -160,12 +176,16 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
         .map((entry) => entry.replace(/^\.\//, ""));
     }).pipe(Effect.scoped);
 
-  /** `find` tests pruning `paths` (relative to where it runs) and the folder's own `.git`. */
-  const pruning = (paths: ReadonlyArray<string>) => [
+  /**
+   * `find` tests pruning `paths` (relative to where it runs), folders called
+   * one of `names`, and the folder's own `.git`.
+   */
+  const pruning = (paths: ReadonlyArray<string>, names: ReadonlyArray<string> = []) => [
     "(",
     "-path",
     "./.git",
     ...paths.flatMap((file) => ["-o", "-path", findPath(file)]),
+    ...names.flatMap((name) => ["-o", "-name", name]),
     ")",
     "-prune",
     "-o",
@@ -342,9 +362,13 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
         ],
         edited,
       );
+      const checkoutLeftOut = [...skipped.map((folder) => folder.path), ...shortcuts].map((file) =>
+        path.join(input.cwd, file),
+      );
       const checkout = yield* beyond(index, base);
 
       const outside: Array<readonly [string, string, string]> = [];
+      const outsideLeftOut: Array<string> = [];
       for (const folder of input.outside) {
         if (!(yield* fs.exists(folder.dir))) continue;
         const caches: Array<string> = [];
@@ -352,6 +376,8 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
           if (yield* fs.exists(path.join(folder.dir, cache))) caches.push(cache);
         }
         const inner = yield* nestedRepositories(folder.dir, [...folder.exclude, ...folder.caches]);
+        const left = [...folder.exclude, ...folder.caches, ...inner];
+        outsideLeftOut.push(...left.map((file) => path.join(folder.dir, file)));
         for (const file of caches)
           skipped.push({ path: `${folder.label}/${file}`, recipe: CACHE_RECIPE });
         for (const file of inner)
@@ -364,6 +390,7 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
         );
         if (tree !== EMPTY_TREE) outside.push(["040000", tree, folder.name]);
       }
+      leftOut = [...checkoutLeftOut, ...outsideLeftOut];
 
       if (checkout === null && outside.length === 0 && trees.length === 0) {
         return { tree: null, skipped } satisfies CapturedMachine;
@@ -399,6 +426,38 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
         ...(excludesBlob === null ? [] : [["100644", excludesBlob, EXCLUDES] as const]),
       ]);
       return { tree: root, skipped } satisfies CapturedMachine;
+    });
+
+  /**
+   * Whether anything the state keeps changed after `stamp` was last touched:
+   * a file or folder written, added or removed. Stops at the first one found.
+   * Dependency trees anywhere are left to the turn's end: tools write caches
+   * into them all the time.
+   */
+  const changedSince = (stamp: string) =>
+    Effect.gen(function* () {
+      if (!(yield* fs.exists(stamp))) return true;
+      // `-cnewer`: a file copied with its old times (`cp -p`, `tar -x`) still changed now.
+      const newer = yield* findFrom(
+        [input.cwd, ...input.outside.map((folder) => folder.dir)],
+        [
+          "(",
+          "-path",
+          literalFindPath(gitDir),
+          ...leftOut.flatMap((file) => ["-o", "-path", literalFindPath(file)]),
+          "-o",
+          "-name",
+          "node_modules",
+          ")",
+          "-prune",
+          "-o",
+          "-cnewer",
+          stamp,
+          "-print0",
+          "-quit",
+        ],
+      );
+      return newer.length > 0;
     });
 
   /** Adds the thread's saved excludes to this repository's, keeping the lines already there. */
@@ -513,7 +572,7 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
     );
   });
 
-  return { capture, restore, restoreEdits };
+  return { capture, restore, restoreEdits, changedSince };
 });
 
 export type MachineState = Effect.Success<ReturnType<typeof makeMachineState>>;

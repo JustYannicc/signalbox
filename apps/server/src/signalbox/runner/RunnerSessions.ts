@@ -49,8 +49,11 @@ export interface RunnerSessions {
   ) => Effect.Effect<void>;
   readonly failures: Queue.Dequeue<string>;
   readonly claude: ClaudeSessions;
-  /** Waits until everything the harness wrote so far is durable, for a machine about to go. */
-  readonly flush: (driver: ProviderDriverKind) => Effect.Effect<void>;
+  /**
+   * Waits until everything the harness wrote so far is durable, for a machine
+   * about to go. Answers why it isn't, or null once it is.
+   */
+  readonly flush: (driver: ProviderDriverKind) => Effect.Effect<string | null>;
 }
 
 /** Sending that makes no progress for this long stops the turn. */
@@ -131,10 +134,13 @@ export const makeRunnerSessions = Effect.fn("makeRunnerSessions")(function* (inp
       Effect.gen(function* () {
         if (driver === CODEX_DRIVER_KIND) yield* codex.settle(SETTLE_WAIT_MS);
         yield* outbox.drain(SETTLE_WAIT_MS);
+        return null;
       }).pipe(
         Effect.catchTags({
           SessionNotSavedError: (error) =>
-            Effect.logWarning("leaving before the session is saved", error.message),
+            Effect.logWarning("leaving before the session is saved", error.message).pipe(
+              Effect.as(error.message),
+            ),
         }),
       ),
   } satisfies RunnerSessions;
