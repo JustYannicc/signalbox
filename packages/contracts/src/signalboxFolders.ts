@@ -85,7 +85,7 @@ export const FOLDER_PHASE_NAME_MAX_LENGTH = 48;
 export const FolderPhaseName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(FOLDER_PHASE_NAME_MAX_LENGTH),
 );
-export const FOLDER_PHASES_MAX = 12;
+const FOLDER_PHASES_MAX = 12;
 
 /**
  * Where a folder is in its life (#677): `current`, one of its own `phases`,

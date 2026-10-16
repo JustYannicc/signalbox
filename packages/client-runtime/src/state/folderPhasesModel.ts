@@ -12,7 +12,7 @@ import type { SignalboxContext } from "@t3tools/contracts/signalboxContexts";
  */
 
 /** Phases as the editor shows them, one per line. */
-export const folderPhasesText = (phases: ReadonlyArray<string>) => phases.join("\n");
+const folderPhasesText = (phases: ReadonlyArray<string>) => phases.join("\n");
 
 /** The template for a folder in a tree of `kind`, as editor text. */
 export const folderPhaseTemplateText = (kind: SignalboxContext["kind"]) =>
