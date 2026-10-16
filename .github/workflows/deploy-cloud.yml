@@ -57,6 +57,11 @@ on:
         required: false
         default: false
         type: boolean
+      base:
+        description: "Dry run: compare with this ref instead of main"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -185,6 +190,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MAIN: ${{ github.event.repository.default_branch }}
+          BASE: ${{ inputs.base }}
         run: |
           # A file renamed out of a Runner path changes the Runner too.
           row='.filename, (.previous_filename // empty)'
@@ -198,13 +204,14 @@ jobs:
           else
             # main compares with the commit `nightly` was built from, so a
             # build that failed or a run a newer push replaced is caught up by
-            # the next push. Another ref (a dry run) compares with main.
+            # the next push. Another ref (a dry run) compares with main or
+            # the `base` it names.
             if [[ "$GITHUB_REF" == "refs/heads/$MAIN" ]]; then
               # runner-image.yml's IMAGE.
               base="$(docker buildx imagetools inspect ghcr.io/justyannicc/signalbox-runner:nightly \
                 --format '{{ index .Image.Config.Labels "org.opencontainers.image.revision" }}' || true)"
             else
-              base="$MAIN"
+              base="${BASE:-$MAIN}"
             fi
             echo "Compared with ${base:-nothing}." >> "$GITHUB_STEP_SUMMARY"
             # The compare endpoint lists at most 300 files, and a base it
