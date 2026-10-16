@@ -638,7 +638,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "step",
           id: "s1",
-          line: 119,
+          line: 123,
           verb: "call",
           label: {
             text: "Read the pull request",
@@ -657,7 +657,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s2",
-          line: 122,
+          line: 126,
           source: "condition",
           label: {
             text: 'pr.state !== "open"',
@@ -670,7 +670,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s3/s4",
-                  line: 63,
+                  line: 67,
                   verb: "call",
                   label: {
                     text: "Tell the agent",
@@ -689,7 +689,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s5",
-                  line: 124,
+                  line: 128,
                   exit: "workflow",
                 },
               ],
@@ -703,7 +703,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s6",
-          line: 128,
+          line: 132,
           source: "condition",
           label: {
             text: "notReady.length > 0",
@@ -716,7 +716,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s7/s4",
-                  line: 63,
+                  line: 67,
                   verb: "call",
                   label: {
                     text: "Tell the agent",
@@ -735,7 +735,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s8",
-                  line: 130,
+                  line: 134,
                   exit: "workflow",
                 },
               ],
@@ -749,7 +749,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s9",
-          line: 134,
+          line: 138,
           source: "condition",
           label: {
             text: "reasons.length > 0",
@@ -762,7 +762,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s10",
-                  line: 136,
+                  line: 140,
                   verb: "ask",
                   label: {
                     text: "Merge …#…?",
@@ -787,7 +787,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "branch",
                   id: "s13",
-                  line: 147,
+                  line: 151,
                   source: "outcome",
                   label: {
                     text: "Merge …#…?",
@@ -801,7 +801,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s11/s4",
-                          line: 63,
+                          line: 67,
                           verb: "call",
                           label: {
                             text: "Tell the agent",
@@ -820,7 +820,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s12",
-                          line: 152,
+                          line: 156,
                           exit: "workflow",
                         },
                       ],
@@ -842,7 +842,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "try",
           id: "s14",
-          line: 157,
+          line: 161,
           label: {
             text: "If something fails",
             dynamic: false,
@@ -851,7 +851,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "step",
               id: "s15",
-              line: 158,
+              line: 162,
               verb: "call",
               label: {
                 text: "Merge it",
@@ -873,7 +873,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "step",
               id: "s16/s4",
-              line: 63,
+              line: 67,
               verb: "call",
               label: {
                 text: "Tell the agent",
@@ -892,7 +892,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "end",
               id: "s17",
-              line: 166,
+              line: 170,
               exit: "workflow",
             },
           ],
@@ -900,7 +900,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s18",
-          line: 168,
+          line: 172,
           source: "condition",
           label: {
             text: "merged.moved",
@@ -913,7 +913,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s19/s4",
-                  line: 63,
+                  line: 67,
                   verb: "call",
                   label: {
                     text: "Tell the agent",
@@ -932,7 +932,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s20",
-                  line: 170,
+                  line: 174,
                   exit: "workflow",
                 },
               ],
@@ -946,7 +946,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s21",
-          line: 173,
+          line: 177,
           source: "condition",
           label: {
             text: "A host with a merge queue takes it in instead of merging; the branch stays until it lands.",
@@ -959,7 +959,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s22/s4",
-                  line: 63,
+                  line: 67,
                   verb: "call",
                   label: {
                     text: "Tell the agent",
@@ -978,7 +978,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s23",
-                  line: 175,
+                  line: 179,
                   exit: "workflow",
                 },
               ],
@@ -992,7 +992,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "try",
           id: "s24",
-          line: 178,
+          line: 182,
           label: {
             text: "If something fails",
             dynamic: false,
@@ -1001,7 +1001,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "step",
               id: "s25",
-              line: 179,
+              line: 183,
               verb: "call",
               label: {
                 text: "Delete its branch",
@@ -1023,7 +1023,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "step",
           id: "s26/s4",
-          line: 63,
+          line: 67,
           verb: "call",
           label: {
             text: "Tell the agent",
