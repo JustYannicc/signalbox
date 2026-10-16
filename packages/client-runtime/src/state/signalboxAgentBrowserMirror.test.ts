@@ -36,6 +36,19 @@ describe("parseAgentBrowserMirrorPageMessage", () => {
     });
   });
 
+  it("asks for a copy of web links only", () => {
+    expect(
+      parseAgentBrowserMirrorPageMessage({ type: "copy", url: "https://example.com/a?b=1" }),
+    ).toEqual({ type: "copy", url: "https://example.com/a?b=1" });
+    expect(
+      parseAgentBrowserMirrorPageMessage({ type: "copy", url: "javascript:alert(1)" }),
+    ).toBeNull();
+    expect(
+      parseAgentBrowserMirrorPageMessage({ type: "copy", url: "file:///etc/hosts" }),
+    ).toBeNull();
+    expect(parseAgentBrowserMirrorPageMessage({ type: "copy" })).toBeNull();
+  });
+
   it("refuses anything else, including taking control from inside the page", () => {
     expect(parseAgentBrowserMirrorPageMessage("{")).toBeNull();
     expect(parseAgentBrowserMirrorPageMessage({ type: "events" })).toBeNull();

@@ -550,7 +550,17 @@ export const makeMachineState = Effect.fn("makeMachineState")(function* (input: 
       held = edits.length > 0 ? { commit, trees, files: edits } : null;
       for (const folder of input.outside) {
         const saved = `${commit}:${OUTSIDE}/${folder.name}`;
-        if (yield* exists(saved)) yield* writeFiles(folder.dir, saved, "all");
+        if (!(yield* exists(saved))) continue;
+        // A state saved before a path was left out may still hold it; it stays left out.
+        const kept =
+          folder.exclude.length === 0
+            ? "all"
+            : (yield* git.run(["ls-tree", "-r", "-z", "--name-only", saved]))
+                .split("\0")
+                .filter(
+                  (file) => file.length > 0 && !folder.exclude.some((left) => within(file, left)),
+                );
+        yield* writeFiles(folder.dir, saved, kept);
       }
     });
 

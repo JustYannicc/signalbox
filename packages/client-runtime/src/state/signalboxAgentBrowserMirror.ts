@@ -2,6 +2,8 @@ import { AgentBrowserDrivingInput } from "@t3tools/contracts/signalboxPreviews";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { reportableUrl } from "../browsing/browsingRecord.ts";
+
 /**
  * The mirror page (`/agent-browser.html`) and its host talk in these messages.
  * In an iframe both sides use `postMessage`; in a React Native WebView the
@@ -13,6 +15,8 @@ export type AgentBrowserMirrorHostMessage =
   | { readonly type: "events"; readonly events: string }
   /** Whether the page sends the person's input. */
   | { readonly type: "interactive"; readonly on: boolean }
+  /** Whether clicking a link while not driving asks for your own copy of it (#597). */
+  | { readonly type: "copyLinks"; readonly on: boolean }
   /** Show nothing. */
   | { readonly type: "reset" };
 
@@ -24,7 +28,9 @@ export type AgentBrowserMirrorPageMessage =
   /** The person touched the mirror (throttled). */
   | { readonly type: "activity" }
   /** The mirrored page's viewport, when it changes. */
-  | { readonly type: "viewport"; readonly width: number; readonly height: number };
+  | { readonly type: "viewport"; readonly width: number; readonly height: number }
+  /** The person clicked a link while following: open it in a tab of their own. */
+  | { readonly type: "copy"; readonly url: string };
 
 // Only driving input: taking or handing back control is the host's call, never the page's.
 const decodeDrivingInput = Schema.decodeUnknownOption(AgentBrowserDrivingInput);
@@ -56,6 +62,12 @@ export function parseAgentBrowserMirrorPageMessage(
         message.height > 0
         ? { type: "viewport", width: message.width, height: message.height }
         : null;
+    case "copy": {
+      // Only web pages: a mirrored page's link is the agent's site's to choose.
+      const url =
+        "url" in message && typeof message.url === "string" ? reportableUrl(message.url) : null;
+      return url === null ? null : { type: "copy", url };
+    }
     case "input": {
       if (!("input" in message)) return null;
       const input = Option.getOrNull(decodeDrivingInput(message.input));

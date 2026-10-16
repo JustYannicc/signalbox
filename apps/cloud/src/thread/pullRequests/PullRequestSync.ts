@@ -9,6 +9,7 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -21,6 +22,7 @@ import { GitHub } from "../../github/GitHub.ts";
 import { pullRequestSnapshot } from "../../github/GitHubPullRequests.ts";
 import { UserDirectory } from "../../user/UserDirectory.ts";
 import { isLiveRun } from "../runLifecycle.ts";
+import { awaitsHandoff, harnessRun } from "../runner/runnerTurn.ts";
 import { type Actor, ThreadEngine } from "../ThreadEngine.ts";
 import { ThreadStore } from "../ThreadStore.ts";
 import { snapshotFieldsEqual } from "./pullRequestLinks.ts";
@@ -40,11 +42,18 @@ import { type PullRequestPoll, PullRequestPolls } from "./PullRequestPolls.ts";
  * otherwise. A merged one is never read again; a closed one (it can reopen)
  * once more after the thread next changes. A rate limit pauses every read of
  * the thread until the time GitHub gave, since it limits the owner's token.
+ *
+ * A turn waiting to start reads every link not read since it was asked for
+ * first, so its machine knows whether the thread's pull request merged and
+ * takes in the new `main` (#495): the object holds the turn back until then,
+ * for `TURN_HOLD_MS` at most.
  */
 
 export const FAST_POLL_MS = 60_000;
 export const SLOW_POLL_MS = 5 * 60_000;
 export const RECENT_MS = 10 * 60_000;
+/** The longest a turn waits for its reads: a sync that keeps failing never stalls it. */
+export const TURN_HOLD_MS = 15_000;
 
 const pullRequestReads = Metric.counter("signalbox_cloud_pull_request_reads_total", {
   description: "Linked pull request reads from a thread object's alarm, by outcome.",
@@ -92,6 +101,9 @@ export function pullRequestSchedule(input: {
   const { projection, polls, now } = input;
   const activeAt = lastActivity(projection);
   const live = projection.runs.some(isLiveRun);
+  const starting = harnessRun(projection);
+  const turnAskedAt =
+    starting !== undefined && awaitsHandoff(starting) ? ms(starting.requestedAt) : null;
   // A rate limit is the owner's token's, so it pauses every link.
   const pausedUntil = Math.max(0, ...[...polls.values()].map((poll) => poll.retryAt ?? 0));
   return visibleThreadPullRequests(projection.thread.pullRequests ?? []).flatMap((link) => {
@@ -102,6 +114,7 @@ export function pullRequestSchedule(input: {
       const snapshot = link.snapshot;
       if (snapshot?.state === "merged") return null;
       if (polledAt === null) return now;
+      if (turnAskedAt !== null && polledAt < turnAskedAt) return now;
       if (snapshot?.state === "closed") {
         return activeAt > polledAt ? polledAt + FAST_POLL_MS : null;
       }
@@ -125,6 +138,8 @@ export class PullRequestSync extends Context.Service<
     readonly sync: Effect.Effect<number | null>;
     /** When a link is due next, reading nothing from GitHub. */
     readonly dueAt: Effect.Effect<number | null>;
+    /** Whether a turn waiting to start waits for reads due now; `sync` makes them. Never fails. */
+    readonly holdsTurn: Effect.Effect<boolean>;
   }
 >()("@signalbox/cloud/thread/pullRequests/PullRequestSync") {}
 
@@ -151,6 +166,26 @@ const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     return nextAt(pullRequestSchedule({ ...current, host, now }));
   });
+
+  const holdsTurn: PullRequestSync["Service"]["holdsTurn"] = Effect.gen(function* () {
+    const projection = yield* engine.projection;
+    const run = projection === null ? undefined : harnessRun(projection);
+    if (projection === null || run === undefined || !awaitsHandoff(run)) return false;
+    if ((projection.thread.pullRequests ?? []).length === 0) return false;
+    const now = yield* Clock.currentTimeMillis;
+    if (now >= ms(run.requestedAt) + TURN_HOLD_MS) return false;
+    const at = nextAt(
+      pullRequestSchedule({ projection, polls: yield* Effect.orDie(polls.all), host, now }),
+    );
+    return at !== null && at <= now;
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.as(
+        Effect.logWarning("checking pull request reads failed", Cause.pretty(cause)),
+        false,
+      ),
+    ),
+  );
 
   const counted = (outcome: Outcome) =>
     Metric.update(Metric.withAttributes(pullRequestReads, { outcome }), 1);
@@ -267,7 +302,7 @@ const make = Effect.gen(function* () {
       : nextAt(pullRequestSchedule({ projection: after, polls: recorded, host, now }));
   }).pipe(Effect.withSpan("PullRequestSync.sync"));
 
-  return PullRequestSync.of({ sync, dueAt });
+  return PullRequestSync.of({ sync, dueAt, holdsTurn });
 });
 
 /** In a thread's object: needs its engine and store, the owner's object, and GitHub. */

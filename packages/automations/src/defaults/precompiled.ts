@@ -629,15 +629,16 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
     meta: {
       name: "Merge gate",
       description:
-        "Decides whether a thread's pull request merges: asks you, then merges it, deletes its branch and tells the agent.",
-      intent: "ask me before an agent merges its pull request",
+        "Decides whether a thread's pull request merges: sends it back to the agent until checks and reviews are done, merges it by itself when it's easy to undo, and asks you first when it's hard to undo or undecided.",
+      intent:
+        "merge an agent's pull request once it's ready, and ask me first about anything hard to undo",
     },
     graph: {
       nodes: [
         {
           type: "step",
           id: "s1",
-          line: 24,
+          line: 119,
           verb: "call",
           label: {
             text: "Read the pull request",
@@ -654,48 +655,22 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
           },
         },
         {
-          type: "step",
-          id: "s2",
-          line: 33,
-          verb: "ask",
-          label: {
-            text: "Merge …#…?",
-            dynamic: true,
-          },
-          detail: {
-            question: {
-              expression:
-                '[pr.title, input.url, pinned, input.note].filter(Boolean).join("\\n\\n")',
-            },
-            fields: {
-              literal: {
-                reason: {
-                  type: "longText",
-                  label: "Anything to do first?",
-                },
-              },
-            },
-          },
-          outcomes: ["merge", "not yet"],
-        },
-        {
           type: "branch",
-          id: "s6",
-          line: 38,
-          source: "outcome",
+          id: "s2",
+          line: 122,
+          source: "condition",
           label: {
-            text: "Merge …#…?",
-            dynamic: true,
+            text: 'pr.state !== "open"',
+            dynamic: false,
           },
-          decidedBy: "s2",
           arms: [
             {
-              label: "not yet",
+              label: "Yes",
               body: [
                 {
                   type: "step",
                   id: "s3/s4",
-                  line: 17,
+                  line: 63,
                   verb: "call",
                   label: {
                     text: "Tell the agent",
@@ -714,21 +689,160 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s5",
-                  line: 43,
+                  line: 124,
                   exit: "workflow",
                 },
               ],
             },
             {
-              label: "merge",
+              label: "No",
+              body: [],
+            },
+          ],
+        },
+        {
+          type: "branch",
+          id: "s6",
+          line: 128,
+          source: "condition",
+          label: {
+            text: "notReady.length > 0",
+            dynamic: false,
+          },
+          arms: [
+            {
+              label: "Yes",
+              body: [
+                {
+                  type: "step",
+                  id: "s7/s4",
+                  line: 63,
+                  verb: "call",
+                  label: {
+                    text: "Tell the agent",
+                    dynamic: false,
+                  },
+                  service: "signalbox",
+                  detail: {
+                    operation: {
+                      literal: "signalbox.t3_thread_send",
+                    },
+                    args: {
+                      expression: '{ threadId, mode: "queue", message }',
+                    },
+                  },
+                },
+                {
+                  type: "end",
+                  id: "s8",
+                  line: 130,
+                  exit: "workflow",
+                },
+              ],
+            },
+            {
+              label: "No",
+              body: [],
+            },
+          ],
+        },
+        {
+          type: "branch",
+          id: "s9",
+          line: 134,
+          source: "condition",
+          label: {
+            text: "reasons.length > 0",
+            dynamic: false,
+          },
+          arms: [
+            {
+              label: "Yes",
+              body: [
+                {
+                  type: "step",
+                  id: "s10",
+                  line: 136,
+                  verb: "ask",
+                  label: {
+                    text: "Merge …#…?",
+                    dynamic: true,
+                  },
+                  detail: {
+                    question: {
+                      expression:
+                        '[ pr.title, input.url, pr.headSha ? `At ${commit}. ${evidence(pr, commit)}` : evidence(pr, commit), `Asking because ${reasons.join("; ")}.`, input.note, ].filter(Boolean).join("\\n\\n")',
+                    },
+                    fields: {
+                      literal: {
+                        reason: {
+                          type: "longText",
+                          label: "Anything to do first?",
+                        },
+                      },
+                    },
+                  },
+                  outcomes: ["merge", "not yet"],
+                },
+                {
+                  type: "branch",
+                  id: "s13",
+                  line: 147,
+                  source: "outcome",
+                  label: {
+                    text: "Merge …#…?",
+                    dynamic: true,
+                  },
+                  decidedBy: "s10",
+                  arms: [
+                    {
+                      label: "not yet",
+                      body: [
+                        {
+                          type: "step",
+                          id: "s11/s4",
+                          line: 63,
+                          verb: "call",
+                          label: {
+                            text: "Tell the agent",
+                            dynamic: false,
+                          },
+                          service: "signalbox",
+                          detail: {
+                            operation: {
+                              literal: "signalbox.t3_thread_send",
+                            },
+                            args: {
+                              expression: '{ threadId, mode: "queue", message }',
+                            },
+                          },
+                        },
+                        {
+                          type: "end",
+                          id: "s12",
+                          line: 152,
+                          exit: "workflow",
+                        },
+                      ],
+                    },
+                    {
+                      label: "merge",
+                      body: [],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              label: "No",
               body: [],
             },
           ],
         },
         {
           type: "try",
-          id: "s7",
-          line: 47,
+          id: "s14",
+          line: 157,
           label: {
             text: "If something fails",
             dynamic: false,
@@ -736,8 +850,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
           body: [
             {
               type: "step",
-              id: "s8",
-              line: 48,
+              id: "s15",
+              line: 158,
               verb: "call",
               label: {
                 text: "Merge it",
@@ -758,8 +872,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
           failure: [
             {
               type: "step",
-              id: "s9/s4",
-              line: 17,
+              id: "s16/s4",
+              line: 63,
               verb: "call",
               label: {
                 text: "Tell the agent",
@@ -777,16 +891,16 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             },
             {
               type: "end",
-              id: "s10",
-              line: 56,
+              id: "s17",
+              line: 166,
               exit: "workflow",
             },
           ],
         },
         {
           type: "branch",
-          id: "s11",
-          line: 58,
+          id: "s18",
+          line: 168,
           source: "condition",
           label: {
             text: "merged.moved",
@@ -798,8 +912,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               body: [
                 {
                   type: "step",
-                  id: "s12/s4",
-                  line: 17,
+                  id: "s19/s4",
+                  line: 63,
                   verb: "call",
                   label: {
                     text: "Tell the agent",
@@ -817,8 +931,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 },
                 {
                   type: "end",
-                  id: "s13",
-                  line: 60,
+                  id: "s20",
+                  line: 170,
                   exit: "workflow",
                 },
               ],
@@ -831,8 +945,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "branch",
-          id: "s14",
-          line: 63,
+          id: "s21",
+          line: 173,
           source: "condition",
           label: {
             text: "A host with a merge queue takes it in instead of merging; the branch stays until it lands.",
@@ -844,8 +958,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
               body: [
                 {
                   type: "step",
-                  id: "s15/s4",
-                  line: 17,
+                  id: "s22/s4",
+                  line: 63,
                   verb: "call",
                   label: {
                     text: "Tell the agent",
@@ -863,8 +977,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 },
                 {
                   type: "end",
-                  id: "s16",
-                  line: 65,
+                  id: "s23",
+                  line: 175,
                   exit: "workflow",
                 },
               ],
@@ -877,8 +991,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "try",
-          id: "s17",
-          line: 68,
+          id: "s24",
+          line: 178,
           label: {
             text: "If something fails",
             dynamic: false,
@@ -886,8 +1000,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
           body: [
             {
               type: "step",
-              id: "s18",
-              line: 69,
+              id: "s25",
+              line: 179,
               verb: "call",
               label: {
                 text: "Delete its branch",
@@ -908,8 +1022,8 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         },
         {
           type: "step",
-          id: "s19/s4",
-          line: 17,
+          id: "s26/s4",
+          line: 63,
           verb: "call",
           label: {
             text: "Tell the agent",
@@ -928,9 +1042,9 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
       ],
     },
     script:
-      'export const meta = {\n\tname: "Merge gate",\n\tdescription: "Decides whether a thread\'s pull request merges: asks you, then merges it, deletes its branch and tells the agent.",\n\tintent: "ask me before an agent merges its pull request"\n};\n/** Tells the agent how it went; it doesn\'t see the automation. */\nasync function tell(w, threadId, message) {\n\tawait w.call("s4", "Tell the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage\n\t});\n}\nexport default workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the pull request\'s thread.");\n\t// What the person sees comes from the host, never from the input.\n\tconst pr = await w.call("s1", "Read the pull request", "signalbox.pull_request_read", {\n\t\tthreadId,\n\t\turl: input.url\n\t});\n\tconst name = `${pr.repository}#${pr.number} (${input.url})`;\n\tconst commit = pr.headSha ? pr.headSha.slice(0, 7) : "its current head";\n\t// Without a head commit from the host there\'s nothing to pin the approval to; say so.\n\tconst pinned = pr.headSha ? `At ${commit}.` : "The host didn\'t report a head commit, so this approval isn\'t pinned to one: whatever is the head when you choose merge, merges.";\n\t// The approval is for this commit; anything pushed later needs its own.\n\tconst answer = await w.ask("s2", `Merge ${pr.repository}#${pr.number}?`, {\n\t\tquestion: [\n\t\t\tpr.title,\n\t\t\tinput.url,\n\t\t\tpinned,\n\t\t\tinput.note\n\t\t].filter(Boolean).join("\\n\\n"),\n\t\toptions: ["merge", "not yet"],\n\t\tfields: { reason: {\n\t\t\ttype: "longText",\n\t\t\tlabel: "Anything to do first?"\n\t\t} }\n\t});\n\tif (answer.choice !== "merge") {\n\t\tw.$arm("s6", 0);\n\t\tconst asked = answer.values.reason ? ` They said: ${answer.values.reason} Do that, then call merge_pull_request again.` : " Ask them what\'s missing before calling merge_pull_request again.";\n\t\tawait tell(w.$frame("s3"), threadId, `Not merging ${name} yet.${asked}`);\n\t\treturn "not yet";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tlet merged;\n\ttry {\n\t\tw.$arm("s7", 0);\n\t\tmerged = await w.call("s8", "Merge it", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "merge",\n\t\t\t...pr.headSha ? { expectedHeadSha: pr.headSha } : {}\n\t\t});\n\t} catch (error) {\n\t\tw.$arm("s7", 1);\n\t\tawait tell(w.$frame("s9"), threadId, `Merging ${name} failed: ${String(error)}. Fix what it says, then call merge_pull_request again.`);\n\t\treturn "failed";\n\t}\n\tif (merged.moved) {\n\t\tw.$arm("s11", 0);\n\t\tawait tell(w.$frame("s12"), threadId, `Not merging ${name}: new commits landed after it was approved at ${commit}. Call merge_pull_request again so they can approve what\'s there now.`);\n\t\treturn "moved";\n\t} else {\n\t\tw.$arm("s11", 1);\n\t}\n\t// A host with a merge queue takes it in instead of merging; the branch stays until it lands.\n\tif (merged.state !== "merged") {\n\t\tw.$arm("s14", 0);\n\t\tawait tell(w.$frame("s15"), threadId, `${name} is approved and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`);\n\t\treturn "queued";\n\t} else {\n\t\tw.$arm("s14", 1);\n\t}\n\tlet cleanedUp = true;\n\ttry {\n\t\tw.$arm("s17", 0);\n\t\tawait w.call("s18", "Delete its branch", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "delete-branch"\n\t\t});\n\t} catch {\n\t\tw.$arm("s17", 1);\n\t\tcleanedUp = false;\n\t}\n\tawait tell(w.$frame("s19"), threadId, `Merged ${name}${cleanedUp ? " and deleted its branch" : ""}. Wrap up and hand the work back.`);\n\treturn "merged";\n});\n',
+      'export const meta = {\n\tname: "Merge gate",\n\tdescription: "Decides whether a thread\'s pull request merges: sends it back to the agent until checks and reviews are done, merges it by itself when it\'s easy to undo, and asks you first when it\'s hard to undo or undecided.",\n\tintent: "merge an agent\'s pull request once it\'s ready, and ask me first about anything hard to undo"\n};\n/** true: a person approves every merge, however ready and small. */\nconst ASK_EVERY_TIME = false;\n/**\n* Changes a person approves before they merge, because merging them is hard\n* to take back. A changed path matching `paths` makes the gate ask. Most match\n* a word anywhere in the path on purpose: a needless question costs a tap, a\n* missed one merges a migration nobody saw. Add this folder\'s own, e.g.\n* infrastructure or billing.\n*/\nconst HARD_TO_UNDO = [\n\t{\n\t\twhy: "a database migration",\n\t\tpaths: /migrat|\\.sql$|(^|\\/)schema\\.(prisma|rb)$/i\n\t},\n\t(\n\t// Cloudflare\'s config also holds Durable Object migrations, which can delete their data.\n\t{\n\t\twhy: "the Workers config (wrangler)",\n\t\tpaths: /(^|\\/)wrangler\\.(jsonc?|toml)$/i\n\t}),\n\t{\n\t\twhy: "sign-in or access control",\n\t\tpaths: /auth(?!ors?([^a-z]|$))|log[-_]?in(?!g|put|dex)|sign[-_]?in(?!g|put|dex)|permission|access[-_]?control|rbac|credential|secret|(^|[\\/._-])(sessions?|acl|roles?|scopes?|grants?)([\\/._-]|$)/i\n\t},\n\t{\n\t\twhy: "deleting or rewriting stored data",\n\t\tpaths: /backfill|purge|retention|(^|[^s])wipe/i\n\t}\n];\n/** Check results that count as passed; anything else still runs or failed. */\nconst PASSED = [\n\t"success",\n\t"skipped",\n\t"neutral"\n];\n/** Tells the agent how it went; it doesn\'t see the automation. */\nasync function tell(w, threadId, message) {\n\tawait w.call("s4", "Tell the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage\n\t});\n}\nconst names = (checks) => checks.map((check) => check.name).join(", ");\n/** What the agent has to fix before anyone looks: failed or running checks, open reviews, a draft, a conflict. */\nfunction missing(pr) {\n\tconst checks = pr.checks ?? [];\n\tconst failed = checks.filter((check) => check.status !== "pending" && !PASSED.includes(check.status));\n\tconst running = checks.filter((check) => check.status === "pending");\n\treturn [\n\t\tpr.isDraft ? "it\'s still a draft" : "",\n\t\tpr.mergeability === "conflicting" ? "it conflicts with its base branch" : "",\n\t\tfailed.length > 0 ? `checks failed: ${names(failed)}` : "",\n\t\trunning.length > 0 ? `checks are still running: ${names(running)}` : "",\n\t\tpr.openThreads ? `${pr.openThreads} review thread${pr.openThreads === 1 ? " is" : "s are"} unresolved` : "",\n\t\tpr.reviewDecision === "changes-requested" ? "a reviewer requested changes" : "",\n\t\tpr.reviewDecision === "review-required" ? "it still needs the review the branch requires" : ""\n\t].filter(Boolean);\n}\n/** Why a person decides this one rather than the gate; empty when nothing says so. */\nfunction reasonsToAsk(pr, input) {\n\tconst files = pr.files ?? [];\n\tconst risky = HARD_TO_UNDO.flatMap((rule) => {\n\t\tconst hits = files.filter((path) => rule.paths.test(path));\n\t\treturn hits.length === 0 ? [] : [`it changes ${rule.why} (${hits.slice(0, 3).join(", ")}${hits.length > 3 ? ", …" : ""})`];\n\t});\n\treturn [\n\t\tASK_EVERY_TIME ? "this folder asks before every merge" : "",\n\t\tinput.askBecause ? `the agent asks: ${input.askBecause}` : "",\n\t\t...risky,\n\t\tpr.headSha ? "" : "the host didn\'t say which commit is the head, so nothing pins what merges",\n\t\tpr.checks ? "" : "the checks at the head couldn\'t be read",\n\t\tpr.checks && pr.checks.length === 0 ? "no checks ran at the head" : "",\n\t\tpr.openThreads === null || pr.openThreads === undefined ? "the review threads couldn\'t be read" : "",\n\t\tpr.files ? "" : "the changed files couldn\'t be read, so it isn\'t known to be easy to undo"\n\t].filter(Boolean);\n}\n/** The evidence as a person reads it. */\nfunction evidence(pr, commit) {\n\tconst checks = pr.checks ?? [];\n\treturn [\n\t\tchecks.length > 0 ? `Checks: all ${checks.length} passed at ${commit}.` : "",\n\t\tpr.openThreads === 0 ? "Review threads: all resolved." : "",\n\t\tpr.reviewDecision === "approved" ? "Review: approved." : "",\n\t\tpr.files ? `Changes ${pr.files.length} file${pr.files.length === 1 ? "" : "s"}.` : ""\n\t].filter(Boolean).join(" ");\n}\nexport default workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the pull request\'s thread.");\n\t// Everything decided here comes from the host, never from the input.\n\tconst pr = await w.call("s1", "Read the pull request", "signalbox.pull_request_read", {\n\t\tthreadId,\n\t\turl: input.url\n\t});\n\tconst name = `${pr.repository}#${pr.number} (${input.url})`;\n\tconst commit = pr.headSha ? pr.headSha.slice(0, 7) : "its current head";\n\tif (pr.state !== "open") {\n\t\tw.$arm("s2", 0);\n\t\tawait tell(w.$frame("s3"), threadId, `${name} is already ${pr.state}; there\'s nothing to merge.`);\n\t\treturn pr.state;\n\t} else {\n\t\tw.$arm("s2", 1);\n\t}\n\tconst notReady = missing(pr);\n\tif (notReady.length > 0) {\n\t\tw.$arm("s6", 0);\n\t\tawait tell(w.$frame("s7"), threadId, `Not merging ${name} yet: ${notReady.join("; ")}. Fix that (watch_pull_request wakes you when checks finish), then call merge_pull_request again.`);\n\t\treturn "not ready";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tconst reasons = reasonsToAsk(pr, input);\n\tif (reasons.length > 0) {\n\t\tw.$arm("s9", 0);\n\t\t// The approval is for this commit; anything pushed later needs its own.\n\t\tconst answer = await w.ask("s10", `Merge ${pr.repository}#${pr.number}?`, {\n\t\t\tquestion: [\n\t\t\t\tpr.title,\n\t\t\t\tinput.url,\n\t\t\t\tpr.headSha ? `At ${commit}. ${evidence(pr, commit)}` : evidence(pr, commit),\n\t\t\t\t`Asking because ${reasons.join("; ")}.`,\n\t\t\t\tinput.note\n\t\t\t].filter(Boolean).join("\\n\\n"),\n\t\t\toptions: ["merge", "not yet"],\n\t\t\tfields: { reason: {\n\t\t\t\ttype: "longText",\n\t\t\t\tlabel: "Anything to do first?"\n\t\t\t} }\n\t\t});\n\t\tif (answer.choice !== "merge") {\n\t\t\tw.$arm("s13", 0);\n\t\t\tconst asked = answer.values.reason ? ` They said: ${answer.values.reason} Do that, then call merge_pull_request again.` : " Ask them what\'s missing before calling merge_pull_request again.";\n\t\t\tawait tell(w.$frame("s11"), threadId, `Not merging ${name} yet.${asked}`);\n\t\t\treturn "not yet";\n\t\t} else {\n\t\t\tw.$arm("s13", 1);\n\t\t}\n\t} else {\n\t\tw.$arm("s9", 1);\n\t}\n\tlet merged;\n\ttry {\n\t\tw.$arm("s14", 0);\n\t\tmerged = await w.call("s15", "Merge it", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "merge",\n\t\t\t...pr.headSha ? { expectedHeadSha: pr.headSha } : {}\n\t\t});\n\t} catch (error) {\n\t\tw.$arm("s14", 1);\n\t\tawait tell(w.$frame("s16"), threadId, `Merging ${name} failed: ${String(error)}. Fix what it says, then call merge_pull_request again.`);\n\t\treturn "failed";\n\t}\n\tif (merged.moved) {\n\t\tw.$arm("s18", 0);\n\t\tawait tell(w.$frame("s19"), threadId, `Not merging ${name}: new commits landed after ${commit}, which is what was checked. Call merge_pull_request again so the gate looks at what\'s there now.`);\n\t\treturn "moved";\n\t} else {\n\t\tw.$arm("s18", 1);\n\t}\n\t// A host with a merge queue takes it in instead of merging; the branch stays until it lands.\n\tif (merged.state !== "merged") {\n\t\tw.$arm("s21", 0);\n\t\tawait tell(w.$frame("s22"), threadId, `${name} passed the gate and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`);\n\t\treturn "queued";\n\t} else {\n\t\tw.$arm("s21", 1);\n\t}\n\tlet cleanedUp = true;\n\ttry {\n\t\tw.$arm("s24", 0);\n\t\tawait w.call("s25", "Delete its branch", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "delete-branch"\n\t\t});\n\t} catch {\n\t\tw.$arm("s24", 1);\n\t\tcleanedUp = false;\n\t}\n\tconst how = reasons.length > 0 ? "approved" : "ready and easy to undo";\n\tawait tell(w.$frame("s26"), threadId, `Merged ${name} at ${commit} (${how})${cleanedUp ? " and deleted its branch" : ""}. Wrap up and hand the work back.`);\n\treturn "merged";\n});\n',
     runModule: null,
     workerModule:
-      'export function load(workflow) {\nconst meta = {\n\tname: "Merge gate",\n\tdescription: "Decides whether a thread\'s pull request merges: asks you, then merges it, deletes its branch and tells the agent.",\n\tintent: "ask me before an agent merges its pull request"\n};\n/** Tells the agent how it went; it doesn\'t see the automation. */\nasync function tell(w, threadId, message) {\n\tawait w.call("s4", "Tell the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage\n\t});\n}\nconst __signalboxWorkflow = workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the pull request\'s thread.");\n\t// What the person sees comes from the host, never from the input.\n\tconst pr = await w.call("s1", "Read the pull request", "signalbox.pull_request_read", {\n\t\tthreadId,\n\t\turl: input.url\n\t});\n\tconst name = `${pr.repository}#${pr.number} (${input.url})`;\n\tconst commit = pr.headSha ? pr.headSha.slice(0, 7) : "its current head";\n\t// Without a head commit from the host there\'s nothing to pin the approval to; say so.\n\tconst pinned = pr.headSha ? `At ${commit}.` : "The host didn\'t report a head commit, so this approval isn\'t pinned to one: whatever is the head when you choose merge, merges.";\n\t// The approval is for this commit; anything pushed later needs its own.\n\tconst answer = await w.ask("s2", `Merge ${pr.repository}#${pr.number}?`, {\n\t\tquestion: [\n\t\t\tpr.title,\n\t\t\tinput.url,\n\t\t\tpinned,\n\t\t\tinput.note\n\t\t].filter(Boolean).join("\\n\\n"),\n\t\toptions: ["merge", "not yet"],\n\t\tfields: { reason: {\n\t\t\ttype: "longText",\n\t\t\tlabel: "Anything to do first?"\n\t\t} }\n\t});\n\tif (answer.choice !== "merge") {\n\t\tw.$arm("s6", 0);\n\t\tconst asked = answer.values.reason ? ` They said: ${answer.values.reason} Do that, then call merge_pull_request again.` : " Ask them what\'s missing before calling merge_pull_request again.";\n\t\tawait tell(w.$frame("s3"), threadId, `Not merging ${name} yet.${asked}`);\n\t\treturn "not yet";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tlet merged;\n\ttry {\n\t\tw.$arm("s7", 0);\n\t\tmerged = await w.call("s8", "Merge it", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "merge",\n\t\t\t...pr.headSha ? { expectedHeadSha: pr.headSha } : {}\n\t\t});\n\t} catch (error) {\n\t\tw.$arm("s7", 1);\n\t\tawait tell(w.$frame("s9"), threadId, `Merging ${name} failed: ${String(error)}. Fix what it says, then call merge_pull_request again.`);\n\t\treturn "failed";\n\t}\n\tif (merged.moved) {\n\t\tw.$arm("s11", 0);\n\t\tawait tell(w.$frame("s12"), threadId, `Not merging ${name}: new commits landed after it was approved at ${commit}. Call merge_pull_request again so they can approve what\'s there now.`);\n\t\treturn "moved";\n\t} else {\n\t\tw.$arm("s11", 1);\n\t}\n\t// A host with a merge queue takes it in instead of merging; the branch stays until it lands.\n\tif (merged.state !== "merged") {\n\t\tw.$arm("s14", 0);\n\t\tawait tell(w.$frame("s15"), threadId, `${name} is approved and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`);\n\t\treturn "queued";\n\t} else {\n\t\tw.$arm("s14", 1);\n\t}\n\tlet cleanedUp = true;\n\ttry {\n\t\tw.$arm("s17", 0);\n\t\tawait w.call("s18", "Delete its branch", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "delete-branch"\n\t\t});\n\t} catch {\n\t\tw.$arm("s17", 1);\n\t\tcleanedUp = false;\n\t}\n\tawait tell(w.$frame("s19"), threadId, `Merged ${name}${cleanedUp ? " and deleted its branch" : ""}. Wrap up and hand the work back.`);\n\treturn "merged";\n});\n\nreturn __signalboxWorkflow;\n}\n',
+      'export function load(workflow) {\nconst meta = {\n\tname: "Merge gate",\n\tdescription: "Decides whether a thread\'s pull request merges: sends it back to the agent until checks and reviews are done, merges it by itself when it\'s easy to undo, and asks you first when it\'s hard to undo or undecided.",\n\tintent: "merge an agent\'s pull request once it\'s ready, and ask me first about anything hard to undo"\n};\n/** true: a person approves every merge, however ready and small. */\nconst ASK_EVERY_TIME = false;\n/**\n* Changes a person approves before they merge, because merging them is hard\n* to take back. A changed path matching `paths` makes the gate ask. Most match\n* a word anywhere in the path on purpose: a needless question costs a tap, a\n* missed one merges a migration nobody saw. Add this folder\'s own, e.g.\n* infrastructure or billing.\n*/\nconst HARD_TO_UNDO = [\n\t{\n\t\twhy: "a database migration",\n\t\tpaths: /migrat|\\.sql$|(^|\\/)schema\\.(prisma|rb)$/i\n\t},\n\t(\n\t// Cloudflare\'s config also holds Durable Object migrations, which can delete their data.\n\t{\n\t\twhy: "the Workers config (wrangler)",\n\t\tpaths: /(^|\\/)wrangler\\.(jsonc?|toml)$/i\n\t}),\n\t{\n\t\twhy: "sign-in or access control",\n\t\tpaths: /auth(?!ors?([^a-z]|$))|log[-_]?in(?!g|put|dex)|sign[-_]?in(?!g|put|dex)|permission|access[-_]?control|rbac|credential|secret|(^|[\\/._-])(sessions?|acl|roles?|scopes?|grants?)([\\/._-]|$)/i\n\t},\n\t{\n\t\twhy: "deleting or rewriting stored data",\n\t\tpaths: /backfill|purge|retention|(^|[^s])wipe/i\n\t}\n];\n/** Check results that count as passed; anything else still runs or failed. */\nconst PASSED = [\n\t"success",\n\t"skipped",\n\t"neutral"\n];\n/** Tells the agent how it went; it doesn\'t see the automation. */\nasync function tell(w, threadId, message) {\n\tawait w.call("s4", "Tell the agent", "signalbox.t3_thread_send", {\n\t\tthreadId,\n\t\tmode: "queue",\n\t\tmessage\n\t});\n}\nconst names = (checks) => checks.map((check) => check.name).join(", ");\n/** What the agent has to fix before anyone looks: failed or running checks, open reviews, a draft, a conflict. */\nfunction missing(pr) {\n\tconst checks = pr.checks ?? [];\n\tconst failed = checks.filter((check) => check.status !== "pending" && !PASSED.includes(check.status));\n\tconst running = checks.filter((check) => check.status === "pending");\n\treturn [\n\t\tpr.isDraft ? "it\'s still a draft" : "",\n\t\tpr.mergeability === "conflicting" ? "it conflicts with its base branch" : "",\n\t\tfailed.length > 0 ? `checks failed: ${names(failed)}` : "",\n\t\trunning.length > 0 ? `checks are still running: ${names(running)}` : "",\n\t\tpr.openThreads ? `${pr.openThreads} review thread${pr.openThreads === 1 ? " is" : "s are"} unresolved` : "",\n\t\tpr.reviewDecision === "changes-requested" ? "a reviewer requested changes" : "",\n\t\tpr.reviewDecision === "review-required" ? "it still needs the review the branch requires" : ""\n\t].filter(Boolean);\n}\n/** Why a person decides this one rather than the gate; empty when nothing says so. */\nfunction reasonsToAsk(pr, input) {\n\tconst files = pr.files ?? [];\n\tconst risky = HARD_TO_UNDO.flatMap((rule) => {\n\t\tconst hits = files.filter((path) => rule.paths.test(path));\n\t\treturn hits.length === 0 ? [] : [`it changes ${rule.why} (${hits.slice(0, 3).join(", ")}${hits.length > 3 ? ", …" : ""})`];\n\t});\n\treturn [\n\t\tASK_EVERY_TIME ? "this folder asks before every merge" : "",\n\t\tinput.askBecause ? `the agent asks: ${input.askBecause}` : "",\n\t\t...risky,\n\t\tpr.headSha ? "" : "the host didn\'t say which commit is the head, so nothing pins what merges",\n\t\tpr.checks ? "" : "the checks at the head couldn\'t be read",\n\t\tpr.checks && pr.checks.length === 0 ? "no checks ran at the head" : "",\n\t\tpr.openThreads === null || pr.openThreads === undefined ? "the review threads couldn\'t be read" : "",\n\t\tpr.files ? "" : "the changed files couldn\'t be read, so it isn\'t known to be easy to undo"\n\t].filter(Boolean);\n}\n/** The evidence as a person reads it. */\nfunction evidence(pr, commit) {\n\tconst checks = pr.checks ?? [];\n\treturn [\n\t\tchecks.length > 0 ? `Checks: all ${checks.length} passed at ${commit}.` : "",\n\t\tpr.openThreads === 0 ? "Review threads: all resolved." : "",\n\t\tpr.reviewDecision === "approved" ? "Review: approved." : "",\n\t\tpr.files ? `Changes ${pr.files.length} file${pr.files.length === 1 ? "" : "s"}.` : ""\n\t].filter(Boolean).join(" ");\n}\nconst __signalboxWorkflow = workflow(async (w, input, trigger) => {\n\tconst threadId = input.threadId ?? trigger.attach?.threadId;\n\tif (!threadId) throw new Error("Pass threadId, or start the run attached to the pull request\'s thread.");\n\t// Everything decided here comes from the host, never from the input.\n\tconst pr = await w.call("s1", "Read the pull request", "signalbox.pull_request_read", {\n\t\tthreadId,\n\t\turl: input.url\n\t});\n\tconst name = `${pr.repository}#${pr.number} (${input.url})`;\n\tconst commit = pr.headSha ? pr.headSha.slice(0, 7) : "its current head";\n\tif (pr.state !== "open") {\n\t\tw.$arm("s2", 0);\n\t\tawait tell(w.$frame("s3"), threadId, `${name} is already ${pr.state}; there\'s nothing to merge.`);\n\t\treturn pr.state;\n\t} else {\n\t\tw.$arm("s2", 1);\n\t}\n\tconst notReady = missing(pr);\n\tif (notReady.length > 0) {\n\t\tw.$arm("s6", 0);\n\t\tawait tell(w.$frame("s7"), threadId, `Not merging ${name} yet: ${notReady.join("; ")}. Fix that (watch_pull_request wakes you when checks finish), then call merge_pull_request again.`);\n\t\treturn "not ready";\n\t} else {\n\t\tw.$arm("s6", 1);\n\t}\n\tconst reasons = reasonsToAsk(pr, input);\n\tif (reasons.length > 0) {\n\t\tw.$arm("s9", 0);\n\t\t// The approval is for this commit; anything pushed later needs its own.\n\t\tconst answer = await w.ask("s10", `Merge ${pr.repository}#${pr.number}?`, {\n\t\t\tquestion: [\n\t\t\t\tpr.title,\n\t\t\t\tinput.url,\n\t\t\t\tpr.headSha ? `At ${commit}. ${evidence(pr, commit)}` : evidence(pr, commit),\n\t\t\t\t`Asking because ${reasons.join("; ")}.`,\n\t\t\t\tinput.note\n\t\t\t].filter(Boolean).join("\\n\\n"),\n\t\t\toptions: ["merge", "not yet"],\n\t\t\tfields: { reason: {\n\t\t\t\ttype: "longText",\n\t\t\t\tlabel: "Anything to do first?"\n\t\t\t} }\n\t\t});\n\t\tif (answer.choice !== "merge") {\n\t\t\tw.$arm("s13", 0);\n\t\t\tconst asked = answer.values.reason ? ` They said: ${answer.values.reason} Do that, then call merge_pull_request again.` : " Ask them what\'s missing before calling merge_pull_request again.";\n\t\t\tawait tell(w.$frame("s11"), threadId, `Not merging ${name} yet.${asked}`);\n\t\t\treturn "not yet";\n\t\t} else {\n\t\t\tw.$arm("s13", 1);\n\t\t}\n\t} else {\n\t\tw.$arm("s9", 1);\n\t}\n\tlet merged;\n\ttry {\n\t\tw.$arm("s14", 0);\n\t\tmerged = await w.call("s15", "Merge it", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "merge",\n\t\t\t...pr.headSha ? { expectedHeadSha: pr.headSha } : {}\n\t\t});\n\t} catch (error) {\n\t\tw.$arm("s14", 1);\n\t\tawait tell(w.$frame("s16"), threadId, `Merging ${name} failed: ${String(error)}. Fix what it says, then call merge_pull_request again.`);\n\t\treturn "failed";\n\t}\n\tif (merged.moved) {\n\t\tw.$arm("s18", 0);\n\t\tawait tell(w.$frame("s19"), threadId, `Not merging ${name}: new commits landed after ${commit}, which is what was checked. Call merge_pull_request again so the gate looks at what\'s there now.`);\n\t\treturn "moved";\n\t} else {\n\t\tw.$arm("s18", 1);\n\t}\n\t// A host with a merge queue takes it in instead of merging; the branch stays until it lands.\n\tif (merged.state !== "merged") {\n\t\tw.$arm("s21", 0);\n\t\tawait tell(w.$frame("s22"), threadId, `${name} passed the gate and the host queued it to merge. Watch it with watch_pull_request; it merges when the queue gets to it.`);\n\t\treturn "queued";\n\t} else {\n\t\tw.$arm("s21", 1);\n\t}\n\tlet cleanedUp = true;\n\ttry {\n\t\tw.$arm("s24", 0);\n\t\tawait w.call("s25", "Delete its branch", "signalbox.pull_request_action", {\n\t\t\tthreadId,\n\t\t\turl: input.url,\n\t\t\taction: "delete-branch"\n\t\t});\n\t} catch {\n\t\tw.$arm("s24", 1);\n\t\tcleanedUp = false;\n\t}\n\tconst how = reasons.length > 0 ? "approved" : "ready and easy to undo";\n\tawait tell(w.$frame("s26"), threadId, `Merged ${name} at ${commit} (${how})${cleanedUp ? " and deleted its branch" : ""}. Wrap up and hand the work back.`);\n\treturn "merged";\n});\n\nreturn __signalboxWorkflow;\n}\n',
   },
 };

@@ -38,6 +38,11 @@ interface Attachment {
 export interface RunnerSocketHost {
   readonly ctx: DurableObjectState;
   readonly run: <A>(effect: Effect.Effect<A, never, ThreadRunner.ThreadRunner>) => Promise<A>;
+  /**
+   * Whether the turn waits for its pull requests' reads, which the object's
+   * alarm makes before it hands work out again (#495). Never rejects.
+   */
+  readonly holdsTurn: () => Promise<boolean>;
   /** Arms the object's alarm after anything that may have left it work. */
   readonly afterChange: (work?: ThreadRunner.RunnerWork) => Promise<void>;
 }
@@ -90,10 +95,14 @@ export function endRunners(ctx: DurableObjectState, generation: number, reason: 
  */
 export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunner.RunnerWork> {
   const work = await host.run(runner.use((service) => service.work));
-  const handedOut =
-    work.turn !== null && work.modelToken !== null && work.sessions !== null
-      ? work.turn.runId
+  const turn =
+    work.turn !== null &&
+    work.modelToken !== null &&
+    work.sessions !== null &&
+    !(await host.holdsTurn())
+      ? { turn: work.turn, modelToken: work.modelToken, sessions: work.sessions }
       : null;
+  const handedOut = turn?.turn.runId ?? null;
   const starting =
     handedOut !== null &&
     host.ctx.getWebSockets(RUNNER_TAG).some((socket) => {
@@ -112,15 +121,13 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       ? await host.run(runner.use((service) => service.secretsToken))
       : null;
   // Asked the same way, and only for a turn that resumes its harness session.
-  const handed = work.turn;
+  const handed = turn?.turn ?? null;
   const freshSessionText =
     starting && handed !== null && handed.providerThread.nativeThreadRef !== null
       ? await host.run(runner.use((service) => service.freshSessionText(handed)))
       : null;
   const drive: DriveAccess | null =
     work.drive === null || author === null ? work.drive : { ...work.drive, author };
-  const turn =
-    handed === null || freshSessionText === null ? handed : { ...handed, freshSessionText };
   for (const socket of host.ctx.getWebSockets(RUNNER_TAG)) {
     const attachment = attachmentOf(socket);
     if (attachment === null || attachment.generation !== work.generation) continue;
@@ -131,24 +138,19 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       sentRunId = null;
       sentSteers = 0;
     }
-    if (
-      turn !== null &&
-      work.modelToken !== null &&
-      work.sessions !== null &&
-      sentRunId !== turn.runId
-    ) {
+    if (turn !== null && sentRunId !== turn.turn.runId) {
       send(socket, {
         type: "turn.start",
-        turn,
-        modelToken: work.modelToken,
+        turn: freshSessionText === null ? turn.turn : { ...turn.turn, freshSessionText },
+        modelToken: turn.modelToken,
         drive,
-        sessions: work.sessions,
+        sessions: turn.sessions,
         // The owner's 1Password token rides only in this frame; never log it.
         ...(work.secrets.length === 0
           ? {}
           : { secrets: { token: secretsToken, environments: work.secrets } }),
       });
-      sentRunId = turn.runId;
+      sentRunId = turn.turn.runId;
       sentSteers = 0;
     }
     // Steers count from the oldest, so the ones not handed out yet are the tail.

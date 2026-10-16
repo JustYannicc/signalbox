@@ -14,6 +14,8 @@ import {
   BROWSER_PATHS,
   type BrowserEndRequest,
   type BrowserSessionAnswer,
+  type BrowserSignInAnswer,
+  type BrowserSignInRequest,
   browserJson,
 } from "@signalbox/runner-protocol/BrowserProtocol";
 import {
@@ -52,7 +54,8 @@ import { HttpClient, HttpClientRequest } from "effect/http";
  * `browserSession` gets the thread's session in the person's browser
  * (`BrowserProtocol.ts`), and `endBrowser` deletes it. Both are safe to
  * retry: the cloud reuses the thread's open session and ending one twice
- * does nothing.
+ * does nothing. `browserSignIn` (#576) is never retried: a second login
+ * would cancel the first.
  */
 
 export class ContextClientError extends Schema.TaggedError<ContextClientError>()(
@@ -95,6 +98,9 @@ export interface ContextClient {
   ) => Effect.Effect<ToolResult, ContextClientError>;
   readonly browserSession: Effect.Effect<BrowserSessionAnswer, ContextClientError>;
   readonly endBrowser: (request: BrowserEndRequest) => Effect.Effect<void, ContextClientError>;
+  readonly browserSignIn: (
+    request: BrowserSignInRequest,
+  ) => Effect.Effect<BrowserSignInAnswer, ContextClientError>;
 }
 
 class Retryable extends Schema.TaggedError<Retryable>()("Retryable", { message: Schema.String }) {}
@@ -203,5 +209,11 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
     automationTool: (request, { retry }) => (retry ? automationRead : automationWrite)(request),
     browserSession: json(BROWSER_PATHS.session, () => "{}", browserJson.session.decode)(undefined),
     endBrowser: json(BROWSER_PATHS.end, browserJson.endRequest.encode, constVoid),
+    browserSignIn: json(
+      BROWSER_PATHS.signIn,
+      browserJson.signInRequest.encode,
+      browserJson.signIn.decode,
+      false,
+    ),
   } satisfies ContextClient;
 });
