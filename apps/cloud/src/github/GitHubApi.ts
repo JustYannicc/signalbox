@@ -150,7 +150,16 @@ export const makeGitHubApi = (
 
   const send = (operation: string, request: HttpClientRequest.HttpClientRequest) =>
     client.execute(request.pipe(HttpClientRequest.setHeader("user-agent", "signalbox-cloud"))).pipe(
-      // The request (with tokens or the App's secret) stays out of the error, which gets logged.
+      // The request (with tokens or the App's secret) stays out of the error, which gets logged;
+      // only why it failed is.
+      Effect.tapError((error) => {
+        const cause = "cause" in error.reason ? error.reason.cause : undefined;
+        return Effect.logWarning("GitHub request failed", {
+          operation,
+          reason: error.reason._tag,
+          cause: cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause),
+        });
+      }),
       Effect.mapError(
         () => new GitHubError({ operation, status: 0, message: "GitHub did not answer." }),
       ),
