@@ -13,6 +13,7 @@ import {
 } from "../../components/CompactBrandTitle";
 import { useWorkspaceState } from "../../state/workspace";
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { useOneEnvironmentCopy } from "./useOneEnvironmentCopy"; // signalbox
 import {
   workspaceConnectionStatusPresentation,
   type WorkspaceConnectionStatusPresentation,
@@ -87,6 +88,7 @@ export function WorkspaceConnectionTitle(props: {
   const { scale } = useAndroidControlSizing();
   // signalbox: with one environment there are no environment settings to open.
   const onPress = useShowsEnvironmentUi() ? props.onPress : undefined;
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox
 
   if (status === null) {
     return props.grow ? (
@@ -102,7 +104,7 @@ export function WorkspaceConnectionTitle(props: {
     <StatusFadeIn grow={props.grow} maxWidth={props.maxWidth}>
       <Pressable
         accessibilityHint={onPress ? "Opens environment settings" : undefined}
-        accessibilityLabel={status.label}
+        accessibilityLabel={environmentCopy(status.label)}
         accessibilityRole={onPress ? "button" : undefined}
         disabled={onPress === undefined}
         hitSlop={8}
@@ -131,7 +133,7 @@ export function WorkspaceConnectionTitle(props: {
           numberOfLines={1}
           style={{ flexShrink: 1, fontSize: (size === "pageTitle" ? 20 : 16) * scale }}
         >
-          {status.label}
+          {environmentCopy(status.label)}
         </Text>
       </Pressable>
     </StatusFadeIn>
