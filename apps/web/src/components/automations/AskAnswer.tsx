@@ -2,11 +2,14 @@
  * A waiting `w.ask`: its question, its form when it has fields, and one
  * button per option (checkboxes and Submit for `multi`). The same control
  * answers from the diagram's details panel, the overview and Pipeline, so a
- * simple approve or reject never needs the diagram.
+ * simple approve or reject never needs the diagram. An ask that names a
+ * thread (`open`) offers to open it, or its agent's live browser.
  */
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   automationOptionLabel,
   type AutomationAskField,
+  type AutomationAskOpen,
   type AutomationWaitingQuestion,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -17,8 +20,11 @@ import {
   type AskDraft,
   type AskDraftValue,
 } from "@t3tools/client-runtime/automations/ask";
+import { useNavigate } from "@tanstack/react-router";
 import { useId, useMemo, useState } from "react";
 
+import { useRightPanelStore } from "../../rightPanelStore";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { automationState } from "../../state/automations";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -120,6 +126,10 @@ export function AskAnswer(props: {
   density?: "panel" | "rail";
   /** Shows the ask's label above the question; off where a heading already says it. */
   showTitle?: boolean;
+  /** Shows the question's text; off where the surrounding view already says it. */
+  showQuestion?: boolean;
+  /** Offers what the ask opens; off where it's open already. */
+  showOpen?: boolean;
 }) {
   const { question } = props;
   const ask = useMemo(() => askFromQuestion(question), [question]);
@@ -150,7 +160,7 @@ export function AskAnswer(props: {
       {props.showTitle === false ? null : (
         <p className="text-sm font-medium text-balance text-foreground">{question.label}</p>
       )}
-      {question.question ? (
+      {question.question && props.showQuestion !== false ? (
         <p
           className={
             rail
@@ -225,7 +235,37 @@ export function AskAnswer(props: {
             </Button>
           ))
         )}
+        {question.open && props.showOpen !== false ? (
+          <AskOpenButton
+            environmentId={props.environmentId}
+            open={question.open}
+            size={rail ? "xs" : "sm"}
+          />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** Opens the thread an ask names, with its agent's browser beside it for `view: "browser"`. */
+function AskOpenButton(props: {
+  environmentId: EnvironmentId;
+  open: AutomationAskOpen;
+  size: "xs" | "sm";
+}) {
+  const navigate = useNavigate();
+  const { environmentId, open } = props;
+  return (
+    <Button
+      size={props.size}
+      variant="ghost"
+      onClick={() => {
+        const ref = scopeThreadRef(environmentId, open.threadId);
+        if (open.view === "browser") useRightPanelStore.getState().open(ref, "agent-browser");
+        void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+      }}
+    >
+      {open.view === "browser" ? "Open the browser" : "Open thread"}
+    </Button>
   );
 }

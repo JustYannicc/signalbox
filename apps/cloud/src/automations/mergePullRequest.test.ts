@@ -108,6 +108,30 @@ export default workflow(async (w) => {
     );
   });
 
+  it.effect("the gate sees where a fork's pull request comes from and goes (#5)", () => {
+    const { cloud, github, open, tool, getRun, run } = makePullRequestThread();
+    return run(
+      Effect.gen(function* () {
+        yield* open;
+        github.update(1, { checks: [...PASSED], files: ["app.ts"], headRepository: "fork/repo" });
+        yield* cloud.syncPullRequests(threadId);
+
+        const { waitId } = (yield* tool("merge_pull_request", { url: URL })) as {
+          readonly waitId: string;
+        };
+        yield* cloud.settle;
+        const read = (yield* getRun(waitId)).steps.find(
+          (step) => step.label === "Read the pull request",
+        );
+        expect(read?.result).toMatchObject({
+          headBranch: github.pulls[0]!.head,
+          baseBranch: "main",
+          headRepository: "fork/repo",
+        });
+      }),
+    );
+  });
+
   it.effect("an unready one goes back to the agent, and nothing merges", () => {
     const { cloud, github, open, tool, messages, run } = makePullRequestThread();
     return run(

@@ -2,6 +2,7 @@ import {
   AutomationDefaults,
   AutomationErrorDetail,
   AutomationRunLog,
+  ExternalRun,
   parseAutomationAsk,
   WorkflowTrigger,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ const decodeArgs = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.U
 const decodeTriggers = Schema.decodeSync(Schema.fromJsonString(Schema.Array(WorkflowTrigger)));
 const decodeDefaults = Schema.decodeSync(Schema.fromJsonString(AutomationDefaults));
 const decodeDetail = Schema.decodeSync(Schema.fromJsonString(AutomationErrorDetail));
+const decodeExternalRun = Schema.decodeSync(Schema.fromJsonString(ExternalRun));
 const decodeLogs = Schema.decodeSync(Schema.fromJsonString(Schema.Array(AutomationRunLog)));
 const decodeMarks = Schema.decodeSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
@@ -39,6 +41,9 @@ export const automationDefaults = (row: Pick<AutomationRow, "defaults_json">) =>
 /** A step's or run's why/fix, when it has one. */
 export const errorDetailOf = (text: string | null): AutomationErrorDetail | null =>
   text === null ? null : decodeDetail(text);
+
+/** The run in another system a step started, as last read (`external.ts`). */
+export const externalRunOf = (text: string): ExternalRun => decodeExternalRun(text);
 
 /** The latest replay's console lines. */
 export const runLogLines = (run: Pick<RunRow, "logs_json">): ReadonlyArray<AutomationRunLog> =>

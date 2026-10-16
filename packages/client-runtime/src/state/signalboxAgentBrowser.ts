@@ -1,6 +1,7 @@
 import {
   SIGNALBOX_AGENT_BROWSER_WS_METHODS,
   type AgentBrowserControl,
+  type AgentBrowserHandoff,
   type AgentBrowserStep,
   type AgentBrowserTab,
   type AgentBrowserUpdate,
@@ -93,6 +94,8 @@ export interface AgentBrowserView {
   readonly notice: string | null;
   /** No machine runs the thread; the trail is all there is. */
   readonly offline: boolean;
+  /** The mirrored tab waits on the person, e.g. to finish a payment. */
+  readonly handoff: AgentBrowserHandoff | null;
   readonly segment: AgentBrowserSegment | null;
   /** Steps that finished while watching, oldest first. */
   readonly steps: ReadonlyArray<AgentBrowserStep>;
@@ -114,6 +117,7 @@ export function newAgentBrowserView(): AgentBrowserView {
     problem: null,
     notice: null,
     offline: false,
+    handoff: null,
     segment: null,
     steps: [],
     nonce: String(viewCount),
@@ -163,6 +167,7 @@ export function reduceAgentBrowserUpdate(
         problem: update.problem,
         notice: update.notice ?? (update.control === view.control ? view.notice : null),
         offline: false,
+        handoff: update.handoff ?? null,
         // No tab open means no page; a new tab's page arrives as its own fresh batch.
         segment: update.tabId === null ? null : view.segment,
       };
@@ -206,6 +211,7 @@ export function reduceAgentBrowserUpdate(
         problem: null,
         notice: null,
         offline: true,
+        handoff: null,
         segment: null,
       };
   }

@@ -59,7 +59,7 @@ const Target = {
 
 const PullRequestReadTool = Tool.make("pull_request_read", {
   description:
-    "Read a pull request linked to a thread, fresh from the host: where it lives, its title, state and head commit, and the merge gate's evidence at that commit. Parts the host can't answer here are null: review threads, the review decision and the changed files are read only in the cloud so far.",
+    "Read a pull request linked to a thread, fresh from the host: where it lives, its title, state, head commit, head and base branches and the head's repository (another one's is a fork), and the merge gate's evidence at that commit. Parts the host can't answer here are null: review threads, the review decision and the changed files are read only in the cloud so far.",
   parameters: Schema.Struct(Target),
   success: Schema.Struct({
     repository: Schema.String,
@@ -67,6 +67,9 @@ const PullRequestReadTool = Tool.make("pull_request_read", {
     title: Schema.String,
     state: PullRequestState,
     headSha: Schema.NullOr(Schema.String),
+    headBranch: Schema.String,
+    baseBranch: Schema.String,
+    headRepository: Schema.NullOr(Schema.String),
     isDraft: Schema.Boolean,
     mergeability: PullRequestMergeability,
     reviewDecision: Schema.Null,
@@ -173,6 +176,9 @@ export const layer = McpToolAccess.toLayer(
           title: current.title,
           state: current.state,
           headSha: current.headSha ?? null,
+          headBranch: current.headBranch,
+          baseBranch: current.baseBranch,
+          headRepository: current.headRepositoryNameWithOwner ?? null,
           isDraft: current.isDraft,
           mergeability: current.mergeability,
           reviewDecision: null,

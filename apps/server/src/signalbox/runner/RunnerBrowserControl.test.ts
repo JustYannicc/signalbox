@@ -6,6 +6,7 @@ import {
   DRIVER_IDLE_MS,
   IDLE_HAND_BACK,
   makeTabControl,
+  PAYMENT_WAITING,
   PERSON_DRIVING,
   type Timer,
 } from "./RunnerBrowserControl.ts";
@@ -137,5 +138,46 @@ describe("a tab's control", () => {
     const refused = control.agentTurn();
     fire(AGENT_WAIT_MS);
     await expect(refused).rejects.toThrow(PERSON_DRIVING);
+  });
+
+  it("keeps a tab handed to the person until the hold ends, whoever drives it meanwhile", async () => {
+    const { control, log, record, logged, fire } = setup();
+    control.hold(true);
+    expect(control.personal()).toBe(true);
+
+    // Nobody drives yet, and still the agent waits; it hears why once it waited long enough.
+    const refused = control.agentTurn();
+    fire(AGENT_WAIT_MS);
+    await expect(refused).rejects.toThrow(PAYMENT_WAITING);
+
+    // Ada pays and lets go: the tab stays with the person.
+    const waiting = control.agentTurn().then((done) => {
+      record("agent's turn");
+      done();
+    });
+    expect(control.take("ada")).toBe(true);
+    control.drive("ada", { _tag: "text", text: "4242" });
+    control.handBack(null);
+    await logged("released");
+    expect(control.personal()).toBe(true);
+    expect(control.take("grace")).toBe(true);
+
+    // Done: whoever drives lets go, and the agent goes on once their input settled.
+    control.hold(false);
+    await waiting;
+    expect(log).toEqual([
+      "taken",
+      "taken",
+      "handed back by ada: null",
+      "Input.insertText 4242",
+      "person step",
+      "released",
+      "taken",
+      "handed back by grace: null",
+      "person step",
+      "released",
+      "agent's turn",
+    ]);
+    expect(control.personal()).toBe(false);
   });
 });

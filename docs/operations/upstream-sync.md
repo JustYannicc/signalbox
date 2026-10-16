@@ -29,7 +29,11 @@ sync into conflicts. The workflow force-pushes
 `upstream-sync` on every clean run, so never push your own work to that branch.
 
 Every PR also runs the Upstream Merge job in Signalbox CI. It fails when the PR adds files that
-conflict with `upstream/main`; conflicts already on `main` are left to the sync.
+conflict with `upstream/main`; conflicts already on `main` are left to the sync. On a PR that merges
+upstream, it also fails when a `signalbox:` hook line from `main` is gone, unless upstream deleted
+the hook's file. A hook that moved with upstream's code counts as kept. When that job passes on an
+upstream merge, the Upstream Sync check passes too, and the signalbox folder's Merge gate trusts it
+to merge the sync PR on its own.
 
 When the merge conflicts, or GitHub refuses the push, the workflow opens or updates one issue
 labelled `upstream-sync-conflict` with the files and the upstream commit. Resolve it by hand below.

@@ -71,6 +71,29 @@ describe("a folder's menu", () => {
     ]);
   });
 
+  it("offers lending the user's GitHub on a folder with files, naming the account while lent", () => {
+    const lend = (target: Parameters<typeof byId>[0] | ReturnType<typeof byId>) =>
+      folderMenuActions({
+        snapshot,
+        folder: typeof target === "string" ? byId(target) : target,
+        pools,
+      }).find((action) => action.id === "folder:github-lend");
+    expect(lend("notes")).toBeUndefined();
+    expect(lend("northwind")).toMatchObject({
+      title: "Lend my GitHub to CI steps",
+      state: undefined,
+    });
+    const lent = { ...byId("northwind"), githubLend: { login: "octo", lentAt: 1 } };
+    expect(lend(lent)).toMatchObject({ title: "CI steps run as @octo", state: "on" });
+    // A lend whose files went away can still be seen and stopped.
+    expect(lend({ ...byId("notes"), githubLend: { login: "octo", lentAt: 1 } })?.state).toBe("on");
+    // Choosing it flips the lend: on when not lent, off when lent.
+    expect(parse("northwind", "folder:github-lend")).toEqual({ _tag: "githubLend", lent: true });
+    expect(
+      parseFolderMenuEvent({ snapshot, folder: lent, pools, event: "folder:github-lend" }),
+    ).toEqual({ _tag: "githubLend", lent: false });
+  });
+
   it("turns choices back into changes, and nothing for no-ops", () => {
     expect(parse("work", "folder:down")).toEqual({
       _tag: "move",
