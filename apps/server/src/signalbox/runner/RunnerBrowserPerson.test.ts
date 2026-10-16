@@ -2,7 +2,10 @@
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
-import type { BrowserSessionAnswer } from "@signalbox/runner-protocol/BrowserProtocol";
+import type {
+  BrowserSessionAnswer,
+  BrowserSignInAnswer,
+} from "@signalbox/runner-protocol/BrowserProtocol";
 import { type Browser, chromium } from "playwright-core";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -84,8 +87,12 @@ const machineTabs = async (): Promise<TabSource> => {
   return { newPage: () => context.newPage(), close: () => context.close() };
 };
 
-const sessions = (answer: () => BrowserSessionAnswer) => {
-  const calls = { open: 0, ended: [] as Array<string> };
+const sessions = (
+  answer: () => BrowserSessionAnswer,
+  signIn: (site: string) => Promise<BrowserSignInAnswer> = () =>
+    Promise.reject(new Error("not used")),
+) => {
+  const calls = { open: 0, ended: [] as Array<string>, signIns: [] as Array<string> };
   return {
     calls,
     session: {
@@ -96,8 +103,28 @@ const sessions = (answer: () => BrowserSessionAnswer) => {
       end: async (sessionId: string) => {
         calls.ended.push(sessionId);
       },
+      signIn: async (site: string) => {
+        calls.signIns.push(site);
+        return signIn(site);
+      },
     },
   };
+};
+
+/**
+ * What the cloud does for a sign-in (#576): Kernel deletes the thread's
+ * session, so its pages are gone, and Managed Auth saves the login to the
+ * profile, which the next session loads.
+ */
+const cloudSignsIn = async (): Promise<BrowserSignInAnswer> => {
+  const kernel = await chromium.connectOverCDP(cdpWsUrl);
+  const profile = kernel.contexts()[0]!;
+  await Promise.all(profile.pages().map((page) => page.close()));
+  await profile.addCookies([
+    { name: "login", value: "from-1password", domain: "site.test", path: "/" },
+  ]);
+  await kernel.close();
+  return { _tag: "signed_in", site: "site.test", item: "Site", username: "me@site.test" };
 };
 
 const ready = (): BrowserSessionAnswer => ({ _tag: "ready", sessionId: "brw_1", cdpWsUrl });
@@ -195,6 +222,68 @@ describe("the thread's browser with the person's", () => {
     try {
       const site = await browser.navigate({ url: `http://site.test:${port}/mine` });
       expect((await browser.status({})).tabs?.map((tab) => tab.tabId)).toEqual([site.tabId]);
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
+
+  it("signs in, then reopens the person's tabs where they were, signed in", async () => {
+    const { session, calls } = sessions(ready, cloudSignsIn);
+    const browser = makeRunnerBrowser({
+      machine: await machineTabs(),
+      person: personTabs(session),
+    });
+    try {
+      const dev = await browser.navigate({ url: `http://localhost:${port}/` });
+      const site = await browser.open({
+        url: `http://site.test:${port}/account`,
+        reuseExistingTab: false,
+      });
+      expect(await cookieOn(browser, site.tabId!)).toBe("profile=signed-in");
+
+      expect(await browser.signIn({})).toEqual({
+        _tag: "signed_in",
+        site: "site.test",
+        item: "Site",
+        username: "me@site.test",
+      });
+      // The current tab's site, asked once, from a fresh connection afterwards.
+      expect(calls.signIns).toEqual([`http://site.test:${port}`]);
+      expect(calls.open).toBe(2);
+
+      // Same tabs, same ids, the site's loaded again with the login.
+      const status = await browser.status({});
+      expect(status.tabId).toBe(site.tabId);
+      expect(status.tabs?.map((tab) => [tab.tabId, tab.url])).toEqual([
+        [dev.tabId, `http://localhost:${port}/`],
+        [site.tabId, `http://site.test:${port}/account`],
+      ]);
+      expect(await cookieOn(browser, site.tabId!)).toBe("profile=signed-in; login=from-1password");
+      expect(await cookieOn(browser, dev.tabId!)).toBe("none");
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
+
+  it("keeps the person's tabs when the sign-in is refused", async () => {
+    const { session } = sessions(ready, async (site) => ({
+      _tag: "not_allowed",
+      site,
+      message: "Ask the person.",
+    }));
+    const browser = makeRunnerBrowser({
+      machine: await machineTabs(),
+      person: personTabs(session),
+    });
+    try {
+      const site = await browser.navigate({ url: `http://site.test:${port}/kept` });
+      expect((await browser.signIn({}))._tag).toBe("not_allowed");
+      expect((await browser.status({})).tabs?.map((tab) => [tab.tabId, tab.url])).toEqual([
+        [site.tabId, `http://site.test:${port}/kept`],
+      ]);
+      // A dev tab has nothing to sign in to.
+      await browser.navigate({ url: `http://localhost:${port}/` });
+      await expect(browser.signIn({})).rejects.toThrow("keeps no logins");
     } finally {
       await browser.close();
     }

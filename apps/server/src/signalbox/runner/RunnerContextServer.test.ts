@@ -184,6 +184,7 @@ const fakeClient = (calls: Calls): ContextClient => ({
   automationTool: () => Effect.die("Automation tools aren't part of these tests."),
   browserSession: Effect.die("The person's browser isn't part of these tests."),
   endBrowser: () => Effect.die("The person's browser isn't part of these tests."),
+  browserSignIn: () => Effect.die("The person's browser isn't part of these tests."),
 });
 
 const serve = Effect.gen(function* () {

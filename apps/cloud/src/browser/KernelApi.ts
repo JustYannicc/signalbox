@@ -63,10 +63,17 @@ export interface KernelApi {
   readonly deleteBrowser: (id: string) => Effect.Effect<void, KernelApiError>;
 }
 
-export const makeKernelApi = (
-  client: HttpClient.HttpClient,
-  options: { readonly apiKey: Redacted.Redacted<string>; readonly baseUrl?: string },
-): KernelApi => {
+export interface KernelOptions {
+  readonly apiKey: Redacted.Redacted<string>;
+  readonly baseUrl?: string;
+}
+
+/**
+ * Kernel's requests as every client of its API sends them: authenticated,
+ * timed out, a non-2xx answer as a `KernelApiError` with Kernel's own code
+ * and message.
+ */
+export const makeKernelRequests = (client: HttpClient.HttpClient, options: KernelOptions) => {
   const base = (options.baseUrl ?? KERNEL_API_URL).replace(/\/+$/, "");
   const url = (path: string) => `${base}${path}`;
 
@@ -77,14 +84,14 @@ export const makeKernelApi = (
         request.pipe(HttpClientRequest.bearerToken(options.apiKey), HttpClientRequest.acceptJson),
       )
       .pipe(
+        // Not the transport's error: it holds the request, and a sign-in's body holds values.
         Effect.mapError(
-          (cause) =>
+          () =>
             new KernelApiError({
               operation,
               status: 0,
               code: null,
               message: "Kernel did not answer.",
-              cause,
             }),
         ),
         Effect.flatMap((response) =>
@@ -132,6 +139,11 @@ export const makeKernelApi = (
         ),
       );
 
+  return { url, send, decoded };
+};
+
+export const makeKernelApi = (client: HttpClient.HttpClient, options: KernelOptions): KernelApi => {
+  const { url, send, decoded } = makeKernelRequests(client, options);
   const browserPath = (id: string) => url(`/browsers/${encodeURIComponent(id)}`);
   const gone = (error: KernelApiError) => error.status === 404;
 
