@@ -1,7 +1,7 @@
 import { Button } from "../ui/button";
 
 /** Where people get the Signalbox app. */
-export const SIGNALBOX_DOWNLOAD_URL = "https://github.com/JustYannicc/signalbox/releases/latest";
+const SIGNALBOX_DOWNLOAD_URL = "https://github.com/JustYannicc/signalbox/releases/latest";
 
 /** Opens `deepLink` in the installed app: the phone app on a phone, else the desktop app. */
 export function OpenInAppButton(props: {

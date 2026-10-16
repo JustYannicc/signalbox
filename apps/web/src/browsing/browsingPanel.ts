@@ -18,7 +18,7 @@ import type { BrowsingCommand, BrowsingTab } from "@t3tools/contracts/signalboxB
  * A record tab as the panel's session, with what only this device knows
  * (viewport, zoom, colours, profile, back/forward, a failed load) on top.
  */
-export function browsingSessionSnapshot(
+function browsingSessionSnapshot(
   threadId: ThreadId,
   tab: BrowsingTab,
   local: PreviewSessionSnapshot | undefined,

@@ -84,7 +84,7 @@ export function samePagePosition(a: BrowsingPosition | undefined, b: BrowsingPos
 }
 
 /** The top of a page with nothing playing: nowhere worth restoring or reporting. */
-export const isPageTop = (position: BrowsingPosition) =>
+const isPageTop = (position: BrowsingPosition) =>
   position.scrollRatio === 0 &&
   position.textFragment === undefined &&
   position.mediaSeconds === undefined;
