@@ -10,7 +10,9 @@ import type { CDPSession, Page } from "playwright-core";
  * rrweb's recorder in a tab of the agent's browser (#587): what the mirror
  * replays and the trail keeps. The recorder runs in the page's main world in
  * every frame; only the top frame reports, and cross-origin frames post to it
- * (`recordCrossOriginIframes`). It reports over a CDP binding on the tab's own
+ * (`recordCrossOriginIframes`), sending their document again whenever the top
+ * frame takes a full snapshot (card fields live in such frames, #663). It
+ * reports over a CDP binding on the tab's own
  * session, under a random name the script takes and deletes before the page's
  * own scripts run, so a site sees no automation global (Playwright's
  * `exposeBinding` would leave `__playwright__binding__` behind). What the
@@ -120,27 +122,50 @@ ${recorder}}).call(holder);
     if (!timer) timer = setTimer(() => flush(true), ${BATCH_MS});
   };
   const options = {
-    emit,
     recordAfter: "DOMContentLoaded",
     recordCrossOriginIframes: true,
     inlineStylesheet: true,
     maskInputOptions: { password: true },
     sampling: { scroll: 150, mousemove: false },
   };
+  // A full snapshot replays every cross-origin frame empty until that frame
+  // sends its own again, and rrweb never asks it to (rrweb#1720): ask each
+  // child frame, which asks its own children in turn.
+  const snapshotFrames = () => {
+    for (let index = 0; index < window.length; index++)
+      try { window[index].postMessage({ [key]: "snapshot" }, "*"); } catch {}
+  };
+  if (!top)
+    addEventListener("message", (event) => {
+      if (event.source !== window.parent || !event.data || event.data[key] !== "snapshot") return;
+      try { record.takeFullSnapshot(); } catch {}
+      snapshotFrames();
+    });
   let canvas = false;
   let stopRecording;
+  let session;
   const start = () => {
     stopRecording = undefined;
+    // rrweb leaves a stopped recording's frame listener on the window, which
+    // would replay frames again under stale ids; only this session's events count.
+    const own = {};
+    session = own;
+    const sessionEmit = (event) => {
+      if (session !== own) return;
+      emit(event);
+      if (event.type === 2) snapshotFrames();
+    };
     if (canvas)
       try {
         stopRecording = record({
           ...options,
+          emit: sessionEmit,
           recordCanvas: true,
           sampling: { ...options.sampling, canvas: 1 },
           dataURLOptions: { type: "image/webp", quality: 0.6 },
         });
       } catch {}
-    if (!stopRecording) stopRecording = record(options);
+    if (!stopRecording) stopRecording = record({ ...options, emit: sessionEmit });
   };
   start();
   if (!top) return;
