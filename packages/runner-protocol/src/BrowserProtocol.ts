@@ -18,11 +18,18 @@ import { jsonCodec } from "./jsonCodec.ts";
  * words for the agent, such as the plan's browser limit, rather than failing.
  * A cloud without Kernel answers `unconfigured`, and every site opens in the
  * machine's own browser, as before #574.
+ *
+ * `signIn` is the agent's `sign_in` tool (#576): the cloud signs the person's
+ * profile in to a site from 1Password and answers only a status, never a
+ * value. It ends the thread's session before logging in, so that session
+ * can't save the profile over the login, and the machine's next session
+ * loads the profile with the login in it.
  */
 
 export const BROWSER_PATHS = {
   session: `${DRIVE_API_PREFIX}/browser/session`,
   end: `${DRIVE_API_PREFIX}/browser/end`,
+  signIn: `${DRIVE_API_PREFIX}/browser/sign-in`,
 } as const;
 
 export const BrowserSessionAnswer = Schema.Union([
@@ -41,7 +48,33 @@ export type BrowserSessionAnswer = typeof BrowserSessionAnswer.Type;
 export const BrowserEndRequest = Schema.Struct({ sessionId: Schema.String });
 export type BrowserEndRequest = typeof BrowserEndRequest.Type;
 
+/** A page or site address; the cloud keeps its origin. */
+export const BrowserSignInRequest = Schema.Struct({
+  site: Schema.String.check(Schema.isMaxLength(2048)),
+});
+export type BrowserSignInRequest = typeof BrowserSignInRequest.Type;
+
+/**
+ * How a sign-in went, in words for the agent. `site` is the site as grants
+ * name it. Only `signed_in` names the 1Password login, by title and username.
+ */
+export const BrowserSignInAnswer = Schema.Union([
+  Schema.TaggedStruct("signed_in", {
+    site: Schema.String,
+    item: Schema.String,
+    username: Schema.NullOr(Schema.String),
+  }),
+  Schema.TaggedStruct("no_saved_login", { site: Schema.String, message: Schema.String }),
+  /** The grant or the requester check said no; `message` tells the agent what to ask the person. */
+  Schema.TaggedStruct("not_allowed", { site: Schema.String, message: Schema.String }),
+  /** The login couldn't finish without the person; `message` says why. */
+  Schema.TaggedStruct("failed", { site: Schema.String, message: Schema.String }),
+]);
+export type BrowserSignInAnswer = typeof BrowserSignInAnswer.Type;
+
 export const browserJson = {
   session: jsonCodec(BrowserSessionAnswer),
   endRequest: jsonCodec(BrowserEndRequest),
+  signInRequest: jsonCodec(BrowserSignInRequest),
+  signIn: jsonCodec(BrowserSignInAnswer),
 };

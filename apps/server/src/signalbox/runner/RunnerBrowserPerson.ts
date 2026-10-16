@@ -1,7 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - Owns a Playwright connection outside the Effect runtime.
 import * as NodeModule from "node:module";
 
-import type { BrowserSessionAnswer } from "@signalbox/runner-protocol/BrowserProtocol";
+import type {
+  BrowserSessionAnswer,
+  BrowserSignInAnswer,
+} from "@signalbox/runner-protocol/BrowserProtocol";
 import { constVoid } from "effect/Function";
 import type { Browser, BrowserContext } from "playwright-core";
 
@@ -21,6 +24,10 @@ import type { TabSource } from "./RunnerBrowser.ts";
  * reconnects to the same session, through the cloud, and the tabs come back.
  * Kernel deletes a browser left in standby, saving the profile; closing this
  * source (the thread's machine stopping) deletes it at once.
+ *
+ * Signing in (#576) lets go of the session too: the cloud ends it before it
+ * logs the profile in, so the next connection is a new session that loads
+ * the login.
  */
 
 export interface PersonSession {
@@ -28,6 +35,8 @@ export interface PersonSession {
   readonly open: () => Promise<BrowserSessionAnswer>;
   /** Deletes the session, which saves the profile. */
   readonly end: (sessionId: string) => Promise<void>;
+  /** Signs the profile in to `site` from 1Password, ending the thread's session first. */
+  readonly signIn: (site: string) => Promise<BrowserSignInAnswer>;
 }
 
 /** Long enough to span an agent thinking between steps, short enough not to bill a pause. */
@@ -75,6 +84,8 @@ export const personTabs = (
   let unconfigured = false;
   let closed = false;
   let inFlight = 0;
+  /** A sign-in under way: nothing reconnects until the cloud has logged the profile in. */
+  let signingIn: Promise<unknown> | null = null;
   let cancelIdle: () => void = constVoid;
 
   const disconnect = async () => {
@@ -105,10 +116,11 @@ export const personTabs = (
   };
 
   /** The open connection, a new one, or null when this cloud has no person's browser. */
-  const open = (): Promise<Connection | null> => {
-    if (closed) return Promise.reject(refused("The thread's browser has closed."));
-    if (unconfigured) return Promise.resolve(null);
-    if (connection !== null && connection.browser.isConnected()) return Promise.resolve(connection);
+  const open = async (): Promise<Connection | null> => {
+    await signingIn?.catch(constVoid);
+    if (closed) throw refused("The thread's browser has closed.");
+    if (unconfigured) return null;
+    if (connection !== null && connection.browser.isConnected()) return connection;
     connecting ??= (async () => {
       const answer = await session.open();
       if (answer._tag === "unconfigured") {
@@ -158,6 +170,23 @@ export const personTabs = (
       }
     },
     use,
+    signIn: async (site) => {
+      const release = use();
+      const signedIn = (async () => {
+        if (closed) throw refused("The thread's browser has closed.");
+        await connecting?.catch(constVoid);
+        // The cloud ends the session it signs in around; the next open gets a new one.
+        await disconnect();
+        return session.signIn(site);
+      })();
+      signingIn = signedIn;
+      try {
+        return await signedIn;
+      } finally {
+        if (signingIn === signedIn) signingIn = null;
+        release();
+      }
+    },
     close: async () => {
       closed = true;
       await connecting?.catch(constVoid);

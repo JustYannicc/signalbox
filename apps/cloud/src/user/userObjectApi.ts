@@ -11,6 +11,7 @@ import { publishBranch } from "../github/branchPublishing.ts";
 import type * as GitHubBranches from "../github/GitHubBranches.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
+import * as LoginService from "../signIn/LoginService.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
 import {
   authorizeLocalModel,
@@ -55,6 +56,7 @@ export const makeUserObjectApi = (
       | OnePasswordAccount.OnePasswordAccount
       | PersonBrowsers.PersonBrowsers
       | SignInGrants.SignInGrants
+      | LoginService.LoginService
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -151,6 +153,7 @@ export const makeUserObjectApi = (
     automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
     browserSession: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
+    browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),
     checkSignIn: (input) => run(SignInGrants.SignInGrants.use((grants) => grants.check(input))),
     endBrowser: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.end(input))),

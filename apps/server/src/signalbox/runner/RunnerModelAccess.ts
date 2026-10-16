@@ -92,6 +92,9 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 /** A TOML basic string. */
 const tomlString = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 
+/** Longer than the login service's 4-minute budget for one sign-in. */
+const MCP_TOOL_TIMEOUT_SEC = 300;
+
 /** The Runner's loopback MCP servers, by the name the harnesses know each as. */
 export type RunnerMcpServers = Readonly<Record<string, string>>;
 
@@ -119,6 +122,8 @@ const codexConfig = (layout: MachineLayout, gatewayUrl: string, mcpServers: Runn
     ...Object.entries(mcpServers).flatMap(([name, url]) => [
       `[mcp_servers.${tomlString(name)}]`,
       `url = ${tomlString(url)}`,
+      // Codex gives a tool call 60 seconds; a sign-in (#576) can take minutes.
+      `tool_timeout_sec = ${MCP_TOOL_TIMEOUT_SEC}`,
       "",
     ]),
   ].join("\n");

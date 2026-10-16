@@ -76,6 +76,7 @@ const personSession = (view: ReturnType<typeof makeDrivesView>): PersonSession =
   return {
     open: () => call((client) => client.browserSession),
     end: (sessionId) => call((client) => client.endBrowser({ sessionId })),
+    signIn: (site) => call((client) => client.browserSignIn({ site })),
   };
 };
 
