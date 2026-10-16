@@ -34,6 +34,11 @@ interface Attachment {
 export interface RunnerSocketHost {
   readonly ctx: DurableObjectState;
   readonly run: <A>(effect: Effect.Effect<A, never, ThreadRunner.ThreadRunner>) => Promise<A>;
+  /**
+   * Whether the turn waits for its pull requests' reads, which the object's
+   * alarm makes before it hands work out again (#495). Never rejects.
+   */
+  readonly holdsTurn: () => Promise<boolean>;
   /** Arms the object's alarm after anything that may have left it work. */
   readonly afterChange: (work?: ThreadRunner.RunnerWork) => Promise<void>;
 }
@@ -85,10 +90,14 @@ export function endRunners(ctx: DurableObjectState, generation: number, reason: 
  */
 export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunner.RunnerWork> {
   const work = await host.run(runner.use((service) => service.work));
-  const handedOut =
-    work.turn !== null && work.modelToken !== null && work.sessions !== null
-      ? work.turn.runId
+  const turn =
+    work.turn !== null &&
+    work.modelToken !== null &&
+    work.sessions !== null &&
+    !(await host.holdsTurn())
+      ? { turn: work.turn, modelToken: work.modelToken, sessions: work.sessions }
       : null;
+  const handedOut = turn?.turn.runId ?? null;
   const starting =
     handedOut !== null &&
     host.ctx.getWebSockets(RUNNER_TAG).some((socket) => {
@@ -116,24 +125,19 @@ export async function pushRunnerWork(host: RunnerSocketHost): Promise<ThreadRunn
       send(socket, { type: "interrupt", runId: sentRunId });
       sentRunId = null;
     }
-    if (
-      work.turn !== null &&
-      work.modelToken !== null &&
-      work.sessions !== null &&
-      sentRunId !== work.turn.runId
-    ) {
+    if (turn !== null && sentRunId !== turn.turn.runId) {
       send(socket, {
         type: "turn.start",
-        turn: work.turn,
-        modelToken: work.modelToken,
+        turn: turn.turn,
+        modelToken: turn.modelToken,
         drive,
-        sessions: work.sessions,
+        sessions: turn.sessions,
         // The owner's 1Password token rides only in this frame; never log it.
         ...(work.secrets.length === 0
           ? {}
           : { secrets: { token: secretsToken, environments: work.secrets } }),
       });
-      sentRunId = work.turn.runId;
+      sentRunId = turn.turn.runId;
     }
     // A drain asked for and not answered yet, once per connection (#493).
     let sentDrainId = attachment.sentDrainId;
