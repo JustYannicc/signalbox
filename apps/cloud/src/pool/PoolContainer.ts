@@ -1,9 +1,10 @@
 // @effect-diagnostics globalTimers:off globalDate:off - the container lifecycle is promise code on the Durable Object's own clock.
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
-import { CLI_PROXY_API_PORT } from "./cliProxyApi.ts";
+import { CLI_PROXY_API_PORT, listModels, type PoolEndpoint } from "./cliProxyApi.ts";
 import { POOL_STORE_BUCKET } from "./poolStore.ts";
 
 /**
@@ -37,24 +38,35 @@ const BACKSTOP_TIMEOUT_MS = IDLE_TIMEOUT_MS + 60_000;
 const READY_TIMEOUT_MS = 30_000;
 const READY_POLL_MS = 100;
 
+/**
+ * How long a model request waits after a cold start for CLIProxyAPI to load
+ * its accounts. It listens before it has: until then it answers
+ * `unknown provider for model` (#563). After this the request goes in anyway.
+ */
+const MODELS_READY_MS = 10_000;
+
 /** The store credentials the container is configured with. */
 export interface StoreCredentials {
   readonly accessKey: string;
   readonly secretKey: string;
 }
 
+/**
+ * What sending a request needs. `models`: the request runs a model on a pool
+ * with accounts, so it waits until CLIProxyAPI serves them; `onSend` runs
+ * once the container is up, as the request goes in.
+ */
+export interface SendOptions {
+  readonly store: StoreCredentials;
+  readonly models?: { readonly clientKey: string };
+  readonly onSend?: () => void;
+}
+
 export class PoolContainer extends Context.Service<
   PoolContainer,
   {
-    /**
-     * Sends a request to the CLIProxyAPI, starting the container first if it
-     * sleeps. `onSend` runs once it is up, as the request goes in.
-     */
-    readonly fetch: (
-      request: Request,
-      store: StoreCredentials,
-      onSend?: () => void,
-    ) => Promise<Response>;
+    /** Sends a request to the CLIProxyAPI, starting the container first if it sleeps. */
+    readonly fetch: (request: Request, options: SendOptions) => Promise<Response>;
     /**
      * Sends a request only if the container is already up, without keeping
      * it up: for reads that must never wake it or delay its sleep.
@@ -166,6 +178,42 @@ export const layerCloudflare = (input: {
   let stopping: Promise<void> | undefined;
   const activity = makeActivity((at) => wakeAt(at + IDLE_TIMEOUT_MS));
 
+  /**
+   * Settles once this container's CLIProxyAPI lists models, or gave up
+   * waiting. Reset by each start; a container already up when this object
+   * started has long loaded its accounts.
+   */
+  let modelsReady: Promise<void> | undefined = container.running ? Promise.resolve() : undefined;
+
+  /** Asks `/v1/models` until it lists any, for at most `MODELS_READY_MS`. */
+  const waitForModels = async (clientKey: string) => {
+    const port = container.getTcpPort(CLI_PROXY_API_PORT);
+    const startedAt = performance.now();
+    const left = () => MODELS_READY_MS - (performance.now() - startedAt);
+    // Straight to the port: through `fetch` it would wait on itself.
+    const endpoint: PoolEndpoint = {
+      fetch: (request) =>
+        port.fetch(
+          new Request(request, { signal: AbortSignal.timeout(Math.max(Math.ceil(left()), 1)) }),
+        ),
+      baseUrl: CONTAINER_ORIGIN,
+      managementKey: "",
+      clientKey,
+      link: false,
+    };
+    // `stopping` is set by `destroy` while this waits.
+    // oxlint-disable-next-line no-unmodified-loop-condition
+    while (left() > 0 && container.running && !stopping) {
+      const listed = await Effect.runPromiseExit(listModels(endpoint));
+      if (Exit.isSuccess(listed) && listed.value.length > 0) return;
+      await sleep(READY_POLL_MS);
+    }
+    log("pool.container.models_not_ready", {
+      waitedMs: Math.round(performance.now() - startedAt),
+      stopped: !container.running || stopping !== undefined,
+    });
+  };
+
   const waitUntilReady = async (startedAt: number) => {
     const port = container.getTcpPort(CLI_PROXY_API_PORT);
     while (performance.now() - startedAt < READY_TIMEOUT_MS) {
@@ -186,6 +234,7 @@ export const layerCloudflare = (input: {
     const startedAt = performance.now();
     // Intercepts last until the container stops, so every start sets them again.
     await container.interceptOutboundHttp(STORE_HOST, storeGateway);
+    modelsReady = undefined;
     container.start({ enableInternet: true, env: containerEnv(store) });
     await container.setInactivityTimeout(BACKSTOP_TIMEOUT_MS);
     await waitUntilReady(startedAt);
@@ -220,9 +269,14 @@ export const layerCloudflare = (input: {
   return Layer.succeed(
     PoolContainer,
     PoolContainer.of({
-      fetch: (request, store, onSend) =>
+      fetch: (request, { store, models, onSend }) =>
         activity.track(async () => {
           await ensure(store);
+          // Every call a model request makes waits, so pinning an account (`threadAccounts.ts`) finds it loaded.
+          if (models !== undefined) {
+            modelsReady ??= waitForModels(models.clientKey);
+            await modelsReady;
+          }
           onSend?.();
           return container.getTcpPort(CLI_PROXY_API_PORT).fetch(request);
         }),
@@ -280,7 +334,7 @@ export const makeFake = (
   const layer = Layer.succeed(
     PoolContainer,
     PoolContainer.of({
-      fetch: (request, store, onSend) => {
+      fetch: (request, { store, onSend }) => {
         if (!running) {
           running = true;
           state.starts += 1;
