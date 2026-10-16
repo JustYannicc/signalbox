@@ -81,24 +81,27 @@ export function ExternalRunView(props: { run: ExternalRun }) {
       aria-label={`${EXTERNAL_RUN_SYSTEM_NAMES[run.system]} run`}
       className="flex flex-col gap-2 rounded-md border px-2.5 py-2"
     >
-      <div className="flex min-w-0 items-center gap-1.5 text-xs">
-        <GitHubIcon aria-hidden className="size-3.5 shrink-0" />
-        <span className="font-medium">{EXTERNAL_RUN_SYSTEM_NAMES[run.system]}</span>
-        <span className="truncate text-muted-foreground">
+      <div className="flex min-w-0 flex-col gap-0.5 text-xs">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <GitHubIcon aria-hidden className="size-3.5 shrink-0" />
+          <span className="font-medium">{EXTERNAL_RUN_SYSTEM_NAMES[run.system]}</span>
+          {run.url ? (
+            <a
+              href={run.url}
+              target="_blank"
+              rel="noreferrer"
+              className="ms-auto inline-flex shrink-0 items-center gap-1 text-muted-foreground hover:text-foreground"
+            >
+              Open run
+              <ExternalLinkIcon aria-hidden className="size-3" />
+            </a>
+          ) : null}
+        </div>
+        {/* Who first: in a narrow panel the repository is what gets cut. */}
+        <span className="truncate ps-5 text-muted-foreground">
+          {run.actingAs ? `as @${run.actingAs} · ` : ""}
           {run.scope}
-          {run.actingAs ? ` · as @${run.actingAs}` : ""}
         </span>
-        {run.url ? (
-          <a
-            href={run.url}
-            target="_blank"
-            rel="noreferrer"
-            className="ms-auto inline-flex shrink-0 items-center gap-1 text-muted-foreground hover:text-foreground"
-          >
-            Open run
-            <ExternalLinkIcon aria-hidden className="size-3" />
-          </a>
-        ) : null}
       </div>
       {run.jobs.length > 0 ? (
         <ul className="flex flex-col gap-2">
