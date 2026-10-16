@@ -275,6 +275,8 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
     this.runnerHost = {
       ctx,
       run: (effect) => this.runtime.runPromise(effect),
+      holdsTurn: () =>
+        this.runtime.runPromise(PullRequestSync.PullRequestSync.use((sync) => sync.holdsTurn)),
       afterChange: (work) => this.armAlarm(work),
     };
     this.api = makeThreadObjectApi(

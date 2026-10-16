@@ -48,7 +48,7 @@ import { stripUnservedToolOutputImageBytes } from "../../orchestration-v2/toolOu
 import type { HarnessStderr } from "./harnessStderr.ts";
 import type { RunnerAttachments } from "./RunnerAttachments.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
-import type { RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
+import type { MainConflict, RunnerDrive, RunnerDriveError } from "./RunnerDrive.ts";
 import { DriveClientError, DriveRefusedError, DriveTooLargeError } from "./RunnerDriveClient.ts";
 import { RunnerGitError } from "./RunnerGit.ts";
 import { RunnerInstructionsError } from "./RunnerInstructions.ts";
@@ -56,7 +56,12 @@ import { type RunnerSecrets, SecretsRegisterError } from "./RunnerSecrets.ts";
 import type { RunnerSessions } from "./RunnerSessions.ts";
 import { causeText, runnerLog } from "./runnerLog.ts";
 import { outgrownBy } from "./RunnerMachineClass.ts";
-import { FILE_CHANGING_ITEMS, finishDriveTurn, saveFailureReason } from "./RunnerTurnDrive.ts";
+import {
+  FILE_CHANGING_ITEMS,
+  finishDriveTurn,
+  resolveMainConflict,
+  saveFailureReason,
+} from "./RunnerTurnDrive.ts";
 import { SAVED_AGAIN_NOTICE, watchChanges } from "./RunnerDriveWatch.ts";
 import { isUnmeasured } from "./RunnerUsage.ts";
 
@@ -76,6 +81,8 @@ import { isUnmeasured } from "./RunnerUsage.ts";
  * A turn with a drive works in a checkout of it (`RunnerDrive.ts`): checked
  * out before the harness starts, saved after each tool item that may change
  * files, and landed before the turn's end is reported (`RunnerTurnDrive.ts`).
+ * When its start took in a merged pull request's main and that conflicted,
+ * the agent resolves it before the turn's own message.
  * Once the checkout is in place, its dependency trees are brought in step
  * with their lockfiles (`RunnerDependencies.ts`), one turn at a time.
  * Harnesses read their instructions when a session starts, so when the
@@ -148,6 +155,12 @@ interface SessionLoad {
   readonly instructions: string;
   /** The version of the folder's secrets (`RunnerSecrets.ts`). */
   readonly secrets: number;
+}
+
+/** A run waiting on the agent to resolve a merge (`finishing`). */
+interface Held {
+  waiting: Deferred.Deferred<boolean> | null;
+  stopped?: boolean;
 }
 
 /** A run this machine was handed, until the harness ends its turn. */
@@ -296,8 +309,12 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   let drive: { readonly driveId: string; readonly drive: RunnerDrive } | null = null;
   /** The drive whose changes stream in. */
   let watching: RunnerDrive | null = null;
-  /** Runs whose end is held until their files land, and the agent turn awaited for a conflict. */
-  const finishing = new Map<RunId, { waiting: Deferred.Deferred<boolean> | null }>();
+  /**
+   * Runs whose end is held until their files land, or whose start waits for a
+   * conflict to be resolved, and the agent turn awaited for it. `stopped`: the
+   * thread stopped the run meanwhile.
+   */
+  const finishing = new Map<RunId, Held>();
   /** Agent turns run to resolve a merge, by attempt, and their provider turns once named. */
   const mergeAttempts = new Set<RunAttemptId>();
   const mergeProviderTurns = new Set<ProviderTurnId>();
@@ -475,17 +492,32 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
       return opened;
     });
 
-  /** Runs the agent once more in `runId`'s turn and answers whether that completed. */
-  const continueTurn = (runId: RunId, state: Turn, prompt: string, attempt: number) =>
+  /**
+   * Runs the agent once more in `runId`'s turn and answers whether that
+   * completed. `step` tells a conflict at the turn's start (`sync`) from one at
+   * its end (`merge`).
+   */
+  const continueTurn = (
+    runId: RunId,
+    state: Turn,
+    prompt: string,
+    step: "sync" | "merge",
+    attempt: number,
+  ) =>
     Effect.gen(function* () {
       const held = finishing.get(runId);
-      if (held === undefined || state.session === null || state.providerThread === null) {
+      if (
+        held === undefined ||
+        held.stopped === true ||
+        state.session === null ||
+        state.providerThread === null
+      ) {
         return false;
       }
       const ended = yield* Deferred.make<boolean>();
       const turn = state.turn;
       // Its own attempt: adapters name the provider turn, and Claude its prompt, after the attempt.
-      const attemptId = RunAttemptId.make(`${turn.attemptId}:merge:${attempt}`);
+      const attemptId = RunAttemptId.make(`${turn.attemptId}:${step}:${attempt}`);
       // Its own end: the next turn waits for this agent turn, not the one it follows.
       const continuation: Turn = {
         ...state,
@@ -503,14 +535,17 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           threadId: input.threadId,
           runId,
           runOrdinal: turn.runOrdinal,
-          // Clear of the ordinals the thread gives its next runs.
-          providerTurnOrdinal: turn.providerTurnOrdinal * 1000 + attempt,
+          // Clear of the ordinals the thread gives its next runs, and of each other.
+          providerTurnOrdinal:
+            turn.providerTurnOrdinal * 1000 + (step === "sync" ? 100 : 0) + attempt,
           attemptId,
           rootNodeId: turn.rootNodeId,
           providerThread: state.providerThread,
+          // Before the run's own turn, a fresh session has nothing to resume yet.
+          ...(step === "sync" ? { nativeThreadHasTurns: turn.providerTurnOrdinal > 1 } : {}),
           message: {
             ...turn.message,
-            messageId: MessageId.make(`${turn.message.messageId}:merge:${attempt}`),
+            messageId: MessageId.make(`${turn.message.messageId}:${step}:${attempt}`),
             text: prompt,
             attachments: [],
           },
@@ -595,7 +630,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         message: state.turn.message.text,
         drive: current,
         emit: input.emit,
-        resolve: (prompt) => continueTurn(runId, state, prompt, ++attempts),
+        resolve: (prompt) => continueTurn(runId, state, prompt, "merge", ++attempts),
       }).pipe(
         Effect.andThen(deliver(event, runId)),
         Effect.ensuring(Effect.sync(() => finishing.delete(runId))),
@@ -804,6 +839,52 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     }));
   };
 
+  /**
+   * Has the agent take in the main `state`'s turn start found conflicting
+   * (`resolveMainConflict`), in provider turns of its run before its own, then
+   * brings dependencies in step with what it took in. Answers false when the
+   * thread stopped the run meanwhile: it already ended it.
+   */
+  const resolveBeforeTurn = (state: Turn, conflict: MainConflict, current: RunnerDrive) =>
+    Effect.gen(function* () {
+      const runId = state.turn.runId;
+      const held: Held = { waiting: null };
+      finishing.set(runId, held);
+      let attempts = 0;
+      const merged = yield* resolveMainConflict({
+        runId,
+        conflict,
+        drive: current,
+        emit: input.emit,
+        resolve: (prompt) => continueTurn(runId, state, prompt, "sync", ++attempts),
+        stopped: Effect.sync(() => held.stopped === true),
+      });
+      // One step with the check, so a stop lands either on `held` or on the turn itself.
+      const goOn = yield* ordered.withPermits(1)(
+        Effect.sync(() => {
+          finishing.delete(runId);
+          if (held.stopped === true) {
+            // A merge step still running stays tracked, so it's interrupted once the harness
+            // names it and the next turn winds it down; the run's own turn never reaches it.
+            forget(runId, state);
+            if (runningRunId === runId) runningRunId = null;
+            return false;
+          }
+          // Its merge steps ran as their own attempts; the turn's own goes on as itself.
+          turns.set(runId, state);
+          return true;
+        }),
+      );
+      // A lockfile main brought in is installed before the turn.
+      if (goOn && merged && input.dependencies !== undefined) {
+        const dependencies = input.dependencies;
+        yield* preparing.withPermits(1)(
+          dependencies.prepare((message) => input.emit({ kind: "drive.notice", runId, message })),
+        );
+      }
+      return goOn;
+    });
+
   const run = (
     turn: RunnerTurn,
     modelToken: string,
@@ -842,7 +923,15 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           const drive =
             opened !== null && access !== null
               ? yield* opened
-                  .prepare(access.remoteToken, access.author, access.instructions)
+                  .prepare(
+                    access.remoteToken,
+                    access.author,
+                    access.instructions,
+                    // A turn continuing one a lost machine ran keeps the base it had.
+                    turn.restartContinuationOfRunId === undefined
+                      ? (turn.appThread.pullRequests ?? [])
+                      : [],
+                  )
                   .pipe(
                     Effect.mapError((error) =>
                       isInstructionsError(error) ? error : drivePrepareError(error),
@@ -946,6 +1035,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         }),
       );
       if (!started) return;
+      const conflict = prepared.drive?.mainConflict;
+      if (conflict !== undefined && opened !== null) {
+        if (!(yield* resolveBeforeTurn(state, conflict, opened))) return;
+      }
       yield* session.startTurn({
         appThread: turn.appThread,
         threadId: input.threadId,
@@ -1023,6 +1116,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     Effect.suspend(() => {
       // A merge the agent was resolving ends with the run; its files stay saved.
       const held = finishing.get(runId);
+      if (held !== undefined) held.stopped = true;
       if (held?.waiting != null) Deferred.doneUnsafe(held.waiting, Effect.succeed(false));
       const turn = turns.get(runId);
       if (turn === undefined || turn.status === "stopped") return Effect.void;

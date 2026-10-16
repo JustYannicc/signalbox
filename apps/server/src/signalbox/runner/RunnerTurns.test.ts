@@ -54,6 +54,7 @@ const turnFor = (n: number, thread = providerThread): RunnerTurn =>
     attemptId: RunAttemptId.make(`attempt-${n}`),
     modelSelection: { instanceId, model: "m" },
     providerThread: thread,
+    appThread: { pullRequests: [] },
   }) as unknown as RunnerTurn;
 
 const unmeasured: MachineUsage = {
@@ -408,6 +409,7 @@ describe("RunnerTurns", () => {
               outcome = { _tag: "landed", main: "c".repeat(40) };
               return outcome;
             }),
+            takeInMain: Effect.die(new Error("not in this test")),
             abandonMerge: Effect.sync(() => {
               driveCalls.push("abandon");
               return { _tag: "not_landed", reason: "abandoned" } as const;
@@ -573,6 +575,7 @@ describe("RunnerTurns", () => {
             outcome = { _tag: "landed", main: "c".repeat(40) };
             return outcome;
           }),
+          takeInMain: Effect.die(new Error("not in this test")),
           abandonMerge: Effect.sync(() => {
             driveCalls.push("abandon");
             return { _tag: "not_landed", reason: "abandoned" } as const;
@@ -693,6 +696,198 @@ describe("RunnerTurns", () => {
       }),
     ),
   );
+
+  describe("after the thread's pull request merged (#495)", () => {
+    /**
+     * A turn whose start took in main and hit a conflict: the drive records
+     * what the turns ask of it, and the agent's prompts are kept in order.
+     */
+    const conflicted = (resolves = true) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeAdapter;
+        const prompts: Array<string> = [];
+        const session = (yield* fake.adapter.openSession(
+          {} as never,
+        )) as ProviderAdapterV2SessionRuntime;
+        const startTurn = session.startTurn;
+        Object.assign(session, {
+          startTurn: (input: Parameters<typeof startTurn>[0]) =>
+            Effect.andThen(
+              Effect.sync(() => void prompts.push(input.message.text)),
+              startTurn(input),
+            ),
+        });
+        const driveCalls: Array<string> = [];
+        const drive: RunnerDrive = {
+          prepare: (_remoteToken, _author, _folders, pullRequests) =>
+            Effect.sync(() => {
+              driveCalls.push(`prepare ${pullRequests?.map((link) => link.number).join(",")}`);
+              return {
+                instructions: "",
+                notices: [],
+                mainConflict: { pullRequest: 7, branch: "main", files: ["src/app.ts"] },
+              };
+            }),
+          autosave: Effect.void,
+          flush: Effect.void,
+          restoreDependencyEdits: Effect.void,
+          saveNow: Effect.void,
+          changed: Effect.succeed(false),
+          finishTurn: () => Effect.die(new Error("not in this test")),
+          continueAfterResolution: Effect.sync((): DriveOutcome => {
+            driveCalls.push("continue");
+            return resolves
+              ? { _tag: "saved", head: "c".repeat(40) }
+              : { _tag: "conflict", files: ["src/app.ts"] };
+          }),
+          takeInMain: Effect.sync(() => {
+            driveCalls.push("take in");
+            return { _tag: "conflict", files: ["src/app.ts"] } as const;
+          }),
+          abandonMerge: Effect.sync(() => {
+            driveCalls.push("abandon");
+            return { _tag: "not_landed", reason: "abandoned" } as const;
+          }),
+          saveBranch: () => Effect.die(new Error("not in this test")),
+          published: () => Effect.void,
+        };
+        const reported: Array<RunnerItem> = [];
+        const turns = yield* makeRunnerTurns({
+          threadId,
+          adapters: new Map([[instanceId, fake.adapter]]),
+          cwd: "/tmp",
+          useModelToken: () => Effect.void,
+          usage: Effect.succeed(unmeasured),
+          emit: (item) => Effect.sync(() => void reported.push(item)),
+          openDrive: () => Effect.succeed(drive),
+        });
+        yield* Deferred.succeed(fake.loaded, undefined);
+        const turn = {
+          ...turnFor(1),
+          appThread: { pullRequests: [{ number: 7 }] },
+          message: { messageId: MessageId.make("message-1"), text: "Next thing", attachments: [] },
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+        } as unknown as RunnerTurn;
+        yield* turns.start({
+          turn,
+          modelToken: "token-1",
+          drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: "sbr1.x.y" },
+        });
+        yield* settle;
+        const now = DateTime.makeUnsafe(0);
+        /** The harness names merge step `n`'s provider turn. */
+        const mergeStepNamed = (n = 1) =>
+          Queue.offer(fake.events, {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: {
+              id: ProviderTurnId.make(`native-sync-${n}`),
+              providerThreadId: providerThread.id,
+              nodeId: NodeId.make("node-1"),
+              runAttemptId: RunAttemptId.make(`attempt-1:sync:${n}`),
+              nativeTurnRef: null,
+              ordinal: 1101,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          } as ProviderAdapterV2Event);
+        const mergeStepEnded = (status: "completed" | "interrupted", n = 1) =>
+          Queue.offer(fake.events, {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: providerThread.id,
+            providerTurnId: ProviderTurnId.make(`native-sync-${n}`),
+            runOrdinal: 1,
+            status,
+            failure: null,
+            threadDisposition: "reusable",
+          } as ProviderAdapterV2Event);
+        const notices = () =>
+          reported.flatMap((item) => (item.kind === "drive.notice" ? [item.message] : []));
+        return {
+          fake,
+          turns,
+          prompts,
+          driveCalls,
+          reported,
+          mergeStepNamed,
+          mergeStepEnded,
+          notices,
+        };
+      });
+
+    it.effect("has the agent resolve a conflict with main before the turn's own message", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { prompts, driveCalls, reported, mergeStepNamed, mergeStepEnded, notices } =
+            yield* conflicted();
+          // The merge step runs first; the person's message waits for it.
+          expect(driveCalls).toEqual(["prepare 7", "take in"]);
+          expect(prompts).toHaveLength(1);
+          expect(prompts[0]).toContain("Pull request #7 merged");
+          expect(prompts[0]).toContain("- src/app.ts");
+          expect(notices()).toEqual([
+            "Pull request #7 merged, so this thread is taking in the latest main. It conflicts in src/app.ts; resolving that first.",
+          ]);
+
+          yield* mergeStepNamed();
+          yield* mergeStepEnded("completed");
+          yield* settle;
+          expect(driveCalls).toEqual(["prepare 7", "take in", "continue"]);
+          expect(prompts).toEqual([prompts[0], "Next thing"]);
+          expect(notices()[1]).toBe("The latest main is merged in.");
+          // The merge step's end is not the run's.
+          expect(
+            reported.filter(
+              (item) => item.kind === "provider" && item.event.type === "turn.terminal",
+            ),
+          ).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect("drops main still conflicted after two tries, says so, then runs the message", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { prompts, driveCalls, mergeStepNamed, mergeStepEnded, notices } =
+            yield* conflicted(false);
+          for (const n of [1, 2]) {
+            yield* mergeStepNamed(n);
+            yield* mergeStepEnded("completed", n);
+            yield* settle;
+          }
+          expect(driveCalls).toEqual(["prepare 7", "take in", "continue", "continue", "abandon"]);
+          expect(prompts.slice(2)).toEqual(["Next thing"]);
+          expect(notices()[1]).toBe(
+            "The latest main isn't merged in: src/app.ts still conflicted. This turn works on the branch as it was; the next one tries again.",
+          );
+        }),
+      ),
+    );
+
+    it.effect("never sends the message of a run stopped while the agent resolves main", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fake, turns, prompts, driveCalls, mergeStepNamed, mergeStepEnded, notices } =
+            yield* conflicted();
+          // Stopped before the harness named the merge step: it's interrupted once it does.
+          yield* turns.interrupt(RunId.make("run-1"));
+          yield* settle;
+          yield* mergeStepNamed();
+          yield* settle;
+          yield* mergeStepEnded("interrupted");
+          yield* settle;
+          expect(fake.calls).toContain("interrupt native-sync-1");
+          expect(driveCalls).toEqual(["prepare 7", "take in", "abandon"]);
+          expect(prompts).toHaveLength(1);
+          // No turn follows to hear about it.
+          expect(notices()).toHaveLength(1);
+        }),
+      ),
+    );
+  });
 
   it.effect(
     "reports usage around a turn, every half minute while it runs, in order with its items",
@@ -840,6 +1035,7 @@ describe("RunnerTurns", () => {
             outcome: { _tag: "landed", main: "c".repeat(40) } as const,
           }),
         continueAfterResolution: Effect.die(new Error("not in this test")),
+        takeInMain: Effect.die(new Error("not in this test")),
         abandonMerge: Effect.die(new Error("not in this test")),
         saveBranch: () => Effect.die(new Error("not in this test")),
         published: () => Effect.void,
