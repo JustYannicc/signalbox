@@ -1,7 +1,7 @@
 /**
  * A waiting `w.ask`: its question, its form when it has fields, and one
  * button per option (checkboxes and Submit for `multi`). The same control
- * answers from the diagram's details panel, the overview and Pipeline, so a
+ * answers from the diagram's details panel, the overview and Home, so a
  * simple approve or reject never needs the diagram.
  */
 import {

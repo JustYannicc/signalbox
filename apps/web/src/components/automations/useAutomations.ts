@@ -43,7 +43,7 @@ export function useAllAutomations(): AutomationsView {
   }, [lists]);
 }
 
-/** How many automations have a run waiting on the user, for the rail badge. Redraws only when it changes. */
+/** How many automations have a run waiting on the user. Redraws only when it changes. */
 export function useWaitingAutomationCount(): number {
   return useAtomValue(automationState.waitingCount(useListKey()));
 }
