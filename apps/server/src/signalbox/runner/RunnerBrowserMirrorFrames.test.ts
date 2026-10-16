@@ -19,10 +19,13 @@ const PAY = "http://pay.test";
 const SHOP_PAGE = `<title>Checkout</title>
 <style>body { margin: 0 } iframe { position: absolute; left: 20px; top: 60px; width: 300px; height: 60px; border: 0 }</style>
 <label>Email <input id="email"></label>
+<p>Total €35.95</p>
 <script>addEventListener("load", () => document.body.append(Object.assign(document.createElement("iframe"), { id: "card-frame", src: "${PAY}/card" })));</script>`;
+// Like Stripe's card field, the frame also writes the number as text beside its input.
 const CARD_PAGE = `<title>Card</title>
 <style>body { margin: 0 } input { width: 280px; height: 40px }</style>
-<input id="card" name="cardnumber" autocomplete="cc-number" placeholder="Card number">`;
+<div class="field"><input id="card" name="cardnumber" autocomplete="cc-number" placeholder="Card number"><span><span id="echo"></span></span></div>
+<script>card.addEventListener("input", () => { echo.textContent = card.value; });</script>`;
 
 let chrome: Browser;
 
@@ -84,6 +87,7 @@ interface RrwebEvent {
 const FULL_SNAPSHOT = 2;
 const INCREMENTAL = 3;
 const INPUT = 5;
+const MUTATION = 0;
 const decoder = new TextDecoder();
 
 const eventsOf = (updates: ReadonlyArray<AgentBrowserUpdate>): ReadonlyArray<RrwebEvent> =>
@@ -166,6 +170,15 @@ describe("cross-origin frames in the agent's browser", () => {
             event.data.text === "****",
         ),
       );
+      // The number the frame writes as text beside its field reaches the viewer too.
+      await updates.until(() =>
+        eventsOf(updates.seen.slice(typed)).some(
+          (event) =>
+            event.type === INCREMENTAL &&
+            event.data?.source === MUTATION &&
+            /\*{4}|4242/.test(JSON.stringify(event)),
+        ),
+      );
       viewer.input({ _tag: "release" });
 
       expect(await (await cardFrame()).inputValue("#card")).toBe("4242");
@@ -175,6 +188,10 @@ describe("cross-origin frames in the agent's browser", () => {
       expect(
         updates.seen.some((update) => update._tag === "events" && update.events.includes("4242")),
       ).toBe(false);
+      // The shop's own figures stay readable.
+      expect(
+        updates.seen.some((update) => update._tag === "events" && update.events.includes("35.95")),
+      ).toBe(true);
     } finally {
       await browser.close();
     }

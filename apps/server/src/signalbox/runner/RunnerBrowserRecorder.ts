@@ -97,6 +97,14 @@ const pageScript = (recorder: string, binding: string, key: string) => `(() => {
   if (top && typeof send !== "function") return;
   const key = ${JSON.stringify(key)};
   const cardField = ${CARD_FIELD};
+  // Whether a card field sits in this element or the three around it.
+  const besideCard = (element) => {
+    if (!element || !element.ownerDocument) return false;
+    const cards = [...element.ownerDocument.querySelectorAll("input")].filter(cardField);
+    for (let at = element, depth = 0; at && depth < 4; at = at.parentElement, depth++)
+      if (cards.some((card) => at.contains(card))) return true;
+    return false;
+  };
   // Reconnecting to the person's browser injects again into the same document.
   if (top) globalThis[key]?.stop();
   const holder = {};
@@ -140,6 +148,10 @@ ${recorder}}).call(holder);
     maskInputOptions: { password: true, input: true },
     maskInputFn: (text, element) =>
       element && (element.type === "password" || cardField(element)) ? "*".repeat(text.length) : text,
+    // Every text goes through maskTextFn, which masks the digits of text that
+    // sits beside a card field: Stripe's field also writes the number as text.
+    maskTextSelector: "*",
+    maskTextFn: (text, element) => (/\\d/.test(text) && besideCard(element) ? text.replace(/\\d/g, "*") : text),
     sampling: { scroll: 150, mousemove: false },
   };
   // A full snapshot replays every cross-origin frame empty until that frame
