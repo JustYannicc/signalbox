@@ -291,6 +291,10 @@
       "types": "./src/state/folders.ts",
       "default": "./src/state/folders.ts"
     },
+    "./state/signalboxNotes": {
+      "types": "./src/state/notes.ts",
+      "default": "./src/state/notes.ts"
+    },
     "./state/signalboxSignIn": {
       "types": "./src/state/signalboxSignIn.ts",
       "default": "./src/state/signalboxSignIn.ts"

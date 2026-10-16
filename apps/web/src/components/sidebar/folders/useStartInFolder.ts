@@ -7,27 +7,25 @@
 import { RegistryContext } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { poolModelSelection } from "@t3tools/client-runtime/state/sections";
 import {
   homeOfThread,
   newThreadIn,
   poolOfHome,
 } from "@t3tools/client-runtime/state/signalboxFolders";
-import { DEFAULT_SERVER_SETTINGS, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type { FolderId } from "@t3tools/contracts/signalboxFolders";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useCallback, useContext } from "react";
 
 import { type DraftId, useComposerDraftStore } from "../../../composerDraftStore";
 import { useNewThreadHandler } from "../../../hooks/useHandleNewThread";
 import { hasExplicitComposerModelSelection } from "../../../lib/chatThreadActions";
 import { useRightPanelStore } from "../../../rightPanelStore";
-import { readProjects } from "../../../state/entities";
 import { draftModelSelection } from "../../../state/projectPool";
 import { environmentServerConfigsAtom } from "../../../state/server";
 import { environmentFoldersAtom } from "../../../state/signalboxFolders";
 import { stackedThreadToast, toastManager } from "../../ui/toast";
+import { projectSettingsIn, selectionOnPool } from "./homeModelSelection";
 import { useFolderCommands } from "./useFolderCommands";
 
 export interface StartInFolder {
@@ -55,19 +53,11 @@ export function useStartInFolder() {
       const draft = getComposerDraft(draftId);
       if (hasExplicitComposerModelSelection(draft)) return;
       const config = registry.get(environmentServerConfigsAtom).get(environmentId);
-      const project = readProjects().find(
-        (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
-      );
-      const settings = resolveProjectSettings(
-        config?.settings ?? DEFAULT_SERVER_SETTINGS,
-        projectId,
-        project,
-      ).settings;
-      const selection = poolModelSelection({
+      const selection = selectionOnPool({
+        config,
+        settings: projectSettingsIn(config, environmentId, projectId),
         selection: draftModelSelection(draft),
-        pool: { poolId },
-        providerInstances: settings.providerInstances,
-        providers: config?.providers ?? [],
+        poolId,
       });
       if (selection) setModelSelection(draftId, selection, { replaceOptions: true });
     },

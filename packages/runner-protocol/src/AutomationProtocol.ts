@@ -25,6 +25,12 @@ export const AUTOMATION_PATHS = {
   tool: `${DRIVE_API_PREFIX}/automations/tool`,
 } as const;
 
+/**
+ * Signalbox's own tool on the same route: the team notes on the thread's
+ * folders (#318). The machine declares it, the cloud answers it.
+ */
+export const LIST_NOTES_TOOL = "list_notes";
+
 /** One tool call: its MCP name and its input as the agent gave it (plus `compiled` for a save). */
 export const ToolRequest = Schema.Struct({
   name: Schema.String,

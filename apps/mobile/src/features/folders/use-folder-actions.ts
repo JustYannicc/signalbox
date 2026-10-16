@@ -22,6 +22,7 @@ import { Alert } from "react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { signalboxFolders } from "../../state/signalboxFolders";
 import { useAtomCommand } from "../../state/use-atom-command";
+import type { NotesOpen } from "../notes/note-menus";
 import { parseFolderMenuEvent, type PoolChoice } from "./folder-menus";
 
 /** A level whose instructions are open in the editor. */
@@ -66,6 +67,7 @@ export function useFolderActions(input: {
   const setInstructions = useAtomCommand(signalboxFolders.setInstructions, QUIET);
   const setGitHubLend = useAtomCommand(signalboxFolders.setGitHubLend, QUIET);
   const [editing, setEditing] = useState<InstructionsEditing | null>(null);
+  const [notes, setNotes] = useState<NotesOpen | null>(null);
 
   const requestCreateFolder = useCallback(
     (parentId: FolderId | null, ownerId: SignalboxContextId) => {
@@ -132,6 +134,9 @@ export function useFolderActions(input: {
             instructions: folder.instructions ?? "",
           });
           return;
+        case "notes":
+          setNotes({ environmentId, level: { _tag: "folder", folderId: folder.id } });
+          return;
         case "delete":
           Dialog.confirm({
             title: `Delete ${folder.name}?`,
@@ -163,6 +168,7 @@ export function useFolderActions(input: {
   const onTopLevelAction = useCallback(
     (owner: SignalboxContext, event: string) => {
       if (event === "top:new-folder") requestCreateFolder(null, owner.id);
+      if (event === "top:notes") setNotes({ environmentId, level: { _tag: "top" } });
       if (event === "top:instructions" && snapshot !== null) {
         setEditing({
           level: { _tag: "top" },
@@ -171,7 +177,7 @@ export function useFolderActions(input: {
         });
       }
     },
-    [requestCreateFolder, snapshot],
+    [environmentId, requestCreateFolder, snapshot],
   );
 
   /** Saves the open editor's text; resolves whether it was saved. */
@@ -191,6 +197,8 @@ export function useFolderActions(input: {
     onTopLevelAction,
     editing,
     closeEditor: useCallback(() => setEditing(null), []),
+    notes,
+    closeNotes: useCallback(() => setNotes(null), []),
     saveInstructions,
   };
 }

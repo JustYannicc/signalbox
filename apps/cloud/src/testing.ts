@@ -35,6 +35,8 @@ import type { DrivePerson } from "./drive/DriveMembers.ts";
 import type * as DrivePacks from "./drive/DrivePacks.ts";
 import { makeMemoryDrives } from "./drive/driveTesting.ts";
 import * as Platform from "./platform.ts";
+import * as NoteReader from "./notes/NoteReader.ts";
+import * as UserNotes from "./notes/UserNotes.ts";
 import * as PoolDirectory from "./pool/PoolDirectory.ts";
 import * as PreviewSetup from "./previewSetup/PreviewSetup.ts";
 import * as PushNotifier from "./push/PushNotifier.ts";
@@ -266,6 +268,7 @@ const makeUserRuntime = (
   automations: Layer.Layer<CloudAutomations.CloudAutomations> | Layer.Layer<never>,
   kernel: KernelApi | null,
   logins: { readonly kernel: KernelAuth | null; readonly executor: ExecutorLogins | null },
+  noteReader: Layer.Layer<NoteReader.NoteReader>,
 ) =>
   ManagedRuntime.make(
     // The user's automations, on the same services the object gives them.
@@ -279,6 +282,7 @@ const makeUserRuntime = (
           UserPreviewSetup.layer,
           CloudAssets.layer,
           LoginService.layer(logins),
+          UserNotes.layer.pipe(Layer.provide(noteReader)),
         ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
@@ -361,6 +365,8 @@ export const makeMemoryCloud = (
     /** Kernel's Managed Auth and Executor for agents' sign-ins (#576); none unless given. */
     readonly kernelAuth?: KernelAuth;
     readonly executorLogins?: ExecutorLogins;
+    /** What reads every user's notes; nothing unless given, so notes stay plain notes. */
+    readonly noteReader?: Layer.Layer<NoteReader.NoteReader>;
   } = {},
 ) => {
   const users = new Map<
@@ -444,6 +450,7 @@ export const makeMemoryCloud = (
       options.automations ?? Layer.empty,
       options.kernel ?? null,
       { kernel: options.kernelAuth ?? null, executor: options.executorLogins ?? null },
+      options.noteReader ?? NoteReader.layerNone,
     );
     const object = { api: makeUserObjectApi((effect) => runtime.runPromise(effect)), runtime };
     users.set(userId, object);

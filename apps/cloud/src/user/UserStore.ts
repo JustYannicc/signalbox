@@ -24,6 +24,7 @@ import * as Migrations from "../storage/migrations.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
+import * as NoteTables from "../notes/noteTables.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
@@ -213,6 +214,7 @@ const migrations = Migrator.fromRecord({
   "0016_local_keys": LocalKeys.createTables,
   "0017_api_keys": LocalKeys.addApiScopes,
   "0018_sign_in_grants": SignInTables.createTables,
+  "0019_notes": NoteTables.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */

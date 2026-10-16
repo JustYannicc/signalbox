@@ -39,6 +39,7 @@ import {
   SIGNALBOX_FOLDERS_WS_METHODS,
   SignalboxFolderError,
 } from "@t3tools/contracts/signalboxFolders";
+import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes";
 import {
   SIGNALBOX_BROWSING_REQUIRED_SCOPES,
   SIGNALBOX_BROWSING_WS_METHODS,
@@ -99,6 +100,7 @@ import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes";
 import { makePushHandlers } from "../push/pushRpc.ts";
 import { makeKeysHandlers } from "./keysRpc.ts";
 import { makeSignInHandlers } from "../signIn/signInRpc.ts";
+import { makeNotesHandlers, NOTES_METHODS } from "../notes/notesRpc.ts";
 import { DriveShortcuts } from "./DriveShortcuts.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -182,6 +184,8 @@ const SERVED = [
   ...Object.values(SIGNALBOX_CONTEXTS_WS_METHODS),
   ...Object.values(SIGNALBOX_DRIVES_WS_METHODS),
   ...Object.values(SIGNALBOX_FOLDERS_WS_METHODS),
+  // Notes on each level's pad (`notes/`).
+  ...NOTES_METHODS,
   ...Object.values(SIGNALBOX_PREVIEWS_WS_METHODS),
   // A thread's synced browser tabs (`thread/browsing/`), and the browser panel's own RPCs on them.
   ...Object.values(SIGNALBOX_BROWSING_WS_METHODS),
@@ -248,6 +252,7 @@ const REQUIRED_SCOPES = {
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES,
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES,
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES,
+  ...SIGNALBOX_NOTES_REQUIRED_SCOPES,
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES,
   ...SIGNALBOX_BROWSING_REQUIRED_SCOPES,
   // The same scopes a self-hosted server requires for its browser panel.
@@ -469,15 +474,17 @@ export const layerHandlers = (input: {
       const shortcutsCall = withDrives(shortcuts);
       const pools = yield* makePoolHandlers({ identity, actor: { userId } });
       const pushes = yield* makePushHandlers(input.sid);
+      const newThreadModel = pools.configNow.pipe(
+        Effect.map(
+          (config) =>
+            config.settings.defaultModelSelection ?? poolFallbackModelSelection(config.providers),
+        ),
+      );
       const automations = yield* makeAutomationHandlers({
         personReviews: input.via === "client",
-        newThreadModel: pools.configNow.pipe(
-          Effect.map(
-            (config) =>
-              config.settings.defaultModelSelection ?? poolFallbackModelSelection(config.providers),
-          ),
-        ),
+        newThreadModel,
       });
+      const notes = yield* makeNotesHandlers({ newThreadModel });
       const keys = yield* makeKeysHandlers({
         userId,
         scopes: input.scopes ?? AuthStandardClientScopes,
@@ -487,6 +494,7 @@ export const layerHandlers = (input: {
         ...pools.handlers,
         ...pushes,
         ...automations,
+        ...notes,
         ...keys,
         ...signIn,
         [WS_METHODS.subscribeServerConfig]: (request) => pools.configStream(request),
