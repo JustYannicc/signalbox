@@ -4,6 +4,7 @@ import { folderStatusSummary } from "@t3tools/client-runtime/state/threadStatusL
 import type { ReactElement } from "react";
 
 import { folderStatusBreakdown } from "../sidebar/folders/folderStatus";
+import { ThreadCount } from "../sidebar/folders/LevelRow";
 import { folderStatusCountsAtom } from "../sidebar/folders/folderThreads";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -30,17 +31,10 @@ export function useFolderStatus(folderNodeKey: string): FolderStatus | null {
 export function FolderStatusCount(props: {
   readonly count: number;
   readonly status: FolderStatus | null;
-  readonly className: string;
 }) {
   const summary = props.status?.summary ?? null;
-  if (summary !== null) return <span className={props.className}>{summary}</span>;
-  if (props.count === 0) return null;
-  return (
-    <span className={props.className}>
-      {props.count}
-      <span className="sr-only"> {props.count === 1 ? "thread" : "threads"}</span>
-    </span>
-  );
+  if (summary === null) return <ThreadCount count={props.count} />;
+  return <span className="text-3xs tabular-nums text-sidebar-muted-foreground/50">{summary}</span>;
 }
 
 /** The full breakdown on the folder's name, pulled by hovering; the name alone without one. */

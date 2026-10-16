@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type AutomationDefaults,
+  type ExternalRun,
   type ModelSelection,
   type ProviderOptionSelection,
   type ProviderInteractionMode,
@@ -35,6 +36,9 @@ export type StepStart =
       readonly agentRunId?: string;
       readonly wakeAt?: string;
       readonly event?: string;
+      /** The run in another system the step started (`external.ts`), read again at `pollAt`. */
+      readonly external?: ExternalRun;
+      readonly pollAt?: string;
     };
 
 /** When a `sleep` or `waitFor` timeout ends: `{ minutes: 5 }`-style durations add up; `until` is an ISO time. */

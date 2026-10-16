@@ -59,6 +59,10 @@ type PullRequest = {
   title: string;
   state: string;
   headSha: string | null;
+  /** Where it comes from and goes. A headRepository other than repository is a fork. */
+  headBranch?: string;
+  baseBranch?: string;
+  headRepository?: string | null;
   isDraft?: boolean | null;
   mergeability?: string | null;
   reviewDecision?: string | null;

@@ -16,7 +16,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { layerAutomationTools } from "./RunnerAutomationTools.ts";
+import { automationCaller, layerAutomationTools } from "./RunnerAutomationTools.ts";
 import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import {
   BROWSER_EXECUTABLE_ENV,
@@ -25,6 +25,7 @@ import {
   makeRunnerBrowser,
 } from "./RunnerBrowser.ts";
 import type { BrowserMirror } from "./RunnerBrowserMirror.ts";
+import { layerPaymentTool, makePayments, paymentAsker } from "./RunnerBrowserPayment.ts";
 import { type PersonSession, personTabs } from "./RunnerBrowserPerson.ts";
 import {
   BROWSER_INSTRUCTIONS,
@@ -57,7 +58,8 @@ import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
  * (`RunnerStatusLineTools.ts`). `/browser` serves the thread's browser
  * (#402, #574) as its own MCP server, under the name agents know it by locally:
  * the machine's headless Chromium for its dev servers, and the person's
- * browser for real sites, which the turn's client opens in the cloud.
+ * browser for real sites, which the turn's client opens in the cloud. It hands
+ * payments there to the person (`RunnerBrowserPayment.ts`).
  */
 
 const MCP_PATH = "/mcp";
@@ -106,13 +108,27 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   let drive: BranchDrive | null = null;
   // Chromium starts with the first browser call and stops with the thread.
   const env = yield* HostProcess.Environment;
+  // Payments are asked from the thread, so only a machine running one hands them over.
+  const payments =
+    input.browser === undefined && input.threadId !== undefined
+      ? makePayments({ asker: paymentAsker(automationCaller(view), input.threadId) })
+      : null;
   const browser =
     input.browser ??
-    makeRunnerBrowser({
-      machine: machineTabs({ executable: env[BROWSER_EXECUTABLE_ENV], env }),
-      person: personTabs(personSession(view)),
-    });
-  yield* Effect.addFinalizer(() => Effect.tryPromise(() => browser.close()).pipe(Effect.ignore));
+    makeRunnerBrowser(
+      {
+        machine: machineTabs({ executable: env[BROWSER_EXECUTABLE_ENV], env }),
+        person: personTabs(personSession(view)),
+      },
+      payments === null ? {} : { guard: payments.guard },
+    );
+  payments?.bind(browser);
+  yield* Effect.addFinalizer(() =>
+    Effect.tryPromise(async () => {
+      await payments?.close();
+      await browser.close();
+    }).pipe(Effect.ignore),
+  );
 
   const dav = HttpRouter.add("*", `${DAV_PATH}/*`, (request) =>
     serveDav(view, {
@@ -155,7 +171,10 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   // Fresh: every MCP server layer shares `McpServer.layer`, so a memoized one
   // would put the browser's tools on the context server too.
   const browserMcp = Layer.fresh(
-    layerBrowserTools(browser).pipe(
+    Layer.mergeAll(
+      layerBrowserTools(browser),
+      payments === null ? Layer.empty : layerPaymentTool(payments),
+    ).pipe(
       Layer.provide(
         McpServer.layerHttp({
           name: BROWSER_SERVER_NAME,

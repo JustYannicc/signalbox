@@ -45,7 +45,7 @@ export function ThreadStatusLineSection(props: {
         separated={false}
         showHeading={false}
       >
-        <div className="flex flex-col gap-1.5 px-2.5 pt-1.5 text-[13px]">
+        <div className="flex flex-col gap-1.5 px-2.5 pt-1.5 text-sm">
           <p className="m-0 flex min-w-0 items-center gap-2 font-medium text-foreground/80">
             <span
               aria-hidden

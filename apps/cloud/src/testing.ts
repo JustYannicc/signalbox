@@ -74,6 +74,7 @@ import * as ResourceBindings from "./user/ResourceBindings.ts";
 import * as ThreadContexts from "./user/threadContexts.ts";
 import * as UserContexts from "./user/UserContexts.ts";
 import * as GitHub from "./github/GitHub.ts";
+import * as GitHubActions from "./github/GitHubActions.ts";
 import * as GitHubBranches from "./github/GitHubBranches.ts";
 import * as ConnectionLinks from "./connections/ConnectionLinks.ts";
 import * as GitHubConnection from "./github/GitHubConnection.ts";
@@ -284,6 +285,7 @@ const makeUserRuntime = (
         // The same branches the socket's RPC uses, so the git panel sees what the agent pushed.
         Layer.mergeAll(
           GitHubBranches.layer,
+          GitHubActions.layer,
           UserPreviewSetup.layer,
           CloudAssets.layer,
           LoginService.layer(logins),

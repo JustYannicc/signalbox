@@ -476,14 +476,14 @@ function EmptySourceControlDiscovery({
   const hasError = error !== null;
 
   return (
-    <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+    <SettingsSection id={searchableSetting("source-control").id} title="Version Control">
       <Empty>
         <EmptyMedia variant="icon">
           <PullRequestGlyph.pullRequest />
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>
-            {hasError ? "Could not scan the server environment" : "Nothing detected yet"}
+            {hasError ? "Couldn't scan Git and hosting integrations" : "Nothing detected yet"}
           </EmptyTitle>
           <EmptyDescription>
             {hasError
@@ -550,7 +550,7 @@ export function SourceControlSettingsPanel() {
             variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
-            aria-label="Rescan server environment"
+            aria-label="Rescan Git and hosting integrations"
           >
             <RefreshIcon refreshing={discovery.isPending} />
           </Button>
@@ -564,7 +564,7 @@ export function SourceControlSettingsPanel() {
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
-        <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+        <SettingsSection id={searchableSetting("source-control").id} title="Version Control">
           <p className="px-4 py-3 text-sm text-muted-foreground">
             Connect an environment to inspect its version control tools and hosting integrations.
           </p>

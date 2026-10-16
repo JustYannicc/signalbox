@@ -75,6 +75,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_THREAD_KINDS_WS_METHODS.setArchiveChatsAfterDays]: AuthSettingsWriteScope, // signalbox: thread kinds
   [SIGNALBOX_FOLDERS_WS_METHODS.setSecrets]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.setOnePassword]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.setGitHubLend]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_SIGN_IN_WS_METHODS.grant]: AuthSettingsWriteScope, // signalbox: sign-in grants
   [SIGNALBOX_SIGN_IN_WS_METHODS.revoke]: AuthSettingsWriteScope, // signalbox: sign-in grants
 } as const;

@@ -247,8 +247,8 @@ export function folderStatusRollups(
   }
   const rollups = new Map<FolderId, FolderStatusRollup>();
   for (const [folderId, folderCounts] of counts) {
-    const oldest = (waitingOnPerson.get(folderId) ?? [])
-      .toSorted((left, right) => Date.parse(left.updatedAt) - Date.parse(right.updatedAt))
+    const oldest = [...(waitingOnPerson.get(folderId) ?? [])]
+      .sort((left, right) => Date.parse(left.updatedAt) - Date.parse(right.updatedAt))
       .slice(0, 2);
     rollups.set(folderId, {
       counts: folderCounts,

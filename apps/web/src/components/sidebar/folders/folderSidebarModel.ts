@@ -9,6 +9,7 @@ import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import {
   folderTree,
   ownerFilesProject,
+  ownerLevels,
   type FolderNode,
   type ThreadFolderChoice,
 } from "@t3tools/client-runtime/state/signalboxFolders";
@@ -155,8 +156,9 @@ export interface VisibleFolderList {
 }
 
 /**
- * The thread lists the tree shows, in the order it shows them: per open
- * owner its top level's, then each open folder's subfolders' and its own.
+ * The thread lists the tree shows, in the order it shows them: your top
+ * level's, then each open folder's subfolders' and its own, then the same for
+ * each open member level. Your top level has no row, so it never folds.
  */
 export function visibleFolderLists(
   environments: ReadonlyArray<{
@@ -167,9 +169,10 @@ export function visibleFolderLists(
 ): Array<VisibleFolderList> {
   const lists: Array<VisibleFolderList> = [];
   for (const { environmentId, owners } of environments) {
-    for (const owner of owners) {
+    const { top, members } = ownerLevels(owners, (owner) => owner.context);
+    for (const owner of top ? [top, ...members] : members) {
       const ownerId = owner.context.id;
-      if (collapsed.has(folderOwnerKey(environmentId, ownerId))) continue;
+      if (owner !== top && collapsed.has(folderOwnerKey(environmentId, ownerId))) continue;
       const push = (home: FolderId | null) =>
         lists.push({
           environmentId,

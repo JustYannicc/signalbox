@@ -349,12 +349,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
-    id: "working-shelf",
-    title: "Working section (beta)",
-    to: "/settings/general",
-    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
-  },
-  {
     id: "auto-settle-inactive-threads",
     capability: "serverSettingsWrite",
     title: "Auto-settle inactive threads",
@@ -526,7 +520,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",
-    searchTerms: ["ask before thread pinned section"],
+    searchTerms: ["ask before thread pinned unpin"],
   },
   {
     id: "archive-confirmation",
@@ -611,12 +605,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Context window indicator (legacy)",
     to: "/settings/general",
     searchTerms: ["composer meter usage tokens circle old"],
-  },
-  {
-    id: "legacy-sidebar",
-    title: "Sidebar (legacy)",
-    to: "/settings/general",
-    searchTerms: ["project thread tree old flat list"],
   },
   {
     id: "keybindings",

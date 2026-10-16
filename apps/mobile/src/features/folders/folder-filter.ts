@@ -7,6 +7,7 @@ import {
   homeOfProject,
   newThreadIn,
   ownerFilesProject,
+  ownerLevelName,
   threadHomeLookup,
 } from "@t3tools/client-runtime/state/signalboxFolders";
 import { EnvironmentId, type ProjectId, type ThreadId } from "@t3tools/contracts";
@@ -195,12 +196,12 @@ export function folderStart(
   return {
     environmentId,
     folderId: folder?.id ?? null,
-    name: folder?.name ?? owner.name,
+    name: folder?.name ?? ownerLevelName(owner),
     projectId,
     file,
     unfiledName:
       snapshot.folders.find((candidate) => candidate.id === projectHome)?.name ??
-      `the top level of ${owner.name}`,
+      (owner.kind === "personal" ? "the top level" : `the top level of ${owner.name}`),
   };
 }
 
@@ -213,5 +214,6 @@ export function filterLevelName(
   if (level._tag === "folder") {
     return snapshot.folders.find((folder) => folder.id === level.folderId)?.name ?? null;
   }
-  return owners?.contexts.find((owner) => owner.id === level.ownerId)?.name ?? null;
+  const owner = owners?.contexts.find((candidate) => candidate.id === level.ownerId);
+  return owner ? ownerLevelName(owner) : null;
 }

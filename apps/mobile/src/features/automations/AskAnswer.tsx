@@ -5,8 +5,10 @@ import {
   type AskDraft,
   type AskDraftValue,
 } from "@t3tools/client-runtime/automations/ask";
+import { useNavigation } from "@react-navigation/native";
 import {
   automationOptionLabel,
+  type AutomationAskOpen,
   type AutomationWaitingQuestion,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -32,12 +34,15 @@ const SEND_PICKED = "\u0000send";
  * one button per option. The first option is the primary action, matching how
  * authors order them ("send", "skip"). A `multi` ask turns its options into
  * toggles with one Send button. Answers are checked here first so a missing
- * field says so inline; the server runs the same check.
+ * field says so inline; the server runs the same check. An ask that names a
+ * thread (`open`) offers to open it, or its agent's live browser.
  */
 export function AskAnswer(props: {
   readonly environmentId: EnvironmentId;
   readonly question: AutomationWaitingQuestion;
   readonly showQuestion?: boolean;
+  /** Offers what the ask opens; off where it's open already. */
+  readonly showOpen?: boolean;
 }) {
   const { question } = props;
   const ask = useMemo(() => askFromQuestion(question), [question]);
@@ -149,11 +154,34 @@ export function AskAnswer(props: {
           ))}
         </View>
       )}
+      {question.open && props.showOpen !== false ? (
+        <View className="flex-row">
+          <AskOpenButton environmentId={props.environmentId} open={question.open} />
+        </View>
+      ) : null}
       {error ? (
         <Text accessibilityLiveRegion="polite" className="text-sm text-danger-foreground">
           {error}
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/** Opens the thread an ask names, or its agent's live browser for `view: "browser"`. */
+function AskOpenButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly open: AutomationAskOpen;
+}) {
+  const navigation = useNavigation();
+  const params = { environmentId: props.environmentId, threadId: props.open.threadId };
+  return props.open.view === "browser" ? (
+    <PillButton
+      label="Open the browser"
+      icon="globe"
+      onPress={() => navigation.navigate("ThreadAgentBrowser", params)}
+    />
+  ) : (
+    <PillButton label="Open thread" onPress={() => navigation.navigate("Thread", params)} />
   );
 }

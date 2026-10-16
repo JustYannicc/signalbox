@@ -230,6 +230,7 @@ import {
   useSectionSidebarActions,
 } from "./sidebar/sections/SectionSidebarActions";
 import { SectionsProjectTree } from "./sidebar/sections/SectionsProjectTree";
+import { FoldersTopLevelMenu } from "./sidebar/folders/FoldersSidebarTree"; // signalbox: folders
 import { useSectionsSidebar } from "./sidebar/sections/useSectionsSidebar";
 import { visibleSectionThreadKeys } from "./sidebar/sections/sectionSidebarViewModel";
 import {
@@ -3158,6 +3159,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 {sectionsSidebar.labels.add /* signalbox: folders */}
               </TooltipPopup>
             </Tooltip>
+            <FoldersTopLevelMenu sidebar={sectionsSidebar.folders} /* signalbox: folders */ />
             {sectionsSidebar.createOptions.length > 0 ? (
               <Tooltip>
                 <TooltipTrigger

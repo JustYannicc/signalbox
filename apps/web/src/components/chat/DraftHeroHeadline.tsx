@@ -368,7 +368,7 @@ export function DraftHeroHeadline({
   const headingLabel = isScratchDraft
     ? "What should we work on?"
     : hasResolvedProject
-      ? `What should we build in ${activeProjectDisplayName}?`
+      ? `What should we work on in ${activeProjectDisplayName}?`
       : canChooseProject
         ? `${activeProjectDisplayName ?? copy.choose} to start`
         : copy.addToStart;
@@ -407,7 +407,7 @@ export function DraftHeroHeadline({
         {isScratchDraft ? (
           <>What should we work on?</>
         ) : hasResolvedProject ? (
-          <>What should we build in {projectSelector}?</>
+          <>What should we work on in {projectSelector}?</>
         ) : canChooseProject ? (
           <>{projectSelector} to start</>
         ) : (

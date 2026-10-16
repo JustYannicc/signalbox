@@ -27,6 +27,7 @@ import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
 import IconBrain from "@tabler/icons-react-native/IconBrain";
+import IconBuilding from "@tabler/icons-react-native/IconBuilding";
 import IconCamera from "@tabler/icons-react-native/IconCamera";
 import IconCar from "@tabler/icons-react-native/IconCar";
 import IconChartBar from "@tabler/icons-react-native/IconChartBar";
@@ -165,6 +166,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "bolt.circle": IconBolt,
   "bolt.horizontal.circle": IconBolt,
   brain: IconBrain,
+  "building.2": IconBuilding,
   "cable.connector": IconPlug,
   camera: IconCamera,
   car: IconCar,

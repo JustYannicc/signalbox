@@ -1,5 +1,6 @@
 import { CONTROL_FLOW } from "./content/controlFlow.ts";
 import { EXAMPLES } from "./content/examples.ts";
+import { GITHUB_ACTIONS } from "./content/githubActions.ts";
 import { PATTERNS } from "./content/patterns.ts";
 import { RUNS } from "./content/runs.ts";
 import { SKILL } from "./content/skill.ts";
@@ -21,6 +22,7 @@ export const SKILL_TOPICS = {
   triggers: TRIGGERS,
   runs: RUNS,
   patterns: PATTERNS,
+  "github-actions": GITHUB_ACTIONS,
 } as const;
 export type SkillTopic = keyof typeof SKILL_TOPICS;
 

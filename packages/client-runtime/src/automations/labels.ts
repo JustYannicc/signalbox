@@ -56,10 +56,10 @@ export const CONTAINER_TYPE_LABEL: Record<LayoutContainer["kind"], string> = {
 
 /** How long a finished step or run took; null while it's still going. */
 export function durationMs(entry: {
-  readonly startedAt: string;
+  readonly startedAt: string | null;
   readonly finishedAt: string | null;
 }): number | null {
-  if (!entry.finishedAt) return null;
+  if (!entry.startedAt || !entry.finishedAt) return null;
   const ms = Date.parse(entry.finishedAt) - Date.parse(entry.startedAt);
   return Number.isFinite(ms) ? ms : null;
 }
