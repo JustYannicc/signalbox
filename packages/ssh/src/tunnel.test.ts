@@ -1226,8 +1226,14 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
 
         // A crashed server whose parent never reaps it stays a zombie, which
         // kill -0 still reports. Its pid file and runtime record keep naming it.
+        // The parent resets SIGCHLD itself: when it arrives ignored (inherited,
+        // and a POSIX shell can't undo that), the kernel reaps the child at once
+        // and there's no zombie to test against.
         const parent = yield* spawner.spawn(
-          ChildProcess.make("sh", ["-c", "sleep 600 & echo $!; exec sleep 600"]),
+          ChildProcess.make("perl", [
+            "-e",
+            '$SIG{CHLD} = "DEFAULT"; $| = 1; my $c = fork; if (!$c) { sleep 600; exit } print "$c\\n"; sleep 600',
+          ]),
         );
         const zombie = Number(
           Option.getOrThrow(
@@ -1235,7 +1241,13 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           ),
         );
         process.kill(zombie, "SIGKILL");
-        assert.include((yield* runScript(home, ["-c", `ps -o stat= -p ${zombie}`])).stdout, "Z");
+        // SIGKILL lands asynchronously, so wait for the child to show as a zombie.
+        const zombieState = runScript(home, [
+          "-c",
+          `for i in $(seq 50); do s=$(ps -o stat= -p ${zombie}); case "$s" in *Z*) echo "$s"; exit 0;; esac; sleep 0.1; done; echo "$s"; ps -o pid=,ppid=,stat=,comm= -p ${zombie},${parent.pid} >&2`,
+        ]);
+        const { stdout: state, stderr: processes } = yield* zombieState;
+        assert.include(state, "Z", `no zombie; processes (pid ppid stat comm):\n${processes}`);
         yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
         yield* fs.writeFileString(
           `${home}/.signalbox/userdata/server-runtime.json`,
