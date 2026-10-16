@@ -119,6 +119,23 @@ export const SIGNALBOX_RPC_REACH = {
 
   "signalbox.previews.subscribe": read({ name: "previews.list" }),
   "signalbox.previews.open": write(),
+  // The agent's browser (#587): agents drive it through their own `preview_*` tools.
+  "signalbox.previews.browserWatch": exempt(
+    "client-local",
+    "A live mirror of the agent's page for a client's replayer to show.",
+  ),
+  "signalbox.previews.browserInput": exempt(
+    "client-local",
+    "A person's own input to the page they watch; agents act through preview_* tools.",
+  ),
+  "signalbox.previews.browserTrail": read({
+    name: "previews.browserSteps",
+    summary: "The steps an agent took in its browser in a thread.",
+  }),
+  "signalbox.previews.browserStep": exempt(
+    "client-local",
+    "One step's page recording, for a client's replayer to show.",
+  ),
 
   "signalbox.browsing.subscribe": read({
     name: "browsing.get",

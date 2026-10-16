@@ -7,12 +7,14 @@ import {
   PREVIEW_TUNNEL_VERSION,
   type PreviewPort,
   readDataFrame,
+  RUNNER_STREAM_BASE,
   type TunnelThreadMessage,
   tunnelRunnerFrame,
   tunnelThreadFrame,
 } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ThreadId } from "@t3tools/contracts";
 
+import { BrowserMirror, type BrowserMirrorHost } from "./BrowserMirror.ts";
 import { requestHeaders, responseHeaders, sendableCloseCode } from "./previewHeaders.ts";
 import {
   labelOfHost,
@@ -41,6 +43,9 @@ import { type PreviewClaims, previewToken, verifyPreviewToken } from "./previewT
  * open the preview holds the machine's lease (`ThreadRunner.PreviewHold`).
  * Sockets survive hibernation with what they need in their attachments; HTTP
  * requests keep the object in memory until they finish.
+ *
+ * The agent's browser rides the same tunnel (`BrowserMirror.ts`); its
+ * mirrors never hold the lease.
  */
 
 const TUNNEL_TAG = "preview-tunnel";
@@ -71,6 +76,8 @@ const CLOSE = {
 interface TunnelAttachment {
   readonly generation: number;
   readonly ports: ReadonlyArray<PreviewPort>;
+  /** The Runner mirrors its agent's browser. Absent on tunnels from before #587. */
+  readonly mirror?: boolean;
 }
 
 interface ClientAttachment {
@@ -78,7 +85,10 @@ interface ClientAttachment {
   readonly generation: number;
 }
 
-export interface PreviewGatewayHost {
+export interface PreviewGatewayHost extends Pick<
+  BrowserMirrorHost,
+  "canSee" | "storeStep" | "logError" | "viewerId"
+> {
   readonly ctx: DurableObjectState;
   readonly settings: PreviewSettings | null;
   readonly threadId: () => ThreadId;
@@ -86,9 +96,10 @@ export interface PreviewGatewayHost {
   readonly now?: () => number;
   /** The lease token when `generation` holds the lease (and `token` matches, if given). */
   readonly leaseToken: (generation: number, token?: string) => Promise<string | null>;
-  readonly canSee: (userId: string) => Promise<boolean>;
   /** An open preview started or ended holding the lease. */
   readonly holdChanged: () => Promise<void>;
+  /** Whether the thread's browser trail has a step. */
+  readonly browsed: () => Promise<boolean>;
 }
 
 interface Deferred<A> {
@@ -161,19 +172,40 @@ const tryClose = (socket: WebSocket, code: number, reason: string) => {
 
 export class PreviewGateway {
   private readonly pending = new Map<number, Pending>();
-  private nextStream = Math.floor(Math.random() * 0x7fff_ffff);
+  // The thread's own streams stay below the Runner's (`RUNNER_STREAM_BASE`).
+  private nextStream = Math.floor(Math.random() * RUNNER_STREAM_BASE);
   private lastActive: number | null = null;
   private readonly listeners = new Set<(line: string) => void>();
+  /** The trail has a step; read once, before the first subscriber hears it. */
+  private browsed: Promise<boolean> | null = null;
+  private browsedNow = false;
   /** What the lease was last told, so it hears only flips. */
   private toldHeld = false;
   /** Labels per port: the thread id never changes. */
   private readonly labels = new Map<number, Promise<string>>();
   private readonly host: PreviewGatewayHost;
   private readonly now: () => number;
+  /** The agent's browser: watchers and the steps' recordings. */
+  readonly mirror: BrowserMirror;
 
   constructor(host: PreviewGatewayHost) {
     this.host = host;
     this.now = host.now ?? Date.now;
+    this.mirror = new BrowserMirror({
+      ...host,
+      storeStep: async (step, recording) => {
+        await host.storeStep(step, recording);
+        this.markBrowsed();
+      },
+      tunnel: () => {
+        const tunnel = this.tunnel();
+        return tunnel === null
+          ? null
+          : { socket: tunnel.socket, mirror: tunnel.attachment.mirror === true };
+      },
+      send: (socket, message) => this.send(socket, message),
+      newStream: () => this.newStream(),
+    });
   }
 
   /** Whether a browser holds a preview socket open. */
@@ -263,8 +295,10 @@ export class PreviewGateway {
       socket.serializeAttachment({
         generation: message.generation,
         ports: [],
+        mirror: message.mirror === true,
       } satisfies TunnelAttachment);
       trySend(socket, tunnelThreadFrame.encode({ type: "welcome" }));
+      this.mirror.connected();
       this.notify();
       await this.holdMaybeChanged();
       return;
@@ -278,6 +312,9 @@ export class PreviewGateway {
       case "ports":
         socket.serializeAttachment({ ...attachment, ports: message.ports });
         this.notify();
+        return;
+      case "trail.step":
+        this.mirror.onTrailStep(message.stream, message.step);
         return;
       case "head": {
         const pending = this.pending.get(message.stream);
@@ -304,6 +341,7 @@ export class PreviewGateway {
         return;
       }
       case "end": {
+        if (await this.mirror.onEnd(message.stream)) return;
         const pending = this.pending.get(message.stream);
         if (pending?.kind === "http") {
           this.pending.delete(message.stream);
@@ -316,6 +354,7 @@ export class PreviewGateway {
         return;
       }
       case "fail":
+        if (this.mirror.onFail(message.stream, message.message)) return;
         this.failStream(message.stream, message.message);
         return;
       case "ws.opened": {
@@ -337,6 +376,7 @@ export class PreviewGateway {
     if (attachmentOf<TunnelAttachment>(socket) === null) return;
     if (this.tunnel() !== null) return; // Replaced; the hello already cleaned up.
     this.failAll("The machine went away.");
+    this.mirror.disconnected();
     this.notify();
     await this.holdMaybeChanged();
   }
@@ -351,6 +391,8 @@ export class PreviewGateway {
     }
     if (!ended) return;
     this.failAll("The machine stopped.");
+    // Watchers already moved on if a newer machine said hello first.
+    if (this.tunnel() === null) this.mirror.disconnected();
     this.notify();
     await this.holdMaybeChanged();
   }
@@ -475,8 +517,12 @@ export class PreviewGateway {
         .map((socket) => attachmentOf<ClientAttachment>(socket)?.stream),
     );
     do {
-      this.nextStream = (this.nextStream + 1) % 0xffff_ffff;
-    } while (this.pending.has(this.nextStream) || inUse.has(this.nextStream));
+      this.nextStream = (this.nextStream + 1) % RUNNER_STREAM_BASE;
+    } while (
+      this.pending.has(this.nextStream) ||
+      inUse.has(this.nextStream) ||
+      this.mirror.owns(this.nextStream)
+    );
     return this.nextStream;
   }
 
@@ -606,7 +652,7 @@ export class PreviewGateway {
 
   private onData(data: ArrayBuffer) {
     const frame = readDataFrame(data);
-    if (frame === null) return;
+    if (frame === null || this.mirror.onData(frame)) return;
     if (frame.kind === DATA_KIND.body) {
       const pending = this.pending.get(frame.stream);
       if (pending?.kind !== "http") return;
@@ -665,13 +711,41 @@ export class PreviewGateway {
   }
 
   private notify() {
-    const line = previewsLine(this.ports());
+    const line = previewsLine(this.ports(), this.browsedNow);
     for (const listener of this.listeners) listener(line);
   }
 
-  /** Newline-delimited `{ ports }`, now and after every change; null when `userId` can't see the thread. */
+  /** The trail kept its first step: subscribers hear `browsed`. */
+  private markBrowsed() {
+    if (this.browsedNow) return;
+    this.browsedNow = true;
+    this.browsed = Promise.resolve(true);
+    this.notify();
+  }
+
+  private loadBrowsed() {
+    this.browsed ??= this.host.browsed().then(
+      (browsed) => {
+        this.browsedNow ||= browsed;
+        return this.browsedNow;
+      },
+      (cause: unknown) => {
+        // Read again by the next subscriber.
+        this.browsed = null;
+        this.host.logError("browser trail unreadable", cause);
+        return this.browsedNow;
+      },
+    );
+    return this.browsed;
+  }
+
+  /**
+   * Newline-delimited `{ ports, browsed? }`, now and after every change;
+   * null when `userId` can't see the thread.
+   */
   async subscribe(userId: string): Promise<ReadableStream<Uint8Array> | null> {
     if (!(await this.host.canSee(userId))) return null;
+    await this.loadBrowsed();
     let listener: ((line: string) => void) | null = null;
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
@@ -686,7 +760,7 @@ export class PreviewGateway {
           }
         };
         this.listeners.add(listener);
-        listener(previewsLine(this.ports()));
+        listener(previewsLine(this.ports(), this.browsedNow));
       },
       cancel: () => {
         if (listener !== null) this.listeners.delete(listener);

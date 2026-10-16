@@ -55,6 +55,7 @@
         "@napi-rs/keyring",
         "oxc-parser",
         "oxc-transform",
+        "@rrweb/record", // signalbox: agent browser; its IIFE is read from disk and injected into pages
       ],
     },
     "apps/cloud": {
@@ -89,7 +90,8 @@
       // Vitest loads this through the per-file @vitest-environment directive.
       "ignoreDependencies": ["jsdom"],
       // Worktree setup (scripts/setup-worktree.ts) runs this directly.
-      "entry": ["scripts/warm-dep-cache.ts"],
+      // signalbox: agent browser; the mirror page is a second Vite entry (vite.config.ts).
+      "entry": ["scripts/warm-dep-cache.ts", "src/agentBrowser/mirror/main.ts!"],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.

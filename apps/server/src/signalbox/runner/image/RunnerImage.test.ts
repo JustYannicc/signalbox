@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import packageJson from "../../../../package.json" with { type: "json" };
 import { previewBrowserRelease } from "../../../preview/PreviewBrowser.ts";
+import { GATEWAY_PINS_CHECKED_ON } from "../RunnerGatewayPins.ts";
 
 /**
  * The Runner image's browser (#402) is the one the server's browser pins, so
@@ -27,8 +28,19 @@ describe("Runner image pins", () => {
     }
   });
 
+  // Which settings and variables move a harness off the gateway changes between
+  // releases, so a bump re-checks them first (#600, `RunnerGatewayPins.ts`).
+  it("installs the harnesses the gateway pins were checked against", () => {
+    expect(arg("CLAUDE_CODE_VERSION")).toBe(GATEWAY_PINS_CHECKED_ON.claudeCode);
+    expect(arg("CODEX_VERSION")).toBe(GATEWAY_PINS_CHECKED_ON.codex);
+  });
+
   it("installs the Playwright the server pins", () => {
     expect(arg("PLAYWRIGHT_CORE_VERSION")).toBe(packageJson.dependencies["playwright-core"]);
+  });
+
+  it("installs the rrweb recorder the agent's browser pins", () => {
+    expect(arg("RRWEB_RECORD_VERSION")).toBe(packageJson.dependencies["@rrweb/record"]);
   });
 
   it("installs the oxc the automation compiler pins", () => {
@@ -42,6 +54,7 @@ describe("Runner image pins", () => {
     const installs = dockerfile.match(/npm install --prefix \/opt\/signalbox[^&]*/g) ?? [];
     expect(installs).toHaveLength(1);
     expect(installs[0]).toContain('"playwright-core@${PLAYWRIGHT_CORE_VERSION}"');
+    expect(installs[0]).toContain('"@rrweb/record@${RRWEB_RECORD_VERSION}"');
     expect(installs[0]).toContain('"@1password/sdk@${ONEPASSWORD_SDK_VERSION}"');
     expect(installs[0]).toContain('"oxc-parser@${OXC_VERSION}"');
   });

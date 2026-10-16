@@ -184,7 +184,8 @@ function SettingsIndexSections() {
       <SettingsSection title="Automations">
         {/* signalbox: automations */}
         <AutomationsSettingsRows />
-        <SignInSettingsRow /> {/* signalbox: sign-in grants */}
+        {/* signalbox: sign-in grants */}
+        <SignInSettingsRow />
         {/* signalbox: hidden where no selected environment runs them. */}
         {!noServerTargets &&
         targetsSupporting(selectedTargets, "scheduledTasks").length === 0 ? null : (

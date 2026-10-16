@@ -195,7 +195,51 @@ describe("RunnerSecrets", () => {
 
       expect(secrets.environment()).toEqual({ TEST_ANTHROPIC_API_KEY: "sk-ant-for-tests" });
       expect(notices).toEqual([
-        "Skipped ANTHROPIC_API_KEY, HOME from 1Password: Signalbox sets them for the agent's own harness.",
+        "Skipped HOME from 1Password: Signalbox sets it for the agent's own harness.",
+        "Skipped ANTHROPIC_API_KEY from 1Password: it could send the agent's model requests, or copies of them, around the gateway that keeps secrets out of them.",
+      ]);
+    }),
+  );
+
+  // Each of these took Claude Code 2.1.292 or Codex 0.160.1 off the gateway, or
+  // copied its prompts elsewhere, when set in the harness's environment (#600).
+  it.effect.each([
+    ["a proxy", ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "all_proxy"]],
+    [
+      "OpenTelemetry export",
+      ["CLAUDE_CODE_ENABLE_TELEMETRY", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_LOG_USER_PROMPTS"],
+    ],
+    [
+      "another model provider",
+      ["CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_FOUNDRY_BASE_URL", "CLAUDE_CODE_USE_MANTLE"],
+    ],
+    ["a socket instead of the gateway", ["ANTHROPIC_UNIX_SOCKET"]],
+    ["code loaded into the harness", ["NODE_OPTIONS", "BUN_OPTIONS", "LD_PRELOAD"]],
+    [
+      "Codex's launch arguments and endpoint",
+      ["T3CODE_CODEX_LAUNCH_ARGS", "OPENAI_BASE_URL", "CODEX_CA_CERTIFICATE"],
+    ],
+  ] as const)("skips folder secrets that route the harness through %s, and says so", ([, names]) =>
+    Effect.gen(function* () {
+      const account = fakeOnePassword({
+        [top]: [
+          ...names.map((name) => variable(name, `http://dead.invalid/${name}`, false)),
+          variable("OPENAI_API_KEY", "sk-for-the-apps-own-tests"),
+        ],
+      });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(),
+      });
+      const { report, notices } = reporter();
+
+      yield* secrets.load(access([top]), report);
+
+      // A key the app itself uses still loads: Codex reads none of its provider from it.
+      expect(secrets.environment()).toEqual({ OPENAI_API_KEY: "sk-for-the-apps-own-tests" });
+      expect(notices).toEqual([
+        `Skipped ${names.toSorted().join(", ")} from 1Password: ${names.length === 1 ? "it" : "they"} could send the agent's model requests, or copies of them, around the gateway that keeps secrets out of them.`,
       ]);
     }),
   );

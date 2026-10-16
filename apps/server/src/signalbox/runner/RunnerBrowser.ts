@@ -36,6 +36,8 @@ import type { CDPSession, Dialog, Page } from "playwright-core";
 
 import { ServerBrowserContexts } from "../../preview/ServerBrowserContexts.ts";
 import * as ServerBrowserPage from "../../preview/ServerBrowserPage.ts";
+import type { Timer } from "./RunnerBrowserControl.ts";
+import { type BrowserMirror, makeBrowserMirror } from "./RunnerBrowserMirror.ts";
 import { type BrowserRoute, browserFor } from "./RunnerBrowserRoute.ts";
 
 /**
@@ -53,6 +55,10 @@ import { type BrowserRoute, browserFor } from "./RunnerBrowserRoute.ts";
  * A tab whose next URL belongs to the other browser moves there under the same
  * tab id, so a dev tab never carries the profile and a real site never runs
  * in the cookie-less browser.
+ *
+ * Every tab records itself for the people watching the agent's browser
+ * (`RunnerBrowserMirror.ts`), and a tab a person took over makes the agent's
+ * actions on it wait.
  */
 
 type TabInput = PreviewAutomationTabTargetInput;
@@ -85,6 +91,8 @@ export interface BrowserBackend {
    */
   readonly signIn: (input: { readonly site?: string }) => Promise<BrowserSignInAnswer>;
   readonly close: () => Promise<void>;
+  /** The browser as people watch it; absent on a browser that isn't mirrored. */
+  readonly mirror?: BrowserMirror;
 }
 
 /** Where the Runner image puts the pinned headless shell (see `image/Dockerfile`). */
@@ -110,6 +118,8 @@ export interface TabSource {
   readonly use?: () => () => void;
   /** Signs the browser's profile in to `site`, letting go of the browser first. */
   readonly signIn?: (site: string) => Promise<BrowserSignInAnswer>;
+  /** Why this browser last refused to open, in its provider's words; null once it opens. */
+  readonly problem?: () => string | null;
   readonly close: () => Promise<void>;
 }
 
@@ -184,16 +194,49 @@ export const makeHeadlessBrowser = (options: {
  * One set of tabs over the machine's browser and, when the thread has one,
  * the person's. Without `person` every URL opens on the machine.
  */
-export const makeRunnerBrowser = (sources: {
-  readonly machine: TabSource;
-  readonly person: TabSource | null;
-}): BrowserBackend => {
+export const makeRunnerBrowser = (
+  sources: {
+    readonly machine: TabSource;
+    readonly person: TabSource | null;
+  },
+  options: { readonly timer?: Timer } = {},
+): BrowserBackend => {
   const tabs = new Map<string, Tab>();
   let current: string | null = null;
   /** Tab ids of the person's pages while its browser is let go, by CDP target, for when it's back. */
   const parked = new Map<string, string>();
   /** The current tab, when it is one of those. */
   let parkedCurrent: string | null = null;
+
+  const { recorder, mirror } = makeBrowserMirror(
+    {
+      tabs: () => [
+        ...[...tabs.values()].map(({ tabId, route, page }) => ({ tabId, route, page })),
+        ...[...new Set(parked.values())]
+          .filter((tabId) => !tabs.has(tabId))
+          .map((tabId) => ({ tabId, route: "person" as const, page: null })),
+      ],
+      current: () => current ?? parkedCurrent,
+      problem: () => sources.person?.problem?.() ?? null,
+      drive: async (tabId) => {
+        const release = sourceOf(tabs.get(tabId)?.route ?? "person").use?.() ?? constVoid;
+        try {
+          await findTab({ tabId });
+        } catch (cause) {
+          release();
+          throw cause;
+        }
+        return { cdp: () => tabs.get(tabId)?.cdp ?? null, release };
+      },
+    },
+    options,
+  );
+  /** `promise`, telling viewers when it fails: the person's browser may have refused. */
+  const telling = <A>(promise: Promise<A>) =>
+    promise.catch((cause: unknown) => {
+      recorder.changed();
+      throw cause;
+    });
 
   const routeOf = (url: string): BrowserRoute =>
     sources.person === null ? "machine" : browserFor(url);
@@ -306,6 +349,7 @@ export const makeRunnerBrowser = (sources: {
         parked.set(tab.targetId, tab.tabId);
         if (parked.size > TAB_LIMIT * 2) parked.delete(parked.keys().next().value!);
       }
+      recorder.changed();
     });
     tabs.set(tab.tabId, tab);
     if (options.background !== true) current = tab.tabId;
@@ -313,12 +357,14 @@ export const makeRunnerBrowser = (sources: {
       current = tab.tabId;
       parkedCurrent = null;
     }
+    await recorder.attach(tab.tabId, page, cdp);
+    recorder.changed();
     return tab;
   }
 
   /** A page in `route`'s browser, or on the machine when the cloud has no person's browser. */
   const pageOn = async (route: BrowserRoute) => {
-    const page = await sourceOf(route).newPage();
+    const page = await telling(sourceOf(route).newPage());
     if (page !== null) return { page, route };
     const machine = await sources.machine.newPage();
     if (machine === null) throw failure("This machine has no browser.");
@@ -353,7 +399,7 @@ export const makeRunnerBrowser = (sources: {
   /** `tab`, or the tab that replaces it in the browser `route` names, under the same id. */
   const onRoute = async (tab: Tab, route: BrowserRoute): Promise<Tab> => {
     if (tab.route === route) return tab;
-    const page = await sourceOf(route).newPage();
+    const page = await telling(sourceOf(route).newPage());
     // Without a person's browser, a machine tab stays where it is.
     if (page === null && tab.route === "machine") return tab;
     const opened = page === null ? await pageOn("machine") : { page, route };
@@ -369,7 +415,7 @@ export const makeRunnerBrowser = (sources: {
   const findTab = async (input: TabInput): Promise<Tab> => {
     const wanted = input.tabId ?? (current === null ? parkedCurrent : null);
     if (wanted !== null && !tabs.has(wanted) && [...parked.values()].includes(wanted)) {
-      if (await sources.person?.reopen?.()) await adopt();
+      if (await telling(sources.person?.reopen?.() ?? Promise.resolve(false))) await adopt();
     }
     return requireTab(input);
   };
@@ -385,13 +431,27 @@ export const makeRunnerBrowser = (sources: {
     );
   };
 
-  /** An action on a tab, refused while a dialog waits, and kept in the tab's timeline. */
-  const act = async <A>(
+  /** The agent's `action` on a tab: unless it only reads, it waits while a person drives the tab. */
+  const agentTurn = async <A>(
     input: TabInput,
     action: string,
     run: (tab: Tab) => Promise<A>,
   ): Promise<A> => {
-    const tab = await findTab(input);
+    const found = await findTab(input);
+    const done = await recorder.agentTurn(found.tabId, action);
+    try {
+      return await run(requireTab({ tabId: found.tabId }));
+    } finally {
+      done();
+      recorder.changed();
+    }
+  };
+
+  /** An action on a tab in the agent's turn, refused while a dialog waits, and kept in the tab's timeline. */
+  const act = <A>(input: TabInput, action: string, run: (tab: Tab) => Promise<A>): Promise<A> =>
+    agentTurn(input, action, (tab) => actOn(tab, action, run));
+
+  const actOn = async <A>(tab: Tab, action: string, run: (tab: Tab) => Promise<A>): Promise<A> => {
     if (tab.dialog !== null)
       throw failure("A browser dialog is pending. Read preview_status and use preview_dialog.");
     const event: {
@@ -415,7 +475,15 @@ export const makeRunnerBrowser = (sources: {
     } finally {
       event.completedAt = new Date().toISOString();
       release();
+      // A dialog blocks the page's scripts, so the recorder can't mark the step.
+      recorder.step(tab.tabId, action, event.startedAt, { canMark: tab.dialog === null });
     }
+  };
+
+  /** A person who took a tab over drives it; the agent's actions there wait. */
+  const controlOf = (tabId: string | null) => {
+    const control = recorder.control(tabId);
+    return { ...control, ownedByCaller: control.owner === "agent" };
   };
 
   const statusOf = async (tab: Tab | undefined): Promise<PreviewAutomationStatus> => {
@@ -442,13 +510,11 @@ export const makeRunnerBrowser = (sources: {
               defaultValue: tab.dialog.defaultValue(),
             },
       ...(viewport === undefined ? {} : { viewport }),
-      tabs: [...tabs.values()].map((each) => ({
-        tabId: each.tabId,
-        url: each.page.url(),
-        owner: "agent" as const,
-        ownedByCaller: true,
-        visible: false,
-      })),
+      control: controlOf(tab?.tabId ?? null),
+      tabs: [...tabs.values()].map((each) => {
+        const { owner, ownedByCaller } = controlOf(each.tabId);
+        return { tabId: each.tabId, url: each.page.url(), owner, ownedByCaller, visible: false };
+      }),
     };
   };
 
@@ -547,6 +613,7 @@ export const makeRunnerBrowser = (sources: {
             ? found
             : await onRoute(found, route);
       current = tab.tabId;
+      recorder.changed();
       if (url !== undefined)
         await act({ tabId: tab.tabId }, "navigate", (each) => goto(each, url, { url }));
       await adopt();
@@ -561,16 +628,18 @@ export const makeRunnerBrowser = (sources: {
       await adopt();
       return statusOf(tab);
     },
-    dialog: async (input) => {
-      const tab = await findTab(input);
-      const dialog = tab.dialog;
-      if (dialog === null) throw failure("No dialog is pending.");
-      if (input.accept) await dialog.accept(input.promptText);
-      else await dialog.dismiss();
-      if (tab.dialog === dialog) tab.dialog = null;
-      ServerBrowserPage.invalidateRefs(tab.page);
-      return statusOf(tab);
-    },
+    dialog: (input) =>
+      agentTurn(input, "dialog", async (tab) => {
+        const dialog = tab.dialog;
+        if (dialog === null) throw failure("No dialog is pending.");
+        const startedAt = new Date().toISOString();
+        if (input.accept) await dialog.accept(input.promptText);
+        else await dialog.dismiss();
+        if (tab.dialog === dialog) tab.dialog = null;
+        ServerBrowserPage.invalidateRefs(tab.page);
+        recorder.step(tab.tabId, "dialog", startedAt, { canMark: tab.dialog === null });
+        return statusOf(tab);
+      }),
     resize: (input) =>
       act(input, "resize", async (tab) => {
         const setting = resolvePreviewViewport(input);
@@ -615,7 +684,9 @@ export const makeRunnerBrowser = (sources: {
       act(input, "waitFor", (tab) => ServerBrowserPage.waitFor(tab.page, input).then(constVoid)),
     signIn,
     close: async () => {
+      recorder.close();
       await Promise.all([sources.machine.close(), sources.person?.close() ?? Promise.resolve()]);
     },
+    mirror,
   };
 };

@@ -56,9 +56,15 @@ const pairs = (raw: ReadonlyArray<string>): Headers => {
   return result;
 };
 
-const sendData = (input: ProxyStreamInput, stream: number, kind: DataKind, bytes: Uint8Array) => {
+/** Sends `bytes` on `stream` as data frames of at most `MAX_DATA_BYTES`. */
+export const sendData = (
+  emit: (frame: TunnelFrame) => void,
+  stream: number,
+  kind: DataKind,
+  bytes: Uint8Array,
+) => {
   for (let offset = 0; offset < bytes.byteLength; offset += MAX_DATA_BYTES) {
-    input.emit(dataFrame(stream, kind, bytes.subarray(offset, offset + MAX_DATA_BYTES)));
+    emit(dataFrame(stream, kind, bytes.subarray(offset, offset + MAX_DATA_BYTES)));
   }
 };
 
@@ -116,7 +122,7 @@ export const proxyHttp = (request: RequestMessage, input: ProxyStreamInput): Pro
       headers: endToEnd(pairs(response.rawHeaders)),
     });
     response.on("data", (chunk: Buffer) => {
-      if (!state.finished) sendData(input, stream, DATA_KIND.body, chunk);
+      if (!state.finished) sendData(input.emit, stream, DATA_KIND.body, chunk);
     });
     response.on("end", () => state.finish({ type: "end", stream }));
     response.on("error", (error) => fail(`localhost:${port}: ${describeError(error)}`));

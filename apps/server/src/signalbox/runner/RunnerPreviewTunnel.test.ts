@@ -14,17 +14,24 @@ import {
   PREVIEW_TUNNEL_PATH,
   type PreviewPort,
   readDataFrame,
+  RUNNER_STREAM_BASE,
   type TunnelRunnerMessage,
   tunnelRunnerFrame,
   type TunnelThreadMessage,
   tunnelThreadFrame,
 } from "@signalbox/runner-protocol/PreviewTunnel";
 import { ThreadId } from "@t3tools/contracts";
+import type {
+  AgentBrowserInput,
+  AgentBrowserStep,
+  AgentBrowserUpdate,
+} from "@t3tools/contracts/signalboxPreviews";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { TunnelFrame } from "./previewProxy.ts";
+import type { BrowserMirror } from "./RunnerBrowserMirror.ts";
 import {
   type PreviewPortSource,
   previewTunnelTransport,
@@ -93,7 +100,7 @@ const makePorts = (initial: ReadonlyArray<PreviewPort>) => {
   return { source, set };
 };
 
-const startTunnel = (ports: ReadonlyArray<number>) =>
+const startTunnel = (ports: ReadonlyArray<number>, mirror?: BrowserMirror) =>
   Effect.gen(function* () {
     const thread = yield* makeFakeThread;
     const portSource = makePorts(ports.map((port) => ({ port, processName: "node" })));
@@ -103,6 +110,7 @@ const startTunnel = (ports: ReadonlyArray<number>) =>
       token: "lease-token",
       transport: thread.transport,
       ports: portSource.source,
+      ...(mirror === undefined ? {} : { mirror }),
     });
     return { thread, tunnel, setPorts: portSource.set };
   });
@@ -123,7 +131,7 @@ const nextData = (socket: FakeSocket) =>
   });
 
 /** Takes the next socket, checks its hello, and welcomes it. */
-const welcome = (thread: { readonly sockets: Queue.Queue<FakeSocket> }) =>
+const welcome = (thread: { readonly sockets: Queue.Queue<FakeSocket> }, mirror = false) =>
   Effect.gen(function* () {
     const socket = yield* Queue.take(thread.sockets);
     expect(yield* nextControl(socket)).toEqual({
@@ -132,6 +140,7 @@ const welcome = (thread: { readonly sockets: Queue.Queue<FakeSocket> }) =>
       threadId,
       generation: 3,
       token: "lease-token",
+      ...(mirror ? { mirror: true } : {}),
     });
     yield* socket.toRunner({ type: "welcome" });
     return socket;
@@ -518,6 +527,118 @@ describe("RunnerPreviewTunnel", () => {
         expect(readDataFrame(body)).toMatchObject({ stream: 7, kind: DATA_KIND.body });
         expect(decoder.decode(readDataFrame(body)!.payload)).toBe("hello from 127.0.0.1");
         expect(text(yield* Queue.take(frames))).toEqual({ type: "end", stream: 7 });
+      }),
+    ),
+  );
+
+  it.effect("serves the agent's browser to viewers and uploads its trail", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const inputs: Array<{ readonly viewerId: string; readonly input: AgentBrowserInput }> = [];
+        const closed: Array<string> = [];
+        const ends = new Map<string, () => void>();
+        let publish: ((step: AgentBrowserStep, events: string) => void) | null = null;
+        const mirror: BrowserMirror = {
+          watch: ({ viewerId, tabId, send, end }) => {
+            ends.set(viewerId, end);
+            const line = (update: AgentBrowserUpdate) =>
+              new TextEncoder().encode(`${JSON.stringify(update)}\n`);
+            send(
+              line({
+                _tag: "state",
+                viewerId,
+                tabs: [],
+                tabId,
+                control: "agent",
+                resting: false,
+                problem: null,
+                notice: null,
+              }),
+            );
+            send(
+              line({
+                _tag: "events",
+                tabId: "tab-1",
+                events: JSON.stringify(["x".repeat(100_000)]),
+              }),
+            );
+            return {
+              input: (input) => void inputs.push({ viewerId, input }),
+              close: () => void closed.push(viewerId),
+            };
+          },
+          onStep: (listener) => {
+            publish = listener;
+            return () => {
+              publish = null;
+            };
+          },
+        };
+        const { thread } = yield* startTunnel([], mirror);
+        const step: AgentBrowserStep = {
+          stepId: "step-1",
+          tabId: "tab-1",
+          action: "click",
+          url: "https://example.com/",
+          title: "Example",
+          startedAt: "2026-10-16T00:00:00.000Z",
+          endedAt: "2026-10-16T00:00:01.000Z",
+        };
+        const recording = `[${'{"type":4},'.repeat(10_000)}{"type":2}]`;
+        // A step that finishes before the thread welcomes the tunnel waits for it.
+        publish!(step, recording);
+
+        const socket = yield* welcome(thread, true);
+        expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+        const announced = yield* nextControl(socket);
+        if (announced.type !== "trail.step") throw new Error(JSON.stringify(announced));
+        expect(announced.step).toEqual(step);
+        expect(announced.stream).toBeGreaterThanOrEqual(RUNNER_STREAM_BASE);
+        const body = (stream: number) =>
+          Effect.gen(function* () {
+            const chunks: Array<Uint8Array> = [];
+            while (true) {
+              const frame = yield* next(socket);
+              if (!(frame instanceof Uint8Array)) return { chunks, after: frame };
+              const data = readDataFrame(frame)!;
+              expect(data).toMatchObject({ stream, kind: DATA_KIND.body });
+              expect(data.payload.byteLength).toBeLessThanOrEqual(MAX_DATA_BYTES);
+              chunks.push(data.payload.slice());
+            }
+          });
+        const uploaded = yield* body(announced.stream);
+        expect(uploaded.chunks.length).toBeGreaterThan(1);
+        expect(Buffer.concat(uploaded.chunks).toString()).toBe(recording);
+        expect(uploaded.after).toEqual({ type: "end", stream: announced.stream });
+
+        // A viewer's updates arrive as JSON lines, one per update, however many frames they span.
+        const watch = (stream: number, tabId: string | null) =>
+          Effect.gen(function* () {
+            yield* socket.toRunner({ type: "mirror.open", stream, tabId });
+            const lines: Array<AgentBrowserUpdate> = [];
+            let text = "";
+            while (lines.length < 2) {
+              const data = yield* nextData(socket);
+              expect(data).toMatchObject({ stream, kind: DATA_KIND.body });
+              text += decoder.decode(data.payload);
+              const parts = text.split("\n");
+              text = parts.pop()!;
+              lines.push(...parts.map((line) => JSON.parse(line) as AgentBrowserUpdate));
+            }
+            return lines;
+          });
+        const lines = yield* watch(5, null);
+        expect(lines.map((line) => line._tag)).toEqual(["state", "events"]);
+        expect(lines[0]).toMatchObject({ viewerId: "5", tabId: null });
+
+        yield* socket.toRunner({ type: "mirror.input", stream: 5, input: { _tag: "take" } });
+        yield* socket.toRunner({ type: "cancel", stream: 5 });
+        // A viewer the browser ends (it closed) ends its stream on the thread too.
+        yield* watch(6, "tab-1");
+        ends.get("6")!();
+        expect(yield* nextControl(socket)).toEqual({ type: "end", stream: 6 });
+        expect(inputs).toEqual([{ viewerId: "5", input: { _tag: "take" } }]);
+        expect(closed).toEqual(["5"]);
       }),
     ),
   );

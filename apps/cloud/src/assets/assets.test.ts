@@ -88,6 +88,10 @@ const threads = CloudThreadService.CloudThreadService.of({
   browse: () => Effect.die("not used by assets"),
   browsingRecord: () => Effect.die("not used by assets"),
   openPreview: unused,
+  browserWatch: () => Stream.die("not used by assets"),
+  browserInput: unused,
+  browserTrail: unused,
+  browserStep: unused,
   turnDiagnostics: unused,
   canSee: (actor, id) => Effect.succeed(actor.userId === owner && id === threadId),
 });
