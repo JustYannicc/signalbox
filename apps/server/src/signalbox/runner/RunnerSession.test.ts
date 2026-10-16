@@ -37,6 +37,8 @@ const makeFakeThread = Effect.gen(function* () {
   const committed = yield* Ref.make<ReadonlyArray<RunnerItem>>([]);
   const acked = yield* Ref.make(0);
   const hellos = yield* Ref.make<ReadonlyArray<number>>([]);
+  /** The runs each `hello` said its process holds. */
+  const helloRuns = yield* Ref.make<ReadonlyArray<ReadonlyArray<RunId> | undefined>>([]);
   const dropAfterCommit = yield* Ref.make(false);
   const toRunner = yield* Ref.make<Queue.Queue<ThreadMessage, RunnerConnectionError> | null>(null);
   const closed = new RunnerConnectionError({ message: "closed" });
@@ -57,6 +59,7 @@ const makeFakeThread = Effect.gen(function* () {
           switch (message.type) {
             case "hello":
               yield* Ref.update(hellos, (all) => [...all, message.lastAckedSequence]);
+              yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
                 type: "welcome",
                 generation: message.generation,
@@ -88,7 +91,7 @@ const makeFakeThread = Effect.gen(function* () {
       inbox === null ? Effect.void : Effect.asVoid(Queue.offer(inbox, message)),
     );
 
-  return { transport, committed, acked, hellos, dropAfterCommit, toCurrent };
+  return { transport, committed, acked, hellos, helloRuns, dropAfterCommit, toCurrent };
 });
 
 /** A harness whose reports the test writes by hand. */
@@ -100,6 +103,7 @@ const makeFakeTurns = Effect.gen(function* () {
       start: (next) => Ref.update(startedTurns, (all) => [...all, next.turn.runId]),
       interrupt: () => Effect.void,
       keepOnly: () => Effect.void,
+      taken: Ref.get(startedTurns),
     } satisfies RunnerTurns);
   const emit = (reported: RunnerItem) =>
     Effect.flatMap(Deferred.await(emitRef), (send) => send(reported));
@@ -177,6 +181,8 @@ describe("RunnerSession", () => {
         expect(labels).toEqual(["a", "b", "c", "log"]);
         // The reconnect said hello with what the Runner last saw acknowledged.
         expect(yield* Ref.get(thread.hellos)).toEqual([0, 1]);
+        // And with the turn it holds, so the thread knows it is still running here.
+        expect(yield* Ref.get(thread.helloRuns)).toEqual([[], [runId]]);
       }),
     ),
   );
@@ -246,6 +252,8 @@ describe("RunnerSession", () => {
 
       expect((yield* Ref.get(thread.committed)).map(label)).toEqual(["a", "b", "x", "y"]);
       expect(yield* Ref.get(thread.hellos)).toEqual([0, 0]);
+      // #613: the new process holds no turn, so the thread continues the one the first had.
+      expect((yield* Ref.get(thread.helloRuns))[1]).toEqual([]);
     }).pipe(Effect.scoped),
   );
 

@@ -621,7 +621,11 @@ harness wrote, and only the machine holding the lease can write.
 - When the machine running a turn is lost (its socket stays gone for 60 s, or
   it says `end`), the run ends interrupted, with anything still streaming
   shown aborted, and a continuation run (`restartContinuationOfRunId`) starts
-  on the next machine. That machine restores the session at its latest
+  on the next machine. A new Runner process on the same machine counts as
+  well: boat can bring a resumed disk up on another node, and that Runner
+  dials in with the same generation before the 60 s are up. Its `hello` lists
+  the runs it was handed, so a started run missing from it continues on that
+  machine. That machine restores the session at its latest
   durable row and the worktree at its latest auto-save, then resumes natively.
   A tool that was running is reported to the model as unfinished by the
   harness itself and never rerun. After three lost machines in a row, or when
