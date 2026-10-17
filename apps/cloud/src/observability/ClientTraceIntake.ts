@@ -46,13 +46,11 @@ const make = Effect.gen(function* () {
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(ClientTraces));
 
   const ingest: ClientTraceIntake["Service"]["ingest"] = Effect.fnUntraced(function* (input) {
-    const session = yield* sessions
-      .authenticate(input.credentials)
-      .pipe(
-        Effect.catchTags({
-          UserObjectError: (cause) => Effect.fail(new ClientTraceRejected({ status: 503, cause })),
-        }),
-      );
+    const session = yield* sessions.authenticate(input.credentials).pipe(
+      Effect.catchTags({
+        UserObjectError: (cause) => Effect.fail(new ClientTraceRejected({ status: 503, cause })),
+      }),
+    );
     if (!(yield* limits.allow(session.userId)))
       return yield* new ClientTraceRejected({ status: 429 });
     if (
