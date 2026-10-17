@@ -1022,6 +1022,10 @@ const make = Effect.gen(function* () {
         const backend = backends[classOf(lease)];
         const run = projection === null ? undefined : harnessRun(projection);
         const runId = run?.id ?? null;
+        const closing =
+          projection !== null &&
+          (projection.thread.archivedAt !== null ||
+            projection.thread.settledOverride === "settled");
         /**
          * Lets the machine go. `failure` fails the live run with it; `recover`
          * continues it on the next machine (`runRecovery.ts`), and then the
@@ -1061,7 +1065,7 @@ const make = Effect.gen(function* () {
           );
         };
         if (lease.status === "none") {
-          const previewHeld = yield* previews.held;
+          const previewHeld = !closing && (yield* previews.held);
           if ((run === undefined && !previewHeld) || projection === null) {
             return keep(UNNEEDED);
           }
@@ -1095,7 +1099,7 @@ const make = Effect.gen(function* () {
         }
         if (lease.status === "requested") {
           // A preview can keep the request alive without a run to fail.
-          const previewHeld = yield* previews.held;
+          const previewHeld = !closing && (yield* previews.held);
           if (run === undefined && !previewHeld) {
             return yield* release({ reason: "idle", detail: "No turn needs it any more." });
           }
@@ -1119,10 +1123,6 @@ const make = Effect.gen(function* () {
             runId,
           });
         }
-        const closing =
-          projection !== null &&
-          (projection.thread.archivedAt !== null ||
-            projection.thread.settledOverride === "settled");
         if (lease.disconnectedAt !== null) {
           const deadline = lease.disconnectedAt + RECONNECT_TIMEOUT_MS;
           if (now < deadline) return keep({ ...IDLE, wakeAt: deadline, runId });

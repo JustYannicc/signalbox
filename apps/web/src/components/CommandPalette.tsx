@@ -112,6 +112,7 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import {
@@ -695,7 +696,7 @@ function OpenCommandPaletteDialog(props: {
     activeThread !== null &&
     activeThreadServerConfig?.environment.capabilities.threadPinning === true &&
     canOperateActiveThread;
-  const toggleActiveThreadPin = useCallback(async () => {
+  const toggleActiveThreadPin = async () => {
     if (!activeThread || !canToggleActiveThreadPin) return;
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     const isPinned = activeThread.pinnedAt != null;
@@ -709,7 +710,8 @@ function OpenCommandPaletteDialog(props: {
         description: error instanceof Error ? error.message : "An error occurred.",
       }),
     );
-  }, [activeThread, canToggleActiveThreadPin, confirmAndUnpinThread, pinThread]);
+  };
+  const runToggleActiveThreadPin = useStableCallback(toggleActiveThreadPin);
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -2005,7 +2007,7 @@ function OpenCommandPaletteDialog(props: {
         <PinIcon className={ITEM_ICON_CLASS} />
       ),
       shortcutCommand: "thread.pin",
-      run: toggleActiveThreadPin,
+      run: runToggleActiveThreadPin,
     });
   }
 

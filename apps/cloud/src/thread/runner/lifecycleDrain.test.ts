@@ -115,6 +115,8 @@ describe("cloud lifecycle machine release", () => {
             });
             expect((yield* runner.reconcile).release).toBe(machine.generation);
             expect(yield* runner.leaseToken(machine.generation)).toBeNull();
+            expect((yield* runner.reconcile).ensure).toBeNull();
+            expect((yield* runner.work).needsUpkeep).toBe(false);
             const snapshot = yield* engine.snapshot(owner);
             expect(snapshot.projection.turnItems).toContainEqual(
               expect.objectContaining({
