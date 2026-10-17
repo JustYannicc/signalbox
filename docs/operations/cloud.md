@@ -735,13 +735,52 @@ tokens, CPU and memory, and the harness's session refs.
   `GET /api/cloud/threads/<thread id>/diagnostics` lists recent turns with
   their trace ids and failures, and `.../diagnostics/<trace, run or command id>` returns
   one record.
-- In Workers Logs, search for the trace id. When a turn ends, its object logs
-  the whole record as `cloud turn diagnostic`.
+- Search the wide events (below) for the trace id: the turn's own event
+  (`action: turn`) carries it as `turn.traceId`, and so does each of its model
+  requests' events from the ModelGateway.
+
+### Wide events
+
+Both Workers log through [evlog](https://www.evlog.dev) (#285), configured in
+`apps/cloud/evlog.config.ts`: one wide event per request, per Durable Object
+alarm, per turn, per model request through the ModelGateway, and per Executor
+call. `Effect.log*` inside one of these lands on its event instead of a line
+of its own. Every event names its unit (`action`) and its person, thread,
+turn, provider, model or pool by id, with `environment` set to the stage and
+`version` to the deployed commit. They never carry text anyone wrote: the
+config redacts every string under a content-shaped key before any drain
+sees it, and `src/observability/wideEvents.test.ts` fails if a turn's prompt or
+reply reaches one. Lint fails on `console.*` or another logger in
+`apps/cloud/src`.
+
+Where they go depends on the deploy environment's secrets (`cloud-preview`
+and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
+
+- `SENTRY_DSN`: every event as a Sentry log, every error event as a Sentry
+  issue, and both Workers' own traces through an allowlist-filtering Worker
+  before Sentry's OTLP endpoint (all of a preview's requests, a tenth of
+  production's). Native exports must never point directly at Sentry: they
+  include SQL statements, full URLs and storage keys outside evlog's redactor.
+  Unfiltered trace persistence in Cloudflare is disabled. Each stage has its
+  own destination and receiver at `traces-<app-origin>/v1/traces`, accepting
+  OTLP JSON, plain or gzip, with bearer auth using the DSN's public ingest
+  key. Cloud intake uses the `TRACE_EXPORT` service binding and
+  `TRACE_EXPORT_TOKEN` with that same protocol. The receiver keeps trace IDs,
+  approved enums, counts and timings; unknown fields, events and content
+  are dropped. It has no tracing of its own, preventing export loops.
+- `POSTHOG_API_KEY` with the `POSTHOG_HOST` variable, both required (no
+  default host): every event as a PostHog log. Both this drain and usage
+  analytics also require `SIGNALBOX_POSTHOG_ENABLED=true`. Leave that switch
+  unset until #358 lands, then set it with the EU project credentials.
+  Credentials alone never enable PostHog.
+
+After each deploy, CI sends one `release` event naming the stage and commit
+(`apps/cloud/infra/release-event.ts`).
 
 ### Usage analytics
 
-With `SIGNALBOX_POSTHOG_KEY` set (and `SIGNALBOX_POSTHOG_HOST` for a non-US
-project), thread objects send `cloud.turn.completed` per turn and
+With `SIGNALBOX_POSTHOG_ENABLED=true` and both `SIGNALBOX_POSTHOG_KEY` and
+`SIGNALBOX_POSTHOG_HOST` set to the EU project, thread objects send `cloud.turn.completed` per turn and
 `cloud.machine.session` per machine wake to Signalbox's PostHog. These are the
 #116 events the cost replay reads. Ids are hashed and nothing carries content,
 paths or command text. `T3CODE_TELEMETRY_ENABLED=false` turns them off. The

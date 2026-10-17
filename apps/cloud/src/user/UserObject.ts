@@ -11,6 +11,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import * as Evlog from "../observability/Evlog.ts";
+import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as IdentityProvider from "../account/IdentityProvider.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
@@ -35,6 +37,11 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential } from "../api/apiCredential.ts";
 import { serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
+import * as LearnerService from "../learner/LearnerService.ts";
+import * as LearnerJev from "../learner/LearnerJev.ts";
+import * as LearnerSummary from "../learner/LearnerSummary.ts";
+import * as LearnerHomes from "./LearnerHomes.ts";
+import * as UserLearner from "./UserLearner.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as NoteReader from "../notes/NoteReader.ts";
@@ -102,6 +109,7 @@ export interface UserObjectEnv
     MachineBackendEnv,
     PreviewEnv,
     GitHub.GitHubEnv,
+    LearnerJev.LearnerJevEnv,
     KindClassifier.KindClassifierEnv,
     PersonBrowsers.PersonBrowsersEnv,
     LoginService.LoginServiceEnv {
@@ -124,6 +132,10 @@ export interface UserObjectEnv
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
+  /** The Worker binding that accepts filtered client RPC trace batches. */
+  readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
+  /** Secret shared with the Worker-side trace intake. */
+  readonly TRACE_EXPORT_TOKEN?: string;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -207,7 +219,8 @@ const layerAlarm = (storage: DurableObjectStorage) =>
   );
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
-const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
+const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
+  const { storage } = ctx;
   const drives = layerDrives(env);
   const services =
     // The user's automations (#434), on the services below.
@@ -246,6 +259,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               UserShell.layer,
               UserThreadStatus.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PoolSignIns.layer,
               drives.services,
               ConnectionLinks.layer,
@@ -290,6 +304,20 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           ),
           Layer.provideMerge(LegacySections.layer),
           Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              LearnerService.layer,
+              LearnerSummary.layer((objectName) =>
+                PoolDirectory.poolObjectStub(env.POOLS, objectName, {
+                  localWorkerd: env.LOCAL_WORKERD === "1",
+                }),
+              ),
+            ).pipe(
+              Layer.provideMerge(
+                LearnerJev.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+              ),
+            ),
+          ),
           Layer.provideMerge(ModelManifest.layer),
           Layer.provideMerge(
             GitHub.layerForUsers(GitHub.gitHubEndpoints(env)).pipe(
@@ -318,7 +346,14 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               }),
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              SqliteClient.layer({ storage }),
+              Platform.layerCrypto,
+              Evlog.layer,
+              Evlog.layerWaitUntil(ctx),
+            ),
+          ),
           Layer.provideMerge(
             IdentityProvider.layer.pipe(
               Layer.provide(CloudConfig.layer),
@@ -333,6 +368,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
+          Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
         ),
       ),
     );
@@ -373,7 +409,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
     };
-    this.runtime = makeRuntime(ctx.storage, env);
+    this.runtime = makeRuntime(ctx, env);
     this.sockets = new ClientSockets({
       ctx,
       identity: this.identity,
@@ -560,6 +596,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.contextIds();
   }
 
+  clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
+    return this.api.clientTraceDimensions(threadIds);
+  }
+
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {
     return this.api.recordDriveAccess(entry);
   }
@@ -582,6 +622,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   driveEvents(input: Parameters<UserObjectApi["driveEvents"]>[0]) {
     return this.api.driveEvents(input);
+  }
+
+  learnerTool(threadId: string, name: string, input: unknown) {
+    return this.api.learnerTool(threadId, name, input);
   }
 
   automationTool(threadId: string, name: string, input: unknown) {
@@ -708,6 +752,12 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           ),
         ],
         { discard: true },
+      ).pipe(
+        // Named by the person's user id (`UserDirectory`).
+        Evlog.withUnit(
+          "user.alarm",
+          this.ctx.id.name === undefined ? {} : { person: { id: this.ctx.id.name } },
+        ),
       ),
     );
   }

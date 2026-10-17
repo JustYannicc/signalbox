@@ -7,8 +7,19 @@ need a separate branch and working directory.
 
 The icon rail on the left edge of the sidebar opens **Home**, which shows your threads
 where they live. Collapsing the sidebar hides Home but keeps the rail. **New**, pinned
-above Home, starts a thread. The back and forward arrows beside the sidebar toggle step
-through where you've been.
+above Home, opens quick capture; Shift-click it to go straight to a new draft. The back
+and forward arrows beside the sidebar toggle step through where you've been.
+
+## Quick capture
+
+Quick capture is the fastest way to write something down. Open it with **New**,
+`mod+shift+space`, or **Quick capture** in the command palette. Type `#` to pick a folder;
+without one it goes to your top level. Paste or drop files to attach them. **Enter** saves
+it as a draft and leaves you where you are. `mod+Enter` opens it as a full draft. Closing it
+any other way also keeps what you wrote as a draft.
+
+Unsent drafts show under **Drafts** at the top of Home. Click one to pick up where you left
+off, or hover it and choose **Discard draft**.
 
 ## Organize with folders
 
@@ -107,6 +118,18 @@ ignore it, and it stays a plain note. **Read again** in the note's menu asks for
 Notes are private by default: only you and your assistant read them. In an organization's folders,
 switch to **Team** to write notes the folder's agent can read too. Agents working in a folder can
 look up its team notes when they need them. They never see your private notes.
+
+### Learning from decisions
+
+In cloud threads, ask the agent to remember a rule for the thread's current folder or to consult
+what that level has learned. Your personal top level and each personal folder keep
+separate learning. Company learners are not available yet.
+Moving a thread changes where new decisions are recorded; it does not copy
+its earlier learning into the new folder.
+
+Agents can pair a recommendation with your later decision to learn a rule. A learned rule needs
+later support before the agent can rely on it. A rule you state directly can be used right away.
+When the evidence is missing or contradictory, the learner leaves the question for review.
 
 ### Sections on your own server
 

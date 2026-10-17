@@ -2,9 +2,9 @@ import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProt
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import type { ModelForwardReply, ModelServeReply } from "../models/ModelProtocol.ts";
-import { handleModelRequest, type ModelGatewayDeps } from "./modelGateway.ts";
-import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
+import type { ModelForwardReply, ModelServeReply } from "./ModelProtocol.ts";
+import { handleModelRequest, type ModelGatewayDeps } from "./ModelGateway.ts";
+import type { ModelGatewayRecord } from "./ModelRecords.ts";
 
 const LIVE = "sbm1.dGhyZWFkLWE.live";
 /** A local key (`localKeys/`): its user's object grants it, with no thread or turn. */

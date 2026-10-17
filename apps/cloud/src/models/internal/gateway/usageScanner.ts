@@ -1,6 +1,6 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 
-import type { ModelUsage } from "./modelGatewayRecord.ts";
+import type { ModelUsage } from "../../ModelRecords.ts";
 
 /**
  * Reads the model and token usage out of a provider response as its chunks

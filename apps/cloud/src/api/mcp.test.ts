@@ -1,10 +1,13 @@
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import { TrashSnapshot } from "@t3tools/contracts/signalboxTrash";
+
+import { makeRepo } from "../drive/driveTesting.ts";
+import { uploadPack } from "../drive/DriveUploads.ts";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import { signLocalKey } from "../localKeys/LocalKeys.ts";
@@ -16,6 +19,10 @@ const decodeFolders = Schema.decodeUnknownSync(Schema.fromJsonString(SignalboxFo
 const decodeTrash = Schema.decodeUnknownSync(Schema.fromJsonString(TrashSnapshot));
 
 const userId = "user_1";
+const repos: Array<ReturnType<typeof makeRepo>> = [];
+afterEach(() => {
+  for (const repo of repos.splice(0)) repo.cleanup();
+});
 
 const JsonRpcAnswer = Schema.Struct({
   result: Schema.optional(Schema.Unknown),
@@ -49,7 +56,7 @@ const connect = Effect.gen(function* () {
   const handle = cloud.userDirectory.forUser(userId);
   yield* handle.recordSignIn({ id: userId, email: "a@b.c" });
   const created = yield* handle.createLocalKey("agent", {
-    scopes: ["orchestration:read", "orchestration:operate"],
+    scopes: ["orchestration:read", "orchestration:operate", "filesystem:read"],
     model: false,
   });
   if (created._tag !== "created") throw new Error("no key");
@@ -92,7 +99,7 @@ const connect = Effect.gen(function* () {
     Effect.flatMap(rpc("tools/call", { name, arguments: args }), (answer) =>
       decodeToolResult(answer.result),
     );
-  return { rpc, tool };
+  return { rpc, tool, cloud };
 });
 
 describe("Signalbox's MCP", () => {
@@ -156,6 +163,40 @@ describe("Signalbox's MCP", () => {
       expect(created.isError ?? false).toBe(false);
       const listed = yield* tool("signalbox_call", { operation: "folders.list" });
       expect(listed.content[0]!.text).toContain("Via MCP");
+    }),
+  );
+
+  it.effect("serves cloud refs and immutable diff contents through MCP", () =>
+    Effect.gen(function* () {
+      const { tool, cloud } = yield* connect;
+      const git = makeRepo();
+      repos.push(git);
+      git.write("file.txt", "from MCP\n");
+      const headRef = git.commit("files");
+      const driveId = "my/personal/user_1";
+      yield* uploadPack({ driveId, threadId: "t1", ...git.pack([headRef]) }).pipe(
+        Effect.provide(cloud.drives.layer),
+      );
+      const contents = yield* tool("signalbox_call", {
+        operation: "review.getDiffFileContents",
+        input: {
+          cwd: `/drives/${driveId}`,
+          sourceKind: "branch-range",
+          changeType: "new",
+          baseRef: null,
+          headRef,
+          oldPath: "file.txt",
+          newPath: "file.txt",
+        },
+      });
+      expect(contents.isError ?? false).toBe(false);
+      expect(contents.content[0]!.text).toContain('"newContents":"from MCP\\n"');
+      const refs = yield* tool("signalbox_call", {
+        operation: "vcs.listRefs",
+        input: { cwd: "/host/path" },
+      });
+      expect(refs.isError ?? false).toBe(false);
+      expect(refs.content[0]!.text).toContain('"isRepo":false');
     }),
   );
 
