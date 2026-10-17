@@ -2346,6 +2346,9 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     if (!serverThread?.id) return;
+    // signalbox: a cached shell renders before the environment connects, and a visit sent then
+    // fails with nothing to resend it; this effect re-runs once the connection is up.
+    if (activeEnvironmentUnavailable) return;
     const visitStamp = visitStampFor(serverThread); // signalbox: at least the latest run's end
     const threadUpdatedAt = Date.parse(visitStamp);
     if (Number.isNaN(threadUpdatedAt)) return;
@@ -2393,6 +2396,7 @@ export default function ChatView(props: ChatViewProps) {
       serverThread.updatedAt,
     );
   }, [
+    activeEnvironmentUnavailable, // signalbox
     activeThreadLocalLastVisitedAt,
     markThreadVisited,
     routeThreadKey,
