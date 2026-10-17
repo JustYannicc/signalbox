@@ -90,18 +90,19 @@ const cacheKeyMaterial = (identity: NativeArtifactIdentity) => ({
   expoPlatforms: identity.expoPlatforms,
   target: identity.target,
   toolchain: identity.toolchain,
-  sources: sortedSources(identity),
+  sources: sortedHashBearingSources(identity),
   artifactKind: identity.artifactKind,
 });
 
-const sortedSources = (identity: NativeArtifactIdentity) =>
-  [...identity.sources].sort((left, right) =>
-    canonicalJson(left).localeCompare(canonicalJson(right), "en"),
-  );
+// Expo includes only sources with a hash in its fingerprint. Null-hash records
+// explain what Expo inspected but do not identify build inputs.
+const sortedHashBearingSources = (identity: NativeArtifactIdentity) =>
+  identity.sources
+    .filter((source) => source.hash !== null)
+    .sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right), "en"));
 
 const sameIdentity = (left: NativeArtifactIdentity, right: NativeArtifactIdentity) =>
-  canonicalJson(cacheKeyMaterial(left)) === canonicalJson(cacheKeyMaterial(right)) &&
-  canonicalJson(sortedSources(left)) === canonicalJson(sortedSources(right));
+  canonicalJson(cacheKeyMaterial(left)) === canonicalJson(cacheKeyMaterial(right));
 
 const digest = Effect.fn("nativeArtifact.digest")(function* (value: string | Uint8Array) {
   const crypto = yield* Crypto.Crypto;

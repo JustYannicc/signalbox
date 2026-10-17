@@ -252,6 +252,139 @@ it.layer(NodeServices.layer)("native artifact cache", (it) => {
     }),
   );
 
+  it.effect("reuses artifacts when Expo adds or removes null-hash source records", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-artifact-null-source-" });
+      const commonSources: Array<NativeArtifactCache.NativeArtifactSource> = [
+        {
+          type: "file",
+          filePath: "app.json",
+          reasons: ["expoConfig"],
+          hash: "f".repeat(40),
+        },
+      ];
+      const androidSource = {
+        type: "dir",
+        filePath: "android",
+        reasons: ["bareNativeDir"],
+        hash: null,
+      } as const;
+      const primaryIdentity = identity({
+        platform: "android",
+        fingerprint: "f69eef1931fe93f4bafc5063ace4e9fc328bb2e7",
+        expoPlatforms: ["android"],
+        target: {
+          abi: "arm64-v8a",
+          apiLevel: "36",
+          variant: "debug",
+          appId: "com.justyannicc.signalbox.dev",
+        },
+        toolchain: {
+          host: "darwin",
+          hostArchitecture: "arm64",
+          node: "v24.18.0",
+          expoTemplateHash: "0aaa86f73a8c75ee18a7dcccd19737de4f5d705566bdec0a4c9e89077d8db1cc",
+          javaVersion:
+            'openjdk version "21.0.12.1" 2026-08-18\nOpenJDK Runtime Environment Homebrew (build 21.0.12.1)\nOpenJDK 64-Bit Server VM Homebrew (build 21.0.12.1, mixed mode, sharing)',
+          androidSdkBuildTools: ["35.0.0", "36.0.0", "37.0.0"],
+          androidSdkPlatforms: ["android-34", "android-35", "android-36", "android-37.0"],
+          androidNdkVersions: ["27.1.12297006"],
+        },
+        sources: [...commonSources, androidSource],
+        artifactKind: "apk",
+      });
+      const secondaryIdentity = identity({
+        ...primaryIdentity,
+        sources: commonSources,
+      });
+      const primaryKey = yield* NativeArtifactCache.nativeArtifactCacheKey(primaryIdentity);
+      const secondaryKey = yield* NativeArtifactCache.nativeArtifactCacheKey(secondaryIdentity);
+      assert.equal(primaryKey, secondaryKey);
+
+      const withOtherIgnoredSources = identity({
+        ...secondaryIdentity,
+        sources: [
+          ...commonSources,
+          {
+            type: "file",
+            filePath: "ignored.txt",
+            reasons: ["bareNativeDir"],
+            hash: null,
+          },
+          {
+            type: "package",
+            name: "ignored-package",
+            version: "1.0.0",
+            filePath: "node_modules/ignored-package/package.json",
+            reasons: ["expoConfigPlugins"],
+            hash: null,
+          },
+        ],
+      });
+      assert.equal(
+        yield* NativeArtifactCache.nativeArtifactCacheKey(withOtherIgnoredSources),
+        primaryKey,
+      );
+
+      let buildCount = 0;
+      const request = (
+        worktree: string,
+        device: string,
+        buildIdentity: NativeArtifactCache.NativeArtifactIdentity,
+      ) =>
+        makeClient({
+          cacheRoot: root,
+          worktree,
+          device,
+          identity: buildIdentity,
+          build: (artifactPath) =>
+            Effect.gen(function* () {
+              buildCount += 1;
+              yield* writeArtifact(buildIdentity, artifactPath, `built for ${worktree}`);
+            }),
+        }).pipe(Effect.flatMap((options) => NativeArtifactCache.ensureNativeArtifact(options)));
+
+      let buildFinished = false;
+      const primaryOptions = yield* makeClient({
+        cacheRoot: root,
+        worktree: "worktree-with-android-dir",
+        device: "emulator-primary",
+        identity: primaryIdentity,
+        build: (artifactPath) =>
+          Effect.gen(function* () {
+            buildCount += 1;
+            yield* writeArtifact(
+              primaryIdentity,
+              artifactPath,
+              "built for worktree-with-android-dir",
+            );
+            buildFinished = true;
+          }),
+      });
+      const first = yield* NativeArtifactCache.ensureNativeArtifact({
+        ...primaryOptions,
+        currentIdentity: () => Effect.succeed(buildFinished ? secondaryIdentity : primaryIdentity),
+      });
+      const second = yield* request("clean-worktree", "emulator-secondary", secondaryIdentity);
+      const manifestText = yield* fs.readFileString(
+        path.join(path.dirname(first.artifactPath), "manifest.json"),
+      );
+      const installedSecondaryPath = path.join(root, "installed/emulator-secondary.native");
+
+      assert.equal(buildCount, 1);
+      assert.isTrue(first.built);
+      assert.isTrue(second.cacheHit);
+      assert.isFalse(second.built);
+      assert.isTrue(manifestText.includes('"filePath":"android"'));
+      assert.equal(
+        yield* fs.readFileString(installedSecondaryPath),
+        "built for worktree-with-android-dir",
+      );
+    }),
+  );
+
   it.effect("serializes concurrent callers so one build serves both devices", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -315,10 +448,18 @@ it.layer(NodeServices.layer)("native artifact cache", (it) => {
       const toolchainChanged = identity({
         toolchain: { host: "darwin", xcode: "Xcode 26.5 build 17F80", simulatorSdk: "26.5" },
       });
+      const targetChanged = identity({
+        target: { runtime: "iOS-26-5", architecture: "arm64" },
+      });
       const fingerprintChanged = identity({ fingerprint: "b".repeat(40) });
       let builds = 0;
 
-      for (const [index, buildIdentity] of [base, toolchainChanged, fingerprintChanged].entries()) {
+      for (const [index, buildIdentity] of [
+        base,
+        toolchainChanged,
+        targetChanged,
+        fingerprintChanged,
+      ].entries()) {
         const request = yield* makeClient({
           cacheRoot: root,
           worktree: `worktree-${index}`,
@@ -333,7 +474,7 @@ it.layer(NodeServices.layer)("native artifact cache", (it) => {
         yield* NativeArtifactCache.ensureNativeArtifact(request);
       }
 
-      assert.equal(builds, 3);
+      assert.equal(builds, 4);
     }),
   );
 
