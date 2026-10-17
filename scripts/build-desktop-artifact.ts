@@ -4051,7 +4051,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   localServer: Flag.Boolean("local-server").pipe(
     Flag.withDescription(
-      "Bundle upstream's local server. Kept buildable for upstream compatibility; Signalbox ships the gateway build without it (env: T3CODE_DESKTOP_LOCAL_SERVER).",
+      "Bundle upstream's local server, which runs agents on this machine. Signalbox ships the gateway build without it (env: T3CODE_DESKTOP_LOCAL_SERVER).",
     ),
     Flag.optional,
   ),

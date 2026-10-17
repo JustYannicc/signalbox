@@ -74,7 +74,19 @@ try {
   NodeFS.chmodSync(directory, 0o777);
   NodeFS.chmodSync(configPath, 0o666);
 
-  docker(["build", "--tag", image, "--file", dockerfilePath, buildContext], { stdio: "inherit" });
+  docker(
+    [
+      "build",
+      "--build-arg",
+      "CLIPROXYAPI_TEST_CARRIED_FLOWS=1",
+      "--tag",
+      image,
+      "--file",
+      dockerfilePath,
+      buildContext,
+    ],
+    { stdio: "inherit" },
+  );
 
   docker([
     "run",
@@ -114,7 +126,9 @@ try {
   if (!ready)
     throw lastError ?? new Error("CLIProxyAPI did not answer before the startup deadline.");
   await checkPoolCalls(origin);
-  console.log("CLIProxyAPI's v8 management API, managed config and /v1/models work.");
+  console.log(
+    "CLIProxyAPI's fake-auth Codex device-login and Claude manual-login tests, v8 management API, managed config and /v1/models work.",
+  );
 } catch (error) {
   if (started) {
     const logs = NodeChildProcess.spawnSync("docker", ["logs", container], { encoding: "utf8" });
