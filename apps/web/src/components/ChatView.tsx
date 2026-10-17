@@ -1,7 +1,4 @@
-import {
-  isComposerSubmissionUncertain,
-  recoverComposerSubmission,
-} from "../composerSubmissionRecovery";
+import { isComposerSubmissionUncertain } from "../composerSubmissionRecovery";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -343,6 +340,7 @@ import {
   type DraftThreadEnvMode,
   useComposerDraftStore,
   DraftId,
+  recoverComposerSubmission,
 } from "../composerDraftStore";
 import {
   formatTerminalContextLabel,

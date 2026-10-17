@@ -9,14 +9,6 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 
-import {
-  composerDraftHasUserContent,
-  useComposerDraftStore,
-  type ComposerImageAttachment,
-  type ComposerThreadDraftState,
-  type ComposerThreadTarget,
-} from "./composerDraftStore";
-
 /** A lost response cannot tell us whether the server accepted the message. */
 export function isComposerSubmissionUncertain(
   result: AtomCommandResult<unknown, unknown>,
@@ -42,9 +34,9 @@ export function isComposerSubmissionUncertain(
   return isTransportConnectionErrorMessage(error instanceof Error ? error.message : String(error));
 }
 
-export function cloneComposerImageForRetry(
-  image: ComposerImageAttachment,
-): ComposerImageAttachment {
+export function cloneComposerImageForRetry<Image extends { previewUrl: string; file: Blob }>(
+  image: Image,
+): Image {
   if (typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
     return image;
   }
@@ -56,33 +48,4 @@ export function cloneComposerImageForRetry(
   } catch {
     return image;
   }
-}
-
-export function recoverComposerSubmission(input: {
-  target: ComposerThreadTarget;
-  result: AtomCommandResult<unknown, unknown>;
-  requestStarted: boolean;
-  content: Pick<
-    ComposerThreadDraftState,
-    | "prompt"
-    | "images"
-    | "files"
-    | "terminalContexts"
-    | "previewAnnotations"
-    | "reviewComments"
-    | "threadContexts"
-  >;
-}) {
-  if (isComposerSubmissionUncertain(input.result, input.requestStarted)) return "uncertain";
-  const store = useComposerDraftStore.getState();
-  if (composerDraftHasUserContent(store.getComposerDraft(input.target))) return "occupied";
-  const { target, content } = input;
-  store.setPrompt(target, content.prompt);
-  store.addImages(target, content.images.map(cloneComposerImageForRetry));
-  store.addFiles(target, content.files);
-  store.setTerminalContexts(target, content.terminalContexts);
-  store.setPreviewAnnotations(target, content.previewAnnotations);
-  store.setReviewComments(target, content.reviewComments);
-  store.setThreadContexts(target, content.threadContexts);
-  return "restored";
 }

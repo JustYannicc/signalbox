@@ -1,4 +1,3 @@
-import { recoverComposerSubmission } from "./composerSubmissionRecovery";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -79,6 +78,7 @@ import {
   partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
+  recoverComposerSubmission,
 } from "./composerDraftStore";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 import { insertInlineContextReference } from "./lib/composerContextReferences";
