@@ -27,7 +27,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -38,6 +37,7 @@ import { type Decision, decide, decideLaunch, type ThreadWorktree } from "./thre
 import type { DecisionContext } from "./threadEvents.ts";
 import { applyEvents, threadShellFromProjection, workStartedAt } from "./threadProjection.ts";
 import { noteKey, noteRunId, supersedes } from "./statusLine/statusNotePolicy.ts";
+import { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
 import * as ThreadStore from "./ThreadStore.ts";
 import * as TurnModels from "./TurnModels.ts";
 import {
@@ -62,44 +62,7 @@ import type { ThreadMonitor, ThreadSnapshotWire, ThreadSummaryWire } from "./thr
  * event the log could lose.
  */
 
-export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>()(
-  "ThreadNotFoundError",
-  {},
-) {
-  override get message(): string {
-    return "Thread not found.";
-  }
-}
-
-export class ThreadCommandRejectedError extends Schema.TaggedError<ThreadCommandRejectedError>()(
-  "ThreadCommandRejectedError",
-  { commandId: Schema.String, commandType: Schema.String, reason: Schema.String },
-) {
-  override get message(): string {
-    return this.reason;
-  }
-
-  static forCommand(
-    command: { readonly id: string; readonly type: string },
-    reason: string,
-  ): ThreadCommandRejectedError {
-    return new ThreadCommandRejectedError({
-      commandId: command.id,
-      commandType: command.type,
-      reason,
-    });
-  }
-}
-
-/**
- * Who is acting. Only a thread's owner can read or change it until sharing
- * lands, and only while they're still in its context: `contextIds` are the
- * owner's contexts as their own object holds them at the time of the call.
- */
-export interface Actor {
-  readonly userId: string;
-  readonly contextIds: ReadonlyArray<SignalboxContextId>;
-}
+export { type Actor, ThreadNotFoundError, ThreadCommandRejectedError } from "./ThreadAccess.ts";
 
 /**
  * Fixed when a thread is created: the context it acts as and the drive it
