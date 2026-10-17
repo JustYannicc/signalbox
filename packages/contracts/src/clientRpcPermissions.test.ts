@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "./auth.ts";
-import { clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
-import { AUTOMATION_WS_METHODS } from "./automationRpc.ts";
+import {
+  AUTOMATION_WS_METHODS,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  clientRpcRequiredScopes,
+} from "./index.ts";
 
 describe("task lifecycle client RPC permissions", () => {
   it("lets read actions use orchestration read scope", () => {

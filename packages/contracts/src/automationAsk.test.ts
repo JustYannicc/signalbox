@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseAutomationAsk } from "./automationAsk.ts";
+import { parseAutomationAsk } from "./index.ts";
 
 describe("automation ask importance", () => {
   it("keeps existing asks interrupting by default and allows low priority", () => {
