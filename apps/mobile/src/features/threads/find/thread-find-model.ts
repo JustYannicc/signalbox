@@ -28,6 +28,7 @@ export type ThreadFindRevealAction =
 /** What a feed row holds that a Find match can name: its id, or the turn items inside it. */
 interface FeedRowLike {
   readonly id?: unknown;
+  readonly itemId?: unknown;
   readonly type?: unknown;
   readonly runId?: unknown;
   readonly groupId?: unknown;
@@ -54,6 +55,9 @@ function asFeedRow(value: unknown): FeedRowLike | null {
 
 function rowHolds(row: FeedRowLike, entryId: string): boolean {
   if (row.id === entryId) return true;
+  if ((row.type === "html-render" || row.type === "mcp-app") && row.itemId === entryId) {
+    return true;
+  }
   if (row.message?.projectedItem?.item?.id === entryId) return true;
   return row.activities?.some((activity) => activity.projectedItem?.item?.id === entryId) ?? false;
 }
