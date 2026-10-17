@@ -281,6 +281,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
                 adapters,
                 stderr,
                 cwd,
+                claudeConfigDir: layout.claudeHome,
                 useModelToken: (token) =>
                   writeModelToken(layout, token).pipe(
                     Effect.provideService(FileSystem.FileSystem, fs),

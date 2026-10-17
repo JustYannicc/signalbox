@@ -1,3 +1,4 @@
+import { workflowStopResult } from "../workflowControl.ts";
 import type {
   RunnerItem,
   RunnerMessageInput,
@@ -247,6 +248,7 @@ function itemEvents(
   item: RunnerItem,
   ctx: DecisionContext,
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
+  if (item.kind === "workflow.stopped") return workflowStopResult(projection, item, ctx);
   const run = harnessRun(projection);
   // Usage and log lines are for the turn's diagnostics, not its events; a drain is the lease's.
   if (item.kind === "usage" || item.kind === "log" || item.kind === "machine.drained") return [];
