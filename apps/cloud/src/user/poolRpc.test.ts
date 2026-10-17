@@ -93,6 +93,72 @@ const personalDownOnce = (cloud: Effect.Success<ReturnType<typeof client>>["clou
   });
 
 describe("cloud pool RPC", () => {
+  it.live("refuses another flow's callback and lets the active sign-in be corrected", () =>
+    Effect.gen(function* () {
+      const { rpc } = yield* client();
+      const instanceId = ProviderInstanceId.make(poolInstanceId("claude", "personal"));
+      const otherId = ProviderInstanceId.make(poolInstanceId("codex", "personal"));
+      const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+      const other = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId: otherId });
+      const otherState = new URL(other.authorizationUrl!).searchParams.get("state");
+      const failure = yield* Effect.flip(
+        rpc[WS_METHODS.providerAuthComplete]({
+          instanceId,
+          flowId: started.flowId!,
+          callbackUrl: `http://localhost:54545/callback?code=foreign-code&state=${otherState}`,
+        }),
+      );
+      expect(failure.message).toBe(
+        "Enter the authorization code or the full callback URL from this sign-in.",
+      );
+      expect((yield* first(rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }))).phase).toBe(
+        "waiting",
+      );
+      yield* rpc[WS_METHODS.providerAuthCancel]({ instanceId: otherId, flowId: other.flowId! });
+      yield* rpc[WS_METHODS.providerAuthComplete]({
+        instanceId,
+        flowId: started.flowId!,
+        callbackUrl: "correct-code",
+      });
+      const finished = yield* first(
+        rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+        ),
+      );
+      expect(finished.phase).toBe("succeeded");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live.each([
+    { provider: "claude", driver: "claudeAgent" },
+    { provider: "codex", driver: "codex" },
+  ] as const)(
+    "adds a $provider account from its short authorization code",
+    ({ provider, driver }) =>
+      Effect.gen(function* () {
+        const { rpc } = yield* client();
+        const work = yield* rpc[WS_METHODS.accountPoolCreate]({ name: "Work" });
+        const instanceId = ProviderInstanceId.make(poolInstanceId(provider, work.id));
+        const started = yield* rpc[WS_METHODS.providerAuthStart]({ instanceId });
+        yield* rpc[WS_METHODS.providerAuthComplete]({
+          instanceId,
+          flowId: started.flowId!,
+          callbackUrl: "short-authorization-code",
+        });
+        const finished = yield* first(
+          rpc[WS_METHODS.providerAuthSubscribe]({ instanceId }).pipe(
+            Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+          ),
+        );
+        expect(finished.phase).toBe("succeeded");
+        expect(started.interaction).toMatchObject({ type: "browser", acceptsCode: true });
+        expect(
+          (yield* config(rpc)).sources.find((source) => source.id === poolSourceId(work.id))
+            ?.accounts,
+        ).toEqual([expect.objectContaining({ driver })]);
+      }).pipe(Effect.scoped),
+  );
+
   it.live("creates a pool and signs an account into it from the existing pool UI", () =>
     Effect.gen(function* () {
       const { rpc } = yield* client();
