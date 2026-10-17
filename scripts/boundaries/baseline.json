@@ -172,8 +172,6 @@
     "no-circular | packages/automations/src/startStep.ts | packages/automations/src/runLog.ts",
     "no-circular | packages/automations/src/startStep.ts | packages/automations/src/steps.ts",
     "no-circular | packages/automations/src/steps.ts | packages/automations/src/runLog.ts",
-    "no-circular | packages/shared/src/automationMcpTools.ts | packages/shared/src/t3McpToolPresentation.ts",
-    "no-circular | packages/shared/src/sectionsMcpTools.ts | packages/shared/src/t3McpToolPresentation.ts",
     "tests-through-entrypoints | apps/cloud/infra/stage.test.ts | apps/cloud/src/thread/preview/previewHost.ts",
     "tests-through-entrypoints | apps/cloud/src/attachments/attachments.test.ts | apps/cloud/src/thread/runner/ThreadRunner.ts",
     "tests-through-entrypoints | apps/cloud/src/drive/automationRoutes.test.ts | apps/cloud/src/thread/runner/ThreadRunner.ts",
