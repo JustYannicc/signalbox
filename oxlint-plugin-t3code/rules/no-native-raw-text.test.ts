@@ -21,6 +21,31 @@ describe("t3code/no-native-raw-text", () => {
   rule.invalid("rejects zero", "<View>{0}</View>");
   rule.invalid("rejects a negative number", "<View>{-1}</View>");
   rule.invalid("rejects a positive unary number", "<View>{+1}</View>");
+  rule.invalid("rejects bigint zero", "<View>{0n}</View>");
+  rule.invalid("rejects numeric addition", "<View>{1 + 1}</View>");
+  rule.invalid("rejects nested numeric addition", "<View>{(1 * 2) + (-3)}</View>");
+  rule.invalid("rejects subtraction", "<View>{value - 1}</View>");
+  rule.invalid("rejects multiplication", "<View>{value * 2}</View>");
+  rule.invalid("rejects division", "<View>{value / 2}</View>");
+  rule.invalid("rejects remainder", "<View>{value % 2}</View>");
+  rule.invalid("rejects exponentiation", "<View>{value ** 2}</View>");
+  rule.invalid("rejects left shift", "<View>{value << 1}</View>");
+  rule.invalid("rejects right shift", "<View>{value >> 1}</View>");
+  rule.invalid("rejects unsigned right shift", "<View>{value >>> 1}</View>");
+  rule.invalid("rejects bitwise or", "<View>{value | 1}</View>");
+  rule.invalid("rejects bitwise xor", "<View>{value ^ 1}</View>");
+  rule.invalid("rejects bitwise and", "<View>{value & 1}</View>");
+  rule.invalid("rejects bitwise not", "<View>{~0}</View>");
+  rule.invalid("rejects numeric expressions in children props", "<View children={1 + 1} />");
+  rule.invalid("rejects text through satisfies", '<View>{"Bad" satisfies string}</View>');
+  rule.invalid(
+    "rejects children props through satisfies",
+    "<View children={0 satisfies number} />",
+  );
+  rule.invalid(
+    "rejects nested transparent wrappers",
+    "<View>{((0 satisfies number) as number)!}</View>",
+  );
   rule.invalid("rejects a string children prop", '<View children="Bad" />');
   rule.invalid("rejects a numeric children prop", "<View children={0} />");
   rule.invalid("rejects a signed children prop", "<View children={-1} />");
@@ -53,6 +78,15 @@ describe("t3code/no-native-raw-text", () => {
   rule.valid("allows a count comparison", "<View>{count > 0 ? <SettingsRow /> : null}</View>");
   rule.valid("allows a boolean guard", "<View>{count > 0 && <SettingsRow />}</View>");
   rule.valid("allows boolean coercion", "<View>{!!email && <SettingsRow />}</View>");
+  rule.valid(
+    "allows boolean coercion through as",
+    "<View>{(!!count as boolean) && <Row />}</View>",
+  );
+  rule.valid(
+    "allows boolean coercion through satisfies",
+    "<View>{(!!count satisfies boolean) && <Row />}</View>",
+  );
+  rule.valid("allows boolean coercion through non-null", "<View>{(!!count)! && <Row />}</View>");
   rule.valid(
     "allows native text content",
     '<View><Text>{count} {email || "Signed out"}</Text></View>',
@@ -97,6 +131,30 @@ describe("t3code/no-native-raw-text", () => {
   rule.valid(
     "recognizes an aliased AppText import",
     'import { AppText as Label } from "./AppText"; const el = <View><Label>{email}</Label></View>;',
+  );
+  rule.valid(
+    "recognizes a native Text alias imported after JSX",
+    'const el = <NativeText>Safe</NativeText>; import { Text as NativeText } from "react-native";',
+  );
+  rule.valid(
+    "recognizes a native namespace imported after JSX",
+    'const el = <RN.Text>Safe</RN.Text>; import * as RN from "react-native";',
+  );
+  rule.valid(
+    "recognizes an AppText alias imported after JSX",
+    'const el = <Label>Safe</Label>; import { AppText as Label } from "./AppText";',
+  );
+  rule.valid(
+    "recognizes a fragment alias imported after JSX",
+    'const el = <Text><Group>Safe</Group></Text>; import { Fragment as Group } from "react";',
+  );
+  rule.valid(
+    "recognizes a React namespace imported after JSX",
+    'const el = <Text><R.Fragment>Safe</R.Fragment></Text>; import * as R from "react";',
+  );
+  rule.valid(
+    "recognizes a React default import after JSX",
+    'const el = <Text><R.Fragment>Safe</R.Fragment></Text>; import R from "react";',
   );
   rule.valid(
     "ignores props",

@@ -32,6 +32,7 @@ function hasTextParent(
 }
 
 function isElementOrNull(node: ESTree.Node): boolean {
+  node = unwrapExpression(node);
   if (node.type === "JSXElement" || node.type === "JSXFragment") return true;
   if (node.type === "Literal") return node.value === null;
   if (node.type === "ConditionalExpression")
@@ -39,14 +40,41 @@ function isElementOrNull(node: ESTree.Node): boolean {
   return false;
 }
 
-function containsRawText(node: ESTree.Node): boolean {
+function unwrapExpression(node: ESTree.Node): ESTree.Node {
+  switch (node.type) {
+    case "ParenthesizedExpression":
+    case "TSAsExpression":
+    case "TSNonNullExpression":
+    case "TSSatisfiesExpression":
+    case "TSTypeAssertion":
+      return unwrapExpression(node.expression);
+    default:
+      return node;
+  }
+}
+
+function isNumeric(node: ESTree.Node): boolean {
+  node = unwrapExpression(node);
   switch (node.type) {
     case "Literal":
-      return (
-        typeof node.value === "number" || (typeof node.value === "string" && node.value !== "")
-      );
+      return typeof node.value === "number" || typeof node.value === "bigint";
     case "UnaryExpression":
-      return node.operator === "+" || node.operator === "-";
+      return node.operator === "+" || node.operator === "-" || node.operator === "~";
+    case "BinaryExpression":
+      return node.operator === "+"
+        ? isNumeric(node.left) && isNumeric(node.right)
+        : ["-", "*", "/", "%", "**", "<<", ">>", ">>>", "|", "^", "&"].includes(node.operator);
+    default:
+      return false;
+  }
+}
+
+function containsRawText(node: ESTree.Node): boolean {
+  node = unwrapExpression(node);
+  if (isNumeric(node)) return true;
+  switch (node.type) {
+    case "Literal":
+      return typeof node.value === "string" && node.value !== "";
     case "TemplateLiteral":
       return node.expressions.length > 0 || node.quasis.some((part) => part.value.cooked !== "");
     case "ConditionalExpression":
@@ -57,15 +85,13 @@ function containsRawText(node: ESTree.Node): boolean {
       return node.operator !== "&&" || !isBoolean(node.left) || containsRawText(node.right);
     case "ArrayExpression":
       return node.elements.some((element) => element !== null && containsRawText(element));
-    case "TSAsExpression":
-    case "TSNonNullExpression":
-      return containsRawText(node.expression);
     default:
       return false;
   }
 }
 
 function isBoolean(node: ESTree.Node): boolean {
+  node = unwrapExpression(node);
   switch (node.type) {
     case "Literal":
       return typeof node.value === "boolean";
@@ -126,22 +152,27 @@ export default defineRule({
     }
     const inText = (node: ESTree.Node) => hasTextParent(node, textNames, fragmentNames);
     return {
-      ImportDeclaration(node) {
-        const source = String(node.source.value);
-        if (source !== "react" && source !== "react-native" && !source.endsWith("/AppText")) return;
-        for (const specifier of node.specifiers) {
-          if (
-            specifier.type === "ImportNamespaceSpecifier" ||
-            specifier.type === "ImportDefaultSpecifier"
-          ) {
-            if (source === "react") fragmentNames.add(`${specifier.local.name}.Fragment`);
-            else if (source === "react-native") textNames.add(`${specifier.local.name}.Text`);
-          } else if (specifier.type === "ImportSpecifier") {
-            const imported = specifier.imported;
-            const name = imported.type === "Identifier" ? imported.name : imported.value;
-            if (source === "react" && name === "Fragment") fragmentNames.add(specifier.local.name);
-            else if (source !== "react" && (name === "Text" || name === "AppText"))
-              textNames.add(specifier.local.name);
+      Program(program) {
+        for (const node of program.body) {
+          if (node.type !== "ImportDeclaration") continue;
+          const source = String(node.source.value);
+          if (source !== "react" && source !== "react-native" && !source.endsWith("/AppText"))
+            continue;
+          for (const specifier of node.specifiers) {
+            if (
+              specifier.type === "ImportNamespaceSpecifier" ||
+              specifier.type === "ImportDefaultSpecifier"
+            ) {
+              if (source === "react") fragmentNames.add(`${specifier.local.name}.Fragment`);
+              else if (source === "react-native") textNames.add(`${specifier.local.name}.Text`);
+            } else if (specifier.type === "ImportSpecifier") {
+              const imported = specifier.imported;
+              const name = imported.type === "Identifier" ? imported.name : imported.value;
+              if (source === "react" && name === "Fragment")
+                fragmentNames.add(specifier.local.name);
+              else if (source !== "react" && (name === "Text" || name === "AppText"))
+                textNames.add(specifier.local.name);
+            }
           }
         }
       },
