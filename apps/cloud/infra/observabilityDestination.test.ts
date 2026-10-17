@@ -7,6 +7,7 @@ import {
 } from "alchemy/Cloudflare/Workers";
 import * as Provider from "alchemy/Provider";
 import { noopSession } from "alchemy/Report";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -107,13 +108,24 @@ const fixture = () => {
 
 const resource = { id: "SentryTraces", fqn: "SentryTraces", instanceId: "fixture" };
 
+class ProviderFailure extends Data.TaggedError("ProviderFailure")<{ cause: unknown }> {}
+
+const providerFailure = (cause: unknown) => new ProviderFailure({ cause });
+
 describe("Alchemy observability destinations beyond the first API page", () => {
   it.effect("refreshes an existing destination by slug without losing it", () => {
     const { requests, provider } = fixture();
     return Effect.gen(function* () {
       const service = yield* Provider.findProvider(ObservabilityDestination);
       if (!service.read) throw new Error("read provider missing");
-      const observed = yield* service.read({ ...resource, olds: props, output: target });
+      const read: Effect.Effect<
+        ObservabilityDestination["Attributes"] | undefined,
+        ProviderFailure
+      > = Effect.mapError(
+        service.read({ ...resource, olds: props, output: target }),
+        providerFailure,
+      );
+      const observed = yield* read;
       expect(observed).toEqual(target);
       expect(requests.some((request) => request.page > 1)).toBe(true);
       expect(requests.every((request) => request.method === "GET")).toBe(true);
@@ -124,14 +136,19 @@ describe("Alchemy observability destinations beyond the first API page", () => {
     const { requests, provider } = fixture();
     return Effect.gen(function* () {
       const service = yield* Provider.findProvider(ObservabilityDestination);
-      const observed = yield* service.reconcile({
-        ...resource,
-        news: props,
-        olds: undefined,
-        output: undefined,
-        bindings: [],
-        session: { ...noopSession, note: () => Effect.void },
-      });
+      const reconcile: Effect.Effect<ObservabilityDestination["Attributes"], ProviderFailure> =
+        Effect.mapError(
+          service.reconcile({
+            ...resource,
+            news: props,
+            olds: undefined,
+            output: undefined,
+            bindings: [],
+            session: { ...noopSession, note: () => Effect.void },
+          }),
+          providerFailure,
+        );
+      const observed = yield* reconcile;
       expect(observed).toEqual(target);
       expect(requests.some((request) => request.page > 1)).toBe(true);
       expect(requests.every((request) => request.method === "GET")).toBe(true);
@@ -143,7 +160,9 @@ describe("Alchemy observability destinations beyond the first API page", () => {
     return Effect.gen(function* () {
       const service = yield* Provider.findProvider(ObservabilityDestination);
       if (!service.list) throw new Error("list provider missing");
-      const observed = yield* service.list();
+      const list: Effect.Effect<ObservabilityDestination["Attributes"][], ProviderFailure> =
+        Effect.mapError(service.list(), providerFailure);
+      const observed = yield* list;
       expect(observed).toHaveLength(51);
       expect(observed.at(-1)).toEqual(target);
       expect(requests.every((request) => request.method === "GET")).toBe(true);
