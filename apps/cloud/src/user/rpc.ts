@@ -186,6 +186,8 @@ const SERVED = [
   WS_METHODS.projectsReadFile,
   WS_METHODS.projectsSearchEntries,
   WS_METHODS.reviewGetDiffPreview,
+  WS_METHODS.reviewGetDiffFileContents,
+  WS_METHODS.vcsListRefs,
   ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
   ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
   // Pasted screenshots and files (`attachments/CloudAttachments.ts`).
@@ -281,6 +283,8 @@ const REQUIRED_SCOPES = {
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
   [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
+  [WS_METHODS.reviewGetDiffFileContents]: AuthFilesystemReadScope,
+  [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
@@ -750,6 +754,20 @@ export const layerHandlers = (input: {
                 }),
             ),
           ),
+        [WS_METHODS.reviewGetDiffFileContents]: (request) =>
+          drives.diffFileContents(request).pipe(
+            Effect.mapError(
+              (detail) =>
+                new GitCommandError({
+                  operation: "review.getDiffFileContents",
+                  command: "drive read",
+                  cwd: request.cwd,
+                  detail,
+                }),
+            ),
+          ),
+        [WS_METHODS.vcsListRefs]: (request) =>
+          Effect.flatMap(actorNow, (actor) => branches.listRefs(actor, request)),
         [WS_METHODS.reviewGetDiffPreview]: (request) => drives.reviewPreview(request),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (request) =>
           drives

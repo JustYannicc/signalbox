@@ -2448,7 +2448,7 @@ export function GeneralSettingsPanel() {
         <NotificationSettings />
         <SettingsRow
           {...searchableSetting("in-app-notifications")}
-          description="Show a toast when another thread finishes, fails, or needs input or approval while this app has focus."
+          description="Show a toast while this app has focus when another thread needs your input or approval, fails, or finishes a turn of a minute or more you started."
           control={
             <Switch
               checked={settings.inAppNotificationsEnabled}

@@ -85,8 +85,6 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "git.preparePullRequestThread": gap("#818"),
 
   // Git beyond the thread's own branch.
-  "vcs.listRefs": gap("#809"),
-  "review.getDiffFileContents": gap("#809"),
   "sourceControl.cloneRepository": githubImports,
   "sourceControl.publishRepository": gap("#810"),
 
