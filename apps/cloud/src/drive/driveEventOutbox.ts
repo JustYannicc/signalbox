@@ -37,7 +37,9 @@ export const deliverDriveEvents = (driveId: string) =>
       const known = built.get(move.sequence);
       if (known !== undefined) return Effect.succeed(known);
       return Effect.map(
-        store.commitsBetween(move.before, move.after, EVENT_COMMITS + 1),
+        move.after === null
+          ? Effect.succeed([])
+          : store.commitsBetween(move.before, move.after, EVENT_COMMITS + 1),
         (commits): DriveEvents.DriveRefEvent => ({
           ...move,
           commits: commits.slice(0, EVENT_COMMITS).map((commit) => ({
