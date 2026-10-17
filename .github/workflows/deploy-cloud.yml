@@ -1,478 +1,125 @@
-# Signalbox-only: deploys Signalbox Cloud (apps/cloud) to Cloudflare through its
-# Alchemy stack (apps/cloud/alchemy.run.ts). Its own file so upstream merges
-# never touch it. Setup: docs/operations/cloud.md.
-#
-# - main deploys the `production` stage: app.signalbox.run, and its
-#   ModelGateway at gateway.signalbox.run. A push that changes the Runner then
-#   publishes it as the Runner image's `nightly`, which production's boat
-#   machines run.
-# - Pull requests from JustYannicc deploy the `pr-<number>` stage at
-#   preview-<number>.signalbox.run: its own Worker, Durable Objects and
-#   ModelGateway (gateway-preview-<number>), destroyed when the pull request
-#   closes. They also plan production, to show what merging would do.
-#
-# Every deploy plans first and stops if the plan replaces, deletes, orphans or
-# unbinds anything (apps/cloud/infra/plan.sh). Plans are in the job summary.
-name: Deploy Signalbox Cloud
+name: Isolated WorkOS grant proof
 
 on:
-  push:
-    branches:
-      - main
-    paths: &cloud-paths
-      - apps/cloud/**
-      - apps/web/**
-      - packages/account/**
-      - packages/automations/**
-      - packages/runner-protocol/**
-      - packages/client-runtime/**
-      - packages/contracts/**
-      - packages/shared/**
-      # Light machines run the Runner built with the Worker, and a preview's
-      # boat machines its own image (runner-image.yml has the same paths).
-      - apps/server/src/signalbox/runner/**
-      - apps/server/src/preview/**
-      - apps/server/src/orchestration-v2/Adapters/**
-      # The Runner compiles automations its agents save.
-      - apps/server/src/workflows/**
-      - packages/automation-compiler/**
-      - .github/workflows/runner-image.yml
-      - pnpm-lock.yaml
-      - patches/alchemy@*.patch
-      - .github/workflows/deploy-cloud.yml
-      # Production's cleanup token is derived by this script. The other cleanup
-      # scripts run from main's checkout when a PR closes, so they need no deploy.
-      - .github/scripts/preview-cleanup-token.sh
-      # Every deploy reconnects every client, so skip what never ships.
-      - "!**/*.test.ts"
-      - "!**/*.test.tsx"
-      - "!**/*.md"
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
-    paths: *cloud-paths
-  # Redeploys main, e.g. after rotating a secret.
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Deploy nothing: decide whether this ref changes the Runner (against main) and build its image without publishing"
-        required: false
-        default: false
-        type: boolean
-      base:
-        description: "Dry run: compare with this ref instead of main"
-        required: false
-        default: ""
-        type: string
+      action:
+        description: Deploy or delete the disposable proof environment
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, delete]
 
 permissions:
   contents: read
 
-env:
-  ALCHEMY_TELEMETRY_DISABLED: "1"
+concurrency:
+  group: isolated-workos-grant-proof-883
+  cancel-in-progress: false
 
 jobs:
-  deploy_production:
-    name: Deploy production cloud
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.dry_run
+  proof:
+    name: Isolated candidate deployment
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    concurrency:
-      group: cloud-production
-      cancel-in-progress: false
-    environment:
-      name: cloud-production
-      url: https://app.signalbox.run
+    environment: cloud-preview
     env:
+      CANDIDATE: aa1be5a3c7f8b00b3c3e931c2b31e1dc1c48a1d0
+      PROOF_WORKER: signalbox-auth-proof-883
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      STAGE: production
-      T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
-      # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
-      WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
-      MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
-      # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
-      EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
-      # Optional: `cloud.*` usage analytics (#116). Production only, so
-      # previews never mix test turns into the cost data.
-      SIGNALBOX_POSTHOG_KEY: ${{ vars.SIGNALBOX_POSTHOG_KEY }}
-      SIGNALBOX_POSTHOG_HOST: ${{ vars.SIGNALBOX_POSTHOG_HOST }}
-      SESSION_SECRET: ${{ secrets.CLOUD_SESSION_SECRET }}
-      T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
-      # Optional: membership changes from WorkOS at once (docs/operations/cloud.md).
-      T3CODE_WORKOS_WEBHOOK_SECRET: ${{ secrets.T3CODE_WORKOS_WEBHOOK_SECRET }}
-      # Optional: Claude and Codex on boat VMs (docs/operations/cloud.md).
-      BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
-      # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
-      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      # Optional: the person's browser on Kernel; unset, machines browse headless (docs/operations/cloud.md).
-      KERNEL_API_KEY: ${{ secrets.KERNEL_API_KEY }}
-      # Optional: agents' sign-ins from 1Password through Executor (docs/operations/cloud.md).
-      EXECUTOR_LOGIN_SERVICE_URL: ${{ vars.EXECUTOR_LOGIN_SERVICE_URL }}
-      EXECUTOR_LOGIN_SERVICE_TOKEN: ${{ secrets.EXECUTOR_LOGIN_SERVICE_TOKEN }}
-      # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
-      APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
-      APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
-      APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
-      FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+      WRANGLER_SEND_METRICS: "false"
     steps:
-      - &checkout
-        name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
+          ref: aa1be5a3c7f8b00b3c3e931c2b31e1dc1c48a1d0
           sparse-checkout: |
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - &setup
-        name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=@signalbox/cloud...
-              - --filter=@t3tools/web...
-              - --filter=t3...
-
-      # The cloud serves this build from its own origin.
-      - &build
-        name: Build web app
-        run: vp run --filter @t3tools/web build
+      - name: Validate isolation and write temporary config
         env:
-          # Sourcemaps change every build and would be served publicly.
-          T3CODE_WEB_SOURCEMAP: "false"
-          # The sidebar feedback button sends here; without it the button hides.
-          VITE_T3CODE_FEEDBACK_DSN: ${{ vars.VITE_T3CODE_FEEDBACK_DSN }}
-
-      # Light machines' container image is built from this Runner bundle.
-      - &bundle_runner
-        name: Bundle the Runner
-        working-directory: apps/server
-        run: vp run runner:bundle
-
-      - name: Derive the preview cleanup token
+          PROOF_ACTION: ${{ inputs.action }}
+          E2E_WORKOS_CLIENT_ID: ${{ secrets.E2E_WORKOS_CLIENT_ID }}
+          E2E_WORKOS_API_KEY: ${{ secrets.E2E_WORKOS_API_KEY }}
         run: |
-          token="$(bash .github/scripts/preview-cleanup-token.sh)"
-          echo "::add-mask::$token"
-          echo "PREVIEW_CLEANUP_TOKEN=$token" >> "$GITHUB_ENV"
-
-      # Nothing deploys unless the plan keeps every Worker, Durable Object,
-      # container and bucket where it is.
-      - &plan
-        name: Plan
-        working-directory: apps/cloud
-        run: bash infra/plan.sh "$STAGE"
-
-      - &deploy
-        name: Deploy
-        working-directory: apps/cloud
-        run: ./node_modules/.bin/alchemy deploy --stage "$STAGE" --yes --no-input
-
-  # Whether the pull request or push changes what boat machines run (the
-  # paths runner-image.yml builds on). Then a preview runs its own Runner
-  # image, and main publishes `nightly` once production deploys.
-  runner_changes:
-    name: Runner changes
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.action != 'closed' &&
-      github.event.pull_request.user.login == 'JustYannicc' &&
-      github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      changed: ${{ steps.files.outputs.changed }}
-    steps:
-      - name: List the changed files
-        id: files
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          MAIN: ${{ github.event.repository.default_branch }}
-          BASE: ${{ inputs.base }}
-        run: |
-          # A file renamed out of a Runner path changes the Runner too.
-          row='.filename, (.previous_filename // empty)'
-          if [[ "$EVENT" == "pull_request" ]]; then
-            # The files endpoint stops at 3000 files: a list shorter than the
-            # pull request's count builds the image to be safe.
-            expected="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')"
-            files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq ".[] | $row")"
-            listed="$(grep -c . <<< "$files" || true)"
-            complete="$([[ "$listed" -ge "$expected" ]] && echo true || echo false)"
-          else
-            # main compares with the commit `nightly` was built from, so a
-            # build that failed or a run a newer push replaced is caught up by
-            # the next push. Another ref (a dry run) compares with main or
-            # the `base` it names.
-            if [[ "$GITHUB_REF" == "refs/heads/$MAIN" ]]; then
-              # runner-image.yml's IMAGE.
-              base="$(docker buildx imagetools inspect ghcr.io/justyannicc/signalbox-runner:nightly \
-                --format '{{ index .Image.Config.Labels "org.opencontainers.image.revision" }}' || true)"
-            else
-              base="${BASE:-$MAIN}"
-            fi
-            echo "Compared with ${base:-nothing}." >> "$GITHUB_STEP_SUMMARY"
-            # The compare endpoint lists at most 300 files, and a base it
-            # can't find lists none: both build the image to be safe.
-            complete=false
-            listed=0
-            if [[ -n "$base" ]] && files="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$GITHUB_SHA" --jq ".files[]? | $row")"; then
-              listed="$(grep -c . <<< "$files" || true)"
-              if [[ "$listed" -lt 300 ]]; then complete=true; fi
-            fi
-          fi
-          echo "Listed $listed changed files, complete: $complete." >> "$GITHUB_STEP_SUMMARY"
-          # runner-image.yml's paths, without what never ships.
-          shipped="$(grep -Ev '\.(test\.tsx?|md)$' <<< "$files" || true)"
-          if [[ "$complete" != "true" ]] ||
-            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/preview/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/automation-compiler/|packages/runner-protocol/|packages/automations/|\.github/workflows/runner-image\.yml$)' <<< "$shipped"; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  # Published as ghcr.io/justyannicc/signalbox-runner:pr-<number> before the
-  # preview deploys, so its first boat machine can pull it.
-  runner_image:
-    name: Runner image
-    needs: runner_changes
-    if: github.event_name == 'pull_request' && needs.runner_changes.outputs.changed == 'true'
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/runner-image.yml
-    with:
-      pr_number: ${{ format('{0}', github.event.pull_request.number) }}
-
-  # main's Runner as `nightly`, which production's boat machines pull at their
-  # next wake. Only after the cloud deploys: the Worker's light machines and
-  # every thread object are already on this commit, and a deploy that fails
-  # leaves boat machines on the Runner that matches the cloud still running.
-  runner_nightly:
-    name: Runner image (nightly)
-    needs: [runner_changes, deploy_production]
-    if: >-
-      !cancelled() &&
-      github.event_name != 'pull_request' &&
-      needs.runner_changes.outputs.changed == 'true' &&
-      (needs.deploy_production.result == 'success' ||
-      (inputs.dry_run && needs.deploy_production.result == 'skipped'))
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/runner-image.yml
-    with:
-      channel: nightly
-      dry_run: ${{ inputs.dry_run == true }}
-
-  # One open issue while main's Runner change hasn't reached production's
-  # machines because a job failed, closed by the next push that finds
-  # `nightly` current (published by it, or by hand). A run a newer push
-  # replaced reports nothing: that push compares with `nightly`, so it builds
-  # what this one didn't.
-  runner_nightly_alert:
-    name: Report the Runner image
-    needs: [runner_changes, deploy_production, runner_nightly]
-    if: "!cancelled() && github.event_name == 'push'"
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      issues: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      ALERT_TITLE: Production machines don't run main's Runner
-      RESULT: ${{ needs.runner_nightly.result }}
-      CHANGED: ${{ needs.runner_changes.outputs.changed }}
-      FAILED: ${{ contains(needs.*.result, 'failure') }}
-      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    steps:
-      - name: Open or close the alert
-        run: |
-          open="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$ALERT_TITLE\"" \
-            --json number,title --jq 'map(select(.title == env.ALERT_TITLE)) | .[0].number // empty')"
-          if [[ "$RESULT" == "success" || "$CHANGED" == "false" ]]; then
-            [[ -z "$open" ]] || gh issue close "$open" --repo "$GITHUB_REPOSITORY" --comment "Fixed: \`nightly\` runs main's Runner as of $GITHUB_SHA ($RUN_URL)."
-          elif [[ "$FAILED" != "true" ]]; then
-            exit 0
-          elif [[ -z "$open" ]]; then
-            body="$GITHUB_SHA changed the Runner, but \`nightly\` wasn't published from it, so production's boat machines still run an older Runner: $RUN_URL"
-            body+=$'\n\n'"Fix the failing job and rerun it, or publish by hand with \`gh workflow run runner-image.yml -f channel=nightly\`. The next push that publishes closes this."
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ALERT_TITLE" --label area:cloud --body "$body"
-          else
-            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "$GITHUB_SHA didn't publish either: $RUN_URL"
-          fi
-
-  # Same-repository pull requests opened by JustYannicc (including agents
-  # working under that account). Forks never get a preview or the secrets.
-  deploy_preview:
-    name: Deploy preview cloud
-    needs: [runner_changes, runner_image]
-    # Without a Runner change the image job skips, and the preview runs `nightly`.
-    if: >-
-      !cancelled() &&
-      github.event_name == 'pull_request' &&
-      needs.runner_changes.result == 'success' &&
-      (needs.runner_image.result == 'success' || needs.runner_image.result == 'skipped')
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    concurrency:
-      group: cloud-preview-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    environment:
-      name: cloud-preview
-      url: https://preview-${{ github.event.pull_request.number }}.signalbox.run
-    env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-      STAGE: pr-${{ github.event.pull_request.number }}
-      T3CODE_WORKOS_CLIENT_ID: ${{ vars.T3CODE_WORKOS_CLIENT_ID }}
-      # The MCP authorization server (`apps/cloud/src/api/mcpRoutes.ts`); unset, MCP takes keys only.
-      WORKOS_AUTHKIT_DOMAIN: ${{ vars.WORKOS_AUTHKIT_DOMAIN }}
-      MACHINE_BACKEND: ${{ vars.MACHINE_BACKEND }}
-      # Optional: the Executor local harness setup adds as an MCP server (src/localKeys/).
-      EXECUTOR_MCP_URL: ${{ vars.EXECUTOR_MCP_URL }}
-      T3CODE_WORKOS_API_KEY: ${{ secrets.T3CODE_WORKOS_API_KEY }}
-      BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
-      # Optional: chat or task classifiers; unset, threads stay tasks (docs/operations/cloud.md).
-      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      # Optional: the person's browser on Kernel; unset, machines browse headless (docs/operations/cloud.md).
-      KERNEL_API_KEY: ${{ secrets.KERNEL_API_KEY }}
-      # Optional: agents' sign-ins from 1Password through Executor (docs/operations/cloud.md).
-      EXECUTOR_LOGIN_SERVICE_URL: ${{ vars.EXECUTOR_LOGIN_SERVICE_URL }}
-      EXECUTOR_LOGIN_SERVICE_TOKEN: ${{ secrets.EXECUTOR_LOGIN_SERVICE_TOKEN }}
-      # The pull request's own Runner on boat machines, when it changes the Runner.
-      RUNNER_IMAGE: ${{ needs.runner_image.outputs.image }}
-      # Optional: pushes to phones (docs/operations/cloud.md, "Push notifications").
-      APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
-      APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
-      APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
-      FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
-    steps:
-      - *checkout
-      - *setup
-      - *build
-      - *bundle_runner
-
-      # Each preview signs its own sessions: stable across its redeploys, and
-      # never accepted by production or another preview.
-      - name: Derive the preview's session secret
-        run: |
-          set -o pipefail
-          : "${PREVIEW_SESSION_SECRET:?CLOUD_PREVIEW_SESSION_SECRET is not set}"
-          secret="$(printf 'preview-%s' "$PR_NUMBER" | openssl dgst -sha256 -hmac "$PREVIEW_SESSION_SECRET" -r | cut -d' ' -f1)"
-          echo "::add-mask::$secret"
-          echo "SESSION_SECRET=$secret" >> "$GITHUB_ENV"
-        env:
-          PREVIEW_SESSION_SECRET: ${{ secrets.CLOUD_PREVIEW_SESSION_SECRET }}
-
-      # A reopened pull request may use the same preview origin as before.
-      # This job already runs PR code (the build, the stack) with the Cloudflare
-      # token, which is enough to derive the cleanup token. Main's checkout isn't
-      # a security boundary: it only means a reopen uses main's reviewed call,
-      # not whatever the PR changed it to.
-      - name: Checkout trusted preview cleanup scripts
-        if: github.event.action == 'reopened'
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          path: .trusted-cleanup
-          # Keep the default persist-credentials: with false, checkout runs
-          # `git submodule foreach` in this step, which dies on the vendored
-          # gitlink under .repos/ that has no .gitmodules entry.
-          sparse-checkout: |
-            /.github/scripts
-          sparse-checkout-cone-mode: false
-
-      - name: Reopen production preview links
-        if: github.event.action == 'reopened'
-        run: bash .trusted-cleanup/.github/scripts/call-preview-cleanup.sh activate "$PR_NUMBER"
-
-      - *plan
-      - *deploy
-
-      # Until a new preview's hosts serve their own certificates, opening one
-      # breaks app.signalbox.run and the other previews in that browser (#618,
-      # see the script). The hosts are infra/stage.ts's cloud and gateway domains.
-      - name: Wait for the preview's own certificates
-        timeout-minutes: 35
-        run: >-
-          node .github/scripts/wait-own-certificate.cjs
-          "preview-$PR_NUMBER.signalbox.run" "gateway-preview-$PR_NUMBER.signalbox.run"
-
-      # Production runs main as it is now, which can be ahead of this checkout:
-      # merge it in, and rebuild when it brought anything.
-      - name: Merge main for the production plan
-        id: merge_main
-        run: |
-          git fetch --no-tags --filter=blob:none --unshallow origin +refs/heads/main:refs/remotes/origin/main
-          bash apps/cloud/infra/merge-main.sh origin/main
-
-      - name: Rebuild with main for the production plan
-        if: steps.merge_main.outputs.merged == 'true'
-        run: |
-          vp install --filter=@signalbox/cloud... --filter=@t3tools/web... --filter=t3...
-          vp run --filter @t3tools/web build
-          (cd apps/server && vp run runner:bundle)
-        env:
-          T3CODE_WEB_SOURCEMAP: "false"
-          VITE_T3CODE_FEEDBACK_DSN: ${{ vars.VITE_T3CODE_FEEDBACK_DSN }}
-
-      # What merging this pull request would do to production. Placeholder
-      # secrets: a plan uploads nothing. The production deploy plans again
-      # with the real values, and that plan is what stops a bad deploy.
-      - name: Plan production
-        working-directory: apps/cloud
-        run: |
-          SESSION_SECRET=plan-only T3CODE_WORKOS_API_KEY=plan-only PREVIEW_CLEANUP_TOKEN=plan-only \
-            bash infra/plan.sh production
-
-  # Destroys the preview's stage, then asks production to drop its drive packs
-  # and pool links.
-  delete_preview:
-    name: Delete preview cloud
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.action == 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    concurrency:
-      group: cloud-preview-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    environment:
-      name: cloud-preview
-    permissions:
-      contents: read
-      # Deletes the preview's Runner image (pr-<number>).
-      packages: write
-    env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      GH_TOKEN: ${{ github.token }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-    steps:
-      # Only main's code runs here: no PR code ever sees the token in this job.
-      - name: Checkout trusted cleanup
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          # Keep the default persist-credentials: with false, checkout runs
-          # `git submodule foreach` in this step, which dies on the vendored
-          # gitlink under .repos/ that has no .gitmodules entry.
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const { execFileSync } = require('node:child_process');
+          const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
+          const must = (condition, message) => { if (!condition) throw new Error(message); };
+          const cf = async (suffix) => fetch(`https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}${suffix}`, {
+            headers: { Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` },
+          });
+          (async () => {
+            must(execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() === process.env.CANDIDATE, 'Unexpected candidate');
+            must(['deploy', 'delete'].includes(process.env.PROOF_ACTION), 'Unexpected action');
+            must(process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN, 'Cloudflare credentials missing');
+            const current = await cf(`/workers/scripts/${process.env.PROOF_WORKER}/settings`);
+            if (current.status !== 404) {
+              must(current.ok, 'Cannot inspect the proof Worker');
+              const settings = await current.json();
+              must(settings.success, 'Cannot read proof Worker settings');
+              const vars = Object.fromEntries(settings.result.bindings.filter(b => b.type === 'plain_text').map(b => [b.name, b.text]));
+              must(vars.PROOF_CANDIDATE === process.env.CANDIDATE && vars.ENVIRONMENT_ID === 'cloud-auth-proof-883', 'Existing Worker is not this proof environment');
+            } else {
+              must(process.env.PROOF_ACTION === 'deploy', 'Proof environment does not exist');
+            }
+            const domainResponse = await cf('/workers/subdomain');
+            must(domainResponse.ok, 'Cannot read the Workers subdomain');
+            const domain = await domainResponse.json();
+            must(domain.success && /^[a-z0-9-]+$/.test(domain.result.subdomain), 'Invalid Workers subdomain');
+            const origin = `https://${process.env.PROOF_WORKER}.${domain.result.subdomain}.workers.dev`;
+            console.log(`::add-mask::${origin}`);
+            const config = {
+              name: process.env.PROOF_WORKER,
+              main: path.resolve('apps/cloud/src/worker.ts'),
+              compatibility_date: '2026-10-01',
+              compatibility_flags: ['nodejs_compat', 'legacy_module_registry'],
+              workers_dev: true,
+              preview_urls: false,
+              routes: [],
+              limits: { cpu_ms: 300000 },
+              assets: { directory: path.resolve('apps/web/dist'), binding: 'ASSETS', not_found_handling: 'single-page-application', run_worker_first: true },
+              durable_objects: { bindings: [
+                ['USERS', 'UserObject'], ['THREADS', 'ThreadObject'], ['POOLS', 'PoolObject'], ['DRIVES', 'DriveObject'], ['PREVIEW_LINKS', 'PreviewLinkRegistry'],
+              ].map(([name, class_name]) => ({ name, class_name })) },
+              migrations: [{ tag: 'proof-v1', new_sqlite_classes: ['UserObject', 'ThreadObject', 'PoolObject', 'DriveObject', 'PreviewLinkRegistry'] }],
+              r2_buckets: [{ binding: 'DRIVE_PACKS', bucket_name: 'signalbox-drives-preview', jurisdiction: 'eu' }],
+              vars: {
+                ENVIRONMENT_ID: 'cloud-auth-proof-883',
+                ENVIRONMENT_LABEL: 'WorkOS grant proof',
+                PROOF_CANDIDATE: process.env.CANDIDATE,
+                CLOUD_URL: origin,
+                DRIVE_PACKS_PREFIX: 'auth-proof-883/',
+              },
+              observability: { enabled: true, logs: { enabled: true, invocation_logs: true } },
+            };
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'auth-proof.json'), JSON.stringify(config), { mode: 0o600 });
+            if (process.env.PROOF_ACTION === 'delete') return;
+            const clientId = process.env.E2E_WORKOS_CLIENT_ID?.trim();
+            const apiKey = process.env.E2E_WORKOS_API_KEY?.trim();
+            must(clientId && apiKey?.startsWith('sk_test_'), 'Dedicated E2E credentials missing');
+            must(hash(clientId) === '600d0fb6026b83de9805abd866063df44dc80e25948f4caf05b0ac8102e00a0f', 'Unexpected E2E client');
+            const identityResponse = await fetch(`https://api.workos.com/user_management/users/external_id/${encodeURIComponent('test:pr883:multi-org')}`, {
+              headers: { Authorization: `Bearer ${apiKey}` },
+            });
+            must(identityResponse.ok, 'E2E key cannot read the expected test identity');
+            const identity = await identityResponse.json();
+            must(typeof identity.id === 'string' && hash(identity.id) === '7dc3de9899f7a9542d5d899ae87bcf0936bd43db2d11311dc16a218d5f9f3d50', 'Unexpected E2E key realm');
+            const sessionSecret = crypto.randomBytes(48).toString('hex');
+            console.log(`::add-mask::${sessionSecret}`);
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'auth-proof-secrets.json'), JSON.stringify({
+              T3CODE_WORKOS_CLIENT_ID: clientId,
+              T3CODE_WORKOS_API_KEY: apiKey,
+              SESSION_SECRET: sessionSecret,
+            }), { mode: 0o600 });
+            console.log('Dedicated E2E realm and candidate validated.');
+          })().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -482,6 +129,35 @@ jobs:
           run-install: |
             args:
               - --filter=@signalbox/cloud...
+              - --filter=@t3tools/web...
 
-      - name: Delete preview resources
-        run: bash .github/scripts/delete-cloud-preview.sh
+      - name: Build candidate web app
+        if: inputs.action == 'deploy'
+        run: vp run --filter @t3tools/web build
+        env:
+          T3CODE_WEB_SOURCEMAP: "false"
+
+      - name: Deploy isolated Worker
+        if: inputs.action == 'deploy'
+        working-directory: apps/cloud
+        run: |
+          if ! ./node_modules/.bin/wrangler deploy --config "$RUNNER_TEMP/auth-proof.json" --secrets-file "$RUNNER_TEMP/auth-proof-secrets.json" > "$RUNNER_TEMP/auth-proof-deploy.log" 2>&1; then
+            node -e 'const fs=require("node:fs");const text=fs.readFileSync(process.env.RUNNER_TEMP+"/auth-proof-deploy.log","utf8");console.error(text.replace(/https?:\/\/[^\s)]+/g,"[url]").replace(/\/(?:home|tmp|Users)\/[^\s)]+/g,"[path]").replace(/(?:client_|user_|org_|environment_|redir_)[A-Za-z0-9_]+/g,"[id]").split("\n").slice(-60).join("\n"));'
+            echo 'Isolated deployment failed.'
+            exit 1
+          fi
+          echo 'Isolated candidate deployed.'
+
+      - name: Delete isolated Worker
+        if: inputs.action == 'delete'
+        working-directory: apps/cloud
+        run: |
+          if ! ./node_modules/.bin/wrangler delete --config "$RUNNER_TEMP/auth-proof.json" --force > "$RUNNER_TEMP/auth-proof-delete.log" 2>&1; then
+            echo 'Isolated deletion failed.'
+            exit 1
+          fi
+          echo 'Isolated candidate deleted.'
+
+      - name: Remove temporary credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/auth-proof-secrets.json"
