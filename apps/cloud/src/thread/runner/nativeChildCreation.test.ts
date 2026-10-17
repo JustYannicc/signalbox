@@ -51,6 +51,7 @@ describe("native child creation transport", () => {
           createdBy: "agent",
           creationSource: "provider",
         });
+        expect(appThread).toHaveProperty("historyOrigin", undefined);
         const attestation = {
           id: subagentId,
           threadId: parent.thread.id,
