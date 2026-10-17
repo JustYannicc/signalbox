@@ -1,3 +1,5 @@
+import { ThreadId } from "@t3tools/contracts";
+import { NoteId } from "@t3tools/contracts/signalboxNotes";
 import { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { SignalboxTrashError } from "@t3tools/contracts/signalboxTrash";
 import { describe, expect, it } from "@effect/vitest";
@@ -31,12 +33,16 @@ const fixture = (enabled = true) => {
         contextId: "personal",
         target: { threadId, driveId: "my/personal/u1" },
         plannedRemovals: [
-          { _tag: "threadResource", threadId, resource: "history" },
-          { _tag: "threadResource", threadId, resource: "machine-cache" },
-          { _tag: "threadResource", threadId, resource: "previews" },
-          { _tag: "threadResource", threadId, resource: "attachments" },
-          { _tag: "threadResource", threadId, resource: "automation-runs" },
-          { _tag: "driveThreadRefs", driveId: "my/personal/u1", threadId },
+          { _tag: "threadResource", threadId: ThreadId.make(threadId), resource: "history" },
+          { _tag: "threadResource", threadId: ThreadId.make(threadId), resource: "machine-cache" },
+          { _tag: "threadResource", threadId: ThreadId.make(threadId), resource: "previews" },
+          { _tag: "threadResource", threadId: ThreadId.make(threadId), resource: "attachments" },
+          {
+            _tag: "threadResource",
+            threadId: ThreadId.make(threadId),
+            resource: "automation-runs",
+          },
+          { _tag: "driveThreadRefs", driveId: "my/personal/u1", threadId: ThreadId.make(threadId) },
         ],
       }),
     trashFolder: (_actor, folderId) =>
@@ -47,22 +53,38 @@ const fixture = (enabled = true) => {
         contextId: "personal",
         deletedAt: INITIAL,
         purgeAfter: INITIAL + RETENTION_MS,
-        targets: [{ threadId: "nested-thread", driveId: "folder-drive" }],
+        targets: [{ threadId: ThreadId.make("nested-thread"), driveId: "folder-drive" }],
         driveIds: ["folder-drive"],
         plannedRemovals: [
-          { _tag: "threadResource", threadId: "nested-thread", resource: "history" },
-          { _tag: "threadResource", threadId: "nested-thread", resource: "machine-cache" },
-          { _tag: "threadResource", threadId: "nested-thread", resource: "previews" },
-          { _tag: "threadResource", threadId: "nested-thread", resource: "attachments" },
-          { _tag: "threadResource", threadId: "nested-thread", resource: "automation-runs" },
+          { _tag: "threadResource", threadId: ThreadId.make("nested-thread"), resource: "history" },
+          {
+            _tag: "threadResource",
+            threadId: ThreadId.make("nested-thread"),
+            resource: "machine-cache",
+          },
+          {
+            _tag: "threadResource",
+            threadId: ThreadId.make("nested-thread"),
+            resource: "previews",
+          },
+          {
+            _tag: "threadResource",
+            threadId: ThreadId.make("nested-thread"),
+            resource: "attachments",
+          },
+          {
+            _tag: "threadResource",
+            threadId: ThreadId.make("nested-thread"),
+            resource: "automation-runs",
+          },
           {
             _tag: "driveThreadRefs",
             driveId: "folder-drive",
-            threadId: "nested-thread",
+            threadId: ThreadId.make("nested-thread"),
           },
-          { _tag: "folder", folderId: "folder-1" },
-          { _tag: "folder", folderId: "folder-child" },
-          { _tag: "note", noteId: "note-1" },
+          { _tag: "folder", folderId: FolderId.make("folder-1") },
+          { _tag: "folder", folderId: FolderId.make("folder-child") },
+          { _tag: "note", noteId: NoteId.make("note-1") },
           { _tag: "drive", driveId: "folder-drive", onlyIfUnshared: true },
         ],
       }),

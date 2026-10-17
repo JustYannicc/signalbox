@@ -83,17 +83,7 @@ export const makeThreadObjectApi = (
       await afterChange();
       return result;
     },
-    purge: (actor, input) =>
-      reply(
-        engine.use((service) =>
-          Effect.map(service.purgeTrash(actor, input), (receipt) => ({
-            trashId: receipt.trashId,
-            deletedAt: receipt.deletedAt,
-            purgeAfter: receipt.purgeAfter,
-            state: receipt.state,
-          })),
-        ),
-      ),
+    purge: (actor, input) => reply(engine.use((service) => service.purgeTrash(actor, input))),
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),
