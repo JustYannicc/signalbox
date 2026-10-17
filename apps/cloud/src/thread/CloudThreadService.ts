@@ -125,6 +125,7 @@ export class CloudThreadService extends Context.Service<
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
+      expectedRun?: ThreadCreation["expectedRun"],
     ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
     readonly launchThread: (
       actor: Actor,
@@ -358,7 +359,11 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) =>
+  const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (
+    actor,
+    command,
+    expectedRun,
+  ) =>
     Effect.gen(function* () {
       const threadId = commandThreadId(command);
       if (threadId === null) {
@@ -381,7 +386,10 @@ const make = Effect.gen(function* () {
             messageOf(command),
           )
         : null;
-      const creation = placed(place, threadId, turn);
+      const creation = {
+        ...placed(place, threadId, turn),
+        ...(expectedRun === undefined ? {} : { expectedRun }),
+      };
       if (command.type !== "message.dispatch") {
         return yield* directory.forThread(threadId).dispatch(actor, command, creation);
       }

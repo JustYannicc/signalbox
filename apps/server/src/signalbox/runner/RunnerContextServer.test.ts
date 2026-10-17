@@ -314,6 +314,11 @@ describe("context server (#141)", () => {
         "drive_diff",
         "list_drives",
         "read_drive_file",
+        "orchestrator_capabilities",
+        "t3_thread_list",
+        "t3_thread_read",
+        "t3_thread_wait",
+        "task_status",
       ]);
 
       const found = yield* call("search_context", {
@@ -382,7 +387,14 @@ describe("context server (#141)", () => {
         tools
           .filter((tool) => !tool.annotations.readOnlyHint && !AUTOMATION_SIDE.has(tool.name))
           .map((tool) => tool.name),
-      ).toEqual(["push", "create_pr"]);
+      ).toEqual([
+        "t3_thread_send",
+        "delegate_task",
+        "task_cancel",
+        "t3_thread_interrupt",
+        "push",
+        "create_pr",
+      ]);
 
       const opened = yield* call("create_pr", {
         title: "Add dark mode",

@@ -4,6 +4,7 @@ import {
   EventId,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadLaunchResult,
@@ -109,6 +110,8 @@ export interface Actor {
  */
 export interface ThreadCreation {
   readonly lineage?: OrchestrationV2AppThreadLineage;
+  /** Internal delivery can require the run observed before crossing objects. */
+  readonly expectedRun?: Pick<OrchestrationV2Run, "id" | "status"> | null;
   readonly place: { readonly contextId: SignalboxContextId; readonly driveId: string } | null;
   /** The branch and worktree a new thread gets, when its drive has threads work on their own branch. */
   readonly worktree?: ThreadWorktree | null;
@@ -473,7 +476,7 @@ const make = Effect.gen(function* () {
         const refusePool = (error: Parameters<typeof poolErrorMessage>[0]) =>
           Effect.flatMap(poolErrorMessage(error), (message) => refuse(message, { record: false }));
         if (decision._tag === "rejected") {
-          return yield* refuse(decision.message, { record: true });
+          return yield* refuse(decision.message, { record: decision.record !== false });
         }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
@@ -553,7 +556,10 @@ const make = Effect.gen(function* () {
               }
             : onItsPool,
           ctx,
-          creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs },
+          {
+            ...(creation.idleSinceMs === undefined ? {} : { idleSinceMs: creation.idleSinceMs }),
+            ...(creation.expectedRun === undefined ? {} : { run: creation.expectedRun }),
+          },
         );
       },
     ).pipe(Effect.map(({ sequence }) => ({ sequence })));

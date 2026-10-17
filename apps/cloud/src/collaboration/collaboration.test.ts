@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { CommandId, ThreadId, type ProjectId } from "@t3tools/contracts";
+import { CommandId, MessageId, ThreadId, type ProjectId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -272,6 +272,76 @@ describe("cloud thread collaboration", () => {
       const child = yield* service.read(source, { threadId: task.childThreadId });
       expect(child.recentRuns.map((run) => run.status)).toEqual(["cancelled", "interrupted"]);
       expect((yield* service.status(source, { taskId: task.taskId })).status).toBe("interrupted");
+    }),
+  );
+
+  it.effect(
+    "cancels nested children and rejects a late result that would revive their parent",
+    () =>
+      Effect.gen(function* () {
+        const { cloud, service } = yield* setup;
+        const child = yield* service.delegate(source, { task: "Child work" });
+        const grandchild = yield* service.delegate(child.childThreadId, { task: "Nested work" });
+        // Rebuild the service to prove the task graph is durable, not a sidebar cache.
+        const restarted = yield* make.pipe(Effect.provide(cloud.layerFor(userId)));
+        yield* restarted.cancel(source, { taskId: child.taskId });
+        expect(
+          yield* Effect.result(restarted.delegate(child.childThreadId, { task: "Too late" })),
+        ).toMatchObject({
+          _tag: "Failure",
+          failure: { code: "invalid_request" },
+        });
+        yield* cloud.settle;
+        const stopped = yield* service.read(source, { threadId: child.childThreadId });
+        expect(stopped.recentRuns).toHaveLength(1);
+        expect(stopped.recentRuns[0]?.status).toBe("interrupted");
+        expect(
+          (yield* service.status(child.childThreadId, { taskId: grandchild.taskId })).status,
+        ).toBe("interrupted");
+        const events = yield* cloud.threadEvents(grandchild.childThreadId);
+        yield* cloud.userDirectory.forUser(userId).threadEvents({
+          threadId: grandchild.childThreadId,
+          events: wire.events.encode(
+            events.map((event, index) => ({ event, sequence: index + 1 })),
+          ),
+        });
+        expect(
+          (yield* service.read(source, { threadId: child.childThreadId })).recentRuns,
+        ).toHaveLength(1);
+      }),
+  );
+
+  it.effect("checks a result's observed parent run atomically with the delivery command", () =>
+    Effect.gen(function* () {
+      const { cloud, service, threads } = yield* setup;
+      const sent = yield* service.send(source, { threadId: target, message: "Work to stop" });
+      const actor = { userId, contextIds: [PERSONAL_CONTEXT_ID] };
+      const before = yield* threads.threadSnapshot(actor, target);
+      const run = before.projection.runs.find((candidate) => candidate.id === sent.runId)!;
+      yield* service.interrupt(source, { threadId: target, runId: run.id });
+      expect(
+        yield* Effect.result(
+          threads.dispatchCommand(
+            actor,
+            {
+              type: "message.dispatch",
+              commandId: CommandId.make("late-result"),
+              messageId: MessageId.make("late-result"),
+              threadId: target,
+              text: "Must not restart this thread",
+              attachments: [],
+              createdBy: "agent",
+              creationSource: "mcp",
+              dispatchMode: { type: "queue_after_active" },
+            },
+            run,
+          ),
+        ),
+      ).toMatchObject({ _tag: "Failure", failure: { _tag: "ThreadCommandRejectedError" } });
+      yield* cloud.settle;
+      const stopped = yield* service.read(source, { threadId: target });
+      expect(stopped.recentRuns).toHaveLength(1);
+      expect(stopped.recentRuns[0]?.status).toBe("interrupted");
     }),
   );
 

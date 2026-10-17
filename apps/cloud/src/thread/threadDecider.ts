@@ -35,13 +35,17 @@ import { applyEvents } from "./threadProjection.ts";
 
 export type Decision =
   | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | { readonly _tag: "rejected"; readonly message: string };
+  | { readonly _tag: "rejected"; readonly message: string; readonly record?: boolean };
 
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
   _tag: "accepted",
   events,
 });
-const reject = (message: string): Decision => ({ _tag: "rejected", message });
+const reject = (message: string, record = true): Decision => ({
+  _tag: "rejected",
+  message,
+  ...(record ? {} : { record }),
+});
 
 type Projection = OrchestrationV2ThreadProjection;
 type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
@@ -238,7 +242,10 @@ export function decide(
   command: OrchestrationV2Command,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
-  expected: { readonly idleSinceMs?: number } = {},
+  expected: {
+    readonly idleSinceMs?: number;
+    readonly run?: Pick<OrchestrationV2Run, "id" | "status"> | null;
+  } = {},
 ): Decision {
   if (!isCloudCommand(command)) return reject(unsupported(command.type));
   if (command.type === "thread.create") {
@@ -246,6 +253,14 @@ export function decide(
   }
   if (projection === null) return reject("This thread does not exist.");
   if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
+  if (expected.run !== undefined) {
+    const latest = projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+    if (latest?.id !== expected.run?.id || latest?.status !== expected.run?.status)
+      return reject(
+        "The thread's run changed before delivery. Retry with its current state.",
+        false,
+      );
+  }
   switch (command.type) {
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);

@@ -41,6 +41,8 @@ export const deliverCompletion = (
     const parent = yield* threads.value.threadSnapshot(actor, lineage.parentThreadId);
     if (parent.projection.thread.archivedAt !== null || parent.projection.thread.deletedAt !== null)
       return;
+    const parentRun = parent.projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+    if (parentRun?.status === "interrupted" || parentRun?.status === "cancelled") return;
     const messages = projection.messages.filter(
       (message) => message.runId === run.id && message.role === "assistant" && !message.streaming,
     );
@@ -48,18 +50,22 @@ export const deliverCompletion = (
       messages.at(-1)?.text ??
       `The child ended with status ${run.status}. Read its activity for details.`;
     const id = `cloud-task-result:${childId}:${run.id}`;
-    yield* threads.value.dispatchCommand(actor, {
-      type: "message.dispatch",
-      commandId: CommandId.make(id),
-      messageId: MessageId.make(id),
-      threadId: lineage.parentThreadId,
-      senderThreadId: childId,
-      createdBy: "agent",
-      creationSource: "mcp",
-      attachments: [],
-      text: `Child task cloud-task:${childId} ${run.status}.\n\n${summary.slice(0, 12_000)}${summary.length > 12_000 ? "\n\nResult truncated. Read task_status for the full result." : ""}`,
-      dispatchMode: { type: "queue_after_active" },
-    });
+    yield* threads.value.dispatchCommand(
+      actor,
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        messageId: MessageId.make(id),
+        threadId: lineage.parentThreadId,
+        senderThreadId: childId,
+        createdBy: "agent",
+        creationSource: "mcp",
+        attachments: [],
+        text: `Child task cloud-task:${childId} ${run.status}.\n\n${summary.slice(0, 12_000)}${summary.length > 12_000 ? "\n\nResult truncated. Read task_status for the full result." : ""}`,
+        dispatchMode: { type: "queue_after_active" },
+      },
+      parentRun ?? null,
+    );
   }).pipe(
     // Losing access must not keep a child's outbox retrying a private result forever.
     Effect.catchTags({ ThreadNotFoundError: () => Effect.void }),

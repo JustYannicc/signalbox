@@ -30,6 +30,7 @@ import { makeAccess, collaborationFailure, refuse } from "./access.ts";
 import { listItem, readPage } from "./threadReads.ts";
 import { makeCapabilities } from "./capabilities.ts";
 import { makeTasks } from "./tasks.ts";
+import { makeTaskRecords } from "./taskRecords.ts";
 
 export type CollaborationService = {
   readonly [M in CollaborationMethod]: (
@@ -266,7 +267,8 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(collaborationFailure));
 
   const capabilities = yield* makeCapabilities(access);
-  const tasks = makeTasks({ access, key, wait, interrupt, capabilities });
+  const records = yield* makeTaskRecords;
+  const tasks = makeTasks({ access, key, wait, interrupt, capabilities, records });
   return CloudCollaboration.of({ list, read, send, wait, interrupt, capabilities, ...tasks });
 });
 

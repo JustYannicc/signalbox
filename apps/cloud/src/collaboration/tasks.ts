@@ -7,9 +7,11 @@ import {
   type OrchestratorMcpDelegateTaskResult,
 } from "@t3tools/contracts";
 import { runtimeModeWithin } from "@signalbox/automations/access";
+import type { CollaborationInput } from "@t3tools/contracts/signalboxCollaboration";
 import * as Effect from "effect/Effect";
 
 import { isLiveRun } from "../thread/runLifecycle.ts";
+import type { TaskRecords } from "./taskRecords.ts";
 import { collaborationFailure, refuse, type CollaborationAccess } from "./access.ts";
 import type { CollaborationService } from "./CloudCollaboration.ts";
 
@@ -81,6 +83,7 @@ export const makeTasks = (deps: {
   readonly wait: CollaborationService["wait"];
   readonly interrupt: CollaborationService["interrupt"];
   readonly capabilities: CollaborationService["capabilities"];
+  readonly records: TaskRecords;
 }) => {
   const ownedTask = (source: ThreadId, taskId: string) =>
     Effect.gen(function* () {
@@ -102,6 +105,9 @@ export const makeTasks = (deps: {
   const delegate: CollaborationService["delegate"] = (source, input) =>
     Effect.gen(function* () {
       const caller = yield* deps.access.source(source);
+      const ordinal = Math.max(0, ...caller.projection.runs.map((run) => run.ordinal));
+      if (!(yield* deps.records.canDelegate(source, ordinal)))
+        return yield* refuse("This task was stopped. Start a new turn before delegating again.");
       if (input.isolation === "shared")
         return yield* refuse(
           "Cloud child threads have their own branch. Omit isolation or use worktree.",
@@ -147,7 +153,13 @@ export const makeTasks = (deps: {
           modelSelection = {
             instanceId: provider.providerInstanceId,
             model,
-            ...(input.target.options === undefined ? {} : { options: input.target.options }),
+            ...(input.target.options !== undefined
+              ? { options: input.target.options }
+              : provider.providerInstanceId === parent.providerInstanceId &&
+                  model === parent.modelSelection.model &&
+                  parent.modelSelection.options !== undefined
+                ? { options: parent.modelSelection.options }
+                : {}),
           };
         }
         const runtimeMode =
@@ -168,6 +180,7 @@ export const makeTasks = (deps: {
             "A child must stay in plan mode while its parent is planning.",
             "interaction_mode_escalation_denied",
           );
+        yield* deps.records.record(source, childId);
         // File first: the very first turn must resolve the parent's complete home chain.
         yield* deps.access.folders.moveThread({ threadId: childId, folderId: caller.home });
         yield* deps.access.threads.launchThread(
@@ -192,19 +205,31 @@ export const makeTasks = (deps: {
         );
       }
       const taskId = NodeId.make(`${TASK_PREFIX}${childId}`);
-      const initial = yield* status(source, { taskId });
+      return yield* status(source, { taskId });
+    }).pipe(deps.records.lock.withPermits(1), Effect.mapError(collaborationFailure));
+
+  const delegateAndWait: CollaborationService["delegate"] = (source, input) =>
+    Effect.gen(function* () {
+      const initial = yield* delegate(source, input);
       if (input.mode !== "wait" || initial.workState === "result_available") return initial;
       const waited = yield* deps.wait(source, {
-        threadId: childId,
+        threadId: initial.childThreadId,
         ...(initial.childRunId === null ? {} : { runId: initial.childRunId }),
         ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
       });
-      return { ...(yield* status(source, { taskId })), waitTimedOut: waited.timedOut };
+      return {
+        ...(yield* status(source, { taskId: initial.taskId })),
+        waitTimedOut: waited.timedOut,
+      };
     }).pipe(Effect.mapError(collaborationFailure));
 
   const cancel: CollaborationService["cancel"] = (source, input) =>
     Effect.gen(function* () {
       const { projection } = yield* ownedTask(source, input.taskId);
+      yield* deps.records.stop(
+        projection.thread.id,
+        Math.max(0, ...projection.runs.map((run) => run.ordinal)),
+      );
       // Cancel queued runs first so stopping the active run cannot start the next one.
       const runs = projection.runs
         .filter((run) => run.status === "queued" || isLiveRun(run))
@@ -218,6 +243,16 @@ export const makeTasks = (deps: {
             ? {}
             : { clientRequestId: `${input.clientRequestId}:${run.id}` }),
         });
+      // Stop the parent first so a descendant's late result cannot start another turn in it.
+      const children = yield* deps.records.children(projection.thread.id);
+      for (const child of children)
+        yield* cancel(projection.thread.id, {
+          taskId: NodeId.make(`${TASK_PREFIX}${child}`),
+          ...(input.reason === undefined ? {} : { reason: input.reason }),
+          ...(input.clientRequestId === undefined
+            ? {}
+            : { clientRequestId: input.clientRequestId }),
+        });
       const after = yield* status(source, { taskId: input.taskId });
       const state = after.status;
       return {
@@ -228,8 +263,13 @@ export const makeTasks = (deps: {
           state === "cancelled" ||
           state === "interrupted"
             ? state
-            : "cancel_requested",
+            : ("cancel_requested" as const),
       };
-    });
-  return { delegate, status, cancel };
+    }).pipe(Effect.mapError(collaborationFailure));
+  return {
+    delegate: delegateAndWait,
+    status,
+    cancel: (source: ThreadId, input: CollaborationInput<"cancel">) =>
+      cancel(source, input).pipe(deps.records.lock.withPermits(1)),
+  };
 };
