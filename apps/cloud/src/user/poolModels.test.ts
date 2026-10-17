@@ -3,6 +3,9 @@ import {
   AuthOrchestrationReadScope,
   AuthProvidersManageScope,
   EnvironmentId,
+  CommandId,
+  ThreadId,
+  ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -72,6 +75,84 @@ const config = (rpc: Effect.Success<ReturnType<typeof client>>["rpc"]) =>
   }));
 
 describe("cloud pool models", () => {
+  it.effect("gives a thread the same pool model IDs as server.config and the picker", () =>
+    Effect.gen(function* () {
+      const { rpc, personal, signIn } = yield* client();
+      personal.cliProxyApi.catalog.claude!.push({
+        id: "claude-custom-team-model",
+        created: 1_800_000_000,
+        displayName: "Custom team model",
+        reasoningEfforts: [],
+      });
+      yield* signIn("claude");
+      yield* signIn("codex");
+      const current = (yield* config(rpc)).config;
+      const threadId = ThreadId.make("catalog-agent");
+      yield* rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+        commandId: CommandId.make("catalog-agent-launch"),
+        threadId,
+        projectId: scratchProject.id,
+        title: "Catalog test",
+        modelSelection: current.settings.defaultModelSelection!,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+      });
+      const available = yield* rpc["signalbox.collaboration.capabilities"]({
+        sourceThreadId: threadId,
+        input: {},
+      });
+      expect(
+        available.providers.map((provider) => ({
+          id: provider.providerInstanceId,
+          models: provider.models.map((model) => model.id),
+        })),
+      ).toEqual(
+        current.providers.map((provider) => ({
+          id: provider.instanceId,
+          models: provider.models.map((model) => model.slug),
+        })),
+      );
+      expect(
+        available.providers.flatMap((provider) => provider.models.map((model) => model.id)),
+      ).toContain("claude-custom-team-model");
+      const emptyClient = yield* client();
+      emptyClient.personal.cliProxyApi.catalog.claude = [];
+      yield* emptyClient.signIn("claude");
+      yield* emptyClient.rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+        commandId: CommandId.make("catalog-agent-launch"),
+        threadId,
+        projectId: scratchProject.id,
+        title: "Empty catalog test",
+        modelSelection: current.settings.defaultModelSelection!,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+      });
+      const empty = yield* emptyClient.rpc["signalbox.collaboration.capabilities"]({
+        sourceThreadId: threadId,
+        input: {},
+      });
+      expect(
+        empty.providers.every(
+          (provider) => provider.models.length === 0 && !provider.canRunChildTask,
+        ),
+      ).toBe(true);
+      const refused = yield* emptyClient.rpc["signalbox.collaboration.delegate"]({
+        sourceThreadId: threadId,
+        input: {
+          task: "Cannot inherit an empty catalog",
+          mode: "async",
+          clientRequestId: "empty-catalog",
+        },
+      }).pipe(Effect.flip);
+      expect(refused._tag).toBe("OrchestratorMcpFailure");
+      if (refused._tag !== "OrchestratorMcpFailure") return;
+      expect(refused.code).toBe("provider_unavailable");
+      expect(refused.message).toContain("no models");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reads a scheduled catalog refresh when a client reloads its config", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const startedAt = Date.parse("2026-10-17T10:00:00.000Z");

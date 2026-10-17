@@ -10,14 +10,11 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { AccountHubRpcError } from "@t3tools/contracts/accountHub";
-import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-
-import type { ModelManifestCatalogs } from "@t3tools/shared/modelManifest";
 
 import * as Environment from "../environment.ts";
 import {
@@ -26,10 +23,9 @@ import {
   overview,
   poolDefaultModelSelection,
   poolProviderInstances,
-  poolProviders,
 } from "../pool/poolViews.ts";
 import type { PoolActor } from "../pool/PoolEngine.ts";
-import * as ModelManifest from "../thread/ModelManifest.ts";
+import { makePoolModelCatalog, type PoolModelCatalog } from "../pool/poolModelCatalog.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import * as UserPools from "./UserPools.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
@@ -93,16 +89,12 @@ export const POOL_REQUIRED_SCOPES = {
 const notYet = (what: string) =>
   Effect.fail(new AccountHubRpcError({ detail: `Signalbox Cloud pools can't ${what} yet.` }));
 
-const now = Effect.map(DateTime.now, DateTime.formatIso);
-
 /** The server config with the user's pools in it. */
 const configOf = (
   identity: Environment.CloudEnvironmentIdentity,
   state: UserPools.PoolsState,
-  checkedAt: string,
-  manifest: ModelManifestCatalogs,
+  { checkedAt, providers }: Effect.Success<ReturnType<PoolModelCatalog>>,
 ) => {
-  const providers = poolProviders(state, checkedAt, manifest);
   return Environment.serverConfig(identity, checkedAt, {
     providers,
     instances: poolProviderInstances(state.map((entry) => entry.pool)),
@@ -178,13 +170,11 @@ export const makePoolHandlers = (input: {
   Effect.gen(function* () {
     const pools = yield* UserPools.UserPools;
     const signIns = yield* PoolSignIns.PoolSignIns;
-    const manifest = yield* ModelManifest.ModelManifest;
+    const poolModelCatalog = yield* makePoolModelCatalog;
     const modelSettings = yield* UserModelSettings.UserModelSettings;
     const { actor, identity } = input;
     const configNowOf = (state: UserPools.PoolsState) =>
-      Effect.all([now, manifest.current]).pipe(
-        Effect.map(([checkedAt, catalogs]) => configOf(identity, state, checkedAt, catalogs)),
-      );
+      poolModelCatalog(state).pipe(Effect.map((catalog) => configOf(identity, state, catalog)));
     const withModelSettings = (
       config: ReturnType<typeof configOf>,
       saved: UserModelSettings.ModelSettingsSnapshot,

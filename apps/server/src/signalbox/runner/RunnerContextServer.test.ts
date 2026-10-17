@@ -3,9 +3,13 @@ import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/B
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import type {
   ContextView,
-  SearchResult,
+  ContextSearchResult,
+  SearchRequest,
+  ThreadRequest,
   TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
+import { contextJson } from "@signalbox/runner-protocol/ContextProtocol";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -109,7 +113,9 @@ const BLOBS: Record<string, string> = {
 
 /** What the fake drive and cloud were asked, in order, and what the cloud answers a publish. */
 interface Calls {
-  readonly searches: Array<{ query: string; driveId: string | null }>;
+  readonly searches: Array<SearchRequest>;
+  readonly threads: Array<ThreadRequest>;
+  searchResult: ContextSearchResult | null;
   readonly log: Array<string>;
   readonly published: Array<PublishRequest>;
   answer: PublishResult;
@@ -154,35 +160,52 @@ const fakeClient = (calls: Calls): ContextClient => ({
   diff: () => Effect.succeed({ _tag: "diff", patch: "+dark = true\n", truncated: false }),
   search: (request) => {
     calls.searches.push(request);
-    return Effect.succeed({
-      _tag: "found",
-      terms: ["dark", "mode"],
-      hits: [
-        {
-          kind: "commit",
-          driveId: "shared/org_acme/billing",
-          commit: C2,
-          parent: OLD,
-          message: "Add dark mode",
-          time: 1,
-          matched: ["dark", "mode"],
-          files: ["theme/darkMode.ts"],
-        },
-        {
-          kind: "work",
-          driveId: "folder/personal/plans",
-          threadId: "thread-2",
-          title: null,
-          commit: C2,
-          base: null,
-          matched: ["dark", "mode"],
-          files: ["q3.md"],
-        },
-      ],
-      searched: { threads: 0, threadsInScope: 0, drives: 1, commits: 2, work: 0 },
-    } satisfies SearchResult);
+    const searchResult = calls.searchResult;
+    if (searchResult !== null) return Effect.succeed(searchResult);
+    const result = contextJson.search.decode(
+      JSON.stringify({
+        hits: [
+          {
+            threadId: ThreadId.make("thread-dark-mode"),
+            projectId: ProjectId.make("drive:shared/org_acme/billing"),
+            title: "Dark mode",
+            archived: false,
+            itemId: "item-dark-mode",
+            entryId: "entry-dark-mode",
+            runId: null,
+            position: 0,
+            kind: "summary",
+            snippet: "Add dark mode",
+            createdAt: null,
+            sourceSequence: 4,
+            indexedThrough: 4,
+          },
+        ],
+        nextCursor: null,
+        coverage: { complete: true, indexedThreads: 2, pendingThreads: 0, available: true },
+        driveHits: [
+          {
+            kind: "work",
+            driveId: "folder/personal/plans",
+            threadId: "thread-2",
+            title: null,
+            commit: C2,
+            base: null,
+            matched: ["dark", "mode"],
+            files: ["q3.md"],
+          },
+        ],
+        driveSearched: { threads: 0, threadsInScope: 0, drives: 1, commits: 2, work: 1 },
+        driveHitsTruncated: false,
+      }),
+    );
+    return Effect.succeed(result);
   },
-  thread: () => Effect.succeed({ _tag: "not_found" }),
+  thread: (request) =>
+    Effect.sync(() => {
+      calls.threads.push(request);
+      return { _tag: "not_found" } as const;
+    }),
   publish: (request) =>
     Effect.sync(() => {
       calls.log.push(`publish: ${request.action}`);
@@ -213,7 +236,15 @@ const serve = (
   previewServicesReady?: Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
-    const calls: Calls = { searches: [], log: [], published: [], answer: PUBLISHED, notes: [] };
+    const calls: Calls = {
+      searches: [],
+      threads: [],
+      searchResult: null,
+      log: [],
+      published: [],
+      answer: PUBLISHED,
+      notes: [],
+    };
     const server = yield* startContextServer({
       mountPoint: null,
       ...(previewServices === undefined ? {} : { previewServices }),
@@ -256,7 +287,7 @@ const serve = (
         (answer) =>
           answer.result as { isError?: boolean; content: ReadonlyArray<{ text: string }> },
       );
-    return { dav, mcp, call, searches: calls.searches, calls };
+    return { dav, mcp, call, searches: calls.searches, threads: calls.threads, calls };
   });
 
 const hrefs = (xml: string) =>
@@ -315,7 +346,7 @@ describe("context server (#141)", () => {
 
   it.effect("serves the context tool over MCP", () =>
     Effect.gen(function* () {
-      const { mcp, call, searches } = yield* serve();
+      const { mcp, call, searches, threads, calls } = yield* serve();
       const tools = (yield* mcp("tools/list", {})).result.tools as ReadonlyArray<{
         name: string;
         annotations: { readOnlyHint: boolean };
@@ -329,27 +360,84 @@ describe("context server (#141)", () => {
         "drive_diff",
         "list_drives",
         "read_drive_file",
+        "orchestrator_capabilities",
+        "t3_thread_list",
+        "t3_thread_read",
+        "t3_thread_wait",
+        "task_status",
       ]);
 
       const found = yield* call("search_context", {
         query: "dark mode",
+        mode: "keyword",
         drive: "/drives/Acme/Shared drives/Billing",
       });
-      expect(searches).toEqual([{ query: "dark mode", driveId: "shared/org_acme/billing" }]);
+      expect(searches[0]).toMatchObject({
+        query: "dark mode",
+        mode: "keyword",
+        driveId: "shared/org_acme/billing",
+      });
       // Drives come back as the paths the agent reads them at.
       expect(JSON.parse(found.content[0]!.text)).toMatchObject({
         result: "found",
-        hits: [
-          { kind: "commit", drive: "/drives/Acme/Shared drives/Billing", parent: OLD },
-          // A drive only a shortcut reaches is named by the shortcut's path.
-          { kind: "work", drive: "/drives/Personal/My Drive/shared/plans" },
-        ],
+        nextCursor: null,
+        coverage: { complete: true, available: true },
+        hits: [{ threadId: "thread-dark-mode", itemId: "item-dark-mode", kind: "summary" }],
+        // A drive only a shortcut reaches is named by the shortcut's path.
+        driveHits: [{ kind: "work", drive: "/drives/Personal/My Drive/shared/plans" }],
       });
+
+      calls.searchResult = {
+        hits: [],
+        nextCursor: "opaque-page-2",
+        coverage: { complete: false, indexedThreads: 1, pendingThreads: 1, available: true },
+        driveHits: [],
+        driveSearched: { threads: 0, threadsInScope: 0, drives: 1, commits: 0, work: 0 },
+        driveHitsTruncated: false,
+      };
+      const incomplete = yield* call("search_context", { query: "dark mode" });
+      expect(JSON.parse(incomplete.content[0]!.text)).toMatchObject({
+        result: "insufficient_evidence",
+        coverage: { complete: false, available: true },
+        nextCursor: "opaque-page-2",
+      });
+      calls.searchResult = null;
 
       // A drive's own name does too, when only one drive has it.
       yield* call("search_context", { query: "dark mode", drive: "billing" });
       expect(searches.at(-1)?.driveId).toBe("shared/org_acme/billing");
+      const cursor = "thread-search-cursor/v2/opaque";
+      yield* call("search_context", {
+        query: "dark mode",
+        mode: "literal",
+        threadId: "thread-2",
+        kinds: ["summary", "assistant"],
+        limit: 3,
+        drive: "billing",
+        cursor,
+      });
+      expect(searches.at(-1)).toMatchObject({
+        query: "dark mode",
+        mode: "literal",
+        threadId: "thread-2",
+        kinds: ["summary", "assistant"],
+        limit: 3,
+        cursor,
+        driveId: "shared/org_acme/billing",
+      });
       expect((yield* call("search_context", { query: "x", drive: "Payroll" })).isError).toBe(true);
+
+      yield* call("open_thread", {
+        threadId: "thread-dark-mode",
+        itemId: "item-dark-mode",
+        projectId: "drive:shared/org_acme/billing",
+      });
+      expect(searches.at(-1)?.cursor).toBe(cursor);
+      expect(threads.at(-1)).toMatchObject({
+        threadId: "thread-dark-mode",
+        itemId: "item-dark-mode",
+        projectId: "drive:shared/org_acme/billing",
+      });
 
       expect((yield* call("list_drives", {})).content[0]!.text).toBe("Personal/\nAcme/");
       expect(
@@ -497,7 +585,14 @@ describe("context server (#141)", () => {
         tools
           .filter((tool) => !tool.annotations.readOnlyHint && !AUTOMATION_SIDE.has(tool.name))
           .map((tool) => tool.name),
-      ).toEqual(["push", "create_pr"]);
+      ).toEqual([
+        "t3_thread_send",
+        "delegate_task",
+        "task_cancel",
+        "t3_thread_interrupt",
+        "push",
+        "create_pr",
+      ]);
 
       const opened = yield* call("create_pr", {
         title: "Add dark mode",

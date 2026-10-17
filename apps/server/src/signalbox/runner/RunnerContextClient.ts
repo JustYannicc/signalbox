@@ -23,8 +23,10 @@ import {
   type ContextView,
   contextJson,
   type DiffResult,
-  type SearchResult,
+  type ContextSearchResult,
+  type SearchRequest,
   type ThreadResult,
+  type ThreadRequest,
   type TreeResult,
 } from "@signalbox/runner-protocol/ContextProtocol";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
@@ -95,14 +97,10 @@ export interface ContextClient {
     readonly from: string | null;
     readonly to: string;
   }) => Effect.Effect<DiffResult, ContextClientError>;
-  readonly search: (request: {
-    readonly query: string;
-    readonly driveId: string | null;
-  }) => Effect.Effect<SearchResult, ContextClientError>;
-  readonly thread: (request: {
-    readonly threadId: string;
-    readonly turn: number | null;
-  }) => Effect.Effect<ThreadResult, ContextClientError>;
+  readonly search: (
+    request: SearchRequest,
+  ) => Effect.Effect<ContextSearchResult, ContextClientError>;
+  readonly thread: (request: ThreadRequest) => Effect.Effect<ThreadResult, ContextClientError>;
   readonly publish: (request: PublishRequest) => Effect.Effect<PublishResult, ContextClientError>;
   readonly automationTool: (
     request: ToolRequest,

@@ -120,6 +120,7 @@ export class UserFolders extends Context.Service<
     /** Where a thread lives now (`homeOf`), with the state that says so. */
     readonly threadHome: (
       threadId: ThreadId,
+      fallback?: { readonly projectId: ProjectId; readonly ownerId: SignalboxContextId },
     ) => Effect.Effect<{ readonly state: FolderState; readonly home: FolderId | null }, SqlError>;
     /** `states` as snapshots. */
     readonly changes: Stream.Stream<SignalboxFoldersSnapshot, SqlError>;
@@ -328,14 +329,14 @@ const make = Effect.gen(function* () {
 
   const snapshot: UserFolders["Service"]["snapshot"] = Effect.map(state, toSnapshot);
 
-  const threadHome: UserFolders["Service"]["threadHome"] = (threadId) =>
+  const threadHome: UserFolders["Service"]["threadHome"] = (threadId, fallback) =>
     Effect.gen(function* () {
       const current = yield* state;
       const indexed = yield* indexedThread(threadId);
       const home = homeOf(current.tree, {
         threadId,
-        projectId: indexed?.projectId ?? null,
-        ownerId: indexed?.contextId ?? null,
+        projectId: indexed?.projectId ?? fallback?.projectId ?? null,
+        ownerId: indexed?.contextId ?? fallback?.ownerId ?? null,
       });
       return { state: current, home };
     });

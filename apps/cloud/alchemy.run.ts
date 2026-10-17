@@ -34,6 +34,7 @@ import type {
   PoolObject,
   PreviewLinkRegistry,
   ThreadObject,
+  SearchIndexObject,
   UserObject,
 } from "./src/worker.ts";
 
@@ -206,6 +207,7 @@ function deploy(
         AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
+        SEARCH_INDEX: Cloudflare.DurableObject<SearchIndexObject>(DO.SEARCH_INDEX),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
         PREVIEW_LINKS: Cloudflare.DurableObject<PreviewLinkRegistry>(DO.PREVIEW_LINKS),
         // A managed pool's CLIProxyAPI, pinned in containers/cliproxyapi/release.json.

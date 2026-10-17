@@ -530,6 +530,10 @@
     "./poolUsage": {
       "types": "./src/poolUsage.ts",
       "import": "./src/poolUsage.ts"
+    },
+    "./providerChildTasks": {
+      "types": "./src/providerChildTasks.ts",
+      "import": "./src/providerChildTasks.ts"
     }
   },
   "scripts": {

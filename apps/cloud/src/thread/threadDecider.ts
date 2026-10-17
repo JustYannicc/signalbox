@@ -1,6 +1,7 @@
 import {
   MessageId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2AppThreadLineage,
   type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -34,13 +35,22 @@ import { applyEvents } from "./threadProjection.ts";
 
 export type Decision =
   | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | { readonly _tag: "rejected"; readonly message: string };
+  | {
+      readonly _tag: "rejected";
+      readonly message: string;
+      readonly record?: boolean;
+      readonly code?: "run_changed";
+    };
 
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
   _tag: "accepted",
   events,
 });
-const reject = (message: string): Decision => ({ _tag: "rejected", message });
+const reject = (message: string, record = true): Decision => ({
+  _tag: "rejected",
+  message,
+  ...(record ? {} : { record }),
+});
 
 type Projection = OrchestrationV2ThreadProjection;
 type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
@@ -133,6 +143,8 @@ function dispatchMessage(
   command: CommandOf<"message.dispatch">,
   ctx: DecisionContext,
 ): Decision {
+  // The inbox identifies delivery by message id, even when a retry has a new command id.
+  if (projection.messages.some((message) => message.id === command.messageId)) return accept([]);
   if (command.dispatchMode.type === "defer_start") {
     return reject("Deferred starts are not available in the cloud yet.");
   }
@@ -213,7 +225,7 @@ function dispatchMessage(
   };
   const recorded = messageEvent(ctx, message);
   if (live !== undefined) {
-    return accept([...updates, runEvent(ctx, "run.created", run), recorded]);
+    return accept([...updates, recorded, runEvent(ctx, "run.created", run)]);
   }
   const withMessage = applyEvents(projection, [...updates, recorded]) ?? projection;
   return accept([...updates, recorded, ...startRunEvents(withMessage, run, "turn_start", ctx)]);
@@ -237,7 +249,10 @@ export function decide(
   command: OrchestrationV2Command,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
-  expected: { readonly idleSinceMs?: number } = {},
+  expected: {
+    readonly idleSinceMs?: number;
+    readonly run?: Pick<OrchestrationV2Run, "id" | "status"> | null;
+  } = {},
 ): Decision {
   if (!isCloudCommand(command)) return reject(unsupported(command.type));
   if (command.type === "thread.create") {
@@ -245,6 +260,16 @@ export function decide(
   }
   if (projection === null) return reject("This thread does not exist.");
   if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
+  if (expected.run !== undefined) {
+    const latest = projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+    if (latest?.id !== expected.run?.id || latest?.status !== expected.run?.status)
+      return {
+        _tag: "rejected",
+        message: "The thread's run changed before delivery. Retry with its current state.",
+        record: false,
+        code: "run_changed",
+      };
+  }
   switch (command.type) {
     case "message.dispatch":
       return dispatchMessage(projection, command, ctx);
@@ -377,6 +402,7 @@ export function decideLaunch(
   input: OrchestrationV2ThreadLaunchInput & { readonly threadId: ThreadId },
   ctx: DecisionContext,
   worktree: ThreadWorktree | null = null,
+  lineage?: OrchestrationV2AppThreadLineage,
 ): Decision {
   if (input.workspaceStrategy.type !== "root") {
     return reject("Cloud threads have no worktrees yet.");
@@ -385,7 +411,7 @@ export function decideLaunch(
     return reject("This thread already exists.");
   }
   const creationSource = input.creationSource ?? "web";
-  const created =
+  const initial =
     projection === null
       ? createThread(
           {
@@ -405,6 +431,16 @@ export function decideLaunch(
           ctx,
         )
       : accept([]);
+  const created =
+    initial._tag === "accepted" && lineage !== undefined
+      ? accept(
+          initial.events.map((event) =>
+            event.type === "thread.created"
+              ? { ...event, payload: { ...event.payload, lineage, createdBy: "agent" } }
+              : event,
+          ),
+        )
+      : initial;
   const message = input.initialMessage;
   if (created._tag === "rejected" || message === undefined) return created;
   const withThread = applyEvents(projection, created.events);
@@ -414,7 +450,8 @@ export function decideLaunch(
     {
       type: "message.dispatch",
       commandId: input.commandId,
-      createdBy: "user",
+      createdBy: lineage === undefined ? "user" : "agent",
+      ...(lineage?.parentThreadId == null ? {} : { senderThreadId: lineage.parentThreadId }),
       creationSource,
       threadId: input.threadId,
       messageId: message.messageId ?? MessageId.make(`message:${input.commandId}`),

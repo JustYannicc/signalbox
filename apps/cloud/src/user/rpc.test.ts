@@ -152,6 +152,7 @@ describe("cloud RPC", () => {
       if (first?.type !== "snapshot") return;
       expect(first.config.environment.environmentId).toBe("cloud-test");
       expect(first.config.environment.orchestrationProtocolVersion).toBe(2);
+      expect(first.config.threadFind).toBe(true);
     }).pipe(Effect.scoped),
   );
 

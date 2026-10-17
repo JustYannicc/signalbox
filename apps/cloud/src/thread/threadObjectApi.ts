@@ -10,6 +10,7 @@ import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
+import { nativeChildBatchWire, type NativeChildBatchResult } from "./runner/nativeChildBatch.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -49,6 +50,7 @@ export const makeThreadObjectApi = (
               commandId: error.commandId,
               commandType: error.commandType,
               reason: error.reason,
+              ...(error.code === undefined ? {} : { code: error.code }),
             } as const),
         }),
       ),
@@ -74,8 +76,27 @@ export const makeThreadObjectApi = (
       await afterChange();
       return result;
     },
+    recordNativeChildBatch: async (input) => {
+      const result: NativeChildBatchResult = await run(
+        engine.use((service) => service.recordNativeChildBatch(nativeChildBatchWire.decode(input))),
+      );
+      await afterChange();
+      return result;
+    },
     snapshot: (actor) =>
       reply(engine.use((service) => Effect.map(service.snapshot(actor), wire.snapshot.encode))),
+    backfill: async (actor) => {
+      const value = await run(engine.use((service) => service.backfill(actor)));
+      if (value === null) return { _tag: "not_found" };
+      await afterChange();
+      return { _tag: "ok", value };
+    },
+    searchDocuments: (actor, itemIds) =>
+      run(engine.use((service) => service.searchDocuments(actor, itemIds))),
+    contextWorkVisible: (actor, projectId) =>
+      run(engine.use((service) => service.contextWorkVisible(actor, projectId))),
+    find: (actor, input) =>
+      reply(engine.use((service) => service.find(actor, wire.findInput.decode(input)))),
     subscribe: (actor, input) =>
       run(
         engine.use((service) =>
@@ -103,7 +124,9 @@ export const makeThreadObjectApi = (
       run(
         engine.use((service) =>
           service.snapshot(actor).pipe(
-            Effect.map(({ projection }) => matchThread(projection, terms)),
+            Effect.map(({ projection }) =>
+              projection.thread.deletedAt === null ? matchThread(projection, terms) : null,
+            ),
             Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
           ),
         ),
@@ -112,11 +135,15 @@ export const makeThreadObjectApi = (
       run(
         engine.use((service) =>
           service.snapshot(actor).pipe(
-            Effect.map(({ projection }) => ({
-              title: projection.thread.title,
-              projectId: projection.thread.projectId,
-              turns: threadTurns(projection, turn),
-            })),
+            Effect.map(({ projection }) =>
+              projection.thread.deletedAt === null
+                ? {
+                    title: projection.thread.title,
+                    projectId: projection.thread.projectId,
+                    turns: threadTurns(projection, turn),
+                  }
+                : null,
+            ),
             Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
           ),
         ),

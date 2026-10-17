@@ -32,6 +32,8 @@ import { signalboxKeysWsHandlers } from "./keys/rpc.ts";
 import { signalboxSignInWsHandlers } from "./signIn/rpc.ts";
 import { signalboxRepositoriesWsHandlers } from "./repositories/rpc.ts";
 import { signalboxThreadKindsWsHandlers } from "./threadKinds/rpc.ts";
+import { signalboxCollaborationWsHandlers } from "./collaboration/rpc.ts";
+import { SIGNALBOX_SEARCH_WS_METHODS, ThreadSearchError } from "@t3tools/contracts/signalboxSearch";
 import { signalboxThreadStatusWsHandlers } from "./statusLine/rpc.ts";
 
 /**
@@ -72,6 +74,9 @@ export const layer = (clientAnalyticsProps: Readonly<Record<string, unknown>>) =
         ...signalboxRepositoriesWsHandlers,
         ...signalboxThreadKindsWsHandlers,
         ...signalboxThreadStatusWsHandlers,
+        ...signalboxCollaborationWsHandlers,
+        [SIGNALBOX_SEARCH_WS_METHODS.query]: () =>
+          Effect.fail(new ThreadSearchError({ reason: "unavailable" })),
         ...signalboxKeysWsHandlers,
         ...signalboxSignInWsHandlers,
         [WS_METHODS.accountPoolSubscribe]: () => pools.changes,

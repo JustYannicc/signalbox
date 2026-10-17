@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as Context from "effect/Context";
 
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ThreadInbox from "../thread/ThreadInbox.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import { threadShellFromProjection } from "../thread/threadProjection.ts";
@@ -110,6 +111,7 @@ export const layer = Layer.effect(
     const store = yield* UserStore.UserStore;
     const drives = yield* UserDrives.UserDrives;
     const feed = yield* ThreadEventFeed;
+    const inbox = yield* ThreadInbox.ThreadInbox;
 
     const owner = ownerActor.pipe(
       Effect.provideService(UserStore.UserStore, store),
@@ -134,10 +136,15 @@ export const layer = Layer.effect(
           Effect.map((read) => recordsOf(read, fields, filter)),
           Effect.mapError(hostError("Couldn't read the thread")),
         ),
+      readInbox: (threadId) =>
+        owner.pipe(
+          Effect.flatMap((actor) => inbox.read(actor, threadId)),
+          Effect.mapError(hostError("Couldn't read the thread inbox")),
+        ),
       launch: (input) =>
         owner.pipe(
           Effect.flatMap((actor) =>
-            threads.launchThread(actor, {
+            inbox.start(actor, {
               commandId: input.commandId,
               creationSource: "server",
               projectId: input.projectId,
@@ -156,7 +163,7 @@ export const layer = Layer.effect(
       send: (input) =>
         Effect.gen(function* () {
           const actor = yield* owner;
-          yield* threads.dispatchCommand(actor, {
+          const receipt = yield* inbox.post(actor, {
             type: "message.dispatch",
             commandId: input.commandId,
             threadId: input.threadId,
@@ -168,9 +175,8 @@ export const layer = Layer.effect(
             ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
             dispatchMode: { type: "queue_after_active" },
           });
-          // The cloud picks start or queue itself; the run is the one this message asked for.
-          const { runs } = yield* projection(input.threadId);
-          const run = runs.find((candidate) => candidate.userMessageId === input.messageId);
+          const state = yield* inbox.read(actor, input.threadId);
+          const run = state.runs.find((candidate) => candidate.id === receipt.runId);
           if (!run)
             return yield* new AutomationError({
               message: "The thread took the message but made no run for it.",

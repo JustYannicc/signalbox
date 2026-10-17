@@ -272,6 +272,9 @@ export const AUTOMATION_TOOLS = {
     }),
     success: Schema.Struct({
       waitId: WaitId,
+      alreadySatisfied: Schema.Boolean.annotate({
+        description: "True when the requested event already matched current state at registration.",
+      }),
       callbackUrl: Schema.NullOr(Schema.String).annotate({
         description:
           "With callback: true, the link to hand out. A path when the server has no public address yet.",

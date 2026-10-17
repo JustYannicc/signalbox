@@ -1,6 +1,7 @@
 import { traceSynchronization } from "@t3tools/shared/synchronization";
 import {
   type ChatAttachment,
+  type OrchestrationV2AppThreadLineage,
   type OrchestrationV2Command,
   type OrchestrationV2SubscribeThreadInput,
   type OrchestrationV2ThreadBoundedSnapshot,
@@ -8,8 +9,10 @@ import {
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadLaunchResult,
   type OrchestrationV2ThreadStreamItem,
+  type OrchestrationV2TurnItem,
   type ProjectId,
   ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type {
@@ -125,10 +128,12 @@ export class CloudThreadService extends Context.Service<
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
+      expectedRun?: ThreadCreation["expectedRun"],
     ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
     readonly launchThread: (
       actor: Actor,
       input: OrchestrationV2ThreadLaunchInput,
+      lineage?: OrchestrationV2AppThreadLineage,
     ) => Effect.Effect<OrchestrationV2ThreadLaunchResult, CloudThreadError>;
     /**
      * The whole thread at its current sequence. Cloud threads are short
@@ -140,6 +145,14 @@ export class CloudThreadService extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<
       OrchestrationV2ThreadBoundedSnapshot,
+      ThreadNotFoundError | ThreadDirectory.ThreadObjectError
+    >;
+    readonly getTurnItem: (
+      actor: Actor,
+      threadId: ThreadId,
+      itemId: TurnItemId,
+    ) => Effect.Effect<
+      OrchestrationV2TurnItem | null,
       ThreadNotFoundError | ThreadDirectory.ThreadObjectError
     >;
     /** Older history before a bounded window: none, since the window is the whole thread. */
@@ -358,7 +371,11 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (actor, command) =>
+  const dispatchCommand: CloudThreadService["Service"]["dispatchCommand"] = (
+    actor,
+    command,
+    expectedRun,
+  ) =>
     Effect.gen(function* () {
       const threadId = commandThreadId(command);
       if (threadId === null) {
@@ -381,7 +398,10 @@ const make = Effect.gen(function* () {
             messageOf(command),
           )
         : null;
-      const creation = placed(place, threadId, turn);
+      const creation = {
+        ...placed(place, threadId, turn),
+        ...(expectedRun === undefined ? {} : { expectedRun }),
+      };
       if (command.type !== "message.dispatch") {
         return yield* directory.forThread(threadId).dispatch(actor, command, creation);
       }
@@ -400,7 +420,7 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input) =>
+  const launchThread: CloudThreadService["Service"]["launchThread"] = (actor, input, lineage) =>
     Effect.gen(function* () {
       const place = yield* threadContexts.placeOfProject(input.projectId);
       // Receipts live in the thread's object, so a launch without an id needs
@@ -442,7 +462,7 @@ const make = Effect.gen(function* () {
                 ? {}
                 : { initialMessage: { ...message, attachments: claimed } }),
             },
-            creation,
+            { ...creation, ...(lineage === undefined ? {} : { lineage }) },
           ),
       );
     });
@@ -460,6 +480,12 @@ const make = Effect.gen(function* () {
           null,
         ),
       }),
+    );
+
+  const getTurnItem: CloudThreadService["Service"]["getTurnItem"] = (actor, threadId, itemId) =>
+    Effect.map(
+      directory.forThread(threadId).snapshot(actor),
+      ({ projection }) => projection.turnItems.find((item) => item.id === itemId) ?? null,
     );
 
   const threadHistoryPage: CloudThreadService["Service"]["threadHistoryPage"] = (actor, threadId) =>
@@ -578,6 +604,7 @@ const make = Effect.gen(function* () {
     dispatchCommand,
     launchThread,
     threadSnapshot,
+    getTurnItem,
     threadHistoryPage,
     subscribeThread,
     turnDiagnostics: (actor, threadId, key) =>

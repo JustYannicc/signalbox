@@ -82,6 +82,7 @@ const setup = (
           }),
         dispatchCommand: unused,
         threadSnapshot: unused,
+        getTurnItem: () => Effect.succeed(null),
         threadHistoryPage: unused,
         subscribeThread: () => Stream.die("not used by notes"),
         previews: () => Stream.die("not used by notes"),

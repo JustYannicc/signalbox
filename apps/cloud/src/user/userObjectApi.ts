@@ -1,9 +1,14 @@
 import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
-import { AutomationError, ThreadId } from "@t3tools/contracts";
+import { AutomationError, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type * as Collaboration from "../collaboration/CloudCollaboration.ts";
+import { deliverCompletion } from "../collaboration/completion.ts";
+import type { CloudThreadService } from "../thread/CloudThreadService.ts";
+import type { ThreadInbox } from "../thread/ThreadInbox.ts";
+import * as ThreadSearch from "../search/ThreadSearch.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
@@ -33,6 +38,7 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserFolders from "./UserFolders.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -47,7 +53,11 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | ThreadSearch.ThreadSearch
       | UserStore.UserStore
+      | CloudThreadService
+      | ThreadInbox
+      | Collaboration.CloudCollaboration
       | UserShell.UserShell
       | UserContexts.UserContexts
       | GitHubConnection.GitHubConnection
@@ -58,6 +68,7 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
+      | UserFolders.UserFolders
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
@@ -86,6 +97,10 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    searchThreads: (actor, input) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.query(actor, input))),
+    readSearchItem: (actor, threadId, itemId) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.readItem(actor, threadId, itemId))),
     receiveHook: (request) =>
       run(withAutomations((automations) => automations.receiveHook(request))),
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
@@ -114,17 +129,40 @@ export const makeUserObjectApi = (
         ),
       );
     },
+    copyThreadHome: ({ parentThreadId, childThreadId, projectId, ownerId }) =>
+      run(
+        UserFolders.UserFolders.use((folders) =>
+          Effect.gen(function* () {
+            const { home } = yield* folders.threadHome(ThreadId.make(parentThreadId), {
+              projectId: ProjectId.make(projectId),
+              ownerId,
+            });
+            yield* folders.moveThread({ threadId: ThreadId.make(childThreadId), folderId: home });
+          }),
+        ),
+      ),
     // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
       run(
-        Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
-          Option.isNone(automations)
-            ? Effect.void
-            : automations.value.threadEvents({ threadId, events: wire.events.decode(events) }),
-        ).pipe(
-          // Ids only, never what happened (#284).
-          Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
-        ),
+        deliverCompletion(threadId, wire.events.decode(events))
+          .pipe(
+            Effect.andThen(
+              Effect.flatMap(
+                Effect.serviceOption(CloudAutomations.CloudAutomations),
+                (automations) =>
+                  Option.isNone(automations)
+                    ? Effect.void
+                    : automations.value.threadEvents({
+                        threadId,
+                        events: wire.events.decode(events),
+                      }),
+              ),
+            ),
+          )
+          .pipe(
+            // Ids only, never what happened (#284).
+            Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
+          ),
       ),
     driveEvents: ({ driveId, events }) =>
       run(

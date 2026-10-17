@@ -91,6 +91,8 @@ export interface WorkflowEngineShape extends CatalogShape {
     readonly authorize?: AuthorizeAutomation<E>;
     /** Binds the run to a thread (see attachments.ts). */
     readonly attach?: AutomationRunAttach | undefined;
+    /** Arms patterns a host knows before the run's computed wait step starts. */
+    readonly eventPatterns?: ReadonlyArray<string> | undefined;
     /**
      * For a `builtin:<slug>` id: the project to run it in (default: the
      * attached thread's) and the defaults its host row starts with there.
@@ -569,6 +571,7 @@ export const makeEngine = <R>(
                   run_id: row.run_id,
                   lineage_id: link.lineage_id ?? row.run_id,
                   started_at: row.started_at,
+                  event_patterns_json: link.event_patterns_json ?? "[]",
                 })
               : Effect.void,
           ),
@@ -634,12 +637,24 @@ export const makeEngine = <R>(
             : undefined,
         );
         if (input.authorize) yield* input.authorize(automationDefaults(automation));
-        const attached = input.attach ? yield* attachments.launchFor(automation, input.attach) : {};
+        const attached = input.attach
+          ? yield* attachments.launchFor(automation, input.attach)
+          : undefined;
+        const withEventPatterns =
+          input.eventPatterns === undefined || attached?.link === undefined
+            ? attached
+            : {
+                ...attached,
+                link: {
+                  ...attached.link,
+                  event_patterns_json: toJson([...new Set(input.eventPatterns)]),
+                },
+              };
         return (yield* launchRun({
           automation,
           input: input.input,
           trigger: input.trigger,
-          ...attached,
+          ...withEventPatterns,
         })).run;
       });
 
@@ -727,6 +742,8 @@ export const makeEngine = <R>(
       newId,
       start: (input) => startRun({ ...input, trigger: "manual" }),
       callback: (runId, hookId) => ingress.createCallback(runId, hookId),
+      deliverCurrent: (runId, event) =>
+        runWaits.deliver(event, [{ runId, projectId: event.projectId, patterns: [event.event] }]),
       cancel: (runId) => endRunById(runId, { status: "cancelled" }),
     });
 

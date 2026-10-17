@@ -175,6 +175,13 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
           computedWatches.set(step.run_id, watches);
         }
       }
+      for (const listener of yield* links.runningEventListeners()) {
+        const stored: unknown = fromJson(listener.event_patterns_json);
+        const patterns = Array.isArray(stored)
+          ? stored.filter((pattern): pattern is string => typeof pattern === "string")
+          : [];
+        computed.set(listener.run_id, [...(computed.get(listener.run_id) ?? []), ...patterns]);
+      }
       for (const run of yield* store.runningRuns()) {
         const fromDiagram = yield* versionPatterns(run.automation_id, run.version);
         const patterns = [
@@ -303,9 +310,20 @@ export const makeRunWaits = (deps: RunWaitDependencies) => {
 
   /** A run ended: its inbox goes, and it stops listening. */
   const ended = (runId: string) =>
-    Effect.sync(invalidate).pipe(Effect.andThen(links.trimInbox(runId, 0)));
+    Effect.sync(invalidate).pipe(
+      Effect.andThen(links.clearEventPatterns(runId)),
+      Effect.andThen(links.trimInbox(runId, 0)),
+    );
 
-  return { lookup, deliver, deliverPending, invalidate, stepWaiting, ended, watching };
+  return {
+    lookup,
+    deliver,
+    deliverPending,
+    invalidate,
+    stepWaiting,
+    ended,
+    watching,
+  };
 };
 
 export type RunWaits = ReturnType<typeof makeRunWaits>;
