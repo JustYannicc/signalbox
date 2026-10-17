@@ -8,3 +8,5 @@ export const makeModelAccess = (authority: ModelAuthority.ModelAuthority["Servic
     Effect.provide(ModelAccess.layer),
     Effect.provideService(ModelAuthority.ModelAuthority, authority),
   );
+
+export { makeUsageScanner } from "./internal/gateway/usageScanner.ts";
