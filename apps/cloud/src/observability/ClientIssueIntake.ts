@@ -1,4 +1,4 @@
-import { WsRpcGroup } from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, WsRpcGroup } from "@t3tools/contracts";
 import { ClientIssue as ClientIssueSchema } from "@t3tools/contracts/clientIssues";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -30,7 +30,7 @@ type TrustedDimensions = {
 
 export class ClientIssueRejected extends Schema.TaggedError<ClientIssueRejected>()(
   "ClientIssueRejected",
-  { status: Schema.Literals([400, 408, 413, 415, 429, 503]) },
+  { status: Schema.Literals([400, 403, 408, 413, 415, 429, 503]) },
 ) {}
 
 export class ClientIssueIntake extends Context.Service<
@@ -66,7 +66,9 @@ const make = Effect.gen(function* () {
         UserObjectError: () => Effect.fail(new ClientIssueRejected({ status: 503 })),
       }),
     );
-    if (!(yield* limits.allow(session.userId)))
+    if (!session.scopes.includes(AuthOrchestrationReadScope))
+      return yield* new ClientIssueRejected({ status: 403 });
+    if (!(yield* limits.allow(`client-issue:${session.userId}`)))
       return yield* new ClientIssueRejected({ status: 429 });
     if (
       input.contentType?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json" ||
@@ -129,7 +131,9 @@ const make = Effect.gen(function* () {
         : undefined;
     const issue = reconstructIssue(decoded, dimensions, method, safeEnvironmentId(environmentId));
 
-    yield* Effect.asVoid(report(issue, session.userId, { stage, release }, exporter));
+    yield* Effect.asVoid(
+      report(issue, session.userId, dimensions.orgId, { stage, release }, exporter),
+    );
   });
   return ClientIssueIntake.of({ ingest });
 });
@@ -174,12 +178,13 @@ const reconstructIssue = (
   severity: input.severity,
   source: input.source,
   client: input.client,
-  release: input.release.length <= 64 ? input.release : "unknown",
+  release: input.release,
   threadId: dimensions.threadId,
   folderId: dimensions.folderId,
   environmentId,
   traceId: input.traceId,
   spanId: input.spanId,
+  ...(input.existingSpan === undefined ? {} : { existingSpan: input.existingSpan }),
   ...(method === undefined ? {} : { method }),
   ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs }),
 });
@@ -187,6 +192,7 @@ const reconstructIssue = (
 const report = (
   issue: ClientIssueInput,
   personId: string,
+  orgId: string | null,
   trusted: { readonly stage: string; readonly release: string },
   exporter: ClientTraceExport.ClientTraceExport["Service"],
 ) =>
@@ -211,6 +217,7 @@ const report = (
     };
     const fields = {
       person: { id: personId },
+      ...(orgId === null ? {} : { org: { id: orgId } }),
       clientIssue: issueFields,
       ...(issue.threadId === null ? {} : { thread: { id: issue.threadId } }),
       ...(issue.folderId === null ? {} : { folder: { id: issue.folderId } }),
@@ -227,6 +234,7 @@ const report = (
       personId,
       serverSpan.spanId,
       BigInt(nowMs) * 1_000_000n,
+      orgId,
     );
     yield* exporter.submit(trace).pipe(Effect.exit, Effect.asVoid);
   }).pipe(

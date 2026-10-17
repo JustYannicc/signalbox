@@ -12,6 +12,44 @@ const UUID = "123e4567-e89b-12d3-a456-426614174000";
 afterEach(() => configureClientIssueReporting(null));
 
 describe("shared client issue reporting", () => {
+  it.each(["1.0.1-nightly.20260905.123", "0.1.0-pr.12.34"])(
+    "retains the shipped release %s",
+    async (release) => {
+      const outbound: unknown[] = [];
+      configureClientIssueReporting({
+        client: "web",
+        release,
+        send: async (event) => {
+          outbound.push(event);
+        },
+      });
+      reportClientIssue({ code: "runtime.uncaught", severity: "error", source: "exception" });
+      await flushClientIssues();
+      expect(outbound).toMatchObject([{ release }]);
+    },
+  );
+
+  it.each([
+    {},
+    { traceId: "a".repeat(32) },
+    { spanId: "b".repeat(16) },
+    { traceId: "invalid", spanId: "b".repeat(16) },
+    { traceId: "a".repeat(32), spanId: "0".repeat(16) },
+    { traceId: "0".repeat(32), spanId: "b".repeat(16) },
+  ])("does not claim an existing span with incomplete or invalid IDs %j", async (ids) => {
+    configureClientIssueReporting({ client: "web", release: "development", send: async () => {} });
+    const captured = reportClientIssue({
+      code: "rpc.failed",
+      severity: "error",
+      source: "rpc",
+      ...ids,
+    });
+    await flushClientIssues();
+    expect(captured?.traceId).toMatch(/^(?!0{32}$)[a-f0-9]{32}$/);
+    expect(captured?.spanId).toMatch(/^(?!0{16}$)[a-f0-9]{16}$/);
+    expect(captured).not.toHaveProperty("existingSpan");
+  });
+
   it("sends only schema fields and never forwards content-shaped extras", async () => {
     const outbound: unknown[] = [];
     configureClientIssueReporting({
@@ -128,6 +166,7 @@ describe("shared client issue reporting", () => {
       folderId: "123e4567-e89b-12d3-a456-426614174002",
       traceId,
       spanId,
+      existingSpan: true,
       method: "server.getConfig",
       durationMs: 125,
     });

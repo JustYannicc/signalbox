@@ -9,6 +9,7 @@ import {
   createClientIssueQueue,
   type ClientIssueFlushResult,
   type ClientIssueReportingStats,
+  type ClientIssueQueueSender,
 } from "./clientIssueQueue.ts";
 
 export type { ClientIssueFlushResult, ClientIssueReportingStats } from "./clientIssueQueue.ts";
@@ -24,8 +25,8 @@ export interface ClientIssueReportingConfig {
   readonly release: string;
   readonly context?: () => ClientIssueContext;
   readonly folderOfThread?: (environmentId: string, threadId: string) => string | null;
-  readonly send: (issue: ClientIssue) => Promise<unknown>;
-  readonly scheduleRetry?: (callback: () => void, delayMs: number) => () => void;
+  readonly send: ClientIssueQueueSender["send"];
+  readonly scheduleRetry?: ClientIssueQueueSender["scheduleRetry"];
 }
 
 export interface ClientIssueReportInput extends ClientIssueContext {
@@ -65,18 +66,14 @@ export function configureClientIssueReporting(next: ClientIssueReportingConfig |
     return;
   }
 
-  try {
-    config = {
-      client: next.client,
-      release: next.release,
-      send: next.send,
-      ...(next.context === undefined ? {} : { context: next.context }),
-      ...(next.folderOfThread === undefined ? {} : { folderOfThread: next.folderOfThread }),
-      ...(next.scheduleRetry === undefined ? {} : { scheduleRetry: next.scheduleRetry }),
-    };
-  } catch {
-    config = null;
-  }
+  config = {
+    client: next.client,
+    release: next.release,
+    send: next.send,
+    ...(next.context === undefined ? {} : { context: next.context }),
+    ...(next.folderOfThread === undefined ? {} : { folderOfThread: next.folderOfThread }),
+    ...(next.scheduleRetry === undefined ? {} : { scheduleRetry: next.scheduleRetry }),
+  };
 }
 
 let config: ClientIssueReportingConfig | null = null;
@@ -120,6 +117,7 @@ export function reportClientIssue(input: ClientIssueReportInput): ClientIssue | 
       environmentId,
       traceId,
       spanId,
+      ...(isTraceId(input.traceId) && isSpanId(input.spanId) ? { existingSpan: true } : {}),
       ...(method === undefined ? {} : { method }),
       ...(durationMs === undefined ? {} : { durationMs }),
     };

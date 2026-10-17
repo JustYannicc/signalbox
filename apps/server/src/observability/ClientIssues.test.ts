@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import type { ClientIssue } from "@t3tools/contracts/clientIssues";
 import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,6 +26,11 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+
+vi.mock("../../package.json", async (importOriginal) => {
+  const original = await importOriginal<{ default: typeof packageJson }>();
+  return { default: { ...original.default, version: "1.0.1-nightly.20260905.123" } };
+});
 
 const environmentId = EnvironmentId.make("client-issue-env");
 const projectId = ProjectId.make("4eb1a0f2-6f23-4c86-a948-e85b2b69ea8e");
@@ -164,12 +170,12 @@ it.effect("persists only trusted issue metadata and validated thread context", (
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("rejects methods outside WsRpcGroup and limits reports per authenticated session", () =>
+it.effect("drops unknown method metadata and limits reports per authenticated session", () =>
   Effect.gen(function* () {
     const context = yield* Layer.build(makeServiceLayer("client-issues-limit-test-"));
     const service = Context.get(context, ClientIssues.ClientIssues);
 
-    const invalidMethod = yield* service
+    yield* service
       .report({
         issue: issue({ method: "not.an.rpc.method" }),
         sessionId: AuthSessionId.make("invalid-method-session"),
@@ -178,12 +184,18 @@ it.effect("rejects methods outside WsRpcGroup and limits reports per authenticat
         Effect.as("accepted" as const),
         Effect.catchTags({
           ClientIssuePayloadError: () => Effect.succeed("invalid_payload" as const),
-          ClientIssueInvalidMethodError: () => Effect.succeed("invalid_method" as const),
           ClientIssueRateLimitedError: () => Effect.succeed("rate_limited" as const),
           ClientIssuePersistenceError: () => Effect.succeed("persistence_error" as const),
         }),
       );
-    expect(invalidMethod).toBe("invalid_method");
+    const fileSystem = Context.get(context, FileSystem.FileSystem);
+    const path = Context.get(context, Path.Path);
+    const logsDir = Context.get(context, ServerConfig.ServerConfig).logsDir;
+    const contents = yield* fileSystem.readFileString(
+      path.join(logsDir, "client-issues", "events.ndjson"),
+    );
+    expect(contents).not.toContain("not.an.rpc.method");
+    expect(contents).not.toContain('"method"');
 
     let accepted = 0;
     for (let index = 0; index < 31; index += 1) {
@@ -196,7 +208,6 @@ it.effect("rejects methods outside WsRpcGroup and limits reports per authenticat
           Effect.as("accepted" as const),
           Effect.catchTags({
             ClientIssuePayloadError: () => Effect.succeed("invalid_payload" as const),
-            ClientIssueInvalidMethodError: () => Effect.succeed("invalid_method" as const),
             ClientIssueRateLimitedError: () => Effect.succeed("rate_limited" as const),
             ClientIssuePersistenceError: () => Effect.succeed("persistence_error" as const),
           }),
@@ -208,5 +219,47 @@ it.effect("rejects methods outside WsRpcGroup and limits reports per authenticat
       }
     }
     expect(accepted).toBe(30);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("retains nightly and preview client releases and a bounded trusted server release", () =>
+  Effect.gen(function* () {
+    const context = yield* Layer.build(makeServiceLayer("client-issues-release-test-"));
+    const service = Context.get(context, ClientIssues.ClientIssues);
+    const fileSystem = Context.get(context, FileSystem.FileSystem);
+    const path = Context.get(context, Path.Path);
+    const logsDir = Context.get(context, ServerConfig.ServerConfig).logsDir;
+    for (const release of ["1.0.1-nightly.20260905.123", "0.1.0-pr.12.34"]) {
+      yield* service.report({
+        issue: issue({ release, source: "rpc" }),
+        sessionId: AuthSessionId.make("release-test"),
+      });
+    }
+    const contents = yield* fileSystem.readFileString(
+      path.join(logsDir, "client-issues", "events.ndjson"),
+    );
+    expect(contents).toContain('"release":"1.0.1-nightly.20260905.123"');
+    expect(contents).toContain('"clientRelease":"1.0.1-nightly.20260905.123"');
+    expect(contents).toContain('"clientRelease":"0.1.0-pr.12.34"');
+    expect(contents).toContain('"method":"' + ORCHESTRATION_V2_WS_METHODS.dispatchCommand + '"');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not attribute a stale thread to a supplied valid folder", () =>
+  Effect.gen(function* () {
+    const context = yield* Layer.build(makeServiceLayer("client-issues-stale-test-"));
+    const service = Context.get(context, ClientIssues.ClientIssues);
+    const fileSystem = Context.get(context, FileSystem.FileSystem);
+    const path = Context.get(context, Path.Path);
+    const logsDir = Context.get(context, ServerConfig.ServerConfig).logsDir;
+    yield* service.report({
+      issue: issue({ threadId: "123e4567-e89b-12d3-a456-426614174000", folderId: projectId }),
+      sessionId: AuthSessionId.make("stale-test"),
+    });
+    const contents = yield* fileSystem.readFileString(
+      path.join(logsDir, "client-issues", "events.ndjson"),
+    );
+    expect(contents).toContain('"threadId":null');
+    expect(contents).toContain('"folderId":null');
   }).pipe(Effect.provide(NodeServices.layer)),
 );

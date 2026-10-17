@@ -2,8 +2,11 @@ import { CLIENT_ISSUES_PATH } from "@t3tools/contracts/clientIssues";
 import * as Effect from "effect/Effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { failure, NO_STORE_HEADERS, requestCredentials } from "../http/credentials.ts";
+import { json, NO_STORE_HEADERS, requestCredentials, traceId } from "../http/credentials.ts";
 import * as ClientIssueIntake from "./ClientIssueIntake.ts";
+
+const rejected = (status: number) =>
+  Effect.map(traceId, (id) => json({ code: "client_issue_rejected", status, traceId: id }, status));
 
 export const layer = HttpRouter.add(
   "POST",
@@ -22,8 +25,8 @@ export const layer = HttpRouter.add(
     return HttpServerResponse.empty({ status: 204, headers: NO_STORE_HEADERS });
   }).pipe(
     Effect.catchTags({
-      CloudCredentialError: () => failure("client_issue_rejected", 401),
-      ClientIssueRejected: ({ status }) => failure("client_issue_rejected", status),
+      CloudCredentialError: () => rejected(401),
+      ClientIssueRejected: ({ status }) => rejected(status),
     }),
   ),
 );

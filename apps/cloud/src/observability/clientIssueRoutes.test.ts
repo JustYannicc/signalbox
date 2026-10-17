@@ -1,4 +1,4 @@
-import { AuthSessionId, WsRpcGroup } from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, AuthSessionId, WsRpcGroup } from "@t3tools/contracts";
 import { CLIENT_ISSUES_PATH } from "@t3tools/contracts/clientIssues";
 import { describe, expect, it } from "@effect/vitest";
 import { initLogger, type WideEvent } from "evlog";
@@ -22,6 +22,7 @@ import * as ClientTraceLimits from "./ClientTraceLimits.ts";
 import * as ClientIssueIntake from "./ClientIssueIntake.ts";
 import * as Routes from "./clientIssueRoutes.ts";
 import * as Evlog from "./Evlog.ts";
+import { REDACTED, redactContent } from "./content.ts";
 import { filterTraces, type OtlpTraces } from "./nativeTracesFilter.ts";
 
 const TRACE = "0123456789abcdef0123456789abcdef";
@@ -32,6 +33,7 @@ const METHOD = [...WsRpcGroup.requests.keys()][0]!;
 const PERSON = "user_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const THREAD = "7b2dd8b5-cfee-49a1-86ce-bac041bf43b1";
 const FOLDER = "8b9b5f11-587e-4ed0-a363-87f462deddd9";
+const ORG = "org_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const FORGED_FOLDER = "90f2a4bd-1178-4ebf-832f-642695d2a8e1";
 const CANARY = "canary-private-message-stack-token";
 const payload = (overrides: Record<string, unknown> = {}) => ({
@@ -47,13 +49,16 @@ const payload = (overrides: Record<string, unknown> = {}) => ({
   spanId: SPAN,
   method: METHOD,
   durationMs: 25,
+  existingSpan: true,
   ...overrides,
 });
 
 const setup = (
   options: {
     readonly authorized?: boolean;
+    readonly withoutReadScope?: boolean;
     readonly limited?: boolean;
+    readonly failDimensions?: boolean;
     readonly telemetry?: string;
     readonly failExport?: boolean;
   } = {},
@@ -63,9 +68,11 @@ const setup = (
     const sent: Array<OtlpTraces | null> = [];
     let authCalls = 0;
     let limitCalls = 0;
+    const limitKeys: Array<string> = [];
     let exportCalls = 0;
     initLogger({
       silent: true,
+      redact: { transform: redactContent },
       drain: ({ event }) => {
         events.push(event);
       },
@@ -80,7 +87,7 @@ const setup = (
             userId: PERSON,
             sessionId: AuthSessionId.make("session_test"),
             method: "bearer-access-token",
-            scopes: [],
+            scopes: options.withoutReadScope ? [] : [AuthOrchestrationReadScope],
             expiresAt: Number.MAX_SAFE_INTEGER,
           });
     };
@@ -89,11 +96,18 @@ const setup = (
       forUser: (id) => ({
         ...cloud.userDirectory.forUser(id),
         clientTraceDimensions: (ids) =>
-          Effect.succeed(
-            ids.includes(THREAD) ? [{ threadId: THREAD, folderId: FOLDER, orgId: null }] : [],
-          ),
+          options.failDimensions
+            ? Effect.fail(
+                new UserDirectory.UserObjectError({
+                  operation: "clientTraceDimensions",
+                  cause: new Error("private storage error"),
+                }),
+              )
+            : Effect.succeed(
+                ids.includes(THREAD) ? [{ threadId: THREAD, folderId: FOLDER, orgId: ORG }] : [],
+              ),
         clientFolderDimensions: (ids) =>
-          Effect.succeed(ids.includes(FOLDER) ? [{ folderId: FOLDER, orgId: null }] : []),
+          Effect.succeed(ids.includes(FOLDER) ? [{ folderId: FOLDER, orgId: ORG }] : []),
       }),
     };
     const services = ClientIssueIntake.layer.pipe(
@@ -131,7 +145,8 @@ const setup = (
             options.limited === false
               ? undefined
               : {
-                  limit: async () => {
+                  limit: async ({ key }) => {
+                    limitKeys.push(key);
                     limitCalls++;
                     return { success: true };
                   },
@@ -180,14 +195,51 @@ const setup = (
       sent,
       authCalls: () => authCalls,
       limitCalls: () => limitCalls,
+      limitKeys,
       exportCalls: () => exportCalls,
     };
   });
 
+const expectRejection = (response: Response, status: number) =>
+  Effect.promise(() => response.json()).pipe(
+    Effect.map((body) =>
+      expect(body).toMatchObject({
+        code: "client_issue_rejected",
+        status,
+        traceId: expect.any(String),
+      }),
+    ),
+  );
+
 describe("cloud client issue intake", () => {
+  it.effect("returns the timeout status in the rejection body", () =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(
+        Layer.succeed(
+          ClientIssueIntake.ClientIssueIntake,
+          ClientIssueIntake.ClientIssueIntake.of({
+            ingest: () => Effect.fail(new ClientIssueIntake.ClientIssueRejected({ status: 408 })),
+          }),
+        ),
+      );
+      const router = yield* HttpRouter.toHttpEffect(Routes.layer);
+      const handler = HttpEffect.toWebHandler(router.pipe(Effect.provide(context)));
+      const response = yield* Effect.promise(() =>
+        handler(
+          new Request(`https://cloud.test${CLIENT_ISSUES_PATH}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+      expect(response.status).toBe(408);
+      yield* expectRejection(response, 408);
+    }),
+  );
+
   it.effect("rebuilds a trusted issue event and joined trace without private input", () =>
     Effect.gen(function* () {
-      const { post, events, sent } = yield* setup();
+      const { post, events, sent, limitKeys } = yield* setup();
       const response = yield* post(
         JSON.stringify({ ...payload(), message: CANARY, stack: CANARY, body: CANARY }),
         { traceparent: `00-${TRACE}-${SPAN}-01` },
@@ -204,7 +256,9 @@ describe("cloud client issue intake", () => {
       expect(output).toContain("server-environment");
       expect(output).toContain("9.8.7");
       expect(output).toContain("1.2.3");
+      expect(output).toContain(ORG);
       expect(output).toContain(METHOD);
+      expect(limitKeys).toEqual([`development:client-issue:${PERSON}`]);
       expect(sent[0]?.resourceSpans).toHaveLength(1);
       const spans = sent[0]?.resourceSpans[0]?.scopeSpans[0]?.spans;
       expect(spans).toHaveLength(1);
@@ -216,13 +270,31 @@ describe("cloud client issue intake", () => {
       });
       const issueEvent = events.find((event) => event.action === "client.issue.rpc.failed");
       expect(issueEvent).toBeDefined();
-      const sentryIssue = toSentryErrorEvent(issueEvent!, { dsn: "https://public@example.com/1" });
+      expect(issueEvent?.org).toEqual({ id: ORG });
+      expect(issueEvent?.error).toEqual({ name: "ClientIssue.rpc.failed", message: REDACTED });
+      const config = { dsn: "https://public@example.com/1" };
+      const withPrivateError = (name: string, message: string) => {
+        const event = { ...issueEvent!, error: { name, message } };
+        redactContent(event);
+        return toSentryErrorEvent(event, config);
+      };
+      const sentryIssue = withPrivateError(CANARY, `${CANARY}-message`);
+      const sameGroup = withPrivateError("private-name-two", "private-message-two");
       expect(sentryIssue).toBeTruthy();
+      expect(sentryIssue?.exception).toEqual(sameGroup?.exception);
+      expect(JSON.stringify(sentryIssue)).toContain("ClientIssue.rpc.failed");
+      expect(JSON.stringify(sentryIssue)).toContain(REDACTED);
+      expect(JSON.stringify({ sentryIssue, sameGroup })).not.toContain(CANARY);
+      expect(JSON.stringify({ sentryIssue, sameGroup })).not.toContain("private-name-two");
       expect(issueEvent?.level).toBe("error");
       const sentryLog = toSentryLog(issueEvent!, { dsn: "https://public@example.com/1" });
       expect(JSON.stringify(issueEvent)).toContain("clientIssue");
       expect(JSON.stringify(sentryLog)).toContain("environmentId");
       expect(sentryIssue.contexts.trace.trace_id).toBe(TRACE);
+      expect(sent[0]?.resourceSpans[0]?.scopeSpans[0]?.spans[0]?.attributes).toContainEqual({
+        key: "org.id",
+        value: { stringValue: ORG },
+      });
     }),
   );
 
@@ -271,9 +343,17 @@ describe("cloud client issue intake", () => {
     () =>
       Effect.gen(function* () {
         const denied = yield* setup({ authorized: false });
-        expect((yield* denied.post("invalid", { authorization: "" })).status).toBe(401);
+        const unauthorized = yield* denied.post("invalid", { authorization: "" });
+        expect(unauthorized.status).toBe(401);
+        yield* expectRejection(unauthorized, 401);
         expect(denied.authCalls()).toBe(1);
         expect(denied.limitCalls()).toBe(0);
+
+        const missingReadScope = yield* setup({ withoutReadScope: true });
+        const forbidden = yield* missingReadScope.post();
+        expect(forbidden.status).toBe(403);
+        yield* expectRejection(forbidden, 403);
+        expect(missingReadScope.limitCalls()).toBe(0);
 
         const cookieSession = yield* setup();
         expect(
@@ -284,7 +364,9 @@ describe("cloud client issue intake", () => {
         ).toBe(204);
 
         const unmetered = yield* setup({ limited: false });
-        expect((yield* unmetered.post("invalid")).status).toBe(429);
+        const limited = yield* unmetered.post("invalid");
+        expect(limited.status).toBe(429);
+        yield* expectRejection(limited, 429);
         expect(unmetered.sent).toHaveLength(0);
         expect(unmetered.events).toHaveLength(0);
       }),
@@ -293,11 +375,21 @@ describe("cloud client issue intake", () => {
   it.effect("bounds JSON intake and rejects invalid codes, release values, and trace joins", () =>
     Effect.gen(function* () {
       const { post, sent, events } = yield* setup();
-      expect((yield* post("not json")).status).toBe(400);
-      expect((yield* post("x".repeat(16 * 1024 + 1))).status).toBe(413);
-      expect((yield* post(undefined, { "content-length": "16385" })).status).toBe(413);
-      expect((yield* post(undefined, { "content-type": "text/plain" })).status).toBe(415);
-      expect((yield* post(undefined, { "content-encoding": "gzip" })).status).toBe(415);
+      const invalidJson = yield* post("not json");
+      expect(invalidJson.status).toBe(400);
+      yield* expectRejection(invalidJson, 400);
+      const oversized = yield* post("x".repeat(16 * 1024 + 1));
+      expect(oversized.status).toBe(413);
+      yield* expectRejection(oversized, 413);
+      const oversizedHeader = yield* post(undefined, { "content-length": "16385" });
+      expect(oversizedHeader.status).toBe(413);
+      yield* expectRejection(oversizedHeader, 413);
+      const wrongType = yield* post(undefined, { "content-type": "text/plain" });
+      expect(wrongType.status).toBe(415);
+      yield* expectRejection(wrongType, 415);
+      const wrongEncoding = yield* post(undefined, { "content-encoding": "gzip" });
+      expect(wrongEncoding.status).toBe(415);
+      yield* expectRejection(wrongEncoding, 415);
       expect((yield* post(JSON.stringify(payload({ code: CANARY })))).status).toBe(400);
       expect((yield* post(JSON.stringify(payload({ release: CANARY })))).status).toBe(400);
       const mismatch = yield* post(JSON.stringify(payload()), {
@@ -308,21 +400,25 @@ describe("cloud client issue intake", () => {
       expect(mismatchBody).not.toContain(OTHER_TRACE);
       expect(sent).toHaveLength(0);
       expect(events).toHaveLength(0);
+
+      const unavailable = yield* setup({ failDimensions: true });
+      const unavailableResponse = yield* unavailable.post();
+      expect(unavailableResponse.status).toBe(503);
+      yield* expectRejection(unavailableResponse, 503);
     }),
   );
 
-  it.effect("caps contract-valid client release metadata before event or trace export", () =>
+  it.effect("keeps the longest bounded contract release in events and traces", () =>
     Effect.gen(function* () {
       const { post, sent, events } = yield* setup();
-      const longRelease = `1.2.3-${"a".repeat(80)}.1`;
+      const longRelease = "1234.1234.1234-nightly.123456789012.123456789012.123456789012";
       expect(
         (yield* post(JSON.stringify(payload({ release: longRelease })), {
           traceparent: `00-${TRACE}-${SPAN}-01`,
         })).status,
       ).toBe(204);
       const output = JSON.stringify({ sent, events });
-      expect(output).not.toContain(longRelease);
-      expect(output).toContain('"clientRelease":"unknown"');
+      expect(output).toContain(longRelease);
     }),
   );
 
@@ -379,6 +475,7 @@ describe("cloud client issue intake", () => {
               source: "ui",
               code: "toast.warning",
               client: "desktop",
+              existingSpan: false,
             }),
           ),
           { traceparent: `00-${TRACE}-${SPAN}-01` },
@@ -400,6 +497,25 @@ describe("cloud client issue intake", () => {
         status: { code: 0 },
       });
       expect(sent[0]?.resourceSpans[1]?.scopeSpans[0]?.spans[0]?.parentSpanId).toBe(SPAN);
+    }),
+  );
+
+  it.effect("reconstructs an RPC client span when the input has no existing span", () =>
+    Effect.gen(function* () {
+      const { post, sent } = yield* setup();
+      const response = yield* post(JSON.stringify(payload({ existingSpan: undefined })), {
+        traceparent: `00-${TRACE}-${SPAN}-01`,
+      });
+      expect(response.status).toBe(204);
+      expect(sent[0]?.resourceSpans).toHaveLength(2);
+      const client = sent[0]?.resourceSpans[0]?.scopeSpans[0]?.spans[0];
+      const intake = sent[0]?.resourceSpans[1]?.scopeSpans[0]?.spans[0];
+      expect(client).toMatchObject({ name: "client.issue", traceId: TRACE, spanId: SPAN });
+      expect(intake).toMatchObject({
+        name: "client.issue.intake",
+        traceId: TRACE,
+        parentSpanId: SPAN,
+      });
     }),
   );
 });

@@ -37,7 +37,7 @@ const traceparentIds = (header: string | undefined) => {
 };
 
 const rejected = (status: number, traceId: string) =>
-  HttpServerResponse.jsonUnsafe({ code: "client_issue_rejected", traceId }, { status });
+  HttpServerResponse.jsonUnsafe({ code: "client_issue_rejected", status, traceId }, { status });
 
 const isJsonContentType = (request: HttpServerRequest.HttpServerRequest) =>
   request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
@@ -137,8 +137,6 @@ export const layer = HttpApiBuilder.group(
             Effect.as(HttpServerResponse.empty({ status: 204 })),
             Effect.catchTags({
               ClientIssuePayloadError: () => Effect.succeed(rejected(400, issue.value.traceId)),
-              ClientIssueInvalidMethodError: () =>
-                Effect.succeed(rejected(400, issue.value.traceId)),
               ClientIssueRateLimitedError: () => Effect.succeed(rejected(429, issue.value.traceId)),
               ClientIssuePersistenceError: () => Effect.succeed(rejected(503, issue.value.traceId)),
             }),

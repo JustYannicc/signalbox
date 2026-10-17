@@ -3,6 +3,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import type { ClientIssue } from "@t3tools/contracts/clientIssues";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   PrimaryConnectionTarget,
@@ -49,6 +50,35 @@ const prepared = (
 });
 
 describe("client issue HTTP delivery", () => {
+  it.effect.each([400, 403, 413, 415])("discards permanent rejection %s", (status) =>
+    Effect.gen(function* () {
+      const fetcher: typeof fetch = async () =>
+        Response.json(
+          { code: "client_issue_rejected", status, traceId: ISSUE.traceId },
+          { status },
+        );
+      const result = yield* sendClientIssue(prepared(null), ISSUE).pipe(
+        Effect.provide(layerRemoteHttpClient(fetcher)),
+      );
+      expect(result).toBe("discarded");
+    }),
+  );
+
+  it.effect.each([401, 408, 429, 503])("retains retryable rejection %s", (status) =>
+    Effect.gen(function* () {
+      const fetcher: typeof fetch = async () =>
+        Response.json(
+          { code: "client_issue_rejected", status, traceId: ISSUE.traceId },
+          { status },
+        );
+      const result = yield* sendClientIssue(prepared(null), ISSUE).pipe(
+        Effect.provide(layerRemoteHttpClient(fetcher)),
+        Effect.result,
+      );
+      expect(Result.isFailure(result)).toBe(true);
+    }),
+  );
+
   it.effect.each([
     { name: "cookie", authorization: null, expectedAuthorization: null },
     {
@@ -66,10 +96,11 @@ describe("client issue HTTP delivery", () => {
           return new Response(null, { status: 204 });
         };
 
-        yield* sendClientIssue(prepared(authorization), ISSUE).pipe(
+        const result = yield* sendClientIssue(prepared(authorization), ISSUE).pipe(
           Effect.provide(layerRemoteHttpClient(fetcher)),
         );
 
+        expect(result).toBeUndefined();
         expect(requests).toHaveLength(1);
         expect(requests[0]!.url).toBe(
           "https://primary.example.test/api/observability/client-issues",
@@ -130,10 +161,9 @@ describe("client issue HTTP delivery", () => {
         if (requests.length === 1) {
           return Response.json(
             {
-              _tag: "EnvironmentAuthInvalidError",
-              code: "auth_invalid",
-              reason: "invalid_credential",
-              traceId: "rejected-trace",
+              code: "client_issue_rejected",
+              status: 401,
+              traceId: ISSUE.traceId,
             },
             { status: 401 },
           );
@@ -162,11 +192,18 @@ describe("client issue HTTP delivery", () => {
         { expectedEnvironmentId: target.environmentId },
         { expectedEnvironmentId: target.environmentId, rejectedAccessToken: "current-token" },
       ]);
-      expect(requests[1]!.headers.get("authorization")).toBe("DPoP renewed-token");
-      expect(requests[1]!.headers.get("dpop")).toBe("proof-2");
-      expect(requests[1]!.headers.get("traceparent")).toBe(
-        `00-${ISSUE.traceId}-${ISSUE.spanId}-01`,
-      );
+      expect(requests.map((request) => request.headers.get("authorization"))).toEqual([
+        "DPoP current-token",
+        "DPoP renewed-token",
+      ]);
+      expect(requests.map((request) => request.headers.get("dpop"))).toEqual([
+        "proof-1",
+        "proof-2",
+      ]);
+      for (const request of requests) {
+        expect(request.headers.get("traceparent")).toBe(`00-${ISSUE.traceId}-${ISSUE.spanId}-01`);
+        expect(yield* Effect.promise(() => request.json())).toEqual(ISSUE);
+      }
       expect(proofs.map(({ method, url, accessToken }) => ({ method, url, accessToken }))).toEqual([
         {
           method: "POST",

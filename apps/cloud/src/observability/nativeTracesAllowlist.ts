@@ -1,5 +1,5 @@
 import { WsRpcGroup } from "@t3tools/contracts";
-import { CLIENT_ISSUE_CODES } from "@t3tools/contracts/clientIssues";
+import { CLIENT_ISSUE_CODES, CLIENT_ISSUE_RELEASE_PATTERN } from "@t3tools/contracts/clientIssues";
 
 /**
  * What may leave Cloudflare's native Worker traces for Sentry (#680). Every
@@ -42,9 +42,9 @@ const workos = (prefix: string) =>
 const uuid = { type: "id", format: new RegExp(`^${UUID}$`) } as const;
 const clientRelease = {
   type: "id",
-  format: /^(?:[a-f0-9]{7,40}|\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[a-z]+\.\d{1,8})?|development|unknown)$/,
+  format: CLIENT_ISSUE_RELEASE_PATTERN,
 } as const;
-const environmentId = { type: "id", format: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/ } as const;
+const environmentId = { type: "id", format: /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/ } as const;
 const clientIssueSources = oneOf("ui", "rpc", "subscription", "exception", "console", "react");
 const clientIssueClients = oneOf("web", "desktop", "mobile");
 

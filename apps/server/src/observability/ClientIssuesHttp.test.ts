@@ -136,6 +136,7 @@ it.effect("caps streamed request bodies and reports a trace-correlated rejection
     const body = yield* Effect.promise(() => response.json());
     expect(body).toEqual({
       code: "client_issue_rejected",
+      status: 413,
       traceId,
     });
     expect(reportCount).toBe(0);
@@ -187,7 +188,7 @@ it.effect("returns 408 when a streamed request body does not arrive within five 
 
     expect(response.status).toBe(408);
     const responseBody = yield* Effect.promise(() => response.json());
-    expect(responseBody).toEqual({ code: "client_issue_rejected", traceId });
+    expect(responseBody).toEqual({ code: "client_issue_rejected", status: 408, traceId });
     expect(reportCount).toBe(0);
   }),
 );
@@ -249,6 +250,7 @@ it.effect("maps standard authentication failures without exposing their details"
     const body = yield* Effect.promise(() => response.json());
     expect(body).toEqual({
       code: "client_issue_rejected",
+      status: 401,
       traceId,
     });
   }),

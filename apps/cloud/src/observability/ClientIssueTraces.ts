@@ -10,9 +10,11 @@ export const make = (
   personId: string,
   serverSpanId: string,
   now: bigint,
+  orgId: string | null,
 ): OtlpTraces => {
   const spanAttributes = [
     attribute("person.id", personId),
+    ...(orgId === null ? [] : [attribute("org.id", orgId)]),
     attribute("client.issue.code", issue.code),
     attribute("client.issue.severity", issue.severity),
     attribute("client.issue.source", issue.source),
@@ -48,7 +50,7 @@ export const make = (
     attributes: spanAttributes,
     status: { code: 0 },
   };
-  const clientHasExistingSpan = issue.source === "rpc" || issue.source === "subscription";
+  const clientHasExistingSpan = issue.existingSpan === true;
 
   return {
     resourceSpans: [

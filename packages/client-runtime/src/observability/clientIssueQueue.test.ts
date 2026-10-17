@@ -1,12 +1,16 @@
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   configureClientIssueReporting,
   flushClientIssues,
   getClientIssueReportingStats,
   reportClientIssue,
+  type ClientIssueFlushResult,
 } from "@t3tools/client-runtime/observability/client-issues";
 
-afterEach(() => configureClientIssueReporting(null));
+afterEach(() => {
+  configureClientIssueReporting(null);
+  vi.restoreAllMocks();
+});
 
 describe("client issue queue", () => {
   it("keeps failures queued, sends independent destinations, and retries after reconnect", async () => {
@@ -54,37 +58,92 @@ describe("client issue queue", () => {
     expect(outbound).toHaveLength(2);
   });
 
-  it("stops after three timer retries and resumes on an explicit flush", async () => {
-    const retryCallbacks: Array<() => void> = [];
+  it("exhausts three timer retries and recovers on a new report after the cooldown", async () => {
+    let nowMillis = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => nowMillis);
     let connected = false;
     let attempts = 0;
+    const retries: Array<{
+      callback: () => Promise<ClientIssueFlushResult> | undefined;
+      delayMs: number;
+    }> = [];
+    const recovered = Promise.withResolvers<void>();
     configureClientIssueReporting({
       client: "web",
       release: "development",
-      scheduleRetry: (callback) => {
-        retryCallbacks.push(callback);
+      scheduleRetry: (callback, delayMs) => {
+        retries.push({ callback, delayMs });
         return () => undefined;
       },
       send: async () => {
         attempts += 1;
         if (!connected) throw new Error("offline");
+        if (attempts === 7) recovered.resolve();
       },
     });
+    const report = () =>
+      reportClientIssue({
+        code: "runtime.uncaught",
+        severity: "error",
+        source: "exception",
+      });
 
-    reportClientIssue({ code: "runtime.uncaught", severity: "error", source: "exception" });
+    report();
     await flushClientIssues();
-    for (let retry = 0; retry < 3; retry += 1) {
-      retryCallbacks[retry]!();
-      await flushClientIssues();
+    for (const [index, delayMs] of [1_000, 5_000, 30_000].entries()) {
+      const retry = retries[index]!;
+      expect(retry.delayMs).toBe(delayMs);
+      nowMillis += delayMs;
+      expect(await retry.callback()).toMatchObject({ sent: 0, failed: 1, pending: 1 });
     }
-
     expect(attempts).toBe(4);
-    expect(retryCallbacks).toHaveLength(3);
+    expect(retries).toHaveLength(3);
     expect(getClientIssueReportingStats().pending).toBe(1);
 
     connected = true;
-    expect(await flushClientIssues()).toMatchObject({ sent: 1, pending: 0 });
-    expect(attempts).toBe(5);
+    nowMillis += 29_999;
+    report();
+    expect(attempts).toBe(4);
+    expect(retries).toHaveLength(3);
+    nowMillis += 1;
+    expect(attempts).toBe(4);
+    report();
+    await recovered.promise;
+    // Join the active delivery before its final send settles; this does not reset retries.
+    expect(await flushClientIssues()).toMatchObject({ sent: 3, failed: 0, pending: 0 });
+    expect(attempts).toBe(7);
+    expect(retries).toHaveLength(3);
+    expect(getClientIssueReportingStats()).toEqual({ pending: 0, dropped: 0 });
+  });
+
+  it("discards a permanent rejection and sends the next issue to the same destination", async () => {
+    const attempted: string[] = [];
+    configureClientIssueReporting({
+      client: "web",
+      release: "development",
+      send: async (event) => {
+        attempted.push(event.code);
+        if (event.code === "runtime.uncaught") return "discarded";
+      },
+    });
+    const rejected = {
+      code: "runtime.uncaught",
+      severity: "error",
+      source: "exception",
+      environmentId: "env-1",
+      dedupeKey: "runtime:uncaught",
+    } as const;
+    reportClientIssue(rejected);
+    reportClientIssue({
+      code: "toast.error",
+      severity: "error",
+      source: "ui",
+      environmentId: "env-1",
+    });
+    expect(await flushClientIssues()).toEqual({ sent: 1, failed: 0, pending: 0, dropped: 1 });
+    expect(attempted).toEqual(["runtime.uncaught", "toast.error"]);
+    expect(reportClientIssue(rejected)).not.toBeNull();
+    expect(await flushClientIssues()).toEqual({ sent: 0, failed: 0, pending: 0, dropped: 2 });
   });
 
   it("bounds its queue, counts dropped events, and can discard in-flight account data", async () => {

@@ -1,8 +1,11 @@
 import type { ClientIssue } from "@t3tools/contracts/clientIssues";
 
 export interface ClientIssueQueueSender {
-  readonly send: (issue: ClientIssue) => Promise<unknown>;
-  readonly scheduleRetry?: (callback: () => void, delayMs: number) => () => void;
+  readonly send: (issue: ClientIssue) => Promise<void | "discarded">;
+  readonly scheduleRetry?: (
+    callback: () => Promise<ClientIssueFlushResult> | undefined,
+    delayMs: number,
+  ) => () => void;
 }
 
 export interface QueuedClientIssue extends ClientIssueQueueSender {
@@ -35,6 +38,7 @@ const MAX_PENDING_ISSUES = 100;
 const MAX_DEDUPE_KEYS = 256;
 const MAX_TIMER_RETRIES = 3;
 const RETRY_DELAYS_MS = [1_000, 5_000, 30_000] as const;
+const RETRY_COOLDOWN_MS = 30_000;
 
 /** Keeps client issue delivery bounded and fences work on account changes. */
 export function createClientIssueQueue() {
@@ -43,6 +47,7 @@ export function createClientIssueQueue() {
   let activeSending: QueuedIssue | null = null;
   let activeFlush: ActiveFlush | null = null;
   let retryCount = 0;
+  let retryAfter = 0;
   let cancelRetry: (() => void) | undefined;
   let droppedCount = 0;
   const lastStateByKey = new Map<string, string>();
@@ -54,6 +59,7 @@ export function createClientIssueQueue() {
     activeSending = null;
     activeFlush = null;
     retryCount = 0;
+    retryAfter = 0;
     droppedCount = 0;
     lastStateByKey.clear();
   };
@@ -95,6 +101,7 @@ export function createClientIssueQueue() {
     if (activeFlush?.generation === generation) return activeFlush.promise;
     cancelScheduledRetry();
     retryCount = 0;
+    retryAfter = 0;
     return startFlush();
   };
 
@@ -148,7 +155,9 @@ export function createClientIssueQueue() {
   }
 
   function scheduleNextRetry(): void {
-    if (cancelRetry !== undefined || pending.length === 0 || retryCount >= MAX_TIMER_RETRIES) {
+    if (cancelRetry !== undefined || pending.length === 0) return;
+    if (retryCount >= MAX_TIMER_RETRIES) {
+      retryAfter = performance.now() + RETRY_COOLDOWN_MS;
       return;
     }
     const delayMs = RETRY_DELAYS_MS[retryCount]!;
@@ -157,22 +166,30 @@ export function createClientIssueQueue() {
     const schedule = pending.find((entry) => entry.scheduleRetry !== undefined)?.scheduleRetry;
     if (schedule === undefined) {
       retryCount = MAX_TIMER_RETRIES;
+      retryAfter = performance.now() + RETRY_COOLDOWN_MS;
       return;
     }
     try {
       cancelRetry = schedule(() => {
         if (generation !== scheduledGeneration) return;
         cancelRetry = undefined;
-        void startFlush();
+        return startFlush();
       }, delayMs);
     } catch {
       retryCount = MAX_TIMER_RETRIES;
+      retryAfter = performance.now() + RETRY_COOLDOWN_MS;
     }
   }
 
   function flushAutomatically(): Promise<ClientIssueFlushResult> {
-    if (pending.length === 0 || cancelRetry !== undefined || retryCount >= MAX_TIMER_RETRIES) {
+    if (activeFlush?.generation === generation) return activeFlush.promise;
+    if (pending.length === 0 || cancelRetry !== undefined) {
       return Promise.resolve(currentFlushResult(0, 0));
+    }
+    if (retryCount >= MAX_TIMER_RETRIES) {
+      if (performance.now() < retryAfter) return Promise.resolve(currentFlushResult(0, 0));
+      retryCount = 0;
+      retryAfter = 0;
     }
     return startFlush();
   }
@@ -204,10 +221,15 @@ export function createClientIssueQueue() {
 
         activeSending = queued;
         try {
-          await queued.send(queued.event);
+          const result = await queued.send(queued.event);
           if (generation !== flushGeneration) break;
           removeQueued(queued);
-          sent += 1;
+          if (result === "discarded") {
+            droppedCount += 1;
+            forgetStateIfCurrent(queued);
+          } else {
+            sent += 1;
+          }
         } catch {
           if (generation !== flushGeneration) break;
           failed += 1;
@@ -222,6 +244,7 @@ export function createClientIssueQueue() {
           scheduleNextRetry();
         } else if (pending.length === 0) {
           retryCount = 0;
+          retryAfter = 0;
           cancelScheduledRetry();
         }
       }

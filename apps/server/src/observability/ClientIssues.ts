@@ -33,15 +33,6 @@ export class ClientIssuePayloadError extends Schema.TaggedError<ClientIssuePaylo
   }
 }
 
-export class ClientIssueInvalidMethodError extends Schema.TaggedError<ClientIssueInvalidMethodError>()(
-  "ClientIssueInvalidMethodError",
-  {},
-) {
-  override get message(): string {
-    return "The client issue method is not a known RPC method.";
-  }
-}
-
 export class ClientIssueRateLimitedError extends Schema.TaggedError<ClientIssueRateLimitedError>()(
   "ClientIssueRateLimitedError",
   {},
@@ -62,7 +53,6 @@ export class ClientIssuePersistenceError extends Schema.TaggedError<ClientIssueP
 
 type ClientIssueError =
   | ClientIssuePayloadError
-  | ClientIssueInvalidMethodError
   | ClientIssueRateLimitedError
   | ClientIssuePersistenceError;
 
@@ -75,7 +65,7 @@ const ClientIssueEventSchema = Schema.Struct({
   type: Schema.Literal("client.issue"),
   occurredAt: Schema.String,
   environmentId: Schema.String,
-  release: ClientIssueContract.ClientIssue.fields.release,
+  release: Schema.String.check(Schema.isMaxLength(128)),
   clientRelease: ClientIssueContract.ClientIssue.fields.release,
   code: ClientIssueContract.ClientIssue.fields.code,
   severity: ClientIssueContract.ClientIssue.fields.severity,
@@ -164,6 +154,7 @@ const make = Effect.gen(function* () {
           folderId: Option.getOrNull(folderId),
         };
       }
+      return { threadId: null, folderId: null };
     }
 
     if (issue.folderId !== null) {
@@ -180,9 +171,12 @@ const make = Effect.gen(function* () {
     const issue = yield* decodeClientIssue(inputIssue).pipe(
       Effect.mapError(() => new ClientIssuePayloadError()),
     );
-    if (issue.method !== undefined && !knownMethods.has(issue.method)) {
-      return yield* new ClientIssueInvalidMethodError();
-    }
+    const method =
+      (issue.source === "rpc" || issue.source === "subscription") &&
+      issue.method !== undefined &&
+      knownMethods.has(issue.method)
+        ? issue.method
+        : undefined;
     yield* consumeRateLimit(sessionId);
 
     const references = yield* resolveReferences(issue);
@@ -199,7 +193,7 @@ const make = Effect.gen(function* () {
       ...references,
       traceId: issue.traceId,
       spanId: issue.spanId,
-      ...(issue.method === undefined ? {} : { method: issue.method }),
+      ...(method === undefined ? {} : { method }),
       ...(issue.durationMs === undefined ? {} : { durationMs: issue.durationMs }),
     };
     const line = yield* encodeClientIssueEvent(event).pipe(
