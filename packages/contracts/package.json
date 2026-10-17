@@ -83,9 +83,17 @@
       "types": "./src/signalboxSignIn.ts",
       "import": "./src/signalboxSignIn.ts"
     },
+    "./signalboxPersonBrowser": {
+      "types": "./src/signalboxPersonBrowser.ts",
+      "import": "./src/signalboxPersonBrowser.ts"
+    },
     "./signalboxRepositories": {
       "types": "./src/signalboxRepositories.ts",
       "import": "./src/signalboxRepositories.ts"
+    },
+    "./signalboxLearner": {
+      "types": "./src/signalboxLearner.ts",
+      "import": "./src/signalboxLearner.ts"
     }
   },
   "scripts": {

@@ -27,7 +27,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import type { PoolActor, PoolRejectedError } from "../pool/PoolEngine.ts";
+import type { PoolAccounts, PoolActor, PoolRejectedError } from "../pool/PoolEngine.ts";
 import { ACCOUNTS_FRESH_MS } from "../pool/PoolEngine.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import { encodeLinkToken } from "../pool/poolLink.ts";
@@ -55,6 +55,20 @@ import {
 
 /** Every pool, in order, with its accounts. */
 export type PoolsState = ReadonlyArray<PoolEntry>;
+
+interface PoolSnapshot {
+  readonly state: PoolsState;
+  readonly checkedAt: number;
+  readonly readId: number;
+}
+
+/** One pool object gets this long to answer its part of a user snapshot. */
+const POOL_ACCOUNT_READ_TIMEOUT_MS = 1_000;
+
+/** Includes time queued behind another refresh, so concurrent config reads stay bounded. */
+export const POOL_SNAPSHOT_TIMEOUT_MS = 1_500;
+
+const POOL_READ_TIMEOUT_MESSAGE = "This pool is taking too long to respond. Try again shortly.";
 
 export class UserPools extends Context.Service<
   UserPools,
@@ -176,10 +190,21 @@ const make = Effect.gen(function* () {
   const newPoolId = Effect.map(Effect.orDie(crypto.randomUUIDv4()), (uuid) =>
     uuid.replaceAll("-", "").slice(0, 8),
   );
-  const current = yield* SubscriptionRef.make(
-    Option.none<{ readonly state: PoolsState; readonly checkedAt: number }>(),
-  );
+  const current = yield* SubscriptionRef.make(Option.none<PoolSnapshot>());
   const reading = yield* Semaphore.make(1);
+  let nextRead = 0;
+
+  const entryFor = (
+    pool: UserPool,
+    accounts: PoolAccounts | { readonly error: string },
+    now: number,
+  ): PoolEntry => ({
+    pool,
+    source: usageSource({ pool, accounts }, now),
+    models: "models" in accounts ? accounts.models : [],
+    role: "role" in accounts ? accounts.role : null,
+    routing: "routing" in accounts ? accounts.routing : null,
+  });
 
   const rows = sql<PoolRow>`SELECT id, object_name, name, personal, backing_url FROM pools
     ORDER BY personal DESC, created_at, id`.pipe(Effect.map((all) => all.map(fromRow)));
@@ -227,39 +252,82 @@ const make = Effect.gen(function* () {
     });
 
   /** Reads every pool's accounts and shares the result with every subscriber. */
-  const refresh: UserPools["Service"]["refresh"] = (actor) =>
-    reading.withPermits(1)(
-      Effect.gen(function* () {
-        const all = yield* pools(actor);
-        const now = yield* Clock.currentTimeMillis;
-        const state = yield* Effect.forEach(
-          all,
-          (pool) =>
-            directory
-              .forPool(pool.objectName)
-              .accounts(actor)
-              .pipe(
-                Effect.catchTags({
-                  PoolRejectedError: (error) => Effect.succeed({ error: error.reason }),
-                  PoolObjectError: (error) =>
-                    Effect.map(PoolDirectory.poolErrorMessage(error), (message) => ({
-                      error: message,
-                    })),
-                }),
-                Effect.map((accounts): PoolEntry => ({
-                  pool,
-                  source: usageSource({ pool, accounts }, now),
-                  models: "models" in accounts ? accounts.models : [],
-                  role: "role" in accounts ? accounts.role : null,
-                  routing: "routing" in accounts ? accounts.routing : null,
-                })),
-              ),
-          { concurrency: "unbounded" },
+  const unavailableState = (
+    observed: Option.Option<PoolSnapshot>,
+    minimumRead: number,
+    message: string,
+  ) =>
+    Effect.gen(function* () {
+      const latest = yield* SubscriptionRef.get(current);
+      if (latest !== observed && Option.isSome(latest) && latest.value.readId >= minimumRead) {
+        return latest.value.state;
+      }
+      // The user object owns pool names; don't reuse account details from an older read here.
+      const readId = ++nextRead;
+      const all = yield* rows.pipe(Effect.catchTags({ SqlError: storageFailed }));
+      const now = yield* Clock.currentTimeMillis;
+      const state = all.map((pool) => entryFor(pool, { error: message }, now));
+      return yield* SubscriptionRef.modify(current, (known) =>
+        known !== observed && Option.isSome(known) && known.value.readId >= minimumRead
+          ? [known.value.state, known]
+          : [state, Option.some({ state, checkedAt: now, readId })],
+      );
+    });
+
+  const refresh = (actor: PoolActor, passive = false) =>
+    Effect.gen(function* () {
+      const observed = yield* SubscriptionRef.get(current);
+      // Explicit refreshes must include mutations that happened after an in-flight read began.
+      const minimumRead = nextRead + (passive ? 0 : 1);
+      return yield* reading
+        .withPermits(1)(
+          Effect.gen(function* () {
+            const latest = yield* SubscriptionRef.get(current);
+            // Coalesce queued reads even when their snapshots share the same clock millisecond.
+            if (
+              latest !== observed &&
+              Option.isSome(latest) &&
+              latest.value.readId >= minimumRead
+            ) {
+              return latest.value.state;
+            }
+            const readId = ++nextRead;
+            const all = yield* pools(actor);
+            const now = yield* Clock.currentTimeMillis;
+            const state = yield* Effect.forEach(
+              all,
+              (pool) =>
+                directory
+                  .forPool(pool.objectName)
+                  .accounts(actor)
+                  .pipe(
+                    Effect.timeoutOrElse({
+                      duration: POOL_ACCOUNT_READ_TIMEOUT_MS,
+                      orElse: () => Effect.succeed({ error: POOL_READ_TIMEOUT_MESSAGE }),
+                    }),
+                    Effect.catchTags({
+                      PoolRejectedError: (error) => Effect.succeed({ error: error.reason }),
+                      PoolObjectError: (error) =>
+                        Effect.map(PoolDirectory.poolErrorMessage(error), (message) => ({
+                          error: message,
+                        })),
+                    }),
+                    Effect.map((accounts) => entryFor(pool, accounts, now)),
+                  ),
+              { concurrency: "unbounded" },
+            );
+            yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now, readId }));
+            return state;
+          }),
+        )
+        .pipe(
+          // The DO's RPC Promise can outlive its caller. Bound that call and the semaphore queue.
+          Effect.timeoutOrElse({
+            duration: POOL_SNAPSHOT_TIMEOUT_MS,
+            orElse: () => unavailableState(observed, minimumRead, POOL_READ_TIMEOUT_MESSAGE),
+          }),
         );
-        yield* SubscriptionRef.set(current, Option.some({ state, checkedAt: now }));
-        return state;
-      }),
-    );
+    });
 
   const state: UserPools["Service"]["state"] = (actor) =>
     Effect.gen(function* () {
@@ -273,7 +341,7 @@ const make = Effect.gen(function* () {
       ) {
         return known.value.state;
       }
-      return yield* refresh(actor);
+      return yield* refresh(actor, true);
     });
 
   // Pool alarms update their own objects, so reread at the shared cache TTL to

@@ -2,7 +2,7 @@
  * Starts a thread in a folder: a draft in the folder's files (or its owner's
  * own), filed there when it lives somewhere else, on the folder's pool. With
  * `openFiles` it also opens the draft's Files panel, which is how a folder's
- * files are browsed.
+ * files are browsed; with `prompt` the draft starts with that request typed.
  */
 import { RegistryContext } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -12,7 +12,7 @@ import {
   newThreadIn,
   poolOfHome,
 } from "@t3tools/client-runtime/state/signalboxFolders";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { AccountPoolId } from "@t3tools/contracts/accountHub";
 import type { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { useCallback, useContext } from "react";
@@ -34,6 +34,18 @@ export interface StartInFolder {
   readonly ownerProjectId: ProjectId | null;
   readonly folderId: FolderId | null;
   readonly openFiles?: boolean;
+  readonly prompt?: string;
+  /** False creates the draft without opening it. */
+  readonly navigate?: boolean;
+  /** Fills the draft the moment it exists, before it opens. */
+  readonly seed?: (draftId: DraftId) => void;
+}
+
+export interface StartedInFolder {
+  readonly draftId: DraftId;
+  readonly threadId: ThreadId;
+  /** False when filing it in the folder failed; it then lives where its project's threads do. */
+  readonly filed: boolean;
 }
 
 export function useStartInFolder() {
@@ -65,20 +77,24 @@ export function useStartInFolder() {
   );
 
   return useCallback(
-    async (input: StartInFolder) => {
+    async (input: StartInFolder): Promise<StartedInFolder | null> => {
       const snapshotNow = () =>
         registry.get(environmentFoldersAtom).get(input.environmentId)?.snapshot ?? null;
       const before = snapshotNow();
-      if (before === null) return;
+      if (before === null) return null;
       const ownerProjectId =
         input.ownerProjectId ??
         before.folders.find((folder) => folder.id === input.folderId)?.files?.projectId;
-      if (ownerProjectId === undefined) return;
+      if (ownerProjectId === undefined) return null;
       const { projectId } = newThreadIn(before, input.folderId, ownerProjectId);
       const result = await settlePromise(() =>
         // Folders without files share their owner's project, so its empty draft may be
         // another folder's: always a draft of this folder's own.
-        handleNewThread(scopeProjectRef(input.environmentId, projectId), { freshDraft: true }),
+        handleNewThread(scopeProjectRef(input.environmentId, projectId), {
+          freshDraft: true,
+          ...(input.navigate === false ? { navigate: false } : {}),
+          ...(input.seed ? { seed: input.seed } : {}),
+        }),
       );
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
@@ -89,10 +105,10 @@ export function useStartInFolder() {
             description: error instanceof Error ? error.message : "An error occurred.",
           }),
         );
-        return;
+        return null;
       }
       const opened = result.value;
-      if (opened === null) return;
+      if (opened === null) return null;
       // Read the tree again: it may have changed while the draft opened. For a fresh draft this
       // is `newThreadIn(...).file`; it also catches an empty draft reused from another folder.
       const latest = snapshotNow() ?? before;
@@ -103,11 +119,13 @@ export function useStartInFolder() {
       // The draft picked its pool by its project; it runs on its folder's.
       const pool = filed && poolOfHome(filed, input.folderId);
       if (pool) followPool(opened.draftId, input.environmentId, projectId, pool.poolId);
+      if (input.prompt) useComposerDraftStore.getState().setPrompt(opened.draftId, input.prompt);
       if (input.openFiles) {
         useRightPanelStore
           .getState()
           .open(scopeThreadRef(input.environmentId, opened.threadId), "files");
       }
+      return { ...opened, filed: filed !== null };
     },
     [commands, followPool, handleNewThread, registry],
   );

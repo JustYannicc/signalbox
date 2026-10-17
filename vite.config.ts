@@ -3,6 +3,8 @@ import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 import { REACT_COMPILED_FILES } from "./apps/web/reactCompiledFiles.ts";
 
+import { evlogLintOverrides } from "./scripts/lib/evlog-lint.ts";
+
 const RESTRICTED_IMPORT_PATHS = [
   {
     name: "@t3tools/client-runtime",
@@ -93,6 +95,7 @@ export default defineConfig({
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
       "*.icon/**",
+      "scripts/upstream-sync/automations/**", // signalbox: copies of the prod automations, kept as prod has them
     ],
     sortPackageJson: {},
     overrides: [
@@ -119,6 +122,7 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      "scripts/upstream-sync/automations/**", // signalbox: copies of the prod automations, kept as prod has them
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
@@ -175,6 +179,16 @@ export default defineConfig({
       "t3code/require-suppression-reason": "error",
     },
     overrides: [
+      {
+        files: [
+          "apps/mobile/src/features/settings/{SettingsRouteScreen,SettingsAuthRouteScreen}.tsx",
+          "apps/mobile/src/features/settings/components/Settings*.tsx",
+          "apps/mobile/src/features/account/EnvironmentAccountSection.tsx",
+          "apps/mobile/src/features/{signIn/SignIn,automations/Automations,usage/Usage}SettingsRow*.tsx",
+          "apps/mobile/src/components/ui/List*.tsx",
+        ],
+        rules: { "t3code/no-native-raw-text": "error" },
+      },
       {
         files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
@@ -395,6 +409,7 @@ export default defineConfig({
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
         },
       },
+      ...evlogLintOverrides([...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS]),
     ],
     options: {
       reportUnusedDisableDirectives: "error",

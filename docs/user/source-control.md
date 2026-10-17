@@ -41,6 +41,12 @@ In Signalbox Cloud there is nothing to install. Open **Settings → Source Contr
 repositories need the organization to allow Signalbox: **Organization access** opens the page on
 GitHub where you grant or request it.
 
+After connecting GitHub and adding a repository, open **Pull Requests** to read its reviews,
+checks, conversations and changed files on web, desktop or mobile. A thread can also link a
+review from another GitHub repository your account can access. If GitHub cannot provide the
+review, Signalbox reports the problem so you can retry. Cloud reviews are read-only; open the
+pull request on GitHub to comment or merge.
+
 To work on a repository, choose **Add project → GitHub repository** and pick it from your
 repositories, or type its `owner/name`. Signalbox doesn't copy
 anything up front: each new thread starts from the latest commit on the default branch. Every

@@ -5,5 +5,6 @@
     "types": ["node"],
     "lib": ["ESNext", "esnext.disposable"]
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["upstream-sync/automations"] // signalbox: automation sources typed by the cloud sandbox, not tsc
 }
