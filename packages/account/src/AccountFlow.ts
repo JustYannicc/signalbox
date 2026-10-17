@@ -28,9 +28,23 @@ const WORKOS_PROVIDERS = {
 /** Email sends require a first-party action, never a cross-site embed or unfurler. */
 export function emailAuthorizeLanding(
   params: AccountAuthorizeParams,
-  fetchSite: string | undefined,
+  source: {
+    readonly fetchSite?: string | undefined;
+    readonly referer?: string | undefined;
+    readonly requestUrl?: URL | undefined;
+  },
 ) {
-  if (params.provider !== "email" || fetchSite === "same-origin" || fetchSite === "none") {
+  const ownReferrer =
+    source.fetchSite === undefined &&
+    source.referer !== undefined &&
+    URL.canParse(source.referer) &&
+    new URL(source.referer).origin === source.requestUrl?.origin;
+  if (
+    params.provider !== "email" ||
+    source.fetchSite === "same-origin" ||
+    source.fetchSite === "none" ||
+    ownReferrer
+  ) {
     return null;
   }
   const query = new URLSearchParams();

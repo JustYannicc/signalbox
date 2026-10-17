@@ -259,7 +259,12 @@ const make = Effect.gen(function* () {
       const personal = email
         ? yield* WorkOSPersonalAuthentication.emailOrganization(workos, email).pipe(
             Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.tapError(logSignInFailure),
+            Effect.tapError((error) =>
+              Effect.logWarning("WorkOS personal email lookup failed", {
+                errorTag: error._tag,
+                status: error.status,
+              }),
+            ),
             Effect.orElseSucceed(() => null),
           )
         : null;

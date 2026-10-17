@@ -32,7 +32,7 @@ describe("emailAuthorizeLanding", () => {
     "collects email without sending for fetch site %s",
     (fetchSite) => {
       const params = native({ provider: "email", loginHint: "person@example.com" });
-      const landing = AccountFlow.emailAuthorizeLanding(params, fetchSite);
+      const landing = AccountFlow.emailAuthorizeLanding(params, { fetchSite });
       expect(landing?.startsWith("/sign-in?")).toBe(true);
       const query = new URL(landing!, "https://box.example.com").searchParams;
       expect(query.get("challenge")).toBe(CHALLENGE);
@@ -40,10 +40,32 @@ describe("emailAuthorizeLanding", () => {
     },
   );
   it.each(["same-origin", "none"])("allows an email action from %s", (fetchSite) => {
-    expect(AccountFlow.emailAuthorizeLanding(browser({ provider: "email" }), fetchSite)).toBeNull();
+    expect(
+      AccountFlow.emailAuthorizeLanding(browser({ provider: "email" }), { fetchSite }),
+    ).toBeNull();
   });
   it("leaves social OAuth available from external links", () => {
-    expect(AccountFlow.emailAuthorizeLanding(browser(), "cross-site")).toBeNull();
+    expect(AccountFlow.emailAuthorizeLanding(browser(), { fetchSite: "cross-site" })).toBeNull();
+  });
+  it("accepts a same-origin referrer only when fetch metadata is absent", () => {
+    const params = browser({ provider: "email", origin: "https://untrusted.example" });
+    const source = {
+      referer: "https://box.example.com/sign-in",
+      requestUrl: new URL("https://box.example.com/api/account/authorize"),
+    };
+    expect(AccountFlow.emailAuthorizeLanding(params, source)).toBeNull();
+    expect(
+      AccountFlow.emailAuthorizeLanding(params, { ...source, fetchSite: "cross-site" }),
+    ).not.toBeNull();
+    expect(
+      AccountFlow.emailAuthorizeLanding(params, {
+        ...source,
+        referer: "https://untrusted.example/sign-in",
+      }),
+    ).not.toBeNull();
+    expect(
+      AccountFlow.emailAuthorizeLanding(params, { ...source, referer: "invalid" }),
+    ).not.toBeNull();
   });
 });
 
