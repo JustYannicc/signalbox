@@ -1831,6 +1831,24 @@ describe("RunnerTurns", () => {
               });
               yield* settle;
               yield* Queue.offer(fake.events, command("running", "npm run-script lint"));
+              yield* Queue.offer(fake.events, {
+                type: "message.updated",
+                driver,
+                message: {
+                  id: MessageId.make("late-old-message"),
+                  threadId,
+                  runId: RunId.make("run-1"),
+                  nodeId: null,
+                  createdBy: "agent",
+                  creationSource: "provider",
+                  role: "assistant",
+                  text: "A late reply from the failed turn.",
+                  attachments: [],
+                  streaming: false,
+                  createdAt: DateTime.makeUnsafe(0),
+                  updatedAt: DateTime.makeUnsafe(0),
+                },
+              });
               yield* Queue.offer(fake.events, turnEnded(1));
               for (let round = 0; round < 30; round++) yield* Effect.yieldNow;
 
@@ -1838,6 +1856,11 @@ describe("RunnerTurns", () => {
                 reported.filter((item) => item.kind === "turn.failed").map((item) => item.runId),
               ).toEqual([RunId.make("run-1")]);
               expect(reported.some((item) => item.kind === "machine.outgrown")).toBe(false);
+              expect(
+                reported.some(
+                  (item) => item.kind === "provider" && item.event.type === "message.updated",
+                ),
+              ).toBe(false);
               expect(fake.calls).toContain("start run-2");
             }),
           ),

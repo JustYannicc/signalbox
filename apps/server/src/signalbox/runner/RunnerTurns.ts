@@ -681,6 +681,16 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     const instanceId = adapter.instanceId;
     // A failed handoff can leave a provider winding down while the next run loads.
     const eventRunId = (event: ProviderAdapterV2Event) => {
+      switch (event.type) {
+        case "message.updated":
+          return event.message.runId ?? latestRunId;
+        case "node.updated":
+          return event.node.runId ?? latestRunId;
+        case "subagent.updated":
+          return event.subagent.runId ?? latestRunId;
+        case "plan.updated":
+          return event.plan.runId ?? latestRunId;
+      }
       if (event.type === "turn_item.updated" && event.turnItem.runId !== null) {
         return event.turnItem.runId;
       }
@@ -691,7 +701,9 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
             ? event.providerTurn.id
             : event.type === "turn_item.updated"
               ? event.turnItem.providerTurnId
-              : null;
+              : event.type === "runtime_request.updated"
+                ? event.runtimeRequest.providerTurnId
+                : null;
       for (const [runId, turn] of turns) {
         if (
           (providerTurnId !== null && turn.providerTurnId === providerTurnId) ||
