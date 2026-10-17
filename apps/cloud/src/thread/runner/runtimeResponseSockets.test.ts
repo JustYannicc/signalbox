@@ -249,20 +249,47 @@ describe("runtime response sockets", () => {
     ),
   );
 
-  it.effect("does not send native responses to an older socket without the capability", () =>
-    withObject(freshDatabase(), (engine, runner) =>
-      Effect.gen(function* () {
-        const connected = yield* pendingQuestion(engine, runner, false);
-        yield* engine.dispatch(owner, answer(connected.requestId, "answer-old"), personal);
-        yield* Effect.promise(() => pushRunnerWork(connected.host));
+  it.effect.each(["answer", "dismiss"] as const)(
+    "keeps a legacy question pending when %s races its machine update",
+    (action) =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          const connected = yield* pendingQuestion(engine, runner, false);
+          const command =
+            action === "answer"
+              ? answer(connected.requestId, "answer-old")
+              : {
+                  type: "thread.user-input.dismiss" as const,
+                  commandId: CommandId.make("dismiss-old"),
+                  threadId,
+                  requestId: connected.requestId,
+                };
+          expect(yield* Effect.result(engine.dispatch(owner, command, personal))).toMatchObject({
+            _tag: "Failure",
+            failure: { reason: expect.stringContaining("updating") },
+          });
+          expect((yield* snapshot(engine)).projection.runtimeRequests).toContainEqual(
+            expect.objectContaining({ id: connected.requestId, status: "pending" }),
+          );
+          expect((yield* runner.work).needsUpkeep).toBe(true);
+          expect(responseFrames(connected.socket)).toEqual([]);
 
-        expect(responseFrames(connected.socket)).toEqual([]);
-        expect((yield* runner.work).needsUpkeep).toBe(true);
-        expect((yield* runner.work).runtimeResponses).toMatchObject([
-          { requestId: connected.requestId, runId: connected.turn.runId },
-        ]);
-      }),
-    ),
+          // A temporary refusal keeps no receipt: the same command can work once supported.
+          connected.sockets.splice(connected.sockets.indexOf(connected.socket.socket), 1);
+          const modern = fakeSocket();
+          connected.sockets.push(modern.socket);
+          yield* say(connected.host, modern, {
+            ...hello(connected.generation, connected.token),
+            lastAckedSequence: 2,
+            takenRunIds: [connected.turn.runId],
+          });
+          yield* engine.dispatch(owner, command, personal);
+          yield* Effect.promise(() => pushRunnerWork(connected.host));
+          expect(responseFrames(modern)).toMatchObject([
+            { requestId: connected.requestId, runId: connected.turn.runId },
+          ]);
+        }),
+      ),
   );
 
   it.effect("rejects late answers after a stop and sends no response frame", () =>

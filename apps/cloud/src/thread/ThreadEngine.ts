@@ -479,6 +479,21 @@ const make = Effect.gen(function* () {
         if (decision._tag === "rejected") {
           return yield* refuse(decision.message, { record: true });
         }
+        const answersNativeRequest = decision.events.some(
+          (event) =>
+            event.type === "runtime-request.updated" &&
+            event.payload.status === "resolved" &&
+            event.payload.responseCapability.type === "live",
+        );
+        if (answersNativeRequest) {
+          const machine = yield* Effect.orDie(store.machine);
+          // Replacing a legacy callback cannot deliver an answer committed during its drain.
+          if (machine.status === "connected" && machine.runtimeResponses !== true) {
+            return yield* refuse("This machine is updating. Try your answer again shortly.", {
+              record: false,
+            });
+          }
+        }
         // The receipt names the turn this command started, so a client's retry finds its trace.
         const started = decision.events.find((event) => event.type === "run.created");
         // A turn starts only on its thread's pool, on a model it serves. A pool
