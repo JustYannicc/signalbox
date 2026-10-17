@@ -21,10 +21,11 @@ export const nativeTraceExport = (
     // This admits the same write-only ingestion as Sentry's public DSN, not access to project data.
     const dsnUrl = new URL(dsn);
     const token = dsnUrl.username;
+    const segments = dsnUrl.pathname.split("/").filter(Boolean);
+    const project = segments.pop();
+    if (project === undefined || token === "") throw new Error("SENTRY_DSN isn't a DSN.");
     if (!target.production) {
       // Existing preview state owns this shared destination. Keep it disabled rather than orphaning it.
-      const segments = dsnUrl.pathname.split("/").filter(Boolean);
-      const project = segments.pop();
       const base = segments.map((segment) => `/${segment}`).join("");
       yield* Cloudflare.Workers.ObservabilityDestination("SentryTraces", {
         name: "signalbox-preview-sentry-traces",
@@ -44,7 +45,12 @@ export const nativeTraceExport = (
       domain: { name: domain, zoneId: SIGNALBOX_ZONE_ID },
       // Instrumenting the receiver would export its requests back into itself.
       observability: { enabled: false },
-      env: { ...telemetry, TRACE_EXPORT_TOKEN: token },
+      env: {
+        SENTRY_DSN: telemetry.SENTRY_DSN,
+        SIGNALBOX_STAGE: telemetry.SIGNALBOX_STAGE,
+        APP_VERSION: telemetry.APP_VERSION,
+        TRACE_EXPORT_TOKEN: token,
+      },
     });
     const destination = yield* Cloudflare.Workers.ObservabilityDestination("FilteredTraces", {
       name: `${target.cloudWorker}-sentry-traces`,
