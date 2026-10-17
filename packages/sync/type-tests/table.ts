@@ -31,46 +31,45 @@ const compositeHomes = table({
 });
 const compositeKey: Key<typeof compositeHomes> = { ownerId: "u1", slug: "main" };
 declare const compositeReads: ReadTable<typeof compositeHomes>;
-compositeReads.get(compositeKey);
+void compositeReads.get(compositeKey);
 // @ts-expect-error Composite domain keys require all declared fields.
-compositeReads.get({ ownerId: "u1" });
+void compositeReads.get({ ownerId: "u1" });
 
-reads.get(homeKey);
-reads.unique("byOwnerAndSlug", { ownerId: "u1", slug: "main" });
-reads.page("byOwnerAndRank", {
+void reads.get(homeKey);
+void reads.unique("byOwnerAndSlug", { ownerId: "u1", slug: "main" });
+void reads.page("byOwnerAndRank", {
   prefix: ["u1"],
   range: { from: 1, to: 4 },
   limit: 25,
 });
-reads.page("byOwnerAndRank", {
+void reads.page("byOwnerAndRank", {
   range: { from: "u1", to: "u9" },
   limit: 25,
 });
-reads.page("byOwnerAndRank", {
+void reads.page("byOwnerAndRank", {
   prefix: ["u1", 2],
   limit: 25,
-  after: undefined,
 });
 
-writes.insert(home);
-writes.replace(homeKey, home);
-writes.patch(homeKey, { slug: "renamed" });
-writes.delete(homeKey);
+void writes.insert(home);
+void writes.replace(homeKey, home);
+void writes.patch(homeKey, { slug: "renamed" });
+void writes.delete(homeKey);
 
 // @ts-expect-error The domain key is the row's id field, independent of storage _id.
-reads.get({ _id: "h1" });
+void reads.get({ _id: "h1" });
 // @ts-expect-error Only unique indexes support unique lookup.
-reads.unique("byOwner", "u1");
+void reads.unique("byOwner", "u1");
 // @ts-expect-error Composite unique indexes require their complete key.
-reads.unique("byOwnerAndSlug", { ownerId: "u1" });
+void reads.unique("byOwnerAndSlug", { ownerId: "u1" });
 // @ts-expect-error A page prefix must follow the index's field order.
-reads.page("byOwnerAndRank", { prefix: [2], limit: 25 });
+void reads.page("byOwnerAndRank", { prefix: [2], limit: 25 });
 // @ts-expect-error Range applies to the index field immediately after the prefix (rank here).
-reads.page("byOwnerAndRank", { prefix: ["u1"], range: { from: "2" }, limit: 25 });
+void reads.page("byOwnerAndRank", { prefix: ["u1"], range: { from: "2" }, limit: 25 });
 // @ts-expect-error A full index prefix has no next field to range over.
-reads.page("byOwnerAndRank", { prefix: ["u1", 2], range: { from: 3 }, limit: 25 });
+void reads.page("byOwnerAndRank", { prefix: ["u1", 2], range: { from: 3 }, limit: 25 });
 // @ts-expect-error Domain key fields cannot be patched.
-writes.patch(homeKey, { id: "other" });
+void writes.patch(homeKey, { id: "other" });
 
 table({
   row: Schema.Struct({ id: Schema.optional(Schema.String) }),

@@ -2,8 +2,13 @@
   "name": "@signalbox/sync",
   "private": true,
   "type": "module",
+  "exports": {
+    "./table": "./src/table.ts",
+    "./definition": "./src/definition.ts"
+  },
   "scripts": {
-    "test": "node ./codegen-proof/run.mjs"
+    "test": "node ./codegen-proof/run.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "effect": "catalog:",
