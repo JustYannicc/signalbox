@@ -58,10 +58,11 @@ though the code grant does not.
 
 ## Desktop starts on Signalbox's sign-in screen
 
-Desktop opens Signalbox's provider and email screen in the system browser. The
-request keeps the app's PKCE challenge and return URL while the person chooses
-how to sign in. Known email accounts with an authoritative personal WorkOS
-organization continue through hosted AuthKit with that organization pinned.
+Desktop opens sign-in in the system browser. A returning browser can reuse its
+Signalbox session's email; otherwise Signalbox collects a provider or email.
+The request keeps the app's PKCE challenge and return URL. Known email accounts
+with an authoritative personal WorkOS organization continue through hosted AuthKit
+with that organization pinned.
 Other email sign-ins use WorkOS Magic Auth and enter the emailed code on the
 Signalbox screen. Social providers also use hosted WorkOS sign-in. The system
 browser gives those hosted flows the user's password manager, passkeys and any
@@ -76,7 +77,7 @@ It therefore keeps the account's own bearer and sends it only to
 ## Sign-out
 
 Sign-out revokes the current environment session only. The WorkOS browser
-session survives, but the next desktop sign-in still starts on Signalbox's
+session survives. With `selectAccount`, desktop sign-in starts on Signalbox's
 provider and email screen. Hosted sign-in may reuse that WorkOS session; email
 sign-in may instead ask for a code. After sign-out, clients pass
 `selectAccount` where the selected provider supports it, so Google can show its

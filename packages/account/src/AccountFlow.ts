@@ -25,6 +25,21 @@ const WORKOS_PROVIDERS = {
   email: "authkit",
 } as const satisfies Record<AccountProvider, string>;
 
+/** Email sends require a first-party action, never a cross-site embed or unfurler. */
+export function emailAuthorizeLanding(
+  params: AccountAuthorizeParams,
+  fetchSite: string | undefined,
+) {
+  if (params.provider !== "email" || fetchSite === "same-origin" || fetchSite === "none") {
+    return null;
+  }
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string") query.set(key, value);
+  }
+  return `${ACCOUNT_SIGN_IN_ROUTE}?${query}`;
+}
+
 export type AccountReturnTarget =
   | { readonly mode: "browser"; readonly returnTo: string }
   | ({ readonly mode: "native"; readonly challenge: string } & NativeReturn);

@@ -192,6 +192,22 @@ describe("CloudAccounts", () => {
       expect(location.searchParams.get("returnUrl")).toBe(nativeParams.returnUrl);
     }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
   );
+  it.effect("Magic Auth native web returns stay relative despite a supplied origin", () =>
+    Effect.gen(function* () {
+      const accounts = yield* CloudAccounts.CloudAccounts;
+      const authorized = yield* accounts.authorize({
+        ...nativeParams,
+        provider: "email",
+        loginHint: "magic@example.com",
+        origin: "https://unregistered.example",
+        via: "web",
+      });
+      const verify = new URL(authorized.location, ORIGIN).searchParams.get("verify") ?? "";
+      const result = yield* accounts.verifyEmail({ verify, code: "654321" }, undefined);
+      expect(result.location.startsWith("/sign-in?")).toBe(true);
+      expect(new URL(result.location, ORIGIN).searchParams.get("handoff")).toBeTruthy();
+    }).pipe(Effect.provide(layerAccounts(CODES, withKey))),
+  );
   it.effect("browser sign-in sets a session the account routes recognize, until sign-out", () =>
     Effect.gen(function* () {
       const accounts = yield* CloudAccounts.CloudAccounts;

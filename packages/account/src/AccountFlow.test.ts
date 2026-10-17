@@ -27,6 +27,26 @@ const reason = (params: AccountAuthorizeParams) => {
   return Result.isFailure(result) ? result.failure : null;
 };
 
+describe("emailAuthorizeLanding", () => {
+  it.each([undefined, "cross-site", "same-site"])(
+    "collects email without sending for fetch site %s",
+    (fetchSite) => {
+      const params = native({ provider: "email", loginHint: "person@example.com" });
+      const landing = AccountFlow.emailAuthorizeLanding(params, fetchSite);
+      expect(landing?.startsWith("/sign-in?")).toBe(true);
+      const query = new URL(landing!, "https://box.example.com").searchParams;
+      expect(query.get("challenge")).toBe(CHALLENGE);
+      expect(query.get("returnUrl")).toBe(params.returnUrl);
+    },
+  );
+  it.each(["same-origin", "none"])("allows an email action from %s", (fetchSite) => {
+    expect(AccountFlow.emailAuthorizeLanding(browser({ provider: "email" }), fetchSite)).toBeNull();
+  });
+  it("leaves social OAuth available from external links", () => {
+    expect(AccountFlow.emailAuthorizeLanding(browser(), "cross-site")).toBeNull();
+  });
+});
+
 describe("validateAuthorizeParams", () => {
   it("accepts bare http(s) origins and normalizes a trailing slash", () => {
     const result = AccountFlow.validateAuthorizeParams(

@@ -259,9 +259,8 @@ const make = Effect.gen(function* () {
       const personal = email
         ? yield* WorkOSPersonalAuthentication.emailOrganization(workos, email).pipe(
             Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.mapError(
-              () => new CloudSignInRequestError({ reason: "email sign-in is unavailable" }),
-            ),
+            Effect.tapError(logSignInFailure),
+            Effect.orElseSucceed(() => null),
           )
         : null;
       const codeVerifier = AccountFlow.randomToken();
@@ -269,7 +268,7 @@ const make = Effect.gen(function* () {
         validated.success.target.mode === "browser" ? AccountFlow.randomToken() : undefined;
       const attempt: CloudTokens.PendingAttempt = {
         codeVerifier,
-        origin: request.origin,
+        origin: email && !personal ? "" : request.origin,
         target: request.target,
         ...(binding ? { binding } : {}),
         ...(personal ? { userId: personal.userId } : {}),

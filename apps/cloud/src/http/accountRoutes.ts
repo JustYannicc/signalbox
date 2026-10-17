@@ -1,3 +1,4 @@
+import * as AccountFlow from "@signalbox/account/AccountFlow";
 import {
   ACCOUNT_AUTHORIZE_PATH,
   ACCOUNT_CALLBACK_PATH,
@@ -78,6 +79,9 @@ const authorizeRoute = HttpRouter.add(
   Effect.gen(function* () {
     const accounts = yield* CloudAccounts.CloudAccounts;
     const params = yield* requestQuery.pipe(Effect.flatMap(decodeAuthorizeParams));
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const landing = AccountFlow.emailAuthorizeLanding(params, request.headers["sec-fetch-site"]);
+    if (landing) return HttpServerResponse.redirect(landing, { headers: NO_STORE });
     const { location, binding } = yield* accounts.authorize(
       params,
       yield* requestCredentialsEffect,
