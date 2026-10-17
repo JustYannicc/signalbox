@@ -3,8 +3,12 @@ import {
   EnvironmentId,
   NodeId,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2ProviderTurn,
+  type OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   OrchestrationV2RuntimeRequest,
+  ProviderTurnId,
+  RunAttemptId,
   RuntimeRequestId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -17,9 +21,11 @@ import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/threa
 import { unsupported } from "./threadDecider.ts";
 import { nodeEvent, runEvent, turnItemEvent } from "./threadEvents.ts";
 import { threadShellFromProjection } from "./threadProjection.ts";
+import { runtimeRequestContext } from "./runtimeRequests.ts";
 import {
   connect,
   freshDatabase,
+  hello,
   launch,
   liveTurn,
   owner,
@@ -34,6 +40,36 @@ const requestId = RuntimeRequestId.make("native-request-1");
 const encodeRequest = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2RuntimeRequest));
 const encodeNode = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2ExecutionNode));
 const encodeItem = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
+
+const contextForAttempt = (
+  projection: OrchestrationV2ThreadProjection,
+  request: OrchestrationV2RuntimeRequest,
+  runAttemptId: RunAttemptId,
+) => {
+  const node = projection.nodes.find((candidate) => candidate.id === request.nodeId)!;
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === node.providerThreadId,
+  )!;
+  return runtimeRequestContext(
+    {
+      ...projection,
+      providerTurns: [
+        {
+          id: ProviderTurnId.make("native-request-turn"),
+          providerThreadId: providerThread.id,
+          nodeId: node.id,
+          runAttemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: projection.updatedAt,
+          completedAt: null,
+        } satisfies OrchestrationV2ProviderTurn,
+      ],
+    },
+    { ...request, providerTurnId: ProviderTurnId.make("native-request-turn") },
+  );
+};
 
 const waiting = (
   engine: Parameters<typeof launch>[0],
@@ -129,6 +165,93 @@ const answer = (commandId = "answer-1") => ({
 });
 
 describe("cloud native runtime requests", () => {
+  it.effect.each(["user_input", "command"] as const)(
+    "keeps a live %s request resumable from a conflict helper",
+    (kind) =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          yield* waiting(engine, runner, kind);
+          const projection = (yield* snapshot(engine)).projection;
+          const request = projection.runtimeRequests.find(
+            (candidate) => candidate.id === requestId,
+          )!;
+          const attempt = projection.attempts.find(
+            (candidate) => candidate.id === projection.runs[0]?.activeAttemptId,
+          )!;
+
+          expect(
+            contextForAttempt(projection, request, RunAttemptId.make(`${attempt.id}:sync:1`)),
+          ).not.toBeNull();
+        }),
+      ),
+  );
+
+  it.effect("rejects unrelated and malformed provider attempt identities", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* waiting(engine, runner);
+        const projection = (yield* snapshot(engine)).projection;
+        const request = projection.runtimeRequests.find((candidate) => candidate.id === requestId)!;
+        const attempt = projection.attempts.find(
+          (candidate) => candidate.id === projection.runs[0]?.activeAttemptId,
+        )!;
+
+        expect(contextForAttempt(projection, request, attempt.id)).not.toBeNull();
+        expect(
+          contextForAttempt(projection, request, RunAttemptId.make(`${attempt.id}:merge:2`)),
+        ).not.toBeNull();
+        for (const invalid of [
+          "other-run:sync:1",
+          `${attempt.id}:sync:0`,
+          `${attempt.id}:sync:01`,
+          `${attempt.id}:rebase:1`,
+          `${attempt.id}:merge:1:2`,
+        ]) {
+          expect(contextForAttempt(projection, request, RunAttemptId.make(invalid))).toBeNull();
+        }
+      }),
+    ),
+  );
+
+  it.effect("expires a native question before a new Runner continues the run", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        const { machine, turn } = yield* waiting(engine, runner);
+        yield* runner.hello({
+          ...hello(machine.generation, machine.token),
+          runtimeResponses: false,
+          takenRunIds: [turn.runId],
+        });
+
+        const drain = yield* runner.reconcile;
+        expect(drain.drain?.generation).toBe(machine.generation);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 3,
+          items: [{ kind: "machine.drained", id: drain.drain!.id, unsaved: [] }],
+        });
+        const upgraded = yield* runner.reconcile;
+        expect(upgraded.ensure?.generation).toBe(machine.generation + 1);
+
+        const recovered = (yield* snapshot(engine)).projection;
+        expect(recovered.runtimeRequests.find((request) => request.id === requestId)?.status).toBe(
+          "expired",
+        );
+        expect(threadShellFromProjection(recovered).pendingRuntimeRequest).toBeNull();
+        expect(recovered.runs).toHaveLength(2);
+
+        yield* runner.ensured(upgraded.ensure!.generation);
+        yield* runner.hello({
+          ...hello(upgraded.ensure!.generation, upgraded.ensure!.token),
+          takenRunIds: [],
+        });
+        const resumed = yield* runner.work;
+        expect(resumed.turn?.runId).toBe(recovered.runs[1]?.id);
+        expect(resumed.runtimeResponses).toEqual([]);
+      }),
+    ),
+  );
+
   it("uses a plain explanation for an unavailable action", () => {
     expect(unsupported()).toBe("This action isn't available in the cloud yet.");
   });

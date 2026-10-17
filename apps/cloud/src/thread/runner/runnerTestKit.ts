@@ -170,6 +170,7 @@ export const hello = (generation: number, token: string) => ({
   token,
   lastAckedSequence: 0,
   drains: true,
+  runtimeResponses: true,
 });
 
 const off = <T extends Record<string, unknown>>(fields: T) =>

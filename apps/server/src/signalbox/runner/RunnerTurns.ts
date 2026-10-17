@@ -296,7 +296,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
     RuntimeRequestId,
     {
       readonly runId: RunId;
-      readonly attemptId: RunAttemptId;
+      readonly localAttemptId: RunAttemptId;
       readonly providerSessionId: ProviderSessionId;
       readonly providerTurnId: ProviderTurnId;
       readonly runtime: ProviderAdapterV2SessionRuntime;
@@ -308,7 +308,10 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
   const taken = new Set<RunId>();
   const clearRuntimeRequests = (runId: RunId, attemptId?: RunAttemptId) => {
     for (const [requestId, request] of pendingRuntimeRequests) {
-      if (request.runId === runId && (attemptId === undefined || request.attemptId === attemptId)) {
+      if (
+        request.runId === runId &&
+        (attemptId === undefined || request.localAttemptId === attemptId)
+      ) {
         pendingRuntimeRequests.delete(requestId);
       }
     }
@@ -542,7 +545,7 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
           }
           pendingRuntimeRequests.set(runtimeRequest.id, {
             runId: turn.turn.runId,
-            attemptId: turn.attemptId,
+            localAttemptId: turn.attemptId,
             providerSessionId: runtimeRequest.responseCapability.providerSessionId,
             providerTurnId: runtimeRequest.providerTurnId,
             runtime,
@@ -1247,12 +1250,13 @@ export const makeRunnerTurns = Effect.fn("makeRunnerTurns")(function* (input: {
         respondingRuntimeRequests.has(response.requestId) ||
         observed === undefined ||
         observed.runId !== response.runId ||
-        observed.attemptId !== response.attemptId ||
-        observed.providerSessionId !== response.providerSessionId ||
-        runningRunId !== response.runId ||
         turn === undefined ||
         turn.status !== "running" ||
-        turn.attemptId !== response.attemptId ||
+        observed.localAttemptId !== turn.attemptId ||
+        observed.providerSessionId !== response.providerSessionId ||
+        runningRunId !== response.runId ||
+        // Cloud responses name the active attempt; the adapter request is bound to its local child.
+        turn.turn.attemptId !== response.attemptId ||
         turn.session !== observed.runtime ||
         !turn.providerTurnIds.has(observed.providerTurnId) ||
         observed.runtime.providerSessionId !== response.providerSessionId

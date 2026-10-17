@@ -125,14 +125,17 @@ const providerTurnStarted = (n: number): ProviderAdapterV2Event =>
     },
   }) as unknown as ProviderAdapterV2Event;
 
-const runtimeRequestPending = (requestId: RuntimeRequestId): ProviderAdapterV2Event =>
+const runtimeRequestPending = (
+  requestId: RuntimeRequestId,
+  providerTurnId = ProviderTurnId.make("native-1"),
+): ProviderAdapterV2Event =>
   ({
     type: "runtime_request.updated",
     driver,
     runtimeRequest: {
       id: requestId,
       nodeId: NodeId.make(`node-${requestId}`),
-      providerTurnId: ProviderTurnId.make("native-1"),
+      providerTurnId,
       nativeRequestRef: null,
       kind: "permission",
       status: "pending",
@@ -923,6 +926,76 @@ describe("RunnerTurns", () => {
           notices,
         };
       });
+
+    it.effect("answers a runtime request from a native helper using the cloud attempt", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fake, turns, mergeStepNamed } = yield* conflicted();
+          const requestId = RuntimeRequestId.make("helper-request");
+          yield* mergeStepNamed();
+          yield* settle;
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(requestId, ProviderTurnId.make("native-sync-1")),
+          );
+          yield* settle;
+
+          yield* turns.respondRuntimeRequest({
+            type: "runtime-request.respond",
+            runId: RunId.make("run-1"),
+            attemptId: RunAttemptId.make("attempt-1"),
+            providerSessionId,
+            requestId,
+            decision: "accept",
+          });
+
+          expect(fake.responses).toEqual([{ requestId, decision: "accept" }]);
+        }),
+      ),
+    );
+
+    it.effect("drops a helper response after a newer helper becomes current", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fake, turns, mergeStepNamed, mergeStepEnded } = yield* conflicted(false);
+          const staleRequestId = RuntimeRequestId.make("stale-helper-request");
+          const response = {
+            type: "runtime-request.respond" as const,
+            runId: RunId.make("run-1"),
+            attemptId: RunAttemptId.make("attempt-1"),
+            providerSessionId,
+            requestId: staleRequestId,
+            decision: "accept" as const,
+          };
+
+          yield* mergeStepNamed(1);
+          yield* settle;
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(staleRequestId, ProviderTurnId.make("native-sync-1")),
+          );
+          yield* settle;
+          yield* mergeStepEnded("completed", 1);
+          yield* settle;
+
+          // The response for helper 1 keeps the cloud attempt id, which also names helper 2.
+          yield* turns.respondRuntimeRequest(response);
+          expect(fake.responses).toEqual([]);
+
+          yield* mergeStepNamed(2);
+          yield* settle;
+          const currentRequestId = RuntimeRequestId.make("current-helper-request");
+          yield* Queue.offer(
+            fake.events,
+            runtimeRequestPending(currentRequestId, ProviderTurnId.make("native-sync-2")),
+          );
+          yield* settle;
+          yield* turns.respondRuntimeRequest({ ...response, requestId: currentRequestId });
+
+          expect(fake.responses).toEqual([{ requestId: currentRequestId, decision: "accept" }]);
+        }),
+      ),
+    );
 
     it.effect("has the agent resolve a conflict with main before the turn's own message", () =>
       Effect.scoped(

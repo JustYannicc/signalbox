@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import type { ThreadMessage } from "@signalbox/runner-protocol/RunnerProtocol";
+import { isRunAttemptOrContinuation } from "@signalbox/runner-protocol/RunAttemptIdentity";
 
 import { isLiveRun } from "./runLifecycle.ts";
 import type { Decision } from "./threadDecider.ts";
@@ -56,7 +57,8 @@ export function runtimeRequestContext(projection: Projection, request: Request) 
     providerThread?.providerSessionId !== session.id ||
     (request.providerTurnId !== null &&
       (turn === undefined ||
-        turn.runAttemptId !== attempt.id ||
+        turn.runAttemptId === null ||
+        !isRunAttemptOrContinuation(attempt.id, turn.runAttemptId) ||
         turn.providerThreadId !== providerThread.id))
   )
     return null;
