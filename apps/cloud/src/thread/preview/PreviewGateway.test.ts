@@ -141,6 +141,15 @@ const fixture = () => {
 };
 
 describe("opening a thread preview", () => {
+  it("tells the runner which deployment hosts its public previews", async () => {
+    const f = fixture();
+    const { ws } = await f.tunnel();
+    expect(JSON.parse(String(ws.sent[0]))).toMatchObject({
+      type: "welcome",
+      previewHostSuffix: ".preview.example",
+    });
+  });
+
   it("lists and opens the declared server while the machine is stopped", async () => {
     const f = fixture();
     const subscription = (await f.gateway.subscribe("member"))!.getReader();
