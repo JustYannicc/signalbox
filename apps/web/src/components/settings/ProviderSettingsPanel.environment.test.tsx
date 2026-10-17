@@ -530,6 +530,38 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(visitElements(panel, isRefreshButton)).not.toBeNull();
   });
 
+  it("lists only providers the Cloud reports, not unconfigurable built-in slots", () => {
+    capabilities.serverSettingsWrite = false;
+    const poolInstanceId = ProviderInstanceId.make("codex_hub");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [poolInstanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+    };
+    atoms.providers = [poolProvider(poolInstanceId)];
+
+    const listed = (instanceId: ProviderInstanceId) =>
+      visitElements(
+        renderPanel(),
+        (element) => element.props.instanceId === instanceId && element.props.mode === "list",
+      );
+
+    expect(listed(poolInstanceId)).not.toBeNull();
+    expect(listed(codexId)).toBeNull();
+    expect(listed(ProviderInstanceId.make("claudeAgent"))).toBeNull();
+  });
+
+  it("keeps built-in slots a self-hosted server can still set up", () => {
+    atoms.providers = [];
+    expect(
+      visitElements(
+        renderPanel(),
+        (element) => element.props.instanceId === codexId && element.props.mode === "list",
+      ),
+    ).not.toBeNull();
+  });
+
   it("removes an open add-instance dialog when the provider grant is revoked", () => {
     let panel = renderPanel();
     const add = visitElements(panel, isAddProviderButton);

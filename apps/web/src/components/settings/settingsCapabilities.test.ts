@@ -36,10 +36,9 @@ describe("settings capability requirements", () => {
     });
     const ids = items.map((item) => item.id);
     expect(ids).toContain("providers");
-    expect(settingsItemSupported("product-analytics", new Set(["serverSettingsWrite"]))).toBe(
-      false,
-    );
-    expect(settingsItemSupported("product-analytics", new Set())).toBe(true);
+    // The cloud serves analytics.* without serving server settings writes.
+    expect(settingsItemSupported("product-analytics", new Set(["serverSettingsWrite"]))).toBe(true);
+    expect(settingsItemSupported("product-analytics", new Set(["analyticsSettings"]))).toBe(false);
     for (const id of [
       "usage-providers",
       "cursor-keychain-usage",
@@ -101,7 +100,11 @@ describe("settings capability requirements", () => {
     expect(settingsItemGate("product-analytics", none, false)).toBe("wait");
     expect(settingsPathGate("/settings/general", none, false)).toBe("show");
     expect(settingsPathGate("/settings/storage", cloud, true)).toBe("hide");
-    expect(settingsItemGate("product-analytics", cloud, true)).toBe("hide");
+    expect(settingsItemGate("product-analytics", cloud, true)).toBe("show");
+    expect(settingsItemGate("github-accounts", cloud, true)).toBe("hide");
+    expect(settingsItemGate("product-analytics", new Set(["analyticsSettings"]), true)).toBe(
+      "hide",
+    );
     // Self-hosted servers never report these capabilities, so they keep everything.
     expect(settingsPathGate("/settings/connections", none, true)).toBe("show");
     expect(settingsItemGate("project-actions", none, true)).toBe("show");
