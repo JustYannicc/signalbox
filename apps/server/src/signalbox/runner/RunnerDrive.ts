@@ -24,7 +24,7 @@ import * as Schema from "effect/Schema";
 import {
   type DriveClient,
   type DriveClientError,
-  type DriveRefusedError,
+  DriveRefusedError,
   DriveTooLargeError,
 } from "./RunnerDriveClient.ts";
 import { CHECKPOINT_NOTES_REF, type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
