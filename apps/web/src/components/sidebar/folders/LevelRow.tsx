@@ -82,6 +82,10 @@ export function LevelRow(props: {
   );
 }
 
+/** A small row inside a level, under its name: its files, its automations. */
+export const LEVEL_ITEM_ROW_CLASS =
+  "flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md ps-5.5 pe-2 text-left text-xs outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset";
+
 export function ThreadCount(props: { count: number }) {
   if (props.count === 0) return null;
   return (
