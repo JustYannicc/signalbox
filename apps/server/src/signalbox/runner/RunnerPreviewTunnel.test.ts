@@ -22,6 +22,7 @@ import {
   tunnelThreadFrame,
 } from "@signalbox/runner-protocol/PreviewTunnel";
 import { ThreadId } from "@t3tools/contracts";
+import { previewLabel } from "@t3tools/shared/preview";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import type {
@@ -289,6 +290,28 @@ const devServer =
   };
 
 describe("RunnerPreviewTunnel", () => {
+  it.live("identifies this thread's declared and discovered public preview hosts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { thread, tunnel, setPorts } = yield* startTunnel([5173]);
+        const socket = yield* welcome(thread, false, {
+          previewHostSuffix: "-test.preview.example",
+          services: [{ port: 3000, command: "node dev.js", cwd: "." }],
+        });
+        yield* nextControl(socket);
+        const hostOf = (port: number) =>
+          Effect.promise(async () => `${await previewLabel(threadId, port)}-test.preview.example`);
+        expect(yield* tunnel.previewHosts).toEqual([yield* hostOf(5173), yield* hostOf(3000)]);
+        yield* setPorts([{ port: 8080, processName: "node" }]);
+        expect(yield* tunnel.previewHosts).toEqual([
+          yield* hostOf(5173),
+          yield* hostOf(3000),
+          yield* hostOf(8080),
+        ]);
+      }),
+    ),
+  );
+
   it.live("proxies an HTTP request with a body and a multi-frame response", () =>
     Effect.scoped(
       Effect.gen(function* () {

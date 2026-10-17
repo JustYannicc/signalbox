@@ -240,7 +240,11 @@ export const makeRunnerBrowser = (
     readonly machine: TabSource;
     readonly person: TabSource | null;
   },
-  options: { readonly timer?: Timer; readonly guard?: PageGuard } = {},
+  options: {
+    readonly timer?: Timer;
+    readonly guard?: PageGuard;
+    readonly previewHosts?: () => Promise<ReadonlyArray<string>>;
+  } = {},
 ): BrowserBackend => {
   const tabs = new Map<string, Tab>();
   let current: string | null = null;
@@ -279,8 +283,10 @@ export const makeRunnerBrowser = (
       throw cause;
     });
 
-  const routeOf = (url: string): BrowserRoute =>
-    sources.person === null ? "machine" : browserFor(url);
+  const routeOf = async (url: string): Promise<BrowserRoute> => {
+    if (sources.person === null || browserFor(url) === "machine") return "machine";
+    return browserFor(url, await options.previewHosts?.());
+  };
   const sourceOf = (route: BrowserRoute) =>
     route === "person" && sources.person !== null ? sources.person : sources.machine;
 
@@ -659,7 +665,7 @@ export const makeRunnerBrowser = (
     open: async (input) => {
       const reuse = input.reuseExistingTab ?? true;
       const url = input.url === undefined ? undefined : normalizePreviewUrl(input.url);
-      const route = url === undefined ? "machine" : routeOf(url);
+      const route = url === undefined ? "machine" : await routeOf(url);
       const found =
         input.tabId !== undefined ? await findTab(input) : reuse ? currentTab() : undefined;
       const tab =
@@ -677,7 +683,7 @@ export const makeRunnerBrowser = (
     },
     navigate: async (input) => {
       const url = navigationUrl(input);
-      const route = routeOf(url);
+      const route = await routeOf(url);
       const found = input.tabId === undefined ? currentTab() : await findTab(input);
       const tab = found === undefined ? await createTab(route) : await onRoute(found, route);
       await act({ tabId: tab.tabId }, "navigate", (each) => goto(each, url, input));

@@ -19,7 +19,7 @@ import { personTabs } from "./RunnerBrowserPerson.ts";
  * dev tab that carried the profile would show it.
  */
 
-const RESOLVE = "--host-resolver-rules=MAP site.test 127.0.0.1";
+const RESOLVE = "--host-resolver-rules=MAP site.test 127.0.0.1, MAP preview.test 127.0.0.1";
 
 let server: NodeHttp.Server;
 let port = 0;
@@ -133,6 +133,38 @@ const cookieOn = async (browser: BrowserBackend, tabId: string) =>
   /cookie: (.*)/.exec((await browser.snapshot({ tabId })).visibleText)?.[1];
 
 describe("the thread's browser with the person's", () => {
+  it("never opens the person's session for the thread's public preview", async () => {
+    const { session, calls } = sessions(ready);
+    const browser = makeRunnerBrowser(
+      { machine: await machineTabs(), person: personTabs(session) },
+      { previewHosts: async () => ["preview.test"] },
+    );
+    try {
+      const preview = await browser.open({ url: `http://preview.test:${port}/debug` });
+      expect(await cookieOn(browser, preview.tabId!)).toBe("none");
+      await browser.navigate({ url: `http://preview.test:${port}/env` });
+      expect(calls.open).toBe(0);
+
+      await browser.navigate({ url: `http://site.test:${port}/account` });
+      expect(await cookieOn(browser, preview.tabId!)).toBe("profile=signed-in");
+      await browser.navigate({ url: `http://preview.test:${port}/back` });
+      expect(await cookieOn(browser, preview.tabId!)).toBe("none");
+      const profile = await chromium.connectOverCDP(cdpWsUrl);
+      try {
+        expect(
+          profile
+            .contexts()[0]!
+            .pages()
+            .some((page) => page.url().includes("preview.test")),
+        ).toBe(false);
+      } finally {
+        await profile.close();
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
   it("opens real sites signed in as the person and dev servers with nobody's cookies", async () => {
     const { session } = sessions(ready);
     const browser = makeRunnerBrowser({
