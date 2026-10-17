@@ -1,12 +1,20 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
+import { environmentCatalog } from "../connection/catalog";
 import ChatView from "./ChatView";
 import { resolveDraftPromotionNavigationTarget, threadHasStarted } from "./ChatView.logic";
 import { waitForDraftHeroTransition } from "./chat/draftHeroTransition";
+import { useAtomCommand } from "../state/use-atom-command";
 import { SidebarInset } from "./ui/sidebar";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
+import { Button } from "./ui/button";
 import {
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
@@ -14,12 +22,20 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
-import { useEnvironmentThreadRefs, useThreadRefs, useThreadShell } from "../state/entities";
+import {
+  useEnvironmentThreadRefs,
+  useThreadProjection,
+  useThreadRefs,
+  useThreadError,
+  useThreadShell,
+  useThreadStatus,
+} from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
 import {
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
+  resolveThreadRouteDetailRef,
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
@@ -45,7 +61,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     : null;
   const serverThreadRef: ScopedThreadRef | null =
     target.kind === "server" ? target.threadRef : (draftSession?.promotedTo ?? inferredThreadRef);
-  const serverThread = useThreadShell(serverThreadRef);
+  const serverThreadShell = useThreadShell(serverThreadRef);
   const backgroundSubmissionPending = useBackgroundDraftSubmissionPending(
     target.kind === "draft" ? serverThreadRef : null,
   );
@@ -53,7 +69,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     target.kind === "draft"
       ? resolveDraftPromotionNavigationTarget({
           serverThreadRef,
-          serverThread,
+          serverThread: serverThreadShell,
           backgroundSubmissionPending,
         })
       : null;
@@ -61,12 +77,28 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const shell = useEnvironmentQuery(
     serverThreadRef === null ? null : environmentShell.stateAtom(serverThreadRef.environmentId),
   );
-  const serverThreadShell = serverThread;
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
   const bootstrapComplete = isThreadRouteSnapshotAuthoritative(shell.data?.status);
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
+  const routeDetailRef = resolveThreadRouteDetailRef(target, {
+    serverThreadExists: serverThreadShell !== null,
+    pendingDraftThreadExists: draftThread !== null,
+  });
+  const routeThreadProjection = useThreadProjection(routeDetailRef);
+  const routeThreadDetailStatus = useThreadStatus(routeDetailRef);
+  const routeThreadDetailError = useThreadError(routeDetailRef);
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const [retryingThreadKey, setRetryingThreadKey] = useState<string | null>(null);
+  const [retryCommandError, setRetryCommandError] = useState<{
+    readonly threadKey: string;
+    readonly message: string;
+  } | null>(null);
+  const routeThreadKey = routeDetailRef === null ? null : scopedThreadKey(routeDetailRef);
+  const retrying = retryingThreadKey !== null;
+  const retryErrorMessage =
+    retryCommandError?.threadKey === routeThreadKey ? retryCommandError.message : null;
   const promotedDraftId = useComposerDraftStore((store) =>
     target.kind === "server" ? store.getDraftIdByRef(target.threadRef) : null,
   );
@@ -94,6 +126,14 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     serverThreadExists: serverThreadShell !== null,
     serverThreadDeleted: serverThreadShell?.deletedAt != null,
     draftThreadExists: draftThread !== null,
+    ...(routeDetailRef === null
+      ? {}
+      : {
+          detailStatus: routeThreadDetailStatus,
+          detailExists: routeThreadProjection !== null,
+          detailDeleted: routeThreadProjection?.projection.thread.deletedAt != null,
+          detailError: routeThreadDetailError ?? retryErrorMessage,
+        }),
   });
   const serverThreadStarted = threadHasStarted(serverThreadShell);
   const environmentHasAnyThreads = environmentThreadRefs.length > 0 || environmentHasDraftThreads;
@@ -133,7 +173,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   }, [canonicalThreadRef, draftSession, navigate, target.kind]);
 
   useEffect(() => {
-    if (target.kind !== "server" || !bootstrapComplete) {
+    if (target.kind !== "server") {
       return;
     }
     if (renderState === "missing") {
@@ -143,7 +183,29 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [environmentHasAnyThreads, navigate, renderState, target]);
+
+  const retryRouteThread = () => {
+    if (routeDetailRef === null || routeThreadKey === null || retryingThreadKey !== null) {
+      return;
+    }
+    const threadKey = routeThreadKey;
+    setRetryingThreadKey(threadKey);
+    setRetryCommandError(null);
+    void retryEnvironment(routeDetailRef.environmentId).then(
+      (result) => {
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setRetryCommandError({
+            threadKey,
+            message: error instanceof Error ? error.message : "Could not reconnect. Try again.",
+          });
+        }
+        setRetryingThreadKey((current) => (current === threadKey ? null : current));
+      },
+      () => setRetryingThreadKey((current) => (current === threadKey ? null : current)),
+    );
+  };
 
   useEffect(() => {
     if (target.kind !== "server" || !serverThreadStarted || !draftThread) {
@@ -166,6 +228,22 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
         />
       );
     }
+  } else if (renderState === "error") {
+    view = (
+      <div className="flex h-full w-full items-center justify-center px-4">
+        <Alert className="w-full max-w-lg" controlAlignment="first-line" variant="error">
+          <AlertTitle>Could not load this thread</AlertTitle>
+          <AlertDescription className="break-words">
+            {retryErrorMessage ?? routeThreadDetailError ?? "Check the connection and try again."}
+          </AlertDescription>
+          <AlertAction>
+            <Button disabled={retrying} onClick={retryRouteThread} size="sm" variant="outline">
+              {retrying ? "Retrying…" : "Retry"}
+            </Button>
+          </AlertAction>
+        </Alert>
+      </div>
+    );
   } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
     view = (
       <ChatView

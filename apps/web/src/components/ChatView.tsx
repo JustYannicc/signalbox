@@ -1,4 +1,5 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
+import { threadDetailToShell } from "@t3tools/client-runtime/state/thread-detail-shell";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
@@ -1174,13 +1175,22 @@ export default function ChatView(props: ChatViewProps) {
         ? store.getDraftSession(draftId)
         : null,
   );
-  const serverThread = useThreadShell(routeThreadRef);
+  const serverThreadShell = useThreadShell(routeThreadRef);
   const routeThreadDetailRef = resolveThreadDetailRef(routeThreadRef, {
-    shellExists: serverThread !== null,
+    shellExists: serverThreadShell !== null,
     waitForShell: draftThread !== null,
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const serverThread = useMemo(() => {
+    if (serverThreadShell !== null) {
+      return serverThreadShell;
+    }
+    if (routeKind !== "server" || serverProjection === null) {
+      return null;
+    }
+    return threadDetailToShell(environmentId, serverProjection);
+  }, [environmentId, routeKind, serverProjection, serverThreadShell]);
   const promptRef = useRef("");
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
