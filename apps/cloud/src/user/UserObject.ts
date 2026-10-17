@@ -34,6 +34,11 @@ import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
+import * as LearnerService from "../learner/LearnerService.ts";
+import * as LearnerJev from "../learner/LearnerJev.ts";
+import * as LearnerSummary from "../learner/LearnerSummary.ts";
+import * as LearnerHomes from "./LearnerHomes.ts";
+import * as UserLearner from "./UserLearner.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as NoteReader from "../notes/NoteReader.ts";
@@ -98,6 +103,7 @@ export interface UserObjectEnv
     MachineBackendEnv,
     PreviewEnv,
     GitHub.GitHubEnv,
+    LearnerJev.LearnerJevEnv,
     KindClassifier.KindClassifierEnv,
     PersonBrowsers.PersonBrowsersEnv,
     LoginService.LoginServiceEnv {
@@ -242,6 +248,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               UserShell.layer,
               UserThreadStatus.layer,
               CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PoolSignIns.layer,
               drives.services,
               ConnectionLinks.layer,
@@ -285,6 +292,20 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           ),
           Layer.provideMerge(LegacySections.layer),
           Layer.provideMerge(UserFolders.layer),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              LearnerService.layer,
+              LearnerSummary.layer((objectName) =>
+                PoolDirectory.poolObjectStub(env.POOLS, objectName, {
+                  localWorkerd: env.LOCAL_WORKERD === "1",
+                }),
+              ),
+            ).pipe(
+              Layer.provideMerge(
+                LearnerJev.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+              ),
+            ),
+          ),
           Layer.provideMerge(ModelManifest.layer),
           Layer.provideMerge(
             GitHub.layerForUsers(GitHub.gitHubEndpoints(env)).pipe(
@@ -557,6 +578,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   driveEvents(input: Parameters<UserObjectApi["driveEvents"]>[0]) {
     return this.api.driveEvents(input);
+  }
+
+  learnerTool(threadId: string, name: string, input: unknown) {
+    return this.api.learnerTool(threadId, name, input);
   }
 
   automationTool(threadId: string, name: string, input: unknown) {
