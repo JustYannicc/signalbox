@@ -4,7 +4,7 @@
  * living there, then your folders, nested at any depth, then each
  * organization you're a member of as a level row holding its own threads and
  * folders. An open folder shows its subfolders, its files as one "Files"
- * source, and the threads that live there, drawn by the sidebar's own
+ * source, its automations (`FolderAutomations`), and the threads that live there, drawn by the sidebar's own
  * project renderer inside a `SidebarThreadScope`.
  */
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -34,6 +34,7 @@ import {
   retryEnvironmentFolders,
 } from "../../../state/signalboxFolders";
 import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "../../../threadRoutes";
+import { cn } from "../../../lib/utils";
 import { DriveShareDialogHost } from "../../drives/DriveProjectShareMenuItem";
 import { NewSharedDriveButton } from "../../drives/NewSharedDriveButton";
 import { Button } from "../../ui/button";
@@ -46,9 +47,11 @@ import {
   useFolderStatus,
 } from "../../statusLine/FolderStatusCount";
 import { openFolderDialog } from "./folderDialogStore";
-import { LevelRow, NewThreadButton } from "./LevelRow";
+import { FolderAutomations, useFolderAutomations } from "./FolderAutomations";
+import { LEVEL_ITEM_ROW_CLASS, LevelRow, NewThreadButton } from "./LevelRow";
 import { FolderMenu, OwnerMenu } from "./FolderMenus";
 import { FolderPhaseLabel } from "./FolderPhase";
+import { NEW_AUTOMATION_PROMPT } from "@t3tools/client-runtime/automations/prompts";
 import {
   folderNodeKey,
   folderOwnerKey,
@@ -166,7 +169,10 @@ function FilesRow(props: { name: string; onOpen: () => void }) {
             <button
               type="button"
               onClick={props.onOpen}
-              className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md ps-5.5 pe-2 text-left text-xs text-sidebar-muted-foreground/75 outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset"
+              className={cn(
+                LEVEL_ITEM_ROW_CLASS,
+                "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+              )}
             />
           }
         >
@@ -194,15 +200,21 @@ const FolderRow = memo(function FolderRow(props: {
   const expanded = !collapsed.has(key);
   const count = counts.get(folder.id) ?? 0;
   const status = useFolderStatus(key); // signalbox: status roll-up (#670)
-  const empty = node.children.length === 0 && folder.files === undefined && count === 0;
+  const listKey = folderThreadListKey(environment.environmentId, owner.context.id, folder.id);
+  const automationCount = useFolderAutomations(listKey).length;
+  const empty =
+    node.children.length === 0 &&
+    folder.files === undefined &&
+    count === 0 &&
+    automationCount === 0;
   // A folder with its own files can start threads even where its owner has none.
   const canStart = owner.filesProjectId !== null || folder.files !== undefined;
-  const startHere = (openFiles: boolean) =>
+  const startHere = (extra?: Pick<StartInFolder, "openFiles" | "prompt">) =>
     start({
       environmentId: environment.environmentId,
       ownerProjectId: owner.filesProjectId,
       folderId: folder.id,
-      openFiles,
+      ...extra,
     });
 
   return (
@@ -227,9 +239,7 @@ const FolderRow = memo(function FolderRow(props: {
       }
       actions={
         <>
-          {canStart ? (
-            <NewThreadButton name={folder.name} onClick={() => startHere(false)} />
-          ) : null}
+          {canStart ? <NewThreadButton name={folder.name} onClick={() => startHere()} /> : null}
           {canEdit ? (
             <FolderMenu
               environmentId={environment.environmentId}
@@ -237,6 +247,11 @@ const FolderRow = memo(function FolderRow(props: {
               owner={owner}
               folder={folder}
               commands={commands}
+              // An automation lives where its project's threads do: only a folder with
+              // files of its own can hold one (#313).
+              onNewAutomation={
+                folder.files ? () => startHere({ prompt: NEW_AUTOMATION_PROMPT }) : null
+              }
             />
           ) : null}
         </>
@@ -254,7 +269,10 @@ const FolderRow = memo(function FolderRow(props: {
           counts={counts}
         />
       ))}
-      {folder.files ? <FilesRow name={folder.name} onOpen={() => startHere(true)} /> : null}
+      {folder.files ? (
+        <FilesRow name={folder.name} onOpen={() => startHere({ openFiles: true })} />
+      ) : null}
+      <FolderAutomations environmentId={environment.environmentId} listKey={listKey} />
       <HomeThreads environment={environment} owner={owner} home={folder.id} canEdit={canEdit} />
       {empty ? (
         <li className="flex h-7 items-center ps-5.5 text-xs text-sidebar-muted-foreground/50">
@@ -301,6 +319,10 @@ function LevelContents(props: LevelProps & { depth: number; after?: ReactNode })
   const { environment, owner, canEdit, counts } = props;
   return (
     <>
+      <FolderAutomations
+        environmentId={environment.environmentId}
+        listKey={folderThreadListKey(environment.environmentId, owner.context.id, null)}
+      />
       <HomeThreads environment={environment} owner={owner} home={null} canEdit={canEdit} />
       {owner.roots.map((node) => (
         <FolderRow
@@ -427,7 +449,7 @@ function useStartFromSidebar(): (input: StartInFolder) => void {
   );
 }
 
-/** Your top level's ⋯ (new thread, instructions, secrets): it has no row of its own. */
+/** Your top level's ⋯ (new thread or automation, instructions, secrets): it has no row of its own. */
 function TopLevelMenu(props: { environment: FolderEnvironmentView }) {
   const { environment } = props;
   const editable = useAtomValue(folderEditableEnvironmentsAtom);
@@ -435,22 +457,24 @@ function TopLevelMenu(props: { environment: FolderEnvironmentView }) {
   const { top } = ownerLevels(environment.owners, (owner) => owner.context);
   if (top === null) return null;
   const filesProjectId = top.filesProjectId;
+  const startTop =
+    filesProjectId === null
+      ? null
+      : (extra?: Pick<StartInFolder, "prompt">) =>
+          start({
+            environmentId: environment.environmentId,
+            ownerProjectId: filesProjectId,
+            folderId: null,
+            ...extra,
+          });
   return (
     <OwnerMenu
       environmentId={environment.environmentId}
       snapshot={environment.snapshot}
       owner={top}
       canEdit={editable.has(environment.environmentId)}
-      onNewThread={
-        filesProjectId === null
-          ? null
-          : () =>
-              start({
-                environmentId: environment.environmentId,
-                ownerProjectId: filesProjectId,
-                folderId: null,
-              })
-      }
+      onNewThread={startTop && (() => startTop())}
+      onNewAutomation={startTop && (() => startTop({ prompt: NEW_AUTOMATION_PROMPT }))}
     />
   );
 }
