@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
+import type * as Scope from "effect/Scope";
 
 import * as AgentCleanup from "./agentCleanup.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -132,11 +133,10 @@ export class WorktreeCleanupGuard extends Context.Service<
       input: WorktreeCleanupGuardInput,
       options?: { readonly verifyCompletion?: boolean },
     ) => Effect.Effect<string | null>;
-    readonly withRemovalGate: <E, R>(
+    readonly acquireRemovalGate: (
       input: WorktreeCleanupGuardInput,
       projectRoot: string,
-      finalize: Effect.Effect<string | null, E, R>,
-    ) => Effect.Effect<string | null, E, R>;
+    ) => Effect.Effect<string | null, never, Scope.Scope>;
   }
 >()("t3/signalbox/worktreeCleanupGuard") {}
 
@@ -342,10 +342,9 @@ const make = Effect.gen(function* () {
       );
   });
 
-  const withRemovalGate: WorktreeCleanupGuard["Service"]["withRemovalGate"] = (
+  const acquireRemovalGate: WorktreeCleanupGuard["Service"]["acquireRemovalGate"] = (
     input,
     projectRoot,
-    finalize,
   ) =>
     Effect.gen(function* () {
       const gate = yield* agentCleanup.acquireWorktreeRemovalGate(input.worktreePath);
@@ -366,10 +365,10 @@ const make = Effect.gen(function* () {
       )
         return "repository or branch changed since check";
 
-      return yield* finalize;
-    }).pipe(Effect.scoped);
+      return null;
+    });
 
-  return WorktreeCleanupGuard.of({ check, withRemovalGate });
+  return WorktreeCleanupGuard.of({ check, acquireRemovalGate });
 });
 
 export const layer = Layer.effect(WorktreeCleanupGuard, make);

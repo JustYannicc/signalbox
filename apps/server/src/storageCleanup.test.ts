@@ -407,6 +407,8 @@ const cleanupFixture = (
     let projectRoots = [repo];
     let editBeforeRemoval = false;
     let worktreeProcessesQuiescent = true;
+    let removalGateHeld = false;
+    let removalGateAtRemoval: boolean | undefined;
     let onStopWorktree: () => Effect.Effect<void> = () => Effect.void;
     let openSessionCwd: string | null = null;
     let sessionLive = true;
@@ -441,6 +443,7 @@ const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
+            if (input.args.includes("remove")) removalGateAtRemoval = removalGateHeld;
             if (editBeforeRemoval && input.args.includes("remove"))
               yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
             return yield* git.execute(input);
@@ -581,6 +584,15 @@ const cleanupFixture = (
         acquireWorktreeRemovalGate: () =>
           Effect.gen(function* () {
             if (!worktreeProcessesQuiescent) return Option.none();
+            yield* Effect.acquireRelease(
+              Effect.sync(() => {
+                removalGateHeld = true;
+              }),
+              () =>
+                Effect.sync(() => {
+                  removalGateHeld = false;
+                }),
+            );
             yield* onStopWorktree();
             return Option.some(gitCommonDir);
           }),
@@ -667,6 +679,8 @@ const cleanupFixture = (
       },
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
+      removalGateHeld: () => removalGateHeld,
+      removalGateAtRemoval: () => removalGateAtRemoval,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
         return Deferred.succeed(activated, undefined);
@@ -2299,6 +2313,24 @@ describe("completion and freshness cleanup gates", () => {
         expect(yield* fixture.fs.readFileString(`${fixture.worktree}/.env`)).toBe("keep me\n");
       }),
     ),
+  );
+
+  it.effect.each([false, true])(
+    "holds registration closed through Git removal and releases it after completion (late edit: %s)",
+    (lateEdit) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
+          const fixture = yield* cleanupFixture();
+          if (lateEdit) fixture.editBeforeRemoval();
+
+          const report = yield* fixture.service.runNow;
+          expect(report.entries[0]?.outcome).toBe(lateEdit ? "failed" : "removed");
+          expect(fixture.removalGateAtRemoval()).toBe(true);
+          expect(fixture.removalGateHeld()).toBe(false);
+          expect(yield* fixture.fs.exists(fixture.worktree)).toBe(lateEdit);
+        }),
+      ),
   );
 
   it.effect("rechecks current run bindings after closing process registration", () =>

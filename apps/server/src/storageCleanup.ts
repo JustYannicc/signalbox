@@ -777,42 +777,39 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        const blockedBeforeRemoval = yield* worktreeCleanupGuard.withRemovalGate(
+        const blockedBeforeRemoval = yield* worktreeCleanupGuard.acquireRemovalGate(
           guardInput,
           project.workspaceRoot,
-          Effect.gen(function* () {
-            const latestProjects = yield* projectStore.listShells();
-            if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
-              return "contains a project checkout";
-            if (hasTerminal(worktreePath)) return "open terminal";
-            if (
-              deleted &&
-              !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
-                .worktreeOnDelete
-            )
-              return "thread or cleanup settings changed since check";
-            if (yield* branchChanged(worktreePath, thread.branch))
-              return "repository or branch changed since check";
-            if (
-              (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-              head.commitSha
-            )
-              return "commit changed since check";
-            const finalChangesAfterStop = yield* localChangesReason(worktreePath, settings);
-            if (finalChangesAfterStop !== null) return finalChangesAfterStop;
-            // Clean only untracked files; Git must still refuse removal if a tracked
-            // edit arrives after our last status check.
-            if (settings.worktreeKeepWhen === "tracked-changes")
-              yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-            yield* cleanupGit(
-              project.workspaceRoot,
-              ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", "--", worktreePath],
-              "git worktree remove",
-            );
-            return null;
-          }),
         );
         if (blockedBeforeRemoval !== null) return keep(blockedBeforeRemoval);
+        const latestProjects = yield* projectStore.listShells();
+        if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
+          return keep("contains a project checkout");
+        if (hasTerminal(worktreePath)) return keep("open terminal");
+        if (
+          deleted &&
+          !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
+            .worktreeOnDelete
+        )
+          return keep("thread or cleanup settings changed since check");
+        if (yield* branchChanged(worktreePath, thread.branch))
+          return keep("repository or branch changed since check");
+        if (
+          (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+          head.commitSha
+        )
+          return keep("commit changed since check");
+        const finalChangesAfterStop = yield* localChangesReason(worktreePath, settings);
+        if (finalChangesAfterStop !== null) return keep(finalChangesAfterStop);
+        // Clean only untracked files; Git must still refuse removal if a tracked
+        // edit arrives after our last status check.
+        if (settings.worktreeKeepWhen === "tracked-changes")
+          yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+        yield* cleanupGit(
+          project.workspaceRoot,
+          ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", "--", worktreePath],
+          "git worktree remove",
+        );
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch and path: ProviderTurnStartService recreates the checkout
