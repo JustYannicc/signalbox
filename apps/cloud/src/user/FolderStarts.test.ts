@@ -4,6 +4,7 @@ import {
   EnvironmentId,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
+import { SIGNALBOX_DRIVES_WS_METHODS } from "@t3tools/contracts/signalboxDrives";
 import { FolderId, SIGNALBOX_FOLDERS_WS_METHODS } from "@t3tools/contracts/signalboxFolders";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -19,6 +20,7 @@ import { threadRef } from "../drive/DriveStore.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { driveOfProject } from "./contextProjects.ts";
 import * as CloudRpc from "./rpc.ts";
+import * as UserFolders from "./UserFolders.ts";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const USER = "user_alice";
@@ -35,16 +37,16 @@ afterEach(() => {
   for (const created of repos.splice(0)) created.cleanup();
 });
 
-const connect = (cloud: ReturnType<typeof makeMemoryCloud>) =>
+const connect = (cloud: ReturnType<typeof makeMemoryCloud>, userId = USER) =>
   RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
     Effect.provide(
       Layer.mergeAll(
-        CloudRpc.layerHandlers({ identity, userId: USER, sid: "test-session" }),
+        CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
         CloudRpc.layerScopeAuthorization([
           AuthOrchestrationReadScope,
           AuthOrchestrationOperateScope,
         ]),
-      ).pipe(Layer.provide(cloud.layerFor(USER))),
+      ).pipe(Layer.provide(cloud.layerFor(userId))),
     ),
   );
 
@@ -94,6 +96,69 @@ const land = (
   }).pipe(Effect.provide(cloud.drives.layer));
 
 describe("starting a folder from existing work", () => {
+  it.effect("lets a viewer start an empty shared folder and checks access again on retry", () =>
+    Effect.gen(function* () {
+      const bobId = "user_bob";
+      const cloud = makeMemoryCloud({
+        people: [
+          { userId: USER, email: EMAIL, name: "Alice", organizations: [ACME] },
+          { userId: bobId, email: "bob@acme.test", name: "Bob", organizations: [ACME] },
+        ],
+      });
+      for (const person of [
+        { id: USER, email: EMAIL },
+        { id: bobId, email: "bob@acme.test" },
+      ]) {
+        const user = cloud.userDirectory.forUser(person.id);
+        yield* user.recordSignIn(person);
+        yield* user.syncOrganizations([{ id: ACME, name: "Acme" }]);
+      }
+      const alice = yield* connect(cloud);
+      const bob = yield* connect(cloud, bobId);
+      const shared = yield* bob[SIGNALBOX_DRIVES_WS_METHODS.create]({
+        contextId: ACME,
+        name: "Empty source",
+      });
+      yield* bob[SIGNALBOX_DRIVES_WS_METHODS.share]({
+        driveId: shared.id,
+        email: EMAIL,
+        role: "viewer",
+      });
+      const before = yield* UserFolders.UserFolders.use((folders) => folders.snapshot).pipe(
+        Effect.provide(cloud.layerFor(USER)),
+      );
+      const source = before.folders.find((folder) => folder.name === "Empty source")!;
+      const original = yield* drive(cloud, shared.id);
+      expect(yield* original.role(USER)).toBe("viewer");
+      const newFolderId = FolderId.make("viewer-copy");
+      const started = yield* alice[SIGNALBOX_FOLDERS_WS_METHODS.startFrom]({
+        id: source.id,
+        newFolderId,
+      });
+      const copy = started.folders.find((folder) => folder.id === newFolderId)!;
+      expect(copy).toMatchObject({
+        ownerId: ACME,
+        parentId: null,
+        origin: { folderId: source.id, driveId: shared.id, head: null },
+      });
+      const destination = yield* drive(cloud, driveOfProject(copy.files!.projectId, USER)!);
+      expect(yield* destination.role(USER)).toBe("owner");
+      expect(yield* original.role(USER)).toBe("viewer");
+      expect(yield* destination.role(bobId)).toBeNull();
+      yield* bob[SIGNALBOX_DRIVES_WS_METHODS.unshare]({ driveId: shared.id, userId: USER });
+      const retry = yield* alice[SIGNALBOX_FOLDERS_WS_METHODS.startFrom]({
+        id: source.id,
+        newFolderId,
+      }).pipe(Effect.result);
+      expect(retry._tag).toBe("Failure");
+      expect(yield* destination.role(USER)).toBe("owner");
+      expect(yield* destination.historyOrigin(USER)).toEqual({
+        sourceDriveId: shared.id,
+        head: null,
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("shares the source history and retries from its recorded head", () =>
     Effect.gen(function* () {
       const cloud = makeMemoryCloud();
