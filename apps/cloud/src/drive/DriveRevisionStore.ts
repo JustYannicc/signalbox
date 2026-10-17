@@ -7,6 +7,7 @@ import type {
   ForkCheckpointRequest,
   RefWrite,
   RestoreCheckpointRequest,
+  RestoreCheckpointStatus,
   UndoRestoreRequest,
   ThreadRefs,
   UpdateToLatestRequest,
@@ -100,7 +101,7 @@ export const makeOperations = (input: RevisionOperationsInput) => {
     });
 
   const receipt = (threadId: string, operationId: string) =>
-    sql`SELECT kind, request_json FROM drive_revision_operations
+    sql`SELECT kind, request_json, requester_id FROM drive_revision_operations
       WHERE thread_id = ${threadId} AND operation_id = ${operationId}`.pipe(
       Effect.map((rows) => DriveRevisions.decodeOperationRows(rows)[0] ?? null),
     );
@@ -129,12 +130,13 @@ export const makeOperations = (input: RevisionOperationsInput) => {
     operationId: string,
     kind: string,
     request: string,
+    userId: string,
   ) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       yield* sql`INSERT INTO drive_revision_operations
-        (thread_id, operation_id, kind, request_json, created_at)
-        VALUES (${threadId}, ${operationId}, ${kind}, ${request}, ${now})`;
+        (thread_id, operation_id, kind, request_json, created_at, requester_id)
+        VALUES (${threadId}, ${operationId}, ${kind}, ${request}, ${now}, ${userId})`;
     });
 
   const recordCheckpoint: (
@@ -254,9 +256,38 @@ export const makeOperations = (input: RevisionOperationsInput) => {
       yield* input.setRef(input.wipRef(request.threadId), selected.commit_oid, request.threadId);
       yield* input.setRef(DriveRevisions.notesRef(request.threadId), notes, request.threadId);
       const current = yield* input.refs(request.threadId, 0);
-      yield* rememberOperation(request.threadId, request.operationId, "fork", requestJson);
+      yield* rememberOperation(request.threadId, request.operationId, "fork", requestJson, userId);
       return { _tag: "ok", refs: current, generation: 0 } as const;
     }).pipe(sql.withTransaction);
+
+  const restoreIdentity = (request: RestoreCheckpointRequest) =>
+    DriveRevisions.encodeRestoreRequest({
+      threadId: request.threadId,
+      runId: request.runId,
+      expectedThread: request.expectedThread,
+      expectedWip: request.expectedWip,
+      generation: request.generation,
+      // Keep end restores compatible with receipts written before boundary selection.
+      ...(request.boundary === "start" ? { boundary: request.boundary } : {}),
+    });
+
+  const restoreCheckpointStatus: (
+    userId: string,
+    request: RestoreCheckpointRequest,
+  ) => Effect.Effect<RestoreCheckpointStatus, SqlError> = (userId, request) =>
+    Effect.gen(function* () {
+      const prior = yield* receipt(request.threadId, request.operationId);
+      if (
+        prior === null ||
+        prior.kind !== "restore" ||
+        prior.request_json !== restoreIdentity(request)
+      ) {
+        return "not-committed";
+      }
+      // Old receipts cannot prove their requester after access changes.
+      if (prior.requester_id === null) return "unverified";
+      return prior.requester_id === userId ? "committed" : "not-committed";
+    });
 
   const restoreCheckpoint: (
     userId: string,
@@ -274,15 +305,7 @@ export const makeOperations = (input: RevisionOperationsInput) => {
       ) {
         return refuseOperation("A restore needs an operation id and current generation.");
       }
-      const requestJson = DriveRevisions.encodeRestoreRequest({
-        threadId: request.threadId,
-        runId: request.runId,
-        expectedThread: request.expectedThread,
-        expectedWip: request.expectedWip,
-        generation: request.generation,
-        // Keep end restores compatible with receipts written before boundary selection.
-        ...(request.boundary === "start" ? { boundary: request.boundary } : {}),
-      });
+      const requestJson = restoreIdentity(request);
       const replay = yield* replayOperation(
         request.threadId,
         requestJson,
@@ -351,7 +374,13 @@ export const makeOperations = (input: RevisionOperationsInput) => {
         pinned_views = ${selected.views_json}, revision = ${request.operationId}
         WHERE thread_id = ${request.threadId}`;
       const updated = yield* input.refs(request.threadId, 0);
-      yield* rememberOperation(request.threadId, request.operationId, "restore", requestJson);
+      yield* rememberOperation(
+        request.threadId,
+        request.operationId,
+        "restore",
+        requestJson,
+        userId,
+      );
       return { _tag: "ok", refs: updated, generation } as const;
     }).pipe(sql.withTransaction);
 
@@ -476,7 +505,13 @@ export const makeOperations = (input: RevisionOperationsInput) => {
       yield* sql`UPDATE threads SET generation = ${generation},
         pinned_views = ${snapshot.before_pinned_views}, revision = ${snapshot.before_revision}
         WHERE thread_id = ${request.threadId}`;
-      yield* rememberOperation(request.threadId, request.operationId, "undo-restore", requestJson);
+      yield* rememberOperation(
+        request.threadId,
+        request.operationId,
+        "undo-restore",
+        requestJson,
+        userId,
+      );
       const updated = yield* input.refs(request.threadId, 0);
       return { _tag: "ok", refs: updated, generation } as const;
     }).pipe(sql.withTransaction);
@@ -528,6 +563,7 @@ export const makeOperations = (input: RevisionOperationsInput) => {
         request.operationId,
         "update-to-latest",
         requestJson,
+        userId,
       );
       return { _tag: "ok", refs: updated, generation } as const;
     }).pipe(sql.withTransaction);
@@ -537,6 +573,7 @@ export const makeOperations = (input: RevisionOperationsInput) => {
     checkpoint,
     forkCheckpoint,
     restoreCheckpoint,
+    restoreCheckpointStatus,
     undoRestore,
     updateToLatest,
   };

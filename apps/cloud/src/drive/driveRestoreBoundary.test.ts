@@ -325,4 +325,75 @@ describe("drive restore boundaries", () => {
       expect(yield* store.refs("t1")).toEqual(before);
     }).pipe(Effect.provide(layer)),
   );
+
+  it.effect("raises only the existing thread fence and never changes refs", () =>
+    Effect.gen(function* () {
+      const { store, first, request } = yield* fixture;
+      const before = yield* store.refs("t1");
+      const other = yield* store.refs("other");
+      expect(yield* store.advanceThreadFence("missing", 3)).toEqual({ _tag: "missing" });
+      expect(yield* store.advanceThreadFence("t1", 3)).toEqual({ _tag: "ok", generation: 3 });
+      expect(yield* store.advanceThreadFence("t1", 2)).toEqual({ _tag: "ok", generation: 3 });
+      expect(yield* store.refs("t1")).toEqual(before);
+      expect(yield* store.refs("other")).toEqual(other);
+      const sql = yield* SqlClient.SqlClient;
+      expect(yield* sql`SELECT thread_id, generation FROM threads ORDER BY thread_id`).toEqual([
+        { thread_id: "other", generation: 1 },
+        { thread_id: "t1", generation: 3 },
+      ]);
+      expect(
+        (yield* store.updateRefs(writer(1), [{ name: wipRef("t1"), old: before.wip, new: first }]))
+          ._tag,
+      ).toBe("refused");
+      expect((yield* store.restoreCheckpoint(editor.userId, request))._tag).toBe("refused");
+      expect(yield* store.restoreCheckpointStatus(editor.userId, request)).toBe("not-committed");
+      expect(
+        (yield* store.restoreCheckpoint(editor.userId, { ...request, generation: 3 }))._tag,
+      ).toBe("ok");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "binds internal committed evidence to the requester and exact request while public replay stays authorized",
+    () =>
+      Effect.gen(function* () {
+        const { store, members, first, request } = yield* fixture;
+        expect(yield* store.restoreCheckpointStatus(editor.userId, request)).toBe("not-committed");
+        expect((yield* store.restoreCheckpoint(editor.userId, request))._tag).toBe("ok");
+        expect(yield* store.restoreCheckpointStatus(manager.userId, request)).toBe("not-committed");
+        for (const changed of [
+          { threadId: "other" },
+          { runId: "other-run" },
+          { operationId: "other-operation" },
+          { boundary: "end" as const },
+          { expectedThread: first },
+          { expectedWip: first },
+          { generation: 2 },
+        ]) {
+          expect(
+            yield* store.restoreCheckpointStatus(editor.userId, { ...request, ...changed }),
+          ).toBe("not-committed");
+        }
+        expect((yield* members.unshare(manager, editor.userId))._tag).toBe("ok");
+        const before = yield* store.refs("t1");
+        expect(yield* store.restoreCheckpointStatus(editor.userId, request)).toBe("committed");
+        expect(yield* store.restoreCheckpoint(editor.userId, request)).toEqual({
+          _tag: "refused",
+          reason: "You no longer have access to change this drive.",
+        });
+        expect(yield* store.refs("t1")).toEqual(before);
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps legacy receipts without a recorded requester unverified", () =>
+    Effect.gen(function* () {
+      const { store, members, request } = yield* fixture;
+      expect((yield* store.restoreCheckpoint(editor.userId, request))._tag).toBe("ok");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE drive_revision_operations SET requester_id = NULL`;
+      expect((yield* members.unshare(manager, editor.userId))._tag).toBe("ok");
+      expect(yield* store.restoreCheckpointStatus(editor.userId, request)).toBe("unverified");
+      expect((yield* store.restoreCheckpoint(editor.userId, request))._tag).toBe("refused");
+    }).pipe(Effect.provide(layer)),
+  );
 });

@@ -147,8 +147,7 @@ describe("cloud rollback recovery", () => {
               expect(yield* undo(engine, firstRun, "recover", true)).toEqual({
                 sequence: receipt?._tag === "accepted" ? receipt.sequence : -1,
               });
-              expect(f.calls).toHaveLength(2);
-              expect(f.calls[0]).toEqual(f.calls[1]);
+              expect(f.calls).toHaveLength(1);
               expect(f.restored.size).toBe(1);
               expect((yield* engine.snapshot(owner)).projection.runs[0]?.status).toBe(
                 "rolled_back",

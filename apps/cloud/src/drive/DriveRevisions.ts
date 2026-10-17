@@ -49,6 +49,11 @@ export const createRestoreTables = Effect.gen(function* () {
   )`;
 });
 
+export const addOperationRequester = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE drive_revision_operations ADD COLUMN requester_id TEXT`;
+});
+
 const ViewsJson = Schema.fromJsonString(CheckpointViews);
 export const encodeViews = Schema.encodeSync(ViewsJson);
 export const decodeViews = Schema.decodeUnknownSync(ViewsJson);
@@ -120,6 +125,7 @@ export const decodeCheckpointRows = Schema.decodeUnknownSync(Schema.Array(Checkp
 export const OperationRow = Schema.Struct({
   kind: Schema.String,
   request_json: Schema.String,
+  requester_id: Schema.NullOr(Schema.String),
 });
 export const decodeOperationRows = Schema.decodeUnknownSync(Schema.Array(OperationRow));
 

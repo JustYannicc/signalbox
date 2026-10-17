@@ -635,7 +635,7 @@ describe("drive checkpoints and revisions", () => {
     }).pipe(Effect.provide(drives.layer));
   });
 
-  it.effect("adds restore snapshots when upgrading a drive with 0007 already applied", () => {
+  it.effect("upgrades revision recovery tables without rewriting existing receipts", () => {
     const layer = DriveStore.layer("my/personal/user_upgrade").pipe(
       Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
     );
@@ -645,6 +645,9 @@ describe("drive checkpoints and revisions", () => {
         thread_id TEXT PRIMARY KEY, base TEXT, generation INTEGER NOT NULL, opened_at INTEGER NOT NULL
       )`;
       yield* DriveRevisions.createTables.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      yield* sql`INSERT INTO drive_revision_operations
+        (thread_id, operation_id, kind, request_json, created_at)
+        VALUES ('legacy-thread', 'legacy-restore', 'restore', '{}', 0)`;
       yield* DriveEvents.createTables;
       yield* sql`CREATE TABLE effect_sql_migrations (
         migration_id INTEGER NOT NULL,
@@ -676,7 +679,11 @@ describe("drive checkpoints and revisions", () => {
         [7, "drive_revisions"],
         [8, "drive_restore_snapshots"],
         [9, "ref_deletions"],
+        [10, "restore_requesters"],
       ]);
+      expect(
+        yield* sql`SELECT operation_id, request_json, requester_id FROM drive_revision_operations`,
+      ).toEqual([{ operation_id: "legacy-restore", request_json: "{}", requester_id: null }]);
     }).pipe(Effect.provide(layer));
   });
 });

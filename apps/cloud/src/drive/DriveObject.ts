@@ -230,6 +230,14 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.restoreCheckpoint(...args);
   }
 
+  restoreCheckpointStatus(...args: Parameters<DriveObjectApi["restoreCheckpointStatus"]>) {
+    return this.api.restoreCheckpointStatus(...args);
+  }
+
+  advanceThreadFence(...args: Parameters<DriveObjectApi["advanceThreadFence"]>) {
+    return this.api.advanceThreadFence(...args);
+  }
+
   undoRestore(...args: Parameters<DriveObjectApi["undoRestore"]>) {
     return this.api.undoRestore(...args);
   }

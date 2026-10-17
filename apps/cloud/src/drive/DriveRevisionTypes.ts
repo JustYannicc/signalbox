@@ -64,6 +64,13 @@ export interface RestoreCheckpointRequest {
   readonly generation: number;
 }
 
+/** Internal recovery evidence. Never returns refs or bypasses public restore authorization. */
+export type RestoreCheckpointStatus = "committed" | "not-committed" | "unverified";
+
+export type ThreadFenceResult =
+  | { readonly _tag: "ok"; readonly generation: number }
+  | { readonly _tag: "missing" };
+
 export interface UndoRestoreRequest {
   readonly threadId: string;
   readonly restoreOperationId: string;

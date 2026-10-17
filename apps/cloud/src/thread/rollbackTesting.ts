@@ -53,6 +53,12 @@ export const fixture = () => {
         checkpoint: (_threadId: string, runId: string) =>
           Effect.succeed(records.get(runId) ?? null),
         refs: () => Effect.sync(() => refs),
+        advanceThreadFence: (_threadId: string, generation: number) =>
+          Effect.succeed({ _tag: "ok", generation } as const),
+        restoreCheckpointStatus: (_userId: string, request: RestoreCheckpointRequest) =>
+          Effect.sync(() =>
+            restored.has(request.operationId) ? ("committed" as const) : ("not-committed" as const),
+          ),
         restoreCheckpoint: (_userId: string, request: RestoreCheckpointRequest) =>
           Effect.gen(function* () {
             calls.push(request);

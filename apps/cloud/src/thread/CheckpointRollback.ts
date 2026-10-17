@@ -138,22 +138,46 @@ const make = Effect.gen(function* () {
           return yield* Effect.die("Undo is waiting for the old machine to stop.");
         }
       }
-      if (!operation.restoreFiles) return;
-      if (operation.driveId === null || Option.isNone(directory))
+      if (operation.driveId === null || Option.isNone(directory)) {
+        if (!operation.restoreFiles) return;
         return yield* Effect.die("Rollback drive binding is missing.");
-      const result = yield* Effect.orDie(
-        directory.value.forDrive(operation.driveId).restoreCheckpoint(operation.userId, {
-          threadId: operation.threadId,
-          runId: operation.runId,
-          boundary: operation.boundary,
-          operationId: `thread-rollback:${operation.commandId}`,
-          expectedThread: operation.expectedThread,
-          expectedWip: operation.expectedWip,
-          generation: operation.generation,
-        }),
+      }
+      const drive = directory.value.forDrive(operation.driveId);
+      const retireLease = Effect.orDie(
+        drive.advanceThreadFence(operation.threadId, operation.generation + 1),
       );
-      if (result._tag !== "ok")
-        return yield* new RollbackRestoreRejectedError({ category: result._tag });
+      if (!operation.restoreFiles) {
+        yield* retireLease;
+        return;
+      }
+      const request = {
+        threadId: operation.threadId,
+        runId: operation.runId,
+        boundary: operation.boundary,
+        operationId: `thread-rollback:${operation.commandId}`,
+        expectedThread: operation.expectedThread,
+        expectedWip: operation.expectedWip,
+        generation: operation.generation,
+      };
+      // A committed restore must finish its conversation even if its requester lost drive access.
+      if (
+        (yield* Effect.orDie(drive.restoreCheckpointStatus(operation.userId, request))) ===
+        "committed"
+      )
+        return;
+      yield* Effect.orDie(drive.advanceThreadFence(operation.threadId, operation.generation));
+      const result = yield* Effect.orDie(drive.restoreCheckpoint(operation.userId, request));
+      if (result._tag === "ok") return;
+      // A delayed first request may have committed between the status check and this refusal.
+      const status = yield* Effect.orDie(drive.restoreCheckpointStatus(operation.userId, request));
+      if (status === "committed") return;
+      if (status === "unverified") {
+        return yield* Effect.die(
+          "The restore's original requester could not be verified; recovery remains pending.",
+        );
+      }
+      yield* retireLease;
+      return yield* new RollbackRestoreRejectedError({ category: result._tag });
     },
   );
   return CheckpointRollback.of({ prepare, restore, arm: runtime?.arm ?? Effect.void });
