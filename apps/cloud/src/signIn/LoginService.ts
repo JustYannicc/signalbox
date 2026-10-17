@@ -325,20 +325,25 @@ const make = (options: {
       Effect.catchCause((cause) => Effect.logError("arming the re-login sweep failed", { cause })),
     );
 
+    const profileStatus: LoginService["Service"]["profileStatus"] = browsers.profileStatus;
+
+    const clearProfile: LoginService["Service"]["clearProfile"] = oneLogin.withPermits(1)(
+      Effect.gen(function* () {
+        yield* browsers.clearProfile((profileName) =>
+          Effect.gen(function* () {
+            if (kernel !== null) yield* kernel.clearConnections(profileName);
+            yield* kept.clear();
+          }),
+        );
+        nextDue = null;
+      }),
+    );
+
     /**
      * Reads every due site's connection, and logs one Kernel found logged out
      * in again, at most one per run: a login takes up to minutes, and the
      * next due site gets the alarm a second later.
      */
-    const profileStatus: LoginService["Service"]["profileStatus"] = browsers.profileStatus;
-
-    const clearProfile: LoginService["Service"]["clearProfile"] = oneLogin.withPermits(1)(
-      Effect.gen(function* () {
-        yield* browsers.clearProfile(() => kept.clear());
-        nextDue = null;
-      }),
-    );
-
     const sweep: LoginService["Service"]["sweep"] = Effect.gen(function* () {
       const ownerId = yield* owner;
       const now = yield* Clock.currentTimeMillis;

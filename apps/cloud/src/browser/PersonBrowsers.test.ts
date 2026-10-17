@@ -184,6 +184,32 @@ describe("the person's browser (#574)", () => {
     }).pipe(Effect.provide(signedIn(kernel.api)));
   });
 
+  it.effect(
+    "finishes deleting the profile when the client disconnects during sign-in cleanup",
+    () => {
+      const kernel = memoryKernel();
+      return Effect.gen(function* () {
+        const browsers = yield* PersonBrowsers.PersonBrowsers;
+        yield* browsers.open({ threadId: "thread-a", requester: OWNER });
+        const clearing = yield* Deferred.make<void>();
+        const finishCleanup = yield* Deferred.make<void>();
+        const clear = yield* Effect.forkChild(
+          browsers.clearProfile(() =>
+            Deferred.succeed(clearing, undefined).pipe(
+              Effect.andThen(Deferred.await(finishCleanup)),
+            ),
+          ),
+        );
+        yield* Deferred.await(clearing);
+        const disconnect = yield* Effect.forkChild(Fiber.interrupt(clear));
+        yield* Deferred.succeed(finishCleanup, undefined);
+        yield* Fiber.join(disconnect);
+        expect(kernel.profiles).toEqual([]);
+        expect(kernel.deletedProfiles).toHaveLength(1);
+      }).pipe(Effect.provide(signedIn(kernel.api)));
+    },
+  );
+
   it.effect("refuses another person's turn without asking Kernel", () => {
     const kernel = memoryKernel();
     return Effect.gen(function* () {

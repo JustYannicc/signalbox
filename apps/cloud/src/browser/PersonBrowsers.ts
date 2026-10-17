@@ -67,7 +67,7 @@ export class PersonBrowsers extends Context.Service<
     }) => Effect.Effect<A, E | SqlError | KernelApiError | PersonBrowserUnavailableError, R>;
     /** Closes every session, forgets automatic re-login state, then deletes the profile. */
     readonly clearProfile: (
-      forgetSignInRecords: () => Effect.Effect<void, SqlError>,
+      clearSignIns: (profileName: string) => Effect.Effect<void, SqlError | KernelApiError>,
     ) => Effect.Effect<void, SqlError | KernelApiError | PersonBrowserUnavailableError>;
   }
 >()("@signalbox/cloud/browser/PersonBrowsers") {}
@@ -244,7 +244,7 @@ const make = (kernel: KernelApi | null) =>
         return yield* run(name);
       }).pipe(opening.withPermits(1), traced("PersonBrowsers.withSignIn", {}));
 
-    const clearProfile: PersonBrowsers["Service"]["clearProfile"] = (forgetSignInRecords) =>
+    const clearProfile: PersonBrowsers["Service"]["clearProfile"] = (clearSignIns) =>
       Effect.gen(function* () {
         if (kernel === null) return yield* Effect.fail(new PersonBrowserUnavailableError({}));
         const ownerId = yield* owner;
@@ -255,9 +255,10 @@ const make = (kernel: KernelApi | null) =>
           discard: true,
           concurrency: 1,
         });
-        // Clearing this first prevents the hourly sweep from restoring sign-ins after deletion.
-        yield* forgetSignInRecords();
-        yield* kernel.deleteProfile(name);
+        // A disconnected client must not interrupt deletion after re-login state is forgotten.
+        yield* Effect.uninterruptible(
+          clearSignIns(name).pipe(Effect.andThen(kernel.deleteProfile(name))),
+        );
       }).pipe(opening.withPermits(1), traced("PersonBrowsers.clearProfile", {}));
 
     return PersonBrowsers.of({ open, end, profileStatus, withSignIn, clearProfile });

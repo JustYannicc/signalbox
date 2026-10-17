@@ -109,18 +109,21 @@ const setup = (
   options: {
     readonly sites?: ReadonlyArray<string>;
     readonly afterKernelLogin?: () => Effect.Effect<void>;
+    readonly clearConnectionError?: KernelApiError;
   } = {},
 ) => {
   const kernel = memoryKernelAuth(SITES);
   const browsers = memoryKernel();
   const executor = memoryExecutor(options.sites ?? Object.keys(SITES));
-  const kernelAuth: KernelAuth =
-    options.afterKernelLogin === undefined
-      ? kernel.api
-      : {
-          ...kernel.api,
-          login: (id) => kernel.api.login(id).pipe(Effect.andThen(options.afterKernelLogin!())),
-        };
+  const kernelAuth: KernelAuth = {
+    ...kernel.api,
+    login: (id) =>
+      kernel.api.login(id).pipe(Effect.andThen(options.afterKernelLogin?.() ?? Effect.void)),
+    clearConnections: (profileName) =>
+      options.clearConnectionError === undefined
+        ? kernel.api.clearConnections(profileName)
+        : Effect.fail(options.clearConnectionError),
+  };
   const layer = LoginService.layer({
     kernel: kernelAuth,
     executor: executor.api,
@@ -308,10 +311,41 @@ describe("signing an agent in (#576)", () => {
 
       expect(browsers.profiles).toEqual([]);
       expect(browsers.deletedProfiles).toHaveLength(1);
+      expect(kernel.connections()).toEqual([]);
       yield* logins.sweep;
       expect(kernel.logins).toHaveLength(1);
+
+      expect(yield* signIn("https://example.com")).toMatchObject({ _tag: "signed_in" });
+      expect(kernel.connections()).toHaveLength(1);
+      expect(kernel.connections()[0]?.id).not.toBe(connection!.id);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "keeps the profile and re-login rows if Managed Auth connections cannot be removed",
+    () => {
+      const { kernel, browsers, layer } = setup({
+        clearConnectionError: new KernelApiError({
+          operation: "deleteAuthConnection",
+          status: 503,
+          code: null,
+          message: "Kernel is unavailable.",
+        }),
+      });
+      return Effect.gen(function* () {
+        const logins = yield* LoginService.LoginService;
+        const sql = yield* SqlClient.SqlClient;
+        yield* grant("example.com");
+        yield* signIn("https://example.com");
+        expect(yield* Effect.flip(logins.clearProfile)).toMatchObject({
+          operation: "deleteAuthConnection",
+        });
+        expect(browsers.deletedProfiles).toEqual([]);
+        expect(kernel.connections()).toHaveLength(1);
+        expect(yield* sql`SELECT connection_id FROM signalbox_sign_in_logins`).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("waits for an active Managed Auth sign-in before clearing the profile", () =>
     Effect.gen(function* () {
