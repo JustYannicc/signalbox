@@ -31,8 +31,8 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import * as Environment from "../environment.ts";
-import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import type { ThreadObjectError } from "../thread/ThreadDirectory.ts";
+import * as Threads from "../thread/Threads.ts";
+import type { ThreadObjectError } from "../thread/ThreadAccess.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { NO_STORE_HEADERS, requestCredentials, sessionCookie, traceId } from "./credentials.ts";
 
@@ -254,7 +254,7 @@ const layerOrchestration = HttpApiBuilder.group(
   "orchestration",
   Effect.fnUntraced(function* (handlers) {
     const users = yield* UserDirectory.UserDirectory;
-    const threads = yield* CloudThreadService.CloudThreadService;
+    const threads = yield* Threads.Threads;
     const threadNotFound = Effect.flatMap(traceId, (id) =>
       Effect.fail(
         new EnvironmentResourceNotFoundError({
@@ -278,7 +278,7 @@ const layerOrchestration = HttpApiBuilder.group(
     });
     const snapshotOf = (threadId: ThreadId) =>
       actorOf.pipe(
-        Effect.flatMap((actor) => threads.threadSnapshot(actor, threadId)),
+        Effect.flatMap((actor) => threads.snapshot(actor, threadId)),
         Effect.catchTags(threadFailure),
       );
     return handlers
@@ -317,7 +317,7 @@ const layerOrchestration = HttpApiBuilder.group(
       .handle("threadBoundedSnapshot", ({ params }) => snapshotOf(params.threadId))
       .handle("threadHistoryPage", ({ params }) =>
         actorOf.pipe(
-          Effect.flatMap((actor) => threads.threadHistoryPage(actor, params.threadId)),
+          Effect.flatMap((actor) => threads.history(actor, params.threadId)),
           Effect.catchTags(threadFailure),
         ),
       );
