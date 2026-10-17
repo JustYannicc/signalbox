@@ -4,6 +4,8 @@ import type * as Stream from "effect/Stream";
 
 import type { ReadTable, TableError, TableMap, WriteTable } from "./table.ts";
 
+export type SyncSchema = Schema.ConstraintCodec<unknown, unknown, never, never>;
+
 export const SyncCursor = Schema.String.pipe(Schema.brand("SyncCursor"));
 export type SyncCursor = typeof SyncCursor.Type;
 export const SyncReceipt = Schema.String.pipe(Schema.brand("SyncReceipt"));
@@ -16,8 +18,29 @@ export class SyncFailure extends Schema.TaggedError<SyncFailure>()("SyncFailure"
     "operation_conflict",
     "invalid_input",
     "invalid_cursor",
+    "invalid_state",
+    "storage_corrupt",
   ]),
 }) {}
+
+/** Storage constraints are permanent failures; reserve unavailable for a failed storage operation. */
+export const tableErrorToSyncFailure = (error: TableError): SyncFailure => {
+  if (error.reason === "storage_unavailable") return new SyncFailure({ reason: "unavailable" });
+  if (error._tag === "TableReadError") {
+    const reason = {
+      invalid_row: "storage_corrupt",
+      invalid_cursor: "invalid_cursor",
+      invalid_query: "invalid_input",
+    } as const;
+    return new SyncFailure({ reason: reason[error.reason] });
+  }
+  return new SyncFailure({
+    reason:
+      error.reason === "invalid_row" || error.reason === "key_mismatch"
+        ? "invalid_input"
+        : "invalid_state",
+  });
+};
 
 export type ViewFrame<A> =
   | {
@@ -60,9 +83,9 @@ export interface TransactionContext<Tables extends TableMap, Actor, Home> extend
 
 export interface Operation<
   Kind extends string,
-  Input extends Schema.Constraint,
-  Output extends Schema.Constraint,
-  Failure extends Schema.Constraint,
+  Input extends SyncSchema,
+  Output extends SyncSchema,
+  Failure extends SyncSchema,
   Context,
 > {
   readonly kind: Kind;
@@ -76,52 +99,52 @@ export interface Operation<
 }
 
 type OperationConfig<
-  Input extends Schema.Constraint,
-  Output extends Schema.Constraint,
-  Failure extends Schema.Constraint,
+  Input extends SyncSchema,
+  Output extends SyncSchema,
+  Failure extends SyncSchema,
   Context,
 > = Omit<Operation<string, Input, Output, Failure, Context>, "kind">;
 
 const view = <
-  Input extends Schema.Constraint,
-  Output extends Schema.Constraint,
-  Failure extends Schema.Constraint,
+  Input extends SyncSchema,
+  Output extends SyncSchema,
+  Failure extends SyncSchema,
   Context,
 >(
   config: OperationConfig<Input, Output, Failure, Context>,
 ) => Object.freeze({ ...config, kind: "view" as const });
 
 const change = <
-  Input extends Schema.Constraint,
-  Output extends Schema.Constraint,
-  Failure extends Schema.Constraint,
+  Input extends SyncSchema,
+  Output extends SyncSchema,
+  Failure extends SyncSchema,
   Context,
 >(
   config: OperationConfig<Input, Output, Failure, Context>,
 ) => Object.freeze({ ...config, kind: "change" as const });
 
 const projection = <
-  Input extends Schema.Constraint,
-  Output extends Schema.Constraint,
-  Failure extends Schema.Constraint,
+  Input extends SyncSchema,
+  Output extends SyncSchema,
+  Failure extends SyncSchema,
   Context,
 >(
   config: OperationConfig<Input, Output, Failure, Context>,
 ) => Object.freeze({ ...config, kind: "projection" as const });
 
 type Factory<Kind extends string, Context> = <
-  Input extends Schema.Constraint,
-  Output extends Schema.Constraint,
-  Failure extends Schema.Constraint,
+  Input extends SyncSchema,
+  Output extends SyncSchema,
+  Failure extends SyncSchema,
 >(
   config: OperationConfig<Input, Output, Failure, Context>,
 ) => Operation<Kind, Input, Output, Failure, Context>;
 
 type OperationShape = {
   readonly kind: string;
-  readonly input: Schema.Constraint;
-  readonly output: Schema.Constraint;
-  readonly failure: Schema.Constraint;
+  readonly input: SyncSchema;
+  readonly output: SyncSchema;
+  readonly failure: SyncSchema;
   readonly run: (context: never, input: never) => Effect.Effect<unknown, unknown>;
 };
 type Operations<Kind extends string> = Readonly<
@@ -136,9 +159,9 @@ export interface HomeOperations {
 
 type CheckedOperation<Operation, Kind extends string, Context> = Operation extends {
   readonly kind: Kind;
-  readonly input: infer Input extends Schema.Constraint;
-  readonly output: infer Output extends Schema.Constraint;
-  readonly failure: infer Failure extends Schema.Constraint;
+  readonly input: infer Input extends SyncSchema;
+  readonly output: infer Output extends SyncSchema;
+  readonly failure: infer Failure extends SyncSchema;
   readonly run: infer Run;
 }
   ? Run extends (
@@ -174,8 +197,8 @@ type CheckedDefinitions<
 
 /** Builds metadata only. An adapter binds it to one server-resolved home and its authorization guard. */
 export const defineHome = <
-  Actor extends Schema.Constraint,
-  Home extends Schema.Constraint,
+  Actor extends SyncSchema,
+  Home extends SyncSchema,
   const Tables extends TableMap,
   const Definitions extends HomeOperations & {
     readonly actor?: never;
@@ -212,14 +235,11 @@ export type Failure<Op extends OperationShape> = Op["failure"]["Type"];
 
 /** Trusted ingress is a server capability supplied by the owning module, never public request data. */
 export interface SyncHome<
-  Actor,
   Ingress,
-  Definitions extends HomeOperations & {
-    readonly actor: Schema.Constraint & { readonly Type: Actor };
-  },
+  Definitions extends HomeOperations & { readonly actor: SyncSchema },
 > {
   readonly view: <K extends keyof Definitions["views"] & string>(
-    actor: Actor,
+    actor: Definitions["actor"]["Type"],
     operation: K,
     input: Input<Definitions["views"][K]>,
     resume?: SyncCursor,
@@ -229,7 +249,7 @@ export interface SyncHome<
   >;
   /** Key replay reauthorizes the actor before returning any stored output. */
   readonly change: <K extends keyof Definitions["changes"] & string>(
-    actor: Actor,
+    actor: Definitions["actor"]["Type"],
     operation: K,
     input: Input<Definitions["changes"][K]>,
     operationKey: string,

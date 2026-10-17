@@ -6,6 +6,7 @@ import {
   type PageCursor,
   type ReadTable,
   type Row,
+  type Table,
   type TableMap,
   type WriteTable,
 } from "../src/table.ts";
@@ -184,3 +185,12 @@ table({
     },
   },
 });
+
+declare const rowWithService: Schema.Codec<
+  { readonly id: string },
+  { readonly id: string },
+  "Service",
+  never
+>;
+// @ts-expect-error Stored schemas cannot require arbitrary decoding services.
+export type InvalidServiceTable = Table<typeof rowWithService>;

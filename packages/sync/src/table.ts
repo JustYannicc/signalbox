@@ -3,7 +3,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 type NonEmpty<T> = readonly [T, ...T[]];
-type AnyRowSchema = Schema.Schema<unknown>;
+type AnyRowSchema = Schema.ConstraintCodec<unknown, unknown, never, never>;
 type ReservedStorageField = "_id" | "_creationTime";
 type KeyScalar = string | number | boolean | null;
 type KeyField<Row> = {

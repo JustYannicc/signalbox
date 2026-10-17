@@ -49,7 +49,7 @@ const home = defineHome(
   }),
 );
 
-declare const bound: SyncHome<typeof home.actor.Type, { readonly source: "outbox" }, typeof home>;
+declare const bound: SyncHome<{ readonly source: "outbox" }, typeof home>;
 void bound.view({ personId: "user" }, "item", "key");
 void bound.change({ personId: "user" }, "increment", { id: "key", by: 1 }, "operation");
 void bound.project({ source: "outbox" }, "apply", { id: "key", amount: 1 }, "delivery");
@@ -118,8 +118,41 @@ const typedActorHome = defineHome(
   { actor: Schema.Struct({ personId: Schema.String }), home: Schema.String, tables: { items } },
   () => ({ views: {}, changes: {}, projections: {} }),
 );
-declare const actorBound: SyncHome<typeof typedActorHome.actor.Type, never, typeof typedActorHome>;
+declare const actorBound: SyncHome<never, typeof typedActorHome>;
 void actorBound;
-// @ts-expect-error SyncHome's actor must match its definition.
-declare const wrongActorBound: SyncHome<number, never, typeof typedActorHome>;
-void wrongActorBound;
+// @ts-expect-error The actor derives from the definition and cannot be widened.
+void actorBound.view(42, "absent", "value");
+
+declare const serviceCodec: Schema.Codec<string, string, "Service", never>;
+declare const encodingServiceCodec: Schema.Codec<string, string, never, "Service">;
+
+defineHome({ actor: Schema.String, home: Schema.String, tables: { items } }, ({ view }) => ({
+  views: {
+    needsDecoder: view({
+      // @ts-expect-error Wire schemas cannot require arbitrary decoding services.
+      input: serviceCodec,
+      output: Schema.String,
+      failure: Schema.Never,
+      run: () => Effect.succeed("value"),
+    }),
+    needsEncoder: view({
+      input: Schema.String,
+      // @ts-expect-error Wire schemas cannot require arbitrary encoding services.
+      output: encodingServiceCodec,
+      failure: Schema.Never,
+      run: () => Effect.succeed("value"),
+    }),
+  },
+  changes: {},
+  projections: {},
+}));
+
+declare const unknownActor: unknown;
+// @ts-expect-error An unknown actor cannot widen the home definition's actor schema.
+void bound.view(unknownActor, "item", "key");
+// @ts-expect-error Home actor decoding cannot require arbitrary services.
+defineHome({ actor: serviceCodec, home: Schema.String, tables: {} }, () => ({
+  views: {},
+  changes: {},
+  projections: {},
+}));

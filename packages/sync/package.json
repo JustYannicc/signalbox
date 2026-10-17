@@ -7,7 +7,7 @@
     "./definition": "./src/definition.ts"
   },
   "scripts": {
-    "test": "node ./codegen-proof/run.mjs",
+    "test": "node ./codegen-proof/run.mjs && vp test run --dir . --maxWorkers=2",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -17,6 +17,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260604.1",
     "@types/node": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

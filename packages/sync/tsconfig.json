@@ -1,5 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": [] },
-  "include": ["src/table.ts", "src/definition.ts", "type-tests/**/*.ts"]
+  "compilerOptions": {
+    "types": []
+  },
+  "include": ["src/table.ts", "src/definition.ts", "src/definition.test.ts", "type-tests/**/*.ts"]
 }
