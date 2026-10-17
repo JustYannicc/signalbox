@@ -125,6 +125,65 @@ describe("SecretScrubber", () => {
     expect(scrubber.text("PORT=8080 FLAG=abcdef")).toBe("PORT=8080 FLAG=abcdef");
   });
 
+  it("can scrub nonempty short secrets without changing the default minimum", () => {
+    const secrets = [
+      { name: "ONE_BYTE", value: "1" },
+      { name: "THREE_BYTES", value: "猫" },
+      { name: "SEVEN_BYTES", value: "éééa" },
+    ];
+    expect(secrets.map(({ value }) => utf8(value).byteLength)).toEqual([1, 3, 7]);
+    expect(secrets.map(({ name, value }) => makeSecretScrubber([{ name, value }]).empty)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+
+    for (const secret of secrets) {
+      const scrubber = makeSecretScrubber([secret], { minLength: 1 });
+      expect(scrubber.empty).toBe(false);
+      expect(scrubber.text(secret.value)).toContain(secretPlaceholder(secret.name));
+      for (let cut = 0; cut <= secret.value.length; cut += 1) {
+        expect(streamed(scrubber, secret.value, [cut])).toBe(scrubber.text(secret.value));
+      }
+    }
+
+    const empty = { name: "EMPTY", value: "" };
+    expect(makeSecretScrubber([empty], { minLength: 1 }).empty).toBe(true);
+    expect(secretForms(empty.value, { minLength: 1 })).toEqual([]);
+    expect(secretForms("x", { minLength: 1 })).not.toContain("");
+  });
+
+  it("scrubs short unicode secrets in every generated encoding across chunks", () => {
+    const secret = { name: "UNICODE", value: "猫" };
+    const scrubber = makeSecretScrubber([secret], { minLength: 1 });
+    const forms = secretForms(secret.value, { minLength: 1 });
+    expect(forms.length).toBeGreaterThan(0);
+    expect(forms.every((form) => form.length > 0)).toBe(true);
+
+    for (const form of forms) {
+      const scrubbed = scrubber.text(form);
+      expect(scrubbed, form).toBe(secretPlaceholder(secret.name));
+      for (let cut = 0; cut <= form.length; cut += 1) {
+        expect(streamed(scrubber, form, [cut]), `${form} at ${cut}`).toBe(scrubbed);
+      }
+    }
+  });
+
+  it("merges overlapping short secrets when the minimum is lowered", () => {
+    const scrubber = makeSecretScrubber(
+      [
+        { name: "FIRST", value: "abc" },
+        { name: "SECOND", value: "bcd" },
+      ],
+      { minLength: 1 },
+    );
+
+    expect(scrubber.text("abcd")).toBe(
+      `${secretPlaceholder("FIRST")}${secretPlaceholder("SECOND")}`,
+    );
+    expect(streamed(scrubber, "abcd", [1, 2, 3])).toBe(scrubber.text("abcd"));
+  });
+
   it("masks overlapping secrets whole, so no tail of either is left", () => {
     const shared = crypto.randomUUID().slice(0, 8);
     const first = `first-${shared}`;

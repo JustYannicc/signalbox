@@ -52,6 +52,7 @@ const REPRESENTATION_HEADERS = [
   "etag",
   "repr-digest",
 ] as const;
+const REPRESENTATION_HEADER_NAMES = new Set<string>(REPRESENTATION_HEADERS);
 
 const refuse = () =>
   new Response("Signalbox refused a response it could not inspect safely.\n", {
@@ -62,7 +63,16 @@ const refuse = () =>
 const bodyKind = (contentType: string | null): "binary" | "text" | "unknown" => {
   if (contentType === null) return "unknown";
   const mime = contentType.split(";", 1)[0]!.trim().toLowerCase();
-  if (TEXT_CONTENT_TYPE.test(mime)) return "text";
+  if (TEXT_CONTENT_TYPE.test(mime)) {
+    const charset = /(?:^|;)\s*charset\s*=\s*(?:"([^"]+)"|'([^']+)'|([^;\s]+))/i.exec(contentType);
+    const label = charset?.[1] ?? charset?.[2] ?? charset?.[3];
+    if (label === undefined) return "text";
+    try {
+      return new TextDecoder(label).encoding === "utf-8" ? "text" : "binary";
+    } catch {
+      return "binary";
+    }
+  }
   if (
     /^(image|audio|video|font)\//.test(mime) ||
     BINARY_APPLICATION_TYPES.has(mime) ||
@@ -209,10 +219,28 @@ export async function redactEgressResponse(
   response: Response,
   secrets: ReadonlyArray<SecretValue>,
 ): Promise<Response> {
-  const scrubber = makeSecretScrubber(secrets);
+  const scrubber = makeSecretScrubber(secrets, { minLength: 1 });
   const headers = new Headers();
-  for (const [name, value] of response.headers) headers.append(name, scrubber.text(value));
-  if (response.body === null) return new Response(null, { status: response.status, headers });
+  let representationHeaderChanged = false;
+  let contentTypeChanged = false;
+  for (const [name, value] of response.headers) {
+    const redacted = scrubber.text(value);
+    const normalizedName = name.toLowerCase();
+    if (redacted !== value) {
+      if (REPRESENTATION_HEADER_NAMES.has(normalizedName) || normalizedName === "content-type") {
+        representationHeaderChanged = true;
+      }
+      if (normalizedName === "content-type") contentTypeChanged = true;
+    }
+    headers.append(name, redacted);
+  }
+  if (response.body === null) {
+    if (representationHeaderChanged) {
+      for (const name of REPRESENTATION_HEADERS) headers.delete(name);
+    }
+    if (contentTypeChanged) headers.delete("content-type");
+    return new Response(null, { status: response.status, headers });
+  }
 
   const encodings = (response.headers.get("content-encoding") ?? "")
     .split(",")
@@ -238,6 +266,10 @@ export async function redactEgressResponse(
     if (kind === "binary") return body.pipeThrough(scanSecretBytes(secrets));
     return sniffUnknownBody(body, scrubber, secrets);
   });
-  for (const name of REPRESENTATION_HEADERS) headers.delete(name);
+  const unchangedIdentityBinary = kind === "binary" && encodings.length === 0;
+  if (!unchangedIdentityBinary || representationHeaderChanged) {
+    for (const name of REPRESENTATION_HEADERS) headers.delete(name);
+  }
+  if (contentTypeChanged) headers.delete("content-type");
   return new Response(redactedBody, { status: response.status, headers });
 }

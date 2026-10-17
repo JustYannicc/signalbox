@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
 import { SecretValue } from "./SecretScrubber.ts";
+import { SecretProtectionWarning } from "./SecretProtection.ts";
 
 /**
  * A thread's secrets (#395): the 1Password Environments its folders name,
@@ -60,4 +61,27 @@ export const SecretsRegistration = Schema.Struct({
 });
 export type SecretsRegistration = typeof SecretsRegistration.Type;
 
-export const secretsJson = { registration: jsonCodec(SecretsRegistration) };
+/** Only the original shape may omit run identity; partial new payloads never fall back. */
+const LegacySecretsRegistration = Schema.Struct({
+  secrets: Schema.Array(SecretValue),
+  runId: Schema.optionalKey(Schema.Never),
+  current: Schema.optionalKey(Schema.Never),
+  sources: Schema.optionalKey(Schema.Never),
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+
+const SecretsRegistrationRequest = Schema.Union([SecretsRegistration, LegacySecretsRegistration]);
+export type SecretsRegistrationRequest = typeof SecretsRegistrationRequest.Type;
+
+const SecretsRegistrationResult = Schema.Struct({
+  warnings: Schema.Array(SecretProtectionWarning),
+});
+
+export const secretsJson = {
+  registration: jsonCodec(SecretsRegistration),
+  registrationResult: jsonCodec(SecretsRegistrationResult),
+  registrationRequest: {
+    decode: Schema.decodeUnknownSync(Schema.fromJsonString(SecretsRegistrationRequest), {
+      onExcessProperty: "error",
+    }),
+  },
+};

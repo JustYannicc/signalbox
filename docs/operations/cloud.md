@@ -75,10 +75,11 @@ See [Cloudflare Workers Logs](https://developers.cloudflare.com/workers/observab
 A turn whose folders have secrets (#395) sends placeholders for values hidden
 by 1Password in model requests. The Runner registers those values with the
 thread before the harness gets them, and the cloud's side of the gateway
-replaces each one, in any common encoding, with `{{secret:NAME}}` as the request
-body streams to the pool (`scrubModelRequest.ts`). Until the machine running the turn has
-registered, the gateway refuses the turn's requests with "This machine hasn't
-registered the folder's secrets to hide them yet."
+replaces each hidden value longer than six characters, in any common encoding,
+with `{{secret:NAME}}` as the request body streams to the pool
+(`scrubModelRequest.ts`). Until the machine running the turn has registered,
+the gateway refuses the turn's requests with "This machine hasn't registered
+the folder's secrets to hide them yet."
 
 Local files and commands keep placeholders literally, including names the
 thread doesn't have. The Runner does not reject a local edit or command because
@@ -91,10 +92,17 @@ While secret history exists, outbound request bodies must be inspectable UTF-8
 text no larger than 1 MiB. Git clone/fetch negotiation also permits gzip or
 deflate, with the same limit on both compressed and decoded bytes; binary Git
 push bodies remain refused. Every external response is checked, even when its
-request carried no secret. Text responses are redacted. Binary responses keep
-their bytes and pass through an exact multi-pattern scan of registered values.
-Standard HTTP content encodings are decoded before checking; archive formats
-are not unpacked. Unsupported encodings or malformed streams fail closed.
+request carried no secret. UTF-8 text responses use the egress text scrubber,
+which replaces every nonempty loaded hidden value and its common encodings. The
+model-facing text scrubber keeps its existing seven-character minimum. Binary
+responses and declared non-UTF-8 text are scanned against the exact bytes of
+loaded hidden values at least eight UTF-8 bytes long. Shorter values are not
+covered in binary responses; registration returns a names-only warning for a
+hidden value below that threshold. Clean identity-encoded binary responses
+retain their representation headers; decoding, text rewriting or a scrubbed
+representation header removes them. Standard HTTP content encodings are decoded
+before checking; archive formats are not unpacked. Unsupported encodings or
+malformed streams fail closed.
 The guarded fetch requests raw response encoding with `encodeResponseBody: "manual"`;
 otherwise Workers can decompress while the broker reads, causing a second decode.
 
@@ -104,7 +112,7 @@ prefix may already have arrived, so a late match truncates the response rather
 than changing its HTTP status. Errors identify the secret's name, never its value.
 An unknown content type is treated as text only when its complete body fits
 the 64 KiB sniff limit and is UTF-8 without binary controls; otherwise it uses
-the exact byte scanner.
+the exact byte scanner, with the same eight-byte minimum.
 
 Platform drive uploads use a separate capability check: the configured storage
 endpoint, authorized drive, signed object path, expiry and byte length must
@@ -113,8 +121,24 @@ only their status.
 
 Each run transition clears current substitution values and sources atomically,
 while retaining old values for response and ModelGateway redaction. Registration
-must match the live run and machine generation. "Always" grants belong to their
-folder; sharing a 1Password Environment never shares an approval. The
+with a run id and machine generation must match the live run. A legacy
+`{ secrets }` registration is accepted for the active lease and run as
+redaction-only compatibility: it keeps the values in redaction history and
+records their Environment source ids for that machine generation, while
+leaving current values and sources empty. It cannot fill placeholders or grant
+a send. Later turns can reuse that history for redaction only when their
+Environment sources match. Changed sources stay unregistered until the Runner
+reloads the secrets and posts registration; a replacement lease must register
+again. Runners advertise `runScopedSecrets` in
+`RunnerHello`. The thread records this capability on the lease after the hello
+or a successful run-scoped registration, and reconnects or legacy posts never
+clear it. A pre-0013 legacy generation receipt without `run_id` retains masking
+only while the lease lacks that capability; it never enables placeholder filling.
+An advertised upgrade requires a fresh registration for the current run.
+Turns without configured environments skip registration
+after the run transition clears current values and sources. "Always" grants
+belong to their folder; sharing a 1Password Environment never shares an
+approval. The
 container trusts the CA Cloudflare re-signs its HTTPS with: the backend sets
 `NODE_EXTRA_CA_CERTS`, and the Runner adds the CA to the system bundle and the
 browser's NSS database as it starts (`RunnerEgressTrust.ts`). A client with

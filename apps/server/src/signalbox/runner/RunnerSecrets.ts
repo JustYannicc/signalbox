@@ -1,3 +1,7 @@
+import {
+  binaryProtectionWarnings,
+  MIN_BINARY_SECRET_BYTES,
+} from "@signalbox/runner-protocol/SecretProtection";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import {
@@ -35,9 +39,10 @@ import type { SecretMask } from "./secretMask.ts";
  * skipped.
  *
  * The model must not see them either (#591): before the harness gets a new
- * set, the masked values are registered with the thread, which the
- * ModelGateway scrubs every model request with. A registration that fails
- * stops the turn, since the gateway serves none of its requests until then.
+ * configured set, the masked values are registered with the thread, which the
+ * ModelGateway scrubs every model request with. If registration fails, a turn
+ * with a configured source stops. With no environments, the cloud clears the
+ * active run's stale values before work, so there is nothing to register.
  *
  * Registration also supplies outbound-only placeholder substitution (#592).
  * Existing raw environment variables remain available to local programs.
@@ -110,6 +115,15 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 
 const listed = (names: ReadonlySet<string>) => [...names].toSorted().join(", ");
 
+const warnAboutBinaryProtection = (report: SecretsReport, secrets: Iterable<SecretValue>) => {
+  const warnings = binaryProtectionWarnings(secrets);
+  if (warnings.length === 0) return Effect.void;
+  const names = warnings.map(({ name }) => name).join(", ");
+  return report.notice(
+    `These hidden secrets are shorter than ${MIN_BINARY_SECRET_BYTES} UTF-8 bytes and cannot be protected in binary downloads: ${names}. They still load and can fill as usual.`,
+  );
+};
+
 export const makeRunnerSecrets = (input: {
   readonly onePassword: OnePassword;
   readonly mask: SecretMask;
@@ -144,9 +158,6 @@ export const makeRunnerSecrets = (input: {
       fillable = { ...fillable, guarded };
       if (environments.length === 0) {
         clear(guarded);
-        const empty = { secrets: [], current: [], sources: [] } satisfies SecretRegistration;
-        yield* report.register(empty);
-        registration = empty;
         return version;
       }
       const token = access?.token ?? null;
@@ -168,6 +179,7 @@ export const makeRunnerSecrets = (input: {
         yield* report
           .register(registration)
           .pipe(Effect.tapError(() => Effect.sync(() => clear(guarded))));
+        yield* warnAboutBinaryProtection(report, registration.secrets);
         return version;
       }
       read = null;
@@ -256,6 +268,7 @@ export const makeRunnerSecrets = (input: {
       yield* report.info(
         `loaded ${plural(count, "secret", "secrets")} from ${plural(environments.length, "1Password Environment", "1Password Environments")}`,
       );
+      yield* warnAboutBinaryProtection(report, nextRegistration.secrets);
       if (failures.length > 0) {
         yield* report.notice(
           input.mask.text(

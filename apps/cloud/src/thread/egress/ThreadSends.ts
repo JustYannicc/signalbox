@@ -351,7 +351,7 @@ export const layer = Layer.effect(
         }),
       );
 
-    const settle: ThreadSends["Service"]["settle"] = Effect.gen(function* () {
+    const settleWork = Effect.gen(function* () {
       const projection = yield* engine.projection;
       if (projection === null) return;
       const requests = new Map(projection.runtimeRequests.map((request) => [request.id, request]));
@@ -393,6 +393,10 @@ export const layer = Layer.effect(
         }
       }
     });
+    const settle: ThreadSends["Service"]["settle"] = settleWork.pipe(
+      // This best-effort follow-up must not expose values from an arbitrary defect.
+      Effect.catchCause(() => Effect.logError("settling secret sends failed")),
+    );
 
     return ThreadSends.of({ secrets, authorize, settle, dispatch });
   }),

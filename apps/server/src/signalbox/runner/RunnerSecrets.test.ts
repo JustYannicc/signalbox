@@ -199,6 +199,60 @@ describe("RunnerSecrets", () => {
     }),
   );
 
+  it.effect("warns by name about short hidden values without preventing loading or filling", () =>
+    Effect.gen(function* () {
+      const shortAscii = "six___";
+      const shortUtf8 = "🔐abc";
+      const boundaryUtf8 = "🔐abcd";
+      const account = fakeOnePassword({
+        [top]: [
+          variable("SHORT_ASCII", shortAscii),
+          variable("SHORT_UTF8", shortUtf8),
+          variable("BOUNDARY_UTF8", boundaryUtf8),
+        ],
+      });
+      const secrets = makeRunnerSecrets({
+        onePassword: account.onePassword,
+        mask: makeSecretMask(),
+        reserved: () => new Set(),
+      });
+      const first = reporter();
+      const configured = { ...access([top]), guarded: true };
+
+      yield* secrets.load(configured, first.report);
+
+      const warning =
+        "These hidden secrets are shorter than 8 UTF-8 bytes and cannot be protected in binary downloads: SHORT_ASCII, SHORT_UTF8. They still load and can fill as usual.";
+      expect(first.notices).toEqual([warning]);
+      expect(warning).not.toContain(shortAscii);
+      expect(warning).not.toContain(shortUtf8);
+      expect(warning).not.toContain(boundaryUtf8);
+      expect(secrets.environment()).toEqual({
+        SHORT_ASCII: shortAscii,
+        SHORT_UTF8: shortUtf8,
+        BOUNDARY_UTF8: boundaryUtf8,
+      });
+      expect([...secrets.fillable().values]).toEqual([
+        ["SHORT_ASCII", shortAscii],
+        ["SHORT_UTF8", shortUtf8],
+        ["BOUNDARY_UTF8", boundaryUtf8],
+      ]);
+      expect(first.registered).toEqual([
+        [
+          { name: "SHORT_ASCII", value: shortAscii },
+          { name: "SHORT_UTF8", value: shortUtf8 },
+          { name: "BOUNDARY_UTF8", value: boundaryUtf8 },
+        ],
+      ]);
+
+      const cached = reporter();
+      yield* secrets.load(configured, cached.report);
+      expect(cached.notices).toEqual([warning]);
+      expect(account.calls).toEqual(["sign in", `read ${top}`]);
+      expect(cached.registered).toEqual(first.registered);
+    }),
+  );
+
   it.effect("clears a prior turn before a failed refresh registers", () =>
     Effect.gen(function* () {
       const account = fakeOnePassword({
@@ -375,7 +429,7 @@ describe("RunnerSecrets", () => {
   );
 
   it.effect(
-    "registers an empty set when a turn has no environments and keeps old values masked",
+    "clears a turn with no environments without registering an empty set, keeping old values masked",
     () =>
       Effect.gen(function* () {
         const account = fakeOnePassword({ [top]: [variable("API_KEY", "old-folder-key")] });
@@ -388,10 +442,21 @@ describe("RunnerSecrets", () => {
         const { report, registered, current } = reporter();
 
         yield* secrets.load(access([top]), report);
-        yield* secrets.load(access([], null), report);
+        let registrationAttempts = 0;
+        const noSources: SecretsReport = {
+          notice: () => Effect.void,
+          info: () => Effect.void,
+          register: () => {
+            registrationAttempts += 1;
+            return Effect.fail(new SecretsRegisterError({ message: "registrar unavailable" }));
+          },
+        };
+        yield* secrets.load(access([], null), noSources);
+        yield* secrets.load(null, noSources);
 
-        expect(registered).toEqual([[{ name: "API_KEY", value: "old-folder-key" }], []]);
-        expect(current).toEqual([[{ name: "API_KEY", value: "old-folder-key" }], []]);
+        expect(registrationAttempts).toBe(0);
+        expect(registered).toEqual([[{ name: "API_KEY", value: "old-folder-key" }]]);
+        expect(current).toEqual([[{ name: "API_KEY", value: "old-folder-key" }]]);
         expect(secrets.environment()).toEqual({});
         expect(secrets.fillable().values.size).toBe(0);
         expect(mask.text("old-folder-key")).toBe(secretPlaceholder("API_KEY"));

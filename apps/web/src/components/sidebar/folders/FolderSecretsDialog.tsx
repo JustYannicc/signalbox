@@ -163,6 +163,11 @@ export function FolderSecretsDialog(props: { dialog: Extract<FolderDialog, { kin
               In the 1Password app: Developer › View Environments › Manage environment › Copy
               environment ID.
             </p>
+            <p className="text-xs text-warning">
+              Hidden values shorter than 8 UTF-8 bytes cannot be protected in binary downloads.
+              UTF-8 text responses still redact them. Values are saved in 1Password; Signalbox
+              checks them when a thread loads this Environment and shows affected names there.
+            </p>
             {above.length > 0 ? (
               <p className="text-xs text-muted-foreground">
                 {named

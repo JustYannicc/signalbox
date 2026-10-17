@@ -42,6 +42,44 @@ const harness = (answer: SendAnswer = { _tag: "allowed" }) => {
 };
 
 describe("egress", () => {
+  it.each(["1", "abc", "abcdefg"])(
+    "fills an approved short placeholder and redacts its text echo: %s",
+    async (value) => {
+      const current = [{ name: "SHORT_KEY", value }];
+      const asked: Array<ReadonlyArray<string>> = [];
+      let sentValue: string | null = null;
+      const response = await serveEgress(
+        new Request("https://api.example.test/", {
+          headers: { "x-secret": "{{secret:SHORT_KEY}}" },
+        }),
+        {
+          ownHosts: new Set(),
+          thread: {
+            secrets: async () => ({
+              registered: 1,
+              registeredRunId: "short-echo",
+              revision: 1,
+              current,
+              values: current,
+            }),
+            authorize: async ({ names }) => {
+              asked.push(names);
+              return { _tag: "allowed" };
+            },
+          },
+          send: async (outgoing) => {
+            sentValue = outgoing.headers.get("x-secret");
+            return new Response(value, { headers: { "content-type": "text/plain" } });
+          },
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(asked).toEqual([["SHORT_KEY"]]);
+      expect(sentValue).toBe(value);
+      expect(await response.text()).toBe("{{secret:SHORT_KEY}}");
+    },
+  );
+
   it("fills placeholders in the URL, headers, a Basic credential and a text body", async () => {
     const { serve, asked, sent } = harness();
 

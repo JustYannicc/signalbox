@@ -1,3 +1,4 @@
+import { MIN_BINARY_SECRET_BYTES } from "@signalbox/runner-protocol/SecretProtection";
 import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 
 interface Pattern {
@@ -36,19 +37,18 @@ const enqueuePrefix = (
 };
 
 const buildMachine = (secrets: Iterable<SecretValue>) => {
-  const patterns = new Map<string, Set<string>>();
+  const patterns = new Map<string, { readonly bytes: Uint8Array; readonly names: Set<string> }>();
   for (const { name, value } of secrets) {
-    if (value.length === 0) continue;
-    const names = patterns.get(value) ?? new Set<string>();
-    names.add(name);
-    patterns.set(value, names);
+    const bytes = utf8.encode(value);
+    if (bytes.byteLength < MIN_BINARY_SECRET_BYTES) continue;
+    const pattern = patterns.get(value) ?? { bytes, names: new Set<string>() };
+    pattern.names.add(name);
+    patterns.set(value, pattern);
   }
 
   const nodes: Array<Node> = [{ next: new Map(), failure: 0, bestMatch: null }];
   let maxPatternBytes = 0;
-  for (const [value, names] of patterns) {
-    const bytes = utf8.encode(value);
-    if (bytes.length === 0) continue;
+  for (const { bytes, names } of patterns.values()) {
     maxPatternBytes = Math.max(maxPatternBytes, bytes.length);
     let at = 0;
     for (const byte of bytes) {

@@ -314,14 +314,7 @@ export class ThreadObject extends DurableObject<ThreadObjectEnv> implements Thre
       (effect) => this.runtime.runPromise(effect),
       async () => {
         // An answer the egress check waits on, or an "Always" to keep (`egress/ThreadSends.ts`).
-        await this.runtime.runPromise(
-          ThreadSends.ThreadSends.use((sends) => sends.settle).pipe(
-            // It's tried again after the next change; the thread's own work goes on.
-            Effect.catchCause((cause) =>
-              Effect.logError("settling secret sends failed", Cause.pretty(cause)),
-            ),
-          ),
-        );
+        await this.runtime.runPromise(ThreadSends.ThreadSends.use((sends) => sends.settle));
         await this.armAlarm(await pushRunnerWork(this.runnerHost));
       },
       (at) => this.setAlarmNoLaterThan(at),

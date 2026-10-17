@@ -34,24 +34,50 @@ const readToFailure = async (stream: ReadableStream<Uint8Array>) => {
 };
 
 describe("scanSecretBytes", () => {
-  it("blocks short and suffix matches across one-byte chunks with names only", async () => {
-    const secret = "she";
+  it.each([
+    ["7 ASCII bytes", "1234567", 7, false],
+    ["8 ASCII bytes", "12345678", 8, true],
+    ["7 UTF-8 bytes", "aééé", 7, false],
+    ["8 UTF-8 bytes", "aéééx", 8, true],
+  ] as const)("applies the binary threshold to %s", async (_kind, value, byteLength, blocked) => {
+    const bytes = new TextEncoder().encode(value);
+    expect(bytes.byteLength).toBe(byteLength);
+    const result = await readToFailure(
+      streamChunks([...bytes].map((byte) => new Uint8Array([byte]))).pipeThrough(
+        scanSecretBytes([{ name: "BOUNDARY", value }]),
+      ),
+    );
+    const message = result.error instanceof Error ? result.error.message : "";
+
+    if (blocked) {
+      expect(message.includes("BOUNDARY")).toBe(true);
+      expect(message.includes(value)).toBe(false);
+      expect(new TextDecoder().decode(result.bytes).includes(value)).toBe(false);
+    } else {
+      expect(result.error).toBeUndefined();
+      expect([...result.bytes]).toEqual([...bytes]);
+    }
+  });
+
+  it("blocks overlapping suffix patterns across one-byte chunks with names only", async () => {
+    const secret = "abcdefghij";
+    const suffix = "cdefghij";
     const bytes = new TextEncoder().encode(`public-${secret}-tail`);
     const result = await readToFailure(
       streamChunks([...bytes].map((byte) => new Uint8Array([byte]))).pipeThrough(
         scanSecretBytes([
-          { name: "SHE", value: secret },
-          { name: "HE", value: "he" },
+          { name: "LONG", value: secret },
+          { name: "SUFFIX", value: suffix },
           { name: "ALIAS", value: secret },
         ]),
       ),
     );
     const message = result.error instanceof Error ? result.error.message : "";
 
-    expect(message.includes("SHE")).toBe(true);
+    expect(message.includes("LONG")).toBe(true);
     expect(message.includes("ALIAS")).toBe(true);
     expect(message.includes(secret)).toBe(false);
-    expect(message.includes("he")).toBe(false);
+    expect(message.includes(suffix)).toBe(false);
     expect(new TextDecoder().decode(result.bytes).includes(secret)).toBe(false);
   });
 

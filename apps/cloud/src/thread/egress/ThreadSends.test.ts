@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { UserDirectory, UserObjectError } from "../../user/UserDirectory.ts";
@@ -41,6 +42,7 @@ const fakeOwner = () => {
   let allowed = new Set<string>();
   let folderId: string | null = homeA;
   let folderLookupFails = false;
+  let nextKeepFailure: Error | null = null;
   const users = {
     forUser: () => ({
       secretSendFolder: (thread: string) =>
@@ -73,15 +75,21 @@ const fakeOwner = () => {
           name: string;
           host: string;
         }>;
-      }) =>
-        Effect.sync(() => {
+      }) => {
+        if (nextKeepFailure !== null) {
+          const error = nextKeepFailure;
+          nextKeepFailure = null;
+          return Effect.die(error);
+        }
+        return Effect.sync(() => {
           keptCalls.push(input);
           const grants = input.grants;
           kept.push(...grants);
           for (const grant of grants) {
             allowed.add(`${input.folderId ?? "top"} ${grant.name} ${grant.host}`);
           }
-        }),
+        });
+      },
     }),
   } as unknown as UserDirectory["Service"];
   return {
@@ -95,6 +103,9 @@ const fakeOwner = () => {
     },
     failFolderLookup: () => {
       folderLookupFails = true;
+    },
+    failNextKeep: (error: Error) => {
+      nextKeepFailure = error;
     },
     revokeAll: () => {
       allowed = new Set();
@@ -241,6 +252,33 @@ describe("ThreadSends", () => {
           "waiting",
         );
       }),
+    );
+  });
+
+  it.effect("logs no defect details when keeping an Always answer fails", () => {
+    const owned = fakeOwner();
+    const canary = "secret-send-settle-canary";
+    const logs: Array<string> = [];
+    const logger = Logger.map(Logger.formatJson, (line) => void logs.push(line));
+    return midTurn(owned, ({ engine, sends }) =>
+      Effect.gen(function* () {
+        expect((yield* sends.authorize({ host: HOST, names: ["KEY"], waitMs: 0 }))._tag).toBe(
+          "waiting",
+        );
+        const [request] = yield* pendingRequests(engine);
+        yield* respond(engine, request!.id, "acceptAlways");
+        owned.failNextKeep(new Error(canary));
+
+        // Settle contains this defect; the failed grant stays unmarked and is retried.
+        yield* sends.settle;
+        const emitted = logs.join("\n");
+        expect(emitted).toContain("settling secret sends failed");
+        expect(emitted).not.toContain(canary);
+        expect(owned.keptCalls).toEqual([]);
+
+        yield* sends.settle;
+        expect(owned.keptCalls).toHaveLength(1);
+      }).pipe(Effect.provide(Logger.layer([logger]))),
     );
   });
 

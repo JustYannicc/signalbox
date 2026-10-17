@@ -320,7 +320,7 @@ describe("egress security boundary", () => {
     expect(sends).toBe(0);
   });
 
-  it("refuses a value the shared scrubber cannot redact", async () => {
+  it("allows an approved short value and redacts its text echo", async () => {
     let sends = 0;
     const response = await serveEgress(
       new Request("https://approved.example/", { headers: { "x-key": "{{secret:KEY}}" } }),
@@ -332,12 +332,13 @@ describe("egress security boundary", () => {
         },
         send: async () => {
           sends++;
-          return new Response("tiny");
+          return new Response("tiny", { headers: { "content-type": "text/plain" } });
         },
       },
     );
-    expect(response.status).toBe(403);
-    expect(sends).toBe(0);
+    expect(response.status).toBe(200);
+    expect(sends).toBe(1);
+    expect(await response.text()).toBe("{{secret:KEY}}");
   });
 
   it("does not expose a resolved URL when the outbound client throws", async () => {

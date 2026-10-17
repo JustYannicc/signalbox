@@ -1,6 +1,5 @@
 // @effect-diagnostics globalFetch:off - the machine's requests pass through the Workers runtime's own fetch, streams untouched, outside Effect.
 import { listedNames } from "@signalbox/runner-protocol/SecretPlaceholders";
-import { MIN_SCRUBBED_LENGTH } from "@signalbox/runner-protocol/SecretScrubber";
 
 import type { SecretValues } from "../runner/secretValues.ts";
 import type { EgressDispatchAnswer } from "./egressDispatch.ts";
@@ -94,15 +93,6 @@ export async function serveEgress(
     if (read.secrets.size > 0 && !read.https) {
       return refused(
         `Signalbox didn't send this request: it carries ${listedNames(read.secrets)} over plain HTTP. Use https://.`,
-      );
-    }
-    if (
-      secrets.current.some(
-        ({ name, value }) => read.secrets.has(name) && value.length < MIN_SCRUBBED_LENGTH,
-      )
-    ) {
-      return refused(
-        "Signalbox didn't send this request: this secret is too short for safe echo redaction.",
       );
     }
     if (read.secrets.size > 0) {
