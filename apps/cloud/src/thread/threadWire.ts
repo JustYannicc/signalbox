@@ -1,4 +1,5 @@
 import {
+  ModelSelection,
   NonNegativeInt,
   SecretRequestAnswerInput,
   OrchestrationV2Command,
@@ -60,6 +61,7 @@ export const ThreadSummaryWire = Schema.Struct({
 
 export const LaunchInputWire = Schema.Struct({
   ...OrchestrationV2ThreadLaunchInput.fields,
+  modelSelection: ModelSelection,
   threadId: ThreadId,
 });
 

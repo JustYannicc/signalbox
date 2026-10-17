@@ -1,7 +1,6 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type ChatAttachment,
@@ -11,14 +10,18 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
+  type Project,
   type ProviderDriverKind,
   type ProviderInteractionMode,
   ProjectId,
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
+  type ServerSettingsError,
   ThreadId,
 } from "@t3tools/contracts";
+import * as SignalboxDefaultModels from "../signalbox/defaultModels.ts"; // signalbox: Centralize project/person/economical launch model resolution.
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -80,7 +83,7 @@ export interface ThreadLaunchInput {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly generateTitle?: boolean;
-  readonly modelSelection: ModelSelection;
+  readonly modelSelection?: ModelSelection | undefined; // signalbox: Let launch callers use shared defaults when omitted.
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -121,6 +124,8 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   {
     operation: Schema.Literals([
       "resolve-project",
+      // signalbox: Report model-default exhaustion separately so callers can explain recovery.
+      "resolve-model",
       "read-receipt",
       "generate-metadata",
       "provision-worktree",
@@ -138,6 +143,10 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   },
 ) {
   override get message(): string {
+    // signalbox: Give callers a recovery step when no default model can be selected.
+    if (this.operation === "resolve-model") {
+      return "No model is available for this project or person, and no economical provider default is available. Connect a provider or choose a model.";
+    }
     return `Thread launch ${this.commandId} failed during ${this.operation}.`;
   }
 }
@@ -159,6 +168,13 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
+    // signalbox: Expose the shared initial-model policy to server entry points.
+    readonly initialModelSelection: (
+      projectId: ProjectId,
+    ) => Effect.Effect<
+      ModelSelection | null,
+      ProjectService.ProjectOperationError | ServerSettingsError
+    >;
     readonly launch: (
       input: ThreadLaunchInput,
     ) => Effect.Effect<
@@ -208,6 +224,25 @@ const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+
+  // signalbox: Resolve saved project/person choices before economical provider defaults.
+  const initialModelSelectionForProject = (projectId: ProjectId, project: Project) =>
+    SignalboxDefaultModels.resolveForProject({
+      projectId,
+      project,
+      settings: serverSettings.getSettings,
+      providers: providerRegistry.getProviders,
+    });
+
+  const initialModelSelection: ThreadLaunchService["Service"]["initialModelSelection"] = (
+    projectId,
+  ) =>
+    Effect.flatMap(projects.getById(projectId), (project) =>
+      Option.match(project, {
+        onNone: () => Effect.succeed(null),
+        onSome: (value) => initialModelSelectionForProject(projectId, value),
+      }),
+    );
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
@@ -834,10 +869,41 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      // signalbox: Preserve retry/reuse selections, then resolve the initial model for new launches.
+      let modelSelection: ModelSelection | null | undefined = input.modelSelection;
+      const acceptedLaunchReceipt =
+        Option.isSome(launchReceipt) &&
+        launchReceipt.value.status === "accepted" &&
+        launchReceipt.value.commandType === "thread.create"
+          ? launchReceipt.value
+          : undefined;
+      const existingThreadId =
+        input.reuseExistingThread === true
+          ? input.threadId
+          : acceptedLaunchReceipt !== undefined &&
+              (input.threadId === undefined || input.threadId === acceptedLaunchReceipt.threadId)
+            ? acceptedLaunchReceipt.threadId
+            : undefined;
+      if (modelSelection === undefined && existingThreadId !== undefined) {
+        const shell = yield* threads
+          .getThreadShell(existingThreadId)
+          .pipe(Effect.mapError(mapError(input, "create-thread", existingThreadId)));
+        if (shell?.projectId === input.projectId) modelSelection = shell.modelSelection;
+      }
+      modelSelection ??= yield* initialModelSelectionForProject(input.projectId, project).pipe(
+        Effect.mapError(mapError(input, "resolve-project")),
+      );
+      if (modelSelection === null || modelSelection === undefined) {
+        return yield* mapError(
+          input,
+          "resolve-model",
+        )(new Error("No supported model is available for this project or person."));
+      }
+      const launchInput = { ...input, modelSelection };
       yield* threads.assertProviderInstanceEnabled({
-        projectId: input.projectId,
-        commandId: input.commandId,
-        instanceId: input.modelSelection.instanceId,
+        projectId: launchInput.projectId,
+        commandId: launchInput.commandId,
+        instanceId: launchInput.modelSelection.instanceId,
       });
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
@@ -911,7 +977,7 @@ const make = Effect.gen(function* () {
                 threadId: candidateThreadId,
                 projectId: input.projectId,
                 title: input.title,
-                modelSelection: input.modelSelection,
+                modelSelection: launchInput.modelSelection, // signalbox: Dispatch the resolved selection, including inherited model options.
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
@@ -965,7 +1031,7 @@ const make = Effect.gen(function* () {
               attachments: input.initialMessage.attachments,
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
-              modelSelection: input.modelSelection,
+              modelSelection: launchInput.modelSelection, // signalbox: Dispatch the resolved selection, including inherited model options.
               dispatchMode: { type: "defer_start", workspaceStrategy },
               createdBy: input.createdBy,
               creationSource: input.creationSource,
@@ -1109,7 +1175,14 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    // signalbox: Make the resolver available to other server launch paths.
+    initialModelSelection,
+    launch,
+    checkWorktreeBase,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

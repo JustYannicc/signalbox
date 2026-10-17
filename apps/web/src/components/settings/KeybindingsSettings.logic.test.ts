@@ -18,6 +18,16 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("finds Home's configurable default without a shortcut conflict", () => {
+    expect(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "go to home")).toEqual([
+      expect.objectContaining({
+        command: "sidebar.home",
+        key: "mod+alt+1",
+        source: "Default",
+        conflicts: [],
+      }),
+    ]);
+  });
   it("lists composer, provider, and pull request commands with editable defaults", () => {
     const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
     for (const command of [

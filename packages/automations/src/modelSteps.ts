@@ -1,18 +1,17 @@
 import type { WorkflowStepVerb } from "@t3tools/contracts";
 
-import { jsonOrText, toJson } from "./json.ts";
+import { toJson } from "./json.ts";
+import { jsonModelOutput, judgeVerdict } from "./modelOutput.ts";
 
 /**
- * `llm`, `judge` and `extract` run as short threads in plan mode on the
- * automation's model, so they use the same providers and accounts as every
- * other agent and stay inspectable. These build their prompt and read the
- * answer back.
+ * Model steps use supplied text only. Hosts with a model gateway call it
+ * directly; self-hosted servers retain their plan-mode thread adapter.
  */
 
 const MODEL_VERBS = new Set(["llm", "judge", "extract"] as const);
 export type ModelVerb = typeof MODEL_VERBS extends Set<infer V> ? V : never;
 
-/** `llm`, `judge` and `extract`: the verbs that ask a model in a short plan-mode thread. */
+/** The verbs that ask a model to interpret supplied text. */
 export const isModelVerb = (verb: WorkflowStepVerb): verb is ModelVerb =>
   MODEL_VERBS.has(verb as ModelVerb);
 
@@ -39,7 +38,9 @@ export function modelPrompt(verb: ModelVerb, label: string, options: Options): s
     case "judge":
       return [
         `${typeof options.question === "string" ? options.question : label}${input}`,
-        `Answer with exactly one of: ${outcomesOf(options).join(", ")}. Reply with only that word.`,
+        options.outcomes === undefined
+          ? 'Reply with only JSON: { "verdict": true or false, "reason": "why" }.'
+          : `Answer with exactly one of: ${outcomesOf(options).join(", ")}. Reply with only that word.`,
         NO_TOOLS,
       ].join("\n\n");
     case "extract":
@@ -62,6 +63,7 @@ const normalize = (text: string) =>
 /** Reads a model step's final message as the value the code gets back. */
 export function modelResult(verb: ModelVerb, options: Options, text: string): Outcome {
   if (verb === "judge") {
+    if (options.outcomes === undefined) return judgeVerdict(text);
     const outcomes = outcomesOf(options);
     const answer = normalize(text);
     const exact = outcomes.find((outcome) => outcome.toLowerCase() === answer);
@@ -79,11 +81,7 @@ export function modelResult(verb: ModelVerb, options: Options, text: string): Ou
         };
   }
   if (verb === "extract") {
-    const stripped = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
-    const value = jsonOrText(stripped);
-    return typeof value === "string"
-      ? { ok: false, error: `The model didn't answer with JSON: "${text.trim().slice(0, 200)}".` }
-      : { ok: true, value };
+    return jsonModelOutput(text, options.schema);
   }
   return { ok: true, value: text.trim() };
 }

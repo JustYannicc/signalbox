@@ -43,6 +43,10 @@
       "types": "./src/StatusLineProtocol.ts",
       "import": "./src/StatusLineProtocol.ts"
     },
+    "./LearnerProtocol": {
+      "types": "./src/LearnerProtocol.ts",
+      "import": "./src/LearnerProtocol.ts"
+    },
     "./drivePaths": {
       "types": "./src/drivePaths.ts",
       "import": "./src/drivePaths.ts"
@@ -65,7 +69,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc-rs --noEmit"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",

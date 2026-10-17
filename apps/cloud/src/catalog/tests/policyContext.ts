@@ -1,4 +1,10 @@
-import type { Key, Row, Table, WriteTable } from "@signalbox/sync/table";
+import {
+  pageCursorSchema,
+  type Key,
+  type Row,
+  type Table,
+  type WriteTable,
+} from "@signalbox/sync/table";
 import * as NodeUtil from "node:util";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -76,6 +82,29 @@ export const policyContext = (userId = "owner", seeds: Seeds = {}) => {
     seeds.folders ?? [],
     (row) => row.id,
   );
+  const folderTable: WriteTable<typeof catalogRootTables.folders> = {
+    ...folders.table,
+    page: (index, options) => {
+      const decodeCursor = Schema.decodeUnknownSync(
+        pageCursorSchema(catalogRootTables.folders, index),
+      );
+      return Effect.sync(() => {
+        const ordered = folders
+          .rows()
+          .filter(
+            (row) =>
+              row.parentId === options.prefix?.[0] && row.parentIncarnation === options.prefix?.[1],
+          )
+          .toSorted((a, b) => a.position - b.position || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        const offset = options.after === undefined ? 0 : Number(options.after);
+        const end = offset + options.limit;
+        return {
+          rows: ordered.slice(offset, end),
+          after: end < ordered.length ? decodeCursor(String(end)) : undefined,
+        };
+      });
+    },
+  };
   const grants = memoryTable<typeof catalogRootTables.grants>(
     seeds.grants ?? [],
     ({ folderId, incarnation, personId }) => ({ folderId, incarnation, personId }),
@@ -84,7 +113,7 @@ export const policyContext = (userId = "owner", seeds: Seeds = {}) => {
   const ctx: CatalogPolicyWriteContext = {
     actor: decodeActor({ userId }),
     home,
-    tables: { state: state.table, root: root.table, folders: folders.table, grants: grants.table },
+    tables: { state: state.table, root: root.table, folders: folderTable, grants: grants.table },
     requireAuthorizationFence: (fence) =>
       Effect.sync(() => {
         fences.push(fence);
