@@ -1,7 +1,7 @@
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
 
-import { makeUsageScanner } from "./usageScanner.ts";
+import { makeUsageScanner } from "./testing.ts";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 

@@ -22,7 +22,7 @@ export function NotificationSettings() {
       {...searchableSetting("thread-notifications")}
       description={
         permissionMessage ??
-        "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while Signalbox is open."
+        "System alerts when a thread needs input or approval, fails, or finishes a turn of a minute or more you started. Applies to this device while Signalbox is open."
       }
       control={
         <Select
