@@ -163,7 +163,7 @@ export const makeRunnerAdapters = Effect.fn("makeRunnerAdapters")(function* (mac
 }) {
   const layout = machineLayout(yield* Path.Path, machine.root);
   const stderr = makeHarnessStderr(machine.mask);
-  yield* prepareMachine(layout, machine.gatewayUrl, machine.mcpServers);
+  yield* prepareMachine(layout, machine.gatewayUrl, machine.mcpServers, machine.cwd);
   const dependencyEnvironment = harnessEnvironment(
     yield* HostProcess.Environment,
     layout,

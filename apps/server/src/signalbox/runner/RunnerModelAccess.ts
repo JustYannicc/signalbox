@@ -89,17 +89,35 @@ export function harnessEnvironment(
   return { ...environment, ...caches, HOME: layout.home, ...claudeGateway(gatewayUrl) };
 }
 
-/** Makes project-installed commands available to every provider's shell tools. */
+/** Makes project-installed commands available to provider shells, including Bash login shells. */
 export const agentToolEnvironment = (
   environment: NodeJS.ProcessEnv,
   cwd: string,
-): NodeJS.ProcessEnv => ({
-  ...environment,
-  PATH: [NodePath.join(cwd, "node_modules", ".bin"), environment.PATH]
-    .filter((entry): entry is string => entry !== undefined && entry.length > 0)
-    .join(NodePath.delimiter),
-  PWD: cwd,
-});
+): NodeJS.ProcessEnv => {
+  const home = environment.HOME;
+  return {
+    ...environment,
+    PATH: [NodePath.join(cwd, "node_modules", ".bin"), environment.PATH]
+      .filter((entry): entry is string => entry !== undefined && entry.length > 0)
+      .join(NodePath.delimiter),
+    PWD: cwd,
+    ...(home === undefined ? {} : { BASH_ENV: NodePath.join(home, ".signalbox-agent-bash-env") }),
+  };
+};
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+const agentToolBashEnvironment = (cwd: string) =>
+  [
+    `_signalbox_agent_tool_bin=${shellQuote(NodePath.join(cwd, "node_modules", ".bin"))}`,
+    'case ":${PATH-}:" in',
+    '  *":${_signalbox_agent_tool_bin}:"*) ;;',
+    '  *) PATH="${_signalbox_agent_tool_bin}${PATH:+:$PATH}" ;;',
+    "esac",
+    "export PATH",
+    "unset _signalbox_agent_tool_bin",
+    "",
+  ].join("\n");
 
 /** Longer than the login service's 4-minute budget for one sign-in. */
 export const MCP_TOOL_TIMEOUT_SEC = 300;
@@ -165,11 +183,19 @@ export const prepareMachine = Effect.fn("prepareMachine")(function* (
   layout: MachineLayout,
   gatewayUrl: string,
   mcpServers: RunnerMcpServers = {},
+  cwd?: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   for (const directory of [layout.home, layout.claudeHome, layout.codexHome]) {
     yield* fs.makeDirectory(directory, { recursive: true });
+  }
+  if (cwd !== undefined) {
+    // Bash login profiles can replace PATH after the provider process starts.
+    yield* fs.writeFileString(
+      path.join(layout.home, ".signalbox-agent-bash-env"),
+      agentToolBashEnvironment(cwd),
+    );
   }
   const settings = yield* encodeClaudeUserSettings({
     apiKeyHelper: claudeKeyHelper(layout),

@@ -63,14 +63,20 @@ describe("RunnerModelAccess", () => {
       const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-tool-path-"));
       try {
         const path = yield* Path.Path;
-        const thread = runnerPaths(path, root, "thread:with:colons");
+        const thread = runnerPaths(
+          path,
+          NodePath.join(root, "runner's home"),
+          "thread:with:colons",
+        );
         const layout = machineLayout(path, thread.machineRoot);
         NodeFS.mkdirSync(layout.home, { recursive: true });
+        const resetPath = NodePath.join(root, "empty-bin");
+        NodeFS.mkdirSync(resetPath);
         const bin = NodePath.join(thread.cwd, "node_modules", ".bin");
         NodeFS.mkdirSync(bin, { recursive: true });
         NodeFS.writeFileSync(
           NodePath.join(bin, "vp"),
-          `#!/usr/bin/env node
+          `#!${process.execPath}
 const fs = require("node:fs");
 const path = require("node:path");
 const entries = process.env.PATH.split(path.delimiter);
@@ -103,16 +109,39 @@ console.log(JSON.stringify({ cwd: process.cwd(), pwd: process.env.PWD, home: pro
           layout,
           GATEWAY,
         );
+        yield* prepareMachine(layout, GATEWAY, {}, thread.cwd);
         const environment = agentToolEnvironment(base, thread.cwd);
-        const child = NodeChildProcess.spawnSync("vp", ["--version"], {
-          cwd: thread.cwd,
-          env: environment,
-          encoding: "utf8",
-        });
+        NodeFS.writeFileSync(
+          NodePath.join(layout.home, ".bash_profile"),
+          `export PATH=${JSON.stringify(resetPath)}\n`,
+        );
+        const { BASH_ENV: _bashEnv, ...environmentWithoutBashEnv } = environment;
+        const withoutBootstrap = NodeChildProcess.spawnSync(
+          "/bin/bash",
+          ["-lc", "command -v vp && vp --version"],
+          {
+            cwd: thread.cwd,
+            env: environmentWithoutBashEnv,
+            encoding: "utf8",
+          },
+        );
+        expect(withoutBootstrap.status).not.toBe(0);
+
+        const child = NodeChildProcess.spawnSync(
+          "/bin/bash",
+          ["-lc", "command -v vp && vp --version"],
+          {
+            cwd: thread.cwd,
+            env: environment,
+            encoding: "utf8",
+          },
+        );
 
         expect(child.status).toBe(0);
         expect(child.stderr).toBe("");
-        const launched = JSON.parse(child.stdout) as {
+        const lines = child.stdout.trim().split("\n");
+        expect(lines[0]).toBe(NodePath.join(bin, "vp"));
+        const launched = JSON.parse(lines[1]!) as {
           cwd: string;
           pwd: string;
           home: string;
