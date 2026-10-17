@@ -296,9 +296,9 @@ describe("ThreadEngine", () => {
         yield* engine.dispatch(owner, send("queue-3", "Third"), personal);
 
         const before = yield* engine.snapshot(owner);
-        const [firstQueued, secondQueued] = before.projection.runs.filter(
-          (run) => run.status === "queued",
-        );
+        const [firstQueued, secondQueued] = before.projection.runs
+          .filter((run) => run.status === "queued")
+          .toSorted((left, right) => left.ordinal - right.ordinal);
         if (firstQueued === undefined || secondQueued === undefined) {
           throw new Error("expected two queued runs");
         }
@@ -342,6 +342,16 @@ describe("ThreadEngine", () => {
         expect(replayed).toEqual(pending);
 
         yield* runToIdle(engine);
+        const starts = yield* replayFrom(engine, before.snapshotSequence);
+        expect(
+          starts.flatMap((item) =>
+            item.kind === "event" &&
+            item.event.type === "run.updated" &&
+            item.event.payload.status === "starting"
+              ? [item.event.payload.id]
+              : [],
+          ),
+        ).toEqual([secondQueued.id, firstQueued.id]);
         const staleEdit = {
           ...edit,
           commandId: CommandId.make("queue-edit-after-promotion"),

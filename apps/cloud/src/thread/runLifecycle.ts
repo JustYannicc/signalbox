@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { driverFor, runnerInstanceFor } from "./providerCatalog.ts";
+import { queuedRunsInDeliveryOrder } from "./queuedRunCommands.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -43,10 +44,7 @@ export const isLiveRun = (run: Run): run is LiveRun =>
 export const activeRun = (projection: Projection): Run | undefined =>
   projection.runs.filter(isLiveRun).toSorted((left, right) => right.ordinal - left.ordinal)[0];
 
-const queuedRuns = (projection: Projection): ReadonlyArray<Run> =>
-  projection.runs
-    .filter((run) => run.status === "queued")
-    .toSorted((left, right) => left.ordinal - right.ordinal);
+const queuedRuns = queuedRunsInDeliveryOrder;
 
 /** The first queued run that may start once nothing is live. */
 export const nextQueuedRun = (projection: Projection): Run | undefined =>
