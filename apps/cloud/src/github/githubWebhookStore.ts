@@ -80,7 +80,13 @@ export const makeGitHubWebhookStore = Effect.gen(function* () {
     nextAt: sql<{
       readonly at: number | null;
     }>`SELECT MIN(retry_at) AS at FROM signalbox_github_subscriptions`.pipe(
-      Effect.map((rows) => rows[0]?.at ?? null),
+      Effect.flatMap((rows) => {
+        const at = rows[0]?.at ?? null;
+        // Zero means "due now" in the table; Cloudflare rejects setAlarm(0).
+        return at === 0
+          ? Clock.currentTimeMillis.pipe(Effect.map((now) => Math.max(1, now)))
+          : Effect.succeed(at);
+      }),
     ),
     previous: (id: string, number: number) =>
       sql<{

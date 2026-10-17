@@ -24,7 +24,7 @@ import { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
  * each calling one engine method and then flushing, so what it started
  * here is done before the request ends. Validating and saving take what the
  * caller compiled (`compiled`), since the cloud can't compile. Executor
- * connections and webhooks aren't in the cloud yet and say so.
+ * connections aren't in the cloud yet and say so.
  */
 
 export const AUTOMATION_METHODS = Object.values(AUTOMATION_WS_METHODS);
