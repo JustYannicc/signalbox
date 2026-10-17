@@ -93,12 +93,14 @@ const publicError = (operation: string) => (error: AgentPullRequestError) =>
         : error.category === "not_found"
           ? "not-found"
           : error.category === "not_connected"
-            ? "permission"
-            : error.category === "github_conflict"
-              ? "conflict"
-              : error.category === "unavailable"
-                ? undefined
-                : error.category,
+            ? "not-connected"
+            : error.category === "conflict"
+              ? "operation-conflict"
+              : error.category === "github_conflict"
+                ? "conflict"
+                : error.category === "unavailable"
+                  ? undefined
+                  : error.category,
   });
 
 /** Folder authority is checked anew even when a durable receipt can answer the retry. */
@@ -133,12 +135,24 @@ export const makePullRequestCollaboration = (
       Effect.gen(function* () {
         const text = yield* github.api
           .graphql("pullRequestCollaboration", token, document, variables)
-          .pipe(Effect.mapError(safeApiError));
+          .pipe(
+            Effect.mapError((error) =>
+              // GraphQL reports a definite rate-limit refusal inside an HTTP 200.
+              safeApiError(error.retryAt === undefined ? error : { ...error, status: 429 }),
+            ),
+          );
         if (text === null) return yield* refuse("not_found", 404);
         const decoded = decode(text);
         if (Option.isNone(decoded)) return yield* refuse("unavailable", 200);
         const { data, errors } = decoded.value;
         if (errors !== undefined && errors.length > 0) {
+          // A mutation may have committed before one of its selected fields failed.
+          if (
+            data != null &&
+            typeof data === "object" &&
+            Object.values(data).some((value) => value != null)
+          )
+            return yield* refuse("unavailable", 200);
           const types = errors.map((error) => error.type);
           if (types.every((type) => type === "FORBIDDEN")) return yield* refuse("permission", 403);
           if (types.every((type) => type === "NOT_FOUND")) return yield* refuse("not_found", 404);
