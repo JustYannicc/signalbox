@@ -16,7 +16,7 @@ import type {
   SectionSidebarProject,
   SectionSidebarVisibleProjectRow,
 } from "../sections/sectionProjectTree";
-import { visibleFolderLists, type FolderOwner } from "./folderSidebarModel";
+import { folderOwnerKey, visibleFolderLists, type FolderOwner } from "./folderSidebarModel";
 import {
   folderCountsAtom,
   folderThreadSlicesAtom,
@@ -103,6 +103,15 @@ export function useFoldersSidebar(input: {
       return next;
     });
   }, []);
+  const expandOwner = useCallback((environmentId: EnvironmentId, ownerId: SignalboxContextId) => {
+    const key = folderOwnerKey(environmentId, ownerId);
+    setCollapsed((current) => {
+      if (!current.has(key)) return current;
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
+  }, []);
 
   const environments = useMemo(
     (): ReadonlyArray<FolderEnvironmentView> =>
@@ -161,9 +170,19 @@ export function useFoldersSidebar(input: {
       visibleRows,
       showEnvironmentLabels: input.environments.length > 1,
       collapsed,
+      expandOwner,
       toggle,
     }),
-    [collapsed, counts, environments, failures, input.environments.length, toggle, visibleRows],
+    [
+      collapsed,
+      counts,
+      environments,
+      expandOwner,
+      failures,
+      input.environments.length,
+      toggle,
+      visibleRows,
+    ],
   );
 }
 

@@ -45,6 +45,13 @@ folder work in those files. In a folder without files of its own, they work in t
 Personal or organization. Each drive you're given starts out as a folder of its own, which you can
 move, rename, or hand its files to another folder.
 
+### Start from another folder
+
+Choose **Start a folder from here** in a folder's menu to try a different direction. The new folder
+stays in the same Personal or organization tree and shows where it started. It shares the file
+history up to that point; later work in either folder is independent. Rename, move, or remove the
+new folder as usual. Nothing about the original changes.
+
 ### Instructions
 
 Each level can have instructions for agents, its own `AGENTS.md`. Choose **Instructions…** in a

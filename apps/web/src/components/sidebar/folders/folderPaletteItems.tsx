@@ -5,9 +5,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { homeOfThread, threadFolderChoices } from "@t3tools/client-runtime/state/signalboxFolders";
 import { useParams } from "@tanstack/react-router";
-import { FolderInputIcon, FolderPlusIcon } from "lucide-react";
+import { FolderInputIcon, FolderPlusIcon, GitBranchIcon } from "lucide-react";
+import { FolderId } from "@t3tools/contracts/signalboxFolders";
 
 import { useComposerDraftStore } from "../../../composerDraftStore";
+import { randomUUID } from "../../../lib/utils";
 import { useThreadShell } from "../../../state/entities";
 import { environmentContextsAtom } from "../../../state/signalboxContexts";
 import {
@@ -76,6 +78,31 @@ export function useFolderPaletteItems(): Array<
         icon: <FolderInputIcon className={ITEM_ICON_CLASS} />,
         addonIcon: <FolderInputIcon className={ADDON_ICON_CLASS} />,
         groups: [{ value: "folders", label: owner.name, items: destinations }],
+      });
+    }
+  }
+
+  if (thread && snapshot && editable.has(thread.environmentId)) {
+    const folderId = homeOfThread(snapshot, {
+      id: thread.threadId,
+      projectId: thread.projectId,
+    });
+    const folder = folderId
+      ? snapshot.folders.find((candidate) => candidate.id === folderId)
+      : null;
+    if (folder) {
+      items.push({
+        kind: "action",
+        value: "action:start-folder-from-here",
+        searchTerms: ["start a folder from here", "folder copy", "based on", folder.name],
+        title: "Start a folder from here",
+        icon: <GitBranchIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await commands.startFrom(thread.environmentId, {
+            id: folder.id,
+            newFolderId: FolderId.make(randomUUID()),
+          });
+        },
       });
     }
   }

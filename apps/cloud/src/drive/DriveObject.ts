@@ -184,6 +184,22 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.unreconciled(...args);
   }
 
+  forkSnapshot(...args: Parameters<DriveObjectApi["forkSnapshot"]>) {
+    return this.api.forkSnapshot(...args);
+  }
+
+  startFrom(...args: Parameters<DriveObjectApi["startFrom"]>) {
+    return this.api.startFrom(...args);
+  }
+
+  forkOrigin(...args: Parameters<DriveObjectApi["forkOrigin"]>) {
+    return this.api.forkOrigin(...args);
+  }
+
+  packOrigin(...args: Parameters<DriveObjectApi["packOrigin"]>) {
+    return this.api.packOrigin(...args);
+  }
+
   setup(...args: Parameters<DriveObjectApi["setup"]>) {
     return this.api.setup(...args);
   }

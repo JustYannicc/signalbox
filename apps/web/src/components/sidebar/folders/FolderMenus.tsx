@@ -1,5 +1,5 @@
 /**
- * The ⋯ menus of the folder tree: a folder's (make, rename, move, files,
+ * The ⋯ menus of the folder tree: a folder's (start from, make, rename, move, files,
  * pool, instructions, secrets, delete) and an owner's top level.
  */
 import { useAtomValue } from "@effect/atom-react";
@@ -19,6 +19,7 @@ import {
   FileTextIcon,
   FolderInputIcon,
   FolderPlusIcon,
+  GitBranchIcon,
   HardDriveIcon,
   KeyRoundIcon,
   PencilIcon,
@@ -63,6 +64,9 @@ interface FolderMenuProps {
   owner: FolderOwner;
   folder: Folder;
   commands: FolderCommands;
+  canEdit: boolean;
+  canStartFrom: boolean;
+  onStartFrom: () => void;
 }
 
 export function FolderMenu(props: FolderMenuProps) {
@@ -78,6 +82,19 @@ export function FolderMenu(props: FolderMenuProps) {
 
 /** Mounts only while the menu is open, so closed rows hold no pool or drive subscriptions. */
 function FolderMenuItems(props: FolderMenuProps) {
+  if (!props.canEdit) {
+    return props.canStartFrom ? (
+      <MenuItem onClick={props.onStartFrom}>
+        <GitBranchIcon />
+        Start a folder from here
+      </MenuItem>
+    ) : null;
+  }
+
+  return <EditableFolderMenuItems {...props} />;
+}
+
+function EditableFolderMenuItems(props: FolderMenuProps) {
   const { environmentId, snapshot, owner, folder, commands } = props;
   const pools = usePoolViews(environmentId);
   const drives = (useAtomValue(environmentDrivesAtom).get(environmentId)?.drives ?? []).filter(
@@ -98,6 +115,12 @@ function FolderMenuItems(props: FolderMenuProps) {
 
   return (
     <>
+      {props.canStartFrom ? (
+        <MenuItem onClick={props.onStartFrom}>
+          <GitBranchIcon />
+          Start a folder from here
+        </MenuItem>
+      ) : null}
       <MenuItem
         onClick={() =>
           openFolderDialog({

@@ -1,3 +1,4 @@
+import { SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,7 @@ const SearchAnswer = Schema.Struct({
 const decodeAnswer = Schema.decodeUnknownSync(Schema.fromJsonString(JsonRpcAnswer));
 const decodeToolResult = Schema.decodeUnknownEffect(ToolResult);
 const decodeToolList = Schema.decodeUnknownEffect(ToolList);
+const decodeFolders = Schema.decodeUnknownEffect(Schema.fromJsonString(SignalboxFoldersSnapshot));
 const decodeSearch = Schema.decodeUnknownEffect(Schema.fromJsonString(SearchAnswer));
 
 /** The answer's JSON, whether the server sent JSON or one SSE event. */
@@ -151,6 +153,34 @@ describe("Signalbox's MCP", () => {
       expect(created.isError ?? false).toBe(false);
       const listed = yield* tool("signalbox_call", { operation: "folders.list" });
       expect(listed.content[0]!.text).toContain("Via MCP");
+    }),
+  );
+
+  it.effect("starts an independent folder through MCP and remembers its origin", () =>
+    Effect.gen(function* () {
+      const { tool } = yield* connect;
+      const created = yield* tool("signalbox_call", {
+        operation: "folders.create",
+        input: { name: "Original", parentId: null },
+      });
+      const original = (yield* decodeFolders(created.content[0]!.text)).folders[0]!;
+      const found = yield* tool("signalbox_search", {
+        query: "start independent folder history",
+        limit: 3,
+      });
+      expect(
+        (yield* decodeSearch(found.content[0]!.text)).operations.map((operation) => operation.name),
+      ).toContain("folders.startFrom");
+      const started = yield* tool("signalbox_call", {
+        operation: "folders.startFrom",
+        input: { id: original.id, newFolderId: "mcp-copy" },
+      });
+      expect(started.isError ?? false).toBe(false);
+      const current = yield* decodeFolders(started.content[0]!.text);
+      expect(current.folders.find((folder) => folder.id === "mcp-copy")?.origin?.folderId).toBe(
+        original.id,
+      );
+      expect(current.folders.find((folder) => folder.id === original.id)).toEqual(original);
     }),
   );
 

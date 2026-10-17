@@ -19,12 +19,12 @@ const pools = [
 ];
 const parse = (folder: string, event: string) =>
   parseFolderMenuEvent({ snapshot, folder: byId(folder), pools, event });
+const menu = (folder: string, canStartFrom = true) =>
+  folderMenuActions({ snapshot, folder: byId(folder), pools, canStartFrom });
 
 describe("a folder's menu", () => {
   it("moves anywhere in its owner's tree except inside itself", () => {
-    const move = folderMenuActions({ snapshot, folder: byId("clients"), pools }).find(
-      (action) => action.id === "folder:move",
-    );
+    const move = menu("clients").find((action) => action.id === "folder:move");
     expect(move?.subactions?.map((action) => [action.title, action.state])).toEqual([
       ["Top level", undefined],
       ["Work", "on"],
@@ -33,8 +33,7 @@ describe("a folder's menu", () => {
   });
 
   it("reorders only where there's a sibling to pass", () => {
-    const ids = (name: string) =>
-      folderMenuActions({ snapshot, folder: byId(name), pools }).map((action) => action.id);
+    const ids = (name: string) => menu(name).map((action) => action.id);
     expect(ids("work")).toContain("folder:down");
     expect(ids("work")).not.toContain("folder:up");
     expect(ids("notes")).toContain("folder:up");
@@ -43,9 +42,7 @@ describe("a folder's menu", () => {
   });
 
   it("offers the pools with its own checked and names what it would inherit", () => {
-    const choices = folderMenuActions({ snapshot, folder: byId("clients"), pools }).find(
-      (action) => action.id === "folder:pool",
-    );
+    const choices = menu("clients").find((action) => action.id === "folder:pool");
     expect(choices?.subactions?.map((action) => [action.title, action.state])).toEqual([
       ["Inherit from above (Work)", "on"],
       ["Personal", undefined],
@@ -56,19 +53,22 @@ describe("a folder's menu", () => {
   it("offers the pool choice with one pool only where one is set, so it can be reset", () => {
     const one = pools.slice(1);
     const has = (name: string) =>
-      folderMenuActions({ snapshot, folder: byId(name), pools: one }).some(
+      folderMenuActions({ snapshot, folder: byId(name), pools: one, canStartFrom: true }).some(
         (action) => action.id === "folder:pool",
       );
     expect(has("work")).toBe(true);
     expect(has("clients")).toBe(false);
   });
 
-  it("ends with instructions and delete", () => {
-    const actions = folderMenuActions({ snapshot, folder: byId("notes"), pools });
+  it("offers start-from while keeping the existing delete action", () => {
+    const actions = menu("notes");
+    expect(actions.map((action) => action.id)).toContain("folder:start-from");
     expect(actions.slice(-2).map((action) => action.title)).toEqual([
       "Instructions…",
       "Delete folder",
     ]);
+    expect(parse("notes", "folder:start-from")).toEqual({ _tag: "startFrom" });
+    expect(menu("notes", false).map((action) => action.id)).not.toContain("folder:start-from");
   });
 
   it("turns choices back into changes, and nothing for no-ops", () => {

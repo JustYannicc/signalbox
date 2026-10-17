@@ -350,6 +350,74 @@ describe("RunnerDrive", () => {
       ),
     );
 
+    it.effect("keeps a source fork pinned while fetching history and landing its own work", () =>
+      scopedTest((root) =>
+        Effect.gen(function* () {
+          const upstream = makeUpstream(root);
+          const drive = makeFakeDrive(root, { upstream: upstream.dir });
+          const original = yield* machine(drive, root, "vm-original", "t-original");
+          yield* original.runner.prepare("remote-token");
+          const pinned = git(upstream.dir, "rev-parse", "HEAD");
+          expect(drive.refs("t-original").main).toBe(pinned);
+
+          drive.setRemoteMode("source");
+          const sourceHead = upstream.commit(
+            "src/app.ts",
+            "export const upstream = true;\n",
+            "Advance source",
+          );
+          const fork = yield* machine(drive, root, "vm-fork", "t-fork");
+          const mergedPullRequest = {
+            host: "github.com",
+            repository: "owner/repo",
+            number: 7,
+            url: "https://github.com/owner/repo/pull/7",
+            source: "created",
+            linkedAt: "2026-10-16T10:00:00.000Z",
+            snapshot: {
+              state: "merged",
+              title: "Fork",
+              headBranch: threadRemoteBranch("t-fork"),
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: null,
+              syncedAt: "2026-10-16T10:00:00.000Z",
+            },
+            stack: null,
+          } as ThreadPullRequestLink;
+          yield* fork.runner.prepare("remote-token", undefined, [], [mergedPullRequest]);
+
+          expect(drive.state("t-fork", 0).remote).toMatchObject({ mode: "source" });
+          expect(drive.refs("t-fork")).toMatchObject({
+            main: pinned,
+            thread: pinned,
+            base: pinned,
+          });
+          expect(drive.calls.mirror).toBe(1);
+          expect(git(fork.cwd, "rev-parse", "refs/remotes/origin/main")).toBe(sourceHead);
+          expect(git(fork.cwd, "log", "--format=%s", "refs/remotes/origin/main")).toBe(
+            "Advance source\nsecond\nfirst",
+          );
+          expect(git(fork.cwd, "show", `${sourceHead}:src/app.ts`)).toBe(
+            "export const upstream = true;",
+          );
+          expect(read(fork.cwd, "src/app.ts")).toBe("export {}\n");
+
+          write(fork.cwd, "fork.md", "private exploration\n");
+          const turn = yield* fork.runner.finishTurn({ message: "Explore fork" });
+          expect(turn.outcome._tag).toBe("landed");
+          const forkHead = git(fork.cwd, "rev-parse", "HEAD");
+          expect(drive.refs("t-fork").main).toBe(forkHead);
+          expect(git(fork.cwd, "rev-parse", "HEAD^")).toBe(pinned);
+          expect(drive.calls.reconcile).toBe(1);
+          expect(drive.calls.mirror).toBe(1);
+          expect(git(upstream.dir, "rev-parse", "HEAD")).toBe(sourceHead);
+          expect(gitOk(upstream.dir, "show", "HEAD:fork.md")).toBe(false);
+          expect(drive.mainFile("fork.md")).toBe("private exploration");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
+    );
+
     it.effect("saves a turn on the thread's branch without touching main", () =>
       scopedTest((root) =>
         Effect.gen(function* () {

@@ -16,6 +16,7 @@ import type {
   FolderId,
   FolderLevel,
   FolderMoveInput,
+  FolderStartFromInput,
   OnePasswordEnvironmentId,
   SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
@@ -61,6 +62,7 @@ async function attempted<E>(
 
 export function useFolderCommands() {
   const create = useAtomCommand(signalboxFolders.createFolder, { reportFailure: false });
+  const startFrom = useAtomCommand(signalboxFolders.startFrom, { reportFailure: false });
   const update = useAtomCommand(signalboxFolders.updateFolder, { reportFailure: false });
   const move = useAtomCommand(signalboxFolders.moveFolder, { reportFailure: false });
   const remove = useAtomCommand(signalboxFolders.deleteFolder, { reportFailure: false });
@@ -77,6 +79,23 @@ export function useFolderCommands() {
     () => ({
       create: (environmentId: EnvironmentId, input: FolderCreateInput): Change =>
         reported("Could not create folder", create({ environmentId, input })),
+      startFrom: async (environmentId: EnvironmentId, input: FolderStartFromInput): Change => {
+        const snapshot = await reported(
+          "Could not start a folder from here",
+          startFrom({ environmentId, input }),
+        );
+        if (snapshot) {
+          const folder = snapshot.folders.find((candidate) => candidate.id === input.newFolderId);
+          toastManager.add(
+            stackedThreadToast({
+              type: "success",
+              title: "Folder started",
+              ...(folder?.origin ? { description: `Based on ${folder.origin.name}.` } : {}),
+            }),
+          );
+        }
+        return snapshot;
+      },
       rename: (environmentId: EnvironmentId, id: FolderId, name: string): Change =>
         reported("Could not rename folder", update({ environmentId, input: { id, name } })),
       /** Null inherits the pool from above again. */
@@ -133,7 +152,17 @@ export function useFolderCommands() {
       setOnePassword: (environmentId: EnvironmentId, token: string | null): Attempt =>
         attempted(setOnePassword({ environmentId, input: { token } })),
     }),
-    [create, move, moveThread, remove, setInstructions, setOnePassword, setSecrets, update],
+    [
+      create,
+      move,
+      moveThread,
+      remove,
+      setInstructions,
+      setOnePassword,
+      setSecrets,
+      startFrom,
+      update,
+    ],
   );
 }
 

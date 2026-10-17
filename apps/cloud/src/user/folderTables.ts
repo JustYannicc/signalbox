@@ -54,3 +54,9 @@ export const addSecrets = Effect.gen(function* () {
   yield* sql`ALTER TABLE folders ADD COLUMN secrets_environment_id TEXT`;
   yield* sql`ALTER TABLE folders_state ADD COLUMN secrets_environment_id TEXT`;
 });
+
+/** The folder's fixed origin, retained when its source goes away. */
+export const addOrigins = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE folders ADD COLUMN origin TEXT`;
+});

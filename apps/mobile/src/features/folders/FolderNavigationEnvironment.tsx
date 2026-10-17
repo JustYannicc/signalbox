@@ -9,7 +9,11 @@ import { useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
-import { useEnvironmentFolders, useFolderOwners } from "../../state/signalboxFolders";
+import {
+  signalboxFolders,
+  useEnvironmentFolders,
+  useFolderOwners,
+} from "../../state/signalboxFolders";
 import { folderCountsAtom, folderPoolChoicesAtom } from "./folder-atoms";
 import { folderFilterKey, parseFolderFilterKey } from "./folder-filter";
 import { folderMenuActions, topLevelMenuActions } from "./folder-menus";
@@ -33,7 +37,8 @@ export function FolderNavigationEnvironment(props: {
   const owners = useFolderOwners(environmentId);
   const counts = useAtomValue(folderCountsAtom(environmentId));
   const pools = useAtomValue(folderPoolChoicesAtom(environmentId));
-  const actions = useFolderActions({ environmentId, snapshot, pools });
+  const canStartFrom = useAtomValue(signalboxFolders.startFrom.permissionAtom(environmentId));
+  const actions = useFolderActions({ environmentId, snapshot, pools, onSelect });
   const [collapsed, setCollapsed] = useState<ReadonlySet<FolderId>>(() => new Set());
   const onToggle = useCallback((folder: Folder) => {
     setCollapsed((current) => {
@@ -61,10 +66,10 @@ export function FolderNavigationEnvironment(props: {
       new Map<FolderId, MenuAction[]>(
         (snapshot?.folders ?? []).map((folder) => [
           folder.id,
-          snapshot ? folderMenuActions({ snapshot, folder, pools }) : [],
+          snapshot ? folderMenuActions({ snapshot, folder, pools, canStartFrom }) : [],
         ]),
       ),
-    [pools, snapshot],
+    [canStartFrom, pools, snapshot],
   );
   const trees = useMemo(
     () =>

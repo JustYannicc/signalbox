@@ -91,6 +91,7 @@ import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingR
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadEngine.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
 import { DriveSharing } from "./DriveSharing.ts";
+import { FolderStarts } from "./FolderStarts.ts";
 import { makePoolHandlers, POOL_METHODS, POOL_REQUIRED_SCOPES } from "./poolRpc.ts";
 import { AUTOMATION_METHODS, makeAutomationHandlers } from "../automations/automationRpc.ts";
 import { poolFallbackModelSelection } from "../pool/poolViews.ts";
@@ -394,6 +395,7 @@ export const layerHandlers = (input: {
       const kinds = yield* UserThreadKinds.UserThreadKinds;
       const userDrives = yield* UserDrives.UserDrives;
       const sharing = yield* Effect.serviceOption(DriveSharing);
+      const starts = yield* Effect.serviceOption(FolderStarts);
       const shortcuts = yield* Effect.serviceOption(DriveShortcuts);
       const { userId, identity } = input;
       const actorNow: Effect.Effect<Actor> = Effect.map(
@@ -762,6 +764,12 @@ export const layerHandlers = (input: {
             ),
           ),
         [SIGNALBOX_FOLDERS_WS_METHODS.create]: (request) => folderCall(folders.create(request)),
+        [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: (request) =>
+          starts._tag === "Some"
+            ? starts.value.startFrom(request)
+            : Effect.fail(
+                new SignalboxFolderError({ message: "Could not start the folder. Try again." }),
+              ),
         [SIGNALBOX_FOLDERS_WS_METHODS.update]: (request) => folderCall(folders.update(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.move]: (request) => folderCall(folders.move(request)),
         [SIGNALBOX_FOLDERS_WS_METHODS.delete]: (request) => folderCall(folders.delete(request)),

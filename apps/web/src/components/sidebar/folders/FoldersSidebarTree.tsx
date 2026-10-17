@@ -13,7 +13,7 @@ import {
   type FolderNode,
 } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { FolderId, SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
+import { FolderId, type SignalboxFoldersSnapshot } from "@t3tools/contracts/signalboxFolders";
 import { useParams } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
@@ -26,10 +26,11 @@ import {
 import { createContext, memo, useCallback, useContext, useMemo, type KeyboardEvent } from "react";
 
 import { useComposerDraftStore } from "../../../composerDraftStore";
-import { cn } from "../../../lib/utils";
+import { cn, randomUUID } from "../../../lib/utils";
 import {
   folderEditableEnvironmentsAtom,
   retryEnvironmentFolders,
+  signalboxFolders,
 } from "../../../state/signalboxFolders";
 import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "../../../threadRoutes";
 import { DriveShareDialogHost } from "../../drives/DriveProjectShareMenuItem";
@@ -67,6 +68,10 @@ const NO_SIBLINGS: ReadonlyArray<ProjectId> = [];
 interface TreeContext {
   readonly collapsed: ReadonlySet<string>;
   readonly toggle: (key: string) => void;
+  readonly expandOwner: (
+    environmentId: EnvironmentId,
+    ownerId: FolderOwner["context"]["id"],
+  ) => void;
   readonly commands: FolderCommands;
   readonly start: (input: StartInFolder) => void;
 }
@@ -177,10 +182,11 @@ const FolderRow = memo(function FolderRow(props: {
   node: FolderNode;
   depth: number;
   canEdit: boolean;
+  canStartFrom: boolean;
   counts: ReadonlyMap<FolderId, number>;
 }) {
-  const { environment, owner, node, depth, canEdit, counts } = props;
-  const { collapsed, toggle, commands, start } = useTree();
+  const { environment, owner, node, depth, canEdit, canStartFrom, counts } = props;
+  const { collapsed, toggle, expandOwner, commands, start } = useTree();
   const { folder } = node;
   const key = folderNodeKey(environment.environmentId, folder.id);
   const expanded = !collapsed.has(key);
@@ -204,13 +210,21 @@ const FolderRow = memo(function FolderRow(props: {
 
   return (
     <SidebarMenuItem>
-      <div className="group/folder-row flex h-8 items-center gap-0.5 rounded-md pe-1 hover:bg-sidebar-row-hover has-data-popup-open:bg-sidebar-row-hover">
+      <div
+        className={cn(
+          "group/folder-row flex items-center gap-0.5 rounded-md pe-1 hover:bg-sidebar-row-hover has-data-popup-open:bg-sidebar-row-hover",
+          folder.origin ? "h-10" : "h-8",
+        )}
+      >
         <button
           type="button"
           aria-expanded={expanded}
           onClick={() => toggle(key)}
           onKeyDown={handleKeyDown}
-          className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md ps-1 text-left outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset"
+          className={cn(
+            "flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md ps-1 text-left outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset",
+            folder.origin ? "h-10" : "h-8",
+          )}
         >
           <ChevronRightIcon
             aria-hidden
@@ -224,8 +238,15 @@ const FolderRow = memo(function FolderRow(props: {
           ) : (
             <FolderClosedIcon aria-hidden className="size-3.5 shrink-0 text-icon-muted" />
           )}
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-muted-foreground/85">
-            {folder.name}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-sidebar-muted-foreground/85">
+              {folder.name}
+            </span>
+            {folder.origin ? (
+              <span className="block truncate text-2xs text-sidebar-muted-foreground/65">
+                Based on {folder.origin.name}
+              </span>
+            ) : null}
           </span>
           {count > 0 ? (
             <span className="shrink-0 pe-1 text-3xs tabular-nums text-sidebar-muted-foreground/50 group-hover/folder-row:hidden group-focus-within/folder-row:hidden group-has-data-popup-open/folder-row:hidden pointer-coarse:hidden">
@@ -252,13 +273,23 @@ const FolderRow = memo(function FolderRow(props: {
               <TooltipPopup side="top">New thread</TooltipPopup>
             </Tooltip>
           ) : null}
-          {canEdit ? (
+          {canEdit || canStartFrom ? (
             <FolderMenu
               environmentId={environment.environmentId}
               snapshot={environment.snapshot}
               owner={owner}
               folder={folder}
               commands={commands}
+              canEdit={canEdit}
+              canStartFrom={canStartFrom}
+              onStartFrom={async () => {
+                const newFolderId = FolderId.make(randomUUID());
+                const result = await commands.startFrom(environment.environmentId, {
+                  id: folder.id,
+                  newFolderId,
+                });
+                if (result) expandOwner(environment.environmentId, folder.ownerId);
+              }}
             />
           ) : null}
         </span>
@@ -273,6 +304,7 @@ const FolderRow = memo(function FolderRow(props: {
               node={child}
               depth={depth + 1}
               canEdit={canEdit}
+              canStartFrom={canStartFrom}
               counts={counts}
             />
           ))}
@@ -321,6 +353,9 @@ const OwnerGroup = memo(function OwnerGroup(props: {
 }) {
   const { environment, owner, canEdit, counts } = props;
   const { collapsed, toggle, start } = useTree();
+  const canStartFrom = useAtomValue(
+    signalboxFolders.startFrom.permissionAtom(environment.environmentId),
+  );
   const key = folderOwnerKey(environment.environmentId, owner.context.id);
   const expanded = !collapsed.has(key);
   const newThread =
@@ -367,6 +402,7 @@ const OwnerGroup = memo(function OwnerGroup(props: {
               node={node}
               depth={0}
               canEdit={canEdit}
+              canStartFrom={canStartFrom}
               counts={counts}
             />
           ))}
@@ -414,8 +450,14 @@ export function FoldersSidebarTree(props: {
     [isMobile, setOpenMobile, startInFolder],
   );
   const tree = useMemo<TreeContext>(
-    () => ({ collapsed: sidebar.collapsed, toggle: sidebar.toggle, commands, start }),
-    [commands, sidebar.collapsed, sidebar.toggle, start],
+    () => ({
+      collapsed: sidebar.collapsed,
+      toggle: sidebar.toggle,
+      expandOwner: sidebar.expandOwner,
+      commands,
+      start,
+    }),
+    [commands, sidebar.collapsed, sidebar.expandOwner, sidebar.toggle, start],
   );
   if (sidebar.environments.length === 0 && sidebar.failures.length === 0) return null;
 

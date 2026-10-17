@@ -63,5 +63,13 @@ export const makeDriveObjectApi = (
     share: (by, person, role) => changingOutbox(run(members.use((m) => m.share(by, person, role)))),
     unshare: (by, userId) => changingOutbox(run(members.use((m) => m.unshare(by, userId)))),
     pendingAccess: () => run(members.use((m) => m.pendingAccess)),
+    forkSnapshot: async (userId) => {
+      const result = await run(store.use((s) => s.forkSnapshot(userId)));
+      if (!("sourceDriveId" in result)) throw new Error(result.reason);
+      return result;
+    },
+    startFrom: (userId, snapshot) => run(store.use((s) => s.startFrom(userId, snapshot))),
+    forkOrigin: (userId) => run(store.use((s) => s.forkOrigin(userId))),
+    packOrigin: (name) => run(store.use((s) => s.packOrigin(name))),
   };
 };

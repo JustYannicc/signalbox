@@ -2,6 +2,7 @@ import type { ProjectId, ThreadId } from "@t3tools/contracts";
 import type {
   FolderId,
   FolderLevel,
+  FolderOrigin,
   FolderResolvedPool,
   OnePasswordEnvironmentId,
 } from "@t3tools/contracts/signalboxFolders";
@@ -28,6 +29,7 @@ export interface TreeFolder {
   /** Always one of the same owner's folders, without a cycle (`withSoundParents`), or null. */
   readonly parentId: FolderId | null;
   readonly name: string;
+  readonly origin?: FolderOrigin;
   readonly position: number;
   /** The drive it uses as its files, if any. */
   readonly driveId: string | null;

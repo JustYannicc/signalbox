@@ -9,6 +9,7 @@ import { Pressable, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
+import { cn } from "../../lib/cn";
 
 const MAX_VISUAL_DEPTH = 5;
 const NO_ACTIONS: MenuAction[] = [];
@@ -40,6 +41,7 @@ function LevelRow(props: {
   readonly depth: number;
   readonly icon: "folder" | "folder.fill";
   readonly name: string;
+  readonly subtitle?: string;
   readonly accessibilityLabel: string;
   readonly count: number;
   readonly selected: boolean;
@@ -57,24 +59,35 @@ function LevelRow(props: {
         accessibilityRole="button"
         accessibilityLabel={props.accessibilityLabel}
         accessibilityState={{ selected: props.selected }}
-        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 py-1 active:opacity-75"
+        className={cn(
+          "min-w-0 flex-1 flex-row items-center gap-2 py-1 active:opacity-75",
+          props.subtitle ? "min-h-13" : "min-h-11",
+        )}
         onPress={props.onSelect}
+        accessibilityHint={props.subtitle ? `Based on ${props.subtitle}` : undefined}
       >
         <SymbolView
           name={props.icon}
           size={16}
           tintColorClassName={props.selected ? "accent-primary" : "accent-icon-muted"}
         />
-        <AppText
-          className={
-            props.depth === 0
-              ? "min-w-0 flex-1 font-t3-medium text-foreground"
-              : "min-w-0 flex-1 text-sm text-foreground"
-          }
-          numberOfLines={1}
-        >
-          {props.name}
-        </AppText>
+        <View className="min-w-0 flex-1">
+          <AppText
+            className={
+              props.depth === 0
+                ? "min-w-0 font-t3-medium text-foreground"
+                : "min-w-0 text-sm text-foreground"
+            }
+            numberOfLines={1}
+          >
+            {props.name}
+          </AppText>
+          {props.subtitle ? (
+            <AppText className="text-xs text-foreground-muted" numberOfLines={1}>
+              Based on {props.subtitle}
+            </AppText>
+          ) : null}
+        </View>
         {props.count > 0 ? (
           <AppText className="text-xs tabular-nums text-foreground-muted">{props.count}</AppText>
         ) : null}
@@ -146,6 +159,7 @@ export const FolderNodeRow = memo(function FolderNodeRow(
         depth={props.depth}
         icon="folder"
         name={folder.name}
+        subtitle={folder.origin?.name}
         accessibilityLabel={`Threads in ${path}`}
         count={props.counts.get(folder.id) ?? 0}
         selected={props.selectedFolderId === folder.id}

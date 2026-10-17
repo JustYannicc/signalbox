@@ -26,6 +26,10 @@ export function createSignalboxFoldersAtoms<R, E>(
       label: "signalbox-folders:create",
       tag: SIGNALBOX_FOLDERS_WS_METHODS.create,
     }),
+    startFrom: createEnvironmentRpcCommand(runtime, {
+      label: "signalbox-folders:start-from",
+      tag: SIGNALBOX_FOLDERS_WS_METHODS.startFrom,
+    }),
     updateFolder: createEnvironmentRpcCommand(runtime, {
       label: "signalbox-folders:update",
       tag: SIGNALBOX_FOLDERS_WS_METHODS.update,

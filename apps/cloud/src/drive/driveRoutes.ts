@@ -265,7 +265,12 @@ async function route(
     return await run(shortcutRoute({ userId: auth.userId, driveId: auth.driveId }, request));
   }
   if (request.method === "GET" && pathname.startsWith(`${DRIVE_PATHS.packs}/`)) {
-    return await run(packResponse(auth.driveId, pathname.slice(DRIVE_PATHS.packs.length + 1)));
+    const file = pathname.slice(DRIVE_PATHS.packs.length + 1);
+    const match = /^([0-9a-f]{40})\.(pack|idx)$/u.exec(file);
+    if (match === null) return text("Unknown pack.", 404);
+    const origin = await run(Effect.flatMap(drive, (handle) => handle.packOrigin(match[1]!)));
+    if (origin === null) return text("Unknown pack.", 404);
+    return await run(packResponse(origin.driveId, `${origin.name}.${match[2]!}`));
   }
   if (request.method !== "POST") return text("Method not allowed.", 405);
 

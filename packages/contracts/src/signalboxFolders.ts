@@ -30,6 +30,7 @@ import { SignalboxContextId } from "./signalboxContexts.ts";
 export const SIGNALBOX_FOLDERS_WS_METHODS = {
   subscribe: "signalbox.folders.subscribe",
   create: "signalbox.folders.create",
+  startFrom: "signalbox.folders.startFrom",
   update: "signalbox.folders.update",
   move: "signalbox.folders.move",
   delete: "signalbox.folders.delete",
@@ -43,6 +44,7 @@ export const SIGNALBOX_FOLDERS_WS_METHODS = {
 export const SIGNALBOX_FOLDERS_REQUIRED_SCOPES = {
   [SIGNALBOX_FOLDERS_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.create]: AuthOrchestrationOperateScope,
+  [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.update]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.move]: AuthOrchestrationOperateScope,
   [SIGNALBOX_FOLDERS_WS_METHODS.delete]: AuthOrchestrationOperateScope,
@@ -89,10 +91,21 @@ export type FolderLevel = typeof FolderLevel.Type;
 export const FolderResolvedPool = Schema.Struct({ poolId: AccountPoolId, from: FolderLevel });
 export type FolderResolvedPool = typeof FolderResolvedPool.Type;
 
+/** The fixed starting point. Kept even after the source is renamed or removed. */
+export const FolderOrigin = Schema.Struct({
+  folderId: FolderId,
+  name: FolderName,
+  driveId: Schema.NullOr(Schema.String),
+  commit: Schema.NullOr(Schema.String),
+  createdAt: NonNegativeInt,
+});
+export type FolderOrigin = typeof FolderOrigin.Type;
+
 export const Folder = Schema.Struct({
   id: FolderId,
   /** Its own name, or its files' when it was never renamed. */
   name: FolderName,
+  origin: Schema.optionalKey(FolderOrigin),
   parentId: Schema.NullOr(FolderId),
   position: NonNegativeInt,
   /** Whose tree it's in: Personal, or a work organization. A folder never leaves it. */
@@ -166,6 +179,14 @@ export const FolderCreateInput = Schema.Struct({
   ownerId: Schema.optionalKey(SignalboxContextId),
 });
 export type FolderCreateInput = typeof FolderCreateInput.Type;
+
+/** Starts an independent folder in the source's owner's tree. Reuse newFolderId on retries. */
+export const FolderStartFromInput = Schema.Struct({
+  id: FolderId,
+  newFolderId: FolderId,
+  name: Schema.optionalKey(FolderName),
+});
+export type FolderStartFromInput = typeof FolderStartFromInput.Type;
 
 /** Changes the given fields. */
 export const FolderUpdateInput = Schema.Struct({
@@ -265,6 +286,7 @@ const SubscribeRpc = Rpc.make(SIGNALBOX_FOLDERS_WS_METHODS.subscribe, {
 export const SIGNALBOX_FOLDERS_RPCS = [
   SubscribeRpc,
   change(SIGNALBOX_FOLDERS_WS_METHODS.create, FolderCreateInput),
+  change(SIGNALBOX_FOLDERS_WS_METHODS.startFrom, FolderStartFromInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.update, FolderUpdateInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.move, FolderMoveInput),
   change(SIGNALBOX_FOLDERS_WS_METHODS.delete, FolderDeleteInput),

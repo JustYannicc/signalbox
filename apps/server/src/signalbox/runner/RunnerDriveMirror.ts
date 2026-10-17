@@ -17,8 +17,9 @@ import type { RunnerGit } from "./RunnerGit.ts";
  * commit reaches `^` those refs is closed: everything it points at is in the
  * pack or already in the drive.
  *
- * A remote-backed drive holds the remote's commits one deep: its `main` is
- * the remote's head, and a thread's branch may sit on other remote commits
+ * A drive using a remote for content keeps remote commits one deep. A mirror
+ * drive's `main` is the remote's head; a source drive's `main` stays pinned to
+ * the commit it forked from. A thread may also sit on other remote commits
  * (a newer main it rebased onto, commits pulled from its own branch on the
  * remote, #394), each kept without its parents. A pack carries such commits
  * and their folders, never their files (#406): the remote has those, and the

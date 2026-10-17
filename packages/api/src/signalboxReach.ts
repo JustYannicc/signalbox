@@ -94,6 +94,10 @@ export const SIGNALBOX_RPC_REACH = {
     summary: "Your folders, nested, with their instructions and pools.",
   }),
   "signalbox.folders.create": write({ summary: "Create a folder." }),
+  "signalbox.folders.startFrom": write({
+    summary:
+      "Start an independent folder from an existing folder, sharing its file history. Reuse newFolderId on retries.",
+  }),
   "signalbox.folders.update": write({ summary: "Rename a folder or change its settings." }),
   "signalbox.folders.move": write({ summary: "Move a folder under another one." }),
   "signalbox.folders.delete": write({ destructive: true }),

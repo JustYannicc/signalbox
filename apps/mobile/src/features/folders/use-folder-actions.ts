@@ -7,18 +7,21 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { SignalboxContext, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import type {
-  Folder,
+import {
   FolderId,
-  FolderLevel,
-  SignalboxFoldersSnapshot,
+  type Folder,
+  type FolderLevel,
+  type FolderStartFromInput,
+  type SignalboxFoldersSnapshot,
 } from "@t3tools/contracts/signalboxFolders";
 import { useCallback, useState } from "react";
 import { Alert } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { uuidv4 } from "../../lib/uuid";
 import { signalboxFolders } from "../../state/signalboxFolders";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { folderFilterKey } from "./folder-filter";
 import { parseFolderMenuEvent, type PoolChoice } from "./folder-menus";
 
 /** A level whose instructions are open in the editor. */
@@ -53,10 +56,12 @@ export function useFolderActions(input: {
   readonly environmentId: EnvironmentId;
   readonly snapshot: SignalboxFoldersSnapshot | null;
   readonly pools: ReadonlyArray<PoolChoice>;
+  readonly onSelect: (key: string | null) => void;
 }) {
-  const { environmentId, snapshot, pools } = input;
+  const { environmentId, snapshot, pools, onSelect } = input;
   const run = useFolderCommandRunner();
   const createFolder = useAtomCommand(signalboxFolders.createFolder, QUIET);
+  const startFrom = useAtomCommand(signalboxFolders.startFrom, QUIET);
   const updateFolder = useAtomCommand(signalboxFolders.updateFolder, QUIET);
   const moveFolder = useAtomCommand(signalboxFolders.moveFolder, QUIET);
   const deleteFolder = useAtomCommand(signalboxFolders.deleteFolder, QUIET);
@@ -92,6 +97,21 @@ export function useFolderActions(input: {
         case "newChild":
           requestCreateFolder(folder.id, folder.ownerId);
           return;
+        case "startFrom": {
+          const newFolderId = FolderId.make(uuidv4());
+          void run(
+            "Couldn’t start a folder from here",
+            startFrom({
+              environmentId,
+              input: { id: folder.id, newFolderId } satisfies FolderStartFromInput,
+            }),
+          ).then((started) => {
+            if (started) {
+              onSelect(folderFilterKey(environmentId, { _tag: "folder", folderId: newFolderId }));
+            }
+          });
+          return;
+        }
         case "rename":
           Dialog.prompt({
             title: "Rename folder",
@@ -141,10 +161,12 @@ export function useFolderActions(input: {
       deleteFolder,
       environmentId,
       moveFolder,
+      onSelect,
       pools,
       requestCreateFolder,
       run,
       snapshot,
+      startFrom,
       updateFolder,
     ],
   );

@@ -1,3 +1,4 @@
+import { SIGNALBOX_FOLDERS_WS_METHODS } from "@t3tools/contracts/signalboxFolders";
 import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -59,6 +60,23 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination operate grant to start an independent folder", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const start = createCommandPermissions(runtime, SIGNALBOX_FOLDERS_WS_METHODS.startFrom);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(start.permissionAtom(env))).toBe(false);
+        expect((yield* start.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(start.permissionAtom(env))).toBe(true);
+        yield* start.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

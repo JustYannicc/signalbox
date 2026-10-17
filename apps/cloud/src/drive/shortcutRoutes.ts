@@ -92,5 +92,9 @@ export const shortcutRoute = (reader: ShortcutReader, request: Request) =>
     if (!(yield* readsShortcut(reader, target))) {
       return text("This drive has no shortcut to that drive you can open.", 403);
     }
-    return yield* packResponse(target, match![2]!);
+    const pack = /^([0-9a-f]{40})\.(pack|idx)$/u.exec(match![2]!);
+    if (pack === null) return text("Unknown pack.", 404);
+    const origin = yield* (yield* DriveDirectory).forDrive(target).packOrigin(pack[1]!);
+    if (origin === null) return text("Unknown pack.", 404);
+    return yield* packResponse(origin.driveId, `${origin.name}.${pack[2]!}`);
   });

@@ -10,6 +10,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  type DriveRemote,
   type DriveShortcut,
   type DriveState,
   type RefWriteResult,
@@ -97,7 +98,7 @@ export const makeFakeDrive = (
       .split("\n")
       .filter((line) => line.startsWith("?"))
       .map((line) => line.slice(1));
-  const remote =
+  let remote: DriveRemote | null =
     options.upstream === undefined
       ? null
       : { provider: "github" as const, repository: "owner/repo", defaultBranch: "main" };
@@ -158,7 +159,7 @@ export const makeFakeDrive = (
       mirror: (request) =>
         Effect.sync((): RefWriteResult => {
           calls.mirror++;
-          if (remote === null || settings.refuseMirror) {
+          if (remote === null || remote.mode === "source" || settings.refuseMirror) {
             return { _tag: "refused", reason: "not now" };
           }
           if (request.newMain !== upstreamHead())
@@ -357,6 +358,9 @@ export const makeFakeDrive = (
     shallow: () => shallow.map((entry) => entry.oid),
     promised: () => [...promised],
     settings,
+    setRemoteMode: (mode: "source") => {
+      if (remote !== null) remote = { ...remote, mode };
+    },
     mainFile: (file: string) => git(store, "show", `${main}:${file}`),
     onceBeforeReconcile: (effect: Effect.Effect<void>) => {
       beforeReconcile = effect;

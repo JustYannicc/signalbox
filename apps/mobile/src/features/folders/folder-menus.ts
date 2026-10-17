@@ -27,10 +27,12 @@ export function folderMenuActions(input: {
   readonly snapshot: SignalboxFoldersSnapshot;
   readonly folder: Folder;
   readonly pools: ReadonlyArray<PoolChoice>;
+  readonly canStartFrom: boolean;
 }): MenuAction[] {
   const { snapshot, folder } = input;
   const actions: MenuAction[] = [
     { id: "folder:new-child", title: "New folder inside" },
+    ...(input.canStartFrom ? [{ id: "folder:start-from", title: "Start a folder from here" }] : []),
     { id: "folder:rename", title: "Rename" },
     {
       id: "folder:move",
@@ -86,6 +88,7 @@ export function folderMenuActions(input: {
 
 export type FolderMenuChoice =
   | { readonly _tag: "newChild" }
+  | { readonly _tag: "startFrom" }
   | { readonly _tag: "rename" }
   | { readonly _tag: "move"; readonly input: FolderMoveInput }
   | { readonly _tag: "pool"; readonly poolId: AccountPoolId | null }
@@ -101,6 +104,7 @@ export function parseFolderMenuEvent(input: {
 }): FolderMenuChoice | null {
   const { snapshot, folder, event } = input;
   if (event === "folder:new-child") return { _tag: "newChild" };
+  if (event === "folder:start-from") return { _tag: "startFrom" };
   if (event === "folder:rename") return { _tag: "rename" };
   if (event === "folder:instructions") return { _tag: "instructions" };
   if (event === "folder:delete") return { _tag: "delete" };

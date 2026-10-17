@@ -66,6 +66,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [SIGNALBOX_BROWSING_WS_METHODS.dispatch]: AuthPreviewOperateScope, // signalbox: browsing
   [SIGNALBOX_AGENT_BROWSER_WS_METHODS.input]: AuthOrchestrationOperateScope, // signalbox: agent browser
   [SIGNALBOX_FOLDERS_WS_METHODS.create]: AuthOrchestrationOperateScope, // signalbox: folders
+  [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.update]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.move]: AuthOrchestrationOperateScope, // signalbox: folders
   [SIGNALBOX_FOLDERS_WS_METHODS.delete]: AuthOrchestrationOperateScope, // signalbox: folders

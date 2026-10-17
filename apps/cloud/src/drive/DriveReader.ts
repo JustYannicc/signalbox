@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { DriveDirectory, type DriveObjectError } from "./DriveDirectory.ts";
 import { type DrivePackError, DrivePacks } from "./DrivePacks.ts";
 import { filePatch, MAX_DIFF_BYTES } from "./drivePatch.ts";
-import type { ObjectLocation } from "./DriveStore.ts";
+import type { ObjectLocation, PackOrigin } from "./DriveStore.ts";
 import {
   type Commit,
   inflate,
@@ -87,13 +87,29 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (
 ) {
   const drive = (yield* DriveDirectory).forDrive(driveId);
   const packs = yield* DrivePacks;
+  const packOrigins = new Map<string, PackOrigin>();
+  const storageOrigin = (name: string) => {
+    const cached = packOrigins.get(name);
+    if (cached !== undefined) return Effect.succeed(cached);
+    return Effect.flatMap(drive.packOrigin(name), (origin) =>
+      origin === null
+        ? Effect.fail(new DriveReadError({ message: `The drive has no pack ${name}.` }))
+        : Effect.succeed(packOrigins.set(name, origin).get(name)! satisfies PackOrigin),
+    );
+  };
 
   /** One object at its span of a pack, following delta bases within that pack. */
   const readAt = (location: ObjectLocation, depth = 0): Effect.Effect<GitObject, ReadFailure> =>
     Effect.gen(function* () {
       const fail = (message: string) => new DriveReadError({ message });
       if (depth > 64) return yield* fail("Delta chain too deep.");
-      const bytes = yield* packs.range(driveId, location.pack, location.offset, location.length);
+      const origin = yield* storageOrigin(location.pack);
+      const bytes = yield* packs.range(
+        origin.driveId,
+        origin.name,
+        location.offset,
+        location.length,
+      );
       const header = yield* Effect.try({
         try: () => readEntryHeader(bytes),
         catch: () => fail(`Unreadable object ${location.oid}.`),

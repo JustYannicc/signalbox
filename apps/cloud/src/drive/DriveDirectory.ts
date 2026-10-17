@@ -9,8 +9,12 @@ import type { Oid } from "./git/gitObjects.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
+  DriveForkOrigin,
+  DriveForkResult,
+  DriveSnapshot,
   ObjectLocation,
   PackRegistration,
+  PackOrigin,
   PromisedFile,
   RefWrite,
   Shortcut,
@@ -78,6 +82,10 @@ export interface DriveObjectApi {
     readonly limit: number;
     readonly threadId?: string;
   }) => Promise<ReadonlyArray<UnreconciledWork>>;
+  readonly forkSnapshot: (userId: string) => Promise<DriveSnapshot>;
+  readonly startFrom: (userId: string, snapshot: DriveSnapshot) => Promise<DriveForkResult>;
+  readonly forkOrigin: (userId: string) => Promise<DriveForkOrigin | null>;
+  readonly packOrigin: (name: string) => Promise<PackOrigin | null>;
   /** Names the drive and seats its first members; idempotent. */
   readonly setup: (input: {
     readonly name: string;
@@ -146,6 +154,10 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     addShortcut: wrap("addShortcut"),
     removeShortcut: wrap("removeShortcut"),
     unreconciled: wrap("unreconciled"),
+    forkSnapshot: wrap("forkSnapshot"),
+    startFrom: wrap("startFrom"),
+    forkOrigin: wrap("forkOrigin"),
+    packOrigin: wrap("packOrigin"),
     setup: wrap("setup"),
     driveName: wrap("driveName"),
     role: wrap("role"),

@@ -66,6 +66,7 @@ import * as TurnModels from "./thread/TurnModels.ts";
 import { contextOfProject } from "./user/contextProjects.ts";
 import * as DrivePeople from "./user/DrivePeople.ts";
 import * as DriveSharing from "./user/DriveSharing.ts";
+import * as FolderStarts from "./user/FolderStarts.ts";
 import * as DriveShortcuts from "./user/DriveShortcuts.ts";
 import * as OnePasswordAccount from "./user/OnePasswordAccount.ts";
 import * as ResourceBindings from "./user/ResourceBindings.ts";
@@ -284,6 +285,7 @@ const makeUserRuntime = (
               Layer.succeed(LoginService.LoginAlarm, { armBy: () => Effect.void }),
               UserShell.layer,
               DriveSharing.layer,
+              FolderStarts.layer,
               DriveShortcuts.layer,
               DriveFiles.layer,
               GitHubConnection.layer,
