@@ -143,6 +143,11 @@ vi.mock("../../state/entities", () => ({
   useServerConfigs: () => new Map(),
 }));
 
+vi.mock("../../state/environmentCapabilities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environmentCapabilities")>()),
+  useEnvironmentCanWriteModelSettings: () => true,
+}));
+
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 
