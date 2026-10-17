@@ -3847,7 +3847,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
-  it.effect("starts a wake's work clock from the run that ran before it", () =>
+  it.effect("anchors queued work at activation and wake work at the inherited start", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -3899,6 +3899,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       yield* dispatch("prompt", false);
       yield* dispatch("queued", false);
+      assert.isUndefined((yield* runFor("queued")).workStartedAt);
       yield* dispatch("early-wake", true);
       yield* orchestrator.dispatch({
         type: "queued-run.reorder",
@@ -3944,18 +3945,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const millis = (value: DateTime.Utc | undefined) =>
         value === undefined ? undefined : DateTime.toEpochMillis(value);
 
+      const prompt = yield* runFor("prompt");
+      assert.equal(millis(prompt.workStartedAt), millis(prompt.requestedAt));
+
       yield* settle("prompt", now);
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("early-wake")).id);
       assert.equal(millis((yield* runFor("early-wake")).workStartedAt), millis(now));
 
-      yield* settle("early-wake", DateTime.add(now, { seconds: 1 }));
+      const queuedActivatedAt = DateTime.add(now, { minutes: 10 });
+      yield* TestClock.adjust("10 minutes");
+      yield* settle("early-wake", queuedActivatedAt);
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("queued")).id);
-      assert.isUndefined((yield* runFor("queued")).workStartedAt);
+      assert.equal(millis((yield* runFor("queued")).workStartedAt), millis(queuedActivatedAt));
+      assert.isUndefined((yield* runFor("late-wake")).workStartedAt);
 
-      const queuedStartedAt = DateTime.add(now, { minutes: 10 });
+      const queuedStartedAt = DateTime.add(queuedActivatedAt, { seconds: 35 });
+      yield* TestClock.adjust("35 seconds");
       yield* settle("queued", queuedStartedAt);
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("late-wake")).id);
-      assert.equal(millis((yield* runFor("late-wake")).workStartedAt), millis(queuedStartedAt));
+      assert.equal(millis((yield* runFor("late-wake")).workStartedAt), millis(queuedActivatedAt));
     }),
   );
 
