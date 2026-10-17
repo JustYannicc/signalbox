@@ -1,6 +1,8 @@
 import type { PreviewPort } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { StatusNoteView } from "@signalbox/runner-protocol/StatusLineProtocol";
+import type { FeedbackOutcome } from "@signalbox/runner-protocol/FeedbackProtocol";
+import type { ProviderUploadFeedbackInput } from "@t3tools/contracts";
 import type {
   OrchestrationV2Command,
   OrchestrationV2SubscribeThreadInput,
@@ -82,6 +84,10 @@ const isBehind = Schema.is(BrowserWatchBehind);
 
 /** What a thread object answers. `ThreadObject` implements it method for method. */
 export interface ThreadObjectApi {
+  readonly uploadFeedback: (
+    actor: Actor,
+    input: ProviderUploadFeedbackInput,
+  ) => Promise<ThreadObjectReply<FeedbackOutcome>>;
   readonly dispatch: (
     actor: Actor,
     command: unknown,
@@ -163,6 +169,10 @@ export interface ThreadObjectApi {
 type CommandFailure = ThreadNotFoundError | ThreadCommandRejectedError | ThreadObjectError;
 
 export interface ThreadHandle {
+  readonly uploadFeedback: (
+    actor: Actor,
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<FeedbackOutcome, ThreadNotFoundError | ThreadObjectError>;
   readonly dispatch: (
     actor: Actor,
     command: OrchestrationV2Command,
@@ -325,6 +335,11 @@ const lines = <A>(
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   return {
+    uploadFeedback: (actor, input) =>
+      call("uploadFeedback", () => api.uploadFeedback(actor, input)).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+      ),
     dispatch: (actor, command, creation) =>
       call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
         Effect.flatMap(fromReply),

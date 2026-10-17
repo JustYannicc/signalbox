@@ -52,6 +52,42 @@ const json = (answer: Effect.Success<ReturnType<typeof callOperation>>) => {
 };
 
 describe("public API calls", () => {
+  it.effect("authorizes provider feedback and returns the harness's typed unsupported result", () =>
+    Effect.gen(function* () {
+      const { call } = yield* setup;
+      const denied = json(
+        yield* call(
+          "provider.uploadFeedback",
+          { threadId: "feedback-thread" },
+          person([AuthOrchestrationReadScope]),
+        ),
+      );
+      expect(denied.status).toBe(403);
+      yield* call("threads.create", {
+        commandId: "feedback-create",
+        threadId: "feedback-thread",
+        projectId: Environment.SCRATCH_PROJECT_ID,
+        title: "Feedback",
+        modelSelection: scriptedModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        initialMessage: { messageId: "feedback-message", text: "Hello", attachments: [] },
+      });
+      const unsupported = json(
+        yield* call("provider.uploadFeedback", {
+          threadId: "feedback-thread",
+          requestId: "feedback-1",
+          reason: "private canary",
+        }),
+      );
+      expect(unsupported.status).toBe(422);
+      expect(unsupported.body).toMatchObject({
+        error: { _tag: "ProviderUploadFeedbackError", failure: "unsupported" },
+      });
+      expect(JSON.stringify(unsupported.body)).not.toContain("private canary");
+    }),
+  );
   it.effect("reads and saves analytics consent through the public reach map", () =>
     Effect.gen(function* () {
       const { call } = yield* setup;

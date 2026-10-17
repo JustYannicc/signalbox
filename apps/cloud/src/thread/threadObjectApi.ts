@@ -11,6 +11,7 @@ import {
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
+import * as ThreadFeedback from "./ThreadFeedback.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
@@ -31,7 +32,11 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<
       A,
       E,
-      ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing | PullRequestSync.PullRequestSync
+      | ThreadEngine.ThreadEngine
+      | TurnReports
+      | ThreadBrowsing
+      | PullRequestSync.PullRequestSync
+      | ThreadFeedback.ThreadFeedback
     >,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
@@ -44,7 +49,10 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<
       A,
       ThreadEngine.ThreadNotFoundError | ThreadEngine.ThreadCommandRejectedError,
-      ThreadEngine.ThreadEngine | ThreadBrowsing | PullRequestSync.PullRequestSync
+      | ThreadEngine.ThreadEngine
+      | ThreadBrowsing
+      | PullRequestSync.PullRequestSync
+      | ThreadFeedback.ThreadFeedback
     >,
   ): Promise<ThreadObjectReply<A>> =>
     run(
@@ -64,6 +72,8 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    uploadFeedback: (actor, input) =>
+      reply(ThreadFeedback.ThreadFeedback.use((service) => service.upload(actor, input))),
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),

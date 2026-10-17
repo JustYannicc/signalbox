@@ -102,6 +102,7 @@ import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import { makeGitHubImport } from "../github/GitHubImport.ts";
 import * as DriveBrowsing from "./driveBrowsing.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
 import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
@@ -168,6 +169,7 @@ const SECTION_METHODS = [
 ] as const;
 
 const SERVED = [
+  WS_METHODS.providerUploadFeedback,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.serverGetConfig,
   WS_METHODS.serverUpdateSettings,
@@ -263,6 +265,7 @@ export const CloudRpcGroup = WsRpcGroup.omit(
 
 /** Same scopes the self-hosted server requires for these RPCs. */
 const REQUIRED_SCOPES = {
+  [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
@@ -578,6 +581,15 @@ export const layerHandlers = (input: {
       const personBrowser = yield* LoginService.LoginService;
       const analytics = yield* makeAnalyticsHandlers;
       return {
+        [WS_METHODS.providerUploadFeedback]: (request) =>
+          Effect.flatMap(actorNow, (actor) => threads.uploadFeedback(actor, request)).pipe(
+            Effect.catchTags({
+              ThreadNotFoundError: (cause) =>
+                Effect.fail(new ProviderUploadFeedbackError({ threadId: request.threadId, cause })),
+              ThreadObjectError: (cause) =>
+                Effect.fail(new ProviderUploadFeedbackError({ threadId: request.threadId, cause })),
+            }),
+          ),
         ...pools.handlers,
         ...pushes,
         ...automations,

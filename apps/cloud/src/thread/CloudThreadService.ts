@@ -23,6 +23,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import {
+  ProviderUploadFeedbackError,
+  type ProviderUploadFeedbackInput,
+  type ProviderUploadFeedbackResult,
+} from "@t3tools/contracts";
 
 import type { BrowsingDispatched } from "./browsing/ThreadBrowsing.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
@@ -49,6 +54,13 @@ type Batch = ReadonlyArray<OrchestrationV2ThreadStreamItem>;
 export class CloudThreadService extends Context.Service<
   CloudThreadService,
   {
+    readonly uploadFeedback: (
+      actor: Actor,
+      input: ProviderUploadFeedbackInput,
+    ) => Effect.Effect<
+      ProviderUploadFeedbackResult,
+      ProviderUploadFeedbackError | ThreadNotFoundError | ThreadObjectError
+    >;
     readonly dispatchCommand: (
       actor: Actor,
       command: OrchestrationV2Command,
@@ -228,6 +240,22 @@ const make = Effect.gen(function* () {
     );
 
   return CloudThreadService.of({
+    uploadFeedback: (actor, input) =>
+      directory
+        .forThread(input.threadId)
+        .uploadFeedback(actor, input)
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome._tag === "uploaded"
+              ? Effect.succeed({ feedbackId: outcome.feedbackId })
+              : Effect.fail(
+                  new ProviderUploadFeedbackError({
+                    threadId: input.threadId,
+                    failure: outcome.failure,
+                  }),
+                ),
+          ),
+        ),
     canSee,
     previews,
     browsing,

@@ -5,6 +5,7 @@ import {
   threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunId } from "@t3tools/contracts";
+import type { FeedbackResponse } from "@signalbox/runner-protocol/FeedbackProtocol";
 import type * as Effect from "effect/Effect";
 
 import * as ThreadRunner from "./ThreadRunner.ts";
@@ -25,6 +26,7 @@ const CLOSE = { refused: 4001, replaced: 4002, protocol: 4003, released: 4004 } 
 interface Attachment {
   readonly generation: number;
   readonly connection: number;
+  readonly feedback?: boolean | undefined;
   /** The run this socket's Runner was handed, until it ends or is stopped. */
   readonly sentRunId: RunId | null;
   /** The drain this socket's Runner was asked for (#493); absent: none. */
@@ -37,6 +39,7 @@ interface Attachment {
 
 export interface RunnerSocketHost {
   readonly ctx: DurableObjectState;
+  readonly feedbackResult?: (socket: WebSocket, response: FeedbackResponse) => void;
   readonly run: <A>(effect: Effect.Effect<A, never, ThreadRunner.ThreadRunner>) => Promise<A>;
   /**
    * Whether the turn waits for its pull requests' reads, which the object's
@@ -196,6 +199,9 @@ export async function onRunnerMessage(
   }
   const attachment = attachmentOf(socket);
   switch (message.type) {
+    case "feedback.result":
+      if (attachment !== null) host.feedbackResult?.(socket, message);
+      return;
     case "hello": {
       const result = await host.run(runner.use((service) => service.hello(message)));
       if (result._tag === "refused") {
@@ -214,6 +220,7 @@ export async function onRunnerMessage(
         connection: result.connection,
         sentRunId: result.heldRunId,
         steers: message.steers === true,
+        feedback: message.feedback === true,
       } satisfies Attachment);
       send(socket, {
         type: "welcome",
