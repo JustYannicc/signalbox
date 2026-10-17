@@ -284,12 +284,51 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   };
 
   const finishOpenRequest = (request: DeviceOpenRequestState | undefined) =>
-    Effect.sync(() => {
-      if (request && openRequests.get(request.requestId) === request) {
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        if (!request || openRequests.get(request.requestId) !== request) return;
+        if (request.cancelled && request.canReleaseOwner) {
+          yield* sessionStateLock
+            .withPermit(
+              Effect.gen(function* () {
+                if (openRequests.get(request.requestId) !== request) return [];
+                const claims = yield* leases.release({
+                  threadId: request.threadId,
+                  hostId: request.hostId,
+                  deviceId: request.deviceId,
+                  requestId: request.requestId,
+                  caller: { kind: "panel", threadId: request.threadId },
+                });
+                yield* publish((state) => ({
+                  ...state,
+                  sessions: state.sessions.filter(
+                    (session) => session.requestId !== request.requestId,
+                  ),
+                }));
+                return claims;
+              }),
+            )
+            .pipe(
+              Effect.flatMap((claims) =>
+                withShutdownClaims(claims, () =>
+                  Effect.forEach(claims, (claim) => restore(runShutdownClaim(claim)), {
+                    discard: true,
+                  }),
+                ),
+              ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not release a cancelled device open owner", {
+                  hostId: request.hostId,
+                  deviceId: request.deviceId,
+                  cause,
+                }),
+              ),
+            );
+        }
         request.started = false;
         if (!request.cancelled) openRequests.delete(request.requestId);
-      }
-    });
+      }),
+    );
 
   const openRequestMatches = (
     request: DeviceOpenRequestState,
@@ -1313,38 +1352,45 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         openRequests.set(input.requestId, request);
       }
 
-      const claims = yield* sessionStateLock.withPermit(
+      yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          if (request.target) {
-            yield* leases
-              .cancelWaiter({ target: request.target, waiterId: request.requestId })
-              .pipe(
-                Effect.tapError((cause) =>
-                  Effect.logWarning("Could not remove a cancelled device waiter", { cause }),
-                ),
-                Effect.ignore,
-              );
-          }
-          const canRelease =
-            request.canReleaseOwner && (!request.started || request.phase === "committed");
-          const released = canRelease
-            ? yield* leases.release({
-                threadId: request.threadId,
-                hostId: request.hostId,
-                deviceId: request.deviceId,
-                requestId: request.requestId,
-                caller: { kind: "panel", threadId: request.threadId },
-              })
-            : [];
-          yield* publish((state) => ({
-            ...state,
-            sessions: state.sessions.filter((session) => session.requestId !== request.requestId),
-          }));
-          return released;
+          const claims = yield* sessionStateLock.withPermit(
+            Effect.gen(function* () {
+              if (request.target) {
+                yield* leases
+                  .cancelWaiter({ target: request.target, waiterId: request.requestId })
+                  .pipe(
+                    Effect.tapError((cause) =>
+                      Effect.logWarning("Could not remove a cancelled device waiter", { cause }),
+                    ),
+                    Effect.ignore,
+                  );
+              }
+              const canRelease = request.canReleaseOwner && request.phase !== "opening";
+              const claims = canRelease
+                ? yield* leases.release({
+                    threadId: request.threadId,
+                    hostId: request.hostId,
+                    deviceId: request.deviceId,
+                    requestId: request.requestId,
+                    caller: { kind: "panel", threadId: request.threadId },
+                  })
+                : [];
+              yield* publish((state) => ({
+                ...state,
+                sessions: request.canReleaseOwner
+                  ? state.sessions.filter((session) => session.requestId !== request.requestId)
+                  : state.sessions,
+              }));
+              return claims;
+            }),
+          );
+          yield* withShutdownClaims(claims, () =>
+            Effect.forEach(claims, (claim) => restore(runShutdownClaim(claim)), {
+              discard: true,
+            }),
+          );
         }),
-      );
-      yield* withShutdownClaims(claims, () =>
-        Effect.forEach(claims, runShutdownClaim, { discard: true }),
       );
     },
   );

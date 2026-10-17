@@ -46,7 +46,7 @@ export function DevicePanel(props: {
   const { state, loaded } = useDeviceState(environmentId);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
-  const cancelOpen = useAtomCommand(deviceEnvironment.cancelOpen);
+  const cancelOpen = useAtomCommand(deviceEnvironment.cancelOpen, { reportFailure: false });
   const close = useAtomCommand(deviceEnvironment.close);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [pendingDevice, setPendingDevice] = useState<DeviceSummary | null>(null);

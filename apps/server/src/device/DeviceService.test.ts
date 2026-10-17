@@ -689,6 +689,385 @@ it.effect("releases a provisional owner when open is interrupted just after rese
   }).pipe(Effect.scoped),
 );
 
+it.effect("releases a persisted shutdown claim when cancellation is interrupted", () =>
+  Effect.gen(function* () {
+    const baseStore = yield* makeMemoryDeviceLeaseStore;
+    const shutdownClaimPersisted = yield* Deferred.make<void>();
+    const finishShutdownClaimWrite = yield* Deferred.make<void>();
+    let holdShutdownClaimWrite = false;
+    const store: DeviceLeaseStore = {
+      ...baseStore,
+      write: (key, lease) =>
+        baseStore.write(key, lease).pipe(
+          Effect.tap(() =>
+            Effect.gen(function* () {
+              if (!holdShutdownClaimWrite || lease?.state !== "shutting_down") return;
+              holdShutdownClaimWrite = false;
+              yield* Deferred.succeed(shutdownClaimPersisted, undefined);
+              yield* Deferred.await(finishShutdownClaimWrite);
+            }),
+          ),
+        ),
+    };
+    const blockedOpen = yield* Deferred.make<void>();
+    const waitForBlockedOpen = yield* Deferred.make<void>();
+    const first = yield* fixture(Effect.void, undefined, false, undefined, false, undefined, {
+      store,
+      automaticCleanup: false,
+    });
+    const second = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      {
+        store,
+        automaticCleanup: false,
+        waitForLeaseRetry: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(blockedOpen, undefined);
+            yield* Deferred.await(waitForBlockedOpen);
+          }),
+      },
+      true,
+    );
+    yield* first.service.configure({ enabled: true });
+    yield* second.service.configure({ enabled: true });
+
+    const ownerThreadId = ThreadId.make("interrupt-shutdown-claim-owner");
+    const session = yield* first.service.open({
+      threadId: ownerThreadId,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: DeviceId.make("Pixel_API_35"),
+      platform: "android",
+      requestId: "interrupt-shutdown-claim-request",
+    });
+    const canceling = first.service.cancelOpen({
+      threadId: ownerThreadId,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: DeviceId.make("Pixel_API_35"),
+      requestId: "interrupt-shutdown-claim-request",
+    });
+    holdShutdownClaimWrite = true;
+    const cancellation = yield* Effect.forkChild(canceling);
+    yield* Deferred.await(shutdownClaimPersisted);
+
+    const interruption = yield* Effect.forkChild(Fiber.interrupt(cancellation));
+    yield* Effect.yieldNow;
+    expect(cancellation.pollUnsafe()).toBeUndefined();
+    yield* Deferred.succeed(finishShutdownClaimWrite, undefined);
+    yield* Fiber.join(interruption);
+    expect(Exit.isFailure(yield* Fiber.await(cancellation))).toBe(true);
+
+    const contender = Effect.map(
+      second.service.open({
+        threadId: ThreadId.make("interrupt-shutdown-claim-contender"),
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: session.deviceId,
+        platform: "android",
+      }),
+      () => "opened" as const,
+    );
+    const outcome = yield* Effect.race(
+      contender,
+      Deferred.await(blockedOpen).pipe(Effect.as("blocked" as const)),
+    );
+    expect(outcome).toBe("opened");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("releases a cancelled request retry after readiness without touching other owners", () =>
+  Effect.gen(function* () {
+    const baseStore = yield* makeMemoryDeviceLeaseStore;
+    const requestId = "device-open-retry-cancelled";
+    const siblingRequestId = "device-open-retry-sibling";
+    const retryReadinessStarted = yield* Deferred.make<void>();
+    const finishRetryReadiness = yield* Deferred.make<void>();
+    const exactReadinessStarted = yield* Deferred.make<void>();
+    const finishExactReadiness = yield* Deferred.make<void>();
+    const ownerReleaseStarted = yield* Deferred.make<void>();
+    const finishOwnerRelease = yield* Deferred.make<void>();
+    const blockedOpen = yield* Deferred.make<void>();
+    const waitForBlockedOpen = yield* Deferred.make<void>();
+    let pauseOwnerRelease = false;
+    let nextReadinessGate:
+      | {
+          readonly started: typeof retryReadinessStarted;
+          readonly resume: typeof finishRetryReadiness;
+        }
+      | {
+          readonly started: typeof exactReadinessStarted;
+          readonly resume: typeof finishExactReadiness;
+        }
+      | undefined;
+    const store: DeviceLeaseStore = {
+      ...baseStore,
+      write: (key, lease) =>
+        Effect.gen(function* () {
+          if (pauseOwnerRelease) {
+            const current = yield* baseStore.read(key);
+            if (
+              current?.owners.some((owner) => owner.requestId === requestId) &&
+              !lease?.owners.some((owner) => owner.requestId === requestId)
+            ) {
+              pauseOwnerRelease = false;
+              yield* Deferred.succeed(ownerReleaseStarted, undefined);
+              yield* Deferred.await(finishOwnerRelease);
+            }
+          }
+          yield* baseStore.write(key, lease);
+        }),
+    };
+    const onDeviceHostReady = Effect.gen(function* () {
+      const gate = nextReadinessGate;
+      if (gate === undefined) return;
+      nextReadinessGate = undefined;
+      yield* Deferred.succeed(gate.started, undefined);
+      yield* Deferred.await(gate.resume);
+    });
+    const threadId = ThreadId.make("device-open-retry-cancel");
+    const hostId = LOCAL_DEVICE_HOST_ID;
+    const input = {
+      threadId,
+      hostId,
+      deviceId: DeviceId.make("Pixel_API_35"),
+      platform: "android" as const,
+      requestId,
+    };
+    const { service } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      { store, automaticCleanup: false },
+      true,
+      undefined,
+      undefined,
+      undefined,
+      onDeviceHostReady,
+    );
+    const contender = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      {
+        store,
+        automaticCleanup: false,
+        waitForLeaseRetry: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(blockedOpen, undefined);
+            yield* Deferred.await(waitForBlockedOpen);
+          }),
+      },
+      true,
+    );
+    yield* service.configure({ enabled: true });
+    yield* contender.service.configure({ enabled: true });
+
+    const original = yield* service.open(input);
+    const sibling = yield* service.open({
+      ...input,
+      deviceId: original.deviceId,
+      requestId: siblingRequestId,
+    });
+    const agentOwner = {
+      kind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("device-open-retry-agent"),
+    };
+    const agent = yield* service.open(
+      {
+        threadId,
+        hostId,
+        deviceId: original.deviceId,
+        platform: "android",
+      },
+      agentOwner,
+    );
+
+    nextReadinessGate = { started: retryReadinessStarted, resume: finishRetryReadiness };
+    pauseOwnerRelease = true;
+    const retry = yield* Effect.forkChild(service.open(input));
+    yield* Deferred.await(retryReadinessStarted);
+    const cancelling = yield* Effect.forkChild(service.cancelOpen(input));
+    yield* Deferred.await(ownerReleaseStarted);
+    yield* Deferred.succeed(finishOwnerRelease, undefined);
+    yield* Fiber.join(cancelling);
+    expect((yield* service.state).sessions.map((session) => session.sessionId).toSorted()).toEqual(
+      [sibling.sessionId, agent.sessionId].toSorted(),
+    );
+    yield* Deferred.succeed(finishRetryReadiness, undefined);
+    expect(Exit.isFailure(yield* Fiber.await(retry))).toBe(true);
+
+    const newerRequestId = "device-open-retry-newer";
+    const newer = yield* service.open({
+      ...input,
+      deviceId: original.deviceId,
+      requestId: newerRequestId,
+    });
+    const lease = (yield* baseStore.list).flatMap((entry) => (entry.lease ? [entry.lease] : []))[0];
+    expect(lease?.owners.some((owner) => owner.requestId === requestId)).toBe(false);
+    expect(lease?.owners.some((owner) => owner.requestId === siblingRequestId)).toBe(true);
+    expect(lease?.owners.some((owner) => owner.requestId === newerRequestId)).toBe(true);
+    expect(
+      lease?.owners.some((owner) => owner.providerSessionId === agentOwner.providerSessionId),
+    ).toBe(true);
+    expect(lease?.waiters?.some((waiter) => waiter.waiterId === requestId) ?? false).toBe(false);
+
+    nextReadinessGate = { started: exactReadinessStarted, resume: finishExactReadiness };
+    const exactRenewal = yield* Effect.forkChild(
+      service.open({
+        ...input,
+        deviceId: sibling.deviceId,
+        sessionId: sibling.sessionId,
+        leaseId: sibling.leaseId,
+        requestId: siblingRequestId,
+      }),
+    );
+    yield* Deferred.await(exactReadinessStarted);
+    yield* service.cancelOpen({
+      ...input,
+      deviceId: sibling.deviceId,
+      requestId: siblingRequestId,
+    });
+    yield* Deferred.succeed(finishExactReadiness, undefined);
+    expect(Exit.isFailure(yield* Fiber.await(exactRenewal))).toBe(true);
+    expect((yield* service.state).sessions.map((session) => session.sessionId).toSorted()).toEqual(
+      [sibling.sessionId, agent.sessionId, newer.sessionId].toSorted(),
+    );
+
+    yield* service.close({
+      threadId,
+      hostId,
+      deviceId: sibling.deviceId,
+      sessionId: sibling.sessionId,
+      leaseId: sibling.leaseId,
+    });
+    yield* service.close(
+      {
+        threadId,
+        hostId,
+        deviceId: agent.deviceId,
+        sessionId: agent.sessionId,
+        leaseId: agent.leaseId,
+      },
+      agentOwner,
+    );
+    yield* service.close({
+      threadId,
+      hostId,
+      deviceId: newer.deviceId,
+      sessionId: newer.sessionId,
+      leaseId: newer.leaseId,
+    });
+    const anotherWalk = Effect.map(
+      contender.service.open({
+        threadId: ThreadId.make("device-open-retry-after-cancel"),
+        hostId,
+        deviceId: original.deviceId,
+        platform: "android",
+      }),
+      () => "opened" as const,
+    );
+    const outcome = yield* Effect.race(
+      anotherWalk,
+      Deferred.await(blockedOpen).pipe(Effect.as("blocked" as const)),
+    );
+    expect(outcome).toBe("opened");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("releases a renewed owner cancelled before its retried session is published", () =>
+  Effect.gen(function* () {
+    const baseStore = yield* makeMemoryDeviceLeaseStore;
+    const requestId = "device-open-retry-before-publish";
+    const renewalPersisted = yield* Deferred.make<void>();
+    const finishRenewal = yield* Deferred.make<void>();
+    const cancelWaiterLockRequested = yield* Deferred.make<void>();
+    let pauseNextRenewal = false;
+    let watchNextLock = false;
+    const store: DeviceLeaseStore = {
+      ...baseStore,
+      withLock: (key, use) =>
+        Effect.gen(function* () {
+          if (watchNextLock) {
+            watchNextLock = false;
+            yield* Deferred.succeed(cancelWaiterLockRequested, undefined);
+          }
+          return yield* baseStore.withLock(key, use);
+        }),
+      write: (key, lease) =>
+        Effect.gen(function* () {
+          const before = yield* baseStore.read(key);
+          const isRetryOwnerRenewal =
+            before?.owners.some((owner) => owner.requestId === requestId) === true &&
+            lease?.owners.some((owner) => owner.requestId === requestId) === true;
+          yield* baseStore.write(key, lease);
+          if (pauseNextRenewal && isRetryOwnerRenewal) {
+            pauseNextRenewal = false;
+            yield* Deferred.succeed(renewalPersisted, undefined);
+            yield* Deferred.await(finishRenewal);
+          }
+        }),
+    };
+    const { service } = yield* fixture(Effect.void, undefined, false, undefined, false, undefined, {
+      store,
+      automaticCleanup: false,
+    });
+    yield* service.configure({ enabled: true });
+    const threadId = ThreadId.make("device-open-retry-before-publish");
+    const input = {
+      threadId,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: DeviceId.make("Pixel_API_35"),
+      platform: "android" as const,
+      requestId,
+    };
+    const original = yield* service.open(input);
+    const siblingRequestId = "device-open-retry-before-publish-sibling";
+    const sibling = yield* service.open({
+      ...input,
+      deviceId: original.deviceId,
+      requestId: siblingRequestId,
+    });
+    const agentOwner = {
+      kind: "agent" as const,
+      providerSessionId: ProviderSessionId.make("device-open-before-publish-agent"),
+    };
+    const agent = yield* service.open(
+      { threadId, hostId: LOCAL_DEVICE_HOST_ID, deviceId: original.deviceId, platform: "android" },
+      agentOwner,
+    );
+
+    pauseNextRenewal = true;
+    const retry = yield* Effect.forkChild(service.open(input));
+    yield* Deferred.await(renewalPersisted);
+    watchNextLock = true;
+    const cancelling = yield* Effect.forkChild(service.cancelOpen(input));
+    yield* Deferred.await(cancelWaiterLockRequested);
+    yield* Deferred.succeed(finishRenewal, undefined);
+    expect(Exit.isFailure(yield* Fiber.await(retry))).toBe(true);
+    yield* Fiber.join(cancelling);
+
+    const lease = (yield* baseStore.list).flatMap((entry) => (entry.lease ? [entry.lease] : []))[0];
+    expect(lease?.owners.some((owner) => owner.requestId === requestId)).toBe(false);
+    expect(lease?.owners.some((owner) => owner.requestId === siblingRequestId)).toBe(true);
+    expect(
+      lease?.owners.some((owner) => owner.providerSessionId === agentOwner.providerSessionId),
+    ).toBe(true);
+    expect(lease?.waiters?.some((waiter) => waiter.waiterId === requestId) ?? false).toBe(false);
+    expect((yield* service.state).sessions.map((session) => session.sessionId).toSorted()).toEqual(
+      [sibling.sessionId, agent.sessionId].toSorted(),
+    );
+  }).pipe(Effect.scoped),
+);
+
 it.effect("keeps one device lease across production services and worktree state dirs", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
