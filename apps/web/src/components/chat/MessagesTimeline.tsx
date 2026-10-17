@@ -505,6 +505,8 @@ interface MessagesTimelineProps {
   findQuery?: string;
   activeFindMatch?: ThreadFindMatch | null;
   findNavigationId?: number;
+  /** signalbox: the turn's machine is still being set up (runtimeIsSettingUp). */
+  settingUpMachine?: boolean;
 }
 
 export function MessagesTimeline(props: MessagesTimelineProps) {
@@ -515,11 +517,13 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
     if (findOpen) onManualNavigation();
   }, [findOpen, onManualNavigation]);
   return (
-    <ConversationTimeline
-      {...props}
-      {...find}
-      liveFollowEnabled={!findOpen && props.liveFollowEnabled}
-    />
+    <SettingUpMachineContext value={props.settingUpMachine === true}>
+      <ConversationTimeline
+        {...props}
+        {...find}
+        liveFollowEnabled={!findOpen && props.liveFollowEnabled}
+      />
+    </SettingUpMachineContext>
   );
 }
 
