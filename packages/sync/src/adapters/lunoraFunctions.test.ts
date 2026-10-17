@@ -154,9 +154,9 @@ describe("emitLunoraFunctions", () => {
 export default defineSchema({ probes: defineTable({ key: v.string() }).index("by_key", ["key"]) });
 `,
         );
-        await copyTemplate(project, "functions-home.ts", "lunora/home.ts");
-        await copyTemplate(project, "functions-bindings.ts", "lunora/bindings.ts");
-        await copyTemplate(project, "functions-identity.ts", "lunora/identity.ts");
+        await copyTemplate(project, "functions-home.ts.txt", "lunora/home.ts");
+        await copyTemplate(project, "functions-bindings.ts.txt", "lunora/bindings.ts");
+        await copyTemplate(project, "functions-identity.ts.txt", "lunora/identity.ts");
 
         const cli =
           NodeProcess.env.LUNORA_CODEGEN_CLI ??
@@ -174,7 +174,7 @@ export default defineSchema({ probes: defineTable({ key: v.string() }).index("by
         await runCodegen();
         await writeFixture(project, "lunora/functions.ts", generatedSource().source);
         await runCodegen();
-        await copyTemplate(project, "functions-contract.ts", "src/functions-contract.ts");
+        await copyTemplate(project, "functions-contract.ts.txt", "src/functions-contract.ts");
         await writeFixture(
           project,
           "tsconfig.json",
