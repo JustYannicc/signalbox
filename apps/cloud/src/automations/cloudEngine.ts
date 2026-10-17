@@ -296,6 +296,11 @@ const make = Effect.gen(function* () {
         }),
       );
     },
+    executorRunActive: (runId) =>
+      engine.getRun(runId).pipe(
+        Effect.map(({ run }) => run.status === "running"),
+        Effect.orElseSucceed(() => false),
+      ),
     workerModule: (automationId, version) =>
       runs.workerModule(automationId, version).pipe(
         Effect.flatMap((module) =>

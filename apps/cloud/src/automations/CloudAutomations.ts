@@ -83,6 +83,8 @@ export interface CloudAutomationsShape {
   ) => Effect.Effect<unknown, AutomationError>;
   /** A run's instance calling back: starting a step, ending a wait, finishing. */
   readonly host: (call: AutomationHostCall) => Effect.Effect<unknown, AutomationError>;
+  /** Whether this exact run is still active, for narrowly scoped internal grants. */
+  readonly executorRunActive: (runId: string) => Effect.Effect<boolean>;
   /** A version's code, for loading it as a Dynamic Worker. */
   readonly workerModule: (
     automationId: string,
