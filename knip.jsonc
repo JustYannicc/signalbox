@@ -21,6 +21,7 @@
       // worktree setup (from t3.json) run directly.
       "entry": [
         "knip-schemas.ts",
+        "agent-process-preload.ts", // Loaded by Node's --import in tracked subprocesses.
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "workload-cost-replay.ts", // signalbox: workload analytics

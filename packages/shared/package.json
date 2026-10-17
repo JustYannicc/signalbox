@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./agentProcesses": {
+      "types": "./src/agentProcesses/registry.ts",
+      "import": "./src/agentProcesses/registry.ts"
+    },
+    "./agentProcessSessions": {
+      "types": "./src/agentProcessSessions.ts",
+      "import": "./src/agentProcessSessions.ts"
+    },
     "./signalboxAppUrl": {
       "types": "./src/signalboxAppUrl.ts",
       "import": "./src/signalboxAppUrl.ts"

@@ -1,0 +1,50 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-processes.ts\" hook",
+            "commandWindows": "node -e \"process.stderr.write('Automatic process cleanup is unavailable on Windows.\\n')\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-processes.ts\" hook",
+            "timeout": 3,
+            "commandWindows": "node -e \"process.stderr.write('Automatic process cleanup is unavailable on Windows.\\n')\""
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-processes.ts\" hook",
+            "commandWindows": "node -e \"process.stderr.write('Automatic process cleanup is unavailable on Windows.\\n')\""
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent-processes.ts\" hook",
+            "timeout": 3,
+            "commandWindows": "node -e \"process.stderr.write('Automatic process cleanup is unavailable on Windows.\\n')\""
+          }
+        ]
+      }
+    ]
+  }
+}
