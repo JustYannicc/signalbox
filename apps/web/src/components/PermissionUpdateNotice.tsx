@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { sessionHasLegacyPermissions, type EnvironmentId } from "@t3tools/contracts";
+import {
+  environmentSupports,
+  sessionHasLegacyPermissions,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
@@ -71,7 +75,15 @@ export function PermissionUpdateNotice() {
   const { environments } = useEnvironments();
   // signalbox: pairing again is how this is fixed, and the one environment isn't paired.
   if (!useShowsEnvironmentUi()) return null;
-  return environments.map(({ environmentId, label }) => (
-    <EnvironmentPermissionNotice key={environmentId} environmentId={environmentId} label={label} />
-  ));
+  return environments
+    .filter(({ serverConfig }) =>
+      environmentSupports(serverConfig?.environment.capabilities, "accessManagement"),
+    ) // signalbox: re-pairing fixes this, and an environment without pairing can't
+    .map(({ environmentId, label }) => (
+      <EnvironmentPermissionNotice
+        key={environmentId}
+        environmentId={environmentId}
+        label={label}
+      />
+    ));
 }

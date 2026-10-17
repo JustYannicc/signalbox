@@ -39,6 +39,7 @@ import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentSupports } from "../state/environmentCapabilities"; // signalbox
+import { environmentCopy } from "../state/oneEnvironmentCopy"; // signalbox: one-environment copy for missing access
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -415,7 +416,7 @@ export function BranchToolbarBranchSelector({
         stackedThreadToast({
           type: "error",
           title: "Action unavailable",
-          description: "This connection cannot change the thread's branch.",
+          description: environmentCopy("This connection cannot change the thread's branch."), // signalbox: one-environment copy for missing access
         }),
       );
       return;

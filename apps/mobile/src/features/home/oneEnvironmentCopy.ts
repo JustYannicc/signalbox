@@ -59,6 +59,34 @@ const ONE_ENVIRONMENT_COPY: Readonly<Record<string, string>> = {
   "The environment endpoint could not be found.": "Can't reach Signalbox.",
   "The environment could not authorize the connection.": "Signalbox couldn't sign you in.",
   "Could not synchronize environment data.": "Couldn't sync your threads.",
+  "Your cloud sign-in changed. Sign in again to authorize the environment.":
+    "Your sign-in changed. Sign in again.",
+  // Attachments.
+  "File attachments are not available on this server.":
+    "File attachments aren't available in Signalbox yet.",
+  "This server does not support file attachments.":
+    "File attachments aren't available in Signalbox yet.",
+  "Server attachment support is still loading.": "Attachments are still loading.",
+  // Thread actions (`useThreadListActions`).
+  "This environment's server does not support settling yet. Update the server to use Settle.":
+    "Settling isn't available in Signalbox yet.",
+  "This environment's server does not support snoozing yet. Update the server to use Snooze.":
+    "Snoozing isn't available in Signalbox yet.",
+  "This environment's server does not support snoozing yet. Update the server to wake this thread.":
+    "Snoozing isn't available in Signalbox yet.",
+  "This environment's server does not support pinning yet. Update the server to use Pin.":
+    "Pinning isn't available in Signalbox yet.",
+  "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.":
+    "Turning auto-settle off isn't available in Signalbox yet.",
+  "This environment's server does not support title regeneration yet. Update the server to regenerate thread titles.":
+    "Regenerating titles isn't available in Signalbox yet.",
+  "This environment's server does not support reordering these threads. Update the server to arrange them.":
+    "Moving threads isn't available in Signalbox yet.",
+  // Pull request details.
+  "Review guides are disabled for this server.": "Review guides aren't available in Signalbox yet.",
+  "This environment connection is read-only.": "You can view this pull request but can't merge it.",
+  "This environment can display stacks but cannot merge them.":
+    "Stacks can be viewed here but not merged yet.",
   // Prompt links.
   "No connected environment offers threads without a project.":
     "Signalbox isn't connected yet. Try again in a moment.",
@@ -85,6 +113,10 @@ const ONE_ENVIRONMENT_PHRASES: ReadonlyArray<readonly [string, string]> = [
   ],
   ["Could not obtain environment link proof", "Could not verify Signalbox for activity updates"],
   ["Could not configure environment relay access", "Could not set up activity updates"],
+  // Relay sign-ins append a DPoP hint to the invalid-credential error.
+  ["The environment credential is invalid.", "Your Signalbox sign-in expired. Sign in again."],
+  // Incoming shares: "'report.pdf' was skipped because this server does not support files."
+  ["because this server does not support files", "because Signalbox doesn't support files yet"],
 ];
 
 export function oneEnvironmentCopy(text: string): string {

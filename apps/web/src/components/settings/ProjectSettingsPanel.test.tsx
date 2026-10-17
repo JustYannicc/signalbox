@@ -69,6 +69,11 @@ vi.mock("~/rpc/atomRegistry", () => ({
     return state.registry;
   },
 }));
+// signalbox: these cover a server with other environments, so the delete confirm names path and environment.
+vi.mock("~/state/environmentCapabilities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/environmentCapabilities")>()),
+  readShowsEnvironmentUi: () => true,
+}));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments }),
   usePrimaryEnvironmentId: () => primaryId,
