@@ -770,7 +770,6 @@ export function ProviderInstanceCard({
   };
 
   const updateCustomModels = (next: ReadonlyArray<CustomModelDefinition>) => {
-    if (!canWriteProviderSettings) return;
     const nextConfig = nextConfigBlobWithValue(
       instance.config,
       "customModels",

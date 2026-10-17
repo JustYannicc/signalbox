@@ -55,6 +55,7 @@ import { Toggle } from "../ui/toggle";
 import { toastManager } from "../ui/toast";
 import {
   buildKeybindingRows,
+  filterKeybindingRowsForEnvironment,
   buildKeybindingCommandOptions,
   buildWhenVariableOptions,
   commandLabel,
@@ -1382,7 +1383,7 @@ export function KeybindingsSettingsPanel() {
   );
   const rows = useMemo(
     () =>
-      buildKeybindingRows(keybindings, query, {
+      filterKeybindingRowsForEnvironment(buildKeybindingRows(keybindings, ""), query, {
         localFilesystem: hasLocalFilesystem,
         terminal: hasTerminal,
       }).filter((row) => isShownCommand(row.command)),

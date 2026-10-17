@@ -35,7 +35,6 @@ vi.mock("./SettingsScopeContext", async () => {
     SettingsScopeProvider: ({ children }: { children: ReactNode }) => (
       <Scope value={state.scope}>{children}</Scope>
     ),
-    useOptionalSettingsScope: () => null,
     useSettingsScope: () => {
       const { search, environmentId } = useContext(Scope);
       return {
@@ -47,13 +46,6 @@ vi.mock("./SettingsScopeContext", async () => {
     },
   };
 });
-vi.mock("./useAvailableSettingsSearchItems", () => ({
-  useUnsupportedSettingsCapabilities: () => new Set(),
-}));
-vi.mock("../../state/environmentCapabilities", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../state/environmentCapabilities")>()),
-  useEnvironmentCapabilitiesKnown: () => true,
-}));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../ui/sidebar", () => ({
   SidebarInset: ({ children }: { children: ReactNode }) => <div>{children}</div>,

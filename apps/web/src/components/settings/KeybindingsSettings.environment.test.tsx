@@ -8,7 +8,6 @@ const state = vi.hoisted(() => ({
   canOperate: false,
   canWriteSettings: true,
   connected: true,
-  serverSettingsWrite: true,
   openEditor: vi.fn(),
   upsert: vi.fn(),
   remove: vi.fn(),
@@ -54,7 +53,6 @@ vi.mock("./SettingsScopeContext", () => ({
     const environment = {
       environmentId: "primary-settings",
       serverConfig: {
-        environment: { capabilities: { serverSettingsWrite: state.serverSettingsWrite } },
         keybindings: [],
         keybindingsConfigPath: "/fixture/keybindings.json",
         availableEditors: [],
@@ -110,7 +108,6 @@ describe("KeybindingsSettings editor permission", () => {
     state.canOperate = false;
     state.canWriteSettings = true;
     state.connected = true;
-    state.serverSettingsWrite = true;
     state.openEditor.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
     state.upsert.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
     state.remove.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
@@ -159,7 +156,6 @@ describe("KeybindingsSettings write notice", () => {
     hooks.reset();
     state.canWriteSettings = true;
     state.connected = true;
-    state.serverSettingsWrite = true;
   });
 
   it("asks for a connected environment when none is connected", () => {
@@ -172,27 +168,5 @@ describe("KeybindingsSettings write notice", () => {
     expect(noticeText(renderPanel())).toBe(
       "This connection can view keybindings but cannot change them.",
     );
-  });
-});
-
-describe("KeybindingsSettings unsupported writes", () => {
-  it("blocks save and remove even when the session grants settings writes", () => {
-    hooks.reset();
-    state.connected = true;
-    state.canWriteSettings = true;
-    state.serverSettingsWrite = false;
-    state.upsert.mockClear();
-    state.remove.mockClear();
-    const groups = visitElements(
-      renderPanel(),
-      (element) => typeof element.props.onSave === "function",
-    );
-    if (!groups) throw new Error("Missing keybinding reference groups");
-    (groups.props.onSave as (input: unknown) => void)({ command: "chat.new", key: "mod+n" });
-    (groups.props.onRemove as (row: unknown) => void)({ command: "chat.new", key: "mod+n" });
-    expect(state.upsert).not.toHaveBeenCalled();
-    expect(state.remove).not.toHaveBeenCalled();
-    expect(groups.props.readOnly).toBe(true);
-    state.serverSettingsWrite = true;
   });
 });

@@ -248,7 +248,6 @@ export function groupKeybindingRows(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   query: string,
-  capabilities = { localFilesystem: true, terminal: true },
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   const rows = keybindings.map((binding, index) => {
@@ -292,13 +291,9 @@ export function buildKeybindingRows(
   return rowsWithConflicts.filter((row) => {
     return (
       row.command.toLowerCase().includes(normalizedQuery) ||
-      commandLabel(row.command, capabilities.localFilesystem)
-        .toLowerCase()
-        .includes(normalizedQuery) ||
+      commandLabel(row.command).toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
-      (capabilities.terminal ? row.when : keybindingWhenWithoutTerminal(row.binding.whenAst))
-        .toLowerCase()
-        .includes(normalizedQuery) ||
+      row.when.toLowerCase().includes(normalizedQuery) ||
       row.source.toLowerCase().includes(normalizedQuery)
     );
   });
@@ -448,4 +443,23 @@ export function keybindingWhenWithoutTerminal(node: KeybindingWhenNode | undefin
   if (!node) return "";
   const result = keybindingWhenWithoutTerminalState(node);
   return typeof result === "boolean" ? (result ? "" : "Never") : whenAstToExpression(result);
+}
+
+/** signalbox: search what the environment displays: its labels, and conditions minus terminal state. */
+export function filterKeybindingRowsForEnvironment(
+  rows: ReadonlyArray<KeybindingRow>,
+  query: string,
+  capabilities: { readonly localFilesystem: boolean; readonly terminal: boolean },
+): ReadonlyArray<KeybindingRow> {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.length === 0) return rows;
+  return rows.filter((row) =>
+    [
+      row.command,
+      commandLabel(row.command, capabilities.localFilesystem),
+      row.key,
+      capabilities.terminal ? row.when : keybindingWhenWithoutTerminal(row.binding.whenAst),
+      row.source,
+    ].some((value) => value.toLowerCase().includes(normalizedQuery)),
+  );
 }

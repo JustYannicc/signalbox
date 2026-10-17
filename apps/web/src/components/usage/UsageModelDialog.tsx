@@ -24,6 +24,7 @@ import {
   tokenTypeSegments,
 } from "./usageBreakdown";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { useCanEditUsagePrices } from "./usagePriceCapabilities"; // signalbox
 
 export interface UsageChartWindow {
   readonly days: readonly string[];
@@ -38,7 +39,6 @@ export function UsageModelDialog({
   environments,
   metric,
   chartWindow,
-  canSetPrice,
   onSetPrice,
   onClose,
 }: {
@@ -46,7 +46,6 @@ export function UsageModelDialog({
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly metric: UsageChartMetric;
   readonly chartWindow: UsageChartWindow;
-  readonly canSetPrice: boolean;
   readonly onSetPrice: () => void;
   readonly onClose: () => void;
 }) {
@@ -62,6 +61,10 @@ export function UsageModelDialog({
   const presentation = PROVIDER_PRESENTATION[model.provider];
   const costUnknown = isModelCostUnknown(model);
   const hitRate = cacheHitRate(model);
+  const canSetPrice = useCanEditUsagePrices(
+    // signalbox
+    new Set(environments.map((environment) => environment.environmentId)),
+  );
   const perMillion = costPerMillionTokens(model);
   const stats = [
     { label: "Cost", value: costUnknown ? "Unpriced" : formatUsd(model.costUsd) },

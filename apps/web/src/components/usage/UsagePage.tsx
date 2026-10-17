@@ -95,7 +95,7 @@ import {
 } from "./usageShortcuts";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
-import { hasWritableSelectedUsagePriceTarget } from "./usagePriceCapabilities";
+import { useCanEditUsagePrices } from "./usagePriceCapabilities"; // signalbox
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -179,14 +179,6 @@ export function UsagePage() {
   const isProviderLoading = (provider: UsageProviderKind) =>
     loading.everyProvider || loading.providers.has(provider);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const canEditModelPrices = hasWritableSelectedUsagePriceTarget(
-    environments.map((environment) => ({
-      environmentId: environment.environmentId,
-      serverSettingsWrite: presentations.get(environment.environmentId)?.serverConfig?.environment
-        .capabilities.serverSettingsWrite,
-    })),
-    selectedEnvironmentIds,
-  );
   const cursorAccessEnvironments = hiddenProviders.has("cursor")
     ? []
     : cursorKeychainAccessEnvironments(selectedEnvironments);
@@ -404,10 +396,7 @@ export function UsagePage() {
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
-            canEditModelPrices={canEditModelPrices}
-            onOpenModelPrices={() => {
-              if (canEditModelPrices) setPriceDialog({});
-            }}
+            onOpenModelPrices={() => setPriceDialog({})}
           />
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
@@ -997,16 +986,14 @@ export function UsagePage() {
             timeZone: shownWindow.timeZone,
             referenceTime: shownWindow.untilTime,
           }}
-          canSetPrice={canEditModelPrices}
           onSetPrice={() => {
-            if (!canEditModelPrices) return;
             setSelectedModelKey(null);
             setPriceDialog({ model: selectedModel.model });
           }}
           onClose={() => setSelectedModelKey(null)}
         />
       ) : null}
-      {priceDialog && canEditModelPrices ? (
+      {priceDialog ? (
         <UsagePriceOverrides
           usage={environments}
           initialSelectedEnvironmentIds={selectedEnvironmentIds}
@@ -1246,7 +1233,6 @@ function UsageEnvironmentFilter({
   isPartial,
   duplicateSources,
   contractMismatches,
-  canEditModelPrices,
   onOpenModelPrices,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
@@ -1258,9 +1244,9 @@ function UsageEnvironmentFilter({
   readonly isPartial: boolean;
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
-  readonly canEditModelPrices: boolean;
   readonly onOpenModelPrices: () => void;
 }) {
+  const canEditModelPrices = useCanEditUsagePrices(selectedEnvironmentIds); // signalbox
   const allSelected = selectedEnvironmentIds === null;
   // signalbox: one environment, so this menu only carries status and model prices.
   const showsEnvironmentUi = useShowsEnvironmentUi();

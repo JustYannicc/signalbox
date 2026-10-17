@@ -40,7 +40,7 @@ export function settingsItemSupported(
   return itemRequirements(id).every((capability) => !unsupported.has(capability));
 }
 
-export type SettingsGate = "show" | "hide" | "wait";
+type SettingsGate = "show" | "hide" | "wait";
 
 /**
  * Until an environment reports, absent capabilities mean "not known yet", not "supported":

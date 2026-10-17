@@ -6,49 +6,20 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { isLocalEnvironmentAvailable } from "~/account/cloudDefault";
-import { useShowsEnvironmentUi } from "~/state/environmentCapabilities";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
-import {
-  useEnvironments,
-  usePrimaryEnvironment,
-  usePrimaryEnvironmentId,
-} from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
-import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
-import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
+import type { SettingsScopeSearch } from "./settingsScope";
 import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
-  unsupportedSettingsCapabilities,
 } from "./settingsSearch";
+import { useUnsupportedSettingsCapabilities } from "./useUnsupportedSettingsCapabilities";
 
-const EMPTY_SCOPE_SEARCH: SettingsScopeSearch = {};
-
-/** Capabilities absent from every environment in the selected settings scope. */
-export function useUnsupportedSettingsCapabilities(
-  scopeSearch: SettingsScopeSearch = EMPTY_SCOPE_SEARCH,
-) {
-  const { environments } = useEnvironments();
-  const primaryEnvironment = usePrimaryEnvironment();
-  const showsEnvironmentUi = useShowsEnvironmentUi();
-  const groups = useSettingsProjectGroups();
-  return useMemo(() => {
-    const scope = resolveSettingsScope(scopeSearch, groups, environments);
-    const unsupported = unsupportedSettingsCapabilities(
-      environments.filter((environment) =>
-        scope.environmentIds.includes(environment.environmentId),
-      ),
-      primaryEnvironment,
-    );
-    // The same rule as everywhere else, including a desktop gateway before it signs in.
-    return showsEnvironmentUi
-      ? unsupported
-      : new Set([...unsupported, "otherEnvironments" as const]);
-  }, [environments, groups, primaryEnvironment, scopeSearch, showsEnvironmentUi]);
-}
+export { useUnsupportedSettingsCapabilities }; // signalbox
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
