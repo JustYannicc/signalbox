@@ -20,6 +20,7 @@ import {
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { cn } from "../../lib/utils";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { folderTreesAtom } from "./folders/folderThreads";
 
@@ -216,21 +217,24 @@ const DraftRowItem = memo(function DraftRowItem(props: {
             {props.place}
           </span>
         ) : null}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label="Discard draft"
-                onClick={handleDiscard}
-                className="hidden size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:text-foreground group-focus-within/draft-row:inline-flex group-hover/draft-row:inline-flex"
-              >
-                <XIcon className="size-3" />
-              </button>
-            }
-          />
-          <TooltipPopup side="top">Discard draft</TooltipPopup>
-        </Tooltip>
+        <span className="hidden shrink-0 group-focus-within/draft-row:inline-flex group-hover/draft-row:inline-flex">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost-muted"
+                  size="icon-micro"
+                  aria-label="Discard draft"
+                  onClick={handleDiscard}
+                >
+                  <XIcon />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">Discard draft</TooltipPopup>
+          </Tooltip>
+        </span>
       </div>
     </li>
   );

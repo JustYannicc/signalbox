@@ -31,6 +31,7 @@ import {
 import { cn, isMacPlatform, randomUUID } from "../../lib/utils";
 import { folderTreesAtom } from "../sidebar/folders/folderThreads";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import {
   CommandDialog,
   CommandDialogPopup,
@@ -402,14 +403,16 @@ function Chip(props: {
       {props.icon}
       <span className="max-w-48 truncate">{props.label}</span>
       {props.detail ? <span className="text-muted-foreground">{props.detail}</span> : null}
-      <button
+      <Button
         type="button"
+        variant="ghost-muted"
+        size="icon-micro"
         aria-label={`Remove ${props.label}`}
         onClick={props.onRemove}
-        className="-mr-0.5 inline-flex cursor-pointer items-center rounded-sm text-muted-foreground hover:text-foreground"
+        className="-mr-1"
       >
-        <XIcon className="size-3" />
-      </button>
+        <XIcon />
+      </Button>
     </Badge>
   );
 }
