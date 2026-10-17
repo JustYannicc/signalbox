@@ -11,6 +11,7 @@ import {
   codexGatewayConfig,
   tomlString,
 } from "./RunnerGatewayPins.ts";
+import { CONTEXT_SERVER_NAME } from "./RunnerContextTools.ts";
 import { INSTRUCTIONS_MAX_BYTES, ROOT_MARKER } from "./RunnerInstructions.ts";
 
 /**
@@ -87,7 +88,8 @@ export function harnessEnvironment(
 }
 
 /** Secret cards allow an hour; browser sign-in keeps its four-minute service budget. */
-export const mcpToolTimeoutSec = (serverName: string) => (serverName === "signalbox" ? 3605 : 300);
+export const mcpToolTimeoutSec = (serverName: string) =>
+  serverName === CONTEXT_SERVER_NAME ? 3605 : 300;
 
 /** The Runner's loopback MCP servers, by the name the harnesses know each as. */
 export type RunnerMcpServers = Readonly<Record<string, string>>;

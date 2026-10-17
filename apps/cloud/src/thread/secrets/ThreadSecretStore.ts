@@ -39,6 +39,11 @@ export class ThreadSecretStore extends Context.Service<
       value: string,
       now: number,
     ) => Effect.Effect<void, SecretRequestError>;
+    /** Erase unusable custody; keep tombstones so retries cannot replace an answer. */
+    readonly reconcile: (
+      binding: Omit<SecretBinding, "requestId"> | null,
+      retiredRequests: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlySet<string>, SecretRequestError>;
     readonly consume: (
       ref: SecretRef,
       runId: string,
@@ -57,6 +62,13 @@ const make = Effect.gen(function* () {
     generation INTEGER NOT NULL, ref TEXT NOT NULL UNIQUE, value TEXT,
     saved_at INTEGER, consumed INTEGER NOT NULL DEFAULT 0
   )`.pipe(Effect.orDie);
+  const sweep = Effect.gen(function* () {
+    const cutoff = (yield* Clock.currentTimeMillis) - 86_400_000;
+    yield* sql`UPDATE signalbox_secret_requests SET value = NULL, consumed = 1
+      WHERE saved_at < ${cutoff} AND value IS NOT NULL`;
+  });
+  // An object reopening must not need another request to erase expired values.
+  yield* sweep.pipe(Effect.orDie);
   const read: ThreadSecretStore["Service"]["read"] = (requestId) =>
     sql`SELECT * FROM signalbox_secret_requests WHERE request_id = ${requestId}`.pipe(
       Effect.map((rows) => decode(rows)[0] ?? null),
@@ -65,9 +77,7 @@ const make = Effect.gen(function* () {
   return ThreadSecretStore.of({
     open: (binding) =>
       Effect.gen(function* () {
-        const cutoff = (yield* Clock.currentTimeMillis) - 86_400_000;
-        yield* sql`UPDATE signalbox_secret_requests SET value = NULL, consumed = 1
-        WHERE saved_at < ${cutoff} AND value IS NOT NULL`;
+        yield* sweep;
         const ref = SecretRef.make(
           `secret-ref:${(yield* crypto.randomUUIDv4()).replaceAll("-", "")}`,
         );
@@ -83,6 +93,24 @@ const make = Effect.gen(function* () {
         Effect.asVoid,
         Effect.mapError(() => new SecretRequestError({ reason: "store_failed" })),
       ),
+    reconcile: (binding, retiredRequests) =>
+      Effect.gen(function* () {
+        yield* sweep;
+        const unusable =
+          binding === null
+            ? sql`1 = 1`
+            : sql`(run_id != ${binding.runId} OR attempt_id != ${binding.attemptId}
+              OR generation != ${binding.generation})`;
+        yield* sql`UPDATE signalbox_secret_requests SET value = NULL, consumed = 1
+          WHERE ${unusable} AND (consumed = 0 OR value IS NOT NULL)`;
+        if (retiredRequests.length > 0) {
+          yield* sql`UPDATE signalbox_secret_requests SET value = NULL, consumed = 1
+            WHERE request_id IN ${sql.in(retiredRequests)}`;
+        }
+        const rows = yield* sql<{ request_id: string }>`SELECT request_id
+          FROM signalbox_secret_requests WHERE consumed = 0`;
+        return new Set(rows.map((row) => row.request_id));
+      }).pipe(Effect.mapError(() => new SecretRequestError({ reason: "store_failed" }))),
     consume: (ref, runId, attemptId, generation, now) =>
       Effect.gen(function* () {
         const result = yield* Effect.gen(function* () {

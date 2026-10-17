@@ -325,6 +325,4 @@ const make = Effect.gen(function* () {
   return ThreadSecretRequests.of({ request, answer, consume });
 });
 
-export const layer = Layer.effect(ThreadSecretRequests, make).pipe(
-  Layer.provide(ThreadSecretStore.layer),
-);
+export const layer = Layer.effect(ThreadSecretRequests, make);
