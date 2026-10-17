@@ -8,6 +8,10 @@
       "import": "./src/pnpmVirtualStore.ts",
       "require": "./src/pnpmVirtualStore.ts"
     },
+    "./synchronization": {
+      "types": "./src/synchronization.ts",
+      "import": "./src/synchronization.ts"
+    },
     "./signalboxAppUrl": {
       "types": "./src/signalboxAppUrl.ts",
       "import": "./src/signalboxAppUrl.ts"
