@@ -88,6 +88,13 @@ test("contracts reach web, server and cloud dependents", () => {
   assert.match(gates.test_packages, /@signalbox\/cloud/);
 });
 
+test("account hub pins keep the server tests and desktop build", () => {
+  const gates = detect(["apps/cloud/containers/cliproxyapi/release.json"]);
+  assert.equal(gates.test_server, "true");
+  assert.equal(gates.build, "true");
+  assert.match(gates.test_packages, /@signalbox\/cloud/);
+});
+
 test("native crates keep Rust checks and packaging tests", () => {
   const gates = detect(["native/resource-monitor/src/main.rs"]);
   assert.equal(gates.rust, "true");

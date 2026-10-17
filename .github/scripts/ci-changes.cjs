@@ -31,6 +31,7 @@ const RUNS_EVERYTHING = [
 // Paths outside a package, or files inside one that other packages read
 // through relative imports rather than a package.json dependency.
 const EXTRA_OWNERS = [
+  [/^apps\/cloud\/containers\/cliproxyapi\/release\.json$/, ["t3"]], // signalbox: the server bundles the account hub pins.
   [/^scripts\/cloud-migrations\//, ["@signalbox/cloud"]], // signalbox: stage tests import the migration parser.
   // Vite configs and tsconfigs of these apps import scripts/lib directly.
   [/^scripts\/lib\//, ["@t3tools/desktop", "@t3tools/mobile", "@t3tools/web", "t3"]],
