@@ -26,6 +26,7 @@ test("waits until every host serves its own certificate", async () => {
   const ok = await waitForOwnCertificates(Object.keys(served), {
     deadlineMs: 60_000,
     intervalMs: 10_000,
+    resolve: async () => undefined,
     probe: async (host) => {
       probes.push(host);
       return served[host].shift();
@@ -48,9 +49,31 @@ test("gives up at the deadline while a host is still on the wildcard", async () 
   const ok = await waitForOwnCertificates(["preview-1.signalbox.run"], {
     deadlineMs: 30_000,
     intervalMs: 10_000,
+    resolve: async () => undefined,
     probe: async () => UNIVERSAL,
     log: () => {},
     ...clock(),
   });
   assert.equal(ok, false);
+});
+
+test("reports unresolved DNS separately from an attached domain waiting for its certificate", async () => {
+  const logs = [];
+  const times = clock();
+  const ok = await waitForOwnCertificates(["app.example", "gateway.example"], {
+    deadlineMs: 20_000,
+    intervalMs: 10_000,
+    resolve: async (host) => {
+      if (host === "app.example") throw new Error("ENOTFOUND");
+      return undefined;
+    },
+    probe: async () => UNIVERSAL,
+    log: (message) => logs.push(message),
+    ...times,
+  });
+  assert.equal(ok, false);
+  assert.deepEqual(logs, [
+    "Cloudflare has the Worker domain binding, but DNS did not resolve before the deadline: app.example.",
+    "DNS resolves, but the zone's shared certificate is still served: gateway.example.",
+  ]);
 });

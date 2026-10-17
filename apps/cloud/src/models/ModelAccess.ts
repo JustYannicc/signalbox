@@ -7,8 +7,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { isLocalKey } from "../localKeys/LocalKeys.ts";
-import type { ModelGatewayRecord } from "../modelGateway/modelGatewayRecord.ts";
-import { scrubModelRequest } from "../modelGateway/scrubModelRequest.ts";
+import type { ModelGatewayRecord } from "./ModelRecords.ts";
+import { scrubModelRequest } from "./internal/scrubModelRequest.ts";
 import { threadOfModelToken } from "../thread/ModelTokens.ts";
 import * as ModelAuthority from "./internal/ModelAuthority.ts";
 import type {

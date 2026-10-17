@@ -11,7 +11,7 @@ import { isPreviewHost, labelOfHost, previewSettings } from "./thread/preview/pr
 import { routePreview } from "./thread/preview/previewRoute.ts";
 import { attachmentStorage } from "./attachments/attachmentObjects.ts";
 import { handleDriveRequest, isDriveApiPath } from "./drive/driveRoutes.ts";
-import { ModelGatewayRecord } from "./modelGateway/modelGatewayRecord.ts";
+import { ModelGatewayRecord } from "./models/ModelRecords.ts";
 import * as ModelAccess from "./models/ModelAccess.ts";
 import { layerModelAccess } from "./models/cloudflare.ts";
 import { connectRunner, isRunnerSocketPath } from "./thread/runner/runnerRoute.ts";

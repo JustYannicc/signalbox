@@ -1,16 +1,16 @@
 // @effect-diagnostics globalDate:off globalConsole:off - a plain Workers fetch handler that forwards streams; no Effect runtime on the hot path.
 import type { ModelGatewayProvider } from "@signalbox/runner-protocol/RunnerProtocol";
 
-import type { ModelServeReply } from "../models/ModelProtocol.ts";
-import { handleModelRequest } from "./modelGateway.ts";
-import type { ModelGatewayRecord } from "./modelGatewayRecord.ts";
+import type { ModelServeReply } from "../ModelProtocol.ts";
+import { handleModelRequest } from "../ModelGateway.ts";
+import type { ModelGatewayRecord } from "../ModelRecords.ts";
 
 /**
  * The ModelGateway Worker (`wrangler.model-gateway.jsonc`): the public origin
  * machines' harnesses call. It holds no keys, and never learns which pool a
  * turn runs on: the cloud's `ModelGrants` entrypoint, over a service binding,
  * checks each token and sends granted requests to the turn's pool. Each
- * record goes to its thread the same way. See `modelGateway.ts`.
+ * record goes to its thread the same way through `ModelGateway`.
  */
 
 export interface ModelGatewayEnv {
@@ -27,7 +27,7 @@ export interface ModelGatewayEnv {
 }
 
 export default {
-  fetch(request, env, ctx) {
+  fetch(request: Request, env: ModelGatewayEnv, ctx: Pick<ExecutionContext, "waitUntil">) {
     return handleModelRequest(request, {
       serve: (token, provider, path, forwarded) =>
         env.GRANTS.serve(token, provider, path, forwarded),
