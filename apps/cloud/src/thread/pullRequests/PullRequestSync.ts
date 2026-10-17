@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as Semaphore from "effect/Semaphore";
 
 import { GitHub } from "../../github/GitHub.ts";
 import { pullRequestSnapshot } from "../../github/GitHubPullRequests.ts";
@@ -136,6 +137,8 @@ export class PullRequestSync extends Context.Service<
   {
     /** Reads every due link and dispatches what changed. Returns when one is due next; null: none. */
     readonly sync: Effect.Effect<number | null>;
+    /** Reads one explicitly requested link, even if its normal cadence has not made it due. */
+    readonly requestSync: (key: string) => Effect.Effect<number | null>;
     /** When a link is due next, reading nothing from GitHub. */
     readonly dueAt: Effect.Effect<number | null>;
     /** Whether a turn waiting to start waits for reads due now; `sync` makes them. Never fails. */
@@ -151,6 +154,8 @@ const make = Effect.gen(function* () {
   const github = yield* GitHub;
   const crypto = yield* Crypto.Crypto;
   const host = github.api.host;
+  const syncLock = yield* Semaphore.make(1);
+  const serialized = syncLock.withPermits(1);
 
   /** The thread when it has links to schedule, with its polls; null otherwise. */
   const linked = Effect.gen(function* () {
@@ -246,63 +251,135 @@ const make = Effect.gen(function* () {
       return { retryAt: null };
     });
 
-  const sync: PullRequestSync["Service"]["sync"] = Effect.gen(function* () {
-    const current = yield* linked;
-    if (current === null) return null;
-    const now = yield* Clock.currentTimeMillis;
-    const entries = pullRequestSchedule({ ...current, host, now });
-    const due = entries.filter((entry) => entry.at !== null && entry.at <= now);
-    if (due.length === 0) return nextAt(entries);
-    const owner = yield* Effect.orDie(store.owner);
-    if (owner === null) return null;
-    const threadId = current.projection.thread.id;
-    // Who and where, never what (#284): ids only.
-    yield* Effect.annotateCurrentSpan({
-      "person.id": owner.userId,
-      "folder.id": owner.driveId ?? "my-drive",
-      "thread.id": threadId,
-      "pull_requests.due": due.length,
-    });
-    // Only links still on the thread keep a poll; the others' stay as they were.
-    const recorded = new Map(
-      [...current.polls].filter(([key]) => entries.some((entry) => entry.key === key)),
-    );
-    // Suspended: it saves `recorded` as the reads below left it.
-    const save = Effect.suspend(() => Effect.orDie(polls.replace([...recorded.values()])));
-    yield* Effect.gen(function* () {
-      const token = yield* users
-        .forUser(owner.userId)
-        .githubAccessToken()
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.as(
-              Effect.logWarning("GitHub token unavailable for pull request sync", { cause }),
-              null,
-            ),
-          ),
+  const requestSync: PullRequestSync["Service"]["requestSync"] = (key) =>
+    serialized(
+      Effect.gen(function* () {
+        const current = yield* linked;
+        if (current === null) return null;
+        const link = visibleThreadPullRequests(current.projection.thread.pullRequests ?? []).find(
+          (candidate) => threadPullRequestKeyOf(candidate) === key,
         );
-      // The owner, within the thread's own context, which is all a sync needs to see it.
-      const actor = { userId: owner.userId, contextIds: [owner.contextId] };
-      for (const { link, key } of due) {
-        if (token === null) {
-          yield* counted("not_connected");
-          recorded.set(key, { key, polledAt: now, retryAt: null });
-          continue;
-        }
-        const { retryAt } = yield* syncLink(link, token, actor, threadId);
-        recorded.set(key, { key, polledAt: now, retryAt });
-        // The rest wait out the pause with it.
-        if (retryAt !== null) break;
-      }
-      // Saved even when something above failed, so a retry doesn't read them all again.
-    }).pipe(Effect.ensuring(save));
-    const after = yield* engine.projection;
-    return after === null
-      ? null
-      : nextAt(pullRequestSchedule({ projection: after, polls: recorded, host, now }));
-  }).pipe(Effect.withSpan("PullRequestSync.sync"));
+        if (link === undefined || normalizeThreadPullRequestKey(link).host !== host) return null;
 
-  return PullRequestSync.of({ sync, dueAt, holdsTurn });
+        const now = yield* Clock.currentTimeMillis;
+        // A 403 pauses reads on the owner's token, including a manual refresh. Do not
+        // replace the persisted retryAt with a fresh poll time while that pause holds.
+        const pausedUntil = Math.max(
+          0,
+          ...[...current.polls.values()].map((poll) => poll.retryAt ?? 0),
+        );
+        if (pausedUntil > now) return pausedUntil;
+
+        const owner = yield* Effect.orDie(store.owner);
+        if (owner === null) return null;
+        const entries = pullRequestSchedule({ ...current, host, now });
+        const recorded = new Map(
+          [...current.polls].filter(([pollKey]) => entries.some((entry) => entry.key === pollKey)),
+        );
+        const save = Effect.suspend(() => Effect.orDie(polls.replace([...recorded.values()])));
+        yield* Effect.gen(function* () {
+          const token = yield* users
+            .forUser(owner.userId)
+            .githubAccessToken()
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.as(
+                  Effect.logWarning("GitHub token unavailable for pull request sync", { cause }),
+                  null,
+                ),
+              ),
+            );
+          const threadId = current.projection.thread.id;
+          // The owner's own object, which is all a sync needs to see this thread.
+          const actor = { userId: owner.userId, contextIds: [owner.contextId] };
+          if (token === null) {
+            yield* counted("not_connected");
+            recorded.set(key, { key, polledAt: now, retryAt: null });
+          } else {
+            const { retryAt } = yield* syncLink(link, token, actor, threadId);
+            recorded.set(key, { key, polledAt: now, retryAt });
+          }
+        }).pipe(Effect.ensuring(save));
+        const after = yield* engine.projection;
+        if (after === null) return null;
+        const afterNow = yield* Clock.currentTimeMillis;
+        const afterLink = visibleThreadPullRequests(after.thread.pullRequests ?? []).find(
+          (candidate) => threadPullRequestKeyOf(candidate) === key,
+        );
+        if (
+          afterLink?.snapshot !== null &&
+          afterLink?.snapshot !== undefined &&
+          (link.snapshot === null || !snapshotFieldsEqual(link.snapshot, afterLink.snapshot))
+        ) {
+          // An alarm publishes the committed snapshot to the owner and automations.
+          // Return now even for a newly merged PR, whose normal cadence is `never`.
+          return afterNow;
+        }
+        return nextAt(
+          pullRequestSchedule({ projection: after, polls: recorded, host, now: afterNow }),
+        );
+      }),
+    );
+
+  const sync: PullRequestSync["Service"]["sync"] = serialized(
+    Effect.gen(function* () {
+      const current = yield* linked;
+      if (current === null) return null;
+      const now = yield* Clock.currentTimeMillis;
+      const entries = pullRequestSchedule({ ...current, host, now });
+      const due = entries.filter((entry) => entry.at !== null && entry.at <= now);
+      if (due.length === 0) return nextAt(entries);
+      const owner = yield* Effect.orDie(store.owner);
+      if (owner === null) return null;
+      const threadId = current.projection.thread.id;
+      // Who and where, never what (#284): ids only.
+      yield* Effect.annotateCurrentSpan({
+        "person.id": owner.userId,
+        "folder.id": owner.driveId ?? "my-drive",
+        "thread.id": threadId,
+        "pull_requests.due": due.length,
+      });
+      // Only links still on the thread keep a poll; the others' stay as they were.
+      const recorded = new Map(
+        [...current.polls].filter(([key]) => entries.some((entry) => entry.key === key)),
+      );
+      // Suspended: it saves `recorded` as the reads below left it.
+      const save = Effect.suspend(() => Effect.orDie(polls.replace([...recorded.values()])));
+      yield* Effect.gen(function* () {
+        const token = yield* users
+          .forUser(owner.userId)
+          .githubAccessToken()
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.as(
+                Effect.logWarning("GitHub token unavailable for pull request sync", { cause }),
+                null,
+              ),
+            ),
+          );
+        // The owner, within the thread's own context, which is all a sync needs to see it.
+        const actor = { userId: owner.userId, contextIds: [owner.contextId] };
+        for (const { link, key } of due) {
+          if (token === null) {
+            yield* counted("not_connected");
+            recorded.set(key, { key, polledAt: now, retryAt: null });
+            continue;
+          }
+          const { retryAt } = yield* syncLink(link, token, actor, threadId);
+          recorded.set(key, { key, polledAt: now, retryAt });
+          // The rest wait out the pause with it.
+          if (retryAt !== null) break;
+        }
+        // Saved even when something above failed, so a retry doesn't read them all again.
+      }).pipe(Effect.ensuring(save));
+      const after = yield* engine.projection;
+      return after === null
+        ? null
+        : nextAt(pullRequestSchedule({ projection: after, polls: recorded, host, now }));
+    }),
+  ).pipe(Effect.withSpan("PullRequestSync.sync"));
+
+  return PullRequestSync.of({ sync, requestSync, dueAt, holdsTurn });
 });
 
 /** In a thread's object: needs its engine and store, the owner's object, and GitHub. */

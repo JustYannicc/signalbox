@@ -1,10 +1,10 @@
 import type { CommitAuthor, DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
-import type { SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
 import type { SessionAccess } from "@signalbox/runner-protocol/SessionProtocol";
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import {
   type MachineClass,
   type ModelGatewayProvider,
+  MIN_RUNNER_PROTOCOL_VERSION,
   RUNNER_PROTOCOL_VERSION,
   type RunnerHello,
   type RunnerItem,
@@ -25,8 +25,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
+import type { DriveAuthorization, RemoteAuthorization } from "../ThreadAuthorization.ts";
 import { myDriveId } from "../../drive/driveAccess.ts";
-import { type ModelPoolRoute, poolObjectName } from "../../pool/PoolDirectory.ts";
+import { poolObjectName } from "../../pool/PoolDirectory.ts";
+import type { ModelAuthorization } from "../../models/ModelProtocol.ts";
 import { isRemoteToken, remoteToken } from "../../drive/remoteToken.ts";
 import type { UserObjectError } from "../../user/UserDirectory.ts";
 import { traceIdOf } from "../diagnostics/traceId.ts";
@@ -34,6 +36,7 @@ import { TurnDiagnostics } from "../diagnostics/TurnDiagnostics.ts";
 import { driveToken, isDriveToken } from "../../drive/driveToken.ts";
 import { gatewayProviderFor, poolIdOfInstance } from "../providerCatalog.ts";
 import { holdsNativeSession } from "../session/nativeSession.ts";
+import * as PreviewState from "../PreviewState.ts";
 import { steersOf } from "../steering.ts";
 import { SessionRows } from "../session/SessionRows.ts";
 import { sessionToken } from "../session/sessionToken.ts";
@@ -44,7 +47,7 @@ import type { StopReason } from "../diagnostics/DiagnosticsStore.ts";
 import { isLeaseToken } from "./leaseToken.ts";
 import { MachineBackend, type MachineExit } from "./MachineBackend.ts";
 import { machineClassFor } from "./machineClass.ts";
-import { isModelToken, type ModelGrant, modelToken } from "./modelToken.ts";
+import { isModelToken, type ModelGrant, modelToken } from "../ModelTokens.ts";
 import { freshSessionText, freshSessionTurn } from "./freshSession.ts";
 import { continuedRun, recoverRunEvents } from "./runRecovery.ts";
 import {
@@ -130,22 +133,6 @@ export const PreviewHold = Context.Reference<{
   defaultValue: () => ({ held: Effect.succeed(false), lastActiveAt: Effect.succeed(null) }),
 });
 
-/** What a drive token lets its holder do right now (see `drive/driveRoutes.ts`). */
-export type DriveAuthorization =
-  | {
-      readonly _tag: "granted";
-      readonly threadId: string;
-      /** The thread's owner, whose role the drive checks again on every write. */
-      readonly userId: string;
-      readonly driveId: string;
-      readonly generation: number;
-      /** Whether a turn runs: `main` only moves during one. */
-      readonly live: boolean;
-    }
-  | { readonly _tag: "denied"; readonly reason: string }
-  /** The owner's access couldn't be checked just now; the Runner retries. */
-  | { readonly _tag: "unavailable" };
-
 /**
  * Whether this cloud stores drives, and whether a thread's owner may still
  * change files in its drive: asked of their own object on every drive call,
@@ -176,44 +163,9 @@ export class ThreadSecrets extends Context.Service<
   }
 >()("@signalbox/cloud/thread/runner/ThreadRunner/ThreadSecrets") {}
 
-/** What a remote token lets its holder fetch right now. */
-export type RemoteAuthorization =
-  | {
-      readonly _tag: "granted";
-      readonly threadId: string;
-      readonly driveId: string;
-      /** Whose GitHub connection reaches the remote. */
-      readonly userId: string;
-    }
-  | { readonly _tag: "denied"; readonly reason: string }
-  | { readonly _tag: "unavailable" };
-
 /** Whether a session token may write the thread's session rows right now, and for which machine. */
 export type SessionAuthorization =
   | { readonly _tag: "granted"; readonly generation: number }
-  | { readonly _tag: "denied"; readonly reason: string };
-
-export type ModelAuthorization =
-  | {
-      readonly _tag: "granted";
-      readonly runId: RunId;
-      readonly traceId: string;
-      /** Where the request goes: the turn's pool, for its requester. */
-      readonly pool: ModelPoolRoute;
-      /** What the gateway scrubs from the request (#591). Never log them. */
-      readonly secrets: ReadonlyArray<SecretValue>;
-    }
-  /**
-   * The token is the turn's, but its secrets aren't registered yet (#591): the
-   * request is refused for the turn, not as a bad key, which would send a
-   * harness to sign in again.
-   */
-  | {
-      readonly _tag: "unregistered";
-      readonly runId: RunId;
-      readonly traceId: string;
-      readonly reason: string;
-    }
   | { readonly _tag: "denied"; readonly reason: string };
 
 /** What the object must do for the lease, and when to look again. */
@@ -406,6 +358,7 @@ const needsUpkeep = (lease: ThreadStore.MachineLease, live: boolean, previewHeld
 const make = Effect.gen(function* () {
   const engine = yield* ThreadEngine.ThreadEngine;
   const previews = yield* PreviewHold;
+  const previewState = yield* PreviewState.PreviewState;
   const store = yield* ThreadStore.ThreadStore;
   const sessionRows = yield* SessionRows;
   const crypto = yield* Crypto.Crypto;
@@ -491,7 +444,10 @@ const make = Effect.gen(function* () {
           }),
           keep<HelloResult>({ _tag: "refused", reason, message }),
         );
-      if (hello.protocolVersion !== RUNNER_PROTOCOL_VERSION) {
+      if (
+        hello.protocolVersion < MIN_RUNNER_PROTOCOL_VERSION ||
+        hello.protocolVersion > RUNNER_PROTOCOL_VERSION
+      ) {
         return refuse(
           "protocol_version",
           `This thread speaks Runner protocol ${RUNNER_PROTOCOL_VERSION}.`,
@@ -1061,9 +1017,11 @@ const make = Effect.gen(function* () {
           }
           const generation = lease.generation + 1;
           const token = yield* newToken;
+          const savedServices = (yield* Effect.orDie(previewState.configuration)).services;
           const machineClass = machineClassFor({
             worktreePath: projection.thread.worktreePath,
-            movedUp: lease.movedUp === true,
+            movedUp:
+              lease.movedUp === true || lease.machineClass === "heavy" || savedServices.length > 0,
           });
           if (run !== undefined) {
             yield* diagnostics.machineRequested({ generation, run, now, machineClass });

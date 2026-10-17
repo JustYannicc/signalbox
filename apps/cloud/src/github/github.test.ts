@@ -21,9 +21,11 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as TestClock from "effect/testing/TestClock";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -42,10 +44,11 @@ import { remoteHead } from "../drive/remoteRoutes.ts";
 import * as Platform from "../platform.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import * as IdentityProvider from "../account/IdentityProvider.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
 import * as UserStore from "../user/UserStore.ts";
 import * as CloudRpc from "../user/rpc.ts";
-import { GitHub } from "./GitHub.ts";
+import { GitHub, layerForUsers } from "./GitHub.ts";
 import * as GitHubConnection from "./GitHubConnection.ts";
 import { makeFakeGitHub } from "./githubTesting.ts";
 
@@ -126,6 +129,67 @@ describe("commitAuthorOf", () => {
     expect(GitHubConnection.commitAuthorOf({ ...account, name: "Octo <Cat>" }).name).toBe(
       "Octo Cat",
     );
+  });
+});
+
+it.effect("reports GitHub availability from each user's resolved WorkOS realm", () => {
+  const sandboxUserId = "sandbox-user";
+  const identityProviders = IdentityProvider.IdentityProviders.of({
+    identityProviderForUser: (id) =>
+      Effect.succeed(
+        id === sandboxUserId
+          ? {
+              clientId: "client_sandbox",
+              apiKey: Redacted.make("sk_test_sandbox"),
+              apiBaseUrl: "https://sandbox.workos.test",
+            }
+          : {
+              clientId: "client_primary",
+              apiBaseUrl: "https://primary.workos.test",
+            },
+      ),
+  });
+  const github = layerForUsers().pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FetchHttpClient.layer,
+        Layer.succeed(IdentityProvider.IdentityProviders, identityProviders),
+      ),
+    ),
+  );
+  const cloud = makeMemoryCloud({ github });
+
+  const discover = (id: string) =>
+    Effect.gen(function* () {
+      yield* cloud.userDirectory.forUser(id).recordSignIn({
+        id,
+        email: `${id}@example.test`,
+      });
+      const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CloudRpc.layerHandlers({ identity, userId: id, sid: `session-${id}` }),
+            CloudRpc.layerScopeAuthorization([AuthOrchestrationReadScope]),
+          ).pipe(Layer.provide(cloud.layerFor(id))),
+        ),
+      );
+      return yield* rpc[WS_METHODS.serverDiscoverSourceControl]({});
+    });
+
+  return Effect.gen(function* () {
+    const ordinary = yield* discover("ordinary-user");
+    expect(ordinary.sourceControlProviders[0]).toMatchObject({
+      kind: "github",
+      status: "missing",
+      installHint: "This cloud can't connect GitHub: it has no WorkOS API key.",
+    });
+
+    const sandbox = yield* discover(sandboxUserId);
+    expect(sandbox.sourceControlProviders[0]).toMatchObject({
+      kind: "github",
+      status: "available",
+      installHint: "Connect GitHub to import its repositories.",
+    });
   });
 });
 
