@@ -1,3 +1,4 @@
+import { WS_METHODS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { filterTraces } from "./nativeTracesFilter.ts";
@@ -398,5 +399,71 @@ describe("filterTraces", () => {
     expect(filterTraces({ resourceSpans: [{ scopeSpans: [{ spans: [{}] }] }] }, trusted)).toEqual({
       resourceSpans: [],
     });
+  });
+});
+
+describe("RPC trace filtering", () => {
+  it("keeps only catalog methods and exact RPC names, without request parameters", () => {
+    const method = WS_METHODS.accountPoolCreate;
+    const names = [
+      method,
+      `RpcClient.${method}`,
+      `RpcServer.${method}`,
+      "canary?token=secret",
+      `${method} canary-secret`,
+    ];
+    const result = filterTraces(
+      {
+        resourceSpans: [
+          {
+            resource: { attributes: [str("service.name", "signalbox-cloud")] },
+            scopeSpans: [
+              {
+                spans: names.map((name, index) => ({
+                  traceId: TRACE,
+                  spanId: String(index + 1).repeat(16),
+                  parentSpanId: "9999999999999999",
+                  name,
+                  kind: 2,
+                  startTimeUnixNano: "1000000000",
+                  endTimeUnixNano: "2000000000",
+                  attributes: [
+                    str("rpc.method", index < 3 ? method : `${method}?token=canary-secret`),
+                    str("rpc.parameters", "canary-private-message"),
+                    str("rpc.request", "canary-file-content"),
+                  ],
+                })),
+              },
+            ],
+          },
+        ],
+      },
+      trusted,
+    );
+    const spans = result?.resourceSpans[0]?.scopeSpans[0]?.spans;
+    expect(spans?.map((span) => span.name)).toEqual([
+      method,
+      `RpcClient.${method}`,
+      `RpcServer.${method}`,
+      "worker.operation",
+      "worker.operation",
+    ]);
+    expect(
+      spans
+        ?.slice(0, 3)
+        .every((span) =>
+          span.attributes?.some(
+            (attribute) =>
+              attribute.key === "rpc.method" &&
+              "stringValue" in attribute.value &&
+              attribute.value.stringValue === method,
+          ),
+        ),
+    ).toBe(true);
+    expect(spans?.slice(3).every((span) => span.attributes?.length === 0)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("canary");
+    expect(
+      spans?.every((span) => span.traceId === TRACE && span.parentSpanId === "9999999999999999"),
+    ).toBe(true);
   });
 });
