@@ -20,4 +20,4 @@ Clients use contracts and RPC, with platform APIs confined to adapters.
 `vp run lint:boundaries` checks these rules and dependency cycles, including type
 imports. See [workspace rules](../../../packages/README.md) for severity and the
 baseline. Existing leaks get fixed as PRs touch them, without a backend migration
-or a change to T3 Code's thread model.
+or a change to the thread model.
