@@ -4,6 +4,9 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { learnerTool } from "./learnerTool.ts";
+import * as UserLearner from "./UserLearner.ts";
+import * as UserThreadEvents from "./UserThreadEvents.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
@@ -47,6 +50,8 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | UserLearner.UserLearner
+      | UserThreadEvents.UserThreadEvents
       | UserStore.UserStore
       | UserShell.UserShell
       | UserContexts.UserContexts
@@ -110,16 +115,10 @@ export const makeUserObjectApi = (
         ),
       );
     },
-    // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
       run(
-        Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
-          Option.isNone(automations)
-            ? Effect.void
-            : automations.value.threadEvents({ threadId, events: wire.events.decode(events) }),
-        ).pipe(
-          // Ids only, never what happened (#284).
-          Effect.withSpan("UserObject.threadEvents", { attributes: { "thread.id": threadId } }),
+        UserThreadEvents.UserThreadEvents.use((service) =>
+          service.publish({ threadId, events: wire.events.decode(events) }),
         ),
       ),
     driveEvents: ({ driveId, events }) =>
@@ -180,6 +179,7 @@ export const makeUserObjectApi = (
           status.folderStatus(ThreadId.make(threadId)),
         ).pipe(Effect.map(statusLineJson.folder.encode)),
       ),
+    learnerTool: (threadId, name, input) => run(learnerTool(threadId, name, input)),
     browserSession: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),

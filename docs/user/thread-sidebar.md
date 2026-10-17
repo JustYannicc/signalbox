@@ -91,6 +91,17 @@ Notes are private by default: only you and your assistant read them. In an organ
 switch to **Team** to write notes the folder's agent can read too. Agents working in a folder can
 look up its team notes when they need them. They never see your private notes.
 
+### Learning from decisions
+
+In cloud threads, ask the agent to remember a rule for the thread's current folder or to consult
+what that level has learned. Your personal top level, each folder, and each organization keep
+separate learning. Moving a thread changes where new decisions are recorded; it does not copy
+its earlier learning into the new folder.
+
+Agents can pair a recommendation with your later decision to learn a rule. A learned rule needs
+later support before the agent can rely on it. A rule you state directly can be used right away.
+When the evidence is missing or contradictory, the learner leaves the question for review.
+
 ### Sections on your own server
 
 On a server you run yourself, Home organizes projects into sections instead. On web and desktop,
