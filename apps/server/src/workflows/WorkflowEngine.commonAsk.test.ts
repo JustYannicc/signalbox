@@ -293,3 +293,31 @@ export default workflow(async (w) => w.ask("Merge?", { options: ["merge", "not y
     );
   },
 );
+
+it.effect.each(["deleted", "missing"] as const)(
+  "stops retrying ask sync after its thread is %s",
+  (gone) => {
+    const threads = fakeThreads();
+    threads.state.failAskSync = true;
+    return withEngine(
+      { threads, http: fakeHttp() },
+      Effect.gen(function* () {
+        const engine = yield* WorkflowEngine;
+        const automation = yield* saveOk(SOURCE);
+        const run = yield* engine.startRun({
+          automationId: automation.id,
+          trigger: "manual",
+          attach: { threadId: THREAD },
+        });
+        yield* engine.drain;
+        expect(yield* engine.nextAskSyncAt).not.toBeNull();
+        if (gone === "deleted")
+          threads.state.shells[THREAD] = { deletedAt: "2026-10-17T12:00:00.000Z" };
+        else threads.state.missing.add(THREAD);
+        yield* engine.tick;
+        expect(yield* engine.nextAskSyncAt).toBeNull();
+        expect((yield* engine.getRun(run.id)).steps[0]?.commonAsk?.status).toBe("pending");
+      }),
+    );
+  },
+);

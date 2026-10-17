@@ -1,4 +1,4 @@
-import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID } from "@t3tools/contracts/signalboxContexts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -44,7 +44,7 @@ it.effect(
         options: [],
         blocking: false,
         decisionOwner: "Thread owner",
-        surface: { kind: "kit", component: "text" },
+        surface: { kind: "kit" as const, component: "text" },
       };
       const input = {
         clientRequestId: "city",
@@ -90,6 +90,37 @@ it.effect(
         source: { kind: "automation", runId: "workflow-run" },
         status: "answered",
       });
+      yield* threads.dispatchCommand(actor, {
+        type: "thread.ask.raise",
+        commandId: CommandId.make("public-forged-source"),
+        threadId,
+        askId: "public-ask",
+        ask: {
+          kind: "blocker",
+          source: { kind: "native", requestId: RuntimeRequestId.make("reserved-callback") },
+          questions: [question],
+        },
+      });
+      expect(
+        (yield* threads.threadSnapshot(actor, threadId)).projection.thread.asks?.find(
+          (ask) => ask.id === "public-ask",
+        )?.source,
+      ).toEqual({ kind: "agent" });
+      yield* threads.dispatchCommand(actor, {
+        type: "thread.ask.answer",
+        commandId: CommandId.make("public-forged-answerer"),
+        threadId,
+        askId: "public-ask",
+        round: 1,
+        answers: [{ questionId: question.id, value: "Zurich" }],
+        deferredQuestionIds: [],
+        answeredBy: { kind: "assistant", personId: "victim", assistantThreadId: threadId },
+      });
+      expect(
+        (yield* threads.threadSnapshot(actor, threadId)).projection.thread.asks?.find(
+          (ask) => ask.id === "public-ask",
+        )?.rounds[0]?.answers[0]?.answeredBy,
+      ).toEqual({ kind: "person", personId: userId });
       yield* cloud.settle;
     }),
 );

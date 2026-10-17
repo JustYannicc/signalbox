@@ -304,3 +304,45 @@ it.effect("leaves secret fields on their original request when the public ask is
     expect(projection.thread.asks?.[0]?.questions.map((question) => question.id)).toEqual(["a"]);
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect("holds partial native rounds without queuing a stale message behind the callback", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* create;
+    const sink = yield* EventSink.EventSinkV2;
+    const { request, events } = native(yield* DateTime.now);
+    yield* sink.write({
+      events: events.map((event) =>
+        event.type !== "turn-item.updated" || event.payload.type !== "user_input_request"
+          ? event
+          : {
+              ...event,
+              payload: {
+                ...event.payload,
+                questions: [
+                  ...event.payload.questions,
+                  { ...event.payload.questions[0]!, id: "b" },
+                ],
+              },
+            },
+      ),
+    });
+    const command = answer(`native:${request.id}`);
+    yield* orchestrator.dispatch(command);
+    const projection = yield* orchestrator.getThreadProjection(threadId);
+    expect(projection.thread.asks?.[0]?.rounds.at(-1)?.questionIds).toEqual(["b"]);
+    expect(projection.messages).toEqual([]);
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    expect(yield* outbox.listByCommandId(command.commandId)).toEqual([]);
+    yield* orchestrator.dispatch({
+      ...command,
+      commandId: CommandId.make("finish-partial"),
+      round: 2,
+      answers: [{ questionId: "b", value: ["B"] }],
+    });
+    const final = (yield* outbox.listByCommandId(CommandId.make("finish-partial"))).find(
+      (effect) => effect.request.type === "runtime-request.respond",
+    );
+    expect(final?.request).toMatchObject({ answers: { a: "yes", b: ["B"] } });
+    expect((yield* orchestrator.getThreadProjection(threadId)).messages).toEqual([]);
+  }).pipe(Effect.provide(layer)),
+);

@@ -1,6 +1,7 @@
 import { type ThreadCommand } from "./threadCommands.ts";
 import { decideAsk } from "./threadAsks.ts";
 import { runtimeResponseEvents } from "./runtimeResponses.ts";
+import { isHarnessInstance } from "./providerCatalog.ts";
 import {
   MessageId,
   type OrchestrationV2AppThread,
@@ -55,6 +56,9 @@ export interface ThreadWorktree {
 /** The rejection for a command the cloud does not serve yet. */
 export const unsupported = (commandType: string) =>
   `${commandType} is not available in the cloud yet.`;
+
+export const HARNESS_MODES_UNSUPPORTED =
+  "Claude and Codex in the cloud run with full access and without plan mode until all selected runners support approval responses.";
 
 const CLOUD_COMMAND_TYPES = [
   "thread.create",
@@ -154,6 +158,15 @@ function dispatchMessage(
       updatedAt: ctx.now,
     };
     updates.push(threadEvent(ctx, "thread.model-selection-updated", current));
+  }
+
+  // Older runners cannot deliver approval responses. Keep the existing mode limit
+  // until runner selection enforces runtimeRequestResponses (#410).
+  if (
+    isHarnessInstance(current.providerInstanceId) &&
+    (current.runtimeMode !== "full-access" || current.interactionMode === "plan")
+  ) {
+    return reject(HARNESS_MODES_UNSUPPORTED);
   }
 
   const ordinal = projection.runs.length + 1;

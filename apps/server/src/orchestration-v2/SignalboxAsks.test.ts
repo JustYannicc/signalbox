@@ -56,6 +56,23 @@ it.effect(
       const archived = (yield* orchestrator.getThreadProjection(threadId)).thread.asks?.[0];
       expect(archived?.status).toBe("archived");
       expect(archived?.rounds[0]?.answers).toHaveLength(1);
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("reopen"),
+        threadId,
+      });
+      const reopened = (yield* orchestrator.getThreadProjection(threadId)).thread.asks?.[0];
+      expect(reopened?.status).toBe("pending");
+      expect(reopened?.rounds.at(-1)?.closedAt).toBeNull();
+      yield* orchestrator.dispatch({
+        ...answer(),
+        commandId: CommandId.make("answer-reopened"),
+        round: 2,
+        answers: [{ questionId: "b", value: "B" }],
+      });
+      expect((yield* orchestrator.getThreadProjection(threadId)).thread.asks?.[0]?.status).toBe(
+        "answered",
+      );
     }).pipe(Effect.provide(layer)),
 );
 
@@ -122,4 +139,80 @@ it.effect(
       expect(projection.thread.asks?.[0]?.rounds).toHaveLength(2);
       expect(projection.messages).toEqual([]);
     }).pipe(Effect.provide(ThreadManagement.layer.pipe(Layer.provideMerge(layer)))),
+);
+
+it.effect("syncs a workflow outcome while archived and rejects withdrawing its wait", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* create;
+    yield* orchestrator.dispatch({
+      ...raise,
+      ask: { ...raise.ask, source: { kind: "automation", runId: "run", stepKey: "gate" } },
+    });
+    const withdraw = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.ask.withdraw",
+        commandId: CommandId.make("withdraw-automation"),
+        threadId,
+        askId: raise.askId,
+      }),
+    );
+    expect(Exit.isFailure(withdraw)).toBe(true);
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("archive-automation"),
+      threadId,
+    });
+    const ask = (yield* orchestrator.getThreadProjection(threadId)).thread.asks![0]!;
+    yield* orchestrator.dispatch({
+      type: "thread.ask.sync",
+      commandId: CommandId.make("sync-archived"),
+      threadId,
+      ask: { ...ask, status: "withdrawn" },
+    });
+    expect((yield* orchestrator.getThreadProjection(threadId)).thread.asks?.[0]?.status).toBe(
+      "withdrawn",
+    );
+    yield* orchestrator.dispatch({
+      type: "thread.unarchive",
+      commandId: CommandId.make("unarchive-automation"),
+      threadId,
+    });
+    expect((yield* orchestrator.getThreadProjection(threadId)).thread.asks?.[0]?.status).toBe(
+      "withdrawn",
+    );
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("keeps closed history out of shells and metadata events while preserving replay", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* create;
+    const raised = yield* orchestrator.dispatch(raise);
+    expect(raised.storedEvents.some(({ event }) => event.type === "thread.ask-updated")).toBe(true);
+    yield* orchestrator.dispatch({
+      ...answer(),
+      answers: [
+        { questionId: "a", value: "yes" },
+        { questionId: "b", value: "yes" },
+      ],
+    });
+    expect((yield* orchestrator.getThreadShell(threadId))?.asks).toEqual([]);
+    const renamed = yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("rename-with-history"),
+      threadId,
+      title: "Renamed",
+    });
+    const event = renamed.storedEvents.find(
+      ({ event }) => event.type === "thread.metadata-updated",
+    )?.event;
+    expect(event?.payload).not.toHaveProperty("asks");
+    expect(renamed.storedEvents.some(({ event }) => event.type === "thread.ask-updated")).toBe(
+      false,
+    );
+    const before = (yield* orchestrator.getThreadProjection(threadId)).thread.asks;
+    expect(before?.[0]?.status).toBe("answered");
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    expect((yield* maintenance.rebuild).valid).toBe(true);
+    expect((yield* orchestrator.getThreadProjection(threadId)).thread.asks).toEqual(before);
+  }).pipe(Effect.provide(layer)),
 );

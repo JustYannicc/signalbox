@@ -70,7 +70,7 @@ export const askTool = (
       }
       case "t3_ask_answer": {
         const params = yield* decodeAnswer(input);
-        return yield* threads.dispatchCommand(actor, {
+        return yield* threads.answerAskAsAssistant(actor, caller, {
           ...params,
           type: "thread.ask.answer",
           threadId: target(params.threadId),

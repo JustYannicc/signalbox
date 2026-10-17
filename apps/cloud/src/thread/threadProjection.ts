@@ -122,7 +122,7 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
-    asks: thread.asks,
+    asks: thread.asks?.filter((ask) => ask.status === "pending"),
     pendingRuntimeRequest: (() => {
       const request = projection.runtimeRequests
         .filter(

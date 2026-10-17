@@ -11,6 +11,7 @@ import type {
   SignalboxNativeAskRespondCommand,
 } from "@t3tools/contracts/signalboxAsks";
 import * as DateTime from "effect/DateTime";
+import { threadWithAsk } from "./signalboxAskEvents.ts";
 import { applyAskCommand } from "./signalboxAsks.ts";
 
 const isJson = Schema.is(Schema.Json);
@@ -28,7 +29,9 @@ export function mirrorNativeAskEvents(
   for (const event of events) {
     if (event.threadId !== thread.id) continue;
     last = event;
-    if ("archivedAt" in event.payload && "modelSelection" in event.payload) thread = event.payload;
+    if (event.type === "thread.ask-updated") thread = threadWithAsk(thread, event);
+    if ("archivedAt" in event.payload && "modelSelection" in event.payload)
+      thread = { ...event.payload, asks: event.payload.asks ?? thread.asks };
     if (event.type === "runtime-request.updated") {
       requests.set(event.payload.id, event.payload);
       if (event.payload.kind === "user_input") affected.add(event.payload.id);
@@ -120,12 +123,26 @@ export function mirrorNativeAskEvents(
         answeredBy:
           response?.requestId === requestId
             ? response.answeredBy
-            : { kind: "person", personId: "thread-owner" },
+            : { kind: "person", personId: "local-user" },
       },
       now,
     );
     if (answered.ok) asks = answered.asks;
   }
+  if (projection.thread.archivedAt !== null && thread.archivedAt === null)
+    asks = asks.map((ask) =>
+      ask.status !== "archived"
+        ? ask
+        : {
+            ...ask,
+            status: "pending",
+            updatedAt: now,
+            // Archiving suspended this round; the automation journal still owns its number.
+            rounds: Array.map(ask.rounds, (round, index) =>
+              index === ask.rounds.length - 1 ? { ...round, closedAt: null } : round,
+            ),
+          },
+    );
   if (thread.archivedAt !== null && asks.some((ask) => ask.status === "pending"))
     asks = asks.map((ask) =>
       ask.status !== "pending"

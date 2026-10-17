@@ -195,7 +195,7 @@ explains why it matters, what your answer unblocks, and what the agent recommend
 
 Answer with an option or your own words. You can answer some questions now and leave the rest
 for another round. An ask stays in the thread after the agent finishes; answering later sends
-your reply back to the agent. Archiving the thread closes its remaining asks and keeps their history.
+your reply back to the agent. Archiving the thread closes its remaining asks and keeps their history. Reopening it restores unfinished asks; an automation that ended while archived stays closed.
 
 ## See where a thread got to
 

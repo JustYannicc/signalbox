@@ -1,4 +1,5 @@
 import {
+  SignalboxAsk,
   SignalboxAskCommands,
   SignalboxAskSyncCommand,
   SignalboxAskThreadFields,
@@ -1633,6 +1634,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.ask-updated"),
+    payload: SignalboxAsk,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.pull-request-link-updated"),
     payload: ThreadPullRequestLink,
   }),
@@ -2437,6 +2443,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.provider-switched",
     ]),
     payload: OrchestrationV2AppThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.ask-updated"),
+    payload: SignalboxAsk,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

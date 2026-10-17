@@ -230,7 +230,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           commandId: yield* newCommandId(),
           requestId: input.requestId,
           answers: input.answers,
-          answeredBy: { kind: "assistant", personId: "thread-owner", assistantThreadId: caller.id },
+          answeredBy: { kind: "assistant", personId: "local-user", assistantThreadId: caller.id },
         })
         .pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };

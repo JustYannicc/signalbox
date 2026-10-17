@@ -35,6 +35,7 @@ function AskRound(props: {
   const canAnswer = useAtomValue(signalboxAskCommand.permissionAtom(threadRef.environmentId));
   const send = useAtomCommand(signalboxAskCommand, { reportFailure: false });
   const [drafts, setDrafts] = useState<Record<string, AskDraftAnswer>>({});
+  const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -42,7 +43,12 @@ function AskRound(props: {
   const questions = pendingAskQuestions(ask);
   const disabled = !canAnswer || busy;
   const submit = async (deferAll: boolean) => {
-    if (disabled || inFlight.current || (!deferAll && built.answers.length === 0)) return;
+    if (
+      disabled ||
+      inFlight.current ||
+      (!deferAll && built.answers.length === 0 && !comment.trim())
+    )
+      return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
@@ -55,14 +61,17 @@ function AskRound(props: {
           threadId: threadRef.threadId,
           askId: ask.id,
           ...built,
+          ...(comment.trim() ? { comment: comment.trim() } : {}),
           ...(deferAll
             ? { answers: [], deferredQuestionIds: questions.map((question) => question.id) }
             : {}),
           answeredBy: { kind: "person", personId: "local-user" },
         },
       });
-      if (result._tag === "Success") setDrafts({});
-      else if (!isAtomCommandInterrupted(result)) {
+      if (result._tag === "Success") {
+        setDrafts({});
+        setComment("");
+      } else if (!isAtomCommandInterrupted(result)) {
         const cause = squashAtomCommandFailure(result);
         setError(cause instanceof Error ? cause.message : "Couldn't save your answer. Try again.");
       }
@@ -90,12 +99,14 @@ function AskRound(props: {
             <Text className="font-sans text-sm text-foreground-muted">
               Whose decision: {question.decisionOwner}
             </Text>
-            <Text className="font-sans text-sm text-foreground-muted">
-              Recommendation:{" "}
-              {typeof question.recommendation === "string"
-                ? question.recommendation
-                : JSON.stringify(question.recommendation)}
-            </Text>
+            {question.recommendation === null ? null : (
+              <Text className="font-sans text-sm text-foreground-muted">
+                Recommendation:{" "}
+                {typeof question.recommendation === "string"
+                  ? question.recommendation
+                  : JSON.stringify(question.recommendation)}
+              </Text>
+            )}
             {question.options.map((option, index) => (
               <RequestActionButton
                 key={`${option.label}:${JSON.stringify(option.value)}`}
@@ -116,19 +127,21 @@ function AskRound(props: {
                 }
               />
             ))}
-            <RequestActionButton
-              label="Use recommendation"
-              tone={draft.useRecommendation ? "primary" : "secondary"}
-              accessibilityState={{ selected: draft.useRecommendation === true }}
-              disabled={disabled}
-              onPress={() =>
-                update({
-                  ...draft,
-                  selectedOptionIndexes: [],
-                  useRecommendation: !draft.useRecommendation,
-                })
-              }
-            />
+            {question.recommendation === null ? null : (
+              <RequestActionButton
+                label="Use recommendation"
+                tone={draft.useRecommendation ? "primary" : "secondary"}
+                accessibilityState={{ selected: draft.useRecommendation === true }}
+                disabled={disabled}
+                onPress={() =>
+                  update({
+                    ...draft,
+                    selectedOptionIndexes: [],
+                    useRecommendation: !draft.useRecommendation,
+                  })
+                }
+              />
+            )}
             {question.surface.kind === "html" ? (
               <Text className="font-sans text-sm text-foreground-muted">
                 Answer with the options or text below. The custom view is unavailable here.
@@ -147,6 +160,16 @@ function AskRound(props: {
           </View>
         );
       })}
+      <TextInput
+        accessibilityLabel="Round comment (optional)"
+        placeholder="Round comment (optional)"
+        multiline
+        value={comment}
+        editable={!disabled}
+        onChangeText={setComment}
+        onFocus={() => props.onInputFocusChange(true)}
+        onBlur={() => props.onInputFocusChange(false)}
+      />
       {!canAnswer ? (
         <Text className="font-sans text-sm text-foreground-muted">
           You don't have permission to answer in this environment.
@@ -169,7 +192,7 @@ function AskRound(props: {
               ? "Save answers, defer remainder"
               : "Save answers"
         }
-        disabled={disabled || built.answers.length === 0}
+        disabled={disabled || (built.answers.length === 0 && !comment.trim())}
         onPress={() => void submit(false)}
       />
       <RequestActionButton

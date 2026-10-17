@@ -1,4 +1,5 @@
 import * as Array from "effect/Array";
+import type { OrchestrationV2Command } from "@t3tools/contracts";
 import type {
   SignalboxAsk,
   SignalboxAskAnswerInput,
@@ -213,3 +214,20 @@ export function applyAskCommand(
 }
 
 export { mirrorNativeAskEvents } from "./signalboxNativeAsks.ts";
+
+/** A client can answer as itself; native and workflow provenance comes from internal paths. */
+export function clientAskCommand(
+  command: OrchestrationV2Command,
+  personId: string,
+): OrchestrationV2Command {
+  switch (command.type) {
+    case "thread.ask.raise":
+      return { ...command, ask: { ...command.ask, source: { kind: "agent" } } };
+    case "thread.ask.answer":
+      return { ...command, answeredBy: { kind: "person", personId } };
+    default:
+      return command;
+  }
+}
+
+export { compactAskEvents, threadWithAsk } from "./signalboxAskEvents.ts";

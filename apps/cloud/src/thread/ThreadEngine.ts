@@ -1,6 +1,6 @@
 import { type ThreadCommand } from "./threadCommands.ts";
 import { expireRuntimeRequests } from "./expireRuntimeRequests.ts";
-import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents, compactAskEvents } from "@t3tools/shared/signalboxAsks";
 import {
   type CommandId,
   EventId,
@@ -367,9 +367,13 @@ const make = Effect.gen(function* () {
     const events = yield* stamp(
       current.thread === null
         ? input.events
-        : mirrorNativeAskEvents(
-            current.thread.projection,
-            expireRuntimeRequests(current.thread.projection, input.events),
+        : compactAskEvents(
+            current.thread.projection.thread.id,
+            current.thread.projection.thread.asks,
+            mirrorNativeAskEvents(
+              current.thread.projection,
+              expireRuntimeRequests(current.thread.projection, input.events),
+            ),
           ),
     );
     const projection = applyEvents(current.thread?.projection ?? null, events);

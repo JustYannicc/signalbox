@@ -59,10 +59,12 @@ function AskQuestion({
           <dt className="inline font-medium">Whose decision: </dt>
           <dd className="inline">{question.decisionOwner}</dd>
         </div>
-        <div>
-          <dt className="inline font-medium">Recommendation: </dt>
-          <dd className="inline">{answerText(question.recommendation)}</dd>
-        </div>
+        {question.recommendation === null ? null : (
+          <div>
+            <dt className="inline font-medium">Recommendation: </dt>
+            <dd className="inline">{answerText(question.recommendation)}</dd>
+          </div>
+        )}
       </dl>
       <div className="flex flex-wrap gap-1.5">
         {question.options.map((option, index) => (
@@ -89,22 +91,24 @@ function AskQuestion({
             {option.label}
           </Button>
         ))}
-        <Button
-          type="button"
-          size="sm"
-          variant={draft.useRecommendation ? "secondary" : "outline"}
-          aria-pressed={draft.useRecommendation === true}
-          disabled={disabled}
-          onClick={() =>
-            onChange({
-              ...draft,
-              selectedOptionIndexes: [],
-              useRecommendation: !draft.useRecommendation,
-            })
-          }
-        >
-          Use recommendation
-        </Button>
+        {question.recommendation === null ? null : (
+          <Button
+            type="button"
+            size="sm"
+            variant={draft.useRecommendation ? "secondary" : "outline"}
+            aria-pressed={draft.useRecommendation === true}
+            disabled={disabled}
+            onClick={() =>
+              onChange({
+                ...draft,
+                selectedOptionIndexes: [],
+                useRecommendation: !draft.useRecommendation,
+              })
+            }
+          >
+            Use recommendation
+          </Button>
+        )}
       </div>
       {question.surface.kind === "html" ? (
         <p className="text-xs text-muted-foreground">
@@ -196,7 +200,7 @@ function AskRound({ ask, threadRef }: { ask: SignalboxAsk; threadRef: ScopedThre
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
-          disabled={disabled || built.answers.length === 0}
+          disabled={disabled || (built.answers.length === 0 && !comment.trim())}
           onClick={() => void submit(false)}
         >
           {command.busy

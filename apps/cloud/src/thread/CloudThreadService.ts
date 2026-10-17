@@ -1,6 +1,7 @@
+import { clientAskCommand } from "@t3tools/shared/signalboxAsks";
 import type { ThreadCommand } from "./threadCommands.ts";
 import { dispatchAutomationAskAnswer } from "../automations/askAnswers.ts";
-import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
+import type { SignalboxAsk, SignalboxAskAnswerCommand } from "@t3tools/contracts/signalboxAsks";
 import {
   CommandId,
   type ChatAttachment,
@@ -129,6 +130,11 @@ export class CloudThreadService extends Context.Service<
       actor: Actor,
       threadId: ThreadId,
       ask: SignalboxAsk,
+    ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
+    readonly answerAskAsAssistant: (
+      actor: Actor,
+      caller: ThreadId,
+      command: typeof SignalboxAskAnswerCommand.Type,
     ) => Effect.Effect<{ readonly sequence: number }, CloudThreadError>;
     readonly dispatchCommand: (
       actor: Actor,
@@ -370,14 +376,10 @@ const make = Effect.gen(function* () {
 
   const dispatchCommand = (actor: Actor, command: ThreadCommand) =>
     Effect.gen(function* () {
-      const attributed =
-        command.type === "thread.ask.answer" && command.answeredBy.kind === "person"
-          ? { ...command, answeredBy: { kind: "person" as const, personId: actor.userId } }
-          : command;
       const automationAnswer =
-        attributed.type === "thread.ask.sync"
+        command.type === "thread.ask.sync"
           ? null
-          : yield* dispatchAutomationAskAnswer(actor, attributed, {
+          : yield* dispatchAutomationAskAnswer(actor, command, {
               threadSnapshot: (who, id) => threadSnapshot(who, id),
             });
       if (automationAnswer !== null) return automationAnswer;
@@ -404,15 +406,7 @@ const make = Effect.gen(function* () {
         : null;
       const creation = placed(place, threadId, turn);
       if (command.type !== "message.dispatch") {
-        return yield* directory
-          .forThread(threadId)
-          .dispatch(
-            actor,
-            command.type === "thread.ask.answer" && command.answeredBy.kind === "person"
-              ? { ...command, answeredBy: { kind: "person", personId: actor.userId } }
-              : command,
-            creation,
-          );
+        return yield* directory.forThread(threadId).dispatch(actor, command, creation);
       }
       return yield* withClaimed(
         attachments,
@@ -592,7 +586,13 @@ const make = Effect.gen(function* () {
     browserTrail: (actor, threadId) => directory.forThread(threadId).browserTrail(actor),
     browserStep: (actor, threadId, stepId) =>
       directory.forThread(threadId).browserStep(actor, stepId),
-    dispatchCommand,
+    dispatchCommand: (actor, command) =>
+      dispatchCommand(actor, clientAskCommand(command, actor.userId)),
+    answerAskAsAssistant: (actor, caller, command) =>
+      dispatchCommand(actor, {
+        ...command,
+        answeredBy: { kind: "assistant", personId: actor.userId, assistantThreadId: caller },
+      }),
     launchThread,
     threadSnapshot,
     threadHistoryPage,

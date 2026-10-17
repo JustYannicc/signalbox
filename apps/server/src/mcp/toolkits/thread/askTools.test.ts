@@ -116,7 +116,7 @@ it.effect("forces agent source and assistant answer provenance, with stable retr
     expect(dispatched[2]).toMatchObject({
       type: "thread.ask.answer",
       deferredQuestionIds: [],
-      answeredBy: { kind: "assistant", personId: "thread-owner", assistantThreadId: threadId },
+      answeredBy: { kind: "assistant", personId: "local-user", assistantThreadId: threadId },
     });
   }).pipe(Effect.provide(server));
 });
@@ -201,7 +201,7 @@ it.effect(
           type: "thread.native-ask.respond",
           requestId,
           answers: { city: "Bern" },
-          answeredBy: { kind: "assistant", personId: "thread-owner", assistantThreadId: threadId },
+          answeredBy: { kind: "assistant", personId: "local-user", assistantThreadId: threadId },
         },
       ]);
     }).pipe(Effect.provide(server));

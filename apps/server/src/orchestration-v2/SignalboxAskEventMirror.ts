@@ -3,7 +3,7 @@ import type {
   OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
-import { mirrorNativeAskEvents } from "@t3tools/shared/signalboxAsks";
+import { mirrorNativeAskEvents, compactAskEvents } from "@t3tools/shared/signalboxAsks";
 import type { SignalboxNativeAskRespondCommand } from "@t3tools/contracts/signalboxAsks";
 import * as Effect from "effect/Effect";
 
@@ -24,7 +24,9 @@ export function mirrorSignalboxAskEvents<E>(
         .filter(
           (event) =>
             (event.type === "runtime-request.updated" && event.payload.kind === "user_input") ||
-            event.type === "thread.archived" ||
+            ("archivedAt" in event.payload &&
+              "modelSelection" in event.payload &&
+              event.payload.asks !== undefined) ||
             (event.type === "turn-item.updated" && event.payload.type === "user_input_request"),
         )
         .map((event) => event.threadId),
@@ -37,7 +39,11 @@ export function mirrorSignalboxAskEvents<E>(
         created?.type === "thread.created"
           ? { thread: created.payload, runtimeRequests: [], turnItems: [] }
           : yield* getThreadRecords(threadId);
-      result = mirrorNativeAskEvents(projection, result, response);
+      result = compactAskEvents(
+        threadId,
+        projection.thread.asks,
+        mirrorNativeAskEvents(projection, result, response),
+      );
     }
     return result;
   });

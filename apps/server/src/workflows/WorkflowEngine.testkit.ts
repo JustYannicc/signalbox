@@ -86,6 +86,7 @@ export function fakeThreads() {
     finishedSends: new Set<string>(),
     /** Per-thread shell fields over the defaults, e.g. another project or a system thread. */
     shells: {} as Record<string, Record<string, unknown>>,
+    missing: new Set<string>(),
     /** Per-thread runs, replacing the default ones. */
     threadRuns: {} as Record<string, ReadonlyArray<Record<string, unknown>>>,
   };
@@ -176,16 +177,20 @@ export function fakeThreads() {
       return Effect.succeed({ sequence: 1 });
     }) as never,
     getThreadShell: ((threadId: string) =>
-      Effect.succeed({
-        projectId: PROJECT,
-        deletedAt: state.deleted.has(threadId) ? "2026-10-05T09:00:00.000Z" : null,
-        branch: `branch-of-${threadId}`,
-        worktreePath: `/worktrees/${threadId}`,
-        branchPullRequest: null,
-        title: `Title of ${threadId}`,
-        createdBy: "user",
-        ...state.shells[threadId],
-      })) as never,
+      Effect.succeed(
+        state.missing.has(threadId)
+          ? null
+          : {
+              projectId: PROJECT,
+              deletedAt: state.deleted.has(threadId) ? "2026-10-05T09:00:00.000Z" : null,
+              branch: `branch-of-${threadId}`,
+              worktreePath: `/worktrees/${threadId}`,
+              branchPullRequest: null,
+              title: `Title of ${threadId}`,
+              createdBy: "user",
+              ...state.shells[threadId],
+            },
+      )) as never,
     sendToThread: ((input: { threadId: string; text: string }) => {
       const runId = `sent-${state.sends.length + 1}`;
       state.sends.push({ threadId: input.threadId, text: input.text, runId });

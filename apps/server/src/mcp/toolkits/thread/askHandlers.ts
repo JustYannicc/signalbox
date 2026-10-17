@@ -72,7 +72,7 @@ export const askHandlers = {
           answers: input.answers,
           deferredQuestionIds: input.deferredQuestionIds ?? [],
           ...(input.comment === undefined ? {} : { comment: input.comment }),
-          answeredBy: { kind: "assistant", personId: "thread-owner", assistantThreadId: caller.id },
+          answeredBy: { kind: "assistant", personId: "local-user", assistantThreadId: caller.id },
         })
         .pipe(Effect.mapError(dispatchFailure));
       return { sequence: result.sequence };

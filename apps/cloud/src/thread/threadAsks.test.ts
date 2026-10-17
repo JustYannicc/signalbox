@@ -124,6 +124,16 @@ describe("durable cloud asks", () => {
         expect(
           (yield* snapshot(engine)).projection.thread.asks?.[0]?.rounds[0]?.answers,
         ).toHaveLength(1);
+        expect((yield* engine.summary(owner))?.shell.asks).toEqual([]);
+        yield* engine.dispatch(
+          owner,
+          { type: "thread.unarchive", commandId: CommandId.make("unarchive"), threadId },
+          personal,
+        );
+        expect((yield* snapshot(engine)).projection.thread.asks?.[0]?.status).toBe("pending");
+        yield* engine.dispatch(owner, answer(2, "two"), personal);
+        expect((yield* snapshot(engine)).projection.thread.asks?.[0]?.status).toBe("answered");
+        expect((yield* engine.summary(owner))?.shell.asks).toEqual([]);
       }),
     ),
   );

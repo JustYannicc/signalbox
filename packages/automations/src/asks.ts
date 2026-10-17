@@ -62,7 +62,11 @@ export const makeAsks = (deps: {
   const sync = (step: StepRow, ask: SignalboxAsk) =>
     Effect.gen(function* () {
       const threadId = yield* originatingThread(step.run_id);
-      if (threadId && threads.syncAsk) yield* threads.syncAsk(ThreadId.make(threadId), ask);
+      if (threadId && threads.syncAsk) {
+        const shell = yield* threads.getThreadShell(ThreadId.make(threadId));
+        // Deleted threads cannot accept commands; the workflow journal remains the history.
+        if (shell && shell.deletedAt === null) yield* threads.syncAsk(ThreadId.make(threadId), ask);
+      }
       yield* store.markAskSynced(step.run_id, step.step_key, encodeAsk(ask), yield* nowIso);
     });
 

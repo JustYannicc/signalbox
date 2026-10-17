@@ -144,6 +144,27 @@ function button(label: string) {
 }
 
 describe("mobile durable ask answering", () => {
+  it("sends a round comment without inventing an answer", async () => {
+    await render();
+    const input = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Round comment (optional)"]',
+    )!;
+    await act(() => {
+      input.value = "Need another day";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() => button("Save answers, defer remainder").click());
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          answers: [],
+          deferredQuestionIds: ["one", "two"],
+          comment: "Need another day",
+        }),
+      }),
+    );
+  });
+
   it("sends free text and defers the unanswered remainder after a turn has stopped", async () => {
     await render();
     await typeAnswer("one", "My answer");

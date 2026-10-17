@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
-import { CommandId, ThreadId } from "@t3tools/contracts";
+import { CommandId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
 import type {
   SignalboxAsk,
   SignalboxAskAnswerCommand,
   SignalboxAskCommand,
   SignalboxAskServerCommand,
 } from "@t3tools/contracts/signalboxAsks";
-import { applyAskCommand, blockingAsk, pendingAskQuestions } from "./signalboxAsks.ts";
+import {
+  applyAskCommand,
+  blockingAsk,
+  pendingAskQuestions,
+  clientAskCommand,
+} from "./signalboxAsks.ts";
 
 const now = "2026-10-16T10:00:00.000Z";
 const target = {
@@ -148,4 +153,27 @@ describe("durable ask rounds", () => {
       ).ok,
     ).toBe(false);
   });
+});
+
+it("attributes public answers to the caller and prevents reserved source forgery", () => {
+  const forged = clientAskCommand(
+    answer({
+      answeredBy: { kind: "assistant", personId: "victim", assistantThreadId: target.threadId },
+    }),
+    "signed-in",
+  );
+  expect(forged).toMatchObject({ answeredBy: { kind: "person", personId: "signed-in" } });
+  if (raise.type !== "thread.ask.raise") throw new Error("Expected a raise");
+  expect(
+    clientAskCommand(
+      {
+        ...raise,
+        ask: {
+          ...raise.ask,
+          source: { kind: "native", requestId: RuntimeRequestId.make("reserved") },
+        },
+      },
+      "signed-in",
+    ),
+  ).toMatchObject({ ask: { source: { kind: "agent" } } });
 });

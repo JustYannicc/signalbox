@@ -104,6 +104,11 @@ import {
 import {
   codexMcpElicitationForm,
   codexMcpElicitationResponse,
+  isCodexMcpApproval,
+} from "../../provider/signalboxCodexElicitation.ts";
+import {
+  describeMcpElicitation,
+  toMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
 import { nativeCodexQuestions } from "../../provider/nativeCodexQuestions.ts";
 import {
@@ -5228,16 +5233,85 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
           Effect.gen(function* () {
-            const form = codexMcpElicitationForm(payload);
-            if (form === null) {
-              yield* Effect.logWarning(
-                "Declined an unsupported MCP form. Secrets must use request_secret or URL elicitation.",
-                {
-                  serverName: payload.serverName,
-                  mode: payload.mode,
-                },
+            if (!isCodexMcpApproval(payload)) {
+              const form = codexMcpElicitationForm(payload);
+              if (form === null) {
+                yield* Effect.logWarning(
+                  "Declined an unsupported MCP form. Secrets must use request_secret or URL elicitation.",
+                  {
+                    serverName: payload.serverName,
+                    mode: payload.mode,
+                  },
+                );
+                return codexMcpElicitationResponse(payload, {});
+              }
+              const context =
+                payload.turnId === undefined || payload.turnId === null
+                  ? undefined
+                  : yield* awaitActiveTurn(payload.turnId);
+              if (context === undefined) {
+                yield* Effect.logWarning(
+                  "Declined an MCP elicitation without an active Codex turn context.",
+                  { serverName: payload.serverName },
+                );
+                return {
+                  action: "decline",
+                } satisfies CodexSchema.McpServerElicitationRequestResponse;
+              }
+
+              const nativeRequestId = `mcp-elicitation:${payload.serverName}:${yield* crypto.randomUUIDv4()}`;
+              const artifacts = yield* buildUserInputRequestArtifacts({
+                context,
+                nativeItemId: nativeRequestId,
+                nativeRequestId,
+                questions: form.questions,
+              });
+              const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
+              yield* Ref.update(pendingRuntimeRequests, (current) => {
+                const updated = new Map(current);
+                updated.set(String(artifacts.request.id), {
+                  type: "user_input",
+                  requestId: artifacts.request.id,
+                  answers,
+                });
+                return updated;
+              });
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+              yield* emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CODEX_PROVIDER,
+                threadId: artifacts.node.threadId,
+                runtimeRequest: artifacts.request,
+              });
+
+              const resolved = yield* Deferred.await(answers).pipe(
+                Effect.ensuring(
+                  Ref.update(pendingRuntimeRequests, (current) => {
+                    const updated = new Map(current);
+                    updated.delete(String(artifacts.request.id));
+                    return updated;
+                  }),
+                ),
               );
-              return codexMcpElicitationResponse(payload, {});
+              return codexMcpElicitationResponse(payload, resolved);
+            }
+            if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
+              yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
+                serverName: payload.serverName,
+                mode: payload.mode,
+              });
+              return {
+                action: "decline",
+              } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
             const context =
               payload.turnId === undefined || payload.turnId === null
@@ -5253,20 +5327,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
-            const nativeRequestId = `mcp-elicitation:${payload.serverName}:${yield* crypto.randomUUIDv4()}`;
-            const artifacts = yield* buildUserInputRequestArtifacts({
+            const nativeRequestId =
+              payload.mode === "url"
+                ? payload.elicitationId
+                : `mcp-elicitation:${payload.serverName}`;
+            const described = describeMcpElicitation(payload);
+            const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: nativeRequestId,
               nativeRequestId,
-              questions: form.questions,
+              requestKind: "mcp-elicitation",
+              prompt: payload.message,
+              appName: described.appName,
+              options: described.options,
             });
-            const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
+            const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
               updated.set(String(artifacts.request.id), {
-                type: "user_input",
+                type: "approval",
                 requestId: artifacts.request.id,
-                answers,
+                requestKind: "mcp-elicitation",
+                decision,
               });
               return updated;
             });
@@ -5287,7 +5369,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runtimeRequest: artifacts.request,
             });
 
-            const resolved = yield* Deferred.await(answers).pipe(
+            const resolved = yield* Deferred.await(decision).pipe(
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
@@ -5296,7 +5378,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ),
             );
-            return codexMcpElicitationResponse(payload, resolved);
+            return toMcpElicitationResponse(payload, resolved);
           }).pipe(Effect.orDie),
         );
 

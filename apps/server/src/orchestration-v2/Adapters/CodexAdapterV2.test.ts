@@ -9653,4 +9653,88 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
   });
+  it.effect.each(["decline", "cancel", "acceptForSession", "acceptAlways"] as const)(
+    "preserves MCP approval %s and its persistence on the live callback",
+    (decision) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `mcp-approval-${decision}`;
+        const nativeTurnId = `${nativeThreadId}-turn`;
+        const pending = yield* Deferred.make<OrchestrationV2RuntimeRequest>();
+        const persist = decision === "acceptForSession" ? "session" : "always";
+        const transcript = makeCodexReplayTranscript({
+          scenario: nativeThreadId,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Use Safari." }),
+            {
+              type: "emit_inbound",
+              label: "approval",
+              frame: {
+                id: 100,
+                method: "mcpServer/elicitation/request",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  mode: "form",
+                  serverName: "computer-use",
+                  message: "Allow ChatGPT to use Safari?",
+                  _meta: { persist: ["session", "always"] },
+                  requestedSchema: {
+                    type: "object",
+                    properties: {
+                      approval: { type: "string", enum: ["once", "session", "always"] },
+                    },
+                    required: ["approval"],
+                  },
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "answer",
+              frame: {
+                id: 100,
+                result:
+                  decision === "decline" || decision === "cancel"
+                    ? { action: decision }
+                    : { action: "accept", _meta: { persist }, content: { approval: persist } },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(pending, event.runtimeRequest)
+            : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`${nativeThreadId}-attempt`),
+            text: "Use Safari.",
+          }),
+        );
+        const request = yield* Deferred.await(pending);
+        assert.equal(request.kind, "mcp-elicitation");
+        yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
+        yield* harness.firstTerminal;
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 });

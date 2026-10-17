@@ -39,8 +39,16 @@ function planAskCommand(
   >,
   now: string,
 ) {
-  if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null)
+  if (
+    projection.thread.deletedAt !== null ||
+    (projection.thread.archivedAt !== null && command.type !== "thread.ask.sync")
+  )
     return { ok: false as const, error: "This thread is archived or deleted." };
+  if (
+    command.type === "thread.ask.withdraw" &&
+    projection.thread.asks?.find((ask) => ask.id === command.askId)?.source.kind === "automation"
+  )
+    return { ok: false as const, error: "Cancel the automation instead of withdrawing its ask." };
   const result = applyAskCommand(projection.thread.asks ?? [], command, now);
   if (!result.ok) return result;
   const answered = result.answered;
@@ -65,6 +73,14 @@ function planAskCommand(
         session.status !== "stopped" &&
         session.status !== "error",
     );
+  // Keep partial rounds durable without queuing stale input behind the live callback.
+  if (
+    request?.status === "pending" &&
+    live &&
+    !containsSecret &&
+    answered.ask.status !== "answered"
+  )
+    return { ...result, deliveries: [] as AnswerDelivery[] };
   // Partial rounds cannot complete a provider's synchronous callback.
   if (
     request?.status === "pending" &&
@@ -86,16 +102,19 @@ function planAskCommand(
         answers,
       },
     ];
-    if (
-      command.type === "thread.ask.answer" &&
-      (command.comment?.trim() || command.answers.some((answer) => answer.comment?.trim()))
-    ) {
+    const comments = answered.ask.rounds.flatMap((round) => [
+      ...(round.comment?.trim() ? [`Round ${round.number}: ${round.comment}`] : []),
+      ...round.answers.flatMap((answer) =>
+        answer.comment?.trim() ? [`[${answer.questionId}] ${answer.comment}`] : [],
+      ),
+    ]);
+    if (comments.length) {
       deliveries.push({
         type: "message.dispatch",
         commandId: command.commandId,
         threadId: command.threadId,
         messageId: MessageId.make(`ask-answer:${command.commandId}`),
-        text: answered.message,
+        text: `Comments on ask ${answered.ask.id}:\n\n${comments.join("\n\n")}`,
         attachments: [],
         createdBy: "user",
         creationSource: "server",

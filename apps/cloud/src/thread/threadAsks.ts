@@ -23,12 +23,14 @@ export function decideAsk(
   deliver: (projection: Projection, message: Message, ctx: DecisionContext) => Decision,
   respond: (projection: Projection, response: Response, ctx: DecisionContext) => Decision,
 ): Decision {
-  if (projection.thread.archivedAt !== null)
+  if (projection.thread.archivedAt !== null && command.type !== "thread.ask.sync")
     return { _tag: "rejected", message: "Reopen this thread before raising or answering an ask." };
   const previous =
     command.type === "thread.ask.sync"
       ? undefined
       : projection.thread.asks?.find((ask) => ask.id === command.askId);
+  if (command.type === "thread.ask.withdraw" && previous?.source.kind === "automation")
+    return { _tag: "rejected", message: "Cancel the automation instead of withdrawing its ask." };
   if (command.type === "thread.ask.answer" && previous?.source.kind === "automation")
     return {
       _tag: "rejected",
