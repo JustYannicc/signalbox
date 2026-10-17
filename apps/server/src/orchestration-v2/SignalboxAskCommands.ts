@@ -1,10 +1,24 @@
 import {
   MessageId,
+  type OrchestrationV2AppThread,
   type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import type { SignalboxAskCommand } from "@t3tools/contracts/signalboxAsks";
 import { applyAskCommand } from "@t3tools/shared/signalboxAsks";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+
+type AskCommand = Extract<
+  OrchestrationV2ServerCommand,
+  { type: "thread.ask.raise" | "thread.ask.answer" | "thread.ask.withdraw" | "thread.ask.sync" }
+>;
+type AskProjection = Pick<
+  OrchestrationV2ThreadProjection,
+  "thread" | "runtimeRequests" | "providerSessions" | "turnItems"
+>;
 
 type AnswerDelivery = Extract<
   OrchestrationV2Command,
@@ -100,4 +114,37 @@ export function planAskCommand(
       },
     ] satisfies AnswerDelivery[],
   };
+}
+
+export function dispatchSignalboxAskCommand<E>(input: {
+  readonly command: AskCommand;
+  readonly loadProjection: () => Effect.Effect<AskProjection, E>;
+  readonly now: Effect.Effect<DateTime.Utc, E>;
+  readonly dispatchDelivery: (delivery: AnswerDelivery) => Effect.Effect<void, E>;
+  readonly emitAskUpdate: (
+    thread: OrchestrationV2AppThread,
+    asks: AskProjection["thread"]["asks"],
+    now: DateTime.Utc,
+  ) => Effect.Effect<void, E>;
+  readonly pendingEvents: () => Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, E>;
+  readonly dispatchError: (message: string) => E;
+}) {
+  return Effect.gen(function* () {
+    const projection = yield* input.loadProjection();
+    const now = yield* input.now;
+    const plan = planAskCommand(input.command, projection, DateTime.formatIso(now));
+    if (!plan.ok) return yield* Effect.fail(input.dispatchError(plan.error));
+    for (const delivery of plan.deliveries) yield* input.dispatchDelivery(delivery);
+    if (plan.asks === projection.thread.asks) return;
+    let thread = projection.thread;
+    for (const event of yield* input.pendingEvents()) {
+      if (
+        event.threadId === input.command.threadId &&
+        "archivedAt" in event.payload &&
+        "modelSelection" in event.payload
+      )
+        thread = event.payload;
+    }
+    yield* input.emitAskUpdate(thread, plan.asks, now);
+  });
 }

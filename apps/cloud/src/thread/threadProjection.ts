@@ -125,7 +125,11 @@ export function threadShellFromProjection(
     asks: thread.asks,
     pendingRuntimeRequest: (() => {
       const request = projection.runtimeRequests
-        .filter((entry) => entry.status === "pending")
+        .filter(
+          (entry) =>
+            entry.status === "pending" &&
+            (entry.kind !== "user_input" || entry.responseCapability.type === "live"),
+        )
         .toSorted(
           (left, right) =>
             DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),

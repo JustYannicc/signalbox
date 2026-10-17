@@ -189,6 +189,30 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "waiting_for_input", headline: "Waiting for input" });
   });
 
+  it("does not treat a linked non-blocking native question as needs-you", () => {
+    const requestId = RuntimeRequestId.make("async-question");
+    const ask: SignalboxAsk = {
+      ...pendingAsk,
+      id: "async-question-ask",
+      source: { kind: "native", requestId },
+      questions: [{ ...pendingAsk.questions[0]!, blocking: false }],
+    };
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          pendingRuntimeRequest: {
+            id: requestId,
+            kind: "user_input",
+            createdAt: updatedAt,
+          },
+          asks: [ask],
+        }),
+      }),
+    ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+
   it("does not present authentication refreshes as user approvals", () => {
     expect(
       projectThreadAwarenessV2({

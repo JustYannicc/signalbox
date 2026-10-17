@@ -18,6 +18,18 @@ export function blockingAsk(asks: readonly SignalboxAsk[] | undefined) {
   );
 }
 
+/** Older shells without a linked ask retain their native waiting state. */
+export function runtimeRequestNeedsInput(
+  request: { readonly id: string; readonly kind: string } | null,
+  asks: readonly SignalboxAsk[] | undefined,
+) {
+  if (request?.kind !== "user_input") return false;
+  const linked = asks?.find(
+    (ask) => ask.source.kind === "native" && ask.source.requestId === request.id,
+  );
+  return linked === undefined || pendingAskQuestions(linked).some((question) => question.blocking);
+}
+
 function sameJson(left: unknown, right: unknown): boolean {
   if (left === right) return true;
   if (typeof left !== "object" || left === null || typeof right !== "object" || right === null)

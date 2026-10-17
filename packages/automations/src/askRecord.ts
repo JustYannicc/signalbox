@@ -1,5 +1,5 @@
 import { automationOptionLabel } from "@t3tools/contracts";
-import { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
+import { SignalboxAsk, SignalboxAskQuestion } from "@t3tools/contracts/signalboxAsks";
 import * as Schema from "effect/Schema";
 
 import { stepArgs, stepAsk } from "./columns.ts";
@@ -10,6 +10,7 @@ const codec = Schema.fromJsonString(SignalboxAsk);
 export const decodeAsk = Schema.decodeSync(codec);
 export const encodeAsk = Schema.encodeSync(codec);
 export const askJsonValue = Schema.decodeUnknownSync(Schema.Json);
+const decodeDeciderIds = Schema.decodeUnknownSync(SignalboxAskQuestion.fields.deciderIds);
 
 export function automationAskRecord(automation: AutomationRow, step: StepRow): SignalboxAsk {
   if (step.ask_json) return decodeAsk(step.ask_json);
@@ -43,6 +44,9 @@ export function automationAskRecord(automation: AutomationRow, step: StepRow): S
         multiSelect: ask.multi,
         blocking: true,
         decisionOwner: text("decisionOwner", "automation owner"),
+        ...(options.deciderIds === undefined
+          ? {}
+          : { deciderIds: decodeDeciderIds(options.deciderIds) }),
         surface: { kind: "kit", component: "automation", props: { ...ask } },
       },
     ],

@@ -95,6 +95,47 @@ describe("durable ask shell attention", () => {
     expect(presentThreadShell(environmentId, v2ThreadShell).hasPendingUserInput).toBe(false);
   });
 
+  it("does not show a linked non-blocking native question as needs-you", () => {
+    const requestId = RuntimeRequestId.make("async-question");
+    const nativeAsk: SignalboxAsk = {
+      ...ask,
+      id: "async-question-ask",
+      source: { kind: "native", requestId },
+      questions: [{ ...ask.questions[0]!, blocking: false }],
+    };
+    expect(
+      presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        pendingRuntimeRequest: {
+          id: requestId,
+          kind: "user_input",
+          createdAt: v2Now,
+        },
+        asks: [nativeAsk],
+      }).hasPendingUserInput,
+    ).toBe(false);
+  });
+
+  it("keeps needs-you when the linked native question blocks work", () => {
+    const requestId = RuntimeRequestId.make("blocking-question");
+    const nativeAsk: SignalboxAsk = {
+      ...ask,
+      id: "blocking-question-ask",
+      source: { kind: "native", requestId },
+    };
+    expect(
+      presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        pendingRuntimeRequest: {
+          id: requestId,
+          kind: "user_input",
+          createdAt: v2Now,
+        },
+        asks: [nativeAsk],
+      }).hasPendingUserInput,
+    ).toBe(true);
+  });
+
   it("updates the navigation row on ask-only deltas and clears it when answered", () => {
     const registry = AtomRegistry.make();
     const snapshotAtom = Atom.make(v2ShellSnapshot);

@@ -20,6 +20,7 @@ import { useAutomationCommand } from "../automations/useAutomationCommand";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
+import { SignalboxAskHistory } from "./SignalboxAskHistory";
 
 const kindLabels = { blocker: "Blocker", ready: "Ready", considering: "Considering" };
 const noAsks: ReadonlyArray<SignalboxAsk> = [];
@@ -243,7 +244,8 @@ export function SignalboxAsksPanel({
   threadRef: ScopedThreadRef;
 }) {
   const visible = visiblePendingAsks(asks, requests);
-  if (visible.length === 0) return null;
+  const history = asks.filter((ask) => ask.status !== "pending");
+  if (visible.length === 0 && history.length === 0) return null;
   return (
     <div className="max-h-96 overflow-y-auto divide-y divide-border border-b border-border bg-background">
       {visible.map((ask) => (
@@ -253,6 +255,7 @@ export function SignalboxAsksPanel({
           threadRef={threadRef}
         />
       ))}
+      <SignalboxAskHistory asks={history} />
     </div>
   );
 }

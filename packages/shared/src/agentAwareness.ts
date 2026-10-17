@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { blockingAsk } from "./signalboxAsks.ts";
+import { blockingAsk, runtimeRequestNeedsInput } from "./signalboxAsks.ts";
 
 import { backgroundWorkHoldsCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
 
@@ -92,12 +92,13 @@ function resolveThreadAwarenessPhaseV2(
   if (blockingAsk(thread.asks ?? []) !== undefined) {
     return "waiting_for_input";
   }
-  if (thread.pendingRuntimeRequest?.kind === "user_input") {
+  if (runtimeRequestNeedsInput(thread.pendingRuntimeRequest, thread.asks)) {
     return "waiting_for_input";
   }
   if (
     thread.pendingRuntimeRequest !== null &&
-    thread.pendingRuntimeRequest.kind !== "auth_refresh"
+    thread.pendingRuntimeRequest.kind !== "auth_refresh" &&
+    thread.pendingRuntimeRequest.kind !== "user_input"
   ) {
     return "waiting_for_approval";
   }

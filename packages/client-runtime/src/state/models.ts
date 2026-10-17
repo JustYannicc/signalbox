@@ -1,5 +1,5 @@
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { blockingAsk } from "@t3tools/shared/signalboxAsks";
+import { blockingAsk, runtimeRequestNeedsInput } from "@t3tools/shared/signalboxAsks";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
   ThreadLinkedPullRequest,
@@ -248,7 +248,8 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
     hasPendingUserInput:
-      thread.pendingRuntimeRequest?.kind === "user_input" || blockingAsk(thread.asks) !== undefined,
+      runtimeRequestNeedsInput(thread.pendingRuntimeRequest, thread.asks) ||
+      blockingAsk(thread.asks) !== undefined,
     asks: thread.asks,
     pendingSubagentRequest,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,

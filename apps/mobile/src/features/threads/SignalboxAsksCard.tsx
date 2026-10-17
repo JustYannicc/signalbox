@@ -20,6 +20,7 @@ import { signalboxAskCommand } from "../../state/signalboxAsks";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadProjection } from "../../state/use-thread-detail";
 import { RequestActionButton } from "./RequestActionButton";
+import { SignalboxAskHistory } from "./SignalboxAskHistory";
 
 const kindLabels = { blocker: "Blocker", ready: "Ready", considering: "Considering" };
 const noAsks: ReadonlyArray<SignalboxAsk> = [];
@@ -191,12 +192,11 @@ export function SignalboxAsksCard(props: {
     threadId: props.threadRef?.threadId ?? null,
   });
   const projection = thread?.projection;
-  const asks = visiblePendingAsks(
-    projection?.thread.asks ?? noAsks,
-    projection?.runtimeRequests ?? [],
-  );
+  const allAsks = projection?.thread.asks ?? noAsks;
+  const asks = visiblePendingAsks(allAsks, projection?.runtimeRequests ?? []);
+  const history = allAsks.filter((ask) => ask.status !== "pending");
   const threadRef = props.threadRef;
-  if (threadRef === null || asks.length === 0) return null;
+  if (threadRef === null || (asks.length === 0 && history.length === 0)) return null;
   return (
     <View className="mx-4 mb-3 overflow-hidden rounded-[20px] border border-border bg-card-alt">
       <ScrollView
@@ -212,6 +212,7 @@ export function SignalboxAsksCard(props: {
             onInputFocusChange={props.onInputFocusChange}
           />
         ))}
+        <SignalboxAskHistory asks={history} />
       </ScrollView>
     </View>
   );

@@ -35,6 +35,7 @@ const answer = (
 const SOURCE = `export const meta = { name: "Catering" } as const;
 export default workflow(async (w) => w.ask("What should we bring?", {
   options: ["tea", "cake"], multi: true,
+  decisionOwner: "Catering lead", deciderIds: ["person-1", "person-2"],
   fields: { guests: { type: "number", required: true }, note: { type: "text", default: "hello" } },
 }));`;
 
@@ -116,6 +117,8 @@ it.effect("keeps one common ask through deferred rounds and validated workflow a
       });
       expect(first.questions[0]).toMatchObject({
         multiSelect: true,
+        decisionOwner: "Catering lead",
+        deciderIds: ["person-1", "person-2"],
         surface: {
           kind: "kit",
           component: "automation",

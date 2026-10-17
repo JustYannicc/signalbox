@@ -35,6 +35,7 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { RpcPermissionGuard } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
@@ -63,7 +64,7 @@ const layerTestCrypto = Layer.succeed(
     randomBytes: (size) => new Uint8Array(size),
     digest: (_algorithm, data) => Effect.succeed(data),
   }),
-);
+).pipe(Layer.merge(Layer.succeed(RpcPermissionGuard, { authorize: () => Effect.void })));
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),

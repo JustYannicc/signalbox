@@ -14,6 +14,7 @@ import {
   EnvironmentId,
   ScheduledTaskId,
   WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -59,6 +60,25 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires an operate grant to answer durable asks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const asks = createCommandPermissions(runtime, ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+        const input = { type: "thread.ask.answer" };
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(asks.permissionAtom(env))).toBe(false);
+        expect(registry.get(asks.permissionAtom(env, input))).toBe(false);
+        expect((yield* asks.authorize(registry, env, input).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(asks.permissionAtom(env, input))).toBe(true);
+        yield* asks.authorize(registry, env, input);
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

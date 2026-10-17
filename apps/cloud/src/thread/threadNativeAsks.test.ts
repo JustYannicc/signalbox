@@ -25,9 +25,22 @@ import {
 
 describe("cloud native asks", () => {
   it.effect.each([
-    { secret: false, name: "resolves a complete public answer through the live callback" },
-    { secret: true, name: "queues the public answer without resolving a mixed secret callback" },
-  ])("$name", ({ secret }) =>
+    {
+      secret: false,
+      nonBlocking: false,
+      name: "resolves a complete public answer through the live callback",
+    },
+    {
+      secret: true,
+      nonBlocking: false,
+      name: "queues the public answer without resolving a mixed secret callback",
+    },
+    {
+      secret: false,
+      nonBlocking: true,
+      name: "keeps message-capability questions out of native needs-you",
+    },
+  ])("$name", ({ secret, nonBlocking }) =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
         yield* launch(engine, "launch", personal, undefined, {
@@ -77,10 +90,9 @@ describe("cloud native asks", () => {
                   nativeRequestRef: null,
                   kind: "user_input",
                   status: "pending",
-                  responseCapability: {
-                    type: "live",
-                    providerSessionId: ProviderSessionId.make("session-1"),
-                  },
+                  responseCapability: nonBlocking
+                    ? { type: "message" }
+                    : { type: "live", providerSessionId: ProviderSessionId.make("session-1") },
                   createdAt: ctx.now,
                   resolvedAt: null,
                 },
@@ -108,7 +120,13 @@ describe("cloud native asks", () => {
                   type: "user_input_request",
                   requestId,
                   questions: [
-                    { id: "public", header: "City", question: "Which city?", options: [] },
+                    {
+                      id: "public",
+                      header: "City",
+                      question: "Which city?",
+                      options: [],
+                      native: { isBlocking: !nonBlocking },
+                    },
                     ...(secret
                       ? [
                           {
@@ -126,6 +144,9 @@ describe("cloud native asks", () => {
             ],
           }),
         );
+        expect((yield* engine.summary(owner))?.shell.pendingRuntimeRequest?.id ?? null).toBe(
+          nonBlocking ? null : requestId,
+        );
         yield* engine.dispatch(
           owner,
           {
@@ -142,17 +163,17 @@ describe("cloud native asks", () => {
         );
         const { projection } = yield* snapshot(engine);
         const request = projection.runtimeRequests.find((entry) => entry.id === requestId);
-        expect(request?.status).toBe(secret ? "pending" : "resolved");
-        expect(request?.answers).toEqual(secret ? undefined : { public: "Zurich" });
+        expect(request?.status).toBe(secret || nonBlocking ? "pending" : "resolved");
+        expect(request?.answers).toEqual(secret || nonBlocking ? undefined : { public: "Zurich" });
         expect(projection.thread.asks?.[0]?.status).toBe("answered");
         expect(projection.thread.asks?.[0]?.questions.map((question) => question.id)).toEqual([
           "public",
         ]);
         expect(JSON.stringify(projection.thread.asks)).not.toContain("Private token");
         const replies = projection.messages.filter((message) => message.text.includes("Zurich"));
-        expect(replies).toHaveLength(secret ? 1 : 0);
+        expect(replies).toHaveLength(secret || nonBlocking ? 1 : 0);
         expect(projection.runs.map((run) => run.status)).toEqual(
-          secret ? ["running", "queued"] : ["running"],
+          secret || nonBlocking ? ["running", "queued"] : ["running"],
         );
       }),
     ),

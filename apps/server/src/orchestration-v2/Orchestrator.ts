@@ -1,4 +1,4 @@
-import { planAskCommand } from "./SignalboxAskCommands.ts";
+import { dispatchSignalboxAskCommand } from "./SignalboxAskCommands.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -10649,45 +10649,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.ask.answer":
       case "thread.ask.withdraw":
       case "thread.ask.sync": {
-        const projection = yield* projectionStore
-          .getThreadRecords(
-            command.threadId,
-            ["runtimeRequests", "providerSessions", "turnItems"],
-            { turnItemTypes: ["user_input_request"] },
-          )
-          .pipe(mapDispatchError(command));
-        const now = yield* DateTime.now;
-        const plan = planAskCommand(command, projection, DateTime.formatIso(now));
-        if (!plan.ok)
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: plan.error,
-          });
-        for (const delivery of plan.deliveries) {
-          if (delivery.type === "message.dispatch")
-            yield* dispatchMessage(delivery, events, effects);
-          else yield* dispatchRuntimeRequestRespond(delivery, events, effects);
-        }
-        let thread = projection.thread;
-        for (const event of yield* Ref.get(events)) {
-          if (
-            event.threadId === command.threadId &&
-            "archivedAt" in event.payload &&
-            "modelSelection" in event.payload
-          )
-            thread = event.payload;
-        }
-        if (plan.asks !== projection.thread.asks)
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "thread.metadata-updated",
-            threadId: command.threadId,
-            occurredAt: now,
-            payload: { ...thread, asks: plan.asks, updatedAt: now },
-          });
+        yield* dispatchSignalboxAskCommand({
+          command,
+          loadProjection: () =>
+            projectionStore
+              .getThreadRecords(
+                command.threadId,
+                ["runtimeRequests", "providerSessions", "turnItems"],
+                { turnItemTypes: ["user_input_request"] },
+              )
+              .pipe(mapDispatchError(command)),
+          now: DateTime.now,
+          dispatchDelivery: (delivery) =>
+            delivery.type === "message.dispatch"
+              ? dispatchMessage(delivery, events, effects)
+              : dispatchRuntimeRequestRespond(delivery, events, effects),
+          pendingEvents: () => Ref.get(events),
+          emitAskUpdate: (thread, asks, now) =>
+            emit(
+              events,
+              command,
+            )({
+              type: "thread.metadata-updated",
+              threadId: command.threadId,
+              occurredAt: now,
+              payload: { ...thread, asks, updatedAt: now },
+            }).pipe(Effect.asVoid),
+          dispatchError: (cause) =>
+            new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
+        });
         break;
       }
       case "thread.create":
