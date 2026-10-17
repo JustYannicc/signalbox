@@ -1,9 +1,15 @@
-import { AUTOMATION_WS_METHODS, type AutomationRpcs } from "@t3tools/contracts";
+import {
+  AUTOMATION_WS_METHODS,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type AutomationRpcs,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as Rpc from "effect/rpc/Rpc";
 import * as Stream from "effect/Stream";
 
 import { projectDefaults } from "./callerAccess.ts";
+import * as ProjectAutomations from "./ProjectAutomations.ts";
 import * as ConnectionSettings from "./connectionSettings.ts";
 import type * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
 
@@ -76,8 +82,12 @@ export const automationRpcHandlers = (engine: WorkflowEngine.WorkflowEngine["Ser
         "folder.id": input.projectId,
         ...(input.automationId ? { "automation.id": input.automationId } : {}),
       },
-      projectDefaults(input.projectId).pipe(
-        Effect.flatMap((defaults) => engine.save({ ...input, defaults })),
+      ProjectAutomations.ProjectAutomations.use((automations) =>
+        automations.save({
+          ...input,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        }),
       ),
     ),
   [METHODS.automationsCustomize]: (input: Payload<typeof METHODS.automationsCustomize>) =>

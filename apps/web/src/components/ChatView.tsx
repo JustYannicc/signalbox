@@ -49,6 +49,7 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./chat/composerFocusRedirect";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { configuredProjectModelSelection } from "../lib/composerModelPolicy"; // signalbox: distinguish explicit project defaults from inherited person defaults.
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -59,7 +60,6 @@ import {
   type AssistantCitation,
   type ChatFileAttachment,
   CommandId,
-  DEFAULT_MODEL,
   isProviderNativeSubagentThread,
   type EnvironmentId,
   type MessageId,
@@ -2029,7 +2029,8 @@ export default function ChatView(props: ChatViewProps) {
     retryProjectClone,
     runProjectCloneActionStable,
   ]);
-  const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  // signalbox: pass only a configured project choice as the project's default.
+  const activeProjectDefaultModelSelection = configuredProjectModelSelection(activeProjectSettings);
   const handleNewThreadInActiveProject = () => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   };
@@ -7230,11 +7231,8 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     const title = truncate(titleSeed);
-    const threadCreateModelSelection = createModelSelection(
-      ctxSelectedModelSelection.instanceId,
-      ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
-      ctxSelectedModelSelection.options,
-    );
+    // signalbox: create the thread with the selection resolved for this draft.
+    const threadCreateModelSelection = ctxSelectedModelSelection;
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
 
@@ -8836,6 +8834,11 @@ export default function ChatView(props: ChatViewProps) {
                               providerCatalogKnown={serverConfig !== null}
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
+                              }
+                              personDefaultModelSelection={
+                                /* signalbox: pass the person's fallback when this project has no configured default. */
+                                environmentById.get(environmentId)?.serverConfig?.settings
+                                  .defaultModelSelection ?? null
                               }
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}
