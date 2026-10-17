@@ -32,11 +32,7 @@ export function serverConfigSupportsSignalboxTrash(
   return config?.environment.capabilities.folders === true;
 }
 
-export type ThreadDeleteConfirmationScope =
-  | "thread"
-  | "threads"
-  | "threads-and-archived"
-  | "archived";
+export type ThreadDeleteConfirmationScope = "thread" | "threads";
 
 /** Keep thread-delete warnings aligned with the destination's actual recovery path. */
 export function threadDeleteConfirmationMessage(input: {
@@ -44,33 +40,13 @@ export function threadDeleteConfirmationMessage(input: {
   readonly other: boolean;
   readonly scope: ThreadDeleteConfirmationScope;
 }): string {
-  const { cloud, other, scope } = input;
-  if (cloud && other) {
-    const archived = scope === "threads-and-archived" ? " and archived threads" : "";
-    return `Cloud threads${archived} will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days. Threads in other environments will be permanently deleted.`;
+  if (input.cloud && input.other) {
+    return `Cloud threads will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days. Threads in other environments will be permanently deleted.`;
   }
-  if (cloud) {
-    switch (scope) {
-      case "thread":
-        return `This thread will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
-      case "threads":
-        return `These threads will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
-      case "threads-and-archived":
-        return `Those threads and any archived threads will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
-      case "archived":
-        return `Archived threads will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
-    }
+  if (input.cloud) {
+    return `${input.scope === "thread" ? "This thread" : "These threads"} will move to Trash and can be restored for ${TRASH_RETENTION_DAYS} days.`;
   }
-  switch (scope) {
-    case "thread":
-      return "This permanently clears conversation history for this thread.";
-    case "threads":
-      return "This permanently clears conversation history for these threads.";
-    case "threads-and-archived":
-      return "This permanently clears conversation history for those threads and any archived threads.";
-    case "archived":
-      return "This permanently clears any archived conversation history.";
-  }
+  return `This permanently clears conversation history for ${input.scope === "thread" ? "this thread" : "these threads"}.`;
 }
 
 /**

@@ -31,7 +31,7 @@ import { createSignalboxTrashAtoms } from "./signalboxTrash.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 
 const sessions = Atom.family((_environmentId: EnvironmentId) =>
-  Atom.make(AsyncResult.initial<AuthSessionState, string>()),
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState, string>>(AsyncResult.initial()),
 );
 
 vi.mock("./session.ts", () => ({

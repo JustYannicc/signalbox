@@ -48,17 +48,15 @@ describe("signalboxTrash", () => {
   });
 
   it("uses Trash copy for cloud deletion and explains mixed bulk deletion", () => {
-    expect(
-      threadDeleteConfirmationMessage({ cloud: true, other: false, scope: "thread" }),
-    ).toBe("This thread will move to Trash and can be restored for 30 days.");
-    expect(
-      threadDeleteConfirmationMessage({ cloud: true, other: true, scope: "threads" }),
-    ).toBe(
+    expect(threadDeleteConfirmationMessage({ cloud: true, other: false, scope: "thread" })).toBe(
+      "This thread will move to Trash and can be restored for 30 days.",
+    );
+    expect(threadDeleteConfirmationMessage({ cloud: true, other: true, scope: "threads" })).toBe(
       "Cloud threads will move to Trash and can be restored for 30 days. Threads in other environments will be permanently deleted.",
     );
-    expect(
-      threadDeleteConfirmationMessage({ cloud: false, other: true, scope: "thread" }),
-    ).toBe("This permanently clears conversation history for this thread.");
+    expect(threadDeleteConfirmationMessage({ cloud: false, other: true, scope: "thread" })).toBe(
+      "This permanently clears conversation history for this thread.",
+    );
   });
 
   it("shows what's still in Trash, newest first", () => {

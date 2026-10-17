@@ -83,9 +83,7 @@ function environmentSupportsTitleRegeneration(
   );
 }
 
-function environmentSupportsSignalboxTrash(
-  environmentId: EnvironmentThreadShell["environmentId"],
-) {
+function environmentSupportsSignalboxTrash(environmentId: EnvironmentThreadShell["environmentId"]) {
   return serverConfigSupportsSignalboxTrash(
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId),
   );

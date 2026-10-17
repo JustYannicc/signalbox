@@ -1637,19 +1637,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                           ...(member.environmentLabel
                             ? [`Environment: ${member.environmentLabel}`]
                             : []),
-                          threadDeleteConfirmationMessage({
-                            cloud: serverConfigSupportsSignalboxTrash(
-                              appAtomRegistry
-                                .get(environmentServerConfigsAtom)
-                                .get(member.environmentId),
-                            ),
-                            other: !serverConfigSupportsSignalboxTrash(
-                              appAtomRegistry
-                                .get(environmentServerConfigsAtom)
-                                .get(member.environmentId),
-                            ),
-                            scope: "threads-and-archived",
-                          }),
+                          "This permanently clears conversation history for those threads and any archived threads.",
                           "This removes only this project entry.",
                           "This action cannot be undone.",
                         ].join("\n")
@@ -1659,19 +1647,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                           ...(member.environmentLabel
                             ? [`Environment: ${member.environmentLabel}`]
                             : []),
-                          threadDeleteConfirmationMessage({
-                            cloud: serverConfigSupportsSignalboxTrash(
-                              appAtomRegistry
-                                .get(environmentServerConfigsAtom)
-                                .get(member.environmentId),
-                            ),
-                            other: !serverConfigSupportsSignalboxTrash(
-                              appAtomRegistry
-                                .get(environmentServerConfigsAtom)
-                                .get(member.environmentId),
-                            ),
-                            scope: "archived",
-                          }),
+                          "This permanently clears any archived conversation history.",
                           "This removes only this project entry.",
                         ].join("\n"),
                     { variant: "destructive" },
@@ -1721,15 +1697,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         `Remove project "${member.title}"?`,
         `Path: ${member.workspaceRoot}`,
         ...(member.environmentLabel ? [`Environment: ${member.environmentLabel}`] : []),
-        threadDeleteConfirmationMessage({
-          cloud: serverConfigSupportsSignalboxTrash(
-            appAtomRegistry.get(environmentServerConfigsAtom).get(member.environmentId),
-          ),
-          other: !serverConfigSupportsSignalboxTrash(
-            appAtomRegistry.get(environmentServerConfigsAtom).get(member.environmentId),
-          ),
-          scope: "archived",
-        }),
+        "This permanently clears any archived conversation history.",
         "This removes only this project entry.",
       ].join("\n");
       const confirmed = await api.dialogs.confirm(message, { variant: "destructive" });

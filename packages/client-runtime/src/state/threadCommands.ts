@@ -149,7 +149,7 @@ export type SignalboxTrashCapability = (
 export type SignalboxTrashThreadCommand = {
   readonly run: (
     registry: AtomRegistry.AtomRegistry,
-    target: { readonly environmentId: EnvironmentId; readonly input: TrashThreadInput },
+    target: { readonly environmentId: EnvironmentId; readonly input: typeof TrashThreadInput.Type },
   ) => Promise<AtomCommandResult<unknown, unknown>>;
 };
 

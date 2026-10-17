@@ -9,16 +9,22 @@ import type { Oid } from "./git/gitObjects.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
+  CheckpointOperationResult,
+  ForkCheckpointRequest,
   ObjectLocation,
   PackRegistration,
   PromisedFile,
   RefWrite,
+  RestoreCheckpointRequest,
+  UndoRestoreRequest,
   Shortcut,
   ShortcutChange,
   StoredCommit,
+  UpdateToLatestRequest,
   UnreconciledWork,
   ThreadRefs,
 } from "./DriveStore.ts";
+import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
 
 /**
  * How the Worker, thread and user objects reach drive objects. Every drive
@@ -98,6 +104,27 @@ export interface DriveObjectApi {
   ) => Promise<{ readonly _tag: "ok" } | { readonly _tag: "refused"; readonly reason: string }>;
   /** Membership changes not yet in their people's indexes. */
   readonly pendingAccess: () => Promise<ReadonlyArray<AccessDelivery>>;
+  readonly recordCheckpoint: (
+    writer: DriveWriter,
+    record: DriveCheckpointRecord,
+  ) => Promise<RefWrite>;
+  readonly checkpoint: (threadId: string, runId: string) => Promise<DriveCheckpointRecord | null>;
+  readonly forkCheckpoint: (
+    userId: string,
+    request: ForkCheckpointRequest,
+  ) => Promise<CheckpointOperationResult>;
+  readonly restoreCheckpoint: (
+    userId: string,
+    request: RestoreCheckpointRequest,
+  ) => Promise<CheckpointOperationResult>;
+  readonly undoRestore: (
+    userId: string,
+    request: UndoRestoreRequest,
+  ) => Promise<CheckpointOperationResult>;
+  readonly updateToLatest: (
+    userId: string,
+    request: UpdateToLatestRequest,
+  ) => Promise<CheckpointOperationResult>;
 }
 
 export class DriveObjectError extends Schema.TaggedError<DriveObjectError>()("DriveObjectError", {
@@ -153,6 +180,12 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     share: wrap("share"),
     unshare: wrap("unshare"),
     pendingAccess: wrap("pendingAccess"),
+    recordCheckpoint: wrap("recordCheckpoint"),
+    checkpoint: wrap("checkpoint"),
+    forkCheckpoint: wrap("forkCheckpoint"),
+    restoreCheckpoint: wrap("restoreCheckpoint"),
+    undoRestore: wrap("undoRestore"),
+    updateToLatest: wrap("updateToLatest"),
   } as DriveHandle;
 }
 

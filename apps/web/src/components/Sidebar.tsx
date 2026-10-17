@@ -3993,8 +3993,7 @@ export default function Sidebar() {
           serverConfigSupportsSignalboxTrash(serverConfigs.get(thread.environmentId)),
         );
         const other = selectedThreads.some(
-          (thread) =>
-            !serverConfigSupportsSignalboxTrash(serverConfigs.get(thread.environmentId)),
+          (thread) => !serverConfigSupportsSignalboxTrash(serverConfigs.get(thread.environmentId)),
         );
         const confirmed = await settlePromise(() =>
           api.dialogs.confirm(

@@ -16,7 +16,10 @@ import {
   resolveSidebarProjectScopeKey,
   getSidebarProjectSettingsKey,
 } from "./sidebarProjectGrouping";
-import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
+import {
+  shouldCreateNewThreadInCurrentProject,
+  orderItemsByPreferredIds,
+} from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
 import type { Project } from "./types";
 
@@ -213,14 +216,25 @@ describe("environment grouping", () => {
       repositoryIdentity,
     });
 
-    const projectGroupCount = buildSidebarProjectSnapshots({
-      projects: [primary, remote],
-      settings: defaultGroupingSettings,
-      primaryEnvironmentId,
-      resolveEnvironmentLabel: () => null,
-    }).length;
+    const count = (projects: Project[], settings = defaultGroupingSettings) =>
+      buildSidebarProjectSnapshots({
+        projects,
+        settings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: () => null,
+        groupScratchProjects: true,
+      }).length;
 
-    expect(projectGroupCount).toBe(1);
+    expect([primary, remote]).toHaveLength(2);
+    expect(count([primary, remote])).toBe(1);
+    expect(shouldCreateNewThreadInCurrentProject(false, count([primary, remote]))).toBe(true);
+
+    const other = makeProject({ id: ProjectId.make("other"), workspaceRoot: "/other" });
+    expect(shouldCreateNewThreadInCurrentProject(false, count([primary, remote, other]))).toBe(
+      false,
+    );
+    expect(shouldCreateNewThreadInCurrentProject(true, count([primary, remote, other]))).toBe(true);
+    expect(shouldCreateNewThreadInCurrentProject(false, count([]))).toBe(true);
   });
 
   it("reports whether the project groups span more than one environment", () => {
