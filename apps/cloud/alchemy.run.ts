@@ -237,6 +237,7 @@ function deploy(
           TRACE_EXPORT: traceExport.worker,
           TRACE_EXPORT_TOKEN: traceExport.token,
         }),
+        AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
