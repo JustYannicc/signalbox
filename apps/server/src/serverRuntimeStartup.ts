@@ -331,7 +331,7 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
  * records also land in the trace file and any configured OTLP collector.
  */
 export const announceStartupPairingUrl = (pairingUrl: string) =>
-  Effect.logInfo("Authentication required. Open T3 Code using the pairing URL.").pipe(
+  Effect.logInfo("Authentication required. Open Signalbox using the pairing URL.").pipe(
     // Indented to match the annotation line the pretty logger printed before.
     Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
   );

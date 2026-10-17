@@ -1333,9 +1333,10 @@ export function KeybindingsSettingsPanel() {
   const commandOptions = buildKeybindingCommandOptions(
     mergeWithDefaultKeybindings(serverKeybindings ?? []),
   ).filter(isShownCommand);
-  const rows = buildKeybindingRows(mergeWithDefaultKeybindings(serverKeybindings ?? []), query).filter(
-    (row) => isShownCommand(row.command),
-  );
+  const rows = buildKeybindingRows(
+    mergeWithDefaultKeybindings(serverKeybindings ?? []),
+    query,
+  ).filter((row) => isShownCommand(row.command));
   const groups = groupKeybindingRows(rows);
   const anchorIds = keybindingAnchorIds(rows);
 

@@ -37,7 +37,7 @@ The page names the agent and where its access goes:
   Anyone who runs that service gets the access.
 
 Only approve a sign-in you just started. To approve, enter a pairing code from
-**Settings → Connections** or from `t3 auth pairing create` on the host. A
+**Settings → Connections** or from `signalbox auth pairing create` on the host. A
 browser already signed in to the environment with permission to manage access
 can approve without a code.
 

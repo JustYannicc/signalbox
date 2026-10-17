@@ -3356,39 +3356,40 @@ function useLegacySidebarThreads(input: {
           activeThreadKey: routeThreadKey,
         })
       : sortedProjects.flatMap((project) => {
-    const projectThreads = sortThreads(
-      (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-        (thread) => thread.archivedAt === null,
-      ),
-      sidebarThreadSortOrder,
-    );
-    const projectExpanded = resolveProjectExpanded(
-      projectExpandedById,
-      projectExpansionPreferenceKeys(project),
-    );
-    const activeThreadKey = routeThreadKey ?? undefined;
-    const pinnedCollapsedThread =
-      !projectExpanded && activeThreadKey
-        ? (projectThreads.find(
-            (thread) =>
-              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
-          ) ?? null)
-        : null;
-    const shouldShowThreadPanel = projectExpanded || pinnedCollapsedThread !== null;
-    if (!shouldShowThreadPanel) {
-      return [];
-    }
-    const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-    const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
-    const previewThreads =
-      isThreadListExpanded || !hasOverflowingThreads
-        ? projectThreads
-        : projectThreads.slice(0, sidebarThreadPreviewCount);
-    const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
-    return renderedThreads.map((thread) =>
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-    );
-  });
+          const projectThreads = sortThreads(
+            (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+              (thread) => thread.archivedAt === null,
+            ),
+            sidebarThreadSortOrder,
+          );
+          const projectExpanded = resolveProjectExpanded(
+            projectExpandedById,
+            projectExpansionPreferenceKeys(project),
+          );
+          const activeThreadKey = routeThreadKey ?? undefined;
+          const pinnedCollapsedThread =
+            !projectExpanded && activeThreadKey
+              ? (projectThreads.find(
+                  (thread) =>
+                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                    activeThreadKey,
+                ) ?? null)
+              : null;
+          const shouldShowThreadPanel = projectExpanded || pinnedCollapsedThread !== null;
+          if (!shouldShowThreadPanel) {
+            return [];
+          }
+          const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
+          const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
+          const previewThreads =
+            isThreadListExpanded || !hasOverflowingThreads
+              ? projectThreads
+              : projectThreads.slice(0, sidebarThreadPreviewCount);
+          const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+          return renderedThreads.map((thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          );
+        });
   const threadJumpCommandByKey = new Map<
     string,
     NonNullable<ReturnType<typeof threadJumpCommandForIndex>>
@@ -3809,48 +3810,48 @@ export default function LegacySidebar() {
       <SidebarChromeHeader isElectron={isElectron} />
 
       <SectionSidebarActionsProvider environments={sectionsSidebar.createOptions}>
-      <SidebarProjectsContent
-        showArm64IntelBuildWarning={showArm64IntelBuildWarning}
-        arm64IntelBuildWarningDescription={arm64IntelBuildWarningDescription}
-        desktopUpdateButtonAction={desktopUpdateButtonAction}
-        desktopUpdateButtonDisabled={desktopUpdateButtonDisabled}
-        desktopUpdateActionPending={desktopUpdateActionPending}
-        handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
-        projectSortOrder={sidebarProjectSortOrder}
-        threadSortOrder={sidebarThreadSortOrder}
-        threadPreviewCount={sidebarThreadPreviewCount}
-        updateSettings={updateSettings}
-        openAddProject={openAddProjectCommandPalette}
-        isManualProjectSorting={isManualProjectSorting}
-        projectDnDSensors={projectDnDSensors}
-        projectCollisionDetection={projectCollisionDetection}
-        handleProjectDragStart={handleProjectDragStart}
-        handleProjectDragEnd={handleProjectDragEnd}
-        handleProjectDragCancel={handleProjectDragCancel}
-        handleNewThread={handleNewThread}
-        archiveThread={archiveThread}
-        deleteThread={deleteThread}
-        markThreadUnread={markThreadUnread}
-        sortedProjects={sortedProjects}
-        sortedProjectKeys={sortedProjectKeys}
-        sectionsSidebar={sectionsSidebar}
-        activeRouteProjectRef={activeRouteProjectRef}
-        expandedThreadListsByProject={expandedThreadListsByProject}
-        activeRouteProjectKey={activeRouteProjectKey}
-        routeThreadKey={routeThreadKey}
-        openPullRequestsInRightPanel={routeThreadRef !== null}
-        newThreadShortcutLabel={newThreadShortcutLabel}
-        commandPaletteShortcutLabel={commandPaletteShortcutLabel}
-        threadJumpLabelByKey={visibleThreadJumpLabelByKey}
-        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-        expandThreadListForProject={expandThreadListForProject}
-        collapseThreadListForProject={collapseThreadListForProject}
-        dragInProgressRef={dragInProgressRef}
-        suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-        suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-        attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-        projectsLength={projectsLength}
-      />
+        <SidebarProjectsContent
+          showArm64IntelBuildWarning={showArm64IntelBuildWarning}
+          arm64IntelBuildWarningDescription={arm64IntelBuildWarningDescription}
+          desktopUpdateButtonAction={desktopUpdateButtonAction}
+          desktopUpdateButtonDisabled={desktopUpdateButtonDisabled}
+          desktopUpdateActionPending={desktopUpdateActionPending}
+          handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
+          projectSortOrder={sidebarProjectSortOrder}
+          threadSortOrder={sidebarThreadSortOrder}
+          threadPreviewCount={sidebarThreadPreviewCount}
+          updateSettings={updateSettings}
+          openAddProject={openAddProjectCommandPalette}
+          isManualProjectSorting={isManualProjectSorting}
+          projectDnDSensors={projectDnDSensors}
+          projectCollisionDetection={projectCollisionDetection}
+          handleProjectDragStart={handleProjectDragStart}
+          handleProjectDragEnd={handleProjectDragEnd}
+          handleProjectDragCancel={handleProjectDragCancel}
+          handleNewThread={handleNewThread}
+          archiveThread={archiveThread}
+          deleteThread={deleteThread}
+          markThreadUnread={markThreadUnread}
+          sortedProjects={sortedProjects}
+          sortedProjectKeys={sortedProjectKeys}
+          sectionsSidebar={sectionsSidebar}
+          activeRouteProjectRef={activeRouteProjectRef}
+          expandedThreadListsByProject={expandedThreadListsByProject}
+          activeRouteProjectKey={activeRouteProjectKey}
+          routeThreadKey={routeThreadKey}
+          openPullRequestsInRightPanel={routeThreadRef !== null}
+          newThreadShortcutLabel={newThreadShortcutLabel}
+          commandPaletteShortcutLabel={commandPaletteShortcutLabel}
+          threadJumpLabelByKey={visibleThreadJumpLabelByKey}
+          attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+          expandThreadListForProject={expandThreadListForProject}
+          collapseThreadListForProject={collapseThreadListForProject}
+          dragInProgressRef={dragInProgressRef}
+          suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+          suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+          attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
+          projectsLength={projectsLength}
+        />
       </SectionSidebarActionsProvider>
       <SidebarChromeFooter />
     </>

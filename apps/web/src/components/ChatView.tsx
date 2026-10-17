@@ -4779,13 +4779,13 @@ export default function ChatView(props: ChatViewProps) {
   });
   const localCheckoutBranchMismatch =
     isServerThread && worktreesSupported // signalbox: an own branch never moves under a thread
-    ? resolveLocalCheckoutBranchMismatch({
-        effectiveEnvMode: envMode,
-        activeWorktreePath,
-        activeThreadBranch,
-        currentGitBranch: gitStatusQuery.data?.refName ?? null,
-      })
-    : null;
+      ? resolveLocalCheckoutBranchMismatch({
+          effectiveEnvMode: envMode,
+          activeWorktreePath,
+          activeThreadBranch,
+          currentGitBranch: gitStatusQuery.data?.refName ?? null,
+        })
+      : null;
   const publishComposerOverlayHeight = (height: number) => {
     const nextHeight = Math.ceil(height);
     if (nextHeight <= 0) return;

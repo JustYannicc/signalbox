@@ -1795,8 +1795,14 @@ function useComposerProviderSelection(
   // `useEffectiveComposerModelState` and `useProviderWorkspaceSnapshotRefresh` (the
   // `hasProviderSetup` lookup before, the model picker's `.find` after), so inline it loses its cache.
   "use memo";
-  const { providerStatuses, settings, activeProjectId, environmentId, activeThreadId, ...selection } =
-    input;
+  const {
+    providerStatuses,
+    settings,
+    activeProjectId,
+    environmentId,
+    activeThreadId,
+    ...selection
+  } = input;
   const allProviderInstanceEntries: ReadonlyArray<ProviderInstanceEntry> =
     sortProviderInstanceEntries(
       applyProviderInstanceSettings(
