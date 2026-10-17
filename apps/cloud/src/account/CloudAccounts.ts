@@ -109,6 +109,12 @@ export class CloudAccounts extends Context.Service<
     >;
     /** Never fails for sign-in problems; those become error redirects. */
     readonly callback: (input: CallbackInput) => Effect.Effect<SignInResult>;
+    /** Server-trusted identities only; transports must authenticate before calling. */
+    readonly finishSignIn: (
+      attempt: CloudTokens.PendingAttempt,
+      user: WorkOSClient.WorkOSUser,
+      workos?: WorkOSClient.WorkOSConfig,
+    ) => Effect.Effect<SignInResult, UserDirectory.UserObjectError>;
     readonly verifyEmail: (
       body: AccountVerifyEmailRequest,
       binding: string | undefined,
@@ -127,6 +133,7 @@ export class CloudAccounts extends Context.Service<
      */
     readonly refreshContexts: (
       userId: string,
+      workos?: WorkOSClient.WorkOSConfig,
     ) => Effect.Effect<void, WorkOSClient.WorkOSOrganizationsError | UserDirectory.UserObjectError>;
   }
 >()("@signalbox/cloud/account/CloudAccounts") {}
@@ -169,10 +176,13 @@ const make = Effect.gen(function* () {
    */
   const refreshContexts: CloudAccounts["Service"]["refreshContexts"] = Effect.fn(
     "CloudAccounts.refreshContexts",
-  )(function* (userId) {
-    const { apiKey } = workos;
+  )(function* (userId, identityProvider = workos) {
+    const { apiKey } = identityProvider;
     if (apiKey === undefined) return;
-    const organizations = yield* WorkOSClient.listOrganizations({ ...workos, apiKey }, userId).pipe(
+    const organizations = yield* WorkOSClient.listOrganizations(
+      { ...identityProvider, apiKey },
+      userId,
+    ).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
       // Sign-in waits for this, so a slow WorkOS must not hold it up.
       Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
@@ -184,8 +194,8 @@ const make = Effect.gen(function* () {
   });
 
   /** At sign-in: best effort, so a failure keeps the contexts from the previous one. */
-  const syncContexts = (userId: string) =>
-    refreshContexts(userId).pipe(
+  const syncContexts = (userId: string, identityProvider: WorkOSClient.WorkOSConfig) =>
+    refreshContexts(userId, identityProvider).pipe(
       Effect.catch((error) =>
         Effect.logWarning("cloud contexts sync failed", {
           errorTag: error._tag,
@@ -248,15 +258,18 @@ const make = Effect.gen(function* () {
   );
 
   /** The one success path, shared by the callback and email verification. */
-  const finish = Effect.fn("CloudAccounts.finish")(function* (
+  const finishSignIn: CloudAccounts["Service"]["finishSignIn"] = Effect.fn(
+    "CloudAccounts.finishSignIn",
+  )(function* (
     attempt: CloudTokens.PendingAttempt,
     user: WorkOSClient.WorkOSUser,
+    identityProvider = workos,
   ) {
     const userObject = users.forUser(user.id);
     // Contexts are refreshed alongside the profile, so the first shell after
     // signing in already shows every organization.
     const recordSignIn = Effect.all(
-      [userObject.recordSignIn(toProfile(user)), syncContexts(user.id)],
+      [userObject.recordSignIn(toProfile(user)), syncContexts(user.id, identityProvider)],
       { concurrency: 2, discard: true },
     );
     if (attempt.target.mode === "browser") {
@@ -340,7 +353,7 @@ const make = Effect.gen(function* () {
         code: input.code,
         codeVerifier: attempt.codeVerifier,
       }).pipe(
-        Effect.flatMap((user) => finish(attempt, user)),
+        Effect.flatMap((user) => finishSignIn(attempt, user)),
         Effect.catchTags({
           WorkOSEmailVerificationRequired: (required) => pauseForEmail(attempt, required),
         }),
@@ -375,7 +388,7 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    return yield* finish(pending.attempt, user).pipe(
+    return yield* finishSignIn(pending.attempt, user).pipe(
       Effect.mapError(() => new CloudVerifyEmailError({ error: "failed" })),
     );
   });
@@ -420,6 +433,7 @@ const make = Effect.gen(function* () {
     sessionState,
     authorize,
     callback,
+    finishSignIn,
     verifyEmail,
     redeemHandoff,
     signOut,
