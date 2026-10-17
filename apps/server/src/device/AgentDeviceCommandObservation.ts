@@ -117,15 +117,13 @@ export const observeAgentDeviceCommandResponse = (
               if (outcome === null) {
                 outcome = ndjsonResponseTooLarge
                   ? truncatedResponse(response.status, input.command)
-                  : response.status < 200 || response.status >= 300
-                    ? agentDeviceCommandOutcome({
-                        body: "",
-                        contentType: response.headers["content-type"],
-                        status: response.status,
-                        command: input.command,
-                        tokens: [input.proxyToken, input.daemonToken],
-                      })
-                    : null;
+                  : agentDeviceCommandOutcome({
+                      body: "",
+                      contentType: response.headers["content-type"],
+                      status: response.status,
+                      command: input.command,
+                      tokens: [input.proxyToken, input.daemonToken],
+                    });
               }
             } else if (jsonResponseTooLarge) {
               outcome = truncatedResponse(response.status, input.command);

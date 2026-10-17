@@ -153,6 +153,12 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
       const releaseReplacedResponse = yield* Deferred.make<void>();
       const progressRecord = `${JSON.stringify({ type: "progress", text: "x".repeat(2 * 1024 * 1024) })}\n`;
       const typedResponse = `${JSON.stringify({ type: "response", response: JSON.parse(typedFailure) })}\n`;
+      const successResponse = `${JSON.stringify({
+        type: "response",
+        response: { jsonrpc: "2.0", id: "request-large-success", result: { ok: true } },
+      })}\n`;
+      const progressOnlyBody = `${JSON.stringify({ type: "progress", event: { stage: "runner" } })}\n`;
+      const invalidFinalBody = `${JSON.stringify({ type: "response", response: null })}\n`;
       const oversizedNdjsonSuccessRecord = JSON.stringify({
         type: "response",
         response: {
@@ -181,34 +187,47 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
           }
           const command = (JSON.parse(body) as { params: { command: string } }).params.command;
           const responseBody =
-            command === "large"
-              ? Stream.fromIterable([encoder.encode(progressRecord), encoder.encode(typedResponse)])
-              : command === "oversized-ndjson-newline"
-                ? Stream.make(encoder.encode(`${oversizedNdjsonSuccessRecord}\n`))
-                : command === "oversized-ndjson-no-newline"
-                  ? Stream.make(encoder.encode(oversizedNdjsonSuccessRecord))
-                  : command === "oversized-json"
-                    ? Stream.make(encoder.encode(oversizedJsonSuccess))
-                    : command === "close" || command === "replace"
-                      ? Stream.concat(
-                          Stream.make(encoder.encode('{"type":"progress"}\n')),
-                          Stream.fromEffect(
-                            Deferred.await(
-                              command === "close" ? releaseClosedResponse : releaseReplacedResponse,
-                            ).pipe(Effect.as(encoder.encode(typedResponse))),
-                          ),
-                        )
-                      : Stream.make(
-                          encoder.encode(
-                            JSON.stringify({
-                              type: "response",
-                              response:
-                                command === "unknown"
-                                  ? JSON.parse(unknownFailure)
-                                  : { jsonrpc: "2.0", id: "request-success", result: { ok: true } },
-                            }),
-                          ),
-                        );
+            command === "large" || command === "large-success"
+              ? Stream.fromIterable([
+                  encoder.encode(progressRecord),
+                  encoder.encode(command === "large" ? typedResponse : successResponse),
+                ])
+              : command === "progress-only"
+                ? Stream.make(encoder.encode(progressOnlyBody))
+                : command === "invalid-final"
+                  ? Stream.make(encoder.encode(invalidFinalBody))
+                  : command === "oversized-ndjson-newline"
+                    ? Stream.make(encoder.encode(`${oversizedNdjsonSuccessRecord}\n`))
+                    : command === "oversized-ndjson-no-newline"
+                      ? Stream.make(encoder.encode(oversizedNdjsonSuccessRecord))
+                      : command === "oversized-json"
+                        ? Stream.make(encoder.encode(oversizedJsonSuccess))
+                        : command === "close" || command === "replace"
+                          ? Stream.concat(
+                              Stream.make(encoder.encode('{"type":"progress"}\n')),
+                              Stream.fromEffect(
+                                Deferred.await(
+                                  command === "close"
+                                    ? releaseClosedResponse
+                                    : releaseReplacedResponse,
+                                ).pipe(Effect.as(encoder.encode(typedResponse))),
+                              ),
+                            )
+                          : Stream.make(
+                              encoder.encode(
+                                JSON.stringify({
+                                  type: "response",
+                                  response:
+                                    command === "unknown"
+                                      ? JSON.parse(unknownFailure)
+                                      : {
+                                          jsonrpc: "2.0",
+                                          id: "request-success",
+                                          result: { ok: true },
+                                        },
+                                }),
+                              ),
+                            );
           return HttpServerResponse.stream(responseBody, {
             status: command === "large" ? 207 : 200,
             headers: {
@@ -348,6 +367,27 @@ it.effect("observes authenticated daemon failures across the real HTTP proxy bou
         expect(yield* response.text).toBe(testCase.body);
         expect(yield* diagnostics.snapshot).toEqual(typedDiagnostics);
       }
+
+      for (const testCase of [
+        { command: "progress-only", body: progressOnlyBody },
+        { command: "invalid-final", body: invalidFinalBody },
+      ] as const) {
+        const response = yield* send(testCase.command);
+        expect(response.status).toBe(200);
+        expect(yield* response.text).toBe(testCase.body);
+        expect(yield* diagnostics.snapshot).toMatchObject([
+          {
+            sessionId: liveSession.sessionId,
+            command: testCase.command,
+            message: "Agent-device returned an invalid command response.",
+          },
+        ]);
+      }
+
+      const largeSuccess = yield* send("large-success");
+      expect(largeSuccess.status).toBe(200);
+      expect(yield* largeSuccess.text).toBe(`${progressRecord}${successResponse}`);
+      expect(yield* diagnostics.snapshot).toEqual([]);
 
       const unknown = yield* send("unknown");
       expect(yield* unknown.text).toContain(unknownFailure);

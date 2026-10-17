@@ -101,6 +101,7 @@ function DevicePreviewScreen({
   const agentCommandFailure = agentSessionId
     ? agentDiagnostics.data?.find((failure) => failure.sessionId === agentSessionId)
     : undefined;
+  const deviceControlsTopInset = agentCommandFailure ? 0 : insets.top;
   const onInputConnected = useCallback(async (connected: boolean) => {
     setInputConnected(connected);
     if (connected) setControlsVisible(false);
@@ -280,7 +281,6 @@ function DevicePreviewScreen({
             marginTop: Math.max(insets.top, 12),
             marginLeft: Math.max(insets.left, 12),
             marginRight: Math.max(insets.right, 12),
-            maxHeight: 136,
           }}
         >
           <AppText
@@ -363,7 +363,7 @@ function DevicePreviewScreen({
                 onPress={() => setControlsVisible(false)}
               />
             ) : null}
-            <View className="px-3" style={{ paddingTop: Math.max(insets.top, 12) }}>
+            <View className="px-3" style={{ paddingTop: Math.max(deviceControlsTopInset, 12) }}>
               <GlassSurface className="flex-row items-center gap-1 p-1">
                 <ControlPill
                   accessibilityLabel="Close device preview"
@@ -390,7 +390,7 @@ function DevicePreviewScreen({
             accessibilityHint="Shaking the phone also shows them"
             hitSlop={12}
             className="absolute h-6 w-16 items-center justify-center self-center"
-            style={{ top: Math.max(insets.top - 18, 4) }}
+            style={{ top: Math.max(deviceControlsTopInset - 18, 4) }}
             onPress={() => setControlsVisible(true)}
           >
             <View className="h-1.5 w-10 rounded-full bg-white/40" />
