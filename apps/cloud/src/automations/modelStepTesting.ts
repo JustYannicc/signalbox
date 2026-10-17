@@ -1,5 +1,5 @@
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -104,7 +104,11 @@ export const makeModelStepHarness = () =>
       .forUser(HOOK_USER)
       .recordSignIn({ id: HOOK_USER, email: "models@example.test" });
 
-    const save = (source: string, projectId = Environment.SCRATCH_PROJECT_ID) =>
+    const save = (
+      source: string,
+      projectId = Environment.SCRATCH_PROJECT_ID,
+      modelSelection: ModelSelection | null = claudeModelSelection,
+    ) =>
       cloud.inUser(
         HOOK_USER,
         Effect.gen(function* () {
@@ -119,7 +123,7 @@ export const makeModelStepHarness = () =>
               source,
               projectId,
               defaults: {
-                modelSelection: claudeModelSelection,
+                modelSelection,
                 runtimeMode: "full-access",
                 interactionMode: "default",
               },
