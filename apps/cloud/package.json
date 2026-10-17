@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "mkdir -p ../web/dist && node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev --env dev --port 8787 --var LOCAL_WORKERD:1 --var ENVIRONMENT_ID:cloud-dev --var 'ENVIRONMENT_LABEL:Signalbox Cloud (dev)'",
     "dev:gateway": "node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev -c wrangler.model-gateway.jsonc --port 8788 --inspector-port 9230",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.infra.json",
+    "typecheck": "tsc-rs --noEmit && tsc-rs --noEmit -p tsconfig.infra.json",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
