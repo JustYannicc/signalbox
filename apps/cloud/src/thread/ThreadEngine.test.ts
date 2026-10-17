@@ -169,6 +169,90 @@ describe("ThreadEngine", () => {
     ),
   );
 
+  it.effect("hides a trashed thread and restores its conversation", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        const original = yield* launch(engine);
+        yield* engine.step;
+        yield* engine.dispatch(owner, send("send-queued", "Next"), personal);
+        const beforeTrash = yield* engine.snapshot(owner);
+        expect(beforeTrash.projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
+        const deletedAt = Date.now();
+        const input = {
+          trashId: "trash-1",
+          deletedAt,
+          purgeAfter: deletedAt + 30 * 24 * 60 * 60 * 1000,
+        };
+
+        const trashed = yield* engine.trash(owner, input);
+        expect(trashed).toMatchObject({ trashId: input.trashId, state: "trashed" });
+        expect(yield* engine.canSee(owner)).toBe(false);
+        expect((yield* Effect.flip(engine.snapshot(owner)))._tag).toBe("ThreadNotFoundError");
+        const refused = yield* Effect.flip(
+          engine.dispatch(owner, send("send-hidden", "No"), personal),
+        );
+        expect(refused).toMatchObject({
+          _tag: "ThreadCommandRejectedError",
+          reason: "This thread is in Trash.",
+        });
+        expect(yield* engine.hasTurnWork).toBe(false);
+
+        const eventCount = (yield* store.events(0)).length;
+        expect(yield* engine.trash(owner, input)).toEqual(trashed);
+        expect((yield* store.events(0)).length).toBe(eventCount);
+
+        const restoredReceipt = yield* engine.restoreTrash(owner, input.trashId);
+        expect(restoredReceipt.state).toBe("restored");
+        expect(yield* engine.canSee(owner)).toBe(true);
+        const restored = yield* engine.snapshot(owner);
+        expect(restored.projection.thread.deletedAt).toBeNull();
+        expect(
+          restored.projection.messages.some(
+            (message) => message.role === "user" && message.text === "Next",
+          ),
+        ).toBe(true);
+        expect(restored.projection.runs.map((run) => run.status)).toEqual([
+          "interrupted",
+          "queued",
+        ]);
+        expect(
+          restored.projection.messages.some(
+            (message) => message.id === original.projection.messages[0]?.id,
+          ),
+        ).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("refuses permanent cleanup and preserves the trashed conversation", () =>
+    withObject(freshDatabase(), (engine, store) =>
+      Effect.gen(function* () {
+        const original = yield* launch(engine);
+        const deletedAt = Date.now();
+        const input = {
+          trashId: "trash-purge-disabled",
+          deletedAt,
+          purgeAfter: deletedAt + 30 * 24 * 60 * 60 * 1000,
+        };
+        yield* engine.trash(owner, input);
+        const before = yield* store.currentTrash;
+        const refusal = yield* Effect.flip(
+          engine.purgeTrash(owner, { trashId: input.trashId, empty: true }),
+        );
+        expect(refusal).toMatchObject({
+          _tag: "ThreadCommandRejectedError",
+          reason: "Permanent thread cleanup is not enabled yet.",
+        });
+        expect(yield* store.currentTrash).toEqual(before);
+
+        yield* engine.restoreTrash(owner, input.trashId);
+        const restored = yield* engine.snapshot(owner);
+        expect(restored.projection.messages).toEqual(original.projection.messages);
+        expect(restored.projection.thread.deletedAt).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("remembers a rejection instead of deciding the command again", () =>
     withObject(freshDatabase(), (engine) =>
       Effect.gen(function* () {

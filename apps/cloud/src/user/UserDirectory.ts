@@ -75,6 +75,9 @@ export const shellSnapshotWire = jsonCodec(OrchestrationV2ShellSnapshot);
 
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
+  readonly trashProgress: (
+    id: string,
+  ) => Promise<import("../trash/TrashWorkflow.ts").TrashProgress>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
   readonly createSession: (input: {
@@ -298,6 +301,7 @@ export class UserDirectory extends Context.Service<
 
 // A record, so adding a method to `UserObjectApi` without wrapping it fails to compile.
 const METHODS = Object.keys({
+  trashProgress: true,
   recordSignIn: true,
   profile: true,
   createSession: true,

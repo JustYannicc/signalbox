@@ -6,6 +6,14 @@ self-hosted server, and one User Durable Object per WorkOS user, always in the
 EU jurisdiction. It serves the web app from its own origin. The design is in
 issue #110.
 
+## Trash retention
+
+Deleted threads and folders can be restored for 30 days in Settings → Trash.
+Permanent cleanup is disabled in this release, including Empty Trash. Expired
+items remain stored but cannot be restored through the app. Trash records the
+resource scopes planned for cleanup separately from actual removal receipts.
+The permanent cleanup cascade is tracked in #474 and ships separately.
+
 ## Local development
 
 ```sh

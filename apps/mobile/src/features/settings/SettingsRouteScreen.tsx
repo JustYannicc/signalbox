@@ -22,6 +22,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { targetsSupporting, targetsWithRepositoryIdentity } from "./signalboxSettingsTargets"; // signalbox
 import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
 import { SignInSettingsRow } from "../signIn/SignInSettingsRow"; // signalbox: sign-in grants
+import { TrashSettingsRow } from "../trash/TrashSettingsRow"; // signalbox: trash
 import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
 
@@ -216,6 +217,8 @@ function SettingsIndexSections() {
         <SettingsRow icon="text.bubble" label="Thread behavior" target="SettingsThreads" />
         <SettingsRow icon="arrow.turn.left.up" label="Follow-ups" target="SettingsFollowUp" />
         <SettingsRow icon="archivebox" label="Archived Threads" target="SettingsArchive" />
+        {/* signalbox: trash */}
+        <TrashSettingsRow />
       </SettingsSection>
 
       {hidesServerSettings ? null : (

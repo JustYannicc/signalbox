@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { Operation } from "./catalog.ts";
 import { searchOperations } from "./search.ts";
 
-const forAgents = (operation: Operation) => !operation.humanOnly && !operation.destructive;
+const forAgents = (operation: Operation) => operation.agentCallable;
 const top = (query: string, limit = 3) =>
   searchOperations(query, { limit, include: forAgents }).map((operation) => operation.name);
 
@@ -19,6 +19,7 @@ describe("operation search", () => {
     ["list pools", "pools.list"],
     ["move a thread to a folder", "threads.move"],
     ["start a thread", "threads.create"],
+    ["empty trash", "trash.empty"],
   ])("finds %s", (query, expected) => {
     expect(top(query)).toContain(expected);
   });
