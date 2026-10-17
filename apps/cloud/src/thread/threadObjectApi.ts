@@ -10,6 +10,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
+import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
 import type { ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
@@ -31,7 +32,11 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<
       A,
       E,
-      ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing | PullRequestSync.PullRequestSync
+      | ThreadEngine.ThreadEngine
+      | TurnReports
+      | ThreadBrowsing
+      | ThreadSecretRequests
+      | PullRequestSync.PullRequestSync
     >,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
@@ -64,6 +69,18 @@ export const makeThreadObjectApi = (
     );
   const engine = ThreadEngine.ThreadEngine;
   return {
+    answerSecret: async (actor, input) => {
+      const result = await run(
+        ThreadSecretRequests.use((service) =>
+          service.answer(actor, wire.secretAnswer.decode(input)),
+        ).pipe(
+          Effect.as(null),
+          Effect.catchTags({ SecretRequestError: (error) => Effect.succeed(error.reason) }),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
     dispatch: async (actor, command, creation) => {
       const result = await reply(
         engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),

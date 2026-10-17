@@ -1,5 +1,6 @@
 import {
   NonNegativeInt,
+  SecretRequestAnswerInput,
   OrchestrationV2Command,
   OrchestrationV2DomainEventJson,
   OrchestrationV2SubscribeThreadInput,
@@ -78,6 +79,7 @@ export const ThreadMonitorWire = Schema.Struct({
 export type ThreadMonitor = typeof ThreadMonitorWire.Type;
 
 export const wire = {
+  secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
   command: jsonCodec(OrchestrationV2Command),
   launchInput: jsonCodec(LaunchInputWire),

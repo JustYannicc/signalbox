@@ -4,6 +4,7 @@ import type {
   RunnerItem,
   RunnerTurn,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import { secretRequestJson } from "@signalbox/runner-protocol/SecretRequestProtocol";
 import {
   MessageId,
   NodeId,
@@ -29,6 +30,8 @@ import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type {
   ProviderAdapterV2Event,
@@ -43,6 +46,7 @@ import type { RunnerSessions } from "./RunnerSessions.ts";
 import { DriveTooLargeError } from "./RunnerDriveClient.ts";
 import type { RunnerDependencies } from "./RunnerDependencies.ts";
 import { makeRunnerTurns } from "./RunnerTurns.ts";
+import { makeRunnerSecretRequests } from "./RunnerSecretTools.ts";
 
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
@@ -230,6 +234,38 @@ const makeFakeAdapter = Effect.gen(function* () {
     interrupted,
   };
 });
+
+/** The cloud accepts only the run attempt it issued, never a local conflict step's id. */
+const secretRequestsFor = (run: RunnerTurn, laterRuns: ReadonlyArray<RunnerTurn> = []) =>
+  makeRunnerSecretRequests("https://cloud.test").pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          if (request.body._tag !== "Uint8Array") throw new Error("Expected request metadata");
+          const binding = secretRequestJson.request.decode(
+            new TextDecoder().decode(request.body.body),
+          );
+          const accepted =
+            [run, ...laterRuns].some(
+              (candidate) =>
+                binding.runId === candidate.runId && binding.attemptId === candidate.attemptId,
+            ) && request.headers.authorization === "Bearer session-token";
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              accepted
+                ? secretRequestJson.result.encode({ status: "declined" })
+                : "Stopped attempt.",
+              { status: accepted ? 200 : 403 },
+            ),
+          );
+        }),
+      ),
+    ),
+  );
+
+const requestSecret = { label: "Token", reason: "For this task.", clientRequestId: "request-1" };
 
 const startWithDependencies = (input: {
   readonly machineClass: "light" | "heavy";
@@ -821,6 +857,7 @@ describe("RunnerTurns", () => {
             published: () => Effect.void,
           };
           const reported: Array<RunnerItem> = [];
+          const secretRequests = yield* secretRequestsFor(turnFor(1));
           const turns = yield* makeRunnerTurns({
             threadId,
             adapters: new Map([[instanceId, fake.adapter]]),
@@ -829,6 +866,7 @@ describe("RunnerTurns", () => {
             usage: Effect.succeed(unmeasured),
             emit: (item) => Effect.sync(() => void reported.push(item)),
             openDrive: () => Effect.succeed(drive),
+            secretRequests,
           });
           const settle = Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, {
             discard: true,
@@ -847,6 +885,7 @@ describe("RunnerTurns", () => {
           yield* turns.start({
             turn,
             modelToken: "token-1",
+            sessions: { token: "session-token" },
             drive: {
               driveId: "my/personal/user_1",
               token: "sbd1.x.y",
@@ -896,6 +935,7 @@ describe("RunnerTurns", () => {
           expect(driveCalls).toEqual(["prepare sbr1.x.y", "autosave", "finish"]);
           expect(prompts).toHaveLength(2);
           expect(prompts[1]).toContain("notes.md");
+          expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
           const kinds = () =>
             reported.map((item) => (item.kind === "provider" ? `${item.event.type}` : item.kind));
           expect(kinds()).toEqual([
@@ -936,6 +976,9 @@ describe("RunnerTurns", () => {
             "provider_turn.updated",
             "turn.terminal",
           ]);
+          expect(yield* secretRequests.request(requestSecret).pipe(Effect.result)).toMatchObject({
+            _tag: "Failure",
+          });
         }),
       ),
   );
@@ -1173,6 +1216,14 @@ describe("RunnerTurns", () => {
           saveBranch: () => Effect.die(new Error("not in this test")),
           published: () => Effect.void,
         };
+        const turn = {
+          ...turnFor(1),
+          appThread: { pullRequests: [{ number: 7 }] },
+          message: { messageId: MessageId.make("message-1"), text: "Next thing", attachments: [] },
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+        } as unknown as RunnerTurn;
+        const secretRequests = yield* secretRequestsFor(turn, [turnFor(2)]);
         const reported: Array<RunnerItem> = [];
         const turns = yield* makeRunnerTurns({
           threadId,
@@ -1182,18 +1233,13 @@ describe("RunnerTurns", () => {
           usage: Effect.succeed(unmeasured),
           emit: (item) => Effect.sync(() => void reported.push(item)),
           openDrive: () => Effect.succeed(drive),
+          secretRequests,
         });
         yield* Deferred.succeed(fake.loaded, undefined);
-        const turn = {
-          ...turnFor(1),
-          appThread: { pullRequests: [{ number: 7 }] },
-          message: { messageId: MessageId.make("message-1"), text: "Next thing", attachments: [] },
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-        } as unknown as RunnerTurn;
         yield* turns.start({
           turn,
           modelToken: "token-1",
+          sessions: { token: "session-token" },
           drive: { driveId: "my/personal/user_1", token: "sbd1.x.y", remoteToken: "sbr1.x.y" },
         });
         yield* settle;
@@ -1237,8 +1283,30 @@ describe("RunnerTurns", () => {
           mergeStepNamed,
           mergeStepEnded,
           notices,
+          secretRequests,
         };
       });
+
+    it.effect(
+      "keeps secret requests bound to the cloud attempt during conflict resolution and the original turn",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { turns, secretRequests, prompts, mergeStepNamed, mergeStepEnded } =
+              yield* conflicted();
+            expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
+            yield* mergeStepNamed();
+            yield* mergeStepEnded("completed");
+            yield* settle;
+            expect(prompts).toHaveLength(2);
+            expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
+            yield* turns.interrupt(RunId.make("run-1"));
+            expect(yield* secretRequests.request(requestSecret).pipe(Effect.result)).toMatchObject({
+              _tag: "Failure",
+            });
+          }),
+        ),
+    );
 
     it.effect("answers a runtime request from a native helper using the cloud attempt", () =>
       Effect.scoped(
@@ -1306,6 +1374,25 @@ describe("RunnerTurns", () => {
           yield* turns.respondRuntimeRequest({ ...response, requestId: currentRequestId });
 
           expect(fake.responses).toEqual([{ requestId: currentRequestId, decision: "accept" }]);
+        }),
+      ),
+    );
+
+    it.effect("an old conflict turn ending cannot clear a newer run's secret binding", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { turns, secretRequests, mergeStepNamed, mergeStepEnded } = yield* conflicted();
+          yield* turns.interrupt(RunId.make("run-1"));
+          const next = turnFor(2);
+          secretRequests.pin({
+            runId: next.runId,
+            attemptId: next.attemptId,
+            sessions: { token: "session-token" },
+          });
+          yield* mergeStepNamed();
+          yield* mergeStepEnded("interrupted");
+          yield* settle;
+          expect(yield* secretRequests.request(requestSecret)).toEqual({ status: "declined" });
         }),
       ),
     );
